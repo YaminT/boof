@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "lib": ["ES2022"]
+  },
+  "references": [{ "path": "../shared" }, { "path": "../runner" }],
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts", "ui/**/*"]
+}

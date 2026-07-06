@@ -1,0 +1,74 @@
+name: Release Desktop
+
+# Build the Boof Claw desktop installers (macOS .dmg/.zip + Windows .exe) and attach
+# them to the GitHub release for the tag. Runs automatically when a v* tag is
+# pushed, or on demand for an existing tag via the Actions tab / `gh workflow run`.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload assets to (e.g. v0.2.0-beta)"
+        required: true
+        default: "v0.2.0-beta"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            script: desktop:dist:mac
+            assets: packages/desktop/build/release/*.dmg packages/desktop/build/release/*.zip
+          - os: windows-latest
+            name: Windows
+            script: desktop:dist:win
+            assets: packages/desktop/build/release/*.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout ${{ env.TAG }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build installers (${{ matrix.name }})
+        run: npm run ${{ matrix.script }}
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "$TAG" --notes "Boof Claw desktop beta — automated build." || true
+
+      - name: Upload ${{ matrix.name }} installers to $TAG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" ${{ matrix.assets }} --repo "$GITHUB_REPOSITORY" --clobber

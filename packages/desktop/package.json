@@ -1,0 +1,30 @@
+{
+  "name": "@boof-claw/desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Boof Claw desktop app (Electron) — runs the server and UI in one window",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsup",
+    "start": "electron .",
+    "typecheck": "tsc -b",
+    "stage": "node scripts/stage-app.mjs",
+    "dist": "npm run stage && electron-builder --publish never",
+    "dist:mac": "npm run stage && electron-builder --mac --publish never",
+    "dist:win": "npm run stage && electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@boof-claw/runner": "workspace:*",
+    "@boof-claw/shared": "workspace:*",
+    "@boof-claw/web": "workspace:*",
+    "chokidar": "^4.0.1",
+    "gray-matter": "^4.0.3",
+    "hono": "^4.6.14",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "electron": "^42.0.0",
+    "electron-builder": "^26.15.3"
+  }
+}

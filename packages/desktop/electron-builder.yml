@@ -1,0 +1,46 @@
+appId: com.boofclaw.desktop
+productName: Boof Claw
+copyright: Copyright © 2026 BoofClaw contributors
+
+# The app is pre-assembled by scripts/stage-app.mjs into build/app: a minimal
+# zero-dependency package.json plus the fully self-contained main.js/preload.js
+# bundles and the built UI. asar is disabled so the in-process server can read
+# the UI off disk via serveStatic.
+directories:
+  app: build/app
+  output: build/release
+  buildResources: build-resources
+
+asar: false
+npmRebuild: false
+# main.js is fully bundled by tsup (every runtime dep inlined), so the app needs
+# no node_modules at all. Excluding them keeps the build self-contained and
+# avoids electron-builder's workspace dependency traversal (which differs across
+# package managers / OSes and would otherwise inject ~9 MB of redundant deps).
+files:
+  - "**/*"
+  - "!**/node_modules/**"
+
+mac:
+  category: public.app-category.developer-tools
+  identity: null # unsigned beta build — no signing/notarization
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+
+dmg:
+  writeUpdateInfo: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}

@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/runner" },
+    { "path": "./packages/web" },
+    { "path": "./packages/desktop" },
+    { "path": "./bin" }
+  ]
+}

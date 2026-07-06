@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // dist/ is produced by tsup; tsc is type-check only, so emit declarations to
+    // a throwaway directory.
+    "outDir": "./.tsc-typecheck",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "references": [{ "path": "../shared" }, { "path": "../runner" }, { "path": "../web" }],
+  "include": ["src/**/*"]
+}

@@ -1,0 +1,8 @@
+node_modules/
+packages/desktop/build/
+packages/desktop/dist/
+.tsc-typecheck/
+*.tsbuildinfo
+.DS_Store
+data/
+*.log
