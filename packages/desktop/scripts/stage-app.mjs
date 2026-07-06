@@ -20,7 +20,7 @@ const pkg = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
 // and the GitHub release tag (v<version>) line up: 0.2.0 -> 0.2.0-beta.
 const baseVersion = pkg.version ?? "0.0.0";
 const appVersion =
-  process.env.BOOF_CLAW_APP_VERSION ?? (baseVersion.includes("-") ? baseVersion : `${baseVersion}-beta`);
+  process.env.BOOF_RUNNER_APP_VERSION ?? (baseVersion.includes("-") ? baseVersion : `${baseVersion}-beta`);
 
 function need(path, hint) {
   if (!existsSync(path)) {
@@ -29,9 +29,9 @@ function need(path, hint) {
   }
 }
 
-need(join(distDir, "main.js"), "run `npm run build -w @boof-claw/desktop` first");
-need(join(distDir, "preload.js"), "run `npm run build -w @boof-claw/desktop` first");
-need(join(uiDistDir, "index.html"), "run `npm run build -w @boof-claw/web` first");
+need(join(distDir, "main.js"), "run `npm run build -w @boof-runner/desktop` first");
+need(join(distDir, "preload.js"), "run `npm run build -w @boof-runner/desktop` first");
+need(join(uiDistDir, "index.html"), "run `npm run build -w @boof-runner/web` first");
 
 rmSync(appDir, { recursive: true, force: true });
 mkdirSync(appDir, { recursive: true });
@@ -44,12 +44,12 @@ writeFileSync(
   join(appDir, "package.json"),
   JSON.stringify(
     {
-      name: "boof-claw",
-      productName: "Boof Claw",
+      name: "boof-runner",
+      productName: "Boof Runner",
       version: appVersion,
-      description: "Boof Claw — local-first Agent Task Runner",
+      description: "Boof Runner — local-first Agent Task Runner",
       main: "main.js",
-      author: "BoofClaw contributors",
+      author: "BoofRunner contributors",
       license: "MIT",
     },
     null,
@@ -57,4 +57,4 @@ writeFileSync(
   ) + "\n",
 );
 
-console.log(`stage-app: staged Boof Claw ${appVersion} -> ${appDir}`);
+console.log(`stage-app: staged Boof Runner ${appVersion} -> ${appDir}`);

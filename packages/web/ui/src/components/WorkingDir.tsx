@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Modal } from "./Modal.js";
 import { FolderOpenIcon } from "./Icons.js";
 import { RunnerToggle } from "./RunnerToggle.js";
-import { boofClawLogoUrl } from "../assets.js";
+import { boofRunnerLogoUrl } from "../assets.js";
 import { useWorkingDir } from "../useWorkingDir.js";
 import type { Settings } from "../types.js";
 
@@ -101,10 +101,10 @@ export function WorkingDirGate({ onChange }: { onChange: () => void }) {
   return (
     <div className="gate">
       <div className="gate-card">
-        <img className="gate-logo" src={boofClawLogoUrl} alt="Boof Claw" />
-        <h1>Welcome to Boof Claw</h1>
+        <img className="gate-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
+        <h1>Welcome to Boof Runner</h1>
         <p className="muted">
-          Choose the project folder Boof Claw should work in — this is where your tasks run, so it should
+          Choose the project folder Boof Runner should work in — this is where your tasks run, so it should
           be a git repository. You can change it anytime from the header.
         </p>
         {isDesktop ? (

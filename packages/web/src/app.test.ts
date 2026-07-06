@@ -9,8 +9,8 @@ import {
   taskPromptInjectionsPath,
   taskStopRequestPath,
   workingAreaDir,
-} from "@boof-claw/shared";
-import { MockTool, ToolRegistry } from "@boof-claw/runner";
+} from "@boof-runner/shared";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "./service.js";
 
@@ -26,7 +26,7 @@ const json = (body: unknown): RequestInit => ({
 });
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "boof-claw-web-"));
+  root = await mkdtemp(join(tmpdir(), "boof-runner-web-"));
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.tasks.ensureDirs();
   await new SettingsStore(root).save(defaultSettings(root));

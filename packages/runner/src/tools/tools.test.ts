@@ -78,7 +78,7 @@ describe("usage parsing", () => {
 
 describe("exec cancellation", () => {
   it("stops a child process when the stop signal file appears", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "boof-claw-stop-"));
+    const dir = await mkdtemp(join(tmpdir(), "boof-runner-stop-"));
     const stopPath = join(dir, "stop");
     try {
       setTimeout(() => void writeFile(stopPath, "stop\n"), 100);
@@ -168,15 +168,15 @@ describe("StreamRenderer (claude stream-json)", () => {
 
 describe("health detection", () => {
   it("reports unavailable for a missing CLI", async () => {
-    process.env.BOOF_CLAW_CLAUDE_BIN = "definitely-not-a-real-binary-xyz";
+    process.env.BOOF_RUNNER_CLAUDE_BIN = "definitely-not-a-real-binary-xyz";
     const res = await new ClaudeCodeTool().detect();
     expect(res.status).toBe("unavailable");
-    delete process.env.BOOF_CLAW_CLAUDE_BIN;
+    delete process.env.BOOF_RUNNER_CLAUDE_BIN;
   });
 
   it("registry runs health for all tools and never throws", async () => {
-    process.env.BOOF_CLAW_CLAUDE_BIN = "definitely-not-real-claude-xyz";
-    process.env.BOOF_CLAW_CODEX_BIN = "definitely-not-real-codex-xyz";
+    process.env.BOOF_RUNNER_CLAUDE_BIN = "definitely-not-real-claude-xyz";
+    process.env.BOOF_RUNNER_CODEX_BIN = "definitely-not-real-codex-xyz";
     const reg = new ToolRegistry();
     const health = await reg.healthAll();
     expect(health.mock.status).toBe("available");
@@ -188,8 +188,8 @@ describe("health detection", () => {
         .map((t) => t.id)
         .sort(),
     ).toEqual(["claude-code", "codex", "mock"]);
-    delete process.env.BOOF_CLAW_CLAUDE_BIN;
-    delete process.env.BOOF_CLAW_CODEX_BIN;
+    delete process.env.BOOF_RUNNER_CLAUDE_BIN;
+    delete process.env.BOOF_RUNNER_CODEX_BIN;
     void CodexTool;
   });
 

@@ -14,12 +14,12 @@
       },
     },
     "bin": {
-      "name": "@boof-claw/cli",
+      "name": "@boof-runner/cli",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-claw/runner": "workspace:*",
-        "@boof-claw/shared": "workspace:*",
-        "@boof-claw/web": "workspace:*",
+        "@boof-runner/runner": "workspace:*",
+        "@boof-runner/shared": "workspace:*",
+        "@boof-runner/web": "workspace:*",
         "@hono/node-server": "^1.13.7",
         "chokidar": "^4.0.1",
         "gray-matter": "^4.0.3",
@@ -28,12 +28,12 @@
       },
     },
     "packages/desktop": {
-      "name": "@boof-claw/desktop",
+      "name": "@boof-runner/desktop",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-claw/runner": "workspace:*",
-        "@boof-claw/shared": "workspace:*",
-        "@boof-claw/web": "workspace:*",
+        "@boof-runner/runner": "workspace:*",
+        "@boof-runner/shared": "workspace:*",
+        "@boof-runner/web": "workspace:*",
         "@hono/node-server": "^1.13.7",
         "chokidar": "^4.0.1",
         "gray-matter": "^4.0.3",
@@ -46,14 +46,14 @@
       },
     },
     "packages/runner": {
-      "name": "@boof-claw/runner",
+      "name": "@boof-runner/runner",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-claw/shared": "workspace:*",
+        "@boof-runner/shared": "workspace:*",
       },
     },
     "packages/shared": {
-      "name": "@boof-claw/shared",
+      "name": "@boof-runner/shared",
       "version": "0.2.0",
       "dependencies": {
         "gray-matter": "^4.0.3",
@@ -61,11 +61,11 @@
       },
     },
     "packages/web": {
-      "name": "@boof-claw/web",
+      "name": "@boof-runner/web",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-claw/runner": "workspace:*",
-        "@boof-claw/shared": "workspace:*",
+        "@boof-runner/runner": "workspace:*",
+        "@boof-runner/shared": "workspace:*",
         "@hono/node-server": "^1.13.7",
         "chokidar": "^4.0.1",
         "hono": "^4.6.14",
@@ -125,15 +125,15 @@
 
     "@babel/types": ["@babel/types@7.29.7", "", { "dependencies": { "@babel/helper-string-parser": "^7.29.7", "@babel/helper-validator-identifier": "^7.29.7" } }, "sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA=="],
 
-    "@boof-claw/cli": ["@boof-claw/cli@workspace:bin"],
+    "@boof-runner/cli": ["@boof-runner/cli@workspace:bin"],
 
-    "@boof-claw/desktop": ["@boof-claw/desktop@workspace:packages/desktop"],
+    "@boof-runner/desktop": ["@boof-runner/desktop@workspace:packages/desktop"],
 
-    "@boof-claw/runner": ["@boof-claw/runner@workspace:packages/runner"],
+    "@boof-runner/runner": ["@boof-runner/runner@workspace:packages/runner"],
 
-    "@boof-claw/shared": ["@boof-claw/shared@workspace:packages/shared"],
+    "@boof-runner/shared": ["@boof-runner/shared@workspace:packages/shared"],
 
-    "@boof-claw/web": ["@boof-claw/web@workspace:packages/web"],
+    "@boof-runner/web": ["@boof-runner/web@workspace:packages/web"],
 
     "@dnd-kit/accessibility": ["@dnd-kit/accessibility@3.1.1", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw=="],
 

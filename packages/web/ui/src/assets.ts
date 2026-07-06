@@ -1,1 +1,1 @@
-export const boofClawLogoUrl = new URL("./assets/boof-claw.png", import.meta.url).href;
+export const boofRunnerLogoUrl = new URL("./assets/boof-runner.png", import.meta.url).href;

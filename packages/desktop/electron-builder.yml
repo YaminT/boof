@@ -1,6 +1,6 @@
-appId: com.boofclaw.desktop
-productName: Boof Claw
-copyright: Copyright © 2026 BoofClaw contributors
+appId: com.boofrunner.desktop
+productName: Boof Runner
+copyright: Copyright © 2026 BoofRunner contributors
 
 # The app is pre-assembled by scripts/stage-app.mjs into build/app: a minimal
 # zero-dependency package.json plus the fully self-contained main.js/preload.js

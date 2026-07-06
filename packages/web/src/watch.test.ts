@@ -2,14 +2,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TaskStore } from "@boof-claw/shared";
+import { TaskStore } from "@boof-runner/shared";
 import { DataWatcher } from "./watch.js";
 
 let root: string;
 let watcher: DataWatcher;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "boof-claw-watch-"));
+  root = await mkdtemp(join(tmpdir(), "boof-runner-watch-"));
   await new TaskStore(root).ensureDirs();
   watcher = new DataWatcher(root, 50);
 });

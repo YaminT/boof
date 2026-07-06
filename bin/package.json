@@ -1,5 +1,5 @@
 {
-  "name": "@boof-claw/cli",
+  "name": "@boof-runner/cli",
   "version": "0.2.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "@boof-claw/runner": "workspace:*",
-    "@boof-claw/shared": "workspace:*",
-    "@boof-claw/web": "workspace:*",
+    "@boof-runner/runner": "workspace:*",
+    "@boof-runner/shared": "workspace:*",
+    "@boof-runner/web": "workspace:*",
     "chokidar": "^4.0.1",
     "gray-matter": "^4.0.3",
     "hono": "^4.6.14",

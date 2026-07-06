@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSettings, SettingsStore } from "@boof-claw/shared";
-import { RunnerEngine, execCommand, mockState, resetMock } from "@boof-claw/runner";
+import { defaultSettings, SettingsStore } from "@boof-runner/shared";
+import { RunnerEngine, execCommand, mockState, resetMock } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "./service.js";
 
@@ -28,8 +28,8 @@ const put = (path: string, body: unknown) =>
   });
 
 beforeEach(async () => {
-  dataRoot = await mkdtemp(join(tmpdir(), "boof-claw-e2e-data-"));
-  workDir = await mkdtemp(join(tmpdir(), "boof-claw-e2e-work-"));
+  dataRoot = await mkdtemp(join(tmpdir(), "boof-runner-e2e-data-"));
+  workDir = await mkdtemp(join(tmpdir(), "boof-runner-e2e-work-"));
   const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);

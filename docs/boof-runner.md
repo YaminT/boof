@@ -1,12 +1,12 @@
-# Boof Claw
+# Boof Runner
 
-Boof Claw is the code-execution runner for the Boof Claw project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code and Codex.
+Boof Runner is the code-execution runner for the Boof Runner project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code and Codex.
 
-Boof Claw is local-first. It runs on the user's machine, stores tasks as markdown files, serves a local web UI, and executes one task at a time against the configured working directory.
+Boof Runner is local-first. It runs on the user's machine, stores tasks as markdown files, serves a local web UI, and executes one task at a time against the configured working directory.
 
 ## What It Does
 
-Boof Claw manages the full lifecycle of coding-agent work:
+Boof Runner manages the full lifecycle of coding-agent work:
 
 - It accepts task prompts from the UI or API.
 - It stores each task as a markdown file with validated frontmatter.
@@ -18,24 +18,24 @@ Boof Claw manages the full lifecycle of coding-agent work:
 - It can park a task when the planner needs user input.
 - It can stop a running task and inject extra user prompts while a task is running.
 
-The product goal is not to replace a developer's judgment. Boof Claw automates the repetitive orchestration around coding agents while keeping the work observable, reviewable, and stored in plain files.
+The product goal is not to replace a developer's judgment. Boof Runner automates the repetitive orchestration around coding agents while keeping the work observable, reviewable, and stored in plain files.
 
-## How It Fits In Boof Claw
+## How It Fits In Boof Runner
 
-Boof Claw is the broader project. Boof Claw is the runner part of that system: the component responsible for code execution.
+Boof Runner is the broader project. Boof Runner is the runner part of that system: the component responsible for code execution.
 
-In this repository, Boof Claw includes:
+In this repository, Boof Runner includes:
 
 - `packages/runner`: the execution engine, pipeline, tool adapters, worktree handling, usage tracking, and process execution.
 - `packages/shared`: the task file format, schemas, lifecycle state machine, settings, paths, attachment storage, and atomic file writes.
 - `packages/web`: the local HTTP API, file watcher, SSE updates, and service layer over the stores.
 - `packages/web/ui`: the React UI for task management, settings, live logs, actions, and runtime controls.
 - `packages/desktop`: the Electron wrapper that runs the same server, runner, and UI in a native window.
-- `bin`: the `boof-claw` command that scaffolds the data root, starts the web server, and ensures only one runner is active.
+- `bin`: the `boof-runner` command that scaffolds the data root, starts the web server, and ensures only one runner is active.
 
 ## Core Design
 
-Boof Claw has a simple coordination model: the filesystem is the source of truth.
+Boof Runner has a simple coordination model: the filesystem is the source of truth.
 
 There is no database. The web server and runner both read and write the same data root. Atomic writes, file locks, and status-directory reconciliation keep that safe enough for the local single-user model.
 
@@ -112,20 +112,20 @@ For each task, the pipeline runs these steps:
 
 Developer or reviewer questions are routed back to the planner internally. Only planner questions that block the original task are surfaced to the user.
 
-When a task has `runs > 1`, Boof Claw re-queues it after each completed run until `completedRuns` reaches `runs`. Later runs include framing that asks the agent to critically review and improve the previous run's work.
+When a task has `runs > 1`, Boof Runner re-queues it after each completed run until `completedRuns` reaches `runs`. Later runs include framing that asks the agent to critically review and improve the previous run's work.
 
 ## Code Execution And Isolation
 
-When `settings.workingDirectory` is a git repository, Boof Claw creates a dedicated git worktree for a running task. Agent tools execute inside that worktree, not directly in the main checkout.
+When `settings.workingDirectory` is a git repository, Boof Runner creates a dedicated git worktree for a running task. Agent tools execute inside that worktree, not directly in the main checkout.
 
-This matters because the agents run in auto-approve mode. Worktree isolation gives Boof Claw:
+This matters because the agents run in auto-approve mode. Worktree isolation gives Boof Runner:
 
 - a contained place for file mutations
 - a clear diff for review
 - safer cleanup after done or failed runs
 - protection against one task corrupting the main working tree
 
-If the configured directory is not a git repository, Boof Claw can run without isolation, but it records a warning and loses the worktree safety guarantees.
+If the configured directory is not a git repository, Boof Runner can run without isolation, but it records a warning and loses the worktree safety guarantees.
 
 ## Tool Adapters
 
@@ -151,7 +151,7 @@ The Settings page refreshes available models from the tools and uses a smoke pro
 
 ## Runtime Controls
 
-Boof Claw supports two runtime controls while a task is running.
+Boof Runner supports two runtime controls while a task is running.
 
 ### Stop
 
@@ -161,7 +161,7 @@ The task is then recorded as failed with a clear stopped message. This is intent
 
 ### Prompt Injection
 
-The UI can inject an additional prompt while a task is running. Boof Claw writes that prompt to the running task's control directory and appends a note to the live log.
+The UI can inject an additional prompt while a task is running. Boof Runner writes that prompt to the running task's control directory and appends a note to the live log.
 
 Because Claude Code and Codex are currently run non-interactively, injected prompts do not alter the already-executing CLI invocation. They are picked up before the next pipeline step and included in subsequent prompts under a dedicated injected-prompts section.
 
@@ -210,7 +210,7 @@ The most important safety mechanisms are:
 
 ## Important Tradeoffs
 
-Boof Claw deliberately keeps the first version local, single-user, and file-backed. That makes it easy to inspect and recover data, but it also means:
+Boof Runner deliberately keeps the first version local, single-user, and file-backed. That makes it easy to inspect and recover data, but it also means:
 
 - There is no multi-user permission model.
 - There is no remote queue or hosted control plane.
@@ -219,7 +219,7 @@ Boof Claw deliberately keeps the first version local, single-user, and file-back
 - Prompt injection is applied between non-interactive tool runs, not inside a currently running request.
 - Token/cost handling is tracking-only; it does not enforce budgets yet.
 
-These tradeoffs are acceptable for a local code-execution runner, but they should be revisited if Boof Claw becomes a multi-user or remote system.
+These tradeoffs are acceptable for a local code-execution runner, but they should be revisited if Boof Runner becomes a multi-user or remote system.
 
 ## Suggestions
 
@@ -239,7 +239,7 @@ The highest-value next improvements are:
 
 4. Support interactive tool sessions when available
 
-   True mid-run prompt injection would require interactive sessions or a tool-specific control protocol. If Claude Code or Codex expose stable session APIs, Boof Claw should add adapters that can send input into an active session.
+   True mid-run prompt injection would require interactive sessions or a tool-specific control protocol. If Claude Code or Codex expose stable session APIs, Boof Runner should add adapters that can send input into an active session.
 
 5. Add budget controls
 
@@ -261,12 +261,12 @@ The highest-value next improvements are:
 
    The current one-task-at-a-time model is simple and safe. If concurrency is added, it should preserve per-task worktree isolation and add explicit resource limits.
 
-10. Separate Boof Claw project docs from Boof Claw runner docs
+10. Separate Boof Runner project docs from Boof Runner runner docs
 
-As Boof Claw grows, the project should have a top-level architecture document that distinguishes Boof Claw's product surface from Boof Claw's runner responsibilities.
+As Boof Runner grows, the project should have a top-level architecture document that distinguishes Boof Runner's product surface from Boof Runner's runner responsibilities.
 
 ## Summary
 
-Boof Claw is the execution engine of Boof Claw. It takes local task files, runs coding-agent tools through a fixed planner/developer/reviewer pipeline, isolates code changes in git worktrees, exposes progress through a local web UI, and records durable results back to plain markdown.
+Boof Runner is the execution engine of Boof Runner. It takes local task files, runs coding-agent tools through a fixed planner/developer/reviewer pipeline, isolates code changes in git worktrees, exposes progress through a local web UI, and records durable results back to plain markdown.
 
 Its core strength is controlled local automation: users can queue work, watch it run, intervene when needed, and keep the full history on disk.

@@ -13,7 +13,7 @@ import {
   taskStopRequestPath,
   workingAreaDir,
   type TaskFrontmatter,
-} from "@boof-claw/shared";
+} from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
 import { Pipeline } from "./pipeline.js";
@@ -54,8 +54,8 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 });
 
 beforeEach(async () => {
-  dataRoot = await mkdtemp(join(tmpdir(), "boof-claw-data-"));
-  workDir = await mkdtemp(join(tmpdir(), "boof-claw-work-"));
+  dataRoot = await mkdtemp(join(tmpdir(), "boof-runner-data-"));
+  workDir = await mkdtemp(join(tmpdir(), "boof-runner-work-"));
   // Make workDir a git repo so worktree isolation engages.
   const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);

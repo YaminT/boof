@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { lockedAtomicWrite, readText, type TokenUsage } from "@boof-claw/shared";
+import { lockedAtomicWrite, readText, type TokenUsage } from "@boof-runner/shared";
 import { sumUsage, UNKNOWN_USAGE } from "./tools/usage.js";
 
 /** Global token-usage aggregate, persisted at <data-root>/usage.json. */

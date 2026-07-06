@@ -1,6 +1,6 @@
 name: Release Desktop
 
-# Build the Boof Claw desktop installers (macOS .dmg/.zip + Windows .exe) and attach
+# Build the Boof Runner desktop installers (macOS .dmg/.zip + Windows .exe) and attach
 # them to the GitHub release for the tag. Runs automatically when a v* tag is
 # pushed, or on demand for an existing tag via the Actions tab / `gh workflow run`.
 on:
@@ -66,7 +66,7 @@ jobs:
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --title "$TAG" --notes "Boof Claw desktop beta — automated build." || true
+              --title "$TAG" --notes "Boof Runner desktop beta — automated build." || true
 
       - name: Upload ${{ matrix.name }} installers to $TAG
         env:

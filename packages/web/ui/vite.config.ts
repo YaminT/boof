@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 
-// UI dev server proxies /api to the running Boof Claw server; build emits to ui/dist
+// UI dev server proxies /api to the running Boof Runner server; build emits to ui/dist
 // which the Hono server serves in production.
 export default defineConfig({
   root: rootDir,

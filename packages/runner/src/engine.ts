@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { SettingsStore, TaskStore, workingAreaDir, type Settings, type Task } from "@boof-claw/shared";
+import { SettingsStore, TaskStore, workingAreaDir, type Settings, type Task } from "@boof-runner/shared";
 import { Pipeline, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { pruneStaleWorktrees } from "./worktree.js";

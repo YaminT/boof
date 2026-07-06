@@ -10,7 +10,7 @@ import {
   type Settings,
   type Task,
   type TokenUsage,
-} from "@boof-claw/shared";
+} from "@boof-runner/shared";
 import { sumUsage } from "./tools/usage.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";

@@ -2,8 +2,8 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execCommand } from "./exec.js";
 
-const WORKTREE_ROOT = ".boof-claw-worktrees";
-const BRANCH_PREFIX = "boof-claw/";
+const WORKTREE_ROOT = ".boof-runner-worktrees";
+const BRANCH_PREFIX = "boof-runner/";
 
 function metaPath(workingDir: string, taskId: string): string {
   return join(workingDir, WORKTREE_ROOT, ".meta", `${taskId}.json`);
@@ -129,7 +129,7 @@ async function removeWorktree(workingDir: string, path: string, branch: string):
 export async function cleanupWorktree(workingDir: string, wt: Worktree): Promise<void> {
   await removeWorktree(workingDir, wt.path, wt.branch);
   await git(workingDir, ["worktree", "prune"]);
-  // Recover the task id from the branch (boof-claw/<id>) to drop the meta file.
+  // Recover the task id from the branch (boof-runner/<id>) to drop the meta file.
   const taskId = wt.branch.startsWith(BRANCH_PREFIX) ? wt.branch.slice(BRANCH_PREFIX.length) : null;
   if (taskId) await rm(metaPath(workingDir, taskId), { force: true });
 }
@@ -137,7 +137,7 @@ export async function cleanupWorktree(workingDir: string, wt: Worktree): Promise
 /**
  * Prune stale per-task worktrees on startup so crashed runs don't accumulate
  * (worktree-isolation spec). Removes the git bookkeeping; leftover directories
- * under .boof-claw-worktrees are best-effort removed.
+ * under .boof-runner-worktrees are best-effort removed.
  */
 export async function pruneStaleWorktrees(workingDir: string): Promise<void> {
   if (!(await isGitRepo(workingDir))) return;

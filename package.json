@@ -1,5 +1,5 @@
 {
-  "name": "boof-claw",
+  "name": "boof-runner",
   "version": "0.2.0",
   "private": true,
   "description": "Agent Task Runner — queue prompts and run them through a planner → developer → reviewer pipeline",
@@ -15,19 +15,19 @@
     "electron"
   ],
   "bin": {
-    "boof-claw": "bin/dist/boof-claw.js"
+    "boof-runner": "bin/dist/boof-runner.js"
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx bin/src/boof-claw.ts",
-    "desktop:build": "npm run build -w @boof-claw/web && npm run build -w @boof-claw/desktop",
-    "desktop": "npm run desktop:build && npm run start -w @boof-claw/desktop",
-    "desktop:dist": "npm run desktop:build && npm run dist -w @boof-claw/desktop",
-    "desktop:dist:mac": "npm run desktop:build && npm run dist:mac -w @boof-claw/desktop",
-    "desktop:dist:win": "npm run desktop:build && npm run dist:win -w @boof-claw/desktop",
+    "dev": "tsx bin/src/boof-runner.ts",
+    "desktop:build": "npm run build -w @boof-runner/web && npm run build -w @boof-runner/desktop",
+    "desktop": "npm run desktop:build && npm run start -w @boof-runner/desktop",
+    "desktop:dist": "npm run desktop:build && npm run dist -w @boof-runner/desktop",
+    "desktop:dist:mac": "npm run desktop:build && npm run dist:mac -w @boof-runner/desktop",
+    "desktop:dist:win": "npm run desktop:build && npm run dist:win -w @boof-runner/desktop",
     "lint": "prettier --check .",
     "format": "prettier --write ."
   },

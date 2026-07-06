@@ -1,9 +1,9 @@
-# boof-claw — Agent Task Runner
+# boof-runner — Agent Task Runner
 
-> Installs the `boof-claw` command.
+> Installs the `boof-runner` command.
 
 Queue prompts and run them through a disciplined **planner → developer → reviewer**
-pipeline, driven by coding agents (Claude Code, Codex, …). Boof Claw is **local-first**:
+pipeline, driven by coding agents (Claude Code, Codex, …). Boof Runner is **local-first**:
 every task is a self-contained markdown file on disk (the source of truth), a web UI
 manages the queue, and a background runner executes tasks one at a time — parking for
 your input when the planner needs clarification.
@@ -38,7 +38,7 @@ npm run dev          # run from source (tsx) — boots web + runner
 
 Then open the URL it prints (default <http://127.0.0.1:4319>).
 
-On first run Boof Claw scaffolds the data root (`./data` by default): the `tasks/` status
+On first run Boof Runner scaffolds the data root (`./data` by default): the `tasks/` status
 directories, a `commands/` folder, and `settings.json`.
 
 ### Desktop app
@@ -58,26 +58,26 @@ it any time via the folder icon in the top-right header.
 ### Running the built CLI
 
 ```bash
-node bin/dist/boof-claw.js          # after `npm run build`
-boof-claw                      # after `npm install -g .`
+node bin/dist/boof-runner.js          # after `npm run build`
+boof-runner                      # after `npm install -g .`
 ```
 
 ### Install or update from source
 
 ```bash
-bash scripts/install-or-update-boof-claw.sh
+bash scripts/install-or-update-boof-runner.sh
 ```
 
 The script clones or fast-forwards the source checkout, installs dependencies, builds the
-web UI and CLI, and globally links the `boof-claw` command. Set
-`BOOF_CLAW_DIR`, `BOOF_CLAW_REPO`, or `BOOF_CLAW_BRANCH` to override the source location.
+web UI and CLI, and globally links the `boof-runner` command. Set
+`BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location.
 
 ### Options
 
 | Flag                | Env             | Default   | Description               |
 | ------------------- | --------------- | --------- | ------------------------- |
-| `-d, --data <path>` | `BOOF_CLAW_DATA_ROOT` | `./data`  | Data root directory       |
-| `-p, --port <n>`    | `BOOF_CLAW_PORT`      | `4319`    | Web server port           |
+| `-d, --data <path>` | `BOOF_RUNNER_DATA_ROOT` | `./data`  | Data root directory       |
+| `-p, --port <n>`    | `BOOF_RUNNER_PORT`      | `4319`    | Web server port           |
 | `--no-runner`       | —               | runner on | Start the web server only |
 | `-h, --help`        | —               | —         | Show help                 |
 
@@ -106,14 +106,14 @@ packages/shared    task-file format, schemas, lifecycle state machine, atomic st
 packages/runner    tool adapters, git worktree isolation, the pipeline engine
 packages/web        Hono server + file-watch SSE; React UI under packages/web/ui
 packages/desktop    Electron app: boots the server + runner in-process, opens the UI window
-bin/               the `boof-claw` CLI: scaffolds data, boots web, ensures a single runner
+bin/               the `boof-runner` CLI: scaffolds data, boots web, ensures a single runner
 ```
 
-The `@boof-claw/*` packages are consumed from source and bundled into a single self-contained
+The `@boof-runner/*` packages are consumed from source and bundled into a single self-contained
 CLI by tsup; the React UI is built by Vite and served by the Hono server.
 
-For a deeper explanation of Boof Claw's runner responsibilities, architecture, and next
-steps, see [docs/boof-claw.md](docs/boof-claw.md).
+For a deeper explanation of Boof Runner's runner responsibilities, architecture, and next
+steps, see [docs/boof-runner.md](docs/boof-runner.md).
 
 ## Development
 

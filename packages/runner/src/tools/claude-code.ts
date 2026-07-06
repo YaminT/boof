@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@boof-claw/shared";
+import type { TokenUsage } from "@boof-runner/shared";
 import { commandExists, execCommand } from "../exec.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { parseUsage } from "./usage.js";
@@ -15,7 +15,7 @@ export class ClaudeCodeTool implements Tool {
   readonly id = "claude-code";
   readonly displayName = "Claude Code";
   readonly defaultModels = ["opus", "sonnet", "haiku"];
-  private readonly bin = process.env.BOOF_CLAW_CLAUDE_BIN ?? "claude";
+  private readonly bin = process.env.BOOF_RUNNER_CLAUDE_BIN ?? "claude";
 
   async detect(): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {
