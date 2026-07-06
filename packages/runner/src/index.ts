@@ -9,3 +9,4 @@ export * from "./worktree.js";
 export * from "./usage-store.js";
 export * from "./pipeline.js";
 export * from "./engine.js";
+export * from "./boof-scan.js";

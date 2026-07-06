@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  currentStatus,
   defaultSettings,
   newTask,
+  parseGoal,
   SettingsStore,
   TaskStore,
   taskControlDir,
@@ -244,6 +246,35 @@ describe("RunnerEngine integration (mock tool)", () => {
 
     expect(outcome.kind).toBe("failed");
     if (outcome.kind === "failed") expect(outcome.error).toContain("stopped by user");
+  });
+
+  it("bumps a scanned unit's goal.boof.xml status on successful completion", async () => {
+    const goalXml = `<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Build the core.</goal>
+    <stack>TypeScript</stack>
+    <rules><do>Write a failing test first.</do></rules>
+  </overal>
+  <progress>
+    <status><versions><version number="1" status="plan">seed</version></versions></status>
+    <tests><strategy>TDD</strategy><technology>vitest</technology><run>npm test</run></tests>
+  </progress>
+</boof>`;
+    await mkdir(join(workDir, "core"), { recursive: true });
+    await writeFile(join(workDir, "core", "goal.boof.xml"), goalXml, "utf8");
+
+    await engine.store.create(
+      newTask(fm({ boofGoal: { path: "core/goal.boof.xml", bumpTo: "done" } }), "Implement core."),
+    );
+    const r = await engine.tick();
+    expect(r.kind).toBe("ran");
+    if (r.kind === "ran") expect(r.outcome.kind).toBe("done");
+
+    // The goal file gained a version with status done.
+    const after = parseGoal(await readFile(join(workDir, "core", "goal.boof.xml"), "utf8"));
+    expect(currentStatus(after)).toBe("done");
+    expect(after.progress.versions).toHaveLength(2);
   });
 });
 
