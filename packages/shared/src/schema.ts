@@ -68,6 +68,17 @@ export const TokenUsageSchema = z.object({
 });
 export type TokenUsage = z.infer<typeof TokenUsageSchema>;
 
+/**
+ * Link from a scan-created task back to the goal.boof.xml it implements. On
+ * success the runner appends a version with status `bumpTo` (goal-ingestion).
+ * `path` is relative to the runner's workingDirectory (the scanned repo).
+ */
+export const BoofGoalRefSchema = z.object({
+  path: z.string().min(1),
+  bumpTo: z.enum(["review", "done"]).default("done"),
+});
+export type BoofGoalRef = z.infer<typeof BoofGoalRefSchema>;
+
 /** Canonical task frontmatter (task-file spec). */
 export const TaskFrontmatterSchema = z.object({
   id: kebab,
@@ -86,6 +97,9 @@ export const TaskFrontmatterSchema = z.object({
   completedRuns: z.number().int().min(0).default(0),
   tools: TaskToolsSchema.optional(),
   tokens: TokenUsageSchema.optional(),
+  // Set on scan-created tasks: on successful completion the runner appends a
+  // <version> to this unit's goal.boof.xml, bumping its status (goal-ingestion).
+  boofGoal: BoofGoalRefSchema.optional(),
   created: isoDatetime,
   updated: isoDatetime,
 });

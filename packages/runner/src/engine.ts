@@ -1,6 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { SettingsStore, TaskStore, workingAreaDir, type Settings, type Task } from "@boof-runner/shared";
+import {
+  appendVersion,
+  parseGoal,
+  serializeGoal,
+  SettingsStore,
+  TaskStore,
+  workingAreaDir,
+  type Settings,
+  type Task,
+} from "@boof-runner/shared";
 import { Pipeline, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { pruneStaleWorktrees } from "./worktree.js";
@@ -83,6 +92,10 @@ export class RunnerEngine {
       await this.store.transition(id, next, (t) => {
         t.frontmatter.completedRuns = completed;
       });
+      // On final completion of a scanned unit, bump its goal.boof.xml status.
+      if (next === "done" && outcome.task.frontmatter.boofGoal) {
+        await this.bumpGoalFile(outcome.task).catch(() => {});
+      }
     } else if (outcome.kind === "failed") {
       await this.store.transition(id, "failed");
     } else {
@@ -92,6 +105,26 @@ export class RunnerEngine {
         t.body.questions = outcome.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
       });
     }
+  }
+
+  /**
+   * Append a version to a scanned unit's goal.boof.xml, bumping its status
+   * (goal-ingestion write-back). The path is relative to workingDirectory (the
+   * scanned repo). Best-effort: failures are swallowed by the caller so a
+   * successful task is never marked failed just because status write-back broke.
+   */
+  private async bumpGoalFile(task: Task): Promise<void> {
+    const ref = task.frontmatter.boofGoal;
+    if (!ref) return;
+    const { workingDirectory } = await this.settingsStore.load();
+    const goalPath = join(workingDirectory, ref.path);
+    const goal = parseGoal(await readFile(goalPath, "utf8"));
+    const bumped = appendVersion(
+      goal,
+      ref.bumpTo,
+      `boof-runner completed task ${task.frontmatter.id}.`,
+    );
+    await writeFile(goalPath, serializeGoal(bumped), "utf8");
   }
 
   /** Process at most one task. Returns what happened. */
