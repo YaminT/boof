@@ -62,6 +62,37 @@ node bin/dist/boof-runner.js          # after `npm run build`
 boof-runner                      # after `npm install -g .`
 ```
 
+### Headless CLI (no web server)
+
+The runner can be driven entirely from the command line — no web UI required. All
+commands share `-d, --data <path>` (data root, or `$BOOF_RUNNER_DATA_ROOT`).
+
+```bash
+# Run a single prompt through planner → developer → reviewer and stream progress.
+# Exits non-zero if the task fails or parks for answers.
+boof-runner run "Add a rate limiter to the API" --repo /path/to/repo
+boof-runner run --file task.md --repo /path/to/repo   # prompt from a file
+boof-runner run --all                                 # drive the whole pending queue
+
+# SCAN MODE — turn a boof-seeded repo's unfinished units into tasks.
+# Walks <repo> for goal.boof.xml files whose current status is not `done`,
+# creating one task per unit (ordered by plan.boof.xml order + depends-on, so a
+# unit's dependencies run first). Each task instructs the developer to implement
+# the unit strictly from its goal.boof.xml, TDD; on success the runner appends a
+# <version> to that goal file bumping its status.
+boof-runner scan /path/to/repo --dry-run   # list what it would create
+boof-runner scan /path/to/repo             # create the tasks
+boof-runner run --all -d ./data            # then drive them to completion
+```
+
+Useful flags: `--repo <dir>` (working directory the pipeline runs against — a git
+repo enables worktree isolation), `--tool <id>`/`--model <name>` (force all roles to
+one tool, e.g. `--tool mock` for offline runs), `--runs <n>` (iterate a task N times),
+and, for `scan`, `--bump review|done` (status recorded on success, default `done`).
+
+`scan`/`run` are **universal**: nothing about any specific project is hardcoded — the
+target repo is always taken from the argument.
+
 ### Install or update from source
 
 ```bash
@@ -72,7 +103,7 @@ The script clones or fast-forwards the source checkout, installs dependencies, b
 web UI and CLI, and globally links the `boof-runner` command. Set
 `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location.
 
-### Options
+### Options (serve — the default command)
 
 | Flag                | Env             | Default   | Description               |
 | ------------------- | --------------- | --------- | ------------------------- |
@@ -80,6 +111,8 @@ web UI and CLI, and globally links the `boof-runner` command. Set
 | `-p, --port <n>`    | `BOOF_RUNNER_PORT`      | `4319`    | Web server port           |
 | `--no-runner`       | —               | runner on | Start the web server only |
 | `-h, --help`        | —               | —         | Show help                 |
+
+Run `boof-runner --help` for the full command reference (`serve`, `run`, `scan`).
 
 ## How it works
 
