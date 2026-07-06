@@ -1,0 +1,13 @@
+# Build output & generated artifacts
+**/dist/
+.tsc-typecheck/
+*.tsbuildinfo
+bun.lock
+
+# Runtime data root
+data/
+
+# Vendored agent skills & spec documents (authored elsewhere)
+.claude/
+.codex/
+openspec/

@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // The runnable artifact in ./dist is produced by tsup (a self-contained
+    // bundle). tsc is used only for type-checking, so emit its declaration
+    // output to a throwaway dir to avoid clobbering the tsup bundle.
+    "outDir": "./.tsc-typecheck",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "references": [
+    { "path": "../packages/shared" },
+    { "path": "../packages/runner" },
+    { "path": "../packages/web" }
+  ],
+  "include": ["src/**/*"]
+}

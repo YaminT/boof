@@ -1,0 +1,11 @@
+node_modules/
+dist/
+packages/desktop/build/
+.tsc-typecheck/
+*.tsbuildinfo
+.DS_Store
+data/tasks/
+data/commands/
+data/settings.json
+data/.runner.pid
+*.log

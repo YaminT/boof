@@ -1,0 +1,42 @@
+{
+  "name": "boof-claw",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Agent Task Runner — queue prompts and run them through a planner → developer → reviewer pipeline",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "bin"
+  ],
+  "trustedDependencies": [
+    "electron"
+  ],
+  "bin": {
+    "boof-claw": "bin/dist/boof-claw.js"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx bin/src/boof-claw.ts",
+    "desktop:build": "npm run build -w @boof-claw/web && npm run build -w @boof-claw/desktop",
+    "desktop": "npm run desktop:build && npm run start -w @boof-claw/desktop",
+    "desktop:dist": "npm run desktop:build && npm run dist -w @boof-claw/desktop",
+    "desktop:dist:mac": "npm run desktop:build && npm run dist:mac -w @boof-claw/desktop",
+    "desktop:dist:win": "npm run desktop:build && npm run dist:win -w @boof-claw/desktop",
+    "lint": "prettier --check .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "prettier": "^3.8.3",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
