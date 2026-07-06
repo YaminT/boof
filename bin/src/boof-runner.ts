@@ -1,8 +1,8 @@
 import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RunnerEngine } from "@boof-claw/runner";
-import { startServer } from "@boof-claw/web";
+import { RunnerEngine } from "@boof-runner/runner";
+import { startServer } from "@boof-runner/web";
 import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
 
@@ -15,8 +15,8 @@ interface CliArgs {
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
-    dataRoot: process.env.BOOF_CLAW_DATA_ROOT ?? resolve(process.cwd(), "data"),
-    port: Number(process.env.BOOF_CLAW_PORT ?? 4319),
+    dataRoot: process.env.BOOF_RUNNER_DATA_ROOT ?? resolve(process.cwd(), "data"),
+    port: Number(process.env.BOOF_RUNNER_PORT ?? 4319),
     noRunner: false,
     help: false,
   };
@@ -36,13 +36,13 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-const HELP = `boof-claw — Agent Task Runner
+const HELP = `boof-runner — Agent Task Runner
 
-Usage: boof-claw [options]
+Usage: boof-runner [options]
 
 Options:
-  -d, --data <path>   Data root directory (default: ./data, or $BOOF_CLAW_DATA_ROOT)
-  -p, --port <n>      Web server port (default: 4319, or $BOOF_CLAW_PORT)
+  -d, --data <path>   Data root directory (default: ./data, or $BOOF_RUNNER_DATA_ROOT)
+  -p, --port <n>      Web server port (default: 4319, or $BOOF_RUNNER_PORT)
       --no-runner     Start the web server only (do not start the runner)
   -h, --help          Show this help
 
@@ -96,11 +96,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 }
 
 // Run when invoked directly (not when imported by tests). Resolve symlinks so a
-// globally-installed `boof-claw` shim (e.g. /usr/local/bin/boof-claw → …/bin/dist/boof-claw.js)
+// globally-installed `boof-runner` shim (e.g. /usr/local/bin/boof-runner → …/bin/dist/boof-runner.js)
 // still matches this module's real path.
 const entryPath = process.argv[1] ? realpathSync(process.argv[1]) : "";
 const selfPath = fileURLToPath(import.meta.url);
-const invokedDirectly = entryPath === selfPath || entryPath.endsWith(join("bin", "src", "boof-claw.ts"));
+const invokedDirectly = entryPath === selfPath || entryPath.endsWith(join("bin", "src", "boof-runner.ts"));
 if (invokedDirectly) {
   main().catch((err) => {
     console.error(err);

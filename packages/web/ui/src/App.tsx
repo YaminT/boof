@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
-import { boofClawLogoUrl } from "./assets.js";
+import { boofRunnerLogoUrl } from "./assets.js";
 import { useLive } from "./useLive.js";
 import type { Settings, Task } from "./types.js";
 import { TaskList } from "./components/TaskList.js";
@@ -57,9 +57,9 @@ export function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand-logo" src={boofClawLogoUrl} alt="Boof Claw" />
+          <img className="brand-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
           <div className="brand-text">
-            <span className="brand-name">Boof Claw</span>
+            <span className="brand-name">Boof Runner</span>
             <span className="brand-sub">Agent Task Runner</span>
           </div>
         </div>

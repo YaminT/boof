@@ -205,7 +205,7 @@ export function createApp(deps: AppDeps): Hono {
     app.use("/*", serveStatic({ root: deps.uiDir }));
     app.get("/*", serveStatic({ path: "index.html", root: deps.uiDir }));
   } else {
-    app.get("/", (c) => c.text("Boof Claw Agent Task Runner — UI not built. API at /api/*"));
+    app.get("/", (c) => c.text("Boof Runner Agent Task Runner — UI not built. API at /api/*"));
   }
 
   return app;

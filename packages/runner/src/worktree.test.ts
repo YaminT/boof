@@ -25,8 +25,8 @@ const exists = async (p: string) => {
 };
 
 beforeEach(async () => {
-  repo = await mkdtemp(join(tmpdir(), "boof-claw-repo-"));
-  nonRepo = await mkdtemp(join(tmpdir(), "boof-claw-nonrepo-"));
+  repo = await mkdtemp(join(tmpdir(), "boof-runner-repo-"));
+  nonRepo = await mkdtemp(join(tmpdir(), "boof-runner-nonrepo-"));
   const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "test@example.com"]);

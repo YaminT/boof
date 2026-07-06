@@ -3,15 +3,15 @@ set -Eeuo pipefail
 
 IFS=$'\n\t'
 
-APP_NAME="boof-claw"
-DEFAULT_REPO="git@github.com:YaminT/boof-claw.git"
-DEFAULT_DIR="${XDG_DATA_HOME:-"$HOME/.local/share"}/boof-claw/source"
+APP_NAME="boof-runner"
+DEFAULT_REPO="git@github.com:YaminT/boof-runner.git"
+DEFAULT_DIR="${XDG_DATA_HOME:-"$HOME/.local/share"}/boof-runner/source"
 
-REPO_URL="${BOOF_CLAW_REPO:-$DEFAULT_REPO}"
-INSTALL_DIR="${BOOF_CLAW_DIR:-$DEFAULT_DIR}"
-BRANCH="${BOOF_CLAW_BRANCH:-}"
-SKIP_UPDATE="${BOOF_CLAW_SKIP_UPDATE:-0}"
-INSTALL_MODE="${BOOF_CLAW_INSTALL_MODE:-link}"
+REPO_URL="${BOOF_RUNNER_REPO:-$DEFAULT_REPO}"
+INSTALL_DIR="${BOOF_RUNNER_DIR:-$DEFAULT_DIR}"
+BRANCH="${BOOF_RUNNER_BRANCH:-}"
+SKIP_UPDATE="${BOOF_RUNNER_SKIP_UPDATE:-0}"
+INSTALL_MODE="${BOOF_RUNNER_INSTALL_MODE:-link}"
 
 log() {
   printf '[%s] %s\n' "$APP_NAME" "$*" >&2
@@ -24,22 +24,22 @@ die() {
 
 usage() {
   cat <<'EOF'
-Install or update boof-claw from source.
+Install or update boof-runner from source.
 
 Usage:
-  scripts/install-or-update-boof-claw.sh
+  scripts/install-or-update-boof-runner.sh
 
 Environment:
-  BOOF_CLAW_REPO          Git remote to clone when no checkout is found.
-  BOOF_CLAW_DIR           Install/update directory for cloned source.
-  BOOF_CLAW_BRANCH        Branch/tag to checkout before building.
-  BOOF_CLAW_SKIP_UPDATE   Set to 1 to build/link without pulling.
-  BOOF_CLAW_INSTALL_MODE  link or copy. Default: link.
+  BOOF_RUNNER_REPO          Git remote to clone when no checkout is found.
+  BOOF_RUNNER_DIR           Install/update directory for cloned source.
+  BOOF_RUNNER_BRANCH        Branch/tag to checkout before building.
+  BOOF_RUNNER_SKIP_UPDATE   Set to 1 to build/link without pulling.
+  BOOF_RUNNER_INSTALL_MODE  link or copy. Default: link.
 
 Examples:
-  ./scripts/install-or-update-boof-claw.sh
-  BOOF_CLAW_BRANCH=main bash scripts/install-or-update-boof-claw.sh
-  BOOF_CLAW_REPO=https://github.com/YaminT/boof-claw.git bash scripts/install-or-update-boof-claw.sh
+  ./scripts/install-or-update-boof-runner.sh
+  BOOF_RUNNER_BRANCH=main bash scripts/install-or-update-boof-runner.sh
+  BOOF_RUNNER_REPO=https://github.com/YaminT/boof-runner.git bash scripts/install-or-update-boof-runner.sh
 EOF
 }
 
@@ -63,13 +63,13 @@ script_checkout_root() {
   git -C "$dir" rev-parse --show-toplevel 2>/dev/null || return 1
 }
 
-is_boof_claw_checkout() {
+is_boof_runner_checkout() {
   local dir="$1"
   [[ -f "$dir/package.json" ]] || return 1
   node -e '
     const fs = require("node:fs");
     const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    process.exit(pkg.name === "boof-claw" ? 0 : 1);
+    process.exit(pkg.name === "boof-runner" ? 0 : 1);
   ' "$dir/package.json"
 }
 
@@ -92,7 +92,7 @@ update_checkout() {
   }
 
   tracked_changes_exist "$dir" &&
-    die "tracked local changes exist in $dir; commit/stash them or run with BOOF_CLAW_SKIP_UPDATE=1"
+    die "tracked local changes exist in $dir; commit/stash them or run with BOOF_RUNNER_SKIP_UPDATE=1"
 
   log "Fetching latest source"
   git -C "$dir" fetch --prune origin
@@ -111,7 +111,7 @@ update_checkout() {
 source_dir() {
   local root=""
   root="$(script_checkout_root || true)"
-  if [[ -n "$root" ]] && is_boof_claw_checkout "$root"; then
+  if [[ -n "$root" ]] && is_boof_runner_checkout "$root"; then
     printf '%s\n' "$root"
     return 0
   fi
@@ -152,23 +152,23 @@ install_command() {
   local dir="$1"
   case "$INSTALL_MODE" in
     link)
-      log "Linking boof-claw globally"
+      log "Linking boof-runner globally"
       (cd "$dir" && npm link)
       ;;
     copy)
-      log "Installing boof-claw globally"
+      log "Installing boof-runner globally"
       npm install -g "$dir"
       ;;
     *)
-      die "BOOF_CLAW_INSTALL_MODE must be 'link' or 'copy'"
+      die "BOOF_RUNNER_INSTALL_MODE must be 'link' or 'copy'"
       ;;
   esac
 }
 
 verify_install() {
-  command -v boof-claw >/dev/null 2>&1 || die "boof-claw is not on PATH after install"
-  log "Installed $(boof-claw --help | sed -n '1p')"
-  log "Command path: $(command -v boof-claw)"
+  command -v boof-runner >/dev/null 2>&1 || die "boof-runner is not on PATH after install"
+  log "Installed $(boof-runner --help | sed -n '1p')"
+  log "Command path: $(command -v boof-runner)"
 }
 
 main() {
@@ -183,7 +183,7 @@ main() {
 
   local dir
   dir="$(source_dir)"
-  is_boof_claw_checkout "$dir" || die "$dir is not a boof-claw checkout"
+  is_boof_runner_checkout "$dir" || die "$dir is not a boof-runner checkout"
 
   update_checkout "$dir"
   install_dependencies "$dir"

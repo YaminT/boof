@@ -1,5 +1,5 @@
 import { serve, type ServerType } from "@hono/node-server";
-import { ToolRegistry } from "@boof-claw/runner";
+import { ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "./service.js";
 import { DataWatcher } from "./watch.js";

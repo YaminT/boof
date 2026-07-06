@@ -35,7 +35,7 @@ const fileExists = async (p: string) => {
 };
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "boof-claw-store-"));
+  root = await mkdtemp(join(tmpdir(), "boof-runner-store-"));
   store = new TaskStore(root);
   await store.ensureDirs();
 });

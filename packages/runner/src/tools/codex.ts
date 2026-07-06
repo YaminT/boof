@@ -11,7 +11,7 @@ export class CodexTool implements Tool {
   readonly id = "codex";
   readonly displayName = "Codex";
   readonly defaultModels = ["gpt-5.5"];
-  private readonly bin = process.env.BOOF_CLAW_CODEX_BIN ?? "codex";
+  private readonly bin = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
 
   async detect(): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {

@@ -1,4 +1,4 @@
-import type { Role, TokenUsage } from "@boof-claw/shared";
+import type { Role, TokenUsage } from "@boof-runner/shared";
 
 export type HealthStatus = "available" | "unavailable";
 

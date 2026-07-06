@@ -19,8 +19,8 @@ import {
   type Settings,
   type Status,
   type Task,
-} from "@boof-claw/shared";
-import { ToolRegistry, UsageStore, type HealthResult } from "@boof-claw/runner";
+} from "@boof-runner/shared";
+import { ToolRegistry, UsageStore, type HealthResult } from "@boof-runner/runner";
 
 export interface CreateTaskInput {
   title: string;

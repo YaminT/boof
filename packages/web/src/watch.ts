@@ -1,5 +1,5 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import { dataPaths } from "@boof-claw/shared";
+import { dataPaths } from "@boof-runner/shared";
 
 type Listener = (event: string) => void;
 

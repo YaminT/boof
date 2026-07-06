@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@boof-claw/shared";
+import type { TokenUsage } from "@boof-runner/shared";
 
 export const UNKNOWN_USAGE: TokenUsage = {
   inputTokens: 0,

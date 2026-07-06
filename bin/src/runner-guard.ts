@@ -1,5 +1,5 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { dataPaths } from "@boof-claw/shared";
+import { dataPaths } from "@boof-runner/shared";
 
 /**
  * Single-runner guard via a pidfile (cli-packaging spec). Prevents a second

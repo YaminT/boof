@@ -1,15 +1,15 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { RunnerEngine } from "@boof-claw/runner";
-import { dataPaths, defaultSettings, SettingsStore, TaskStore } from "@boof-claw/shared";
-import { startServer, type RunningServer } from "@boof-claw/web";
+import { RunnerEngine } from "@boof-runner/runner";
+import { dataPaths, defaultSettings, SettingsStore, TaskStore } from "@boof-runner/shared";
+import { startServer, type RunningServer } from "@boof-runner/web";
 
-// Names the userData folder (~/Library/Application Support/Boof Claw, etc.) and the
+// Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
 // window/menu. Must run before any getPath("userData") call.
-app.setName("Boof Claw");
+app.setName("Boof Runner");
 
-const PORT = Number(process.env.BOOF_CLAW_PORT ?? 4319);
+const PORT = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
 
 let server: RunningServer | null = null;
 let engine: RunnerEngine | null = null;
@@ -19,7 +19,7 @@ let win: BrowserWindow | null = null;
  * Built React UI, served by the in-process server.
  * - Packaged (asar:false): main.js sits at <Resources>/app and the UI is staged
  *   beside it as ./ui, so serveStatic reads it as plain files on disk.
- * - Dev (`electron .`): dist/main.js resolves to the sibling @boof-claw/web package.
+ * - Dev (`electron .`): dist/main.js resolves to the sibling @boof-runner/web package.
  */
 function uiDir(): string {
   if (app.isPackaged) return join(__dirname, "ui");
@@ -47,7 +47,7 @@ function createWindow(port: number): void {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: "#e9edf2",
-    title: "Boof Claw",
+    title: "Boof Runner",
     webPreferences: {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -66,7 +66,7 @@ function createWindow(port: number): void {
   });
 }
 
-ipcMain.handle("boof-claw:pick-directory", async (_event, current?: string) => {
+ipcMain.handle("boof-runner:pick-directory", async (_event, current?: string) => {
   const result = await dialog.showOpenDialog({
     title: "Choose working directory",
     properties: ["openDirectory", "createDirectory"],
@@ -99,8 +99,8 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(boot)
     .catch((err) => {
-      console.error("Boof Claw failed to start:", err);
-      dialog.showErrorBox("Boof Claw failed to start", String(err?.stack ?? err));
+      console.error("Boof Runner failed to start:", err);
+      dialog.showErrorBox("Boof Runner failed to start", String(err?.stack ?? err));
       app.quit();
     });
 

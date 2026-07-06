@@ -1,5 +1,5 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
-import { defaultSettings, dataPaths, SettingsStore, TaskStore } from "@boof-claw/shared";
+import { defaultSettings, dataPaths, SettingsStore, TaskStore } from "@boof-runner/shared";
 
 async function exists(p: string): Promise<boolean> {
   try {

@@ -26,7 +26,7 @@ After a successful non-final run the engine increments `completedRuns` and trans
 A single `iterationFraming(task)` helper returns the critical-review text for `completedRuns >= 1`, prepended to every role's prompt. Centralizing it in `buildPrompt` means planner, refinement, developer, and reviewer all receive the same context with no per-call wiring.
 
 ### D4. Worktree reuse with a meta sidecar
-`ensureWorktree` reuses an existing per-task worktree (validated by a `.boof-claw-worktrees/.meta/<id>.json` sidecar + a branch check) or creates a fresh one. Cleanup happens only on final `done`/`failed`; park and intermediate-done retain the worktree. This makes runs cumulative while keeping the isolation and base-diff guarantees intact. *Alternative:* re-create from base each run — rejected; later passes would have nothing to review.
+`ensureWorktree` reuses an existing per-task worktree (validated by a `.boof-runner-worktrees/.meta/<id>.json` sidecar + a branch check) or creates a fresh one. Cleanup happens only on final `done`/`failed`; park and intermediate-done retain the worktree. This makes runs cumulative while keeping the isolation and base-diff guarantees intact. *Alternative:* re-create from base each run — rejected; later passes would have nothing to review.
 
 ## Risks / Trade-offs
 

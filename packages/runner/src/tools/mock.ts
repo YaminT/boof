@@ -1,4 +1,4 @@
-import type { Role } from "@boof-claw/shared";
+import type { Role } from "@boof-runner/shared";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { parseUsage } from "./usage.js";
 

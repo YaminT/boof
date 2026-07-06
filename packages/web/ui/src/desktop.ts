@@ -1,4 +1,4 @@
-// Bridge to the Electron main process, injected by the preload script when Boof Claw
+// Bridge to the Electron main process, injected by the preload script when Boof Runner
 // runs as a desktop app. Undefined in a plain browser, where the UI falls back
 // to a text input for the working directory.
 
@@ -11,11 +11,11 @@ export interface DesktopBridge {
 
 declare global {
   interface Window {
-    boofClawDesktop?: DesktopBridge;
+    boofRunnerDesktop?: DesktopBridge;
   }
 }
 
 export const desktop: DesktopBridge | undefined =
-  typeof window !== "undefined" ? window.boofClawDesktop : undefined;
+  typeof window !== "undefined" ? window.boofRunnerDesktop : undefined;
 
 export const isDesktop = Boolean(desktop);
