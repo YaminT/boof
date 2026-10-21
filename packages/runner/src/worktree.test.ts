@@ -61,7 +61,7 @@ describe("worktree isolation", () => {
     await execCommand("git", ["add", "."], { cwd: wt.path, timeoutMs: 10000 });
     await execCommand("git", ["commit", "-m", "feat"], { cwd: wt.path, timeoutMs: 10000 });
 
-    const diff = await diffAgainstBase(wt);
+    const diff = (await diffAgainstBase(wt)).text;
     expect(diff).toContain("feature.txt");
 
     expect(await finalizeWorktree(repo, wt, "t")).toEqual([expect.stringContaining("Removed")]);
@@ -87,9 +87,38 @@ describe("worktree isolation", () => {
     const wt = await createWorktree(repo, "t2");
     await mkdir(join(wt.path, "sub"), { recursive: true });
     await writeFile(join(wt.path, "sub", "u.txt"), "untracked\n");
-    const diff = await diffAgainstBase(wt);
+    const diff = (await diffAgainstBase(wt)).text;
     expect(diff).toContain("u.txt");
     await finalizeWorktree(repo, wt, "t");
+  });
+
+  it("inlines the full diff when under the byte limit", async () => {
+    const wt = await createWorktree(repo, "cap-under");
+    await writeFile(join(wt.path, "small.txt"), "tiny\n");
+    await g(["-C", wt.path, "add", "."]);
+    const res = await diffAgainstBase(wt, 100000);
+    expect(res.capped).toBe(false);
+    expect(res.text).toContain("## Diff");
+    expect(res.text).toContain("+tiny");
+  });
+
+  it("caps an over-limit diff to --stat plus a note with the base sha", async () => {
+    const wt = await createWorktree(repo, "cap-over");
+    await writeFile(join(wt.path, "big.txt"), "x".repeat(2000) + "\n");
+    await g(["-C", wt.path, "add", "."]);
+    await writeFile(join(wt.path, "loose.txt"), "untracked\n");
+    const res = await diffAgainstBase(wt, 100);
+    const sha = (await g(["rev-parse", wt.base])).stdout.trim();
+    expect(res.capped).toBe(true);
+    expect(res.baseSha).toBe(sha);
+    expect(res.bytes).toBeGreaterThan(100);
+    expect(res.text).toContain("## Summary");
+    expect(res.text).toContain("big.txt");
+    expect(res.text).toContain("loose.txt");
+    expect(res.text).toContain("exceeds the inline limit");
+    expect(res.text).toContain(`git diff ${sha} -- <path>`);
+    expect(res.text).not.toContain("## Diff");
+    expect(res.text).not.toContain("xxxxxxxxxx");
   });
 
   it("re-creating a task whose branch exists reuses it and keeps its commits", async () => {
