@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
 import { Pipeline } from "./pipeline.js";
 import { mockState, resetMock } from "./tools/mock.js";
+import type { RunOptions } from "./tools/types.js";
 
 let dataRoot: string;
 let workDir: string;
@@ -32,6 +34,17 @@ const exists = async (p: string) => {
   } catch {
     return false;
   }
+};
+
+const wtPath = (id = "t1") => join(workDir, ".boof-runner-worktrees", id);
+const gitOut = (args: string[], cwd = workDir) =>
+  execCommand("git", args, { cwd, timeoutMs: 15000 });
+const writeIn = (opts: RunOptions, file: string, content = "x\n") =>
+  writeFile(join(opts.cwd, file), content);
+const commitIn = async (opts: RunOptions, file: string) => {
+  await writeIn(opts, file);
+  await gitOut(["add", file], opts.cwd);
+  await gitOut(["commit", "-m", "agent"], opts.cwd);
 };
 
 const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
@@ -246,6 +259,10 @@ describe("RunnerEngine integration (mock tool)", () => {
 
     expect(outcome.kind).toBe("failed");
     if (outcome.kind === "failed") expect(outcome.error).toContain("stopped by user");
+
+    // Stopped work is kept: worktree directory and task branch survive.
+    expect(await exists(wtPath())).toBe(true);
+    expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
   });
 
   it("bumps a scanned unit's goal.boof.xml status on successful completion", async () => {
@@ -280,3 +297,71 @@ describe("RunnerEngine integration (mock tool)", () => {
 
 void workingAreaDir;
 void readFile;
+
+describe("task work is never destroyed", () => {
+  it("done: keeps the branch with the agent's commit and removes the clean directory", async () => {
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer") await commitIn(opts, "a.txt");
+    };
+    await engine.store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+
+    expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
+    expect((await gitOut(["log", "--format=%s", "boof-runner/t1"])).stdout).toContain("agent");
+    expect(await exists(wtPath())).toBe(false);
+    const done = await engine.store.get("t1");
+    expect(done?.body.log).toMatch(/Task branch boof-runner\/t1 at [0-9a-f]{40}/);
+  });
+
+  it("done with leftovers: commits them on the branch, then removes the directory", async () => {
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer") await writeIn(opts, "left.txt");
+    };
+    await engine.store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+
+    expect((await gitOut(["log", "-1", "--format=%s", "boof-runner/t1"])).stdout.trim()).toBe(
+      "boof-runner: T1",
+    );
+    expect((await gitOut(["show", "boof-runner/t1:left.txt"])).code).toBe(0);
+    expect(await exists(wtPath())).toBe(false);
+  });
+
+  it("failure: keeps the directory, the branch and uncommitted changes", async () => {
+    mockState.onRun = async (opts) => {
+      if (opts.role === "planner") await writeIn(opts, "wip.txt");
+    };
+    mockState.failRole = "developer";
+    await engine.store.create(newTask(fm(), "will fail"));
+    const r = await engine.tick();
+    expect(r.kind).toBe("ran");
+    if (r.kind === "ran") expect(r.outcome.kind).toBe("failed");
+
+    expect(await exists(join(wtPath(), "wip.txt"))).toBe(true);
+    expect((await gitOut(["status", "--porcelain"], wtPath())).stdout).toContain("wip.txt");
+    expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
+    const failed = await engine.store.get("t1");
+    expect(failed?.body.log).toContain(`Kept worktree ${wtPath()} on branch boof-runner/t1`);
+  });
+
+  it("multi-run: iteration 2 sees iteration 1's work in the same worktree", async () => {
+    let iter2Saw: boolean | null = null;
+    const cwds = new Set<string>();
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer") return;
+      cwds.add(opts.cwd);
+      if (!existsSync(join(opts.cwd, "iter1.txt"))) await writeIn(opts, "iter1.txt");
+      else iter2Saw = true;
+    };
+    await engine.store.create(newTask(fm({ runs: 2 }), "twice"));
+    await engine.tick();
+    await engine.tick();
+
+    expect(iter2Saw).toBe(true);
+    expect(cwds.size).toBe(1);
+    expect((await gitOut(["log", "-1", "--format=%s", "boof-runner/t1"])).stdout.trim()).toBe(
+      "boof-runner: T1",
+    );
+    expect((await gitOut(["show", "boof-runner/t1:iter1.txt"])).code).toBe(0);
+  });
+});
