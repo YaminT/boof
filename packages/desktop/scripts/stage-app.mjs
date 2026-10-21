@@ -20,7 +20,8 @@ const pkg = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
 // and the GitHub release tag (v<version>) line up: 0.2.0 -> 0.2.0-beta.
 const baseVersion = pkg.version ?? "0.0.0";
 const appVersion =
-  process.env.BOOF_RUNNER_APP_VERSION ?? (baseVersion.includes("-") ? baseVersion : `${baseVersion}-beta`);
+  process.env.BOOF_RUNNER_APP_VERSION ??
+  (baseVersion.includes("-") ? baseVersion : `${baseVersion}-beta`);
 
 function need(path, hint) {
   if (!existsSync(path)) {

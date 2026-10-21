@@ -104,7 +104,12 @@ export async function scanRepo(repoRoot: string): Promise<ScanResult> {
     const dir = relPosix(repoRoot, abs) || ".";
     try {
       const goal = parseGoal(await readFile(join(abs, GOAL_FILE), "utf8"));
-      raws.push({ dir, goalPath: `${dir === "." ? "" : dir + "/"}${GOAL_FILE}`, goal, status: currentStatus(goal) });
+      raws.push({
+        dir,
+        goalPath: `${dir === "." ? "" : dir + "/"}${GOAL_FILE}`,
+        goal,
+        status: currentStatus(goal),
+      });
     } catch {
       // Not a valid goal file — ignore it.
     }
