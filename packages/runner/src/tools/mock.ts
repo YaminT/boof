@@ -16,6 +16,8 @@ export interface MockState {
   hasAsked: boolean;
   /** Every prompt the mock has received (tests inspect the injected framing). */
   prompts: string[];
+  /** Test hook run before the mock responds (e.g. write/commit files in opts.cwd). */
+  onRun: ((opts: RunOptions) => Promise<void>) | null;
 }
 
 export const mockState: MockState = {
@@ -23,6 +25,7 @@ export const mockState: MockState = {
   failRole: null,
   hasAsked: false,
   prompts: [],
+  onRun: null,
 };
 
 export function resetMock(): void {
@@ -30,6 +33,7 @@ export function resetMock(): void {
   mockState.failRole = null;
   mockState.hasAsked = false;
   mockState.prompts = [];
+  mockState.onRun = null;
 }
 
 const usageLine = "input_tokens: 100 output_tokens: 42 cost: $0.01";
@@ -49,6 +53,7 @@ export class MockTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     mockState.prompts.push(opts.prompt);
+    await mockState.onRun?.(opts);
     if (mockState.failRole === opts.role) {
       throw new Error(`Mock failure injected for role ${opts.role}`);
     }

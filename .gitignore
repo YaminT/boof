@@ -9,3 +9,4 @@ data/commands/
 data/settings.json
 data/.runner.pid
 *.log
+.boof-runner-worktrees/

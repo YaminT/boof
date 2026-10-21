@@ -16,9 +16,10 @@ import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { UsageStore } from "./usage-store.js";
 import {
-  cleanupWorktree,
+  branchHead,
   diffAgainstBase,
   ensureWorktree,
+  finalizeWorktree,
   isGitRepo,
   type Worktree,
 } from "./worktree.js";
@@ -200,7 +201,7 @@ export class Pipeline {
     };
 
     // Append-only log mirrored into the task body so the agent output stays
-    // visible after the working area is removed on done/failed (the UI reads it
+    // visible after the run ends (the UI reads it
     // from the task file). Writes to log.txt for live tailing too.
     const logLines: string[] = task.body.log ? [task.body.log] : [];
     // Record a block into the in-memory body log (the durable record saved to
@@ -340,19 +341,32 @@ export class Pipeline {
       }
       await this.writeReport(task, "reviewer", reviewResult.report);
 
-      // Only tear down the worktree on the final iteration; intermediate runs
-      // keep it so the next run continues from this run's output.
-      if (worktree && isFinalIteration(task)) await cleanupWorktree(workingDirectory, worktree);
+      // Only finalize the worktree on the final iteration (leftovers are
+      // committed, then just the directory is removed; the branch is kept).
+      // Intermediate runs keep it so the next run continues from this output.
+      if (worktree && isFinalIteration(task)) {
+        for (const line of await finalizeWorktree(worktree, task.frontmatter.title)) {
+          await appendLog(line);
+        }
+        await appendLog(
+          `Task branch ${worktree.branch} at ${await branchHead(workingDirectory, worktree.branch)}`,
+        );
+      }
       await this.mirrorLiveLog(task);
       await this.persistUsage(task, usages);
       return { kind: "done", task };
     } catch (err) {
       const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       // Capture the failing tool's captured output (stdout/stderr) when present,
-      // so the Log tab shows *why* it failed even after cleanup.
+      // so the Log tab shows *why* it failed even after the run ends.
       const detail = (err as { output?: string })?.output;
       await appendLog(`ERROR: ${message}${detail ? `\n${detail}` : ""}`);
-      if (worktree) await cleanupWorktree(workingDirectory, worktree).catch(() => {});
+      if (worktree) {
+        const sha = await branchHead(workingDirectory, worktree.branch).catch(() => "(unknown)");
+        await appendLog(
+          `Kept worktree ${worktree.path} on branch ${worktree.branch} at ${sha}`,
+        ).catch(() => {});
+      }
       await this.mirrorLiveLog(task).catch(() => {});
       await this.persistUsage(task, usages).catch(() => {});
       return { kind: "failed", task, error: message };
