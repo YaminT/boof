@@ -18,6 +18,10 @@ export interface MockState {
   prompts: string[];
   /** Test hook run before the mock responds (e.g. write/commit files in opts.cwd). */
   onRun: ((opts: RunOptions) => Promise<void>) | null;
+  /** Internal: rounds seen per `cwd|role`, used to pick the scripted verdict. */
+  roundCounts: Map<string, number>;
+  /** Every role the mock has been invoked for, in order. */
+  calls: Role[];
 }
 
 export const mockState: MockState = {
@@ -26,6 +30,8 @@ export const mockState: MockState = {
   hasAsked: false,
   prompts: [],
   onRun: null,
+  roundCounts: new Map(),
+  calls: [],
 };
 
 export function resetMock(): void {
@@ -34,6 +40,42 @@ export function resetMock(): void {
   mockState.hasAsked = false;
   mockState.prompts = [];
   mockState.onRun = null;
+  mockState.roundCounts = new Map();
+  mockState.calls = [];
+}
+
+/**
+ * Scripted verdicts, embedded in the task prompt as
+ * `[[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]`.
+ * Tokens: APPROVE | CHANGES_REQUESTED | REJECT | NONE (no verdict line) |
+ * GARBLED (`VERDICT: MAYBE`) | CONFLICT (two disagreeing final lines). Round N
+ * of a role uses the Nth token; past the end the last token repeats.
+ */
+const MARKER = /\[\[mock-verdicts\s+([^\]]*)\]\]/;
+
+function scriptedTokens(prompt: string, role: Role): string[] {
+  const m = MARKER.exec(prompt);
+  if (!m) return [];
+  for (const part of m[1]!.trim().split(/\s+/)) {
+    const [name, list] = part.split("=");
+    if (name === role && list) return list.split(",").filter(Boolean);
+  }
+  return [];
+}
+
+function verdictBlock(role: Role, round: number, token: string): string {
+  switch (token) {
+    case "NONE":
+      return "";
+    case "GARBLED":
+      return "VERDICT: MAYBE";
+    case "CONFLICT":
+      return "VERDICT: APPROVE\nVERDICT: REJECT";
+    case "CHANGES_REQUESTED":
+      return `- finding: mock issue ${role} round ${round}\nVERDICT: CHANGES_REQUESTED`;
+    default:
+      return `VERDICT: ${token}`;
+  }
 }
 
 const usageLine = "input_tokens: 100 output_tokens: 42 cost: $0.01";
@@ -53,6 +95,7 @@ export class MockTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     mockState.prompts.push(opts.prompt);
+    mockState.calls.push(opts.role);
     await mockState.onRun?.(opts);
     if (mockState.failRole === opts.role) {
       throw new Error(`Mock failure injected for role ${opts.role}`);
@@ -70,10 +113,21 @@ export class MockTool implements Tool {
       };
     }
 
+    let report = reportFor(opts.role);
+    if (opts.role === "observer" || opts.role === "reviewer") {
+      const key = `${opts.cwd}|${opts.role}`;
+      const round = (mockState.roundCounts.get(key) ?? 0) + 1;
+      mockState.roundCounts.set(key, round);
+      const tokens = scriptedTokens(opts.prompt, opts.role);
+      const token = tokens.length > 0 ? tokens[Math.min(round, tokens.length) - 1]! : "APPROVE";
+      const block = verdictBlock(opts.role, round, token);
+      if (block) report += `\n\n${block}`;
+    }
+
     const output = `MOCK ${opts.role} (${opts.model}) ran in ${opts.cwd}\n${usageLine}`;
     return {
       output,
-      report: reportFor(opts.role),
+      report,
       usage: parseUsage(output),
     };
   }
@@ -85,6 +139,8 @@ function reportFor(role: Role): string {
       return "# Plan\n\n1. Step one.\n2. Step two.";
     case "developer":
       return "# Developer report\n\nImplemented the plan (mock; no real changes).";
+    case "observer":
+      return "# Observer report\n\nChecked the diff against the plan (mock observer).";
     case "reviewer":
       return "# Review\n\nLooks good (mock review).";
   }
