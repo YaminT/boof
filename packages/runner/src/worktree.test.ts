@@ -1,19 +1,21 @@
-import { mkdtemp, rm, writeFile, stat, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, stat, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execCommand } from "./exec.js";
 import {
-  cleanupWorktree,
   createWorktree,
   diffAgainstBase,
   ensureWorktree,
+  finalizeWorktree,
   isGitRepo,
   NotAGitRepoError,
 } from "./worktree.js";
 
 let repo: string;
 let nonRepo: string;
+
+const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
 
 const exists = async (p: string) => {
   try {
@@ -27,7 +29,6 @@ const exists = async (p: string) => {
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "boof-runner-repo-"));
   nonRepo = await mkdtemp(join(tmpdir(), "boof-runner-nonrepo-"));
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "test@example.com"]);
   await g(["config", "user.name", "Test"]);
@@ -63,8 +64,9 @@ describe("worktree isolation", () => {
     const diff = await diffAgainstBase(wt);
     expect(diff).toContain("feature.txt");
 
-    await cleanupWorktree(repo, wt);
+    expect(await finalizeWorktree(wt, "t")).toEqual([expect.stringContaining("Removed")]);
     expect(await exists(wt.path)).toBe(false);
+    expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
   });
 
   it("reuses an existing worktree (preserving prior work) across iterations", async () => {
@@ -76,8 +78,9 @@ describe("worktree isolation", () => {
     expect(second.path).toBe(first.path);
     expect(await exists(join(second.path, "iter1.txt"))).toBe(true);
 
-    await cleanupWorktree(repo, second);
+    await finalizeWorktree(second, "t");
     expect(await exists(second.path)).toBe(false);
+    expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t3"])).code).toBe(0);
   });
 
   it("captures untracked files in the diff", async () => {
@@ -86,6 +89,45 @@ describe("worktree isolation", () => {
     await writeFile(join(wt.path, "sub", "u.txt"), "untracked\n");
     const diff = await diffAgainstBase(wt);
     expect(diff).toContain("u.txt");
-    await cleanupWorktree(repo, wt);
+    await finalizeWorktree(wt, "t");
+  });
+
+  it("re-creating a task whose branch exists reuses it and keeps its commits", async () => {
+    const first = await createWorktree(repo, "t4");
+    await writeFile(join(first.path, "prior.txt"), "prior\n");
+    await finalizeWorktree(first, "prior work");
+    const sha = (await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim();
+    expect(await exists(first.path)).toBe(false);
+
+    const again = await createWorktree(repo, "t4");
+    expect(await exists(join(again.path, "prior.txt"))).toBe(true);
+    expect(again.base).toBe(first.base);
+    expect((await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim()).toBe(sha);
+    await finalizeWorktree(again, "prior work");
+
+    // Without the meta sidecar the base falls back to the merge-base.
+    await rm(join(repo, ".boof-runner-worktrees", ".meta"), { recursive: true, force: true });
+    const third = await createWorktree(repo, "t4");
+    const mb = (await g(["merge-base", "HEAD", "boof-runner/t4"])).stdout.trim();
+    expect(third.base).toBe(mb);
+    expect(await exists(join(third.path, "prior.txt"))).toBe(true);
+    expect((await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim()).toBe(sha);
+  });
+
+  it("re-creating while the worktree is still present keeps uncommitted work", async () => {
+    const first = await createWorktree(repo, "t6");
+    await writeFile(join(first.path, "wip.txt"), "wip\n");
+    const second = await createWorktree(repo, "t6");
+    expect(second.path).toBe(first.path);
+    expect(await exists(join(second.path, "wip.txt"))).toBe(true);
+  });
+
+  it("fails clearly on an unregistered directory at the worktree path, leaving it untouched", async () => {
+    const dir = join(repo, ".boof-runner-worktrees", "t5");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "keep.txt"), "sentinel");
+
+    await expect(createWorktree(repo, "t5")).rejects.toThrow(dir);
+    expect(await readFile(join(dir, "keep.txt"), "utf8")).toBe("sentinel");
   });
 });
