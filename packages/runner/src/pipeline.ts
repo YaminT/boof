@@ -345,7 +345,11 @@ export class Pipeline {
       // committed, then just the directory is removed; the branch is kept).
       // Intermediate runs keep it so the next run continues from this output.
       if (worktree && isFinalIteration(task)) {
-        for (const line of await finalizeWorktree(worktree, task.frontmatter.title)) {
+        for (const line of await finalizeWorktree(
+          workingDirectory,
+          worktree,
+          task.frontmatter.title,
+        )) {
           await appendLog(line);
         }
         await appendLog(

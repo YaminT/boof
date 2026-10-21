@@ -181,7 +181,16 @@ export async function diffAgainstBase(wt: Worktree): Promise<string> {
  * branch is never deleted. Never throws; returns log lines describing what
  * happened. On any failure the directory is kept.
  */
-export async function finalizeWorktree(wt: Worktree, title: string): Promise<string[]> {
+export async function finalizeWorktree(
+  workingDir: string,
+  wt: Worktree,
+  title: string,
+): Promise<string[]> {
+  // A detached or switched HEAD would leave commits unreferenced once the directory is removed.
+  const head = await git(wt.path, ["symbolic-ref", "--quiet", "HEAD"]);
+  if (head.code !== 0 || head.out !== `refs/heads/${wt.branch}`) {
+    return [`Kept worktree ${wt.path}: HEAD is not on ${wt.branch} (${head.out || "detached"})`];
+  }
   const status = await git(wt.path, ["status", "--porcelain"]);
   if (status.code !== 0) {
     return [`Kept worktree ${wt.path}: git status failed: ${status.err || status.out}`];
@@ -194,7 +203,7 @@ export async function finalizeWorktree(wt: Worktree, title: string): Promise<str
       return [`Kept worktree ${wt.path}: commit failed: ${commit.err || commit.out}`];
     }
   }
-  const remove = await git(wt.path, ["worktree", "remove", wt.path]);
+  const remove = await git(workingDir, ["worktree", "remove", wt.path]);
   if (remove.code !== 0) {
     return [`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`];
   }
