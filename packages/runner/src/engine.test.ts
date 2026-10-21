@@ -20,6 +20,7 @@ import {
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
 import { Pipeline } from "./pipeline.js";
+import { ensureWorktree } from "./worktree.js";
 import { mockState, resetMock } from "./tools/mock.js";
 import type { RunOptions } from "./tools/types.js";
 
@@ -246,6 +247,8 @@ describe("RunnerEngine integration (mock tool)", () => {
   it("fails before the next step when stop has been requested", async () => {
     await engine.store.create(newTask(fm(), "Build it."));
     const running = await engine.store.transition("t1", "running");
+    const wt = await ensureWorktree(workDir, "t1");
+    await writeFile(join(wt.path, "wip.txt"), "wip\n");
     await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
     await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
 
@@ -263,6 +266,8 @@ describe("RunnerEngine integration (mock tool)", () => {
     // Stopped work is kept: worktree directory and task branch survive.
     expect(await exists(wtPath())).toBe(true);
     expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
+    expect((await gitOut(["status", "--porcelain"], wtPath())).stdout).toContain("wip.txt");
+    if (outcome.kind === "failed") expect(outcome.task.body.log).toContain("Kept worktree");
   });
 
   it("bumps a scanned unit's goal.boof.xml status on successful completion", async () => {
@@ -341,7 +346,7 @@ describe("task work is never destroyed", () => {
     expect((await gitOut(["status", "--porcelain"], wtPath())).stdout).toContain("wip.txt");
     expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
     const failed = await engine.store.get("t1");
-    expect(failed?.body.log).toContain(`Kept worktree ${wtPath()} on branch boof-runner/t1`);
+    expect(failed?.body.log).toMatch(/Kept worktree .* on branch boof-runner\/t1 at [0-9a-f]{40}/);
   });
 
   it("multi-run: iteration 2 sees iteration 1's work in the same worktree", async () => {
@@ -363,5 +368,44 @@ describe("task work is never destroyed", () => {
       "boof-runner: T1",
     );
     expect((await gitOut(["show", "boof-runner/t1:iter1.txt"])).code).toBe(0);
+  });
+
+  it("unregistered directory at the worktree path: fails clearly, leaves it untouched", async () => {
+    await mkdir(wtPath(), { recursive: true });
+    await writeFile(join(wtPath(), "keep.txt"), "sentinel");
+    await engine.store.create(newTask(fm(), "Build it."));
+    const r = await engine.tick();
+    expect(r.kind).toBe("ran");
+    if (r.kind === "ran") {
+      expect(r.outcome.kind).toBe("failed");
+      if (r.outcome.kind === "failed") expect(r.outcome.error).toContain(wtPath());
+    }
+    expect(await readFile(join(wtPath(), "keep.txt"), "utf8")).toBe("sentinel");
+    expect(
+      (await gitOut(["rev-parse", "--verify", "--quiet", "refs/heads/boof-runner/t1"])).code,
+    ).not.toBe(0);
+  });
+
+  it("retry: reuses the kept branch and its earlier commit", async () => {
+    const cwds: string[] = [];
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer") return;
+      cwds.push(opts.cwd);
+      if (!existsSync(join(opts.cwd, "a.txt"))) await commitIn(opts, "a.txt");
+    };
+    mockState.failRole = "reviewer";
+    await engine.store.create(newTask(fm(), "Build it."));
+    const first = await engine.tick();
+    if (first.kind === "ran") expect(first.outcome.kind).toBe("failed");
+    const sha1 = (await gitOut(["rev-parse", "boof-runner/t1"])).stdout.trim();
+
+    await engine.store.transition("t1", "pending");
+    mockState.failRole = null;
+    const second = await engine.tick();
+    if (second.kind === "ran") expect(second.outcome.kind).toBe("done");
+
+    expect((await gitOut(["merge-base", "--is-ancestor", sha1, "boof-runner/t1"])).code).toBe(0);
+    expect((await gitOut(["show", "boof-runner/t1:a.txt"])).code).toBe(0);
+    expect(cwds).toEqual([wtPath(), wtPath()]);
   });
 });
