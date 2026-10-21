@@ -3,8 +3,8 @@ import { api } from "../api.js";
 import { Modal } from "./Modal.js";
 import type { HealthResult, RoleAssignment, Settings, TokenUsage } from "../types.js";
 
-type Role = "planner" | "developer" | "reviewer";
-const ROLES: Role[] = ["planner", "developer", "reviewer"];
+type Role = "planner" | "developer" | "observer" | "reviewer";
+const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
 
 export function SettingsPage({ settings, onChange }: { settings: Settings; onChange: () => void }) {
   const [workingDir, setWorkingDir] = useState(settings.workingDirectory);
@@ -58,7 +58,14 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
   const tools = Object.keys(models);
 
   const setRole = (role: Role, patch: Partial<RoleAssignment>) =>
-    setRoles((r) => ({ ...r, [role]: { ...r[role], ...patch } }));
+    setRoles((r) => ({ ...r, [role]: { ...r[role], ...patch } as RoleAssignment }));
+
+  // The observer is optional: "(none)" removes it from the saved roles.
+  const clearObserver = () =>
+    setRoles((r) => {
+      const { observer: _unset, ...rest } = r;
+      return rest;
+    });
 
   const openAddModel = (tool: string) => {
     setNewModel("");
@@ -133,35 +140,44 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
 
       <section>
         <h3>Roles</h3>
-        {ROLES.map((role) => (
-          <div key={role} className="role-row">
-            <span className="role-name">{role}</span>
-            <select
-              value={roles[role].tool}
-              onChange={(e) => {
-                const tool = e.target.value;
-                setRole(role, { tool, model: models[tool]?.[0] ?? roles[role].model });
-              }}
-            >
-              {tools.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <select
-              value={roles[role].model}
-              onChange={(e) => setRole(role, { model: e.target.value })}
-            >
-              {(models[roles[role].tool] ?? []).map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-            <button onClick={() => openAddModel(roles[role].tool)}>+ model</button>
-          </div>
-        ))}
+        {ROLES.map((role) => {
+          const assignment = roles[role];
+          return (
+            <div key={role} className="role-row">
+              <span className="role-name">{role}</span>
+              <select
+                value={assignment?.tool ?? ""}
+                onChange={(e) => {
+                  const tool = e.target.value;
+                  if (!tool) return clearObserver();
+                  setRole(role, { tool, model: models[tool]?.[0] ?? assignment?.model ?? "" });
+                }}
+              >
+                {role === "observer" && <option value="">(none)</option>}
+                {tools.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              {assignment && (
+                <>
+                  <select
+                    value={assignment.model}
+                    onChange={(e) => setRole(role, { model: e.target.value })}
+                  >
+                    {(models[assignment.tool] ?? []).map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <button onClick={() => openAddModel(assignment.tool)}>+ model</button>
+                </>
+              )}
+            </div>
+          );
+        })}
       </section>
 
       <section>
@@ -250,6 +266,7 @@ function withRoleModels(
   const out = mergeModels(models);
   for (const role of ROLES) {
     const assignment = roles[role];
+    if (!assignment) continue;
     out[assignment.tool] = unique([...(out[assignment.tool] ?? []), assignment.model]);
   }
   return out;
