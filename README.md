@@ -105,12 +105,12 @@ web UI and CLI, and globally links the `boof-runner` command. Set
 
 ### Options (serve — the default command)
 
-| Flag                | Env             | Default   | Description               |
-| ------------------- | --------------- | --------- | ------------------------- |
+| Flag                | Env                     | Default   | Description               |
+| ------------------- | ----------------------- | --------- | ------------------------- |
 | `-d, --data <path>` | `BOOF_RUNNER_DATA_ROOT` | `./data`  | Data root directory       |
 | `-p, --port <n>`    | `BOOF_RUNNER_PORT`      | `4319`    | Web server port           |
-| `--no-runner`       | —               | runner on | Start the web server only |
-| `-h, --help`        | —               | —         | Show help                 |
+| `--no-runner`       | —                       | runner on | Start the web server only |
+| `-h, --help`        | —                       | —         | Show help                 |
 
 Run `boof-runner --help` for the full command reference (`serve`, `run`, `scan`).
 
@@ -131,6 +131,45 @@ moves on; you answer in the **Actions** tab and it resumes. Developer/reviewer q
 are routed back to the planner via file — never surfaced to you.
 
 Turn the runner on/off any time from the UI; it finishes the in-flight step gracefully.
+
+### Observer, verdicts and the fix loop
+
+One model develops, a second **observes**, a third gives the **final review**. Only a
+reviewer `APPROVE` lets a task finish as `done`.
+
+- **Observer (optional).** Assign `settings.roles.observer` (`{ "tool", "model" }`, also
+  settable in the Settings page; `(none)` disables it) or override it per task with
+  `tools.observer` in the task frontmatter. It runs after the developer and sees the task
+  prompt, the final plan and the diff against the worktree base.
+- **Verdict protocol.** Observer and reviewer reports must end with exactly one line:
+  `VERDICT: APPROVE`, `VERDICT: CHANGES_REQUESTED` (findings listed above it) or
+  `VERDICT: REJECT` (not fixable in place). Only the last line counts (case-sensitive,
+  trailing whitespace and markdown emphasis ignored). A missing, malformed or conflicting
+  verdict counts as not approved.
+- **Gate and fix loop** (`settings.review.gate`, default `true`). On `CHANGES_REQUESTED`
+  the developer re-runs in the same worktree to fix each real finding with a test or rebut
+  it with evidence, then the same role re-checks. A reviewer fix is re-checked by the
+  observer first. Each of observer and reviewer gets `settings.review.maxFixRounds` fix
+  rounds (default `2`). `REJECT`, an invalid verdict or a spent budget fails the task with
+  `review not approved: <role> <verdict>` (`INVALID` for a bad verdict); the worktree and
+  branch are kept. With `gate: false` the observer still runs but verdicts are only
+  recorded.
+- **Diff cap.** Prompts inline the diff only up to `settings.review.maxInlineDiffBytes`
+  (default `120000`); above that they get the `--stat` summary, the untracked-file list and
+  a note to read it with `git diff <base-sha>`.
+
+All keys are optional; existing `settings.json` and task files keep working.
+
+```json
+{
+  "roles": { "observer": { "tool": "claude-code", "model": "sonnet" } },
+  "review": { "gate": true, "maxFixRounds": 2, "maxInlineDiffBytes": 120000 }
+}
+```
+
+For offline tests the `mock` tool takes a marker in the prompt:
+`[[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]` (per role, one
+verdict per round, last repeats; also `NONE`, `GARBLED`, `CONFLICT`).
 
 ## Project layout
 

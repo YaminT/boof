@@ -87,7 +87,7 @@ The body stores human-readable content:
 - injected command text
 - planner questions
 - user answers
-- planner/developer/reviewer reports
+- planner/developer/observer/reviewer reports (observer and reviewer sections hold one entry per round, with its verdict)
 - raw execution log
 
 This format keeps task data editable, inspectable, and portable outside the app.
@@ -107,10 +107,57 @@ For each task, the pipeline runs these steps:
 3. Developer
    Implements the plan in the working directory or isolated worktree.
 
-4. Reviewer
-   Reviews the resulting diff and writes a review report.
+4. Observer (optional)
+   A second model checks the task prompt, the final plan and the diff against the worktree base, and ends its report with a verdict.
 
-Developer or reviewer questions are routed back to the planner internally. Only planner questions that block the original task are surfaced to the user.
+5. Reviewer
+   Gives the final review of the diff and ends its report with a verdict.
+
+Developer, observer or reviewer questions are routed back to the planner internally. Only planner questions that block the original task are surfaced to the user.
+
+### Observer Role
+
+The observer is configured with `settings.roles.observer` (`{ "tool", "model" }`) or per task with `tools.observer` in the frontmatter; the per-task value wins. When neither is set there is no observer step. The Settings page shows the assignment and offers `(none)` to unset it. Task files without an `### Observer` report section still parse.
+
+### Verdict Protocol
+
+The observer and reviewer system prompts require the report to end with exactly one line:
+
+- `VERDICT: APPROVE`
+- `VERDICT: CHANGES_REQUESTED`, with the findings listed above it
+- `VERDICT: REJECT`, for work that should not be fixed in place
+
+`parseVerdict(report)` (in `@boof-runner/shared`) takes the last line matching `^VERDICT:\s*(APPROVE|CHANGES_REQUESTED|REJECT)\s*$`. It is case-sensitive and ignores trailing whitespace and markdown emphasis characters (`*`, `_`, backticks) around the line. It fails closed: a missing verdict, a malformed one, text after the verdict line, or several conflicting final verdict lines all mean not approved. Identical repeated final lines are accepted.
+
+### Review Gate And Fix Loop
+
+With `settings.review.gate` (default `true`) the flow is developer, observer (if configured), reviewer:
+
+- Observer `CHANGES_REQUESTED`: the developer re-runs in the same worktree. Its prompt holds the findings, the plan and the instruction to fix each real finding with a test, or rebut it with evidence. The observer then re-checks. This repeats until `APPROVE` or until `settings.review.maxFixRounds` (default `2`) is spent.
+- Reviewer `CHANGES_REQUESTED`: the developer fixes, the observer (if configured) re-checks until `APPROVE` within the observer's budget, then the reviewer re-checks. The reviewer has its own `maxFixRounds` budget. The observer budget is shared across the whole run.
+- `REJECT` from either, an invalid verdict, or a spent budget: the task fails with `review not approved: <role> <verdict>` (`INVALID` for a missing or malformed verdict). The worktree and branch are kept, as for every failed task.
+- Only a reviewer `APPROVE` lets the task finish as `done`.
+
+With `gate: false` the observer still runs if configured and the reviewer runs once, but verdicts are only recorded, never enforced. Every observer and reviewer report is stored with its round number in the task's `### Observer` and `### Reviewer` report sections, and each verdict is written to the task log (`Observer verdict (round N): X`). With `runs > 1` the full gate repeats each iteration.
+
+### Review Settings
+
+All keys are optional with defaults:
+
+```json
+{
+  "roles": { "observer": { "tool": "claude-code", "model": "sonnet" } },
+  "review": { "gate": true, "maxFixRounds": 2, "maxInlineDiffBytes": 120000 }
+}
+```
+
+- `review.gate`: enforce verdicts (default `true`).
+- `review.maxFixRounds`: developer fix rounds allowed per reviewing role (default `2`).
+- `review.maxInlineDiffBytes`: largest diff inlined in observer, reviewer and developer-fix prompts (default `120000`). Over the limit, the prompt carries the `--stat` summary, the untracked-file list and a note giving the base sha and telling the agent to run `git diff <base>` (per file `git diff <base> -- <path>`). The log records `Diff exceeds inline limit`.
+
+### Mock Verdicts
+
+The mock tool emits scripted verdicts for offline tests. Put a marker in the task prompt: `[[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]`. Each role takes one token per round and the last token repeats. Tokens: `APPROVE`, `CHANGES_REQUESTED`, `REJECT`, `NONE` (no verdict line), `GARBLED` (`VERDICT: MAYBE`), `CONFLICT` (two disagreeing final lines). Without a marker, the mock observer and reviewer approve.
 
 When a task has `runs > 1`, Boof Runner re-queues it after each completed run until `completedRuns` reaches `runs`. Later runs include framing that asks the agent to critically review and improve the previous run's work.
 
