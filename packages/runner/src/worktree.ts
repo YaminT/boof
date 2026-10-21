@@ -160,19 +160,42 @@ export async function ensureWorktree(workingDir: string, taskId: string): Promis
   return createWorktree(workingDir, taskId);
 }
 
-/** Diff the worktree against its base revision (reviewer input). */
-export async function diffAgainstBase(wt: Worktree): Promise<string> {
+export interface InlineDiff {
+  /** Text to inline into a prompt (full diff, or a capped summary). */
+  text: string;
+  /** True when the full diff exceeded the inline limit. */
+  capped: boolean;
+  /** Byte size of the full diff. */
+  bytes: number;
+  /** Resolved base sha the agent can diff against. */
+  baseSha: string;
+}
+
+/**
+ * Diff the worktree against its base revision (reviewer/observer input). A diff
+ * larger than `maxInlineBytes` is replaced by the --stat summary, the untracked
+ * file list and a note telling the agent how to read the full diff itself.
+ */
+export async function diffAgainstBase(wt: Worktree, maxInlineBytes = 120000): Promise<InlineDiff> {
   // Include both committed and uncommitted changes relative to base.
-  const committed = await git(wt.path, ["diff", `${wt.base}`, "--stat"]);
+  const stat = await git(wt.path, ["diff", `${wt.base}`, "--stat"]);
   const full = await git(wt.path, ["--no-pager", "diff", wt.base]);
   const untracked = await git(wt.path, ["ls-files", "--others", "--exclude-standard"]);
-  return [
-    "## Summary\n" + committed.out,
-    "## Diff\n" + full.out,
-    untracked.out ? "## Untracked files\n" + untracked.out : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const rev = await git(wt.path, ["rev-parse", wt.base]);
+  const baseSha = rev.code === 0 && rev.out ? rev.out : wt.base;
+  const bytes = Buffer.byteLength(full.out);
+  const untrackedBlock = untracked.out ? "## Untracked files\n" + untracked.out : "";
+  if (bytes <= maxInlineBytes) {
+    const text = ["## Summary\n" + stat.out, "## Diff\n" + full.out, untrackedBlock]
+      .filter(Boolean)
+      .join("\n\n");
+    return { text, capped: false, bytes, baseSha };
+  }
+  const note =
+    `## Note\nThe full diff (${bytes} bytes) exceeds the inline limit (${maxInlineBytes} bytes). ` +
+    `Read it yourself with \`git diff ${baseSha}\`; per file, \`git diff ${baseSha} -- <path>\`.`;
+  const text = ["## Summary\n" + stat.out, untrackedBlock, note].filter(Boolean).join("\n\n");
+  return { text, capped: true, bytes, baseSha };
 }
 
 /**
