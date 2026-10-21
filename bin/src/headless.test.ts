@@ -2,9 +2,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { currentStatus, parseGoal, SettingsStore, TaskStore } from "@boof-runner/shared";
+import {
+  currentStatus,
+  defaultSettings,
+  parseGoal,
+  SettingsStore,
+  TaskStore,
+} from "@boof-runner/shared";
 import { ToolRegistry, execCommand, mockState, resetMock } from "@boof-runner/runner";
-import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
+import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
 
 let dataRoot: string;
 let repo: string;
@@ -129,11 +135,29 @@ describe("scanRepoToTasks (scan mode)", () => {
     expect(drain.failed).toBe(0);
 
     // Both scanned goal files were bumped to done.
-    expect(currentStatus(parseGoal(await readFile(join(repo, "core", "goal.boof.xml"), "utf8")))).toBe(
-      "done",
-    );
-    expect(currentStatus(parseGoal(await readFile(join(repo, "web", "goal.boof.xml"), "utf8")))).toBe(
-      "done",
-    );
+    expect(
+      currentStatus(parseGoal(await readFile(join(repo, "core", "goal.boof.xml"), "utf8"))),
+    ).toBe("done");
+    expect(
+      currentStatus(parseGoal(await readFile(join(repo, "web", "goal.boof.xml"), "utf8"))),
+    ).toBe("done");
+  });
+});
+
+describe("toolOverride", () => {
+  it("overrides the observer only when one is configured", () => {
+    const withObserver = defaultSettings("/tmp/x");
+    withObserver.roles.observer = { tool: "claude-code", model: "sonnet" };
+    const a = { tool: "mock", model: "mock-default" };
+    expect(toolOverride(registry(), withObserver, "mock")).toEqual({
+      planner: a,
+      developer: a,
+      reviewer: a,
+      observer: a,
+    });
+    const without = toolOverride(registry(), defaultSettings("/tmp/x"), "mock");
+    expect(without).toEqual({ planner: a, developer: a, reviewer: a });
+    expect(without).not.toHaveProperty("observer");
+    expect(toolOverride(registry(), withObserver)).toBeUndefined();
   });
 });
