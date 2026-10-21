@@ -10,7 +10,7 @@ your input when the planner needs clarification.
 
 - **Filesystem is the source of truth** — one markdown file per task, atomic + locked writes.
 - **Web UI** (React + Vite) over a **Hono** server with live updates via file-watch → SSE.
-- **Background runner** drives each task through the pipeline, isolated in a git worktree.
+- **Background runner** drives each task through the pipeline, isolated in a git worktree. Task branches (`boof-runner/<id>`) are never deleted, and the worktrees of failed or stopped tasks are kept.
 - **Pluggable tools** — built-in `claude-code`, `codex`, and a first-class `mock` adapter
   (no network) so the full test suite runs offline.
 - **Desktop app** (Electron) — runs the server, runner, and UI in one window; remembers
