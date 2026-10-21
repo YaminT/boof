@@ -122,7 +122,12 @@ This matters because the agents run in auto-approve mode. Worktree isolation giv
 
 - a contained place for file mutations
 - a clear diff for review
-- safer cleanup after done or failed runs
+- work that is never destroyed:
+  - Task branches `boof-runner/<id>` are never deleted.
+  - On done, uncommitted leftovers are committed on the branch as `boof-runner: <title>`, then only the worktree directory is removed with `git worktree remove` (no `--force`). If the commit or the removal fails, the directory is kept and the reason is logged.
+  - On failed or stopped, the worktree directory and the branch are kept as they are. The directory path, branch name and HEAD sha are logged.
+  - On retry, an existing task branch is reused. An unregistered directory at the worktree path fails the task and is never touched.
+  - For done and failed tasks the branch name and HEAD sha are recorded in the task log.
 - protection against one task corrupting the main working tree
 
 If the configured directory is not a git repository, Boof Runner can run without isolation, but it records a warning and loses the worktree safety guarantees.
@@ -157,7 +162,7 @@ Boof Runner supports two runtime controls while a task is running.
 
 The UI can request a stop for the active task. The API writes a stop signal into the running task's control directory. The active child process polls for that signal and receives `SIGTERM`, followed by `SIGKILL` if it does not exit promptly.
 
-The task is then recorded as failed with a clear stopped message. This is intentionally conservative: a stopped run may have partial changes in its worktree, so it should be reviewed before retrying or cleaning up.
+The task is then recorded as failed with a clear stopped message. This is intentionally conservative: a stopped run may have partial changes in its worktree, its worktree and branch are kept for inspection or resume, so review them before retrying.
 
 ### Prompt Injection
 
@@ -227,7 +232,7 @@ The highest-value next improvements are:
 
 1. Add an explicit stopped status
 
-   Today a stopped task is recorded as failed. A separate `stopped` status would make user intent clearer and allow different retry or cleanup behavior.
+   Today a stopped task is recorded as failed. A separate `stopped` status would make user intent clearer and allow different retry behavior.
 
 2. Make injected prompts visible in the task editor
 
@@ -247,7 +252,7 @@ The highest-value next improvements are:
 
 6. Improve stop cleanup policy
 
-   A stopped task may leave a partially modified worktree. Add UI choices such as keep worktree, discard worktree, or retry from current state.
+   A stopped task keeps its partially modified worktree and branch today. Making this policy configurable (keep or discard) and adding UI choices such as retry from current state are follow-ups.
 
 7. Expand model metadata
 
