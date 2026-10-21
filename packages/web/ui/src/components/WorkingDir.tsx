@@ -104,8 +104,8 @@ export function WorkingDirGate({ onChange }: { onChange: () => void }) {
         <img className="gate-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
         <h1>Welcome to Boof Runner</h1>
         <p className="muted">
-          Choose the project folder Boof Runner should work in — this is where your tasks run, so it should
-          be a git repository. You can change it anytime from the header.
+          Choose the project folder Boof Runner should work in — this is where your tasks run, so it
+          should be a git repository. You can change it anytime from the header.
         </p>
         {isDesktop ? (
           <button className="primary gate-choose" onClick={change} disabled={busy}>
