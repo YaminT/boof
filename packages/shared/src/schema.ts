@@ -16,7 +16,7 @@ export type Status = z.infer<typeof StatusSchema>;
 export const QuestionStateSchema = z.enum(["none", "pending", "answered"]);
 export type QuestionState = z.infer<typeof QuestionStateSchema>;
 
-export const RoleSchema = z.enum(["planner", "developer", "reviewer"]);
+export const RoleSchema = z.enum(["planner", "developer", "observer", "reviewer"]);
 export type Role = z.infer<typeof RoleSchema>;
 
 const kebab = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "must be kebab-case ([a-z0-9-])");
@@ -43,6 +43,7 @@ export const TaskToolsSchema = z
   .object({
     planner: RoleAssignmentSchema.optional(),
     developer: RoleAssignmentSchema.optional(),
+    observer: RoleAssignmentSchema.optional(),
     reviewer: RoleAssignmentSchema.optional(),
   })
   .strict();
@@ -112,6 +113,17 @@ export const CommandTemplateFrontmatterSchema = z.object({
 });
 export type CommandTemplateFrontmatter = z.infer<typeof CommandTemplateFrontmatterSchema>;
 
+/** Review gate / fix-loop settings; every key optional with a default. */
+export const ReviewSettingsSchema = z.object({
+  /** Enforce observer/reviewer verdicts: only a reviewer APPROVE finishes as done. */
+  gate: z.boolean().default(true),
+  /** Max developer fix rounds per reviewing role (observer, reviewer). */
+  maxFixRounds: z.number().int().min(0).default(2),
+  /** Largest diff (bytes) inlined into a prompt; larger gets --stat + a note. */
+  maxInlineDiffBytes: z.number().int().positive().default(120000),
+});
+export type ReviewSettings = z.infer<typeof ReviewSettingsSchema>;
+
 /** settings.json schema (settings spec). */
 export const SettingsSchema = z.object({
   runner: z.object({ enabled: z.boolean() }),
@@ -122,8 +134,10 @@ export const SettingsSchema = z.object({
   roles: z.object({
     planner: RoleAssignmentSchema,
     developer: RoleAssignmentSchema,
+    observer: RoleAssignmentSchema.optional(),
     reviewer: RoleAssignmentSchema,
   }),
+  review: ReviewSettingsSchema.optional(),
   models: z.record(z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;

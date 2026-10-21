@@ -5,6 +5,7 @@ import { TaskFrontmatterSchema, type TaskFrontmatter } from "./schema.js";
 export interface TaskReports {
   planner: string;
   developer: string;
+  observer: string;
   reviewer: string;
 }
 
@@ -30,12 +31,12 @@ const emptyBody = (): TaskBody => ({
   command: "",
   questions: "",
   answers: "",
-  reports: { planner: "", developer: "", reviewer: "" },
+  reports: { planner: "", developer: "", observer: "", reviewer: "" },
   log: "",
 });
 
 const TOP_SECTIONS = ["prompt", "command", "questions", "answers", "reports", "log"];
-const REPORT_SECTIONS = ["planner", "developer", "reviewer"];
+const REPORT_SECTIONS = ["planner", "developer", "observer", "reviewer"];
 
 /**
  * Split a markdown string into sections at the given header level, treating a
@@ -87,6 +88,7 @@ export function parseTask(raw: string): Task {
     const sub = splitSections(reportsRaw, 3, REPORT_SECTIONS);
     body.reports.planner = sub.get("planner") ?? "";
     body.reports.developer = sub.get("developer") ?? "";
+    body.reports.observer = sub.get("observer") ?? "";
     body.reports.reviewer = sub.get("reviewer") ?? "";
   }
 
@@ -112,6 +114,7 @@ export function serializeTask(task: Task): string {
     "",
     reportBlock("Planner", task.body.reports.planner),
     reportBlock("Developer", task.body.reports.developer),
+    reportBlock("Observer", task.body.reports.observer),
     reportBlock("Reviewer", task.body.reports.reviewer),
   ].join("\n");
 
