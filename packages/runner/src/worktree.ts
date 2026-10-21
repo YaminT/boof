@@ -74,7 +74,8 @@ async function registeredWorktreeBranch(workingDir: string, path: string): Promi
     let branch: string | null = null;
     for (const line of entry.split("\n")) {
       if (line.startsWith("worktree ")) wtPath = line.slice("worktree ".length);
-      else if (line.startsWith("branch refs/heads/")) branch = line.slice("branch refs/heads/".length);
+      else if (line.startsWith("branch refs/heads/"))
+        branch = line.slice("branch refs/heads/".length);
     }
     if (wtPath && branch && (await canonical(wtPath)) === target) return branch;
   }
