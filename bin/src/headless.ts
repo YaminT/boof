@@ -14,6 +14,7 @@ import {
   uniqueKebabId,
   workingAreaDir,
   type BoofGoalRef,
+  type Settings,
   type Status,
   type TaskTools,
 } from "@boof-runner/shared";
@@ -39,9 +40,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Build a per-task tool override (all three roles → one tool) when requested. */
-function toolOverride(
+/**
+ * Build a per-task tool override (all roles → one tool) when requested. The
+ * observer is overridden only when one is configured, so --tool never switches
+ * a disabled observer on.
+ */
+export function toolOverride(
   registry: ToolRegistry,
+  settings: Settings,
   tool?: string,
   model?: string,
 ): TaskTools | undefined {
@@ -49,7 +55,12 @@ function toolOverride(
   const t = registry.get(tool);
   const m = model ?? t?.defaultModels[0] ?? "default";
   const a = { tool, model: m };
-  return { planner: a, developer: a, reviewer: a };
+  return {
+    planner: a,
+    developer: a,
+    reviewer: a,
+    ...(settings.roles.observer ? { observer: a } : {}),
+  };
 }
 
 /**
@@ -129,7 +140,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   const existing = (await store.list()).map((t) => t.frontmatter.id);
   const title = opts.title ?? firstLine(opts.prompt);
   const id = uniqueKebabId(title, existing);
-  const tools = toolOverride(registry, opts.tool, opts.model);
+  const tools = toolOverride(registry, settings, opts.tool, opts.model);
   await store.create(
     newTask(
       {
@@ -180,8 +191,12 @@ export async function drainQueue(opts: {
   await scaffoldDataRoot(opts.root);
   const settingsStore = new SettingsStore(opts.root);
   const settings = await settingsStore.load();
-  if (!settings.runner.enabled) await settingsStore.save({ ...settings, runner: { enabled: true } });
-  const engine = new RunnerEngine({ root: opts.root, registry: opts.registry ?? new ToolRegistry() });
+  if (!settings.runner.enabled)
+    await settingsStore.save({ ...settings, runner: { enabled: true } });
+  const engine = new RunnerEngine({
+    root: opts.root,
+    registry: opts.registry ?? new ToolRegistry(),
+  });
   let ran = 0;
   let failed = 0;
   for (;;) {
@@ -244,7 +259,7 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
   await settingsStore.save({ ...settings, workingDirectory: repo });
 
   const registry = opts.registry ?? new ToolRegistry();
-  const tools = toolOverride(registry, opts.tool, opts.model);
+  const tools = toolOverride(registry, settings, opts.tool, opts.model);
   const bumpTo = opts.bumpTo ?? "done";
   const created: string[] = [];
   const taken = new Set((await store.list()).map((t) => t.frontmatter.id));
@@ -279,11 +294,17 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
     created.push(id);
   }
 
-  out(`\nCreated ${created.length} task(s). Run them with:  boof-runner run --all -d ${opts.root}\n`);
+  out(
+    `\nCreated ${created.length} task(s). Run them with:  boof-runner run --all -d ${opts.root}\n`,
+  );
   return { created, units, dryRun: false };
 }
 
 function firstLine(s: string): string {
-  const line = s.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "task";
+  const line =
+    s
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? "task";
   return line.length > 80 ? line.slice(0, 80) : line;
 }
