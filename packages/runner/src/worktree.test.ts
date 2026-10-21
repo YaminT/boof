@@ -64,7 +64,7 @@ describe("worktree isolation", () => {
     const diff = await diffAgainstBase(wt);
     expect(diff).toContain("feature.txt");
 
-    expect(await finalizeWorktree(wt, "t")).toEqual([expect.stringContaining("Removed")]);
+    expect(await finalizeWorktree(repo, wt, "t")).toEqual([expect.stringContaining("Removed")]);
     expect(await exists(wt.path)).toBe(false);
     expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
   });
@@ -78,7 +78,7 @@ describe("worktree isolation", () => {
     expect(second.path).toBe(first.path);
     expect(await exists(join(second.path, "iter1.txt"))).toBe(true);
 
-    await finalizeWorktree(second, "t");
+    await finalizeWorktree(repo, second, "t");
     expect(await exists(second.path)).toBe(false);
     expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t3"])).code).toBe(0);
   });
@@ -89,13 +89,13 @@ describe("worktree isolation", () => {
     await writeFile(join(wt.path, "sub", "u.txt"), "untracked\n");
     const diff = await diffAgainstBase(wt);
     expect(diff).toContain("u.txt");
-    await finalizeWorktree(wt, "t");
+    await finalizeWorktree(repo, wt, "t");
   });
 
   it("re-creating a task whose branch exists reuses it and keeps its commits", async () => {
     const first = await createWorktree(repo, "t4");
     await writeFile(join(first.path, "prior.txt"), "prior\n");
-    await finalizeWorktree(first, "prior work");
+    await finalizeWorktree(repo, first, "prior work");
     const sha = (await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim();
     expect(await exists(first.path)).toBe(false);
 
@@ -103,7 +103,7 @@ describe("worktree isolation", () => {
     expect(await exists(join(again.path, "prior.txt"))).toBe(true);
     expect(again.base).toBe(first.base);
     expect((await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim()).toBe(sha);
-    await finalizeWorktree(again, "prior work");
+    await finalizeWorktree(repo, again, "prior work");
 
     // Without the meta sidecar the base falls back to the merge-base.
     await rm(join(repo, ".boof-runner-worktrees", ".meta"), { recursive: true, force: true });
@@ -129,5 +129,22 @@ describe("worktree isolation", () => {
 
     await expect(createWorktree(repo, "t5")).rejects.toThrow(dir);
     expect(await readFile(join(dir, "keep.txt"), "utf8")).toBe("sentinel");
+  });
+
+  it("finalize keeps a worktree whose HEAD left the task branch", async () => {
+    const wt = await createWorktree(repo, "t7");
+    const sha = (await g(["rev-parse", "refs/heads/boof-runner/t7"])).stdout.trim();
+    const w = (args: string[]) => execCommand("git", args, { cwd: wt.path, timeoutMs: 15000 });
+    await w(["checkout", "--detach"]);
+    await writeFile(join(wt.path, "detached.txt"), "x\n");
+    await w(["add", "-A"]);
+    await w(["commit", "-m", "detached work"]);
+    await writeFile(join(wt.path, "leftover.txt"), "y\n");
+
+    const lines = await finalizeWorktree(repo, wt, "t");
+    expect(lines.join("\n")).toContain("HEAD is not on");
+    expect(await exists(join(wt.path, "detached.txt"))).toBe(true);
+    expect(await exists(join(wt.path, "leftover.txt"))).toBe(true);
+    expect((await g(["rev-parse", "refs/heads/boof-runner/t7"])).stdout.trim()).toBe(sha);
   });
 });
