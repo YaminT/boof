@@ -19,6 +19,60 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
   ...over,
 });
 
+describe("task-file observer section", () => {
+  it("parses an old file without an Observer section", () => {
+    const raw = `---
+id: old-task
+title: Old
+status: done
+priority: 0
+skip: false
+created: 2026-06-04T10:00:00.000Z
+updated: 2026-06-04T10:00:00.000Z
+---
+
+## Prompt
+
+hi
+
+## Reports
+
+### Planner
+
+plan
+
+### Developer
+
+dev
+
+### Reviewer
+
+rev
+`;
+    const t = parseTask(raw);
+    expect(t.body.reports.observer).toBe("");
+    expect(t.body.reports.developer).toBe("dev");
+    expect(t.body.reports.reviewer).toBe("rev");
+  });
+
+  it("round-trips the observer report between developer and reviewer", () => {
+    const task = newTask(fm(), "p");
+    task.body.reports.developer = "dev";
+    task.body.reports.observer = "obs findings";
+    task.body.reports.reviewer = "rev";
+    const out = serializeTask(task);
+    expect(out.indexOf("### Developer")).toBeLessThan(out.indexOf("### Observer"));
+    expect(out.indexOf("### Observer")).toBeLessThan(out.indexOf("### Reviewer"));
+    const back = parseTask(out);
+    expect(back.body.reports).toEqual(task.body.reports);
+  });
+
+  it("accepts tools.observer in frontmatter", () => {
+    const task = newTask(fm({ tools: { observer: { tool: "mock", model: "m" } } }));
+    expect(parseTask(serializeTask(task)).frontmatter.tools?.observer?.tool).toBe("mock");
+  });
+});
+
 describe("task-file round-trip", () => {
   it("round-trips frontmatter and body sections", () => {
     const task = newTask(fm(), "Build a login form.");

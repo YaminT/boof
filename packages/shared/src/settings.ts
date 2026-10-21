@@ -1,7 +1,13 @@
 import { stat } from "node:fs/promises";
 import { lockedAtomicWrite, readText } from "./atomic.js";
 import { dataPaths } from "./paths.js";
-import { SettingsSchema, type RoleAssignment, type Settings } from "./schema.js";
+import {
+  ReviewSettingsSchema,
+  SettingsSchema,
+  type ReviewSettings,
+  type RoleAssignment,
+  type Settings,
+} from "./schema.js";
 import type { Role } from "./schema.js";
 import type { Task } from "./task-file.js";
 
@@ -67,9 +73,24 @@ export class SettingsStore {
 
 /**
  * Resolve the tool+model for a role: a per-task `tools` override wins over the
- * global `settings.roles` assignment (settings spec).
+ * global `settings.roles` assignment (settings spec). The observer is optional;
+ * use `resolveObserver` for it.
  */
-export function resolveRole(settings: Settings, task: Task, role: Role): RoleAssignment {
+export function resolveRole(
+  settings: Settings,
+  task: Task,
+  role: Exclude<Role, "observer">,
+): RoleAssignment {
   const override = task.frontmatter.tools?.[role];
   return override ?? settings.roles[role];
+}
+
+/** Observer assignment (per-task override, then global), or undefined when unset. */
+export function resolveObserver(settings: Settings, task: Task): RoleAssignment | undefined {
+  return task.frontmatter.tools?.observer ?? settings.roles.observer;
+}
+
+/** Review settings with defaults applied (the only place defaults are read). */
+export function reviewSettings(settings: Settings): ReviewSettings {
+  return ReviewSettingsSchema.parse(settings.review ?? {});
 }
