@@ -10,3 +10,4 @@ export * from "./command-templates.js";
 export * from "./attachments.js";
 export * from "./settings.js";
 export * from "./boof-goal.js";
+export * from "./verdict.js";
