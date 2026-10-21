@@ -138,6 +138,29 @@ describe("settings & health API", () => {
     expect(s.runner.enabled).toBe(true);
   });
 
+  it("accepts, shows and unsets the observer assignment", async () => {
+    const put = (body: unknown) =>
+      req("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const base = (await (await req("/api/settings")).json()).roles;
+    const observer = { tool: "mock", model: "mock-default" };
+
+    expect((await put({ roles: { ...base, observer } })).status).toBe(200);
+    expect((await (await req("/api/settings")).json()).roles.observer).toEqual(observer);
+
+    expect((await put({ roles: base })).status).toBe(200);
+    const after = await (await req("/api/settings")).json();
+    expect(after.roles.observer).toBeUndefined();
+
+    const withReview = await (
+      await put({ review: { gate: false, maxFixRounds: 3, maxInlineDiffBytes: 5000 } })
+    ).json();
+    expect(withReview.review).toEqual({ gate: false, maxFixRounds: 3, maxInlineDiffBytes: 5000 });
+  });
+
   it("reports tool health", async () => {
     const res = await (await req("/api/health")).json();
     expect(res.tools.mock.status).toBe("available");

@@ -9,7 +9,7 @@ const NEW = "__new__";
 const ATTACH_ACCEPT =
   ".png,.jpg,.jpeg,.gif,.webp,.pdf,image/png,image/jpeg,image/gif,image/webp,application/pdf";
 
-type OutputTab = "planner" | "developer" | "reviewer" | "log";
+type OutputTab = "planner" | "developer" | "observer" | "reviewer" | "log";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -363,7 +363,7 @@ export function Editor({
             )}
           </div>
           <div className="output-tabs">
-            {(["planner", "developer", "reviewer", "log"] as const).map((k) => {
+            {(["planner", "developer", "observer", "reviewer", "log"] as const).map((k) => {
               const hasContent =
                 k === "log" ? !!(liveLog ?? task.body.log) : !!task.body.reports[k];
               return (

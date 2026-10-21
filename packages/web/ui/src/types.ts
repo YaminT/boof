@@ -44,7 +44,7 @@ export interface TaskBody {
   command: string;
   questions: string;
   answers: string;
-  reports: { planner: string; developer: string; reviewer: string };
+  reports: { planner: string; developer: string; observer: string; reviewer: string };
   /** Raw agent output captured across the pipeline run. */
   log: string;
 }
@@ -66,7 +66,13 @@ export interface Settings {
   selectedSubdirectory: string | null;
   blockHours: unknown[];
   tokens: Record<string, unknown>;
-  roles: { planner: RoleAssignment; developer: RoleAssignment; reviewer: RoleAssignment };
+  roles: {
+    planner: RoleAssignment;
+    developer: RoleAssignment;
+    observer?: RoleAssignment;
+    reviewer: RoleAssignment;
+  };
+  review?: { gate?: boolean; maxFixRounds?: number; maxInlineDiffBytes?: number };
   models: Record<string, string[]>;
 }
 
