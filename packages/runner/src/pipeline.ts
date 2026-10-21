@@ -1,7 +1,10 @@
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  parseVerdict,
+  resolveObserver,
   resolveRole,
+  reviewSettings,
   taskAssetPath,
   taskPromptInjectionsPath,
   taskStopRequestPath,
@@ -10,6 +13,7 @@ import {
   type Settings,
   type Task,
   type TokenUsage,
+  type Verdict,
 } from "@boof-runner/shared";
 import { sumUsage } from "./tools/usage.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
@@ -31,6 +35,12 @@ export interface PipelineDeps {
   settings: Settings;
 }
 
+const VERDICT_PROTOCOL =
+  "End the report with exactly one final line, one of: `VERDICT: APPROVE`; " +
+  "`VERDICT: CHANGES_REQUESTED` (list the findings above it); `VERDICT: REJECT` (the work " +
+  "should not be fixed in place). No text after that line. A missing or malformed verdict " +
+  "counts as not approved.";
+
 const SYSTEM_PROMPTS = {
   planner:
     "You are the PLANNER. Produce a concise implementation plan. If — and only if — " +
@@ -41,9 +51,19 @@ const SYSTEM_PROMPTS = {
   developer:
     "You are the DEVELOPER. Implement the plan in the working directory. Do not ask the " +
     "user questions; if truly blocked, state your question for the planner.",
+  developerFix:
+    "You are the DEVELOPER fixing review findings in the working directory. Fix each real " +
+    "finding with a test, or rebut it with evidence. Do not ask the user questions; if truly " +
+    "blocked, state your question for the planner.",
+  observer:
+    "You are the OBSERVER, a second pair of eyes after the developer. Check the diff against " +
+    "the task prompt and the plan for correctness, missing tests and regressions. Do not ask " +
+    "the user questions. Write a report listing concrete findings. " +
+    VERDICT_PROTOCOL,
   reviewer:
-    "You are the REVIEWER. Review the diff for correctness and quality. Do not ask the user " +
-    "questions. Write a review report.",
+    "You are the REVIEWER giving the final review. Review the diff for correctness and " +
+    "quality. Do not ask the user questions. Write a review report. " +
+    VERDICT_PROTOCOL,
 } as const;
 
 /** Current iteration number for a task (1-based). */
@@ -72,6 +92,14 @@ function iterationFraming(task: Task): string | null {
     `Focus on review and adjustment — find bugs, gaps, and anything left behind, then fix and ` +
     `finish it. Be rigorous and skeptical, and make sure nothing is missing before you stop.`
   );
+}
+
+/** Thrown when the review gate ends without a reviewer APPROVE. */
+class ReviewNotApprovedError extends Error {
+  constructor(role: "observer" | "reviewer", verdict: Verdict | null) {
+    super(`review not approved: ${role} ${verdict ?? "INVALID"}`);
+    this.name = "ReviewNotApprovedError";
+  }
 }
 
 /** Outcome of running the pipeline for a single task. */
@@ -138,6 +166,30 @@ export class Pipeline {
   ): { tool: Tool; model: string } {
     const assignment = resolveRole(this.deps.settings, task, role);
     return { tool: this.deps.registry.require(assignment.tool), model: assignment.model };
+  }
+
+  /** The observer's tool+model, or null when no observer is configured. */
+  private observerTool(task: Task): { tool: Tool; model: string } | null {
+    const assignment = resolveObserver(this.deps.settings, task);
+    if (!assignment) return null;
+    return { tool: this.deps.registry.require(assignment.tool), model: assignment.model };
+  }
+
+  /**
+   * Diff text for a prompt, capped at settings.review.maxInlineDiffBytes (larger
+   * diffs inline only --stat, untracked files and a how-to-read note).
+   */
+  private async inlineDiff(id: string, worktree: Worktree | null): Promise<string> {
+    if (!worktree) return "(no git diff available)";
+    const max = reviewSettings(this.deps.settings).maxInlineDiffBytes;
+    const diff = await diffAgainstBase(worktree, max);
+    if (diff.capped) {
+      await this.log(
+        id,
+        `Diff exceeds inline limit (${diff.bytes} > ${max} bytes); inlined --stat only (base ${diff.baseSha})`,
+      );
+    }
+    return diff.text;
   }
 
   /**
@@ -236,6 +288,9 @@ export class Pipeline {
         );
       }
       const stepCwd = worktree?.path ?? cwd;
+      // Round entries are appended per iteration; start each run with a clean slate.
+      task.body.reports.observer = "";
+      task.body.reports.reviewer = "";
 
       // --- Step 1: Planner ---
       const planner = this.tool(task, "planner");
@@ -312,34 +367,108 @@ export class Pipeline {
       }
       await this.writeReport(task, "developer", devResult.report);
 
-      // --- Step 4: Reviewer ---
-      const diff = worktree ? await diffAgainstBase(worktree) : "(no git diff available)";
+      // --- Step 4: Observer (optional) and Reviewer, gated by verdicts ---
+      const observer = this.observerTool(task);
       const reviewer = this.tool(task, "reviewer");
-      let reviewResult = await this.runStep(id, "Reviewer", reviewer.tool, {
-        role: "reviewer",
-        model: reviewer.model,
-        systemPrompt: SYSTEM_PROMPTS.reviewer,
-        prompt: await this.buildPrompt(
-          task,
-          `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}`,
-        ),
-        cwd: stepCwd,
-        autoApprove: true,
-      });
-      record(reviewResult);
-      recordBody(`### Reviewer\n${reviewResult.output}`);
-      if (reviewResult.questions && reviewResult.questions.length > 0) {
-        reviewResult = await this.answerViaPlanner(
-          task,
-          planner,
-          "reviewer",
-          reviewResult,
-          stepCwd,
-          finalPlan,
-          usages,
+      const { gate, maxFixRounds } = reviewSettings(this.deps.settings);
+      const checkRole = async (role: "observer" | "reviewer", round: number) => {
+        const who = role === "observer" ? observer! : reviewer;
+        const label = role === "observer" ? "Observer" : "Reviewer";
+        const diff = await this.inlineDiff(id, worktree);
+        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, {
+          role,
+          model: who.model,
+          systemPrompt: SYSTEM_PROMPTS[role],
+          prompt: await this.buildPrompt(
+            task,
+            `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}`,
+          ),
+          cwd: stepCwd,
+          autoApprove: true,
+        });
+        record(result);
+        recordBody(`### ${label} (round ${round})\n${result.output}`);
+        // Parse before the planner dialogue is appended, so only the agent's own
+        // final line counts.
+        const verdict = parseVerdict(result.report);
+        if (result.questions && result.questions.length > 0) {
+          result = await this.answerViaPlanner(
+            task,
+            planner,
+            role,
+            result,
+            stepCwd,
+            finalPlan,
+            usages,
+          );
+        }
+        await this.appendRoundReport(task, role, round, verdict, result.report);
+        await appendLog(`${label} verdict (round ${round}): ${verdict ?? "INVALID"}`);
+        return { verdict, report: result.report };
+      };
+      const fix = async (round: number, role: "observer" | "reviewer", findings: string) => {
+        const diff = await this.inlineDiff(id, worktree);
+        let fixResult = await this.runStep(
+          id,
+          `Developer (fix round ${round}, ${role})`,
+          developer.tool,
+          {
+            role: "developer",
+            model: developer.model,
+            systemPrompt: SYSTEM_PROMPTS.developerFix,
+            prompt: await this.buildPrompt(
+              task,
+              `## Plan\n${finalPlan}\n\n## Findings (${role} round ${round})\n${findings}\n\n` +
+                `## Instructions\nFix each real finding with a test, or rebut it with evidence.\n\n` +
+                `## Current diff\n${diff}`,
+            ),
+            cwd: stepCwd,
+            autoApprove: true,
+          },
         );
+        record(fixResult);
+        recordBody(`### Developer (fix round ${round}, ${role})\n${fixResult.output}`);
+        if (fixResult.questions && fixResult.questions.length > 0) {
+          fixResult = await this.answerViaPlanner(
+            task,
+            planner,
+            "developer",
+            fixResult,
+            stepCwd,
+            finalPlan,
+            usages,
+          );
+        }
+        await this.writeReport(
+          task,
+          "developer",
+          `${task.body.reports.developer}\n\n#### Fix round ${round} (${role})\n${fixResult.report}`,
+        );
+      };
+
+      // The observer budget is shared across the run; the reviewer has its own.
+      let obsFix = 0;
+      let revFix = 0;
+      let obsRound = 0;
+      let revRound = 0;
+      for (;;) {
+        if (observer) {
+          for (;;) {
+            const obs = await checkRole("observer", ++obsRound);
+            if (!gate || obs.verdict === "APPROVE") break;
+            if (obs.verdict !== "CHANGES_REQUESTED" || obsFix >= maxFixRounds) {
+              throw new ReviewNotApprovedError("observer", obs.verdict);
+            }
+            await fix(++obsFix, "observer", obs.report);
+          }
+        }
+        const rev = await checkRole("reviewer", ++revRound);
+        if (!gate || rev.verdict === "APPROVE") break;
+        if (rev.verdict !== "CHANGES_REQUESTED" || revFix >= maxFixRounds) {
+          throw new ReviewNotApprovedError("reviewer", rev.verdict);
+        }
+        await fix(++revFix, "reviewer", rev.report);
       }
-      await this.writeReport(task, "reviewer", reviewResult.report);
 
       // Only finalize the worktree on the final iteration (leftovers are
       // committed, then just the directory is removed; the branch is kept).
@@ -360,7 +489,12 @@ export class Pipeline {
       await this.persistUsage(task, usages);
       return { kind: "done", task };
     } catch (err) {
-      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      const message =
+        err instanceof ReviewNotApprovedError
+          ? err.message
+          : err instanceof Error
+            ? `${err.name}: ${err.message}`
+            : String(err);
       // Capture the failing tool's captured output (stdout/stderr) when present,
       // so the Log tab shows *why* it failed even after the run ends.
       const detail = (err as { output?: string })?.output;
@@ -385,7 +519,7 @@ export class Pipeline {
   private async answerViaPlanner(
     task: Task,
     planner: { tool: Tool; model: string },
-    fromRole: "developer" | "reviewer",
+    fromRole: "developer" | "observer" | "reviewer",
     result: RunResult,
     cwd: string,
     plan: string,
@@ -426,13 +560,36 @@ export class Pipeline {
    */
   private async writeReport(
     task: Task,
-    role: "planner" | "developer" | "reviewer",
+    role: "planner" | "developer" | "observer" | "reviewer",
     content: string,
   ): Promise<void> {
     const id = task.frontmatter.id;
     await mkdir(join(this.areaDir(id), "reports"), { recursive: true });
     await writeFile(join(this.areaDir(id), "reports", `${role}.md`), content + "\n", "utf8");
     task.body.reports[role] = content;
+  }
+
+  /**
+   * Append one observer/reviewer round (with its verdict) to the task's report
+   * for that role, and write reports/<role>-round-N.md.
+   */
+  private async appendRoundReport(
+    task: Task,
+    role: "observer" | "reviewer",
+    round: number,
+    verdict: Verdict | null,
+    report: string,
+  ): Promise<void> {
+    const id = task.frontmatter.id;
+    await mkdir(join(this.areaDir(id), "reports"), { recursive: true });
+    await writeFile(
+      join(this.areaDir(id), "reports", `${role}-round-${round}.md`),
+      report + "\n",
+      "utf8",
+    );
+    const entry = `#### Round ${round} — ${verdict ?? "INVALID"}\n${report}`;
+    const prior = task.body.reports[role];
+    await this.writeReport(task, role, prior ? `${prior}\n\n${entry}` : entry);
   }
 
   /** Persist per-task token usage onto the task file and the global aggregate. */
