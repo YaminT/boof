@@ -117,6 +117,26 @@ The default remote is `git@github.com:YaminT/boof.git`.
 
 Run `boof-runner --help` for the full command reference (`serve`, `run`, `scan`).
 
+### Worktrees, retention and retries
+
+Each task runs in its own git worktree on branch `boof-runner/<id>`. Task frontmatter `base`
+(or `run --base <ref>`) starts it from a branch or commit instead of HEAD; an unknown ref
+fails the task before anything is created. Optional `settings.json` keys, all with defaults:
+
+| Key                     | Default                                     | Meaning                                                                                                                                   |
+| ----------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `worktree.root`         | `<workingDirectory>/.boof-runner-worktrees` | Where worktrees live (`<root>/<id>`, sidecar in `<root>/.meta`). Relative paths resolve against `workingDirectory`; `~/` expands to home. |
+| `worktree.onDone`       | `"keep-branch"`                             | `keep-branch`: remove the directory, keep the branch. `keep`: keep the directory too. `delete`: remove directory and branch (loud log).   |
+| `worktree.onFailure`    | `"keep"`                                    | `keep`, or `delete` (loud log). Stopped tasks always keep their work.                                                                     |
+| `retries.transient`     | `2`                                         | Retries per step after a transient API error (5xx, 429, 529, overloaded, ECONNRESET, ETIMEDOUT, ...).                                     |
+| `retries.backoffMs`     | `[30000, 120000]`                           | Delay before each retry; a stop request during the wait stops the task.                                                                   |
+| `retries.idleTimeoutMs` | `1200000`                                   | A step that prints nothing for this long is killed and retried as transient.                                                              |
+
+Nothing is deleted under the defaults. A done task's uncommitted leftovers never land on the
+task branch: they are saved on `boof-runner/<id>--leftovers`. With `runs > 1`, each iteration
+after the first sees the previous iteration's final observer and reviewer reports. See
+[docs/boof-runner.md](docs/boof-runner.md) for details.
+
 ## How it works
 
 A task moves physically between status directories under `<data>/tasks/`, kept in sync
