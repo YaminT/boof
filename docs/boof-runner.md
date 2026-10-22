@@ -129,6 +129,8 @@ The observer and reviewer system prompts require the report to end with exactly 
 
 `parseVerdict(report)` (in `@boof-runner/shared`) is strict and case-sensitive; it ignores trailing whitespace and markdown emphasis characters (`*`, `_`, backticks) around a line. The last non-empty line must match `^VERDICT:\s*(APPROVE|CHANGES_REQUESTED|REJECT)\s*$`. Any other exact verdict line anywhere in the report with a different verdict makes the result INVALID, even across blank lines; identical repeated verdict lines are fine. It fails closed: a missing verdict, a malformed one, text after the verdict line, or conflicting verdict lines all mean not approved.
 
+The codex report is the file written by `codex exec --output-last-message`; stdout is the fallback when that file is missing or empty.
+
 ### Review Gate And Fix Loop
 
 With `settings.review.gate` (default `true`) the flow is developer, observer (if configured), reviewer:

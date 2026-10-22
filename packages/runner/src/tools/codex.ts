@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { commandExists, execCommand } from "../exec.js";
 import { ToolRunError } from "./claude-code.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
@@ -75,19 +78,30 @@ export class CodexTool implements Tool {
       // (codex rejects both together), so pass only the bypass flag.
       args.push("--dangerously-bypass-approvals-and-sandbox");
     }
+    // Ask codex to write its final message to a file outside cwd: stdout also
+    // carries progress and usage noise that would break verdict parsing.
+    const dir = await mkdtemp(join(tmpdir(), "boof-codex-"));
+    const last = join(dir, "last-message.txt");
+    args.push("-o", last);
     args.push(`${opts.systemPrompt}\n\n${opts.prompt}`);
 
-    const res = await execCommand(this.bin, args, {
-      cwd: opts.cwd,
-      timeoutMs: opts.timeoutMs,
-      stopSignalPath: opts.stopSignalPath,
-      onData: opts.onChunk,
-    });
-    const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${res.stdout}\n${res.stderr}`;
-    if (res.code !== 0 || res.timedOut || res.stopped) {
-      throw new ToolRunError(this.id, res.code, res.timedOut, res.stopped, output);
+    try {
+      const res = await execCommand(this.bin, args, {
+        cwd: opts.cwd,
+        timeoutMs: opts.timeoutMs,
+        stopSignalPath: opts.stopSignalPath,
+        onData: opts.onChunk,
+      });
+      const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${res.stdout}\n${res.stderr}`;
+      if (res.code !== 0 || res.timedOut || res.stopped) {
+        throw new ToolRunError(this.id, res.code, res.timedOut, res.stopped, output);
+      }
+      const message = await readFile(last, "utf8").catch(() => "");
+      const report = message.trim() || res.stdout.trim();
+      return { output, report, usage: parseUsage(res.stdout + res.stderr) };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
-    return { output, report: res.stdout.trim(), usage: parseUsage(res.stdout + res.stderr) };
   }
 }
 
