@@ -86,7 +86,9 @@ boof-runner run --all -d ./data            # then drive them to completion
 ```
 
 Useful flags: `--repo <dir>` (working directory the pipeline runs against — a git
-repo enables worktree isolation), `--tool <id>`/`--model <name>` (force all roles to
+repo enables worktree isolation), `--base <ref>` (branch or commit the task's worktree
+starts from instead of HEAD), `--title <text>` (task title, default the first line of
+the prompt), `--tool <id>`/`--model <name>` (force all roles to
 one tool, e.g. `--tool mock` for offline runs), `--runs <n>` (iterate a task N times),
 and, for `scan`, `--bump review|done` (status recorded on success, default `done`).
 
@@ -102,6 +104,7 @@ bash scripts/install-or-update-boof-runner.sh
 The script clones or fast-forwards the source checkout, installs dependencies, builds the
 web UI and CLI, and globally links the `boof-runner` command. Set
 `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location.
+The default remote is `git@github.com:YaminT/boof.git`.
 
 ### Options (serve — the default command)
 
