@@ -3,12 +3,14 @@ import { join } from "node:path";
 import {
   parseVerdict,
   resolveRole,
+  resolveWorktreeRoot,
   reviewSettings,
   taskAssetPath,
   taskPromptInjectionsPath,
   taskStopRequestPath,
   TaskStore,
   workingAreaDir,
+  worktreeSettings,
   type Settings,
   type Task,
   type TokenUsage,
@@ -21,6 +23,7 @@ import { UsageStore } from "./usage-store.js";
 import {
   branchHead,
   diffAgainstBase,
+  discardWorktree,
   ensureWorktree,
   finalizeWorktree,
   isGitRepo,
@@ -285,10 +288,20 @@ export class Pipeline {
       // Set up isolation when the working directory is a git repo. Reused
       // across iterations so later runs build on the prior run's work.
       if (await isGitRepo(workingDirectory)) {
-        worktree = await ensureWorktree(workingDirectory, id);
+        const base = task.frontmatter.base;
+        const made = await ensureWorktree(workingDirectory, id, {
+          root: resolveWorktreeRoot(this.deps.settings),
+          base,
+        });
+        worktree = made.worktree;
         await appendLog(
           `Iteration ${currentIteration(task)}/${task.frontmatter.runs} — worktree at ${worktree.path}`,
         );
+        if (made.baseIgnored) {
+          await appendLog(`base ${base} ignored: reusing existing branch ${worktree.branch}`);
+        } else if (base && !made.reused) {
+          await appendLog(`base ${base} → ${worktree.base}`);
+        }
       } else {
         await appendLog(
           `WARNING: workingDirectory is not a git repo (${workingDirectory}); running without isolation.`,
@@ -482,20 +495,24 @@ export class Pipeline {
         await fix(++revFix, "reviewer", revRound, rev.report);
       }
 
-      // Only finalize the worktree on the final iteration (leftovers are
-      // committed, then just the directory is removed; the branch is kept).
+      // Only finalize the worktree on the final iteration, per settings.worktree.onDone
+      // (default: leftovers go to a side branch, the directory goes, the task branch stays).
       // Intermediate runs keep it so the next run continues from this output.
       if (worktree && isFinalIteration(task)) {
+        const onDone = worktreeSettings(this.deps.settings).onDone;
         for (const line of await finalizeWorktree(
           workingDirectory,
           worktree,
           task.frontmatter.title,
+          onDone,
         )) {
           await appendLog(line);
         }
-        await appendLog(
-          `Task branch ${worktree.branch} at ${await branchHead(workingDirectory, worktree.branch)}`,
-        );
+        if (onDone !== "delete") {
+          await appendLog(
+            `Task branch ${worktree.branch} at ${await branchHead(workingDirectory, worktree.branch)}`,
+          );
+        }
       }
       await this.mirrorLiveLog(task);
       await this.persistUsage(task, usages);
@@ -512,10 +529,18 @@ export class Pipeline {
       const detail = (err as { output?: string })?.output;
       await appendLog(`ERROR: ${message}${detail ? `\n${detail}` : ""}`);
       if (worktree) {
-        const sha = await branchHead(workingDirectory, worktree.branch).catch(() => "(unknown)");
-        await appendLog(
-          `Kept worktree ${worktree.path} on branch ${worktree.branch} at ${sha}`,
-        ).catch(() => {});
+        // A stop request always keeps the work, whatever onFailure says.
+        const stoppedByUser = await this.stopRequested(id);
+        if (worktreeSettings(this.deps.settings).onFailure === "delete" && !stoppedByUser) {
+          for (const line of await discardWorktree(workingDirectory, worktree)) {
+            await appendLog(line).catch(() => {});
+          }
+        } else {
+          const sha = await branchHead(workingDirectory, worktree.branch).catch(() => "(unknown)");
+          await appendLog(
+            `Kept worktree ${worktree.path} on branch ${worktree.branch} at ${sha}`,
+          ).catch(() => {});
+        }
       }
       await this.mirrorLiveLog(task).catch(() => {});
       await this.persistUsage(task, usages).catch(() => {});

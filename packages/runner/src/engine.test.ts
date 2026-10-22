@@ -247,7 +247,9 @@ describe("RunnerEngine integration (mock tool)", () => {
   it("fails before the next step when stop has been requested", async () => {
     await engine.store.create(newTask(fm(), "Build it."));
     const running = await engine.store.transition("t1", "running");
-    const wt = await ensureWorktree(workDir, "t1");
+    const { worktree: wt } = await ensureWorktree(workDir, "t1", {
+      root: join(workDir, ".boof-runner-worktrees"),
+    });
     await writeFile(join(wt.path, "wip.txt"), "wip\n");
     await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
     await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
@@ -318,18 +320,31 @@ describe("task work is never destroyed", () => {
     expect(done?.body.log).toMatch(/Task branch boof-runner\/t1 at [0-9a-f]{40}/);
   });
 
-  it("done with leftovers: commits them on the branch, then removes the directory", async () => {
+  it("done with leftovers: task branch untouched, leftovers on the side branch, directory removed", async () => {
     mockState.onRun = async (opts) => {
-      if (opts.role === "developer") await writeIn(opts, "left.txt");
+      if (opts.role === "developer") {
+        await commitIn(opts, "a.txt");
+        await writeIn(opts, "left.txt");
+        await mkdir(join(opts.cwd, "scratch", "nested"), { recursive: true });
+        await gitOut(["init", "-b", "main"], join(opts.cwd, "scratch", "nested"));
+        await writeIn(opts, "scratch/note.txt");
+      }
     };
     await engine.store.create(newTask(fm(), "Build it."));
     await engine.tick();
 
+    const head = (await gitOut(["rev-parse", "boof-runner/t1"])).stdout.trim();
     expect((await gitOut(["log", "-1", "--format=%s", "boof-runner/t1"])).stdout.trim()).toBe(
-      "boof-runner: T1",
+      "agent",
     );
-    expect((await gitOut(["show", "boof-runner/t1:left.txt"])).code).toBe(0);
+    expect((await gitOut(["show", "boof-runner/t1:left.txt"])).code).not.toBe(0);
+    const side = (await gitOut(["rev-parse", "boof-runner/t1--leftovers"])).stdout.trim();
+    expect(side).toMatch(/^[0-9a-f]{40}$/);
+    expect((await gitOut(["rev-parse", `${side}^`])).stdout.trim()).toBe(head);
+    expect((await gitOut(["show", "boof-runner/t1--leftovers:left.txt"])).code).toBe(0);
     expect(await exists(wtPath())).toBe(false);
+    const done = await engine.store.get("t1");
+    expect(done?.body.log).toContain(`Leftovers committed to boof-runner/t1--leftovers at ${side}`);
   });
 
   it("failure: keeps the directory, the branch and uncommitted changes", async () => {
@@ -364,10 +379,7 @@ describe("task work is never destroyed", () => {
 
     expect(iter2Saw).toBe(true);
     expect(cwds.size).toBe(1);
-    expect((await gitOut(["log", "-1", "--format=%s", "boof-runner/t1"])).stdout.trim()).toBe(
-      "boof-runner: T1",
-    );
-    expect((await gitOut(["show", "boof-runner/t1:iter1.txt"])).code).toBe(0);
+    expect((await gitOut(["show", "boof-runner/t1--leftovers:iter1.txt"])).code).toBe(0);
   });
 
   it("unregistered directory at the worktree path: fails clearly, leaves it untouched", async () => {
@@ -407,6 +419,165 @@ describe("task work is never destroyed", () => {
     expect((await gitOut(["merge-base", "--is-ancestor", sha1, "boof-runner/t1"])).code).toBe(0);
     expect((await gitOut(["show", "boof-runner/t1:a.txt"])).code).toBe(0);
     expect(cwds).toEqual([wtPath(), wtPath()]);
+  });
+});
+
+describe("retention policies", () => {
+  const withWorktree = async (worktree: {
+    root?: string;
+    onDone?: "keep-branch" | "keep" | "delete";
+    onFailure?: "keep" | "delete";
+  }) => {
+    const store = new SettingsStore(dataRoot);
+    const cur = await store.load();
+    await store.save({
+      ...cur,
+      worktree: { onDone: "keep-branch", onFailure: "keep", ...worktree },
+    });
+  };
+  const hasBranch = async (b: string) =>
+    (await gitOut(["rev-parse", "--verify", "--quiet", `refs/heads/${b}`])).code === 0;
+  const dirty = (role: string) => async (opts: RunOptions) => {
+    if (opts.role === role) {
+      await commitIn(opts, "a.txt");
+      await writeIn(opts, "left.txt");
+    }
+  };
+
+  it("defaults: a failed task keeps directory and branch; a done task keeps the branch only", async () => {
+    mockState.failRole = "developer";
+    await engine.store.create(newTask(fm(), "fail"));
+    await engine.tick();
+    expect(await exists(wtPath())).toBe(true);
+    expect(await hasBranch("boof-runner/t1")).toBe(true);
+  });
+
+  it("onDone=keep: leaves the directory (dirty) and saves leftovers on the side branch", async () => {
+    await withWorktree({ onDone: "keep" });
+    mockState.onRun = dirty("developer");
+    await engine.store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    expect(await exists(join(wtPath(), "left.txt"))).toBe(true);
+    expect(await hasBranch("boof-runner/t1")).toBe(true);
+    expect((await gitOut(["show", "boof-runner/t1--leftovers:left.txt"])).code).toBe(0);
+    expect((await gitOut(["show", "boof-runner/t1:left.txt"])).code).not.toBe(0);
+  });
+
+  it("onDone=delete: removes directory and branches and logs loudly", async () => {
+    await withWorktree({ onDone: "delete" });
+    mockState.onRun = dirty("developer");
+    await engine.store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    expect(await exists(wtPath())).toBe(false);
+    expect(await hasBranch("boof-runner/t1")).toBe(false);
+    expect(await hasBranch("boof-runner/t1--leftovers")).toBe(false);
+    const done = await engine.store.get("t1");
+    expect(done?.frontmatter.status).toBe("done");
+    expect(done?.body.log).toContain("WARNING: DELETED task work");
+  });
+
+  it("onFailure=keep (explicit): keeps directory and branch", async () => {
+    await withWorktree({ onFailure: "keep" });
+    mockState.failRole = "developer";
+    await engine.store.create(newTask(fm(), "fail"));
+    await engine.tick();
+    expect(await exists(wtPath())).toBe(true);
+    expect(await hasBranch("boof-runner/t1")).toBe(true);
+  });
+
+  it("onFailure=delete: removes directory and branch and logs loudly", async () => {
+    await withWorktree({ onFailure: "delete" });
+    mockState.onRun = dirty("planner");
+    mockState.failRole = "developer";
+    await engine.store.create(newTask(fm(), "fail"));
+    const r = await engine.tick();
+    if (r.kind === "ran") expect(r.outcome.kind).toBe("failed");
+    expect(await exists(wtPath())).toBe(false);
+    expect(await hasBranch("boof-runner/t1")).toBe(false);
+    expect((await engine.store.get("t1"))?.body.log).toContain("WARNING: DELETED task work");
+  });
+
+  it("onFailure=delete never deletes a stopped task's work", async () => {
+    await withWorktree({ onFailure: "delete" });
+    await engine.store.create(newTask(fm(), "Build it."));
+    const running = await engine.store.transition("t1", "running");
+    await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
+    await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
+    const pipeline = new Pipeline({
+      root: dataRoot,
+      store: engine.store,
+      registry: engine.registry,
+      settings: await engine.settingsStore.load(),
+    });
+    const outcome = await pipeline.run(running);
+    expect(outcome.kind).toBe("failed");
+    expect(await exists(wtPath())).toBe(true);
+    expect(await hasBranch("boof-runner/t1")).toBe(true);
+  });
+
+  it("worktree.root outside the repository: worktree and sidecar live there", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "boof-runner-wtroot-"));
+    try {
+      await withWorktree({ root: outside, onDone: "keep" });
+      const cwds: string[] = [];
+      mockState.onRun = async (opts) => void cwds.push(opts.cwd);
+      await engine.store.create(newTask(fm(), "Build it."));
+      await engine.tick();
+      expect(cwds.every((c) => c === join(outside, "t1"))).toBe(true);
+      expect(await exists(join(outside, "t1"))).toBe(true);
+      expect(await exists(join(outside, ".meta", "t1.json"))).toBe(true);
+      expect(await exists(join(workDir, ".boof-runner-worktrees"))).toBe(false);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("base ref (mock tool)", () => {
+  it("starts from base, logs the resolved sha, and the diff excludes earlier commits", async () => {
+    await gitOut(["branch", "release"]);
+    await writeFile(join(workDir, "later.txt"), "later\n");
+    await gitOut(["add", "."]);
+    await gitOut(["commit", "-m", "later"]);
+    const baseSha = (await gitOut(["rev-parse", "release"])).stdout.trim();
+    let sawLater: boolean | null = null;
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer") sawLater = existsSync(join(opts.cwd, "later.txt"));
+    };
+    await engine.store.create(newTask(fm({ base: "release" }), "Build it."));
+    await engine.tick();
+    expect(sawLater).toBe(false);
+    expect((await gitOut(["merge-base", "--is-ancestor", baseSha, "boof-runner/t1"])).code).toBe(0);
+    expect((await gitOut(["rev-parse", "boof-runner/t1"])).stdout.trim()).toBe(baseSha);
+    expect((await engine.store.get("t1"))?.body.log).toContain(`base release → ${baseSha}`);
+  });
+
+  it("an unknown base fails the task clearly and creates nothing", async () => {
+    await engine.store.create(newTask(fm({ base: "no-such-ref" }), "Build it."));
+    const r = await engine.tick();
+    expect(r.kind).toBe("ran");
+    if (r.kind === "ran" && r.outcome.kind === "failed") {
+      expect(r.outcome.error).toContain("unknown base ref 'no-such-ref'");
+    } else throw new Error("expected failed");
+    expect(await exists(wtPath())).toBe(false);
+    expect(await exists(join(workDir, ".boof-runner-worktrees"))).toBe(false);
+    expect((await gitOut(["branch", "--list", "boof-runner/*"])).stdout.trim()).toBe("");
+  });
+
+  it("a reused branch ignores base and the log says so", async () => {
+    mockState.failRole = "reviewer";
+    await engine.store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    await gitOut(["branch", "other"]);
+    const t = await engine.store.get("t1");
+    t!.frontmatter.base = "other";
+    await engine.store.save(t!);
+    await engine.store.transition("t1", "pending");
+    mockState.failRole = null;
+    await engine.tick();
+    expect((await engine.store.get("t1"))?.body.log).toContain(
+      "base other ignored: reusing existing branch boof-runner/t1",
+    );
   });
 });
 

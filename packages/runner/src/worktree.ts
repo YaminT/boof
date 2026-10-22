@@ -1,13 +1,17 @@
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { execCommand } from "./exec.js";
 
-const WORKTREE_ROOT = ".boof-runner-worktrees";
 const BRANCH_PREFIX = "boof-runner/";
+const LEFTOVERS_SUFFIX = "--leftovers";
 
-function metaPath(workingDir: string, taskId: string): string {
-  return join(workingDir, WORKTREE_ROOT, ".meta", `${taskId}.json`);
+function metaPath(root: string, taskId: string): string {
+  return join(root, ".meta", `${taskId}.json`);
 }
+
+/** What happens to a done task's branch and directory (settings.worktree.onDone). */
+export type DonePolicy = "keep-branch" | "keep" | "delete";
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -30,8 +34,13 @@ export interface Worktree {
 async function git(
   cwd: string,
   args: string[],
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ code: number | null; out: string; err: string }> {
-  const res = await execCommand("git", args, { cwd, timeoutMs: 30000 });
+  const res = await execCommand("git", args, {
+    cwd,
+    timeoutMs: 30000,
+    env: env ? { ...process.env, ...env } : undefined,
+  });
   return { code: res.code, out: res.stdout.trim(), err: res.stderr.trim() };
 }
 
@@ -39,6 +48,16 @@ async function git(
 export async function isGitRepo(dir: string): Promise<boolean> {
   const res = await git(dir, ["rev-parse", "--is-inside-work-tree"]);
   return res.code === 0 && res.out === "true";
+}
+
+export class UnknownBaseRefError extends Error {
+  constructor(
+    public readonly base: string,
+    public readonly dir: string,
+  ) {
+    super(`unknown base ref '${base}': not a branch or commit in ${dir}`);
+    this.name = "UnknownBaseRefError";
+  }
 }
 
 export class NotAGitRepoError extends Error {
@@ -82,20 +101,45 @@ async function registeredWorktreeBranch(workingDir: string, path: string): Promi
   return null;
 }
 
+export interface WorktreeOptions {
+  /** Directory holding task worktrees (`<root>/<taskId>`, sidecar in `<root>/.meta`). */
+  root: string;
+  /** Branch or commit a NEW task branch starts from; default the working directory's HEAD. */
+  base?: string;
+}
+
+export interface WorktreeResult {
+  worktree: Worktree;
+  /** True when the directory or the task branch already existed. */
+  reused: boolean;
+  /** True when `base` was given but ignored because the branch or directory already existed. */
+  baseIgnored: boolean;
+}
+
 /**
- * Create a per-task git worktree rooted at `workingDir`. Throws
- * NotAGitRepoError if the directory is not a git repo. Never deletes anything:
- * an existing task branch is reused, and an existing directory that is not a
- * registered worktree of that branch fails the call untouched.
+ * Create a per-task git worktree for `workingDir` under `opts.root`. Throws
+ * NotAGitRepoError if the directory is not a git repo and UnknownBaseRefError
+ * if `opts.base` does not resolve (before anything is created). Never deletes
+ * anything: an existing task branch is reused (and `base` ignored), and an
+ * existing directory that is not a registered worktree of that branch fails the
+ * call untouched.
  */
-export async function createWorktree(workingDir: string, taskId: string): Promise<Worktree> {
+export async function createWorktree(
+  workingDir: string,
+  taskId: string,
+  opts: WorktreeOptions,
+): Promise<WorktreeResult> {
   if (!(await isGitRepo(workingDir))) throw new NotAGitRepoError(workingDir);
 
+  const root = resolve(opts.root);
   const branch = `${BRANCH_PREFIX}${taskId}`;
-  const path = join(workingDir, WORKTREE_ROOT, taskId);
-  const meta = await readMeta(workingDir, taskId);
+  const path = join(root, taskId);
+  const meta = await readMeta(root, taskId);
+  const hasPath = await pathExists(path);
+  const hasBranch = await branchExists(workingDir, branch);
+  const baseIgnored = !!opts.base && (hasPath || hasBranch);
 
-  if (await pathExists(path)) {
+  if (hasPath) {
     if ((await registeredWorktreeBranch(workingDir, path)) !== branch) {
       throw new Error(
         `Worktree path already exists and is not a registered worktree of ${branch}: ${path}. ` +
@@ -103,29 +147,44 @@ export async function createWorktree(workingDir: string, taskId: string): Promis
       );
     }
     const wt = meta ?? { path, branch, base: await mergeBase(workingDir, branch) };
-    await writeMeta(workingDir, taskId, wt);
-    return wt;
+    await writeMeta(root, taskId, wt);
+    return { worktree: wt, reused: true, baseIgnored };
+  }
+
+  // Resolve the base before anything is created, so an unknown ref leaves no trace.
+  let newBase: string | null = null;
+  if (!hasBranch) {
+    if (opts.base) {
+      const res = opts.base.startsWith("-")
+        ? { code: 1, out: "" }
+        : await git(workingDir, ["rev-parse", "--verify", "--quiet", `${opts.base}^{commit}`]);
+      if (res.code !== 0 || !res.out) throw new UnknownBaseRefError(opts.base, workingDir);
+      newBase = res.out;
+    } else {
+      const headRes = await git(workingDir, ["rev-parse", "HEAD"]);
+      newBase = headRes.code === 0 ? headRes.out : "HEAD";
+    }
   }
 
   // Drops only registrations whose directory is gone; lets `worktree add` succeed on retry.
   await git(workingDir, ["worktree", "prune"]);
+  await mkdir(root, { recursive: true });
 
   let base: string;
   let add: { code: number | null; out: string; err: string };
-  if (await branchExists(workingDir, branch)) {
+  if (newBase === null) {
     base = meta?.base ?? (await mergeBase(workingDir, branch));
     add = await git(workingDir, ["worktree", "add", path, branch]);
   } else {
-    const headRes = await git(workingDir, ["rev-parse", "HEAD"]);
-    base = headRes.code === 0 ? headRes.out : "HEAD";
+    base = newBase;
     add = await git(workingDir, ["worktree", "add", "-b", branch, path, base]);
   }
   if (add.code !== 0) {
     throw new Error(`git worktree add failed: ${add.err || add.out}`);
   }
   const wt = { path, branch, base };
-  await writeMeta(workingDir, taskId, wt);
-  return wt;
+  await writeMeta(root, taskId, wt);
+  return { worktree: wt, reused: hasBranch, baseIgnored };
 }
 
 async function mergeBase(workingDir: string, branch: string): Promise<string> {
@@ -136,15 +195,15 @@ async function mergeBase(workingDir: string, branch: string): Promise<string> {
   return res.out;
 }
 
-async function writeMeta(workingDir: string, taskId: string, wt: Worktree): Promise<void> {
-  const mp = metaPath(workingDir, taskId);
+async function writeMeta(root: string, taskId: string, wt: Worktree): Promise<void> {
+  const mp = metaPath(root, taskId);
   await mkdir(join(mp, ".."), { recursive: true });
   await writeFile(mp, JSON.stringify(wt), "utf8");
 }
 
-async function readMeta(workingDir: string, taskId: string): Promise<Worktree | null> {
+async function readMeta(root: string, taskId: string): Promise<Worktree | null> {
   try {
-    return JSON.parse(await readFile(metaPath(workingDir, taskId), "utf8")) as Worktree;
+    return JSON.parse(await readFile(metaPath(root, taskId), "utf8")) as Worktree;
   } catch {
     return null;
   }
@@ -155,9 +214,13 @@ async function readMeta(workingDir: string, taskId: string): Promise<Worktree | 
  * an existing task branch). Reuse makes multi-run iterations cumulative: each
  * run sees the prior run's work in the same checkout (runs feature).
  */
-export async function ensureWorktree(workingDir: string, taskId: string): Promise<Worktree> {
+export async function ensureWorktree(
+  workingDir: string,
+  taskId: string,
+  opts: WorktreeOptions,
+): Promise<WorktreeResult> {
   if (!(await isGitRepo(workingDir))) throw new NotAGitRepoError(workingDir);
-  return createWorktree(workingDir, taskId);
+  return createWorktree(workingDir, taskId, opts);
 }
 
 export interface InlineDiff {
@@ -198,39 +261,151 @@ export async function diffAgainstBase(wt: Worktree, maxInlineBytes = 120000): Pr
   return { text, capped: true, bytes, baseSha };
 }
 
+/** Side branch holding a task's uncommitted leftovers. */
+export function leftoversBranch(wt: Worktree): string {
+  return `${wt.branch}${LEFTOVERS_SUFFIX}`;
+}
+
 /**
- * Finish a task's worktree on final done. Commits uncommitted changes on the
- * task branch, then removes only the worktree directory (no --force). The
- * branch is never deleted. Never throws; returns log lines describing what
- * happened. On any failure the directory is kept.
+ * Snapshot the worktree's uncommitted changes (including untracked files) onto
+ * the side branch `<branch>--leftovers`, parented on the task branch head (and
+ * on an earlier leftovers head, so it is never orphaned). Uses a temporary index
+ * and `commit-tree`, so the task branch, the worktree's index and its files are
+ * untouched. Returns null when the tree is clean; throws on git failure.
+ */
+export async function commitLeftovers(
+  workingDir: string,
+  wt: Worktree,
+  title: string,
+): Promise<{ branch: string; sha: string } | null> {
+  const status = await git(wt.path, ["status", "--porcelain"]);
+  if (status.code !== 0) throw new Error(`git status failed: ${status.err || status.out}`);
+  if (!status.out) return null;
+
+  const branch = leftoversBranch(wt);
+  const tmp = await mkdtemp(join(tmpdir(), "boof-leftovers-"));
+  try {
+    const env = { GIT_INDEX_FILE: join(tmp, "index") };
+    const run = async (args: string[]): Promise<string> => {
+      const res = await git(wt.path, args, env);
+      if (res.code !== 0) throw new Error(`git ${args[0]} failed: ${res.err || res.out}`);
+      return res.out;
+    };
+    const head = await run(["rev-parse", "HEAD"]);
+    await run(["read-tree", "HEAD"]);
+    // A nested git repository without a commit makes `git add` fail; leave those out.
+    const skipped: string[] = [];
+    for (;;) {
+      const add = await git(
+        wt.path,
+        ["add", "-A", "--", ".", ...skipped.map((p) => `:(exclude)${p}`)],
+        env,
+      );
+      if (add.code === 0) break;
+      const fresh = [...add.err.matchAll(/'([^']+?)\/?' does not have a commit checked out/g)]
+        .map((m) => m[1]!)
+        .filter((p) => !skipped.includes(p));
+      if (fresh.length === 0) throw new Error(`git add failed: ${add.err || add.out}`);
+      skipped.push(...fresh);
+    }
+    const tree = await run(["write-tree"]);
+
+    const parents = ["-p", head];
+    const prior = await git(workingDir, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branch}`,
+    ]);
+    if (prior.code === 0 && prior.out) parents.push("-p", prior.out);
+
+    // Fresh machines and CI may have no committer identity configured.
+    const ident =
+      (await git(wt.path, ["var", "GIT_COMMITTER_IDENT"])).code === 0 &&
+      (await git(wt.path, ["var", "GIT_AUTHOR_IDENT"])).code === 0;
+    const identArgs = ident
+      ? []
+      : ["-c", "user.name=boof-runner", "-c", "user.email=boof-runner@localhost"];
+    const sha = await run([
+      ...identArgs,
+      "commit-tree",
+      tree,
+      ...parents,
+      "-m",
+      `boof-runner leftovers: ${title}`,
+    ]);
+    await run(["update-ref", `refs/heads/${branch}`, sha]);
+    return { branch, sha };
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Remove the worktree directory (leftovers included) and delete the task branches. */
+async function deleteWork(workingDir: string, wt: Worktree, why: string): Promise<string[]> {
+  const lines: string[] = [];
+  const remove = await git(workingDir, ["worktree", "remove", "--force", wt.path]);
+  if (remove.code !== 0 && (await pathExists(wt.path))) {
+    return [`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`];
+  }
+  const branches = [wt.branch];
+  if (await branchExists(workingDir, leftoversBranch(wt))) branches.push(leftoversBranch(wt));
+  for (const b of branches) {
+    const del = await git(workingDir, ["branch", "-D", b]);
+    if (del.code !== 0) lines.push(`Could not delete branch ${b}: ${del.err || del.out}`);
+  }
+  lines.push(`WARNING: DELETED task work: worktree ${wt.path} and branch ${wt.branch} (${why})`);
+  return lines;
+}
+
+/**
+ * Finish a task's worktree on final done, per `policy` (settings.worktree.onDone):
+ * - keep-branch: leftovers go to the `--leftovers` side branch, then the
+ *   directory is removed; the task branch is untouched and kept.
+ * - keep: leftovers go to the side branch; the directory is left in place.
+ * - delete: directory and branch are removed (opt-in; logged loudly).
+ * Never commits onto the task branch. Never throws; returns log lines. On any
+ * failure the directory is kept.
  */
 export async function finalizeWorktree(
   workingDir: string,
   wt: Worktree,
   title: string,
+  policy: DonePolicy = "keep-branch",
 ): Promise<string[]> {
+  if (policy === "delete") return deleteWork(workingDir, wt, "onDone=delete");
+
   // A detached or switched HEAD would leave commits unreferenced once the directory is removed.
   const head = await git(wt.path, ["symbolic-ref", "--quiet", "HEAD"]);
   if (head.code !== 0 || head.out !== `refs/heads/${wt.branch}`) {
     return [`Kept worktree ${wt.path}: HEAD is not on ${wt.branch} (${head.out || "detached"})`];
   }
-  const status = await git(wt.path, ["status", "--porcelain"]);
-  if (status.code !== 0) {
-    return [`Kept worktree ${wt.path}: git status failed: ${status.err || status.out}`];
+  const lines: string[] = [];
+  try {
+    const left = await commitLeftovers(workingDir, wt, title);
+    if (left) lines.push(`Leftovers committed to ${left.branch} at ${left.sha}`);
+  } catch (err) {
+    return [
+      `Kept worktree ${wt.path}: saving leftovers failed: ${err instanceof Error ? err.message : String(err)}`,
+    ];
   }
-  if (status.out) {
-    const add = await git(wt.path, ["add", "-A"]);
-    const commit =
-      add.code === 0 ? await git(wt.path, ["commit", "-m", `boof-runner: ${title}`]) : add;
-    if (commit.code !== 0) {
-      return [`Kept worktree ${wt.path}: commit failed: ${commit.err || commit.out}`];
-    }
+  if (policy === "keep") {
+    lines.push(`Kept worktree directory ${wt.path} (branch ${wt.branch}, onDone=keep)`);
+    return lines;
   }
-  const remove = await git(workingDir, ["worktree", "remove", wt.path]);
+  // --force: leftovers were just saved on the side branch (or the tree was clean).
+  const remove = await git(workingDir, ["worktree", "remove", "--force", wt.path]);
   if (remove.code !== 0) {
-    return [`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`];
+    lines.push(`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`);
+    return lines;
   }
-  return [`Removed worktree directory ${wt.path} (branch ${wt.branch} kept)`];
+  lines.push(`Removed worktree directory ${wt.path} (branch ${wt.branch} kept)`);
+  return lines;
+}
+
+/** Delete a failed task's directory and branch (settings.worktree.onFailure=delete). Never throws. */
+export async function discardWorktree(workingDir: string, wt: Worktree): Promise<string[]> {
+  return deleteWork(workingDir, wt, "onFailure=delete");
 }
 
 /** HEAD commit sha of a task branch, or "(unknown)". */
