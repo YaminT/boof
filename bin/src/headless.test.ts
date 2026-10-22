@@ -11,6 +11,7 @@ import {
 } from "@boof-runner/shared";
 import { ToolRegistry, execCommand, mockState, resetMock } from "@boof-runner/runner";
 import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
+import { firstPositional, runCommand } from "./boof-runner.js";
 
 let dataRoot: string;
 let repo: string;
@@ -107,6 +108,76 @@ describe("runTask (headless)", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.status).toBe("failed");
+  });
+});
+
+describe("run --base and --title", () => {
+  const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+
+  it("firstPositional skips the values of --base and --title", () => {
+    expect(firstPositional(["--base", "main", "--title", "A title", "the prompt"])).toBe(
+      "the prompt",
+    );
+    expect(firstPositional(["the prompt", "--base", "x"])).toBe("the prompt");
+  });
+
+  it("sets frontmatter base and title and starts the worktree at base", async () => {
+    await initGitRepo(repo);
+    const first = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    await writeFile(join(repo, "later.txt"), "later\n");
+    await git(["add", "."]);
+    await git(["commit", "-m", "later"]);
+
+    const log = console.log;
+    console.log = () => {};
+    let code: number;
+    try {
+      code = await runCommand([
+        "--data",
+        dataRoot,
+        "--repo",
+        repo,
+        "--tool",
+        "mock",
+        "--base",
+        first,
+        "--title",
+        "My title",
+        "Build a widget.",
+      ]);
+    } finally {
+      console.log = log;
+    }
+    expect(code).toBe(0);
+
+    const tasks = await new TaskStore(dataRoot).list();
+    expect(tasks).toHaveLength(1);
+    const fm = tasks[0]!.frontmatter;
+    expect(fm.base).toBe(first);
+    expect(fm.title).toBe("My title");
+    expect((await git(["rev-parse", `boof-runner/${fm.id}`])).stdout.trim()).toBe(first);
+  });
+
+  it("an unknown --base fails the run", async () => {
+    await initGitRepo(repo);
+    const log = console.log;
+    console.log = () => {};
+    try {
+      const code = await runCommand([
+        "--data",
+        dataRoot,
+        "--repo",
+        repo,
+        "--tool",
+        "mock",
+        "--base",
+        "no-such-ref",
+        "Build a widget.",
+      ]);
+      expect(code).toBe(1);
+    } finally {
+      console.log = log;
+    }
   });
 });
 

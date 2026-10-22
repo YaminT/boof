@@ -106,6 +106,8 @@ export interface RunTaskOptions {
   title?: string;
   /** Working directory the pipeline runs against (git repo → worktree isolation). */
   repo?: string;
+  /** Branch or commit the task's worktree starts from (frontmatter `base`). */
+  base?: string;
   tool?: string;
   model?: string;
   runs?: number;
@@ -155,6 +157,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
         questions: "none",
         runs: Math.max(1, Math.floor(opts.runs ?? 1)),
         completedRuns: 0,
+        ...(opts.base ? { base: opts.base } : {}),
         ...(tools ? { tools } : {}),
         created: "",
         updated: "",
