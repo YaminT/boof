@@ -143,9 +143,10 @@ reviewer `APPROVE` lets a task finish as `done`.
   prompt, the final plan and the diff against the worktree base.
 - **Verdict protocol.** Observer and reviewer reports must end with exactly one line:
   `VERDICT: APPROVE`, `VERDICT: CHANGES_REQUESTED` (findings listed above it) or
-  `VERDICT: REJECT` (not fixable in place). Only the last line counts (case-sensitive,
-  trailing whitespace and markdown emphasis ignored). A missing, malformed or conflicting
-  verdict counts as not approved.
+  `VERDICT: REJECT` (not fixable in place). The last non-empty line must be the verdict
+  (case-sensitive, trailing whitespace and markdown emphasis ignored); any other verdict
+  line with a different verdict anywhere in the report makes it invalid, identical repeats
+  are fine. A missing, malformed or conflicting verdict counts as not approved.
 - **Gate and fix loop** (`settings.review.gate`, default `true`). On `CHANGES_REQUESTED`
   the developer re-runs in the same worktree to fix each real finding with a test or rebut
   it with evidence, then the same role re-checks. A reviewer fix is re-checked by the

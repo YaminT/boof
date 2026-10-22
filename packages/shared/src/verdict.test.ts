@@ -40,7 +40,23 @@ describe("parseVerdict", () => {
 
   it("ignores a verdict that is not on the final line", () => {
     expect(parseVerdict("VERDICT: APPROVE\nbut actually there is more")).toBeNull();
-    expect(parseVerdict("VERDICT: APPROVE\n\nVERDICT: REJECT")).toBe("REJECT");
+    expect(parseVerdict("VERDICT: APPROVE\n\nVERDICT: REJECT")).toBeNull();
     expect(parseVerdict("quoted VERDICT: APPROVE inside a line")).toBeNull();
+  });
+
+  it("fails closed when a blank line hides a conflicting verdict", () => {
+    expect(parseVerdict("VERDICT: REJECT\n\nVERDICT: APPROVE")).toBeNull();
+    expect(parseVerdict("VERDICT: REJECT\nfindings\nVERDICT: APPROVE")).toBeNull();
+    expect(parseVerdict("**VERDICT: CHANGES_REQUESTED**\nmore\nVERDICT: APPROVE")).toBeNull();
+  });
+
+  it("accepts identical verdict lines anywhere", () => {
+    expect(parseVerdict("VERDICT: APPROVE\n\nok\nVERDICT: APPROVE\n\n")).toBe("APPROVE");
+  });
+
+  it("ignores quoted protocol text that is not an exact verdict line", () => {
+    expect(parseVerdict("Protocol: end with `VERDICT: REJECT` or approve\nVERDICT: APPROVE")).toBe(
+      "APPROVE",
+    );
   });
 });

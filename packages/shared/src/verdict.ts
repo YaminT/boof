@@ -9,10 +9,13 @@ function normalize(line: string): string {
 }
 
 /**
- * Parse the verdict from a report. Only the final non-blank line counts, and it
- * must match exactly (case-sensitive). Fails closed: returns null when the
- * verdict is missing, malformed, or the trailing run of `VERDICT:` lines
- * disagrees. Identical repeated trailing lines are accepted.
+ * Parse the verdict from a report. Case-sensitive and fail-closed (null):
+ * - the last non-empty line must be an exact verdict line;
+ * - identical repeated verdict lines are fine;
+ * - any other exact verdict line anywhere in the report with a different
+ *   verdict makes the result null;
+ * - lines that merely mention `VERDICT:` (quoted protocol text) are ignored
+ *   unless they are in the trailing run of `VERDICT:` lines.
  */
 export function parseVerdict(report: string): Verdict | null {
   const lines = report.split("\n").map(normalize);
@@ -26,6 +29,12 @@ export function parseVerdict(report: string): Verdict | null {
     const v = m[1] as Verdict;
     if (verdict !== null && verdict !== v) return null;
     verdict = v;
+  }
+  if (verdict === null) return null;
+
+  for (const line of lines) {
+    const m = VERDICT_LINE.exec(line);
+    if (m && m[1] !== verdict) return null;
   }
   return verdict;
 }
