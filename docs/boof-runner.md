@@ -127,7 +127,7 @@ The observer and reviewer system prompts require the report to end with exactly 
 - `VERDICT: CHANGES_REQUESTED`, with the findings listed above it
 - `VERDICT: REJECT`, for work that should not be fixed in place
 
-`parseVerdict(report)` (in `@boof-runner/shared`) takes the last line matching `^VERDICT:\s*(APPROVE|CHANGES_REQUESTED|REJECT)\s*$`. It is case-sensitive and ignores trailing whitespace and markdown emphasis characters (`*`, `_`, backticks) around the line. It fails closed: a missing verdict, a malformed one, text after the verdict line, or several conflicting final verdict lines all mean not approved. Identical repeated final lines are accepted.
+`parseVerdict(report)` (in `@boof-runner/shared`) is strict and case-sensitive; it ignores trailing whitespace and markdown emphasis characters (`*`, `_`, backticks) around a line. The last non-empty line must match `^VERDICT:\s*(APPROVE|CHANGES_REQUESTED|REJECT)\s*$`. Any other exact verdict line anywhere in the report with a different verdict makes the result INVALID, even across blank lines; identical repeated verdict lines are fine. It fails closed: a missing verdict, a malformed one, text after the verdict line, or conflicting verdict lines all mean not approved.
 
 ### Review Gate And Fix Loop
 
