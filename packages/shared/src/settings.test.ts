@@ -1,11 +1,19 @@
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dataPaths } from "./paths.js";
-import { resolveObserver, resolveRole, reviewSettings, SettingsStore } from "./settings.js";
+import {
+  resolveObserver,
+  resolveRole,
+  resolveWorktreeRoot,
+  retrySettings,
+  reviewSettings,
+  SettingsStore,
+  worktreeSettings,
+} from "./settings.js";
 import { defaultSettings } from "./settings.js";
-import { newTask } from "./task-file.js";
+import { newTask, parseTask, serializeTask } from "./task-file.js";
 import type { TaskFrontmatter } from "./schema.js";
 
 let root: string;
@@ -52,6 +60,43 @@ describe("settings compatibility", () => {
     expect(s.roles.observer).toBeUndefined();
     expect(reviewSettings(s)).toEqual({ gate: true, maxFixRounds: 2, maxInlineDiffBytes: 120000 });
     expect(resolveObserver(s, newTask(fm()))).toBeUndefined();
+    expect(worktreeSettings(s)).toEqual({ onDone: "keep-branch", onFailure: "keep" });
+    expect(retrySettings(s)).toEqual({
+      transient: 2,
+      backoffMs: [30000, 120000],
+      idleTimeoutMs: 1200000,
+    });
+    expect(resolveWorktreeRoot(s)).toBe("/tmp/x/.boof-runner-worktrees");
+  });
+
+  it("round-trips worktree and retry settings", async () => {
+    const store = new SettingsStore(root);
+    const s = defaultSettings("/tmp/x");
+    s.worktree = { root: "/tmp/wt", onDone: "delete", onFailure: "delete" };
+    s.retries = { transient: 5, backoffMs: [1], idleTimeoutMs: 10 };
+    await store.save(s);
+    const loaded = await store.load();
+    expect(worktreeSettings(loaded)).toEqual(s.worktree);
+    expect(retrySettings(loaded)).toEqual(s.retries);
+  });
+
+  it("round-trips the task base ref", () => {
+    const task = newTask(fm({ base: "main" }), "p");
+    expect(parseTask(serializeTask(task)).frontmatter.base).toBe("main");
+    expect(parseTask(serializeTask(newTask(fm(), "p"))).frontmatter.base).toBeUndefined();
+  });
+
+  it("resolves the worktree root: unset, relative, ~, absolute", () => {
+    const s = defaultSettings("/tmp/x");
+    expect(resolveWorktreeRoot(s)).toBe("/tmp/x/.boof-runner-worktrees");
+    s.worktree = { root: "../wt", onDone: "keep-branch", onFailure: "keep" };
+    expect(resolveWorktreeRoot(s)).toBe("/tmp/wt");
+    s.worktree.root = "~/wts/a";
+    expect(resolveWorktreeRoot(s)).toBe(join(homedir(), "wts", "a"));
+    s.worktree.root = "~";
+    expect(resolveWorktreeRoot(s)).toBe(homedir());
+    s.worktree.root = "/abs/wt";
+    expect(resolveWorktreeRoot(s)).toBe("/abs/wt");
   });
 
   it("round-trips observer and review settings", async () => {

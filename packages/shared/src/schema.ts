@@ -98,6 +98,8 @@ export const TaskFrontmatterSchema = z.object({
   completedRuns: z.number().int().min(0).default(0),
   tools: TaskToolsSchema.optional(),
   tokens: TokenUsageSchema.optional(),
+  // Branch name or commit the task's worktree is created from (default: HEAD).
+  base: z.string().min(1).optional(),
   // Set on scan-created tasks: on successful completion the runner appends a
   // <version> to this unit's goal.boof.xml, bumping its status (goal-ingestion).
   boofGoal: BoofGoalRefSchema.optional(),
@@ -124,6 +126,28 @@ export const ReviewSettingsSchema = z.object({
 });
 export type ReviewSettings = z.infer<typeof ReviewSettingsSchema>;
 
+/** Worktree location and retention; every key optional with a default. */
+export const WorktreeSettingsSchema = z.object({
+  /** Directory holding task worktrees; default <workingDirectory>/.boof-runner-worktrees. */
+  root: z.string().min(1).optional(),
+  /** What happens to a done task's branch and directory. */
+  onDone: z.enum(["keep-branch", "keep", "delete"]).default("keep-branch"),
+  /** What happens to a failed task's branch and directory (never applies to stops). */
+  onFailure: z.enum(["keep", "delete"]).default("keep"),
+});
+export type WorktreeSettings = z.infer<typeof WorktreeSettingsSchema>;
+
+/** Transient-error retry and stall detection; every key optional with a default. */
+export const RetrySettingsSchema = z.object({
+  /** Retries per tool step after a transient failure. */
+  transient: z.number().int().min(0).default(2),
+  /** Delay before each retry; the last entry repeats. */
+  backoffMs: z.array(z.number().int().min(0)).default([30000, 120000]),
+  /** Kill a tool step that prints nothing for this long and treat it as transient. */
+  idleTimeoutMs: z.number().int().positive().default(1200000),
+});
+export type RetrySettings = z.infer<typeof RetrySettingsSchema>;
+
 /** settings.json schema (settings spec). */
 export const SettingsSchema = z.object({
   runner: z.object({ enabled: z.boolean() }),
@@ -138,6 +162,8 @@ export const SettingsSchema = z.object({
     reviewer: RoleAssignmentSchema,
   }),
   review: ReviewSettingsSchema.optional(),
+  worktree: WorktreeSettingsSchema.optional(),
+  retries: RetrySettingsSchema.optional(),
   models: z.record(z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
