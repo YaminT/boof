@@ -8,6 +8,7 @@ import { MockTool, mockState, resetMock } from "./mock.js";
 import { parseUsage, sumUsage, UNKNOWN_USAGE } from "./usage.js";
 import { ToolRegistry } from "./registry.js";
 import { ClaudeCodeTool, StreamRenderer } from "./claude-code.js";
+import { isTransientToolError, ToolRunError } from "./errors.js";
 import { CodexTool } from "./codex.js";
 import type { Tool } from "./types.js";
 
@@ -269,5 +270,90 @@ describe("CodexTool report", () => {
     const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
     expect(res.report).toBe("x\nVERDICT: REJECT");
     expect(parseVerdict(res.report)).toBe("REJECT");
+  });
+});
+
+describe("isTransientToolError", () => {
+  const err = (
+    output: string,
+    stderr = "",
+    over: Partial<{ stopped: boolean; timedOut: boolean }> = {},
+  ) =>
+    new ToolRunError(
+      "claude-code",
+      1,
+      over.timedOut ?? false,
+      over.stopped ?? false,
+      output,
+      stderr,
+    );
+
+  it.each([
+    ["API Error: 500 Internal Server Error"],
+    ["API Error: 503 Service Unavailable"],
+    ["API Error: 529 overloaded_error"],
+    ["API Error: 429 rate limited"],
+    ["HTTP 429 Too Many Requests"],
+    ["status 529"],
+    ["The API is Overloaded, try again"],
+    ["service temporarily unavailable"],
+    ["read ECONNRESET"],
+    ["connect ETIMEDOUT 1.2.3.4:443"],
+    ["request failed: socket hang up"],
+  ])("matches %s (in output)", (text) => {
+    expect(isTransientToolError(err(`[exit 1]\n${text}`))).toBe(true);
+  });
+
+  it("matches stderr too", () => {
+    expect(isTransientToolError(err("[exit 1]", "API Error: 502 Bad Gateway"))).toBe(true);
+  });
+
+  it("matches a stalled stream", () => {
+    const e = new ToolRunError("claude-code", null, false, false, "", "", true, 1200000);
+    expect(isTransientToolError(e)).toBe(true);
+    expect(e.message).toBe("claude-code stalled: no output for 20 min");
+  });
+
+  it("does not match stopped, timed out, plain errors or unrelated failures", () => {
+    expect(isTransientToolError(err("API Error: 503", "", { stopped: true }))).toBe(false);
+    expect(isTransientToolError(err("API Error: 503", "", { timedOut: true }))).toBe(false);
+    expect(isTransientToolError(new Error("API Error: 503"))).toBe(false);
+    expect(isTransientToolError("API Error: 503")).toBe(false);
+    expect(isTransientToolError(err("[exit 1]\ntests failed: 3 assertions", "boom"))).toBe(false);
+    expect(isTransientToolError(err("API Error: 400 Bad Request"))).toBe(false);
+  });
+});
+
+describe("execCommand idle watchdog", () => {
+  it("kills a silent child and reports stalled", async () => {
+    const started = Date.now();
+    const res = await execCommand(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+      cwd: process.cwd(),
+      idleTimeoutMs: 300,
+    });
+    expect(res.stalled).toBe(true);
+    expect(res.timedOut).toBe(false);
+    expect(res.stopped).toBe(false);
+    expect(Date.now() - started).toBeLessThan(10000);
+  });
+
+  it("does not kill a child that keeps printing", async () => {
+    const script =
+      "let n=0;const t=setInterval(()=>{console.log('tick');if(++n===8){clearInterval(t)}},100)";
+    const res = await execCommand(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      idleTimeoutMs: 400,
+    });
+    expect(res.stalled).toBe(false);
+    expect(res.code).toBe(0);
+    expect(res.stdout.match(/tick/g)).toHaveLength(8);
+  });
+
+  it("is off by default", async () => {
+    const res = await execCommand(process.execPath, ["-e", "setTimeout(()=>{},500)"], {
+      cwd: process.cwd(),
+    });
+    expect(res.stalled).toBe(false);
+    expect(res.code).toBe(0);
   });
 });

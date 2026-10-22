@@ -4,6 +4,7 @@ import {
   parseVerdict,
   resolveRole,
   resolveWorktreeRoot,
+  retrySettings,
   reviewSettings,
   taskAssetPath,
   taskPromptInjectionsPath,
@@ -16,6 +17,7 @@ import {
   type TokenUsage,
   type Verdict,
 } from "@boof-runner/shared";
+import { transientReason } from "./tools/errors.js";
 import { sumUsage } from "./tools/usage.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -49,7 +51,22 @@ const WORKTREE_HYGIENE =
   "any edit to tracked files and delete any file or directory you created, including " +
   "nested git repositories. ";
 
-export const SYSTEM_PROMPTS = {
+/** Appended to every role's system prompt: the tool runs in --print mode and exits with its turn. */
+export const NON_INTERACTIVE =
+  "You are running non-interactively. Your process exits as soon as you end your turn, and " +
+  "anything still running in the background is killed. Never end your turn while waiting on " +
+  "background commands, subagents or monitors.\n\n" +
+  "A single foreground shell command is limited to about 10 minutes. For anything longer, such " +
+  "as a commit whose pre-commit hook runs a long test gate:\n\n" +
+  "1. Start it in the background, writing its exit status to a marker file, for example " +
+  "`(cmd; echo $? > /tmp/x.done) > /tmp/x.log 2>&1 &`.\n" +
+  "2. Wait for it with repeated foreground loops that each stay under 10 minutes, for example " +
+  "`until [ -f /tmp/x.done ]; do sleep 5; done`, timing out at about 9 minutes, and repeat until " +
+  "the marker exists.\n" +
+  "3. Read its status and log.\n\n" +
+  "End your turn only when this step's work is complete and your final report is written.";
+
+const BASE_SYSTEM_PROMPTS = {
   planner:
     "You are the PLANNER. Produce a concise implementation plan. If — and only if — " +
     "you genuinely cannot proceed without user input, list clarifying questions.",
@@ -74,6 +91,15 @@ export const SYSTEM_PROMPTS = {
     "quality. Do not ask the user questions. Write a review report. " +
     WORKTREE_HYGIENE +
     VERDICT_PROTOCOL,
+} as const;
+
+export const SYSTEM_PROMPTS = {
+  planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${NON_INTERACTIVE}`,
+  refine: `${BASE_SYSTEM_PROMPTS.refine}\n\n${NON_INTERACTIVE}`,
+  developer: `${BASE_SYSTEM_PROMPTS.developer}\n\n${NON_INTERACTIVE}`,
+  developerFix: `${BASE_SYSTEM_PROMPTS.developerFix}\n\n${NON_INTERACTIVE}`,
+  observer: `${BASE_SYSTEM_PROMPTS.observer}\n\n${NON_INTERACTIVE}`,
+  reviewer: `${BASE_SYSTEM_PROMPTS.reviewer}\n\n${NON_INTERACTIVE}`,
 } as const;
 
 /** Current iteration number for a task (1-based). */
@@ -104,6 +130,12 @@ function iterationFraming(task: Task): string | null {
   );
 }
 
+/** Text from the last `#### Round ` header to the end (verdict line included), or "". */
+function lastRound(report: string): string {
+  const i = report.lastIndexOf("#### Round ");
+  return i === -1 ? report.trim() : report.slice(i).trim();
+}
+
 /** Thrown when the review gate ends without a reviewer APPROVE. */
 class ReviewNotApprovedError extends Error {
   constructor(role: "observer" | "reviewer", verdict: Verdict | null) {
@@ -120,6 +152,8 @@ export type PipelineOutcome =
 
 export class Pipeline {
   private readonly usageStore: UsageStore;
+  /** Previous iteration's final observer/reviewer reports, per task id (runs > 1). */
+  private readonly previousFindings = new Map<string, string>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
   }
@@ -163,11 +197,48 @@ export class Pipeline {
   ): Promise<RunResult> {
     await this.assertNotStopped(id);
     await this.log(id, `\n### ${label}`);
-    return tool.run({
-      ...opts,
-      stopSignalPath: taskStopRequestPath(this.deps.root, id),
-      onChunk: (c) => void this.streamChunk(id, c),
-    });
+    const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
+    let prompt = opts.prompt;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await tool.run({
+          ...opts,
+          prompt,
+          idleTimeoutMs,
+          stopSignalPath: taskStopRequestPath(this.deps.root, id),
+          onChunk: (c) => void this.streamChunk(id, c),
+        });
+      } catch (err) {
+        const reason = transientReason(err);
+        if (reason === null || attempt >= transient) throw err;
+        const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
+        await this.log(
+          id,
+          `\nTransient failure in ${label} (attempt ${attempt + 1}/${transient}): ${reason}; ` +
+            `retrying in ${+(delay / 1000).toFixed(1)}s in the same worktree`,
+        );
+        await this.backoff(id, delay);
+        await this.log(id, `\n### ${label} (retry ${attempt + 1})`);
+        prompt =
+          opts.prompt +
+          "\n\n## Previous attempt interrupted\n" +
+          "The previous attempt of this step was interrupted by a transient error (API or " +
+          "network failure, or a stalled stream). The working directory may hold its partial " +
+          "changes. Run `git status` and `git diff` to inspect them, then continue where it " +
+          "left off rather than restarting from scratch.";
+      }
+    }
+  }
+
+  /** Wait `ms`, checking the stop signal every 250 ms; a stop request throws like any other stop. */
+  private async backoff(id: string, ms: number): Promise<void> {
+    const end = Date.now() + ms;
+    for (;;) {
+      await this.assertNotStopped(id);
+      const left = end - Date.now();
+      if (left <= 0) return;
+      await new Promise((r) => setTimeout(r, Math.min(250, left)));
+    }
   }
 
   private tool(
@@ -246,6 +317,8 @@ export class Pipeline {
     if (injected) parts.push(injected);
     const framing = iterationFraming(task);
     if (framing) parts.push(framing);
+    const findings = this.previousFindings.get(task.frontmatter.id);
+    if (findings) parts.push(findings);
     if (extra) parts.push(extra);
     return parts.join("\n\n");
   }
@@ -308,6 +381,22 @@ export class Pipeline {
         );
       }
       const stepCwd = worktree?.path ?? cwd;
+      // From iteration 2 on, carry the previous iteration's final reports into every prompt.
+      const carried: string[] = [];
+      if (currentIteration(task) >= 2) {
+        const obs = lastRound(task.body.reports.observer);
+        const rev = lastRound(task.body.reports.reviewer);
+        if (obs) carried.push(`### Observer (final report)\n${obs}`);
+        if (rev) carried.push(`### Reviewer (final report)\n${rev}`);
+      }
+      if (carried.length > 0) {
+        this.previousFindings.set(
+          id,
+          `## Findings from the previous iteration\n${carried.join("\n\n")}`,
+        );
+      } else {
+        this.previousFindings.delete(id);
+      }
       // Round entries are appended per iteration; start each run with a clean slate.
       task.body.reports.observer = "";
       task.body.reports.reviewer = "";
@@ -569,7 +658,8 @@ export class Pipeline {
       model: planner.model,
       systemPrompt:
         "You are the PLANNER. Answer the following questions from the " +
-        `${fromRole} using the plan and task context. Do not escalate to the user.`,
+        `${fromRole} using the plan and task context. Do not escalate to the user.\n\n` +
+        NON_INTERACTIVE,
       prompt: await this.buildPrompt(
         task,
         `## Plan\n${plan}\n\n## ${fromRole} questions\n${questions.join("\n")}`,

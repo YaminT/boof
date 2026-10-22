@@ -1,5 +1,7 @@
 import type { Role } from "@boof-runner/shared";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { execCommand } from "../exec.js";
+import { ToolRunError } from "./errors.js";
 import { parseUsage } from "./usage.js";
 
 /**
@@ -22,6 +24,14 @@ export interface MockState {
   roundCounts: Map<string, number>;
   /** Every role the mock has been invoked for, in order. */
   calls: Role[];
+  /** Every system prompt the mock has received, with its role. */
+  systemPrompts: { role: Role; systemPrompt: string }[];
+  /** Questions a non-planner role raises on its FIRST run (routed to the planner). */
+  roleQuestions: Partial<Record<Role, string[]>>;
+  /** Internal: simulated transient failures already thrown, per role. */
+  transientCounts: Map<Role, number>;
+  /** Internal: simulated stalls already run, per role. */
+  stallCounts: Map<Role, number>;
 }
 
 export const mockState: MockState = {
@@ -32,6 +42,10 @@ export const mockState: MockState = {
   onRun: null,
   roundCounts: new Map(),
   calls: [],
+  systemPrompts: [],
+  roleQuestions: {},
+  transientCounts: new Map(),
+  stallCounts: new Map(),
 };
 
 export function resetMock(): void {
@@ -42,6 +56,10 @@ export function resetMock(): void {
   mockState.onRun = null;
   mockState.roundCounts = new Map();
   mockState.calls = [];
+  mockState.systemPrompts = [];
+  mockState.roleQuestions = {};
+  mockState.transientCounts = new Map();
+  mockState.stallCounts = new Map();
 }
 
 /**
@@ -55,6 +73,26 @@ export function resetMock(): void {
  * throw.
  */
 const MARKER = /\[\[mock-verdicts[ \t]+([^\]\n]*)\]\]/g;
+
+/**
+ * Simulated failures, embedded in the task prompt like the verdict marker:
+ * `[[mock-transient developer=1 reviewer=2]]` makes the first N runs of a role
+ * fail with `API Error: 503`; `[[mock-stall developer=1]]` makes the first N
+ * runs go silent (a real silent child, killed by the idle watchdog). Single
+ * line, last marker wins, counted per role in mockState.
+ */
+const TRANSIENT_MARKER = /\[\[mock-transient[ \t]+([^\]\n]*)\]\]/g;
+const STALL_MARKER = /\[\[mock-stall[ \t]+([^\]\n]*)\]\]/g;
+
+function markerCount(prompt: string, marker: RegExp, role: Role): number {
+  const m = [...prompt.matchAll(marker)].at(-1);
+  if (!m) return 0;
+  for (const part of m[1]!.trim().split(/\s+/)) {
+    const [name, n] = part.split("=");
+    if (name === role) return Number(n) || 0;
+  }
+  return 0;
+}
 
 const TOKENS = new Set(["APPROVE", "CHANGES_REQUESTED", "REJECT", "NONE", "GARBLED", "CONFLICT"]);
 
@@ -110,9 +148,37 @@ export class MockTool implements Tool {
   async run(opts: RunOptions): Promise<RunResult> {
     mockState.prompts.push(opts.prompt);
     mockState.calls.push(opts.role);
+    mockState.systemPrompts.push({ role: opts.role, systemPrompt: opts.systemPrompt });
     await mockState.onRun?.(opts);
     if (mockState.failRole === opts.role) {
       throw new Error(`Mock failure injected for role ${opts.role}`);
+    }
+
+    const failFirst = markerCount(opts.prompt, TRANSIENT_MARKER, opts.role);
+    const failed = mockState.transientCounts.get(opts.role) ?? 0;
+    if (failed < failFirst) {
+      mockState.transientCounts.set(opts.role, failed + 1);
+      throw new ToolRunError("mock", 1, false, false, "API Error: 503 Service Unavailable");
+    }
+    const stallFirst = markerCount(opts.prompt, STALL_MARKER, opts.role);
+    const stalls = mockState.stallCounts.get(opts.role) ?? 0;
+    if (stalls < stallFirst) {
+      mockState.stallCounts.set(opts.role, stalls + 1);
+      const res = await execCommand(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        cwd: opts.cwd,
+        idleTimeoutMs: opts.idleTimeoutMs,
+        stopSignalPath: opts.stopSignalPath,
+      });
+      throw new ToolRunError(
+        "mock",
+        res.code,
+        res.timedOut,
+        res.stopped,
+        "mock went silent",
+        res.stderr,
+        res.stalled,
+        opts.idleTimeoutMs,
+      );
     }
 
     // Each iteration starts with the planner: restart scripted verdict rounds.
@@ -129,6 +195,19 @@ export class MockTool implements Tool {
         output,
         report: "Planner needs clarification before producing a plan.",
         questions: [...mockState.plannerQuestions],
+        usage: parseUsage(output),
+      };
+    }
+
+    // A non-planner role raises its configured questions once.
+    const asked = mockState.roleQuestions[opts.role];
+    if (opts.role !== "planner" && asked && asked.length > 0) {
+      delete mockState.roleQuestions[opts.role];
+      const output = `MOCK ${opts.role} questions\n${usageLine}`;
+      return {
+        output,
+        report: reportFor(opts.role),
+        questions: [...asked],
         usage: parseUsage(output),
       };
     }

@@ -27,6 +27,8 @@ export interface RunOptions {
    * cannot stream simply never call it.
    */
   onChunk?: (chunk: string) => void;
+  /** Kill the tool process when it prints nothing for this long (stalled stream). */
+  idleTimeoutMs?: number;
   /** File whose presence requests cancellation of the running tool process. */
   stopSignalPath?: string;
 }
