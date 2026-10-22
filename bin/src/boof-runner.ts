@@ -59,6 +59,8 @@ run options:
   -f, --file <path>   Read the prompt from a file instead of an argument
       --all           Drive all pending tasks instead of a new prompt
       --repo <dir>    Working directory the pipeline runs against (git repo → isolation)
+      --base <ref>    Branch or commit the task's worktree starts from (default: HEAD)
+      --title <text>  Task title (default: first line of the prompt)
       --tool <id>     Force all roles to this tool (e.g. mock, claude-code, codex)
       --model <name>  Model for --tool
       --runs <n>      Run the pipeline N times for the task (default 1)
@@ -130,6 +132,8 @@ export async function runCommand(argv: string[]): Promise<number> {
   const repo = getOpt(argv, ["--repo"]);
   const tool = getOpt(argv, ["--tool"]);
   const model = getOpt(argv, ["--model"]);
+  const base = getOpt(argv, ["--base"]);
+  const title = getOpt(argv, ["--title"]);
 
   if (hasFlag(argv, ["--all"])) {
     const { failed } = await drainQueue({ root });
@@ -149,6 +153,8 @@ export async function runCommand(argv: string[]): Promise<number> {
     root,
     prompt,
     ...(repo ? { repo } : {}),
+    ...(base ? { base } : {}),
+    ...(title ? { title } : {}),
     ...(tool ? { tool } : {}),
     ...(model ? { model } : {}),
     ...(runsOpt ? { runs: Number(runsOpt) } : {}),
@@ -182,13 +188,15 @@ export async function scanCommand(argv: string[]): Promise<number> {
 }
 
 /** First token that is not a flag and not consumed as an option value. */
-function firstPositional(argv: string[]): string | undefined {
+export function firstPositional(argv: string[]): string | undefined {
   const valueOpts = new Set([
     "--data",
     "-d",
     "--file",
     "-f",
     "--repo",
+    "--base",
+    "--title",
     "--tool",
     "--model",
     "--runs",
