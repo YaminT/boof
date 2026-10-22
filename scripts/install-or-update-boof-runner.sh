@@ -4,7 +4,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 APP_NAME="boof-runner"
-DEFAULT_REPO="git@github.com:YaminT/boof-runner.git"
+DEFAULT_REPO="git@github.com:YaminT/boof.git"
 DEFAULT_DIR="${XDG_DATA_HOME:-"$HOME/.local/share"}/boof-runner/source"
 
 REPO_URL="${BOOF_RUNNER_REPO:-$DEFAULT_REPO}"
@@ -39,7 +39,7 @@ Environment:
 Examples:
   ./scripts/install-or-update-boof-runner.sh
   BOOF_RUNNER_BRANCH=main bash scripts/install-or-update-boof-runner.sh
-  BOOF_RUNNER_REPO=https://github.com/YaminT/boof-runner.git bash scripts/install-or-update-boof-runner.sh
+  BOOF_RUNNER_REPO=https://github.com/YaminT/boof.git bash scripts/install-or-update-boof-runner.sh
 EOF
 }
 
