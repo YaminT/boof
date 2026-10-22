@@ -77,4 +77,13 @@ describe("settings compatibility", () => {
     expect(resolveObserver(s, newTask(fm()))?.model).toBe("global");
     expect(resolveRole(s, task, "reviewer")).toEqual(s.roles.reviewer);
   });
+
+  it("resolveRole honours observer: task, then global, then undefined", () => {
+    const s = defaultSettings("/tmp/x");
+    expect(resolveRole(s, newTask(fm()), "observer")).toBeUndefined();
+    s.roles.observer = { tool: "mock", model: "global" };
+    expect(resolveRole(s, newTask(fm()), "observer")?.model).toBe("global");
+    const task = newTask(fm({ tools: { observer: { tool: "mock", model: "task" } } }));
+    expect(resolveRole(s, task, "observer")?.model).toBe("task");
+  });
 });

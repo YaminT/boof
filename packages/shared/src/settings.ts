@@ -73,21 +73,26 @@ export class SettingsStore {
 
 /**
  * Resolve the tool+model for a role: a per-task `tools` override wins over the
- * global `settings.roles` assignment (settings spec). The observer is optional;
- * use `resolveObserver` for it.
+ * global `settings.roles` assignment (settings spec). The observer is optional,
+ * so it resolves to undefined when unset in both places.
  */
+export function resolveRole(settings: Settings, task: Task, role: "observer"): RoleAssignment | undefined;
 export function resolveRole(
   settings: Settings,
   task: Task,
   role: Exclude<Role, "observer">,
-): RoleAssignment {
-  const override = task.frontmatter.tools?.[role];
-  return override ?? settings.roles[role];
+): RoleAssignment;
+export function resolveRole(
+  settings: Settings,
+  task: Task,
+  role: Role,
+): RoleAssignment | undefined {
+  return task.frontmatter.tools?.[role] ?? settings.roles[role];
 }
 
 /** Observer assignment (per-task override, then global), or undefined when unset. */
 export function resolveObserver(settings: Settings, task: Task): RoleAssignment | undefined {
-  return task.frontmatter.tools?.observer ?? settings.roles.observer;
+  return resolveRole(settings, task, "observer");
 }
 
 /** Review settings with defaults applied (the only place defaults are read). */
