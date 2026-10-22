@@ -266,6 +266,16 @@ export function leftoversBranch(wt: Worktree): string {
   return `${wt.branch}${LEFTOVERS_SUFFIX}`;
 }
 
+export interface LeftoversResult {
+  branch: string;
+  sha: string;
+  /**
+   * Paths whose content the snapshot does not hold: nested git repositories (skipped when
+   * they have no commit, stored only as a gitlink otherwise). Removing the directory loses them.
+   */
+  unsaved: string[];
+}
+
 /**
  * Snapshot the worktree's uncommitted changes (including untracked files) onto
  * the side branch `<branch>--leftovers`, parented on the task branch head (and
@@ -277,7 +287,7 @@ export async function commitLeftovers(
   workingDir: string,
   wt: Worktree,
   title: string,
-): Promise<{ branch: string; sha: string } | null> {
+): Promise<LeftoversResult | null> {
   const status = await git(wt.path, ["status", "--porcelain"]);
   if (status.code !== 0) throw new Error(`git status failed: ${status.err || status.out}`);
   if (!status.out) return null;
@@ -309,6 +319,13 @@ export async function commitLeftovers(
       skipped.push(...fresh);
     }
     const tree = await run(["write-tree"]);
+    // Nested repositories with commits become gitlinks; their objects are not in this repo.
+    const gitlinks = (await run(["diff-index", "--cached", "--raw", "HEAD"]))
+      .split("\n")
+      .filter((l) => /^:\d+ 160000 /.test(l))
+      .map((l) => l.split("\t")[1]!)
+      .filter(Boolean);
+    const unsaved = [...skipped, ...gitlinks];
 
     const parents = ["-p", head];
     const prior = await git(workingDir, [
@@ -335,7 +352,7 @@ export async function commitLeftovers(
       `boof-runner leftovers: ${title}`,
     ]);
     await run(["update-ref", `refs/heads/${branch}`, sha]);
-    return { branch, sha };
+    return { branch, sha, unsaved };
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -384,6 +401,13 @@ export async function finalizeWorktree(
   try {
     const left = await commitLeftovers(workingDir, wt, title);
     if (left) lines.push(`Leftovers committed to ${left.branch} at ${left.sha}`);
+    if (left && left.unsaved.length > 0) {
+      lines.push(
+        `Kept worktree ${wt.path}: nested git repositories are not saved on ${left.branch} ` +
+          `(${left.unsaved.join(", ")}); copy or commit them, then remove the directory`,
+      );
+      return lines;
+    }
   } catch (err) {
     return [
       `Kept worktree ${wt.path}: saving leftovers failed: ${err instanceof Error ? err.message : String(err)}`,

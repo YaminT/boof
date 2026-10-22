@@ -326,6 +326,48 @@ describe("worktree isolation", () => {
     });
   });
 
+  describe("nested repositories are never silently deleted", () => {
+    const nested = async (wt: { path: string }, name: string, commit: boolean) => {
+      const dir = join(wt.path, name);
+      await mkdir(dir, { recursive: true });
+      const run = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+      await run(["init", "-b", "main"]);
+      await writeFile(join(dir, "f.txt"), "f\n");
+      if (commit) {
+        await run(["add", "."]);
+        await run(["-c", "user.name=x", "-c", "user.email=x@y", "commit", "-m", "n"]);
+        await writeFile(join(dir, "uncommitted.txt"), "u\n");
+      }
+    };
+
+    it("keep-branch keeps the directory when a nested repo has no commit", async () => {
+      const wt = await createWorktree(repo, "n1");
+      await nested(wt, "fresh", false);
+      const lines = (await finalizeWorktree(repo, wt, "t")).join("\n");
+      expect(await exists(join(wt.path, "fresh", "f.txt"))).toBe(true);
+      expect(lines).toContain(`Kept worktree ${wt.path}: nested git repositories`);
+      expect(lines).toContain("fresh");
+      expect(lines).not.toContain("Removed worktree directory");
+    });
+
+    it("keep-branch keeps the directory when a nested repo is only a gitlink", async () => {
+      const wt = await createWorktree(repo, "n2");
+      await nested(wt, "withcommit", true);
+      const lines = (await finalizeWorktree(repo, wt, "t")).join("\n");
+      expect(await exists(join(wt.path, "withcommit", "uncommitted.txt"))).toBe(true);
+      expect(lines).toContain("nested git repositories");
+      expect(lines).toContain("withcommit");
+    });
+
+    it("commitLeftovers reports the unsaved paths", async () => {
+      const wt = await createWorktree(repo, "n3");
+      await nested(wt, "fresh", false);
+      await nested(wt, "withcommit", true);
+      const left = await commitLeftovers(repo, wt, "t");
+      expect([...left!.unsaved].sort()).toEqual(["fresh", "withcommit"]);
+    });
+  });
+
   describe("retention policies", () => {
     const branchExists = async (b: string) =>
       (await g(["rev-parse", "--verify", "--quiet", `refs/heads/${b}`])).code === 0;
