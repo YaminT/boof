@@ -101,6 +101,12 @@ export class MockTool implements Tool {
       throw new Error(`Mock failure injected for role ${opts.role}`);
     }
 
+    // Each iteration starts with the planner: restart scripted verdict rounds.
+    if (opts.role === "planner") {
+      mockState.roundCounts.delete(`${opts.cwd}|observer`);
+      mockState.roundCounts.delete(`${opts.cwd}|reviewer`);
+    }
+
     // Planner asks its configured questions exactly once (ask-once-then-resume).
     if (opts.role === "planner" && mockState.plannerQuestions.length > 0 && !mockState.hasAsked) {
       mockState.hasAsked = true;

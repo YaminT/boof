@@ -553,13 +553,26 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(out.kind).toBe("failed");
     if (out.kind === "failed") expect(out.error).toBe("review not approved: reviewer INVALID");
     expect(count("developer")).toBe(1);
+    expect(await exists(wtPath())).toBe(true);
+    expect(await branchKept()).toBe(true);
   });
 
-  it("an invalid observer verdict fails as observer INVALID", async () => {
+  it.each(["NONE", "GARBLED", "CONFLICT"])("observer %s verdict is not approved", async (token) => {
     await withObserver();
-    const out = await runTask("x [[mock-verdicts observer=GARBLED]]");
+    const out = await runTask(`x [[mock-verdicts observer=${token}]]`);
     expect(out.kind).toBe("failed");
     if (out.kind === "failed") expect(out.error).toBe("review not approved: observer INVALID");
+    expect(count("reviewer")).toBe(0);
+  });
+
+  it("scripted verdict rounds restart each iteration (runs: 2)", async () => {
+    await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
+    const second = await engine.tick();
+    expect(second.kind).toBe("ran");
+    const end = await engine.store.get("t1");
+    expect(end?.frontmatter.status).toBe("done");
+    expect(count("developer")).toBe(4);
+    expect(count("reviewer")).toBe(4);
   });
 
   it("gate false: verdicts are recorded but not enforced", async () => {
