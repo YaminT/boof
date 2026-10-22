@@ -19,7 +19,7 @@ import {
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
-import { Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
+import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
 import { ensureWorktree } from "./worktree.js";
 import { mockState, resetMock } from "./tools/mock.js";
 import type { RunOptions } from "./tools/types.js";
@@ -834,5 +834,167 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     const reviewPrompt = mockState.prompts.find((p) => p.includes("## Diff under review"))!;
     expect(reviewPrompt).toContain("## Diff\n");
     expect(reviewPrompt).not.toContain("exceeds the inline limit");
+  });
+});
+
+describe("transient retries, stalls and prompts (mock tool)", () => {
+  const MOCK = { tool: "mock", model: "mock-default" };
+  const configure = async (over: {
+    retries?: { transient?: number; backoffMs?: number[]; idleTimeoutMs?: number };
+    observer?: boolean;
+  }) => {
+    const s = await engine.settingsStore.load();
+    await engine.settingsStore.save({
+      ...s,
+      roles: { ...s.roles, ...(over.observer ? { observer: MOCK } : {}) },
+      ...(over.retries
+        ? {
+            retries: {
+              transient: 2,
+              backoffMs: [0],
+              idleTimeoutMs: 1200000,
+              ...over.retries,
+            },
+          }
+        : {}),
+    });
+  };
+  const run = async (prompt: string, over: Partial<TaskFrontmatter> = {}) => {
+    await engine.store.create(newTask(fm(over), prompt));
+    const r = await engine.tick();
+    if (r.kind !== "ran") throw new Error(`expected ran, got ${r.kind}`);
+    return r.outcome;
+  };
+  const devCalls = () => mockState.calls.filter((c) => c === "developer").length;
+
+  it("one transient failure, then success: done, same worktree, retry logged, prompt amended", async () => {
+    await configure({ retries: {} });
+    const cwds: string[] = [];
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer") cwds.push(opts.cwd);
+    };
+    const outcome = await run("Build it. [[mock-transient developer=1]]");
+    expect(outcome.kind).toBe("done");
+    expect(devCalls()).toBe(2);
+    expect(cwds).toEqual([wtPath(), wtPath()]);
+    const devPrompts = mockState.prompts.filter((_, i) => mockState.calls[i] === "developer");
+    expect(devPrompts[0]).not.toContain("## Previous attempt interrupted");
+    expect(devPrompts[1]).toContain("## Previous attempt interrupted");
+    expect(devPrompts[1]).toContain("git status");
+    const done = await engine.store.get("t1");
+    expect(done?.body.log).toMatch(
+      /Transient failure in Developer \(attempt 1\/2\): API Error: 503.*retrying in 0s in the same worktree/,
+    );
+  });
+
+  it("retries exhausted: the task fails and the worktree is kept", async () => {
+    await configure({ retries: { transient: 2 } });
+    mockState.onRun = async (opts) => {
+      if (opts.role === "planner") await writeIn(opts, "wip.txt");
+    };
+    const outcome = await run("Build it. [[mock-transient developer=3]]");
+    expect(outcome.kind).toBe("failed");
+    expect(devCalls()).toBe(3);
+    expect(await exists(join(wtPath(), "wip.txt"))).toBe(true);
+  });
+
+  it("transient: 0 disables retries", async () => {
+    await configure({ retries: { transient: 0 } });
+    const outcome = await run("Build it. [[mock-transient developer=1]]");
+    expect(outcome.kind).toBe("failed");
+    expect(devCalls()).toBe(1);
+  });
+
+  it("a non-transient error is not retried", async () => {
+    await configure({ retries: {} });
+    mockState.failRole = "developer";
+    const outcome = await run("Build it.");
+    expect(outcome.kind).toBe("failed");
+    expect(devCalls()).toBe(1);
+  });
+
+  it("a stop request during the backoff stops the task", async () => {
+    await configure({ retries: { backoffMs: [60000] } });
+    const poll = setInterval(() => {
+      void readFile(join(workingAreaDir(dataRoot, "t1"), "log.txt"), "utf8")
+        .then(async (log) => {
+          if (!log.includes("Transient failure")) return;
+          await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
+          await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
+        })
+        .catch(() => {});
+    }, 50);
+    const started = Date.now();
+    try {
+      const outcome = await run("Build it. [[mock-transient developer=1]]");
+      expect(outcome.kind).toBe("failed");
+      if (outcome.kind === "failed") expect(outcome.error).toContain("stopped by user");
+    } finally {
+      clearInterval(poll);
+    }
+    expect(Date.now() - started).toBeLessThan(8000);
+    expect(devCalls()).toBe(1);
+    expect(await exists(wtPath())).toBe(true);
+  });
+
+  it("a stalled tool is killed and retried as a transient failure", async () => {
+    await configure({ retries: { idleTimeoutMs: 300 } });
+    const outcome = await run("Build it. [[mock-stall developer=1]]");
+    expect(outcome.kind).toBe("done");
+    expect(devCalls()).toBe(2);
+    expect((await engine.store.get("t1"))?.body.log).toContain("stalled: no output");
+  });
+
+  it("every role's system prompt carries the non-interactive guard", async () => {
+    await configure({ observer: true });
+    mockState.roleQuestions = { developer: ["Which db?"] };
+    const outcome = await run(
+      "Build it. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]",
+    );
+    expect(outcome.kind).toBe("done");
+    const seen = new Map<string, Set<string>>();
+    for (const { role, systemPrompt } of mockState.systemPrompts) {
+      expect(systemPrompt).toContain(NON_INTERACTIVE);
+      expect(systemPrompt).toContain("Never end your turn while waiting on background");
+      const set = seen.get(role) ?? new Set<string>();
+      set.add(systemPrompt);
+      seen.set(role, set);
+    }
+    const all = [...seen.values()].flatMap((v) => [...v]);
+    const has = (needle: string) => all.some((p) => p.includes(needle));
+    expect(has("You are the PLANNER. Produce")).toBe(true);
+    expect(has("PLANNER doing a refinement")).toBe(true);
+    expect(has("You are the DEVELOPER. Implement")).toBe(true);
+    expect(has("DEVELOPER fixing review findings")).toBe(true);
+    expect(has("You are the OBSERVER")).toBe(true);
+    expect(has("You are the REVIEWER")).toBe(true);
+    expect(has("Answer the following questions")).toBe(true);
+    for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
+  });
+
+  it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
+    await configure({ observer: true });
+    await run("Twice. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]", {
+      runs: 2,
+    });
+    await engine.tick();
+    const heading = "## Findings from the previous iteration";
+    const iter2 = mockState.prompts.filter((p) => p.includes("## Iteration 2 of 2"));
+    const iter1 = mockState.prompts.filter((p) => !p.includes("## Iteration 2 of 2"));
+    expect(iter1.length).toBeGreaterThan(0);
+    expect(iter2.length).toBeGreaterThan(0);
+    for (const p of iter1) expect(p).not.toContain(heading);
+    for (const p of iter2) {
+      const from = p.indexOf(heading);
+      const next = p.indexOf("\n\n## ", from + heading.length);
+      const section = p.slice(from, next === -1 ? undefined : next);
+      expect(p).toContain(heading);
+      expect(section).toContain("### Observer (final report)");
+      expect(section).toContain("### Reviewer (final report)");
+      expect(section).toContain("#### Round 2 — APPROVE");
+      expect(section).toContain("VERDICT: APPROVE");
+      // Only the final round, not the earlier CHANGES_REQUESTED one.
+      expect(section).not.toContain("mock issue observer round 1");
+    }
   });
 });

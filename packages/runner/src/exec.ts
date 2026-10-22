@@ -7,6 +7,8 @@ export interface ExecResult {
   stderr: string;
   timedOut: boolean;
   stopped: boolean;
+  /** True when the process was killed for printing nothing for `idleTimeoutMs`. */
+  stalled: boolean;
 }
 
 export interface ExecOptions {
@@ -21,6 +23,11 @@ export interface ExecOptions {
   onData?: (chunk: string) => void;
   /** File whose presence requests cooperative cancellation of the child process. */
   stopSignalPath?: string;
+  /**
+   * Kill the child (SIGTERM, then SIGKILL) when it emits no stdout/stderr chunk
+   * for this long; the result has `stalled: true`.
+   */
+  idleTimeoutMs?: number;
   /** Poll interval for stopSignalPath. Defaults to 500 ms. */
   stopPollMs?: number;
 }
@@ -50,6 +57,8 @@ export function execCommand(
     let stderr = "";
     let timedOut = false;
     let stopped = false;
+    let stalled = false;
+    let idleTimer: NodeJS.Timeout | undefined;
     let timer: NodeJS.Timeout | undefined;
     let stopTimer: NodeJS.Timeout | undefined;
     let killTimer: NodeJS.Timeout | undefined;
@@ -58,7 +67,19 @@ export function execCommand(
       if (timer) clearTimeout(timer);
       if (stopTimer) clearInterval(stopTimer);
       if (killTimer) clearTimeout(killTimer);
+      if (idleTimer) clearTimeout(idleTimer);
     };
+
+    const armIdle = () => {
+      if (!opts.idleTimeoutMs || opts.idleTimeoutMs <= 0 || stalled) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        stalled = true;
+        child.kill("SIGTERM");
+        killTimer = setTimeout(() => child.kill("SIGKILL"), 1500);
+      }, opts.idleTimeoutMs);
+    };
+    armIdle();
 
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
@@ -79,22 +100,24 @@ export function execCommand(
     child.stdout.on("data", (d) => {
       const s = d.toString();
       stdout += s;
+      armIdle();
       opts.onData?.(s);
     });
     child.stderr.on("data", (d) => {
       const s = d.toString();
       stderr += s;
+      armIdle();
       opts.onData?.(s);
     });
 
     child.on("error", (err) => {
       clearTimers();
-      resolve({ code: null, stdout, stderr: stderr + String(err), timedOut, stopped });
+      resolve({ code: null, stdout, stderr: stderr + String(err), timedOut, stopped, stalled });
     });
 
     child.on("close", (code) => {
       clearTimers();
-      resolve({ code, stdout, stderr, timedOut, stopped });
+      resolve({ code, stdout, stderr, timedOut, stopped, stalled });
     });
 
     if (opts.input !== undefined) {

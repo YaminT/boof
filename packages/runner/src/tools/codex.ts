@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commandExists, execCommand } from "../exec.js";
-import { ToolRunError } from "./claude-code.js";
+import { ToolRunError } from "./errors.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { parseUsage } from "./usage.js";
 
@@ -90,11 +90,21 @@ export class CodexTool implements Tool {
         cwd: opts.cwd,
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
+        idleTimeoutMs: opts.idleTimeoutMs,
         onData: opts.onChunk,
       });
       const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${res.stdout}\n${res.stderr}`;
-      if (res.code !== 0 || res.timedOut || res.stopped) {
-        throw new ToolRunError(this.id, res.code, res.timedOut, res.stopped, output);
+      if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
+        throw new ToolRunError(
+          this.id,
+          res.code,
+          res.timedOut,
+          res.stopped,
+          output,
+          res.stderr,
+          res.stalled,
+          opts.idleTimeoutMs,
+        );
       }
       const message = await readFile(last, "utf8").catch(() => "");
       const report = message.trim() || res.stdout.trim();

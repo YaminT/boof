@@ -1,7 +1,10 @@
 import type { TokenUsage } from "@boof-runner/shared";
 import { commandExists, execCommand } from "../exec.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { ToolRunError } from "./errors.js";
 import { parseUsage } from "./usage.js";
+
+export { ToolRunError };
 
 /**
  * Adapter for the `claude` CLI (Claude Code). Runs non-interactively with
@@ -83,19 +86,23 @@ export class ClaudeCodeTool implements Tool {
       input: opts.prompt,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
+      idleTimeoutMs: opts.idleTimeoutMs,
       onData: (chunk) => render.push(chunk),
     });
     render.flush();
 
     const header = `$ ${this.bin} --print --output-format stream-json --model ${opts.model}\n[exit ${res.code}]`;
     const output = `${header}\n${render.transcript}`;
-    if (res.code !== 0 || res.timedOut || res.stopped) {
+    if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
       throw new ToolRunError(
         this.id,
         res.code,
         res.timedOut,
         res.stopped,
         `${output}\n${res.stderr}`,
+        res.stderr,
+        res.stalled,
+        opts.idleTimeoutMs,
       );
     }
     return {
@@ -262,23 +269,4 @@ function usageFromResult(obj: Record<string, unknown>): TokenUsage | undefined {
   const outputTokens = Number(u.output_tokens ?? 0);
   const costUsd = Number(obj.total_cost_usd ?? 0);
   return { inputTokens, outputTokens, costUsd, known: true };
-}
-
-export class ToolRunError extends Error {
-  constructor(
-    public readonly toolId: string,
-    public readonly code: number | null,
-    public readonly timedOut: boolean,
-    public readonly stopped: boolean,
-    public readonly output: string,
-  ) {
-    super(
-      stopped
-        ? `${toolId} stopped by user`
-        : timedOut
-          ? `${toolId} timed out`
-          : `${toolId} exited with code ${code ?? "null"}`,
-    );
-    this.name = "ToolRunError";
-  }
 }
