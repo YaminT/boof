@@ -565,6 +565,24 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(count("reviewer")).toBe(0);
   });
 
+  it("labels each findings block with its source round and role", async () => {
+    await withObserver({ maxFixRounds: 3 });
+    const out = await runTask(
+      "x [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE,CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]",
+    );
+    expect(out.kind).toBe("done");
+    const findings = mockState.prompts.filter((p) => p.includes("## Findings ("));
+    expect(
+      findings.some(
+        (p) =>
+          p.includes("## Findings (observer round 3)") &&
+          p.includes("- finding: mock issue observer round 3"),
+      ),
+    ).toBe(true);
+    expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
+    expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
+  });
+
   it("unknown mock verdict token fails the task", async () => {
     const out = await runTask("x [[mock-verdicts reviewer=BOGUS]]");
     expect(out.kind).toBe("failed");

@@ -405,11 +405,16 @@ export class Pipeline {
         await appendLog(`${label} verdict (round ${round}): ${verdict ?? "INVALID"}`);
         return { verdict, report: result.report };
       };
-      const fix = async (round: number, role: "observer" | "reviewer", findings: string) => {
+      const fix = async (
+        fixRound: number,
+        role: "observer" | "reviewer",
+        sourceRound: number,
+        findings: string,
+      ) => {
         const diff = await this.inlineDiff(id, worktree);
         let fixResult = await this.runStep(
           id,
-          `Developer (fix round ${round}, ${role})`,
+          `Developer (fix round ${fixRound}, ${role})`,
           developer.tool,
           {
             role: "developer",
@@ -417,7 +422,7 @@ export class Pipeline {
             systemPrompt: SYSTEM_PROMPTS.developerFix,
             prompt: await this.buildPrompt(
               task,
-              `## Plan\n${finalPlan}\n\n## Findings (${role} round ${round})\n${findings}\n\n` +
+              `## Plan\n${finalPlan}\n\n## Findings (${role} round ${sourceRound})\n${findings}\n\n` +
                 `## Instructions\nFix each real finding with a test, or rebut it with evidence.\n\n` +
                 `## Current diff\n${diff}`,
             ),
@@ -426,7 +431,7 @@ export class Pipeline {
           },
         );
         record(fixResult);
-        recordBody(`### Developer (fix round ${round}, ${role})\n${fixResult.output}`);
+        recordBody(`### Developer (fix round ${fixRound}, ${role})\n${fixResult.output}`);
         if (fixResult.questions && fixResult.questions.length > 0) {
           fixResult = await this.answerViaPlanner(
             task,
@@ -441,7 +446,7 @@ export class Pipeline {
         await this.writeReport(
           task,
           "developer",
-          `${task.body.reports.developer}\n\n#### Fix round ${round} (${role})\n${fixResult.report}`,
+          `${task.body.reports.developer}\n\n#### Fix round ${fixRound} (${role})\n${fixResult.report}`,
         );
       };
 
@@ -458,7 +463,7 @@ export class Pipeline {
             if (obs.verdict !== "CHANGES_REQUESTED" || obsFix >= maxFixRounds) {
               throw new ReviewNotApprovedError("observer", obs.verdict);
             }
-            await fix(++obsFix, "observer", obs.report);
+            await fix(++obsFix, "observer", obsRound, obs.report);
           }
         }
         const rev = await checkRole("reviewer", ++revRound);
@@ -466,7 +471,7 @@ export class Pipeline {
         if (rev.verdict !== "CHANGES_REQUESTED" || revFix >= maxFixRounds) {
           throw new ReviewNotApprovedError("reviewer", rev.verdict);
         }
-        await fix(++revFix, "reviewer", rev.report);
+        await fix(++revFix, "reviewer", revRound, rev.report);
       }
 
       // Only finalize the worktree on the final iteration (leftovers are
