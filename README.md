@@ -169,7 +169,8 @@ All keys are optional; existing `settings.json` and task files keep working.
 
 For offline tests the `mock` tool takes a marker in the prompt:
 `[[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]` (per role, one
-verdict per round, last repeats; also `NONE`, `GARBLED`, `CONFLICT`).
+verdict per round, last repeats; also `NONE`, `GARBLED`, `CONFLICT`). The marker must
+sit on one line, the last complete marker wins, and unknown tokens throw.
 
 ## Project layout
 
