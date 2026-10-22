@@ -2,7 +2,6 @@ import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   parseVerdict,
-  resolveObserver,
   resolveRole,
   reviewSettings,
   taskAssetPath,
@@ -170,7 +169,7 @@ export class Pipeline {
 
   /** The observer's tool+model, or null when no observer is configured. */
   private observerTool(task: Task): { tool: Tool; model: string } | null {
-    const assignment = resolveObserver(this.deps.settings, task);
+    const assignment = resolveRole(this.deps.settings, task, "observer");
     if (!assignment) return null;
     return { tool: this.deps.registry.require(assignment.tool), model: assignment.model };
   }
