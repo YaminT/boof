@@ -130,10 +130,28 @@ function iterationFraming(task: Task): string | null {
   );
 }
 
-/** Text from the last `#### Round ` header to the end (verdict line included), or "". */
-function lastRound(report: string): string {
-  const i = report.lastIndexOf("#### Round ");
-  return i === -1 ? report.trim() : report.slice(i).trim();
+/**
+ * A report holds round entries across iterations, each headed `#### Round N — VERDICT`;
+ * entries of iteration 2 and later carry the suffix ` (iteration K)`, untagged means 1.
+ */
+function roundBlocks(report: string): { iteration: number; text: string }[] {
+  return report
+    .split(/(?=^#### Round )/m)
+    .map((text) => text.trim())
+    .filter((text) => text.startsWith("#### Round "))
+    .map((text) => ({
+      iteration: Number(/^#### Round [^\n]*\(iteration (\d+)\)/.exec(text)?.[1] ?? 1),
+      text,
+    }));
+}
+
+/** Final round entry (verdict line included) of `iteration`, or "". */
+function lastRoundOf(report: string, iteration: number): string {
+  return (
+    roundBlocks(report)
+      .filter((b) => b.iteration === iteration)
+      .at(-1)?.text ?? ""
+  );
 }
 
 /** Thrown when the review gate ends without a reviewer APPROVE. */
@@ -382,10 +400,13 @@ export class Pipeline {
       }
       const stepCwd = worktree?.path ?? cwd;
       // From iteration 2 on, carry the previous iteration's final reports into every prompt.
+      // Round entries accumulate in the task body tagged by iteration, so a park, failure or
+      // retry mid-iteration still finds the previous iteration's final entries.
       const carried: string[] = [];
-      if (currentIteration(task) >= 2) {
-        const obs = lastRound(task.body.reports.observer);
-        const rev = lastRound(task.body.reports.reviewer);
+      const iter = currentIteration(task);
+      if (iter >= 2) {
+        const obs = lastRoundOf(task.body.reports.observer, iter - 1);
+        const rev = lastRoundOf(task.body.reports.reviewer, iter - 1);
         if (obs) carried.push(`### Observer (final report)\n${obs}`);
         if (rev) carried.push(`### Reviewer (final report)\n${rev}`);
       }
@@ -397,9 +418,6 @@ export class Pipeline {
       } else {
         this.previousFindings.delete(id);
       }
-      // Round entries are appended per iteration; start each run with a clean slate.
-      task.body.reports.observer = "";
-      task.body.reports.reviewer = "";
 
       // --- Step 1: Planner ---
       const planner = this.tool(task, "planner");
@@ -714,8 +732,17 @@ export class Pipeline {
       report + "\n",
       "utf8",
     );
-    const entry = `#### Round ${round} — ${verdict ?? "INVALID"}\n${report}`;
-    const prior = task.body.reports[role];
+    const iter = currentIteration(task);
+    const tag = iter >= 2 ? ` (iteration ${iter})` : "";
+    const entry = `#### Round ${round} — ${verdict ?? "INVALID"}${tag}\n${report}`;
+    // Round 1 restarts this iteration's entries (a retried iteration); earlier iterations stay.
+    const prior = (
+      round === 1
+        ? roundBlocks(task.body.reports[role]).filter((b) => b.iteration !== iter)
+        : roundBlocks(task.body.reports[role])
+    )
+      .map((b) => b.text)
+      .join("\n\n");
     await this.writeReport(task, role, prior ? `${prior}\n\n${entry}` : entry);
   }
 

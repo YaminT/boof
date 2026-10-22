@@ -210,7 +210,7 @@ All keys are optional with defaults, so existing settings files keep working:
   - `"keep"` (default): keep directory and branch.
   - `"delete"` (opt-in): same loud deletion. A stopped task always keeps its work.
 
-Nothing is ever deleted under the defaults. Removing a directory also drops ignored files such as `node_modules`; a nested git repository in the leftovers is stored as a gitlink (or skipped if it has no commit) on the `--leftovers` branch only.
+Nothing is ever deleted under the defaults. Removing a directory also drops ignored files such as `node_modules`; a nested git repository in the leftovers cannot be saved (skipped if it has no commit, a bare gitlink otherwise), so the directory is then **kept** and the log names the paths. Move or commit them, then remove the directory yourself.
 
 ## Transient Retries And Stalls
 

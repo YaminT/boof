@@ -325,8 +325,7 @@ describe("task work is never destroyed", () => {
       if (opts.role === "developer") {
         await commitIn(opts, "a.txt");
         await writeIn(opts, "left.txt");
-        await mkdir(join(opts.cwd, "scratch", "nested"), { recursive: true });
-        await gitOut(["init", "-b", "main"], join(opts.cwd, "scratch", "nested"));
+        await mkdir(join(opts.cwd, "scratch"), { recursive: true });
         await writeIn(opts, "scratch/note.txt");
       }
     };
@@ -345,6 +344,24 @@ describe("task work is never destroyed", () => {
     expect(await exists(wtPath())).toBe(false);
     const done = await engine.store.get("t1");
     expect(done?.body.log).toContain(`Leftovers committed to boof-runner/t1--leftovers at ${side}`);
+  });
+
+  it("done with a nested git repository: keeps the directory and says why", async () => {
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer") {
+        await commitIn(opts, "a.txt");
+        await mkdir(join(opts.cwd, "scratch", "nested"), { recursive: true });
+        await gitOut(["init", "-b", "main"], join(opts.cwd, "scratch", "nested"));
+        await writeIn(opts, "scratch/nested/f.txt");
+      }
+    };
+    await engine.store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+
+    expect(await exists(join(wtPath(), "scratch", "nested", "f.txt"))).toBe(true);
+    const log = (await engine.store.get("t1"))?.body.log ?? "";
+    expect(log).toContain("nested git repositories are not saved");
+    expect(log).not.toContain("Removed worktree directory");
   });
 
   it("failure: keeps the directory, the branch and uncommitted changes", async () => {
@@ -970,6 +987,71 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(has("You are the REVIEWER")).toBe(true);
     expect(has("Answer the following questions")).toBe(true);
     for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
+  });
+
+  it("carried findings survive iteration 2 parking and resuming", async () => {
+    await configure({ observer: true });
+    await run("Twice. [[mock-verdicts observer=APPROVE reviewer=APPROVE]]", { runs: 2 });
+    mockState.plannerQuestions = ["Which db?"];
+    const parked = await engine.tick();
+    if (parked.kind === "ran") expect(parked.outcome.kind).toBe("parked");
+    await engine.store.transition("t1", "pending", (t) => {
+      t.body.answers = "Postgres.";
+      t.frontmatter.questions = "answered";
+    });
+    const from = mockState.prompts.length;
+    await engine.tick();
+    const resumed = mockState.prompts.slice(from);
+    expect(resumed.length).toBeGreaterThan(0);
+    for (const p of resumed) {
+      expect(p).toContain("## Findings from the previous iteration");
+      expect(p).toContain("### Reviewer (final report)");
+    }
+  });
+
+  it("carried findings survive iteration 2 failing and being retried", async () => {
+    await configure({ observer: true });
+    await run("Twice. [[mock-verdicts observer=APPROVE reviewer=APPROVE]]", { runs: 2 });
+    mockState.failRole = "developer";
+    const failed = await engine.tick();
+    if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
+    mockState.failRole = null;
+    await engine.store.transition("t1", "pending");
+    const from = mockState.prompts.length;
+    await engine.tick();
+    const retried = mockState.prompts.slice(from);
+    expect(retried.length).toBeGreaterThan(0);
+    for (const p of retried) {
+      expect(p).toContain("## Findings from the previous iteration");
+      expect(p).toContain("### Reviewer (final report)");
+    }
+  });
+
+  it("carried findings stay iteration 1's when iteration 2 fails after its observer round 1", async () => {
+    await configure({ observer: true });
+    await run("Twice. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]", {
+      runs: 2,
+    });
+    let failFix = true;
+    mockState.onRun = async (opts) => {
+      const observerCalls = mockState.calls.filter((c) => c === "observer").length;
+      if (failFix && opts.role === "developer" && observerCalls >= 3) {
+        throw new Error("boom after observer round 1 of iteration 2");
+      }
+    };
+    const failed = await engine.tick();
+    if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
+    failFix = false;
+    await engine.store.transition("t1", "pending");
+    const from = mockState.prompts.length;
+    await engine.tick();
+    const retried = mockState.prompts.slice(from);
+    expect(retried.length).toBeGreaterThan(0);
+    for (const p of retried) {
+      expect(p).toContain("## Findings from the previous iteration");
+      expect(p).toContain("#### Round 2 — APPROVE");
+      expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
+    }
   });
 
   it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
