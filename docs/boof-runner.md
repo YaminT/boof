@@ -77,6 +77,7 @@ Each task is a markdown document with structured frontmatter and named body sect
 - `questions`
 - `runs`
 - `completedRuns`
+- `base` (optional): branch name or commit the task's worktree starts from
 - per-task tool overrides
 - token usage
 - timestamps
@@ -173,15 +174,67 @@ This matters because the agents run in auto-approve mode. Worktree isolation giv
 
 - a contained place for file mutations
 - a clear diff for review
-- work that is never destroyed:
-  - Task branches `boof-runner/<id>` are never deleted.
-  - On done, uncommitted leftovers are committed on the branch as `boof-runner: <title>`, then only the worktree directory is removed with `git worktree remove` (no `--force`). If the commit or the removal fails, the directory is kept and the reason is logged.
+- work that is never destroyed under the defaults:
+  - Task branches `boof-runner/<id>` are never deleted unless you opt in (see Retention Policies).
+  - On done, the task branch keeps only the commits the agents made deliberately. Uncommitted leftovers (including untracked files and scratch directories) are **not** committed onto it. They are saved on a side branch `boof-runner/<id>--leftovers`, created from the task branch head with a temporary index, so the task branch and its worktree stay untouched. The log records the side branch name and sha. Then the worktree directory is removed (`git worktree remove --force`; safe because leftovers are saved). If saving the leftovers or the removal fails, the directory is kept and the reason is logged.
   - On failed or stopped, the worktree directory and the branch are kept as they are. The directory path, branch name and HEAD sha are logged.
-  - On retry, an existing task branch is reused. An unregistered directory at the worktree path fails the task and is never touched.
+  - On retry, an existing task branch is reused (and `base` is ignored, which the log says). An unregistered directory at the worktree path fails the task and is never touched.
   - For done and failed tasks the branch name and HEAD sha are recorded in the task log.
 - protection against one task corrupting the main working tree
 
 If the configured directory is not a git repository, Boof Runner can run without isolation, but it records a warning and loses the worktree safety guarantees.
+
+### Base Ref
+
+Optional task frontmatter `base` (a branch name or commit) makes the task's worktree start from it instead of the working directory's HEAD. From the CLI: `boof-runner run --base <ref>` (and `--title <text>` to set the task title). Boof Runner resolves it first with `git rev-parse --verify --quiet <base>^{commit}`. An unknown ref fails the task with `unknown base ref '<base>': not a branch or commit in <dir>` before any branch or directory is created. The resolved sha is the worktree's `base` used for diffs, and the log records `base <ref> → <sha>`. When the task branch already exists and is reused, `base` is ignored and the log says so.
+
+### Settings: worktree
+
+All keys are optional with defaults, so existing settings files keep working:
+
+```json
+{
+  "worktree": { "root": "~/boof-worktrees", "onDone": "keep-branch", "onFailure": "keep" }
+}
+```
+
+- `worktree.root`: directory holding the task worktrees. Default `<workingDirectory>/.boof-runner-worktrees`. A relative path resolves against `workingDirectory`; a leading `~/` expands to the home directory. Task worktrees live at `<root>/<taskId>` and the meta sidecar under `<root>/.meta/`, so worktrees can live outside the repository. A root inside the repository should be gitignored.
+
+### Retention Policies
+
+- `worktree.onDone`:
+  - `"keep-branch"` (default): leftovers go to `boof-runner/<id>--leftovers`, the directory is removed, the task branch is kept.
+  - `"keep"`: leftovers go to the side branch, and the directory is left in place too.
+  - `"delete"` (opt-in): remove the directory and delete the task branch and its `--leftovers` branch. The log says `WARNING: DELETED task work`.
+- `worktree.onFailure`:
+  - `"keep"` (default): keep directory and branch.
+  - `"delete"` (opt-in): same loud deletion. A stopped task always keeps its work.
+
+Nothing is ever deleted under the defaults. Removing a directory also drops ignored files such as `node_modules`; a nested git repository in the leftovers is stored as a gitlink (or skipped if it has no commit) on the `--leftovers` branch only.
+
+## Transient Retries And Stalls
+
+A tool step that fails with a transient API error is retried in the same worktree instead of failing the task. Settings (all optional):
+
+```json
+{ "retries": { "transient": 2, "backoffMs": [30000, 120000], "idleTimeoutMs": 1200000 } }
+```
+
+- `retries.transient`: retries per step (default `2`; `0` disables). The budget is per step and covers every step, including the planner answering a question.
+- `retries.backoffMs`: delay before each retry (default `[30000, 120000]`; the last entry repeats).
+- `retries.idleTimeoutMs`: kill a tool step that produces no output chunk for this long (default `1200000`, 20 min). The process gets SIGTERM, then SIGKILL, as for stops, and the failure counts as transient (`stalled: no output for N min`). Agents' long commands still stream tool-call events, so this only fires on a true stall.
+
+A failure is transient when it is a tool error that was neither stopped nor timed out, and its output or stderr matches `API Error: 5xx`, `429`, `529`, `overloaded`, `temporarily unavailable`, `ECONNRESET`, `ETIMEDOUT` or `socket hang up` (exported as `isTransientToolError()`), or the stream stalled. Every retry is logged (`Transient failure in <step> (attempt a/n): …; retrying in Xs in the same worktree`). The stop signal is checked during the backoff: a stop request stops the task as usual. The retried step's prompt gains a `## Previous attempt interrupted` section telling the agent that the working directory may hold partial changes and to inspect `git status` and `git diff` and continue rather than restart. Non-transient errors, timeouts and stops are not retried.
+
+The mock tool can simulate both: `[[mock-transient developer=1]]` fails the first N runs of a role with `API Error: 503`, and `[[mock-stall developer=1]]` makes them go silent.
+
+## Non-Interactive Guard
+
+Every role's system prompt (planner, refinement, developer, observer, reviewer, planner-answering) ends with a guard: the tool runs non-interactively, its process exits when the turn ends and kills anything in the background, so the agent must never end its turn while waiting on background work. Commands longer than about 10 minutes run in the background with an exit-status marker file and are awaited with repeated foreground loops under 10 minutes.
+
+## Findings Across Iterations
+
+With `runs > 1`, from iteration 2 on, every step's prompt gains `## Findings from the previous iteration`: the final observer report (if any) and final reviewer report of the previous iteration, verdict lines included.
 
 ## Tool Adapters
 
