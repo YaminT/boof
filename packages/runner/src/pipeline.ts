@@ -40,7 +40,13 @@ const VERDICT_PROTOCOL =
   "should not be fixed in place). No text after that line. A missing or malformed verdict " +
   "counts as not approved.";
 
-const SYSTEM_PROMPTS = {
+const WORKTREE_HYGIENE =
+  "Do any experiments in a temporary directory outside the working directory (e.g. " +
+  "`mktemp -d`), never inside it. Leave the working tree exactly as you found it: revert " +
+  "any edit to tracked files and delete any file or directory you created, including " +
+  "nested git repositories. ";
+
+export const SYSTEM_PROMPTS = {
   planner:
     "You are the PLANNER. Produce a concise implementation plan. If — and only if — " +
     "you genuinely cannot proceed without user input, list clarifying questions.",
@@ -58,10 +64,12 @@ const SYSTEM_PROMPTS = {
     "You are the OBSERVER, a second pair of eyes after the developer. Check the diff against " +
     "the task prompt and the plan for correctness, missing tests and regressions. Do not ask " +
     "the user questions. Write a report listing concrete findings. " +
+    WORKTREE_HYGIENE +
     VERDICT_PROTOCOL,
   reviewer:
     "You are the REVIEWER giving the final review. Review the diff for correctness and " +
     "quality. Do not ask the user questions. Write a review report. " +
+    WORKTREE_HYGIENE +
     VERDICT_PROTOCOL,
 } as const;
 

@@ -19,7 +19,7 @@ import {
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
-import { Pipeline } from "./pipeline.js";
+import { Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
 import { ensureWorktree } from "./worktree.js";
 import { mockState, resetMock } from "./tools/mock.js";
 import type { RunOptions } from "./tools/types.js";
@@ -582,6 +582,23 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
     expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
   });
+
+  it.each(["observer", "reviewer"] as const)(
+    "%s system prompt keeps the worktree clean",
+    async (role) => {
+      expect(SYSTEM_PROMPTS[role]).toContain("temporary directory outside the working directory");
+      expect(SYSTEM_PROMPTS[role]).toContain("Leave the working tree exactly as you found it");
+
+      await withObserver();
+      const seen: Record<string, string> = {};
+      mockState.onRun = async (opts) => {
+        seen[opts.role] = opts.systemPrompt;
+      };
+      const out = await runTask("x");
+      expect(out.kind).toBe("done");
+      expect(seen[role]).toContain("Leave the working tree exactly as you found it");
+    },
+  );
 
   it("unknown mock verdict token fails the task", async () => {
     const out = await runTask("x [[mock-verdicts reviewer=BOGUS]]");

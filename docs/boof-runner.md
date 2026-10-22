@@ -121,6 +121,8 @@ The observer is configured with `settings.roles.observer` (`{ "tool", "model" }`
 
 ### Verdict Protocol
 
+The observer and reviewer system prompts also tell the agent to experiment in a temporary directory outside the working directory and to leave the working tree exactly as found (revert edits to tracked files, delete anything it created), so the leftover auto-commit never sweeps scratch files into the branch.
+
 The observer and reviewer system prompts require the report to end with exactly one line:
 
 - `VERDICT: APPROVE`
