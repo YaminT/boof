@@ -49,18 +49,28 @@ export function resetMock(): void {
  * `[[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]`.
  * Tokens: APPROVE | CHANGES_REQUESTED | REJECT | NONE (no verdict line) |
  * GARBLED (`VERDICT: MAYBE`) | CONFLICT (two disagreeing final lines). Round N
- * of a role uses the Nth token; past the end the last token repeats.
+ * of a role uses the Nth token; past the end the last token repeats. The
+ * marker must sit on one line (the CLI truncates the title copy of the prompt,
+ * which must never match), the last complete marker wins, and unknown tokens
+ * throw.
  */
-const MARKER = /\[\[mock-verdicts\s+([^\]]*)\]\]/;
+const MARKER = /\[\[mock-verdicts[ \t]+([^\]\n]*)\]\]/g;
+
+const TOKENS = new Set(["APPROVE", "CHANGES_REQUESTED", "REJECT", "NONE", "GARBLED", "CONFLICT"]);
 
 function scriptedTokens(prompt: string, role: Role): string[] {
-  const m = MARKER.exec(prompt);
+  const m = [...prompt.matchAll(MARKER)].at(-1);
   if (!m) return [];
+  let found: string[] = [];
   for (const part of m[1]!.trim().split(/\s+/)) {
     const [name, list] = part.split("=");
-    if (name === role && list) return list.split(",").filter(Boolean);
+    const tokens = (list ?? "").split(",").filter(Boolean);
+    for (const token of tokens) {
+      if (!TOKENS.has(token)) throw new Error(`unknown mock verdict token: ${token}`);
+    }
+    if (name === role && tokens.length > 0) found = tokens;
   }
-  return [];
+  return found;
 }
 
 function verdictBlock(role: Role, round: number, token: string): string {
@@ -73,8 +83,12 @@ function verdictBlock(role: Role, round: number, token: string): string {
       return "VERDICT: APPROVE\nVERDICT: REJECT";
     case "CHANGES_REQUESTED":
       return `- finding: mock issue ${role} round ${round}\nVERDICT: CHANGES_REQUESTED`;
+    case "APPROVE":
+      return "VERDICT: APPROVE";
+    case "REJECT":
+      return "VERDICT: REJECT";
     default:
-      return `VERDICT: ${token}`;
+      throw new Error(`unknown mock verdict token: ${token}`);
   }
 }
 

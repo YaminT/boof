@@ -30,6 +30,14 @@ describe("MockTool", () => {
     expect(a.usage?.known).toBe(true);
   });
 
+  it("ignores a truncated marker line and uses the last complete one", async () => {
+    const tool = new MockTool();
+    const prompt =
+      "title [[mock-verdicts reviewer=CHANGES_RE\n[[mock-verdicts reviewer=REJECT]]\nbody";
+    const res = await tool.run({ ...baseOpts, role: "reviewer", prompt });
+    expect(res.report.endsWith("VERDICT: REJECT")).toBe(true);
+  });
+
   it("emits planner questions once when configured, then proceeds", async () => {
     mockState.plannerQuestions = ["What auth provider?"];
     const tool = new MockTool();

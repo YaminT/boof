@@ -565,6 +565,12 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(count("reviewer")).toBe(0);
   });
 
+  it("unknown mock verdict token fails the task", async () => {
+    const out = await runTask("x [[mock-verdicts reviewer=BOGUS]]");
+    expect(out.kind).toBe("failed");
+    if (out.kind === "failed") expect(out.error).toContain("unknown mock verdict token: BOGUS");
+  });
+
   it("scripted verdict rounds restart each iteration (runs: 2)", async () => {
     await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
     const second = await engine.tick();

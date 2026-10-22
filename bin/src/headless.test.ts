@@ -73,6 +73,28 @@ describe("runTask (headless)", () => {
     expect(settings.workingDirectory).toBe(repo);
   });
 
+  it("honours a mock marker in a single-line prompt longer than 80 chars", async () => {
+    const store = new SettingsStore(dataRoot);
+    const cur = await store.load();
+    await store.save({
+      ...cur,
+      roles: { ...cur.roles, observer: { tool: "mock", model: "mock-default" } },
+    });
+    const prompt =
+      "lo smop path [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]";
+    expect(prompt.length).toBeGreaterThan(80);
+    const res = await runTask({
+      root: dataRoot,
+      prompt,
+      repo,
+      tool: "mock",
+      registry: registry(),
+      out: silent,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe("done");
+  });
+
   it("reports failure (ok=false) when a role errors", async () => {
     mockState.failRole = "developer";
     const res = await runTask({
