@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseVerdict } from "@boof-runner/shared";
 import { execCommand } from "../exec.js";
 import { MockTool, mockState, resetMock } from "./mock.js";
 import { parseUsage, sumUsage, UNKNOWN_USAGE } from "./usage.js";
@@ -219,5 +220,54 @@ describe("health detection", () => {
       mock: ["mock-default"],
       failing: ["fallback"],
     });
+  });
+});
+
+describe("CodexTool report", () => {
+  let dir: string;
+  let prevBin: string | undefined;
+
+  const setup = async (script: string) => {
+    prevBin = process.env.BOOF_RUNNER_CODEX_BIN;
+    dir = await mkdtemp(join(tmpdir(), "boof-codex-test-"));
+    const bin = join(dir, "codex");
+    await writeFile(bin, `#!/bin/sh\n${script}\n`);
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_CODEX_BIN = bin;
+    return new CodexTool();
+  };
+  afterEach(async () => {
+    if (prevBin === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
+    else process.env.BOOF_RUNNER_CODEX_BIN = prevBin;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("uses the --output-last-message file, not noisy stdout", async () => {
+    const record = '$(dirname "$0")/out-path';
+    const tool = await setup(
+      [
+        "while [ $# -gt 0 ]; do",
+        '  if [ "$1" = "-o" ]; then',
+        `    printf '%s' "$2" > ${record}`,
+        '    printf "review\\nVERDICT: APPROVE" > "$2"',
+        "  fi",
+        "  shift",
+        "done",
+        'printf "noise\\nVERDICT: APPROVE\\ntokens used: 123\\n"',
+      ].join("\n"),
+    );
+    const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
+    expect(res.report).toBe("review\nVERDICT: APPROVE");
+    expect(parseVerdict(res.report)).toBe("APPROVE");
+    expect(res.report).not.toContain("tokens used");
+    const outPath = await readFile(join(dir, "out-path"), "utf8");
+    await expect(access(outPath)).rejects.toThrow();
+  });
+
+  it("falls back to stdout when the last-message file is missing", async () => {
+    const tool = await setup('printf "x\\nVERDICT: REJECT\\n"');
+    const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
+    expect(res.report).toBe("x\nVERDICT: REJECT");
+    expect(parseVerdict(res.report)).toBe("REJECT");
   });
 });
