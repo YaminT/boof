@@ -1,12 +1,18 @@
 import { stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { lockedAtomicWrite, readText } from "./atomic.js";
 import { dataPaths } from "./paths.js";
 import {
+  RetrySettingsSchema,
   ReviewSettingsSchema,
   SettingsSchema,
+  WorktreeSettingsSchema,
+  type RetrySettings,
   type ReviewSettings,
   type RoleAssignment,
   type Settings,
+  type WorktreeSettings,
 } from "./schema.js";
 import type { Role } from "./schema.js";
 import type { Task } from "./task-file.js";
@@ -102,4 +108,27 @@ export function resolveObserver(settings: Settings, task: Task): RoleAssignment 
 /** Review settings with defaults applied (the only place defaults are read). */
 export function reviewSettings(settings: Settings): ReviewSettings {
   return ReviewSettingsSchema.parse(settings.review ?? {});
+}
+
+/** Worktree settings with defaults applied. */
+export function worktreeSettings(settings: Settings): WorktreeSettings {
+  return WorktreeSettingsSchema.parse(settings.worktree ?? {});
+}
+
+/** Retry settings with defaults applied. */
+export function retrySettings(settings: Settings): RetrySettings {
+  return RetrySettingsSchema.parse(settings.retries ?? {});
+}
+
+/**
+ * Absolute directory holding task worktrees. Unset: `<workingDirectory>/.boof-runner-worktrees`.
+ * `~` and `~/x` expand to the home directory; a relative path resolves against workingDirectory.
+ */
+export function resolveWorktreeRoot(settings: Settings): string {
+  const root = worktreeSettings(settings).root;
+  const wd = settings.workingDirectory;
+  if (!root) return join(wd, ".boof-runner-worktrees");
+  if (root === "~") return homedir();
+  if (root.startsWith("~/")) return join(homedir(), root.slice(2));
+  return isAbsolute(root) ? root : resolve(wd, root);
 }
