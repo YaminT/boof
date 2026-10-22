@@ -76,7 +76,11 @@ export class SettingsStore {
  * global `settings.roles` assignment (settings spec). The observer is optional,
  * so it resolves to undefined when unset in both places.
  */
-export function resolveRole(settings: Settings, task: Task, role: "observer"): RoleAssignment | undefined;
+export function resolveRole(
+  settings: Settings,
+  task: Task,
+  role: "observer",
+): RoleAssignment | undefined;
 export function resolveRole(
   settings: Settings,
   task: Task,
