@@ -10,6 +10,7 @@ import {
   retrySettings,
   reviewSettings,
   SettingsStore,
+  securitySettings,
   worktreeSettings,
 } from "./settings.js";
 import { defaultSettings } from "./settings.js";
@@ -130,5 +131,37 @@ describe("settings compatibility", () => {
     expect(resolveRole(s, newTask(fm()), "observer")?.model).toBe("global");
     const task = newTask(fm({ tools: { observer: { tool: "mock", model: "task" } } }));
     expect(resolveRole(s, task, "observer")?.model).toBe("task");
+  });
+});
+
+describe("legacy settings.json compatibility", () => {
+  it("loads a file without review/worktree/retries/security and does not write defaults", async () => {
+    const legacy = { ...defaultSettings("/tmp/wd") };
+    const paths = dataPaths(root);
+    await mkdir(dirname(paths.settings), { recursive: true });
+    await writeFile(paths.settings, JSON.stringify(legacy, null, 2) + "\n");
+    const store = new SettingsStore(root);
+    const loaded = await store.load();
+    expect(loaded).toEqual(legacy);
+    expect(Object.keys(loaded)).not.toContain("security");
+    const saved = await store.save(loaded);
+    expect(saved).toEqual(legacy);
+    const { readFile } = await import("node:fs/promises");
+    expect(JSON.parse(await readFile(paths.settings, "utf8"))).toEqual(legacy);
+  });
+
+  it("fills nested security defaults from an empty or partial object", () => {
+    const s = defaultSettings("/tmp/wd");
+    expect(securitySettings(s)).toEqual({
+      allowedHosts: [],
+      auth: { mode: "local-trust" },
+      allowedProjectRoots: [],
+      externalTasksRequireApproval: true,
+      rateLimit: { perMinute: 600, attachmentsPerMinute: 30 },
+      audit: { enabled: true, retentionDays: 90 },
+    });
+    expect(
+      securitySettings({ ...s, security: { rateLimit: { perMinute: 5 } } as never }).rateLimit,
+    ).toEqual({ perMinute: 5, attachmentsPerMinute: 30 });
   });
 });
