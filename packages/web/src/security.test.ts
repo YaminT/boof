@@ -459,7 +459,7 @@ describe("auth admin API", () => {
 
     const list = await (await call(app, "/api/auth/clients")).json();
     expect(JSON.stringify(list)).not.toContain("keyHash");
-    expect(JSON.stringify(list)).not.toContain(key.slice("boof_harness_".length));
+    expect(JSON.stringify(list)).not.toContain(key.slice("boof_dash_".length));
     expect(list.clients).toHaveLength(1);
 
     const rotated = await (
