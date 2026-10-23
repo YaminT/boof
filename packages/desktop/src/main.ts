@@ -1,8 +1,15 @@
 import { existsSync } from "node:fs";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
 import { RunnerEngine } from "@boof-runner/runner";
-import { dataPaths, defaultSettings, SettingsStore, TaskStore } from "@boof-runner/shared";
+import {
+  AuthStore,
+  dataPaths,
+  defaultSettings,
+  SettingsStore,
+  TaskStore,
+} from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
 
 // Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
@@ -14,6 +21,53 @@ const PORT = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
 let server: RunningServer | null = null;
 let engine: RunnerEngine | null = null;
 let win: BrowserWindow | null = null;
+/** API key for the bundled UI; undefined when safeStorage is unavailable (local-trust fallback). */
+let desktopToken: string | undefined;
+
+const DESKTOP_CLIENT_NAME = "desktop-ui";
+
+/**
+ * Make sure a `desktop-ui` admin client exists and return its key. The secret is
+ * kept encrypted with Electron safeStorage (OS keychain) in a file under
+ * userData. Without safeStorage there is nowhere safe to keep it, so the app
+ * falls back to local-trust (loopback, no token) and says so in the log.
+ */
+async function ensureDesktopToken(root: string): Promise<string | undefined> {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn("safeStorage unavailable: desktop UI falls back to local-trust (no API key)");
+    return undefined;
+  }
+  const store = new AuthStore(root);
+  const keyFile = join(app.getPath("userData"), "desktop-ui.key");
+  try {
+    if (existsSync(keyFile)) {
+      const key = safeStorage.decryptString(await readFile(keyFile));
+      if ((await store.verify(key)).ok) return key;
+    }
+  } catch (err) {
+    console.warn("could not read stored desktop key; issuing a new one:", err);
+  }
+  const existing = await store.get(DESKTOP_CLIENT_NAME);
+  const issued =
+    existing && !existing.revokedAt
+      ? await store.rotate(DESKTOP_CLIENT_NAME)
+      : await store.create({
+          name: DESKTOP_CLIENT_NAME,
+          kind: "ui",
+          scopes: ["admin"],
+          trust: "trusted",
+        });
+  if (!issued) return undefined;
+  await mkdir(app.getPath("userData"), { recursive: true });
+  await writeFile(keyFile, safeStorage.encryptString(issued.key), { mode: 0o600 });
+  await chmod(keyFile, 0o600).catch(() => {});
+  return issued.key;
+}
+
+// The preload script reads the key synchronously before the page's scripts run.
+ipcMain.on("boof-runner:get-token", (event) => {
+  event.returnValue = desktopToken ?? null;
+});
 
 /**
  * Built React UI, served by the in-process server.
@@ -78,6 +132,10 @@ ipcMain.handle("boof-runner:pick-directory", async (_event, current?: string) =>
 
 async function boot(): Promise<void> {
   const root = await ensureDataRoot();
+  desktopToken = await ensureDesktopToken(root).catch((err) => {
+    console.error("desktop auth setup failed; using local-trust:", err);
+    return undefined;
+  });
   server = await startServer({ root, port: PORT, uiDir: uiDir() });
   engine = new RunnerEngine({ root });
   void engine.loop();

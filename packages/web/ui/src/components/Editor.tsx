@@ -29,14 +29,31 @@ function AttachmentChip({
   onRemove: () => void;
 }) {
   const isImage = attachment.type.startsWith("image/");
+  // <img src> cannot send the Authorization header, so load the bytes with fetch.
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isImage) return;
+    let url: string | null = null;
+    let cancelled = false;
+    void api
+      .attachmentBlobUrl(taskId, attachment.name)
+      .then((u) => {
+        if (cancelled) URL.revokeObjectURL(u);
+        else {
+          url = u;
+          setSrc(u);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [isImage, taskId, attachment.name]);
   return (
     <div className="attachment-chip" title={`${attachment.name} · ${formatSize(attachment.size)}`}>
       {isImage ? (
-        <img
-          className="attachment-thumb"
-          src={api.attachmentUrl(taskId, attachment.name)}
-          alt={attachment.name}
-        />
+        <img className="attachment-thumb" src={src ?? undefined} alt={attachment.name} />
       ) : (
         <span className="attachment-thumb attachment-thumb-file">
           <FileIcon />

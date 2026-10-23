@@ -155,7 +155,9 @@ export function TaskList({
   const [groupByLabel, setGroupByLabel] = useState(false);
   // "active" = everything except archived (default); "all" = include archived;
   // otherwise an exact status match.
-  const [statusFilter, setStatusFilter] = useState<"active" | "all" | Status>("active");
+  const [statusFilter, setStatusFilter] = useState<"active" | "all" | "proposed" | Status>(
+    "active",
+  );
 
   const allLabels = useMemo(
     () => [...new Set(tasks.flatMap((t) => t.frontmatter.labels))].sort(),
@@ -168,6 +170,16 @@ export function TaskList({
     return m;
   }, [tasks]);
 
+  const proposedCount = useMemo(
+    () =>
+      tasks.filter(
+        (t) =>
+          t.frontmatter.status === "draft" &&
+          t.frontmatter.labels.some((l) => l.startsWith("external:")),
+      ).length,
+    [tasks],
+  );
+
   const filtered = useMemo(
     () =>
       tasks.filter((t) => {
@@ -177,7 +189,9 @@ export function TaskList({
             ? true
             : statusFilter === "active"
               ? s !== "archived"
-              : s === statusFilter;
+              : statusFilter === "proposed"
+                ? s === "draft" && t.frontmatter.labels.some((l) => l.startsWith("external:"))
+                : s === statusFilter;
         const labelOk = !labelFilter || t.frontmatter.labels.includes(labelFilter);
         return statusOk && labelOk;
       }),
@@ -219,10 +233,15 @@ export function TaskList({
         </button>
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as "active" | "all" | Status)}
+          onChange={(e) =>
+            setStatusFilter(e.target.value as "active" | "all" | "proposed" | Status)
+          }
         >
           <option value="active">Active (no archived)</option>
           <option value="all">All statuses</option>
+          <option value="proposed">
+            Proposed by clients{proposedCount ? ` (${proposedCount})` : ""}
+          </option>
           {STATUS_FILTERS.map((s) => (
             <option key={s} value={s}>
               {STATUS_LABEL[s]}

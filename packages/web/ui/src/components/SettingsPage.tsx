@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { Modal } from "./Modal.js";
+import { ClientsSection } from "./ClientsSection.js";
 import type { RoleAssignment, Settings, TokenUsage } from "@boof-runner/shared/schema";
 import type { HealthResult } from "../api-types.js";
 
@@ -186,6 +187,8 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
           <p className="muted">Loading…</p>
         )}
       </section>
+
+      <ClientsSection />
 
       <section className="placeholder-card">
         <h3>Block hours</h3>
