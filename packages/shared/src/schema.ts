@@ -31,6 +31,9 @@ const isoDatetime = z.preprocess(
   z.iso.datetime(),
 );
 
+export const KebabIdSchema = kebab;
+export const IsoDatetimeSchema = isoDatetime;
+
 /** A tool+model assignment for a single role. */
 export const RoleAssignmentSchema = z.object({
   tool: z.string().min(1),
@@ -78,6 +81,17 @@ export const BoofGoalRefSchema = z.object({
 });
 export type BoofGoalRef = z.infer<typeof BoofGoalRefSchema>;
 
+/**
+ * Link from a plan-materialised task to the plan goal it implements (plan model). `revision` is
+ * the goal revision the task's prompt was built from; sync compares it to the goal's current one.
+ */
+export const PlanRefSchema = z.object({
+  planId: kebab,
+  goalId: kebab,
+  revision: z.number().int().min(1),
+});
+export type PlanRef = z.infer<typeof PlanRefSchema>;
+
 /** Where a task came from; set when an authenticated client created it (api-security). */
 export const TaskOriginSchema = z.object({
   kind: z.enum(["ui", "cli", "api", "mcp"]),
@@ -108,6 +122,11 @@ export const TaskFrontmatterSchema = z.object({
   // Set on scan-created tasks: on successful completion the runner appends a
   // <version> to this unit's goal.boof.xml, bumping its status (goal-ingestion).
   boofGoal: BoofGoalRefSchema.optional(),
+  // Set on tasks materialised from a plan goal; the engine records the goal's status on done.
+  planRef: PlanRefSchema.optional(),
+  // "plan": the prompt was generated from the goal and sync may rewrite it; "manual": a human
+  // edited it, so sync appends the spec diff instead (plan model, risks).
+  promptSource: z.enum(["plan", "manual"]).optional(),
   // Set when the task was submitted by an external client (drives the prompt's Provenance section).
   origin: TaskOriginSchema.optional(),
   created: isoDatetime,

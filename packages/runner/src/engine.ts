@@ -1,9 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import {
   appendVersion,
   effectiveSettings,
   parseGoal,
+  PlanStore,
   ProjectStore,
   serializeGoal,
   SettingsStore,
@@ -12,6 +13,7 @@ import {
   type Project,
   type Task,
 } from "@boof-runner/shared";
+import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
 import { Pipeline, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { isGitRepo, pruneStaleWorktrees } from "./worktree.js";
@@ -120,8 +122,12 @@ export class RunnerEngine {
       await store.transition(id, next, (t) => {
         t.frontmatter.completedRuns = completed;
       });
-      // On final completion of a scanned unit, bump its goal.boof.xml status.
-      if (next === "done" && outcome.task.frontmatter.boofGoal) {
+      if (next === "done" && outcome.task.frontmatter.planRef) {
+        await this.recordPlanDone(project, outcome.task).catch((err) =>
+          console.error(`plan status write-back failed for ${id}:`, err),
+        );
+      } else if (next === "done" && outcome.task.frontmatter.boofGoal) {
+        // Legacy scan task: bump its goal.boof.xml status.
         await this.bumpGoalFile(project, outcome.task).catch(() => {});
       }
     } else if (outcome.kind === "failed") {
@@ -132,6 +138,100 @@ export class RunnerEngine {
         t.frontmatter.questions = "pending";
         t.body.questions = outcome.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
       });
+    }
+  }
+
+  /**
+   * A plan task finished: record the goal's new status (`plan.bumpTo`) in the plan history at
+   * the revision the task was built from, clear the goal's live task, and, when the goal has a
+   * `path` and the project enables `planWriteBack`, append the same version to the repo's
+   * goal.boof.xml. The plan write retries against concurrent API edits (PlanStore.modify).
+   * Write-back failures are logged and never fail the task.
+   */
+  private async recordPlanDone(project: Project, task: Task): Promise<void> {
+    const ref = task.frontmatter.planRef;
+    if (!ref) return;
+    const taskId = task.frontmatter.id;
+    const description = `boof-runner completed task ${taskId}`;
+    let path: string | undefined;
+    let bumpTo: "review" | "done" = "done";
+    await new PlanStore(this.projects.dir(project.id)).modify(ref.planId, (plan) => {
+      const goal = plan.goals.find((g) => g.id === ref.goalId);
+      if (!goal) return plan;
+      path = goal.path;
+      bumpTo = plan.bumpTo;
+      return {
+        ...plan,
+        goals: plan.goals.map((g) =>
+          g.id !== goal.id
+            ? g
+            : {
+                ...g,
+                status: plan.bumpTo,
+                taskId: g.taskId === taskId ? null : g.taskId,
+                history: [
+                  ...g.history,
+                  {
+                    revision: ref.revision,
+                    status: plan.bumpTo,
+                    description,
+                    at: new Date().toISOString(),
+                  },
+                ],
+              },
+        ),
+      };
+    });
+    if (path === undefined || !project.planWriteBack) return;
+    try {
+      const rel = relative(project.workingDirectory, join(project.workingDirectory, path));
+      if (rel.startsWith("..") || isAbsolute(rel))
+        throw new Error(`goal path escapes the repo: ${path}`);
+      const goalPath = join(project.workingDirectory, path, "goal.boof.xml");
+      const goal = parseGoal(await readFile(goalPath, "utf8"));
+      await writeFile(
+        goalPath,
+        serializeGoal(appendVersion(goal, bumpTo, `${description}.`)),
+        "utf8",
+      );
+    } catch (err) {
+      console.error(`could not write goal status back for ${taskId}:`, err);
+    }
+  }
+
+  /**
+   * Sync every `active` plan with `autoSync` of the projects the runner serves, so goals that
+   * became unblocked or changed turn into tasks before the next selection. Errors are logged;
+   * they never stop the loop.
+   */
+  async syncAutoPlans(): Promise<void> {
+    let settings;
+    try {
+      settings = await this.settingsStore.load();
+    } catch {
+      return;
+    }
+    for (const project of await this.runnableProjects().catch(() => [] as Project[])) {
+      const projectDir = this.projects.dir(project.id);
+      let plans;
+      try {
+        plans = await new PlanStore(projectDir).list();
+      } catch {
+        continue;
+      }
+      for (const plan of plans) {
+        if (plan.status !== "active" || !plan.autoSync) continue;
+        try {
+          await syncPlan({
+            projectDir,
+            project,
+            planId: plan.id,
+            createStatus: await taskStatusForPlan(this.root, plan, settings),
+          });
+        } catch (err) {
+          console.error(`plan sync failed for ${project.id}/${plan.id}:`, err);
+        }
+      }
     }
   }
 
@@ -189,6 +289,7 @@ export class RunnerEngine {
     const settings = await this.settingsStore.load();
     if (!settings.runner.enabled) return { kind: "disabled" };
 
+    await this.syncAutoPlans();
     const next = await this.selectNext();
     if (!next) return { kind: "idle" };
     return this.start(next);
@@ -200,6 +301,7 @@ export class RunnerEngine {
    */
   private async fill(concurrency: number): Promise<Promise<TickResult>[]> {
     const started: Promise<TickResult>[] = [];
+    await this.syncAutoPlans();
     while (this.inflight.size < concurrency) {
       const next = await this.selectNext();
       if (!next) break;
