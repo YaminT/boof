@@ -324,7 +324,7 @@ describe("audit log", () => {
 
     expect(raw).not.toContain(prompt);
     expect(raw).not.toContain(key);
-    expect(raw).not.toContain(key.split("_").pop()!);
+    expect(raw).not.toContain(key.slice("boof_harness_".length));
 
     const [create, get, denied] = lines;
     expect(create).toMatchObject({
@@ -459,7 +459,7 @@ describe("auth admin API", () => {
 
     const list = await (await call(app, "/api/auth/clients")).json();
     expect(JSON.stringify(list)).not.toContain("keyHash");
-    expect(JSON.stringify(list)).not.toContain(key.split("_").pop()!);
+    expect(JSON.stringify(list)).not.toContain(key.slice("boof_harness_".length));
     expect(list.clients).toHaveLength(1);
 
     const rotated = await (
