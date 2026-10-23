@@ -6,11 +6,13 @@ import { dataPaths } from "./paths.js";
 import {
   RetrySettingsSchema,
   ReviewSettingsSchema,
+  SecuritySettingsSchema,
   SettingsSchema,
   WorktreeSettingsSchema,
   type RetrySettings,
   type ReviewSettings,
   type RoleAssignment,
+  type SecuritySettings,
   type Settings,
   type WorktreeSettings,
 } from "./schema.js";
@@ -115,6 +117,11 @@ export function worktreeSettings(settings: Settings): WorktreeSettings {
 /** Retry settings with defaults applied. */
 export function retrySettings(settings: Settings): RetrySettings {
   return RetrySettingsSchema.parse(settings.retries ?? {});
+}
+
+/** Security settings with defaults applied. */
+export function securitySettings(settings: Settings): SecuritySettings {
+  return SecuritySettingsSchema.parse(settings.security ?? {});
 }
 
 /**

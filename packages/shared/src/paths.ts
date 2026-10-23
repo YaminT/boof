@@ -47,6 +47,9 @@ export interface DataPaths {
   commands: string;
   settings: string;
   runnerPid: string;
+  auth: string;
+  authClients: string;
+  audit: string;
 }
 
 export function dataPaths(root: string): DataPaths {
@@ -56,6 +59,9 @@ export function dataPaths(root: string): DataPaths {
     commands: join(root, "commands"),
     settings: join(root, "settings.json"),
     runnerPid: join(root, ".runner.pid"),
+    auth: join(root, "auth"),
+    authClients: join(root, "auth", "clients.json"),
+    audit: join(root, "audit"),
   };
 }
 
