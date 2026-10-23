@@ -12,7 +12,7 @@
     "@boof-runner/runner": "workspace:*",
     "@boof-runner/shared": "workspace:*",
     "@boof-runner/web": "workspace:*",
-    "chokidar": "^4.0.1",
+    "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.13",
     "zod": "^3.24.1"
