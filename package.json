@@ -2,7 +2,7 @@
   "name": "boof-runner",
   "version": "0.2.0",
   "private": true,
-  "description": "Agent Task Runner — queue prompts and run them through a planner → developer → reviewer pipeline",
+  "description": "Agent Task Runner \u2014 queue prompts and run them through a planner \u2192 developer \u2192 reviewer pipeline",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -32,10 +32,10 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "prettier": "^3.8.3",
+    "@types/node": "^22.20.5",
+    "prettier": "^3.9.10",
     "tsup": "^8.3.5",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
