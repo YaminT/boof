@@ -2,6 +2,10 @@ import { z } from "zod";
 import {
   ClientKindSchema,
   isKebabId,
+  ProjectRolesOverrideSchema,
+  ProjectReviewOverrideSchema,
+  ProjectRetriesOverrideSchema,
+  ProjectWorktreeOverrideSchema,
   ScopeSchema,
   StatusSchema,
   TrustSchema,
@@ -75,6 +79,25 @@ export const InjectBody = z.object({ prompt: z.string().max(100_000) }).strict()
 export const AnswersBody = z.object({ answers: z.string().max(200_000) }).strict();
 export const CommandBody = z
   .object({ name: z.string().trim().min(1).max(200), body: z.string().max(200_000).optional() })
+  .strict();
+
+export const CreateProjectBody = z
+  .object({
+    workingDirectory: z.string().trim().min(1).max(4096),
+    id: z
+      .string()
+      .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+      .max(200)
+      .optional(),
+    name: z.string().trim().min(1).max(200).optional(),
+    defaultBase: z.string().min(1).max(200).optional(),
+    labels: labels.optional(),
+    roles: ProjectRolesOverrideSchema.optional(),
+    review: ProjectReviewOverrideSchema.optional(),
+    worktree: ProjectWorktreeOverrideSchema.optional(),
+    retries: ProjectRetriesOverrideSchema.optional(),
+    planWriteBack: z.boolean().optional(),
+  })
   .strict();
 
 const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);

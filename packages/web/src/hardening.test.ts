@@ -1,13 +1,14 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSettings, SettingsStore } from "@boof-runner/shared";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "./service.js";
 
 let root: string;
+let repo: string;
 let app: ReturnType<typeof createApp>;
 let service: TaskService;
 
@@ -25,13 +26,16 @@ const send = (method: string, body: unknown): RequestInit => ({
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-runner-hard-"));
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
-  await service.tasks.ensureDirs();
-  await new SettingsStore(root).save(defaultSettings(root));
+  repo = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-repo-")));
+  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
+  await service.projects.create({ workingDirectory: repo, id: "default" });
   app = createApp({ service, peerAddress: () => "127.0.0.1" });
 });
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
+  await rm(repo, { recursive: true, force: true });
 });
 
 describe("host guard", () => {

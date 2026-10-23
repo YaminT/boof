@@ -1,4 +1,10 @@
-import type { Settings, Status, TokenUsage } from "@boof-runner/shared/schema";
+import type {
+  Project,
+  Settings,
+  SettingsPatch,
+  Status,
+  TokenUsage,
+} from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
 import type { CommandTemplate, HealthResult, PublicClient } from "./api-types.js";
 import { authHeaders, notifyUnauthorized } from "./token.js";
@@ -101,11 +107,17 @@ export const api = {
     http<{ referencedBy: string[] }>(`/api/commands/${id}`, { method: "DELETE" }),
 
   getSettings: () => http<Settings>("/api/settings"),
-  updateSettings: (patch: Partial<Settings>) =>
+  updateSettings: (patch: SettingsPatch) =>
     http<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
   health: () => http<{ tools: Record<string, HealthResult> }>("/api/health").then((r) => r.tools),
   models: () => http<{ models: Record<string, string[]> }>("/api/models").then((r) => r.models),
   usage: () => http<TokenUsage>("/api/usage"),
+  // Minimal project support: the UI still works against the default project (legacy /api/tasks).
+  getProject: (id: string) => http<Project>(`/api/projects/${id}`),
+  createProject: (input: { workingDirectory: string }) =>
+    http<Project>("/api/projects", { method: "POST", body: JSON.stringify(input) }),
+  updateProject: (id: string, patch: { workingDirectory?: string }) =>
+    http<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
 
   /** Fetch an attachment with the auth header and return a blob: URL for <img>/<a>. */
   attachmentBlobUrl: async (id: string, name: string): Promise<string> => {

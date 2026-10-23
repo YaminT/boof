@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
-import { dataPaths, type SecuritySettings } from "@boof-runner/shared";
+import { dataRootPaths, type SecuritySettings } from "@boof-runner/shared";
 
 const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
@@ -25,7 +25,7 @@ export function audit(opts: {
   now?: () => number;
 }): MiddlewareHandler {
   const now = opts.now ?? Date.now;
-  const dir = dataPaths(opts.root).audit;
+  const dir = dataRootPaths(opts.root).audit;
   return async (c, next) => {
     const start = now();
     try {
@@ -37,11 +37,13 @@ export function audit(opts: {
           const principal = c.get("principal");
           const id = c.req.param("id");
           const name = c.req.param("name");
+          const project = c.req.param("pid");
           const line = {
             ts: new Date(start).toISOString(),
             principal: principal?.id ?? "anonymous",
             kind: principal?.kind ?? "anonymous",
             action: `${c.req.method} ${c.req.routePath}`,
+            ...(project ? { project } : {}),
             ...(id ? { target: name ? `${id}/${name}` : id } : {}),
             status: c.res.status,
             ms: now() - start,
@@ -68,7 +70,7 @@ export async function pruneAudit(
   retentionDays: number,
   nowMs: number = Date.now(),
 ): Promise<string[]> {
-  const dir = dataPaths(root).audit;
+  const dir = dataRootPaths(root).audit;
   let names: string[];
   try {
     names = await readdir(dir);

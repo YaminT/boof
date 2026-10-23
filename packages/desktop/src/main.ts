@@ -3,13 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
 import { RunnerEngine } from "@boof-runner/runner";
-import {
-  AuthStore,
-  dataPaths,
-  defaultSettings,
-  SettingsStore,
-  TaskStore,
-} from "@boof-runner/shared";
+import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
 
 // Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
@@ -81,16 +75,14 @@ function uiDir(): string {
 }
 
 /**
- * Ensure the per-user data root exists. On a fresh install the working directory
- * is left blank so the UI's first-run gate prompts for it; thereafter it is
- * remembered in settings.json and never asked again.
+ * Ensure the per-user data root exists in layout v2: a v1 root is migrated, a fresh one gets
+ * default settings with no projects (the UI's first-run gate asks for the first repository).
  */
 async function ensureDataRoot(): Promise<string> {
   const root = join(app.getPath("userData"), "data");
-  await new TaskStore(root).ensureDirs();
-  if (!existsSync(dataPaths(root).settings)) {
-    await new SettingsStore(root).save(defaultSettings(""));
-  }
+  await mkdir(root, { recursive: true });
+  await migrateDataRoot(root);
+  await mkdir(dataRootPaths(root).projects, { recursive: true });
   return root;
 }
 

@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import {
-  dataPaths,
+  dataRootPaths,
   SecuritySettingsSchema,
   securitySettings,
   type SecuritySettings,
@@ -12,7 +12,7 @@ import type { TaskService } from "./service.js";
  * size changes (one stat per call). Keeps the last good value if unreadable.
  */
 export function securityConfigReader(service: TaskService): () => Promise<SecuritySettings> {
-  const path = dataPaths(service.root).settings;
+  const path = dataRootPaths(service.root).settings;
   let sig = "";
   let cached: SecuritySettings = SecuritySettingsSchema.parse({});
   return async () => {

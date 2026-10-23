@@ -55,14 +55,16 @@ function WorkingDirModal({
  */
 export function WorkingDirHeader({
   settings,
+  workingDir,
   runnerReport,
   onChange,
 }: {
   settings: Settings;
+  /** Working directory of the selected (default) project. */
+  workingDir: string;
   runnerReport?: string;
   onChange: () => void;
 }) {
-  const workingDir = settings.workingDirectory;
   const enabled = settings.runner.enabled;
   const { change, save, modalOpen, setModalOpen, busy } = useWorkingDir(workingDir, onChange);
   return (

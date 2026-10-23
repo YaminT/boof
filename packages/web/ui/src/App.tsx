@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { boofRunnerLogoUrl } from "./assets.js";
 import { useLive } from "./useLive.js";
-import type { Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
 import { TaskList } from "./components/TaskList.js";
 import { LivePanel } from "./components/LivePanel.js";
@@ -20,11 +20,16 @@ export function App() {
   const [tab, setTab] = useState<Tab>("tasks");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [t, s] = await Promise.all([api.listTasks(), api.getSettings()]);
+    const s = await api.getSettings();
+    // Minimal project support: act on the default project through the legacy task routes.
+    const p = s.defaultProject ? await api.getProject(s.defaultProject).catch(() => null) : null;
+    const t = p ? await api.listTasks() : [];
     setTasks(t);
+    setProject(p);
     setSettings(s);
   }, []);
 
@@ -66,7 +71,7 @@ export function App() {
 
   // First-run gate: block the app until a working directory is chosen. It then
   // persists to settings.json, so the user is never asked again.
-  if (settings && !settings.workingDirectory.trim()) {
+  if (settings && !project?.workingDirectory.trim()) {
     return <WorkingDirGate onChange={refresh} />;
   }
 
@@ -98,7 +103,12 @@ export function App() {
 
       <main>
         {settings && (
-          <WorkingDirHeader settings={settings} runnerReport={runnerReport} onChange={refresh} />
+          <WorkingDirHeader
+            settings={settings}
+            workingDir={project?.workingDirectory ?? ""}
+            runnerReport={runnerReport}
+            onChange={refresh}
+          />
         )}
         {tab === "tasks" && !editingId && (
           <>
@@ -118,7 +128,13 @@ export function App() {
         )}
         {tab === "commands" && <CommandsTab onChange={refresh} />}
         {tab === "actions" && <ActionsTab tasks={tasks} onChange={refresh} />}
-        {tab === "settings" && settings && <SettingsPage settings={settings} onChange={refresh} />}
+        {tab === "settings" && settings && (
+          <SettingsPage
+            settings={settings}
+            workingDir={project?.workingDirectory ?? ""}
+            onChange={refresh}
+          />
+        )}
       </main>
     </div>
   );

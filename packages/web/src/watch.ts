@@ -1,7 +1,13 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import { dataPaths } from "@boof-runner/shared";
+import { relative, sep } from "node:path";
+import { dataRootPaths } from "@boof-runner/shared";
 
-type Listener = (event: string) => void;
+/** Payload of a `changed` ping: the project whose files changed, or none for global changes. */
+export interface ChangeData {
+  project?: string;
+}
+
+type Listener = (event: string, data: ChangeData) => void;
 
 /**
  * Watches the data root and broadcasts debounced "changed" pings to subscribers
@@ -12,6 +18,9 @@ export class DataWatcher {
   private watcher: FSWatcher | null = null;
   private readonly listeners = new Set<Listener>();
   private timer: NodeJS.Timeout | null = null;
+  /** Project ids changed since the last broadcast, and whether anything outside projects/ did. */
+  private pendingProjects = new Set<string>();
+  private pendingGlobal = false;
 
   constructor(
     private readonly root: string,
@@ -20,12 +29,12 @@ export class DataWatcher {
 
   start(): void {
     if (this.watcher) return;
-    const paths = dataPaths(this.root);
-    this.watcher = chokidar.watch([paths.tasks, paths.commands, paths.settings], {
+    const paths = dataRootPaths(this.root);
+    this.watcher = chokidar.watch([paths.projects, paths.commands, paths.settings], {
       ignoreInitial: true,
-      depth: 4,
+      depth: 6,
     });
-    const ping = () => this.schedule();
+    const ping = (path: string) => this.schedule(path);
     this.watcher
       .on("add", ping)
       .on("change", ping)
@@ -34,13 +43,32 @@ export class DataWatcher {
       .on("unlinkDir", ping);
   }
 
-  private schedule(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.broadcast("changed"), this.debounceMs);
+  /** The project id when `path` is under projects/<id>/, else undefined. */
+  private projectOf(path: string): string | undefined {
+    const rel = relative(dataRootPaths(this.root).projects, path);
+    if (rel === "" || rel.startsWith("..")) return undefined;
+    return rel.split(sep)[0] || undefined;
   }
 
-  broadcast(event: string): void {
-    for (const l of this.listeners) l(event);
+  private schedule(path: string): void {
+    const project = this.projectOf(path);
+    if (project) this.pendingProjects.add(project);
+    else this.pendingGlobal = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), this.debounceMs);
+  }
+
+  private flush(): void {
+    const projects = [...this.pendingProjects].sort();
+    const global = this.pendingGlobal;
+    this.pendingProjects.clear();
+    this.pendingGlobal = false;
+    for (const project of projects) this.broadcast("changed", { project });
+    if (global) this.broadcast("changed", {});
+  }
+
+  broadcast(event: string, data: ChangeData = {}): void {
+    for (const l of this.listeners) l(event, data);
   }
 
   subscribe(listener: Listener): () => void {
