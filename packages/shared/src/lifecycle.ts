@@ -39,3 +39,14 @@ export function assertTransition(from: Status, to: Status): void {
 export function allowedTransitions(from: Status): Status[] {
   return [...TRANSITIONS[from]];
 }
+
+/**
+ * Statuses a user (UI/API) may move a task to. `running`, `action`, `done` and
+ * `failed` are owned by the runner: setting them by hand would create a task
+ * in `ongoing/` with no working area and nothing driving it.
+ */
+export const USER_TARGET_STATUSES: readonly Status[] = ["draft", "pending", "archived"];
+
+export function isUserTransition(from: Status, to: Status): boolean {
+  return USER_TARGET_STATUSES.includes(to) && canTransition(from, to);
+}

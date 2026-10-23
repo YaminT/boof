@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api.js";
-import type { Task } from "../types.js";
+import type { Task } from "@boof-runner/shared/task-types";
 
 function AnswerCard({ task, onChange }: { task: Task; onChange: () => void }) {
   const [answers, setAnswers] = useState("");

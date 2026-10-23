@@ -4,6 +4,7 @@ import {
   AttachmentStore,
   CommandStore,
   injectCommand,
+  isUserTransition,
   isAllowedAttachmentType,
   MAX_ATTACHMENT_BYTES,
   newTask,
@@ -17,6 +18,7 @@ import {
   workingAreaDir,
   type Attachment,
   type Settings,
+  type SettingsPatch,
   type Status,
   type Task,
 } from "@boof-runner/shared";
@@ -129,6 +131,14 @@ export class TaskService {
 
     const targetStatus = input.status;
     if (targetStatus && targetStatus !== task.frontmatter.status) {
+      const from = task.frontmatter.status;
+      if (!isUserTransition(from, targetStatus)) {
+        throw new ServiceError(
+          409,
+          `Invalid status transition: ${from} → ${targetStatus}`,
+          "invalid_transition",
+        );
+      }
       // Persist field edits first, then transition (which re-reads + moves).
       await this.tasks.save(task);
       return this.tasks.transition(id, targetStatus);
@@ -342,7 +352,7 @@ export class TaskService {
     return this.settingsStore.load();
   }
 
-  updateSettings(patch: Partial<Settings>): Promise<Settings> {
+  updateSettings(patch: SettingsPatch): Promise<Settings> {
     return this.settingsStore.update(patch);
   }
 
@@ -359,10 +369,19 @@ export class TaskService {
   }
 }
 
+function defaultCodeFor(status: number): string {
+  if (status === 400) return "invalid_input";
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  return "error";
+}
+
 export class ServiceError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code: string = defaultCodeFor(status),
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = "ServiceError";

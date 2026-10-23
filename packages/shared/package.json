@@ -7,6 +7,14 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./schema": {
+      "types": "./src/schema.ts",
+      "default": "./src/schema.ts"
+    },
+    "./task-types": {
+      "types": "./src/task-types.ts",
+      "default": "./src/task-types.ts"
     }
   },
   "scripts": {

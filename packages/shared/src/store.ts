@@ -7,6 +7,14 @@ import { nowIso } from "./runtime.js";
 import type { Status } from "./schema.js";
 import { parseTask, serializeTask, type Task } from "./task-file.js";
 
+/** Thrown when a task id does not exist in any status directory. */
+export class TaskNotFoundError extends Error {
+  constructor(public readonly id: string) {
+    super(`Task not found: ${id}`);
+    this.name = "TaskNotFoundError";
+  }
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await stat(p);
@@ -117,7 +125,7 @@ export class TaskStore {
    */
   async transition(id: string, to: Status, mutate?: (t: Task) => void): Promise<Task> {
     const located = await this.locate(id);
-    if (!located) throw new Error(`Task not found: ${id}`);
+    if (!located) throw new TaskNotFoundError(id);
     assertTransition(located.status, to);
 
     const task = await this.readReconciled(located.path, located.status);
@@ -163,7 +171,7 @@ export class TaskStore {
   /** Toggle the orthogonal skip flag without changing status/location. */
   async setSkip(id: string, skip: boolean): Promise<Task> {
     const task = await this.get(id);
-    if (!task) throw new Error(`Task not found: ${id}`);
+    if (!task) throw new TaskNotFoundError(id);
     task.frontmatter.skip = skip;
     return this.save(task);
   }

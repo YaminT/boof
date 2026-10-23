@@ -22,9 +22,6 @@ export function defaultSettings(workingDirectory = process.cwd()): Settings {
   return {
     runner: { enabled: false },
     workingDirectory,
-    selectedSubdirectory: null,
-    blockHours: [],
-    tokens: {},
     roles: {
       planner: { tool: "claude-code", model: "opus" },
       developer: { tool: "codex", model: "gpt-5.5" },

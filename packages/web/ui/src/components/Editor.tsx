@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useLive } from "../useLive.js";
-import type { Attachment, CommandTemplate, Task } from "../types.js";
+import type { Attachment } from "@boof-runner/shared/schema";
+import type { Task } from "@boof-runner/shared/task-types";
+import type { CommandTemplate } from "../api-types.js";
 import { FileIcon, PaperclipIcon, XIcon } from "./Icons.js";
 
 const NEW = "__new__";
