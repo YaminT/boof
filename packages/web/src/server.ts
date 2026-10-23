@@ -2,7 +2,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { serve, type ServerType } from "@hono/node-server";
 import { ToolRegistry } from "@boof-runner/runner";
-import { AuthStore, securitySettings, type Settings } from "@boof-runner/shared";
+import { AuthStore, migrateDataRoot, securitySettings, type Settings } from "@boof-runner/shared";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
@@ -64,8 +64,11 @@ export async function assertBindAllowed(
  */
 export async function startServer(opts: StartServerOptions): Promise<RunningServer> {
   const warn = opts.warn ?? ((m: string) => console.warn(m));
+  // Bring a v1 data root to v2 before any store opens (also scaffolds a fresh root).
+  const migration = await migrateDataRoot(opts.root);
+  if (migration.kind === "migrated")
+    warn(`migrated data root ${opts.root} to v2 (see migration-v2.log)`);
   const service = new TaskService(opts.root, opts.registry ?? new ToolRegistry());
-  await service.tasks.ensureDirs();
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);

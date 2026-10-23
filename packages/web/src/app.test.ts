@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,11 +10,12 @@ import {
   taskStopRequestPath,
   workingAreaDir,
 } from "@boof-runner/shared";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "./service.js";
 
 let root: string;
+let repo: string;
 let app: ReturnType<typeof createApp>;
 let service: TaskService;
 
@@ -28,13 +29,16 @@ const json = (body: unknown): RequestInit => ({
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-runner-web-"));
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
-  await service.tasks.ensureDirs();
-  await new SettingsStore(root).save(defaultSettings(root));
+  repo = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-repo-")));
+  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
+  await service.projects.create({ workingDirectory: repo, id: "default" });
   app = createApp({ service, peerAddress: () => "127.0.0.1" });
 });
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
+  await rm(repo, { recursive: true, force: true });
 });
 
 describe("task API", () => {
@@ -176,8 +180,8 @@ describe("answers loop API", () => {
   it("submits answers and resumes a parked task", async () => {
     // Manually place a parked task in actions/.
     await (await req("/api/tasks", json({ title: "Parked", status: "pending" }))).json();
-    await service.tasks.transition("parked", "running");
-    await service.tasks.transition("parked", "action", (t) => {
+    await service.forProject("default").tasks.transition("parked", "running");
+    await service.forProject("default").tasks.transition("parked", "action", (t) => {
       t.frontmatter.questions = "pending";
       t.body.questions = "1. Which DB?";
     });
@@ -194,18 +198,23 @@ describe("answers loop API", () => {
 describe("running task controls", () => {
   it("requests stop and records injected prompts for a running task", async () => {
     await (await req("/api/tasks", json({ title: "Runtime", status: "pending" }))).json();
-    await service.tasks.transition("runtime", "running");
-    await writeFile(join(workingAreaDir(root, "runtime"), "log.txt"), "");
+    await service.forProject("default").tasks.transition("runtime", "running");
+    await writeFile(
+      join(workingAreaDir(service.projects.dir("default"), "runtime"), "log.txt"),
+      "",
+    );
 
     const injected = await req("/api/tasks/runtime/inject", json({ prompt: "Focus on tests." }));
     expect(injected.status).toBe(200);
-    await expect(readFile(taskPromptInjectionsPath(root, "runtime"), "utf8")).resolves.toContain(
-      "Focus on tests.",
-    );
+    await expect(
+      readFile(taskPromptInjectionsPath(service.projects.dir("default"), "runtime"), "utf8"),
+    ).resolves.toContain("Focus on tests.");
 
     const stopped = await req("/api/tasks/runtime/stop", { method: "POST" });
     expect(stopped.status).toBe(200);
-    await expect(readFile(taskStopRequestPath(root, "runtime"), "utf8")).resolves.toContain("T");
+    await expect(
+      readFile(taskStopRequestPath(service.projects.dir("default"), "runtime"), "utf8"),
+    ).resolves.toContain("T");
   });
 
   it("rejects runtime controls for non-running tasks", async () => {

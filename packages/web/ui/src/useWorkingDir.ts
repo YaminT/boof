@@ -5,8 +5,8 @@ import { desktop } from "./desktop.js";
 /**
  * Shared logic for choosing/changing the working directory. In the desktop app
  * it opens a native folder dialog; in a plain browser it surfaces a text modal
- * (the page has no access to real filesystem paths). The chosen path persists
- * to settings.json, so the user is only ever asked once.
+ * (the page has no access to real filesystem paths). The chosen path is stored on the
+ * default project (created on first use), so the user is only ever asked once.
  */
 export function useWorkingDir(current: string, onChange: () => void) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -17,7 +17,13 @@ export function useWorkingDir(current: string, onChange: () => void) {
     if (!trimmed) return;
     setBusy(true);
     try {
-      await api.updateSettings({ workingDirectory: trimmed });
+      const { defaultProject } = await api.getSettings();
+      if (defaultProject) {
+        await api.updateProject(defaultProject, { workingDirectory: trimmed });
+      } else {
+        const project = await api.createProject({ workingDirectory: trimmed });
+        await api.updateSettings({ defaultProject: project.id });
+      }
       onChange();
       setModalOpen(false);
     } finally {

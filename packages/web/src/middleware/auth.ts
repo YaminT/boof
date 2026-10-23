@@ -170,3 +170,23 @@ export function requireScope(scope: Scope): MiddlewareHandler {
     await next();
   };
 }
+
+/** Like {@link requireScope} but any one of `scopes` suffices. */
+export function requireAnyScope(scopes: Scope[]): MiddlewareHandler {
+  return async (c, next) => {
+    const principal = c.get("principal");
+    if (!scopes.some((s) => authorize(principal, s))) {
+      return c.json(
+        {
+          error: {
+            code: "forbidden_scope",
+            message: `Missing required scope: ${scopes.join(" or ")}`,
+            details: { scope: scopes[0], anyOf: scopes },
+          },
+        },
+        403,
+      );
+    }
+    await next();
+  };
+}

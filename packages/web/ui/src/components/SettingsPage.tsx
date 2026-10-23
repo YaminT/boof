@@ -8,8 +8,17 @@ import type { HealthResult } from "../api-types.js";
 type Role = "planner" | "developer" | "observer" | "reviewer";
 const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
 
-export function SettingsPage({ settings, onChange }: { settings: Settings; onChange: () => void }) {
-  const [workingDir, setWorkingDir] = useState(settings.workingDirectory);
+export function SettingsPage({
+  settings,
+  workingDir: savedWorkingDir,
+  onChange,
+}: {
+  settings: Settings;
+  /** Working directory of the default project. */
+  workingDir: string;
+  onChange: () => void;
+}) {
+  const [workingDir, setWorkingDir] = useState(savedWorkingDir);
   const [roles, setRoles] = useState<Settings["roles"]>(settings.roles);
   const [models, setModels] = useState<Record<string, string[]>>(
     withRoleModels(settings.models, settings.roles),
@@ -23,10 +32,10 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
   const [newModel, setNewModel] = useState("");
 
   useEffect(() => {
-    setWorkingDir(settings.workingDirectory);
+    setWorkingDir(savedWorkingDir);
     setRoles(settings.roles);
     setModels((m) => withRoleModels(mergeModels(settings.models, m), settings.roles));
-  }, [settings]);
+  }, [settings, savedWorkingDir]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,11 +90,10 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
   };
 
   const save = async () => {
-    await api.updateSettings({
-      workingDirectory: workingDir,
-      roles,
-      models,
-    });
+    if (settings.defaultProject && workingDir.trim() !== savedWorkingDir) {
+      await api.updateProject(settings.defaultProject, { workingDirectory: workingDir.trim() });
+    }
+    await api.updateSettings({ roles, models });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     onChange();

@@ -1,22 +1,33 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, utimes, writeFile, mkdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+  mkdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthStore,
+  defaultSettings,
   SecuritySettingsSchema,
   SettingsStore,
   type Scope,
   type SecuritySettings,
 } from "@boof-runner/shared";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { pruneAudit } from "./middleware/audit.js";
 import { assertBindAllowed, startServer } from "./server.js";
 import { TaskService } from "./service.js";
 
 let root: string;
+let repo: string;
 let service: TaskService;
 let store: AuthStore;
 let clock: number;
@@ -74,14 +85,17 @@ async function mint(
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-runner-sec-"));
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
-  await service.tasks.ensureDirs();
-  await service.loadSettings();
+  repo = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-repo-")));
+  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
+  await service.projects.create({ workingDirectory: repo, id: "default" });
   clock = Date.parse("2026-03-01T12:00:00Z");
   store = new AuthStore(root, () => clock);
   peer = LOOPBACK;
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
+  await rm(repo, { recursive: true, force: true });
 });
 
 describe("authenticate", () => {
@@ -388,7 +402,7 @@ describe("trust levels", () => {
       key,
     );
     expect(edit.status).toBe(200);
-    expect((await service.get("do-it"))!.frontmatter.status).toBe("draft");
+    expect((await service.forProject("default").get("do-it"))!.frontmatter.status).toBe("draft");
   });
 
   it("a trusted client may create pending tasks and queue drafts", async () => {
