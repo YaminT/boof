@@ -10,3 +10,17 @@ data/settings.json
 data/.runner.pid
 *.log
 .boof-runner-worktrees/
+
+# Local planning notes (never committed)
+plans/
+
+# Agent tooling and spec documents (local only)
+.claude/
+.codex/
+openspec/
+CLAUDE.md
+AGENTS.md
+.mcp.json
+.cursor/
+.windsurf/
+.aider*
