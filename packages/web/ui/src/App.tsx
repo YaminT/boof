@@ -10,6 +10,8 @@ import { Editor } from "./components/Editor.js";
 import { CommandsTab } from "./components/CommandsTab.js";
 import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
+import { TokenGate } from "./components/TokenGate.js";
+import { onUnauthorized } from "./token.js";
 import { WorkingDirGate, WorkingDirHeader } from "./components/WorkingDir.js";
 
 type Tab = "tasks" | "commands" | "actions" | "settings";
@@ -26,8 +28,11 @@ export function App() {
     setSettings(s);
   }, []);
 
+  const [needsToken, setNeedsToken] = useState(false);
+  useEffect(() => onUnauthorized(() => setNeedsToken(true)), []);
+
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => {});
   }, [refresh]);
   useLive(refresh);
 
@@ -47,6 +52,17 @@ export function App() {
       : queued
         ? `${queued} task${queued === 1 ? "" : "s"} queued`
         : "Idle · queue empty";
+
+  if (needsToken) {
+    return (
+      <TokenGate
+        onSubmit={() => {
+          setNeedsToken(false);
+          void refresh().catch(() => {});
+        }}
+      />
+    );
+  }
 
   // First-run gate: block the app until a working directory is chosen. It then
   // persists to settings.json, so the user is never asked again.

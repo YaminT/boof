@@ -1,18 +1,23 @@
 import type { Settings, Status, TokenUsage } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
-import type { CommandTemplate, HealthResult } from "./api-types.js";
+import type { CommandTemplate, HealthResult, PublicClient } from "./api-types.js";
+import { authHeaders, notifyUnauthorized } from "./token.js";
+
+/** Throw a readable error for a failed response; a 401 also opens the token gate. */
+async function failure(res: Response, data: unknown): Promise<never> {
+  if (res.status === 401) notifyUnauthorized();
+  const err = (data as { error?: { message?: string } | string }).error;
+  const message = typeof err === "string" ? err : err?.message;
+  throw new Error(message ?? `HTTP ${res.status}`);
+}
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = (data as { error?: { message?: string } | string }).error;
-    const message = typeof err === "string" ? err : err?.message;
-    throw new Error(message ?? `HTTP ${res.status}`);
-  }
+  if (!res.ok) return failure(res, data);
   return data as T;
 }
 
@@ -66,13 +71,13 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     // No content-type header: the browser sets the multipart boundary.
-    const res = await fetch(`/api/tasks/${id}/attachments`, { method: "POST", body: form });
+    const res = await fetch(`/api/tasks/${id}/attachments`, {
+      method: "POST",
+      body: form,
+      headers: authHeaders(),
+    });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = (data as { error?: { message?: string } | string }).error;
-      const message = typeof err === "string" ? err : err?.message;
-      throw new Error(message ?? `HTTP ${res.status}`);
-    }
+    if (!res.ok) return failure(res, data);
     return data as Task;
   },
   deleteAttachment: (id: string, name: string) =>
@@ -101,4 +106,31 @@ export const api = {
   health: () => http<{ tools: Record<string, HealthResult> }>("/api/health").then((r) => r.tools),
   models: () => http<{ models: Record<string, string[]> }>("/api/models").then((r) => r.models),
   usage: () => http<TokenUsage>("/api/usage"),
+
+  /** Fetch an attachment with the auth header and return a blob: URL for <img>/<a>. */
+  attachmentBlobUrl: async (id: string, name: string): Promise<string> => {
+    const res = await fetch(api.attachmentUrl(id, name), { headers: authHeaders() });
+    if (!res.ok) return failure(res, await res.json().catch(() => ({})));
+    return URL.createObjectURL(await res.blob());
+  },
+
+  listClients: () => http<{ clients: PublicClient[] }>("/api/auth/clients").then((r) => r.clients),
+  createClient: (input: {
+    name: string;
+    kind?: "harness" | "mcp" | "cli";
+    scopes: string[];
+    projects?: "*" | string[];
+    trust?: "trusted" | "review";
+    expiresIn?: string;
+  }) =>
+    http<{ client: PublicClient; key: string }>("/api/auth/clients", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  revokeClient: (id: string) =>
+    http<{ client: PublicClient }>(`/api/auth/clients/${id}/revoke`, { method: "POST" }),
+  rotateClient: (id: string) =>
+    http<{ client: PublicClient; key: string }>(`/api/auth/clients/${id}/rotate`, {
+      method: "POST",
+    }),
 };
