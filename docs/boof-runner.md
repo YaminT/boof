@@ -306,6 +306,17 @@ Important UI areas:
 - Commands: reusable instruction templates
 - Settings: working directory, runner toggle, tool health, model lists, role assignments, usage
 
+## API Authentication
+
+Authentication is middleware in `packages/web/src/middleware/`. Order on `/api`: host guard, secure headers, audit (outermost, so rejected calls are logged), body limit, `authenticate`, rate limit, then the route, which declares its scope with `requireScope`.
+
+- Principals: `local` (loopback peer, no `Authorization` header, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`.
+- Scopes: `tasks:read`, `tasks:write`, `tasks:control` (stop, inject), `settings:read`, `settings:write`, `auth:admin`, `admin` (everything); `projects:*`, `plans:*` and `runner:control` are defined for the multi-project work. Current mapping: health, models and settings reads need `settings:read`; usage, SSE events, commands reads and attachment reads need `tasks:read`; commands and attachment writes follow `tasks:write`; toggling the runner is a settings write. Project restriction (`principal.projects`) is stored and exposed as `authorizeProject()`; routes call it once projects exist.
+- Trust: `review` clients (the default) create tasks as `draft` with label `external:<id>` and an `origin` in the task frontmatter, and cannot move tasks to `pending` (retry, unarchive, answers, status update): `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this for tasks. `trusted` clients behave like local.
+- Admin API (`auth:admin`): `GET/POST /api/auth/clients`, `POST /api/auth/clients/:id/revoke`, `POST /api/auth/clients/:id/rotate`. Responses never contain `keyHash`; a caller cannot grant scopes or trust it does not hold.
+- Settings (`settings.security`, edited in `settings.json`, not through `PUT /api/settings`): `allowedHosts`, `auth.mode`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.
+- Binding: `--host`/`BOOF_RUNNER_HOST`; a non-loopback bind needs `auth.mode = "required"` and an active client; the bind host is added to the Host allow-list. `--tls-cert`/`--tls-key` serve HTTPS.
+
 ## Persistence And Safety
 
 The most important safety mechanisms are:

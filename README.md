@@ -200,11 +200,31 @@ sit on one line, the last complete marker wins, and unknown tokens throw.
 
 ## Security model
 
-- The server binds 127.0.0.1 only and rejects requests whose Host header is not a loopback name. This blocks DNS-rebinding attacks from websites open in your browser.
+- The server binds 127.0.0.1 by default and rejects requests whose Host header is not a loopback name. This blocks DNS-rebinding attacks from websites open in your browser.
 - Anyone who can reach the API can create a task, and every task runs coding agents with permission prompts disabled inside your repository. Treat API access as equivalent to running code as your user.
 - Task and command ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
 - Agents work in a git worktree on a `boof-runner/<id>` branch. Nothing is merged or pushed for you.
-- Do not expose the port to other machines. Authenticated remote access is planned.
+- Do not expose the port to the public internet. For other machines, use the remote access setup below.
+
+### Remote access
+
+Loopback use needs no setup: a request from a loopback peer with no `Authorization` header is the trusted `local` principal. Anything else needs an API key.
+
+```bash
+# 1. require keys everywhere: set in settings.json
+#    "security": { "auth": { "mode": "required" } }
+# 2. create a client (the key is printed once; scopes limit what it can do)
+boof-runner auth add --name ci-bot --scopes tasks:read,tasks:write --expires 30d
+# 3. bind beyond loopback; refused unless mode is "required" and a client exists
+boof-runner --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
+```
+
+- Call the API with `Authorization: Bearer boof_<client>_<secret>`. The browser UI asks for the key once per tab (kept in `sessionStorage`). The desktop app manages its own key.
+- `boof-runner auth list | revoke <id> | rotate <id>` manage clients. Revoked and expired keys stop working within 5 seconds (immediately for changes made through the API).
+- **Keys are root-equivalent.** A client that can create and queue tasks can run code as you. Scope keys narrowly (`tasks:read` for dashboards), set `--expires`, and keep the default `review` trust for anything you do not fully control: its tasks land in `draft` labelled `external:<client>`, and a human approves them in the UI (Tasks, filter "Proposed by clients"). Use `--trust trusted` only for clients you would give your own shell.
+- Without TLS, keys travel in clear text; the server warns when you bind a non-loopback address without `--tls-cert`/`--tls-key`. Tailscale or a reverse proxy are fine alternatives. Requests carrying `X-Forwarded-For` never get local trust.
+- Every `/api` call is appended to `<data>/audit/<day>.jsonl` (principal, action, status, timing, IP; never bodies, prompts or keys). Files older than `security.audit.retentionDays` (default 90) are pruned at start. Requests are rate limited per principal (`security.rateLimit`, default 600/min, 30/min for attachments).
+- Tasks submitted by a client carry a `## Provenance` note in the agent prompt telling it to treat out-of-repo instructions as out of scope. This is advisory; the real controls are trust level, worktree isolation and the never-merge default.
 
 ## Project layout
 
