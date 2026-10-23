@@ -18,7 +18,7 @@ your input when the planner needs clarification.
 - **Prompt attachments** — drop images or PDFs onto a task's prompt; the runner exposes
   them to the agents for additional context.
 
-> Single-user, local only. No auth, no cloud, no OS boot service.
+> Single-user, local only. No cloud, no OS boot service. See [Security model](#security-model).
 
 ## Requirements
 
@@ -84,6 +84,8 @@ boof-runner scan /path/to/repo --dry-run   # list what it would create
 boof-runner scan /path/to/repo             # create the tasks
 boof-runner run --all -d ./data            # then drive them to completion
 ```
+
+`run --repo` and `scan` set the data root's working directory to the given repository; a web UI or desktop app sharing the same data root will follow that change.
 
 Useful flags: `--repo <dir>` (working directory the pipeline runs against — a git
 repo enables worktree isolation), `--base <ref>` (branch or commit the task's worktree
@@ -195,6 +197,14 @@ For offline tests the `mock` tool takes a marker in the prompt:
 `[[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]` (per role, one
 verdict per round, last repeats; also `NONE`, `GARBLED`, `CONFLICT`). The marker must
 sit on one line, the last complete marker wins, and unknown tokens throw.
+
+## Security model
+
+- The server binds 127.0.0.1 only and rejects requests whose Host header is not a loopback name. This blocks DNS-rebinding attacks from websites open in your browser.
+- Anyone who can reach the API can create a task, and every task runs coding agents with permission prompts disabled inside your repository. Treat API access as equivalent to running code as your user.
+- Task and command ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
+- Agents work in a git worktree on a `boof-runner/<id>` branch. Nothing is merged or pushed for you.
+- Do not expose the port to other machines. Authenticated remote access is planned.
 
 ## Project layout
 
