@@ -14,7 +14,7 @@
     "dist:win": "npm run stage && electron-builder --win --publish never"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.17",
+    "@hono/node-server": "^2.0.0",
     "@boof-runner/runner": "workspace:*",
     "@boof-runner/shared": "workspace:*",
     "@boof-runner/web": "workspace:*",
