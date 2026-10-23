@@ -39,21 +39,39 @@ Boof Runner has a simple coordination model: the filesystem is the source of tru
 
 There is no database. The web server and runner both read and write the same data root. Atomic writes, file locks, and status-directory reconciliation keep that safe enough for the local single-user model.
 
-The default data root contains:
+The default data root (layout v2, `settings.json` has `schemaVersion: 2`) contains:
 
 ```text
 settings.json
 commands/
-tasks/
-  drafts/
-  pending/
-  ongoing/
-  actions/
-  done/
-  failed/
-  archived/
-  assets/
+auth/
+audit/
+projects/
+  <projectId>/
+    project.json
+    tasks/
+      drafts/
+      pending/
+      ongoing/
+      actions/
+      done/
+      failed/
+      archived/
+      assets/
+    usage.json
 ```
+
+### Projects
+
+A project is one git repository with its own queue. `project.json` (`ProjectSchema`) holds the `id` (the directory name, kebab-case), `name`, `workingDirectory` (a realpath, resolved when the project is created), `paused`, `archived`, an optional `defaultBase` ref, `labels`, `origin` (`ui`, `cli`, `api` or `migration`) and optional per-project overrides of `roles`, `review`, `worktree` and `retries`. Global settings stay in `settings.json`; the runner merges them per key with the project's overrides (`effectiveSettings`), the project winning, and takes the working directory from the project.
+
+Every task path helper takes a `root`. For a project that root is `projects/<id>/`, so `TaskStore`, `AttachmentStore` and `UsageStore` are used unchanged, one instance per project. Tasks do not store their project: the directory is authoritative, as it is for status. Ids are per project (two projects can both have a task `fix-login`); API responses add `projectId`.
+
+Creating a project (`ProjectStore.create`) resolves the realpath, requires a git work tree (the check is injected by the caller, so `shared` does not depend on `runner`), refuses a directory inside the data root or one that is already a project, and derives the id from the directory name. A project with an empty `workingDirectory` can only come from migrating a v1 data root that never had one; the runner skips it until a directory is set.
+
+### Migration from v1
+
+`migrateDataRoot` (shared) runs before any store opens: at server start, in the desktop app, and in `run`, `scan` and `project`. A missing `settings.json` becomes v2 defaults with no projects. A `settings.json` without `schemaVersion` is v1: `projects/default/project.json` is written from the old `workingDirectory`, `tasks/` and `usage.json` are renamed into `projects/default/`, then `settings.json` is rewritten last as v2 (`defaultProject: "default"`, `runner.concurrency: 1`, removed keys dropped) and `migration-v2.log` records what moved. Because the settings file changes last, a crash leaves a v1 file and the next start finishes the remaining steps; each step checks its own precondition. The migration refuses (and changes nothing) when `tasks/ongoing/` holds a task and `.runner.pid` names a live process. Worktrees live in the repository and are keyed by task id, so they are untouched.
 
 Task state is represented in two ways:
 
@@ -95,7 +113,11 @@ This format keeps task data editable, inspectable, and portable outside the app.
 
 ## Runner Pipeline
 
-The runner polls `tasks/pending/`, chooses the highest-priority non-skipped task, and transitions it to `tasks/ongoing/<task-id>/`.
+The runner polls `tasks/pending/` of every active, non-paused project that has a working directory and chooses across all of them: highest `priority`, then oldest `updated`, then project id (then task id) so the order is deterministic. It transitions the chosen task to `projects/<id>/tasks/ongoing/<task-id>/` and builds the pipeline with the project's effective settings.
+
+### Concurrency
+
+`settings.runner.concurrency` (default 1) is the number of tasks in flight. The invariant is **at most one running task per project**: the engine keeps a map of in-flight pipelines by project id and `selectNext()` skips those projects, because worktree creation, the `.meta` sidecar and branch creation in one repository are not race-safe. With concurrency 2 two projects can run side by side; two tasks of one project never do. Concurrent agent CLIs share CPU, memory and API rate limits. The mock tool's `mockState` is module-global, so tests that run tasks concurrently track their own state in the `onRun` hook instead of relying on `mockState.prompts` or `calls`.
 
 For each task, the pipeline runs these steps:
 
@@ -168,7 +190,7 @@ When a task has `runs > 1`, Boof Runner re-queues it after each completed run un
 
 ## Code Execution And Isolation
 
-When `settings.workingDirectory` is a git repository, Boof Runner creates a dedicated git worktree for a running task. Agent tools execute inside that worktree, not directly in the main checkout.
+When the project's `workingDirectory` is a git repository, Boof Runner creates a dedicated git worktree for a running task. Agent tools execute inside that worktree, not directly in the main checkout.
 
 This matters because the agents run in auto-approve mode. Worktree isolation gives Boof Runner:
 
@@ -280,23 +302,20 @@ This gives the user a practical way to steer a long-running task between steps w
 
 The Hono server exposes a local REST API for:
 
-- task CRUD
-- queue reordering
-- skip toggles
-- retry/archive/unarchive/delete
-- answers for parked tasks
-- attachments
-- live logs
-- stop and prompt injection
-- command templates
-- settings
+- projects: `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:pid` (`?purge=1` deletes the data, otherwise it archives; refused with `409 project_busy` while a task runs), `POST /api/projects/:pid/archive|unarchive|pause|resume`, `GET /api/projects/:pid/usage`
+- per-project tasks under `/api/projects/:pid/tasks…`: CRUD, queue reordering, skip toggles, retry/archive/unarchive/delete, answers for parked tasks, attachments, live logs, stop and prompt injection (task responses carry `projectId`)
+- `GET /api/actions`: tasks parked in `action` across the projects the caller may read
+- command templates (global)
+- settings (global; `defaultProject` is settable, the working directory is not)
 - tool health
 - model lists
-- token usage
+- token usage: `GET /api/usage` is the sum over projects
+
+The legacy `/api/tasks…` routes are aliases of `/api/projects/<settings.defaultProject>/tasks…`. They answer `Deprecation: true`, and `404 no_default_project` while no default is set. They go away in the release after the REST v1 work.
 
 All `/api` requests must carry a loopback Host header (`localhost`, `127.0.0.1` or `[::1]`); other hosts get `421`. Errors have the shape `{ "error": { "code": "…", "message": "…" } }`. Status changes through the API are limited to `draft`, `pending` and `archived`; the runner owns `running`, `action`, `done` and `failed`.
 
-The React UI consumes that API and listens to server-sent events from the file watcher. SSE events are only hints. After an event, the UI reloads current state from the filesystem-backed API.
+The React UI consumes that API and listens to server-sent events from the file watcher. The watcher covers `projects/` (depth 6), `commands/` and `settings.json`; each `changed` event carries the JSON `{ "project": "<id>" }` when the path is under `projects/<id>/` and `{}` otherwise, and a client restricted to some projects only receives the events of its own. SSE events are only hints. After an event, the UI reloads current state from the filesystem-backed API.
 
 Important UI areas:
 
@@ -304,14 +323,14 @@ Important UI areas:
 - Editor: task prompt, labels, runs, command template, attachments, reports, logs
 - Actions: parked planner questions awaiting user answers
 - Commands: reusable instruction templates
-- Settings: working directory, runner toggle, tool health, model lists, role assignments, usage
+- Settings: runner toggle, tool health, model lists, role assignments, usage
 
 ## API Authentication
 
 Authentication is middleware in `packages/web/src/middleware/`. Order on `/api`: host guard, secure headers, audit (outermost, so rejected calls are logged), body limit, `authenticate`, rate limit, then the route, which declares its scope with `requireScope`.
 
 - Principals: `local` (loopback peer, no `Authorization` header, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`.
-- Scopes: `tasks:read`, `tasks:write`, `tasks:control` (stop, inject), `settings:read`, `settings:write`, `auth:admin`, `admin` (everything); `projects:*`, `plans:*` and `runner:control` are defined for the multi-project work. Current mapping: health, models and settings reads need `settings:read`; usage, SSE events, commands reads and attachment reads need `tasks:read`; commands and attachment writes follow `tasks:write`; toggling the runner is a settings write. Project restriction (`principal.projects`) is stored and exposed as `authorizeProject()`; routes call it once projects exist.
+- Scopes: `tasks:read`, `tasks:write`, `tasks:control` (stop, inject), `settings:read`, `settings:write`, `auth:admin`, `admin` (everything); `projects:*`, `plans:*` and `runner:control` are defined for the multi-project work. Current mapping: health, models and settings reads need `settings:read`; SSE events, commands reads and attachment reads need `tasks:read`; commands and attachment writes follow `tasks:write`; toggling the runner is a settings write. Project routes need `projects:read` (list, get, usage) or `projects:write` (create, update, archive, delete); pause and resume accept `runner:control` or `projects:write`; `/api/usage` and `/api/projects/:pid/usage` also accept `tasks:read`; task routes keep their task scopes. Every route with a project calls `authorizeProject()` before anything else (`403 forbidden_project`, so existence is not probed) and list routes filter to the allowed projects. A non-local principal registering a project (or moving its working directory) must pass `security.allowedProjectRoots`, the git and data-root checks and the `/`/home exclusion, else `403 project_root_not_allowed` (the allowed roots are listed in the error only for `admin`).
 - Trust: `review` clients (the default) create tasks as `draft` with label `external:<id>` and an `origin` in the task frontmatter, and cannot move tasks to `pending` (retry, unarchive, answers, status update): `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this for tasks. `trusted` clients behave like local.
 - Admin API (`auth:admin`): `GET/POST /api/auth/clients`, `POST /api/auth/clients/:id/revoke`, `POST /api/auth/clients/:id/rotate`. Responses never contain `keyHash`; a caller cannot grant scopes or trust it does not hold.
 - Settings (`settings.security`, edited in `settings.json`, not through `PUT /api/settings`): `allowedHosts`, `auth.mode`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.
