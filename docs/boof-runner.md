@@ -1,6 +1,6 @@
 # Boof Runner
 
-Boof Runner is the code-execution runner for the Boof Runner project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code and Codex.
+Boof Runner is the code-execution runner of the boof project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code and Codex.
 
 Boof Runner is local-first. It runs on the user's machine, stores tasks as markdown files, serves a local web UI, and executes one task at a time against the configured working directory.
 
@@ -20,9 +20,9 @@ Boof Runner manages the full lifecycle of coding-agent work:
 
 The product goal is not to replace a developer's judgment. Boof Runner automates the repetitive orchestration around coding agents while keeping the work observable, reviewable, and stored in plain files.
 
-## How It Fits In Boof Runner
+## How It Fits In boof
 
-Boof Runner is the broader project. Boof Runner is the runner part of that system: the component responsible for code execution.
+boof is the broader project (it also includes boof-planner, which writes `plan.boof.xml` and `goal.boof.xml` files). Boof Runner is the part responsible for code execution.
 
 In this repository, Boof Runner includes:
 
@@ -294,6 +294,8 @@ The Hono server exposes a local REST API for:
 - model lists
 - token usage
 
+All `/api` requests must carry a loopback Host header (`localhost`, `127.0.0.1` or `[::1]`); other hosts get `421`. Errors have the shape `{ "error": { "code": "…", "message": "…" } }`. Status changes through the API are limited to `draft`, `pending` and `archived`; the runner owns `running`, `action`, `done` and `failed`.
+
 The React UI consumes that API and listens to server-sent events from the file watcher. SSE events are only hints. After an event, the UI reloads current state from the filesystem-backed API.
 
 Important UI areas:
@@ -370,12 +372,8 @@ The highest-value next improvements are:
 
    The current one-task-at-a-time model is simple and safe. If concurrency is added, it should preserve per-task worktree isolation and add explicit resource limits.
 
-10. Separate Boof Runner project docs from Boof Runner runner docs
-
-As Boof Runner grows, the project should have a top-level architecture document that distinguishes Boof Runner's product surface from Boof Runner's runner responsibilities.
-
 ## Summary
 
-Boof Runner is the execution engine of Boof Runner. It takes local task files, runs coding-agent tools through a fixed planner/developer/reviewer pipeline, isolates code changes in git worktrees, exposes progress through a local web UI, and records durable results back to plain markdown.
+Boof Runner is the execution engine of the boof project. It takes local task files, runs coding-agent tools through a fixed planner/developer/reviewer pipeline, isolates code changes in git worktrees, exposes progress through a local web UI, and records durable results back to plain markdown.
 
 Its core strength is controlled local automation: users can queue work, watch it run, intervene when needed, and keep the full history on disk.
