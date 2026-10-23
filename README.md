@@ -13,8 +13,10 @@ your input when the planner needs clarification.
 - **Background runner** drives each task through the pipeline, isolated in a git worktree. Task branches (`boof-runner/<id>`) are never deleted, and the worktrees of failed or stopped tasks are kept.
 - **Pluggable tools** — built-in `claude-code`, `codex`, and a first-class `mock` adapter
   (no network) so the full test suite runs offline.
+- **Many projects, one runner** — register any number of git repositories; each has its own
+  task queue, usage and setting overrides, and one runner serves them all in priority order.
 - **Desktop app** (Electron) — runs the server, runner, and UI in one window; remembers
-  your working directory between launches.
+  your projects between launches.
 - **Prompt attachments** — drop images or PDFs onto a task's prompt; the runner exposes
   them to the agents for additional context.
 
@@ -23,7 +25,7 @@ your input when the planner needs clarification.
 ## Requirements
 
 - **Node.js ≥ 20** or **Bun** (the code runs on both)
-- **git** — the runner isolates each task in a git worktree, so the configured
+- **git** — the runner isolates each task in a git worktree, so every project's
   _working directory_ must be a git repository
 - Optional CLIs detected at runtime via health checks: `claude-code`, `codex`
   (the `mock` tool covers offline use)
@@ -38,8 +40,44 @@ npm run dev          # run from source (tsx) — boots web + runner
 
 Then open the URL it prints (default <http://127.0.0.1:4319>).
 
-On first run Boof Runner scaffolds the data root (`./data` by default): the `tasks/` status
-directories, a `commands/` folder, and `settings.json`.
+On first run Boof Runner scaffolds the data root (`./data` by default) with a `commands/`
+folder, an empty `projects/` folder and `settings.json`. A fresh data root has **no projects**:
+the UI asks you to add one, or run `boof-runner project add <repo>`.
+
+### Data root layout
+
+```text
+<data>/
+  settings.json          # global: schemaVersion 2, runner, roles, models, review, worktree, retries, defaultProject, security
+  commands/              # command templates, shared by all projects
+  auth/  audit/          # API clients and the request audit log
+  projects/
+    <projectId>/
+      project.json       # name, working directory, paused/archived, overrides
+      tasks/             # drafts/ pending/ ongoing/ actions/ done/ failed/ archived/ assets/
+      usage.json         # token usage of this project
+  migration-v2.log       # only after a migration (see below)
+```
+
+A project is a git repository plus its own queue. `project.json` may override the global
+`roles`, `review`, `worktree` and `retries` per key (an unset key inherits the global value);
+it also holds `defaultBase` (the base ref for tasks that do not set one) and `paused`. The
+runner skips paused and archived projects.
+
+### Upgrading a v1 data root
+
+A data root from before multi-project support (no `schemaVersion` in `settings.json`) is
+migrated automatically the first time any command touches it (`serve`, `run`, `scan`,
+`project`, the desktop app): `tasks/` and `usage.json` move into `projects/default/`, the old
+`workingDirectory` becomes the `default` project's working directory, `settings.json` is
+rewritten as v2 with `defaultProject: "default"`, and what moved is written to
+`migration-v2.log`. Task files, command templates, worktrees and branches are untouched.
+The migration refuses to run while a task is `ongoing` and the runner process is alive: stop
+the runner and start again. It is idempotent and finishes by itself if a previous run was
+interrupted.
+
+The old `/api/tasks…` routes keep working for one release as aliases of the default project
+and answer with `Deprecation: true`; use `/api/projects/<id>/tasks…` instead.
 
 ### Desktop app
 
@@ -51,9 +89,9 @@ The desktop app boots the same Hono server and runner in its main process and op
 UI in a native window. Its data root lives in the per-user app-data directory, so settings
 persist across launches.
 
-On first launch it asks for the **working directory** (a full-screen picker that opens a
-native folder dialog). The choice is saved to `settings.json` and never asked again; change
-it any time via the folder icon in the top-right header.
+On first launch it asks for the first project's **working directory** (a full-screen picker
+that opens a native folder dialog). The project is saved in the data root and never asked
+again; change the directory any time via the folder icon in the top-right header.
 
 ### Running the built CLI
 
@@ -70,9 +108,15 @@ commands share `-d, --data <path>` (data root, or `$BOOF_RUNNER_DATA_ROOT`).
 ```bash
 # Run a single prompt through planner → developer → reviewer and stream progress.
 # Exits non-zero if the task fails or parks for answers.
-boof-runner run "Add a rate limiter to the API" --repo /path/to/repo
+boof-runner project add /path/to/repo [--id <kebab>] [--name <text>] [--default]
+boof-runner project list [--json]
+boof-runner project remove <id> [--purge]   # archive; --purge deletes the project's data, never the repo
+
+boof-runner run "Add a rate limiter to the API" --repo /path/to/repo   # registers the repo on first use
+boof-runner run "Fix the flaky test" --project my-api                  # or name a registered project
 boof-runner run --file task.md --repo /path/to/repo   # prompt from a file
-boof-runner run --all                                 # drive the whole pending queue
+boof-runner run --all                                 # drive the pending queue of every project
+boof-runner run --all --project my-api                # ... or of one project
 
 # SCAN MODE — turn a boof-seeded repo's unfinished units into tasks.
 # Walks <repo> for goal.boof.xml files whose current status is not `done`,
@@ -81,14 +125,19 @@ boof-runner run --all                                 # drive the whole pending 
 # the unit strictly from its goal.boof.xml, TDD; on success the runner appends a
 # <version> to that goal file bumping its status.
 boof-runner scan /path/to/repo --dry-run   # list what it would create
-boof-runner scan /path/to/repo             # create the tasks
+boof-runner scan /path/to/repo             # create the tasks (registers the repo if needed)
 boof-runner run --all -d ./data            # then drive them to completion
 ```
 
-`run --repo` and `scan` set the data root's working directory to the given repository; a web UI or desktop app sharing the same data root will follow that change.
+`run --repo <dir>` looks the project up by the real path of `<dir>` and registers it when
+unknown (the new id is printed); a second call with the same directory reuses it. Without
+`--project` or `--repo`, `run` uses `settings.defaultProject` (set it with
+`project add <dir> --default`). `scan <repo>` does the same lookup; `--project <id>` must name
+the project of that repo. Neither command writes a working directory to `settings.json`; the
+only global change is `runner.enabled = true`, which is logged.
 
-Useful flags: `--repo <dir>` (working directory the pipeline runs against — a git
-repo enables worktree isolation), `--base <ref>` (branch or commit the task's worktree
+Useful flags: `--project <id>` / `--repo <dir>` (see above; a git repo enables worktree
+isolation), `--base <ref>` (branch or commit the task's worktree
 starts from instead of HEAD), `--title <text>` (task title, default the first line of
 the prompt), `--tool <id>`/`--model <name>` (force all roles to
 one tool, e.g. `--tool mock` for offline runs), `--runs <n>` (iterate a task N times),
@@ -117,13 +166,13 @@ The default remote is `git@github.com:YaminT/boof.git`.
 | `--no-runner`       | —                       | runner on | Start the web server only |
 | `-h, --help`        | —                       | —         | Show help                 |
 
-Run `boof-runner --help` for the full command reference (`serve`, `run`, `scan`).
+Run `boof-runner --help` for the full command reference (`serve`, `run`, `scan`, `project`, `auth`).
 
 ### Worktrees, retention and retries
 
 Each task runs in its own git worktree on branch `boof-runner/<id>`. Task frontmatter `base`
 (or `run --base <ref>`) starts it from a branch or commit instead of HEAD; an unknown ref
-fails the task before anything is created. Optional `settings.json` keys, all with defaults:
+fails the task before anything is created. Optional `settings.json` keys, all with defaults (a project can override `worktree`, `retries`, `review` and `roles` in its `project.json`; `workingDirectory` is the project's):
 
 | Key                     | Default                                     | Meaning                                                                                                                                   |
 | ----------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -141,21 +190,32 @@ after the first sees the previous iteration's final observer and reviewer report
 
 ## How it works
 
-A task moves physically between status directories under `<data>/tasks/`, kept in sync
-with its `status` frontmatter field:
+A task moves physically between status directories under `<data>/projects/<id>/tasks/`, kept
+in sync with its `status` frontmatter field:
 
 ```
 drafts/ → pending/ → ongoing/ → done/
                   ↘ actions/ (awaiting your answers)  ↘ failed/
 ```
 
-The runner polls `pending/`, picks the highest-priority task, and runs
+The runner polls the `pending/` directory of every active, non-paused project, picks the
+highest-priority task (ties: oldest `updated`, then project id), and runs
 **planner → planner-refinement → developer → reviewer**, writing a report at every step.
 If the planner raises clarifying questions, the task parks in `actions/` and the runner
 moves on; you answer in the **Actions** tab and it resumes. Developer/reviewer questions
 are routed back to the planner via file — never surfaced to you.
 
 Turn the runner on/off any time from the UI; it finishes the in-flight step gracefully.
+
+#### Concurrency
+
+`settings.runner.concurrency` (default `1`) is how many tasks the runner may run at once.
+Whatever the value, **at most one task runs per project at a time**: the worktrees of one
+repository are created one after another. With concurrency above 1, tasks of different
+projects overlap. Each running task starts its own agent CLIs, so they share the machine's CPU
+and memory and your API rate limits (more 429/overloaded retries, slower individual tasks);
+raise it only when the projects are independent and the machine and quotas can carry it. Edit
+it in `settings.json` or with `PUT /api/settings {"runner":{"concurrency":2}}`.
 
 ### Observer, verdicts and the fix loop
 
@@ -202,7 +262,7 @@ sit on one line, the last complete marker wins, and unknown tokens throw.
 
 - The server binds 127.0.0.1 by default and rejects requests whose Host header is not a loopback name. This blocks DNS-rebinding attacks from websites open in your browser.
 - Anyone who can reach the API can create a task, and every task runs coding agents with permission prompts disabled inside your repository. Treat API access as equivalent to running code as your user.
-- Task and command ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
+- Task, command and project ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
 - Agents work in a git worktree on a `boof-runner/<id>` branch. Nothing is merged or pushed for you.
 - Do not expose the port to the public internet. For other machines, use the remote access setup below.
 
@@ -219,6 +279,7 @@ boof-runner auth add --name ci-bot --scopes tasks:read,tasks:write --expires 30d
 boof-runner --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
 ```
 
+- Clients may be restricted to some projects (`--projects a,b`): other projects answer `403 forbidden_project`. A client with `projects:write` may register a project only when its real path is under `security.allowedProjectRoots` (`~` expands), is a git work tree, is not inside the data root and is not `/` or the home directory; otherwise `403 project_root_not_allowed`. With no allowed roots only the local principal can add projects.
 - Call the API with `Authorization: Bearer boof_<client>_<secret>`. The browser UI asks for the key once per tab (kept in `sessionStorage`). The desktop app manages its own key.
 - `boof-runner auth list | revoke <id> | rotate <id>` manage clients. Revoked and expired keys stop working within 5 seconds (immediately for changes made through the API).
 - **Keys are root-equivalent.** A client that can create and queue tasks can run code as you. Scope keys narrowly (`tasks:read` for dashboards), set `--expires`, and keep the default `review` trust for anything you do not fully control: its tasks land in `draft` labelled `external:<client>`, and a human approves them in the UI (Tasks, filter "Proposed by clients"). Use `--trust trusted` only for clients you would give your own shell.
@@ -229,7 +290,7 @@ boof-runner --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
 ## Project layout
 
 ```
-packages/shared    task-file format, schemas, lifecycle state machine, atomic store
+packages/shared    task-file format, schemas, project registry, v1→v2 migration, lifecycle state machine, atomic store
 packages/runner    tool adapters, git worktree isolation, the pipeline engine
 packages/web        Hono server + file-watch SSE; React UI under packages/web/ui
 packages/desktop    Electron app: boots the server + runner in-process, opens the UI window

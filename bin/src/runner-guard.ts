@@ -1,5 +1,5 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { dataPaths } from "@boof-runner/shared";
+import { dataRootPaths } from "@boof-runner/shared";
 
 /**
  * Single-runner guard via a pidfile (cli-packaging spec). Prevents a second
@@ -9,7 +9,7 @@ import { dataPaths } from "@boof-runner/shared";
 export class RunnerGuard {
   private readonly pidFile: string;
   constructor(root: string) {
-    this.pidFile = dataPaths(root).runnerPid;
+    this.pidFile = dataRootPaths(root).runnerPid;
   }
 
   /** True if another live process already holds the runner lock. */

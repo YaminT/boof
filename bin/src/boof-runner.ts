@@ -7,7 +7,9 @@ import { startServer } from "@boof-runner/web";
 import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
-import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
+import { projectCommand } from "./project-cli.js";
+import { drainQueue, ProjectResolutionError, runTask, scanRepoToTasks } from "./headless.js";
+import { MigrationError } from "@boof-runner/shared";
 
 interface ServeArgs {
   dataRoot: string;
@@ -48,8 +50,9 @@ Usage:
   boof-runner [serve] [options]        Start the web UI + background runner (default)
   boof-runner run <prompt> [options]   Enqueue a prompt and drive it to completion (headless)
   boof-runner run --file <path> [...]  Same, reading the prompt from a file
-  boof-runner run --all [options]      Drive the whole pending queue to completion
+  boof-runner run --all [options]      Drive the pending queue of every project to completion
   boof-runner scan <repo> [options]    Turn a repo's not-done goal.boof.xml units into tasks
+  boof-runner project <add|list|remove>  Manage projects (git repositories) served by this data root
   boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
   boof-runner --help                   Show this help
 
@@ -66,8 +69,10 @@ serve options:
 
 run options:
   -f, --file <path>   Read the prompt from a file instead of an argument
-      --all           Drive all pending tasks instead of a new prompt
-      --repo <dir>    Working directory the pipeline runs against (git repo → isolation)
+      --all           Drive all pending tasks (every project, or --project) instead of a new prompt
+      --project <id>  Project to queue the task in (or to drain with --all)
+      --repo <dir>    Repository to run against; its project is looked up by real path and
+                      registered (its id printed) when unknown. Default: the default project
       --base <ref>    Branch or commit the task's worktree starts from (default: HEAD)
       --title <text>  Task title (default: first line of the prompt)
       --tool <id>     Force all roles to this tool (e.g. mock, claude-code, codex)
@@ -75,6 +80,7 @@ run options:
       --runs <n>      Run the pipeline N times for the task (default 1)
 
 scan options:
+      --project <id>  Project the tasks go to (default: the project of <repo>, registered if needed)
       --dry-run       List the units that would become tasks; create nothing
       --bump <s>      Status to record on success: review | done (default done)
       --tool <id>     Force all roles to this tool for the created tasks
@@ -162,9 +168,10 @@ export async function runCommand(argv: string[]): Promise<number> {
   const model = getOpt(argv, ["--model"]);
   const base = getOpt(argv, ["--base"]);
   const title = getOpt(argv, ["--title"]);
+  const project = getOpt(argv, ["--project"]);
 
   if (hasFlag(argv, ["--all"])) {
-    const { failed } = await drainQueue({ root });
+    const { failed } = await drainQueue({ root, ...(project ? { project } : {}) });
     return failed > 0 ? 1 : 0;
   }
 
@@ -180,6 +187,7 @@ export async function runCommand(argv: string[]): Promise<number> {
   const summary = await runTask({
     root,
     prompt,
+    ...(project ? { project } : {}),
     ...(repo ? { repo } : {}),
     ...(base ? { base } : {}),
     ...(title ? { title } : {}),
@@ -202,9 +210,11 @@ export async function scanCommand(argv: string[]): Promise<number> {
   const bump = getOpt(argv, ["--bump"]);
   const tool = getOpt(argv, ["--tool"]);
   const model = getOpt(argv, ["--model"]);
+  const project = getOpt(argv, ["--project"]);
   const summary = await scanRepoToTasks({
     root: dataOpt ? absPath(dataOpt) : defaultDataRoot(),
     repo,
+    ...(project ? { project } : {}),
     dryRun: hasFlag(argv, ["--dry-run"]),
     bumpTo: bump === "review" ? "review" : bump === "done" ? "done" : undefined,
     ...(tool ? { tool } : {}),
@@ -223,6 +233,7 @@ export function firstPositional(argv: string[]): string | undefined {
     "--file",
     "-f",
     "--repo",
+    "--project",
     "--base",
     "--title",
     "--tool",
@@ -250,10 +261,35 @@ export function firstPositional(argv: string[]): string | undefined {
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const [cmd, ...rest] = argv;
   // Top-level --help (but let `run`/`scan --help` fall through to their handlers).
-  if (hasFlag(argv, ["--help", "-h"]) && cmd !== "run" && cmd !== "scan" && cmd !== "auth") {
+  if (
+    hasFlag(argv, ["--help", "-h"]) &&
+    cmd !== "run" &&
+    cmd !== "scan" &&
+    cmd !== "auth" &&
+    cmd !== "project"
+  ) {
     console.log(HELP);
     return;
   }
+  let code = 0;
+  try {
+    code = await dispatch(cmd, rest, argv);
+  } catch (err) {
+    if (err instanceof ProjectResolutionError || err instanceof MigrationError) {
+      console.error(err.message);
+      code = 1;
+    } else {
+      throw err;
+    }
+  }
+  if (code === SERVE_FOREVER) return;
+  if (code !== 0) process.exitCode = code;
+}
+
+/** Sentinel: the command (serve) keeps the process alive; main must not set an exit code. */
+const SERVE_FOREVER = -1;
+
+async function dispatch(cmd: string | undefined, rest: string[], argv: string[]): Promise<number> {
   let code = 0;
   switch (cmd) {
     case "run":
@@ -267,19 +303,22 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "auth":
       code = await authCommand(rest, defaultDataRoot);
       break;
+    case "project":
+      code = await projectCommand(rest, defaultDataRoot);
+      break;
     case "serve":
       await serve(rest);
-      return; // serve runs forever
+      return SERVE_FOREVER; // serve runs forever
     case undefined:
       await serve([]);
-      return;
+      return SERVE_FOREVER;
     default:
       // Unknown first token → treat the whole invocation as serve options so
       // existing `boof-runner -d ... -p ...` usage keeps working.
       await serve(argv);
-      return;
+      return SERVE_FOREVER;
   }
-  if (code !== 0) process.exitCode = code;
+  return code;
 }
 
 // Run when invoked directly (not when imported by tests). Resolve symlinks so a

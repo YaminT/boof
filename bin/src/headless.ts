@@ -5,20 +5,23 @@
  * Everything here is pure orchestration over the shared/runner packages so it
  * is unit-testable with the offline `mock` tool.
  */
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   newTask,
+  ProjectStore,
   SettingsStore,
   TaskStore,
   uniqueKebabId,
   workingAreaDir,
   type BoofGoalRef,
+  type Project,
   type Settings,
   type Status,
   type TaskTools,
 } from "@boof-runner/shared";
 import {
+  isGitRepo,
   RunnerEngine,
   ToolRegistry,
   buildUnitPrompt,
@@ -67,12 +70,13 @@ export function toolOverride(
  * Run one engine tick while live-tailing the selected task's log.txt to `out`,
  * so progress streams to the terminal as the agents produce it.
  */
-async function streamTick(engine: RunnerEngine, root: string, out: Out): Promise<TickResult> {
+async function streamTick(engine: RunnerEngine, out: Out): Promise<TickResult> {
   const next = await engine.selectNext();
   if (!next) return engine.tick(); // idle/disabled/blocked — nothing to tail
-  const id = next.frontmatter.id;
-  out(`\n▶ ${id} — ${next.frontmatter.title}\n`);
-  const logPath = join(workingAreaDir(root, id), "log.txt");
+  const id = next.task.frontmatter.id;
+  const projectDir = engine.projects.dir(next.project.id);
+  out(`\n▶ ${next.project.id}/${id} — ${next.task.frontmatter.title}\n`);
+  const logPath = join(workingAreaDir(projectDir, id), "log.txt");
   let offset = 0;
   let stop = false;
   const flush = async () => {
@@ -100,11 +104,82 @@ async function streamTick(engine: RunnerEngine, root: string, out: Out): Promise
   return res;
 }
 
+/** Which project a command acts on: an id, a repository directory, or the data root's default. */
+export interface ProjectRef {
+  /** Project id. */
+  project?: string;
+  /** Repository directory: the project with this realpath, registered on first use. */
+  repo?: string;
+}
+
+/** Thrown for a bad project reference; the message is for the user. */
+export class ProjectResolutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProjectResolutionError";
+  }
+}
+
+/**
+ * Resolve the project for a headless command. `project` wins, then `repo` (realpath lookup;
+ * an unknown repository is registered and its new id printed), then
+ * `settings.defaultProject`. Never touches settings.json.
+ */
+export async function resolveProject(
+  root: string,
+  ref: ProjectRef,
+  out: Out = stdoutWrite,
+): Promise<Project> {
+  const projects = new ProjectStore(root, { isGitRepo });
+  let project: Project | null = null;
+  if (ref.project) {
+    project = await projects.get(ref.project);
+    if (!project) throw new ProjectResolutionError(`Project not found: ${ref.project}`);
+  } else if (ref.repo) {
+    const dir = abs(ref.repo);
+    project = await projects.findByDirectory(dir);
+    if (!project) {
+      try {
+        project = await projects.create({ workingDirectory: dir, origin: { kind: "cli" } });
+      } catch (err) {
+        throw new ProjectResolutionError(err instanceof Error ? err.message : String(err));
+      }
+      out(`Registered project '${project.id}' for ${project.workingDirectory}\n`);
+    }
+  } else {
+    const id = (await new SettingsStore(root).load()).defaultProject;
+    if (!id) {
+      throw new ProjectResolutionError(
+        "No project: pass --project <id> or --repo <dir>, or set a default with `project add <dir> --default`.",
+      );
+    }
+    project = await projects.get(id);
+    if (!project) throw new ProjectResolutionError(`Default project not found: ${id}`);
+  }
+  if (project.archived) throw new ProjectResolutionError(`Project '${project.id}' is archived.`);
+  if (!project.workingDirectory) {
+    throw new ProjectResolutionError(
+      `Project '${project.id}' has no working directory; set one with the UI or PUT /api/projects/${project.id}.`,
+    );
+  }
+  return project;
+}
+
+/** Turn the runner on (the only global setting headless commands change), logging the change. */
+async function ensureRunnerEnabled(root: string, out: Out): Promise<void> {
+  const store = new SettingsStore(root);
+  if ((await store.load()).runner.enabled) return;
+  await store.update({ runner: { enabled: true } });
+  out("Enabled the runner in settings.json (runner.enabled = true).\n");
+}
+
 export interface RunTaskOptions {
   root: string;
   prompt: string;
   title?: string;
-  /** Working directory the pipeline runs against (git repo → worktree isolation). */
+  /** Project id the task is queued in. */
+  project?: string;
+  /** Repository the pipeline runs against (git repo → worktree isolation); registered if unknown. */
   repo?: string;
   /** Branch or commit the task's worktree starts from (frontmatter `base`). */
   base?: string;
@@ -117,6 +192,7 @@ export interface RunTaskOptions {
 
 export interface RunResultSummary {
   id: string;
+  projectId: string;
   status: Status;
   ok: boolean;
 }
@@ -129,14 +205,13 @@ export interface RunResultSummary {
 export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
-  const store = new TaskStore(opts.root);
-  const settingsStore = new SettingsStore(opts.root);
-  const settings = await settingsStore.load();
-  await settingsStore.save({
-    ...settings,
-    runner: { enabled: true },
-    workingDirectory: opts.repo ? abs(opts.repo) : settings.workingDirectory,
-  });
+  const project = await resolveProject(opts.root, opts, out);
+  if (project.paused) {
+    throw new ProjectResolutionError(`Project '${project.id}' is paused; resume it first.`);
+  }
+  const store = new TaskStore(new ProjectStore(opts.root).dir(project.id));
+  const settings = await new SettingsStore(opts.root).load();
+  await ensureRunnerEnabled(opts.root, out);
 
   const registry = opts.registry ?? new ToolRegistry();
   const existing = (await store.list()).map((t) => t.frontmatter.id);
@@ -166,44 +241,47 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
     ),
   );
 
-  const engine = new RunnerEngine({ root: opts.root, registry });
+  const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
   // Drive until our task leaves the active states. One tick fully runs the
   // highest-priority pending task (ours), so this normally loops once.
   for (;;) {
     const located = await store.locate(id);
     const status = located?.status;
     if (!status || ["done", "failed", "action", "archived"].includes(status)) break;
-    const res = await streamTick(engine, opts.root, out);
+    const res = await streamTick(engine, out);
     if (res.kind === "disabled" || res.kind === "blocked") break;
     if (res.kind === "idle") break;
   }
 
   const finalStatus = (await store.locate(id))?.status ?? "failed";
   const ok = finalStatus === "done";
-  out(`\n${ok ? "[done]" : "[not done]"} task ${id}: ${finalStatus}\n`);
-  return { id, status: finalStatus as Status, ok };
+  out(`\n${ok ? "[done]" : "[not done]"} task ${project.id}/${id}: ${finalStatus}\n`);
+  return { id, projectId: project.id, status: finalStatus as Status, ok };
 }
 
 /** Drive the entire pending queue to completion (used after `scan`). */
 export async function drainQueue(opts: {
   root: string;
+  /** Only drain this project (default: every project). */
+  project?: string;
   registry?: ToolRegistry;
   out?: Out;
 }): Promise<{ ran: number; failed: number }> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
-  const settingsStore = new SettingsStore(opts.root);
-  const settings = await settingsStore.load();
-  if (!settings.runner.enabled)
-    await settingsStore.save({ ...settings, runner: { enabled: true } });
+  if (opts.project && !(await new ProjectStore(opts.root).get(opts.project))) {
+    throw new ProjectResolutionError(`Project not found: ${opts.project}`);
+  }
+  await ensureRunnerEnabled(opts.root, out);
   const engine = new RunnerEngine({
     root: opts.root,
     registry: opts.registry ?? new ToolRegistry(),
+    onlyProject: opts.project,
   });
   let ran = 0;
   let failed = 0;
   for (;;) {
-    const res = await streamTick(engine, opts.root, out);
+    const res = await streamTick(engine, out);
     if (res.kind !== "ran") break;
     ran += 1;
     if (res.outcome.kind === "failed") failed += 1;
@@ -215,6 +293,8 @@ export async function drainQueue(opts: {
 export interface ScanOptions {
   root: string;
   repo: string;
+  /** Project id the tasks go to; it must be the project of `repo`. Default: the project of `repo`, registered if needed. */
+  project?: string;
   dryRun?: boolean;
   bumpTo?: BoofGoalRef["bumpTo"];
   tool?: string;
@@ -225,6 +305,8 @@ export interface ScanOptions {
 
 export interface ScanSummary {
   created: string[];
+  /** Project the tasks went to (absent for a dry run or when nothing was found). */
+  projectId?: string;
   units: ScannedUnit[];
   dryRun: boolean;
 }
@@ -232,8 +314,8 @@ export interface ScanSummary {
 /**
  * Scan `repo` for not-done goal.boof.xml units and create one pipeline task per
  * unit (dependency order → priority). With `dryRun`, only lists what it would
- * create. Sets the data root's workingDirectory to `repo` so the runner and the
- * status write-back both target the scanned repo.
+ * create. The tasks go to the project of `repo` (registered on first use), so the runner and
+ * the status write-back both target the scanned repo. Global settings are not touched.
  */
 export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
   const out = opts.out ?? stdoutWrite;
@@ -256,10 +338,18 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
   }
 
   await scaffoldDataRoot(opts.root);
-  const store = new TaskStore(opts.root);
-  const settingsStore = new SettingsStore(opts.root);
-  const settings = await settingsStore.load();
-  await settingsStore.save({ ...settings, workingDirectory: repo });
+  const project = await resolveProject(
+    opts.root,
+    opts.project ? { project: opts.project } : { repo },
+    out,
+  );
+  if ((await realpath(repo)) !== project.workingDirectory) {
+    throw new ProjectResolutionError(
+      `Project '${project.id}' works on ${project.workingDirectory}, not ${repo}; scan that directory or omit --project.`,
+    );
+  }
+  const store = new TaskStore(new ProjectStore(opts.root).dir(project.id));
+  const settings = await new SettingsStore(opts.root).load();
 
   const registry = opts.registry ?? new ToolRegistry();
   const tools = toolOverride(registry, settings, opts.tool, opts.model);
@@ -298,9 +388,9 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
   }
 
   out(
-    `\nCreated ${created.length} task(s). Run them with:  boof-runner run --all -d ${opts.root}\n`,
+    `\nCreated ${created.length} task(s) in project '${project.id}'. Run them with:  boof-runner run --all --project ${project.id} -d ${opts.root}\n`,
   );
-  return { created, units, dryRun: false };
+  return { created, units, dryRun: false, projectId: project.id };
 }
 
 function firstLine(s: string): string {
