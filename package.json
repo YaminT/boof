@@ -5,7 +5,7 @@
   "description": "Agent Task Runner \u2014 queue prompts and run them through a planner \u2192 developer \u2192 reviewer pipeline",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.22"
   },
   "workspaces": [
     "packages/*",
@@ -38,5 +38,11 @@
     "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "vitest": "^5.0.0"
+  },
+  "overrides": {
+    "tar": "^7.5.22",
+    "http-cache-semantics": "^4.3.0",
+    "fast-uri": "^3.1.9",
+    "@xmldom/xmldom": "^0.8.15"
   }
 }
