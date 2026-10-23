@@ -181,9 +181,13 @@ export function ProjectSwitcher({
         {selected.paused && <span className="paused-badge">Paused</span>}
         <div className="topbar-dir" title={selected.workingDirectory}>
           <span className="topbar-dir-label">Working directory</span>
-          <span className="topbar-dir-path">{selected.workingDirectory}</span>
+          <span className="topbar-dir-path">
+            <bdi>{selected.workingDirectory}</bdi>
+          </span>
         </div>
-        <button onClick={() => setAdding(true)}>Add project</button>
+        <button className="retry-btn" onClick={() => setAdding(true)}>
+          Add project
+        </button>
       </div>
       {adding && (
         <AddProjectModal
