@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile, stat, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   currentStatus,
   defaultSettings,
+  effectiveSettings,
   newTask,
+  ProjectStore,
   parseGoal,
+  serializeTask,
   SettingsStore,
   TaskStore,
   taskControlDir,
@@ -15,6 +18,7 @@ import {
   taskPromptInjectionsPath,
   taskStopRequestPath,
   workingAreaDir,
+  type Project,
   type TaskFrontmatter,
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
@@ -27,6 +31,10 @@ import type { RunOptions } from "./tools/types.js";
 let dataRoot: string;
 let workDir: string;
 let engine: RunnerEngine;
+/** The project under test: `workDir` registered as project `default`. */
+let project: Project;
+let projectDir: string;
+let store: TaskStore;
 
 const exists = async (p: string) => {
   try {
@@ -71,7 +79,7 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 
 beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-runner-data-"));
-  workDir = await mkdtemp(join(tmpdir(), "boof-runner-work-"));
+  workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-work-")));
   // Make workDir a git repo so worktree isolation engages.
   const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
@@ -81,10 +89,14 @@ beforeEach(async () => {
   await g(["add", "."]);
   await g(["commit", "-m", "init"]);
 
-  const store = new TaskStore(dataRoot);
-  await store.ensureDirs();
-  const settings = new SettingsStore(dataRoot);
-  await settings.save({ ...defaultSettings(workDir), runner: { enabled: true } });
+  await new SettingsStore(dataRoot).save({
+    ...defaultSettings(),
+    runner: { enabled: true, concurrency: 1 },
+    defaultProject: "default",
+  });
+  project = await new ProjectStore(dataRoot).create({ workingDirectory: workDir, id: "default" });
+  projectDir = new ProjectStore(dataRoot).dir(project.id);
+  store = new TaskStore(projectDir);
 
   engine = new RunnerEngine({ root: dataRoot, pollIntervalMs: 10 });
   resetMock();
@@ -98,14 +110,14 @@ afterEach(async () => {
 
 describe("RunnerEngine integration (mock tool)", () => {
   it("runs the full happy-path pipeline to done with all reports", async () => {
-    await engine.store.create(newTask(fm(), "Build a thing."));
+    await store.create(newTask(fm(), "Build a thing."));
     const r = await engine.tick();
     expect(r.kind).toBe("ran");
     if (r.kind === "ran") expect(r.outcome.kind).toBe("done");
 
     // Task moved to done/.
-    expect(await exists(taskFilePath(dataRoot, "done", "t1"))).toBe(true);
-    const done = await engine.store.get("t1");
+    expect(await exists(taskFilePath(projectDir, "done", "t1"))).toBe(true);
+    const done = await store.get("t1");
     expect(done?.frontmatter.status).toBe("done");
 
     // Reports + plan written into the working area (kept under ongoing? no — moved).
@@ -118,37 +130,38 @@ describe("RunnerEngine integration (mock tool)", () => {
   });
 
   it("respects skip and priority ordering", async () => {
-    await engine.store.create(newTask(fm({ id: "low", priority: 10 }), "low"));
-    await engine.store.create(newTask(fm({ id: "high", priority: 90 }), "high"));
-    await engine.store.create(newTask(fm({ id: "skipped", priority: 99, skip: true }), "skip"));
+    await store.create(newTask(fm({ id: "low", priority: 10 }), "low"));
+    await store.create(newTask(fm({ id: "high", priority: 90 }), "high"));
+    await store.create(newTask(fm({ id: "skipped", priority: 99, skip: true }), "skip"));
     const next = await engine.selectNext();
-    expect(next?.frontmatter.id).toBe("high");
+    expect(next?.task.frontmatter.id).toBe("high");
+    expect(next?.project.id).toBe("default");
   });
 
   it("does not run when disabled", async () => {
     await engine.settingsStore.update({ runner: { enabled: false } });
-    await engine.store.create(newTask(fm(), "x"));
+    await store.create(newTask(fm(), "x"));
     const r = await engine.tick();
     expect(r.kind).toBe("disabled");
-    expect(await exists(taskFilePath(dataRoot, "pending", "t1"))).toBe(true);
+    expect(await exists(taskFilePath(projectDir, "pending", "t1"))).toBe(true);
   });
 
   it("parks on planner questions, then resumes to done after answers", async () => {
     mockState.plannerQuestions = ["Which database?"];
-    await engine.store.create(newTask(fm(), "Build with a DB."));
+    await store.create(newTask(fm(), "Build with a DB."));
 
     // First tick: planner asks → parked in actions/.
     const first = await engine.tick();
     expect(first.kind).toBe("ran");
     if (first.kind === "ran") expect(first.outcome.kind).toBe("parked");
-    expect(await exists(taskFilePath(dataRoot, "action", "t1"))).toBe(true);
-    const parked = await engine.store.get("t1");
+    expect(await exists(taskFilePath(projectDir, "action", "t1"))).toBe(true);
+    const parked = await store.get("t1");
     expect(parked?.frontmatter.status).toBe("action");
     expect(parked?.frontmatter.questions).toBe("pending");
     expect(parked?.body.questions).toContain("Which database?");
 
     // User answers (simulate the Actions tab): write answers, set answered, move to pending.
-    await engine.store.transition("t1", "pending", (t) => {
+    await store.transition("t1", "pending", (t) => {
       t.body.answers = "Use Postgres.";
       t.frontmatter.questions = "answered";
     });
@@ -157,19 +170,19 @@ describe("RunnerEngine integration (mock tool)", () => {
     const second = await engine.tick();
     expect(second.kind).toBe("ran");
     if (second.kind === "ran") expect(second.outcome.kind).toBe("done");
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.frontmatter.status).toBe("done");
     expect(done?.frontmatter.questions).toBe("answered");
   });
 
   it("runs a task N times and injects the critical-review framing after the first", async () => {
-    await engine.store.create(newTask(fm({ runs: 3 }), "Build it well."));
+    await store.create(newTask(fm({ runs: 3 }), "Build it well."));
 
     const results = await engine.runUntilIdle();
     const ranCount = results.filter((r) => r.kind === "ran").length;
     expect(ranCount).toBe(3);
 
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.frontmatter.status).toBe("done");
     expect(done?.frontmatter.completedRuns).toBe(3);
 
@@ -183,54 +196,54 @@ describe("RunnerEngine integration (mock tool)", () => {
   });
 
   it("re-queues to pending between runs rather than finishing early", async () => {
-    await engine.store.create(newTask(fm({ runs: 2 }), "twice"));
+    await store.create(newTask(fm({ runs: 2 }), "twice"));
     const first = await engine.tick();
     expect(first.kind).toBe("ran");
     // After one run of a 2-run task, it should be back in pending, not done.
-    const mid = await engine.store.get("t1");
+    const mid = await store.get("t1");
     expect(mid?.frontmatter.status).toBe("pending");
     expect(mid?.frontmatter.completedRuns).toBe(1);
 
     const second = await engine.tick();
     expect(second.kind).toBe("ran");
-    const end = await engine.store.get("t1");
+    const end = await store.get("t1");
     expect(end?.frontmatter.status).toBe("done");
     expect(end?.frontmatter.completedRuns).toBe(2);
   });
 
   it("fails the task and captures diagnostics on tool error", async () => {
     mockState.failRole = "developer";
-    await engine.store.create(newTask(fm(), "will fail"));
+    await store.create(newTask(fm(), "will fail"));
     const r = await engine.tick();
     expect(r.kind).toBe("ran");
     if (r.kind === "ran") expect(r.outcome.kind).toBe("failed");
-    expect(await exists(taskFilePath(dataRoot, "failed", "t1"))).toBe(true);
+    expect(await exists(taskFilePath(projectDir, "failed", "t1"))).toBe(true);
 
     // log.txt was moved with the working area? No — failed is a flat file. The
     // working area under ongoing/ is removed on transition; diagnostics were
     // appended during the run. Assert the failed task records the error path.
-    const failed = await engine.store.get("t1");
+    const failed = await store.get("t1");
     expect(failed?.frontmatter.status).toBe("failed");
 
     // Retry returns it to pending.
-    await engine.store.transition("t1", "pending");
-    expect(await exists(taskFilePath(dataRoot, "pending", "t1"))).toBe(true);
+    await store.transition("t1", "pending");
+    expect(await exists(taskFilePath(projectDir, "pending", "t1"))).toBe(true);
   });
 
   it("passes injected prompts into later pipeline steps", async () => {
-    await engine.store.create(newTask(fm(), "Build it."));
-    const running = await engine.store.transition("t1", "running");
-    await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
+    await store.create(newTask(fm(), "Build it."));
+    const running = await store.transition("t1", "running");
+    await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
     await writeFile(
-      taskPromptInjectionsPath(dataRoot, "t1"),
+      taskPromptInjectionsPath(projectDir, "t1"),
       "## 2026-07-02T00:00:00.000Z\nAlso add a focused regression test.\n",
     );
 
     const pipeline = new Pipeline({
-      root: dataRoot,
-      store: engine.store,
+      root: projectDir,
+      store: store,
       registry: engine.registry,
-      settings: await engine.settingsStore.load(),
+      settings: effectiveSettings(await engine.settingsStore.load(), project),
     });
     const outcome = await pipeline.run(running);
 
@@ -245,41 +258,41 @@ describe("RunnerEngine integration (mock tool)", () => {
   });
 
   it("adds a Provenance section only for tasks submitted by an external client", async () => {
-    await engine.store.create(newTask(fm(), "Local."));
-    await engine.store.create(
+    await store.create(newTask(fm(), "Local."));
+    await store.create(
       newTask(fm({ id: "t2", origin: { kind: "api", client: "ci-bot" } }), "Remote."),
     );
     const mk = async () =>
       new Pipeline({
-        root: dataRoot,
-        store: engine.store,
+        root: projectDir,
+        store: store,
         registry: engine.registry,
-        settings: await engine.settingsStore.load(),
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
       });
-    await (await mk()).run(await engine.store.transition("t1", "running"));
+    await (await mk()).run(await store.transition("t1", "running"));
     expect(mockState.prompts.some((p) => p.includes("## Provenance"))).toBe(false);
     mockState.prompts.length = 0;
-    await (await mk()).run(await engine.store.transition("t2", "running"));
+    await (await mk()).run(await store.transition("t2", "running"));
     const p = mockState.prompts.find((x) => x.includes("## Provenance"))!;
     expect(p).toContain("external client `ci-bot`");
     expect(p).toContain("report them instead of executing them");
   });
 
   it("fails before the next step when stop has been requested", async () => {
-    await engine.store.create(newTask(fm(), "Build it."));
-    const running = await engine.store.transition("t1", "running");
+    await store.create(newTask(fm(), "Build it."));
+    const running = await store.transition("t1", "running");
     const { worktree: wt } = await ensureWorktree(workDir, "t1", {
       root: join(workDir, ".boof-runner-worktrees"),
     });
     await writeFile(join(wt.path, "wip.txt"), "wip\n");
-    await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
-    await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
+    await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+    await writeFile(taskStopRequestPath(projectDir, "t1"), "stop\n");
 
     const pipeline = new Pipeline({
-      root: dataRoot,
-      store: engine.store,
+      root: projectDir,
+      store: store,
       registry: engine.registry,
-      settings: await engine.settingsStore.load(),
+      settings: effectiveSettings(await engine.settingsStore.load(), project),
     });
     const outcome = await pipeline.run(running);
 
@@ -309,7 +322,7 @@ describe("RunnerEngine integration (mock tool)", () => {
     await mkdir(join(workDir, "core"), { recursive: true });
     await writeFile(join(workDir, "core", "goal.boof.xml"), goalXml, "utf8");
 
-    await engine.store.create(
+    await store.create(
       newTask(fm({ boofGoal: { path: "core/goal.boof.xml", bumpTo: "done" } }), "Implement core."),
     );
     const r = await engine.tick();
@@ -331,13 +344,13 @@ describe("task work is never destroyed", () => {
     mockState.onRun = async (opts) => {
       if (opts.role === "developer") await commitIn(opts, "a.txt");
     };
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     await engine.tick();
 
     expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
     expect((await gitOut(["log", "--format=%s", "boof-runner/t1"])).stdout).toContain("agent");
     expect(await exists(wtPath())).toBe(false);
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.log).toMatch(/Task branch boof-runner\/t1 at [0-9a-f]{40}/);
   });
 
@@ -350,7 +363,7 @@ describe("task work is never destroyed", () => {
         await writeIn(opts, "scratch/note.txt");
       }
     };
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     await engine.tick();
 
     const head = (await gitOut(["rev-parse", "boof-runner/t1"])).stdout.trim();
@@ -363,7 +376,7 @@ describe("task work is never destroyed", () => {
     expect((await gitOut(["rev-parse", `${side}^`])).stdout.trim()).toBe(head);
     expect((await gitOut(["show", "boof-runner/t1--leftovers:left.txt"])).code).toBe(0);
     expect(await exists(wtPath())).toBe(false);
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.log).toContain(`Leftovers committed to boof-runner/t1--leftovers at ${side}`);
   });
 
@@ -376,11 +389,11 @@ describe("task work is never destroyed", () => {
         await writeIn(opts, "scratch/nested/f.txt");
       }
     };
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     await engine.tick();
 
     expect(await exists(join(wtPath(), "scratch", "nested", "f.txt"))).toBe(true);
-    const log = (await engine.store.get("t1"))?.body.log ?? "";
+    const log = (await store.get("t1"))?.body.log ?? "";
     expect(log).toContain("nested git repositories are not saved");
     expect(log).not.toContain("Removed worktree directory");
   });
@@ -390,7 +403,7 @@ describe("task work is never destroyed", () => {
       if (opts.role === "planner") await writeIn(opts, "wip.txt");
     };
     mockState.failRole = "developer";
-    await engine.store.create(newTask(fm(), "will fail"));
+    await store.create(newTask(fm(), "will fail"));
     const r = await engine.tick();
     expect(r.kind).toBe("ran");
     if (r.kind === "ran") expect(r.outcome.kind).toBe("failed");
@@ -398,7 +411,7 @@ describe("task work is never destroyed", () => {
     expect(await exists(join(wtPath(), "wip.txt"))).toBe(true);
     expect((await gitOut(["status", "--porcelain"], wtPath())).stdout).toContain("wip.txt");
     expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
-    const failed = await engine.store.get("t1");
+    const failed = await store.get("t1");
     expect(failed?.body.log).toMatch(/Kept worktree .* on branch boof-runner\/t1 at [0-9a-f]{40}/);
   });
 
@@ -411,7 +424,7 @@ describe("task work is never destroyed", () => {
       if (!existsSync(join(opts.cwd, "iter1.txt"))) await writeIn(opts, "iter1.txt");
       else iter2Saw = true;
     };
-    await engine.store.create(newTask(fm({ runs: 2 }), "twice"));
+    await store.create(newTask(fm({ runs: 2 }), "twice"));
     await engine.tick();
     await engine.tick();
 
@@ -423,7 +436,7 @@ describe("task work is never destroyed", () => {
   it("unregistered directory at the worktree path: fails clearly, leaves it untouched", async () => {
     await mkdir(wtPath(), { recursive: true });
     await writeFile(join(wtPath(), "keep.txt"), "sentinel");
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     const r = await engine.tick();
     expect(r.kind).toBe("ran");
     if (r.kind === "ran") {
@@ -444,12 +457,12 @@ describe("task work is never destroyed", () => {
       if (!existsSync(join(opts.cwd, "a.txt"))) await commitIn(opts, "a.txt");
     };
     mockState.failRole = "reviewer";
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     const first = await engine.tick();
     if (first.kind === "ran") expect(first.outcome.kind).toBe("failed");
     const sha1 = (await gitOut(["rev-parse", "boof-runner/t1"])).stdout.trim();
 
-    await engine.store.transition("t1", "pending");
+    await store.transition("t1", "pending");
     mockState.failRole = null;
     const second = await engine.tick();
     if (second.kind === "ran") expect(second.outcome.kind).toBe("done");
@@ -484,7 +497,7 @@ describe("retention policies", () => {
 
   it("defaults: a failed task keeps directory and branch; a done task keeps the branch only", async () => {
     mockState.failRole = "developer";
-    await engine.store.create(newTask(fm(), "fail"));
+    await store.create(newTask(fm(), "fail"));
     await engine.tick();
     expect(await exists(wtPath())).toBe(true);
     expect(await hasBranch("boof-runner/t1")).toBe(true);
@@ -493,7 +506,7 @@ describe("retention policies", () => {
   it("onDone=keep: leaves the directory (dirty) and saves leftovers on the side branch", async () => {
     await withWorktree({ onDone: "keep" });
     mockState.onRun = dirty("developer");
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     await engine.tick();
     expect(await exists(join(wtPath(), "left.txt"))).toBe(true);
     expect(await hasBranch("boof-runner/t1")).toBe(true);
@@ -504,12 +517,12 @@ describe("retention policies", () => {
   it("onDone=delete: removes directory and branches and logs loudly", async () => {
     await withWorktree({ onDone: "delete" });
     mockState.onRun = dirty("developer");
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     await engine.tick();
     expect(await exists(wtPath())).toBe(false);
     expect(await hasBranch("boof-runner/t1")).toBe(false);
     expect(await hasBranch("boof-runner/t1--leftovers")).toBe(false);
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.frontmatter.status).toBe("done");
     expect(done?.body.log).toContain("WARNING: DELETED task work");
   });
@@ -517,7 +530,7 @@ describe("retention policies", () => {
   it("onFailure=keep (explicit): keeps directory and branch", async () => {
     await withWorktree({ onFailure: "keep" });
     mockState.failRole = "developer";
-    await engine.store.create(newTask(fm(), "fail"));
+    await store.create(newTask(fm(), "fail"));
     await engine.tick();
     expect(await exists(wtPath())).toBe(true);
     expect(await hasBranch("boof-runner/t1")).toBe(true);
@@ -527,25 +540,25 @@ describe("retention policies", () => {
     await withWorktree({ onFailure: "delete" });
     mockState.onRun = dirty("planner");
     mockState.failRole = "developer";
-    await engine.store.create(newTask(fm(), "fail"));
+    await store.create(newTask(fm(), "fail"));
     const r = await engine.tick();
     if (r.kind === "ran") expect(r.outcome.kind).toBe("failed");
     expect(await exists(wtPath())).toBe(false);
     expect(await hasBranch("boof-runner/t1")).toBe(false);
-    expect((await engine.store.get("t1"))?.body.log).toContain("WARNING: DELETED task work");
+    expect((await store.get("t1"))?.body.log).toContain("WARNING: DELETED task work");
   });
 
   it("onFailure=delete never deletes a stopped task's work", async () => {
     await withWorktree({ onFailure: "delete" });
-    await engine.store.create(newTask(fm(), "Build it."));
-    const running = await engine.store.transition("t1", "running");
-    await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
-    await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
+    await store.create(newTask(fm(), "Build it."));
+    const running = await store.transition("t1", "running");
+    await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+    await writeFile(taskStopRequestPath(projectDir, "t1"), "stop\n");
     const pipeline = new Pipeline({
-      root: dataRoot,
-      store: engine.store,
+      root: projectDir,
+      store: store,
       registry: engine.registry,
-      settings: await engine.settingsStore.load(),
+      settings: effectiveSettings(await engine.settingsStore.load(), project),
     });
     const outcome = await pipeline.run(running);
     expect(outcome.kind).toBe("failed");
@@ -559,7 +572,7 @@ describe("retention policies", () => {
       await withWorktree({ root: outside, onDone: "keep" });
       const cwds: string[] = [];
       mockState.onRun = async (opts) => void cwds.push(opts.cwd);
-      await engine.store.create(newTask(fm(), "Build it."));
+      await store.create(newTask(fm(), "Build it."));
       await engine.tick();
       expect(cwds.every((c) => c === join(outside, "t1"))).toBe(true);
       expect(await exists(join(outside, "t1"))).toBe(true);
@@ -582,16 +595,16 @@ describe("base ref (mock tool)", () => {
     mockState.onRun = async (opts) => {
       if (opts.role === "developer") sawLater = existsSync(join(opts.cwd, "later.txt"));
     };
-    await engine.store.create(newTask(fm({ base: "release" }), "Build it."));
+    await store.create(newTask(fm({ base: "release" }), "Build it."));
     await engine.tick();
     expect(sawLater).toBe(false);
     expect((await gitOut(["merge-base", "--is-ancestor", baseSha, "boof-runner/t1"])).code).toBe(0);
     expect((await gitOut(["rev-parse", "boof-runner/t1"])).stdout.trim()).toBe(baseSha);
-    expect((await engine.store.get("t1"))?.body.log).toContain(`base release → ${baseSha}`);
+    expect((await store.get("t1"))?.body.log).toContain(`base release → ${baseSha}`);
   });
 
   it("an unknown base fails the task clearly and creates nothing", async () => {
-    await engine.store.create(newTask(fm({ base: "no-such-ref" }), "Build it."));
+    await store.create(newTask(fm({ base: "no-such-ref" }), "Build it."));
     const r = await engine.tick();
     expect(r.kind).toBe("ran");
     if (r.kind === "ran" && r.outcome.kind === "failed") {
@@ -604,16 +617,16 @@ describe("base ref (mock tool)", () => {
 
   it("a reused branch ignores base and the log says so", async () => {
     mockState.failRole = "reviewer";
-    await engine.store.create(newTask(fm(), "Build it."));
+    await store.create(newTask(fm(), "Build it."));
     await engine.tick();
     await gitOut(["branch", "other"]);
-    const t = await engine.store.get("t1");
+    const t = await store.get("t1");
     t!.frontmatter.base = "other";
-    await engine.store.save(t!);
-    await engine.store.transition("t1", "pending");
+    await store.save(t!);
+    await store.transition("t1", "pending");
     mockState.failRole = null;
     await engine.tick();
-    expect((await engine.store.get("t1"))?.body.log).toContain(
+    expect((await store.get("t1"))?.body.log).toContain(
       "base other ignored: reusing existing branch boof-runner/t1",
     );
   });
@@ -636,7 +649,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     });
   };
   const runTask = async (prompt: string, over: Partial<TaskFrontmatter> = {}) => {
-    await engine.store.create(newTask(fm(over), prompt));
+    await store.create(newTask(fm(over), prompt));
     const r = await engine.tick();
     if (r.kind !== "ran") throw new Error(`expected ran, got ${r.kind}`);
     return r.outcome;
@@ -657,7 +670,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     const out = await runTask("x");
     expect(out.kind).toBe("done");
     expect(mockState.calls).toEqual(["planner", "planner", "developer", "observer", "reviewer"]);
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.reports.observer).toContain("Round 1 — APPROVE");
     expect(done?.body.reports.reviewer).toContain("Round 1 — APPROVE");
     expect(done?.body.log).toContain("Observer verdict (round 1): APPROVE");
@@ -676,7 +689,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(dev2[0]).toContain("mock issue observer round 1");
     expect(dev2[0]).toContain("rebut it with evidence");
     expect(dev2[0]).toContain("## Plan");
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.reports.observer).toContain("Round 1 — CHANGES_REQUESTED");
     expect(done?.body.reports.observer).toContain("Round 2 — APPROVE");
     expect(done?.body.reports.developer).toContain("Fix round 1 (observer)");
@@ -715,7 +728,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(count("reviewer")).toBe(0);
     expect(await exists(wtPath())).toBe(true);
     expect(await branchKept()).toBe(true);
-    expect(await exists(taskFilePath(dataRoot, "failed", "t1"))).toBe(true);
+    expect(await exists(taskFilePath(projectDir, "failed", "t1"))).toBe(true);
   });
 
   it("reviewer budget exhausted: fails with reviewer reason", async () => {
@@ -819,7 +832,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
     const second = await engine.tick();
     expect(second.kind).toBe("ran");
-    const end = await engine.store.get("t1");
+    const end = await store.get("t1");
     expect(end?.frontmatter.status).toBe("done");
     expect(count("developer")).toBe(4);
     expect(count("reviewer")).toBe(4);
@@ -832,7 +845,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(count("developer")).toBe(1);
     expect(count("observer")).toBe(1);
     expect(count("reviewer")).toBe(1);
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.log).toContain("Observer verdict (round 1): CHANGES_REQUESTED");
     expect(done?.body.log).toContain("Reviewer verdict (round 1): REJECT");
     expect(done?.body.reports.reviewer).toContain("Round 1 — REJECT");
@@ -859,7 +872,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(reviewPrompt).toContain(`git diff ${base}`);
     expect(reviewPrompt).toContain("big.txt");
     expect(reviewPrompt).not.toContain("yyyyyyyyyy");
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.log).toContain("Diff exceeds inline limit");
   });
 
@@ -898,7 +911,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     });
   };
   const run = async (prompt: string, over: Partial<TaskFrontmatter> = {}) => {
-    await engine.store.create(newTask(fm(over), prompt));
+    await store.create(newTask(fm(over), prompt));
     const r = await engine.tick();
     if (r.kind !== "ran") throw new Error(`expected ran, got ${r.kind}`);
     return r.outcome;
@@ -919,7 +932,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(devPrompts[0]).not.toContain("## Previous attempt interrupted");
     expect(devPrompts[1]).toContain("## Previous attempt interrupted");
     expect(devPrompts[1]).toContain("git status");
-    const done = await engine.store.get("t1");
+    const done = await store.get("t1");
     expect(done?.body.log).toMatch(
       /Transient failure in Developer \(attempt 1\/2\): API Error: 503.*retrying in 0s in the same worktree/,
     );
@@ -954,11 +967,11 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
   it("a stop request during the backoff stops the task", async () => {
     await configure({ retries: { backoffMs: [60000] } });
     const poll = setInterval(() => {
-      void readFile(join(workingAreaDir(dataRoot, "t1"), "log.txt"), "utf8")
+      void readFile(join(workingAreaDir(projectDir, "t1"), "log.txt"), "utf8")
         .then(async (log) => {
           if (!log.includes("Transient failure")) return;
-          await mkdir(taskControlDir(dataRoot, "t1"), { recursive: true });
-          await writeFile(taskStopRequestPath(dataRoot, "t1"), "stop\n");
+          await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+          await writeFile(taskStopRequestPath(projectDir, "t1"), "stop\n");
         })
         .catch(() => {});
     }, 50);
@@ -980,7 +993,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     const outcome = await run("Build it. [[mock-stall developer=1]]");
     expect(outcome.kind).toBe("done");
     expect(devCalls()).toBe(2);
-    expect((await engine.store.get("t1"))?.body.log).toContain("stalled: no output");
+    expect((await store.get("t1"))?.body.log).toContain("stalled: no output");
   });
 
   it("every role's system prompt carries the non-interactive guard", async () => {
@@ -1016,7 +1029,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     mockState.plannerQuestions = ["Which db?"];
     const parked = await engine.tick();
     if (parked.kind === "ran") expect(parked.outcome.kind).toBe("parked");
-    await engine.store.transition("t1", "pending", (t) => {
+    await store.transition("t1", "pending", (t) => {
       t.body.answers = "Postgres.";
       t.frontmatter.questions = "answered";
     });
@@ -1037,7 +1050,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     const failed = await engine.tick();
     if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
     mockState.failRole = null;
-    await engine.store.transition("t1", "pending");
+    await store.transition("t1", "pending");
     const from = mockState.prompts.length;
     await engine.tick();
     const retried = mockState.prompts.slice(from);
@@ -1063,7 +1076,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     const failed = await engine.tick();
     if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
     failFix = false;
-    await engine.store.transition("t1", "pending");
+    await store.transition("t1", "pending");
     const from = mockState.prompts.length;
     await engine.tick();
     const retried = mockState.prompts.slice(from);
@@ -1099,5 +1112,271 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
       // Only the final round, not the earlier CHANGES_REQUESTED one.
       expect(section).not.toContain("mock issue observer round 1");
     }
+  });
+});
+
+/** A second (and third) registered repository for the multi-project tests. */
+interface Extra {
+  project: Project;
+  repo: string;
+  dir: string;
+  store: TaskStore;
+}
+const extraRepos: string[] = [];
+
+async function addProject(id: string): Promise<Extra> {
+  const repo = await realpath(await mkdtemp(join(tmpdir(), `boof-runner-${id}-`)));
+  extraRepos.push(repo);
+  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  await g(["init", "-b", "main"]);
+  await g(["config", "user.email", "t@e.com"]);
+  await g(["config", "user.name", "T"]);
+  await writeFile(join(repo, "README.md"), `# ${id}\n`);
+  await g(["add", "."]);
+  await g(["commit", "-m", "init"]);
+  const projects = new ProjectStore(dataRoot);
+  const created = await projects.create({ workingDirectory: repo, id });
+  return { project: created, repo, dir: projects.dir(id), store: new TaskStore(projects.dir(id)) };
+}
+
+afterEach(async () => {
+  for (const r of extraRepos.splice(0)) await rm(r, { recursive: true, force: true });
+});
+
+/** A task that takes its roles from settings instead of a per-task override. */
+const withoutTools = (f: TaskFrontmatter): TaskFrontmatter => {
+  const { tools: _tools, ...rest } = f;
+  void _tools;
+  return rest;
+};
+
+/** Ids in run order, as `project/task`. */
+const order = (results: Awaited<ReturnType<RunnerEngine["runUntilIdle"]>>) =>
+  results.flatMap((r) =>
+    r.kind === "ran" ? [`${r.projectId}/${r.outcome.task.frontmatter.id}`] : [],
+  );
+
+describe("multi-project engine (mock tool)", () => {
+  it("serves projects in global priority order, interleaved", async () => {
+    const b = await addProject("b");
+    await store.create(newTask(fm({ id: "a-low", priority: 10 }), "a low"));
+    await store.create(newTask(fm({ id: "a-mid", priority: 50 }), "a mid"));
+    await b.store.create(newTask(fm({ id: "b-high", priority: 90 }), "b high"));
+    await b.store.create(newTask(fm({ id: "b-mid", priority: 30 }), "b mid"));
+
+    expect(order(await engine.runUntilIdle())).toEqual([
+      "b/b-high",
+      "default/a-mid",
+      "b/b-mid",
+      "default/a-low",
+    ]);
+    expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
+    expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
+  });
+
+  it("breaks priority ties by oldest `updated`, then by project id, then by task id", async () => {
+    const b = await addProject("b");
+    const write = (dir: string, id: string, updated: string) =>
+      writeFile(
+        taskFilePath(dir, "pending", id),
+        serializeTask(newTask(fm({ id, priority: 50, updated }), id)),
+      );
+    await write(projectDir, "newer", "2026-06-04T10:00:05.000Z");
+    await write(b.dir, "older", "2026-06-04T10:00:01.000Z");
+    // Identical priority and `updated`: project id, then task id decide.
+    await write(projectDir, "same-b", "2026-06-04T10:00:09.000Z");
+    await write(projectDir, "same-a", "2026-06-04T10:00:09.000Z");
+    await write(b.dir, "same-c", "2026-06-04T10:00:09.000Z");
+
+    expect(order(await engine.runUntilIdle())).toEqual([
+      "b/older",
+      "default/newer",
+      "b/same-c", // project "b" sorts before "default"
+      "default/same-a",
+      "default/same-b",
+    ]);
+  });
+
+  it("skips paused, archived and directory-less projects, and serves them again once resumed", async () => {
+    const b = await addProject("b");
+    await b.store.create(newTask(fm({ id: "b1", priority: 99 }), "b1"));
+    await store.create(newTask(fm({ id: "a1", priority: 1 }), "a1"));
+
+    await new ProjectStore(dataRoot).update("b", { paused: true });
+    expect((await engine.selectNext())?.task.frontmatter.id).toBe("a1");
+    await new ProjectStore(dataRoot).update("b", { paused: false, archived: true });
+    expect((await engine.selectNext())?.task.frontmatter.id).toBe("a1");
+    await new ProjectStore(dataRoot).update("b", { archived: false });
+    expect((await engine.selectNext())?.task.frontmatter.id).toBe("b1");
+
+    // A migrated project without a working directory is not runnable.
+    await writeFile(
+      join(b.dir, "project.json"),
+      JSON.stringify({ ...b.project, workingDirectory: "" }),
+    );
+    expect((await engine.selectNext())?.task.frontmatter.id).toBe("a1");
+
+    expect(order(await engine.runUntilIdle())).toEqual(["default/a1"]);
+    expect((await b.store.get("b1"))?.frontmatter.status).toBe("pending");
+  });
+
+  it("onlyProject restricts the engine to one project", async () => {
+    const b = await addProject("b");
+    await b.store.create(newTask(fm({ id: "b1", priority: 99 }), "b1"));
+    await store.create(newTask(fm({ id: "a1", priority: 1 }), "a1"));
+    const only = new RunnerEngine({ root: dataRoot, onlyProject: "default" });
+    expect(order(await only.runUntilIdle())).toEqual(["default/a1"]);
+  });
+
+  it("bumpGoalFile writes into the repository of the project the task belongs to", async () => {
+    const b = await addProject("b");
+    const goalXml = (name: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>${name}</goal>
+    <stack>TypeScript</stack>
+    <rules><do>Write a failing test first.</do></rules>
+  </overal>
+  <progress>
+    <status><versions><version number="1" status="plan">seed</version></versions></status>
+    <tests><strategy>TDD</strategy><technology>vitest</technology><run>npm test</run></tests>
+  </progress>
+</boof>`;
+    for (const repo of [workDir, b.repo]) {
+      await mkdir(join(repo, "core"), { recursive: true });
+      await writeFile(join(repo, "core", "goal.boof.xml"), goalXml("core"), "utf8");
+    }
+    // The same relative path in both repos; only project b's task completes.
+    await b.store.create(
+      newTask(fm({ id: "bt", boofGoal: { path: "core/goal.boof.xml", bumpTo: "done" } }), "b"),
+    );
+    expect(order(await engine.runUntilIdle())).toEqual(["b/bt"]);
+
+    const read = async (repo: string) =>
+      parseGoal(await readFile(join(repo, "core", "goal.boof.xml"), "utf8"));
+    expect(currentStatus(await read(b.repo))).toBe("done");
+    expect(currentStatus(await read(workDir))).toBe("plan");
+  });
+
+  it("honours a per-project worktree root override and project-level role overrides", async () => {
+    const b = await addProject("b");
+    const wtRoot = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-wt-")));
+    extraRepos.push(wtRoot);
+    await new ProjectStore(dataRoot).update("b", {
+      worktree: { root: wtRoot },
+      roles: { developer: { tool: "mock", model: "project-dev" } },
+    });
+    const cwds: string[] = [];
+    const models: string[] = [];
+    mockState.onRun = async (opts) => {
+      cwds.push(opts.cwd);
+      if (opts.role === "developer") models.push(opts.model);
+    };
+    // No per-task tools: roles come from global settings + the project's override.
+    await engine.settingsStore.update({
+      roles: {
+        planner: { tool: "mock", model: "g-plan" },
+        developer: { tool: "mock", model: "g-dev" },
+        reviewer: { tool: "mock", model: "g-rev" },
+      },
+    });
+    await b.store.create(newTask(withoutTools(fm({ id: "bt" })), "b"));
+    await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
+    expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
+
+    const bCwds = cwds.filter((c) => c.startsWith(`${wtRoot}/`));
+    const aCwds = cwds.filter((c) => c.startsWith(`${workDir}/.boof-runner-worktrees/`));
+    expect(bCwds.length).toBeGreaterThan(0);
+    expect(aCwds.length).toBeGreaterThan(0);
+    expect(bCwds.length + aCwds.length).toBe(cwds.length);
+    expect(models).toEqual(["project-dev", "g-dev"]);
+  });
+
+  /** Tracks how many roles run at once per repository and overall, with a delay in every step. */
+  const trackConcurrency = (repos: string[]) => {
+    const active = new Map<string, number>();
+    const maxPerRepo = new Map<string, number>();
+    let activeTotal = 0;
+    let maxTotal = 0;
+    mockState.onRun = async (opts) => {
+      const repo = repos.find((r) => opts.cwd.startsWith(`${r}/`)) ?? "?";
+      const n = (active.get(repo) ?? 0) + 1;
+      active.set(repo, n);
+      maxPerRepo.set(repo, Math.max(maxPerRepo.get(repo) ?? 0, n));
+      activeTotal += 1;
+      maxTotal = Math.max(maxTotal, activeTotal);
+      await new Promise((r) => setTimeout(r, 25));
+      active.set(repo, (active.get(repo) ?? 1) - 1);
+      activeTotal -= 1;
+    };
+    return { maxPerRepo, maxTotal: () => maxTotal };
+  };
+
+  it("concurrency=2 runs two projects at once but never two tasks of one project", async () => {
+    const b = await addProject("b");
+    await engine.settingsStore.update({ runner: { concurrency: 2 } });
+    for (const [s, label] of [
+      [store, "a"],
+      [b.store, "b"],
+    ] as const) {
+      await s.create(newTask(fm({ id: `${label}1`, priority: 50 }), `${label}1`));
+      await s.create(newTask(fm({ id: `${label}2`, priority: 40 }), `${label}2`));
+    }
+    const track = trackConcurrency([workDir, b.repo]);
+
+    const results = await engine.runUntilIdle();
+    expect(order(results).sort()).toEqual(["b/b1", "b/b2", "default/a1", "default/a2"]);
+    expect(track.maxTotal()).toBe(2); // two projects overlapped
+    expect(track.maxPerRepo.get(workDir)).toBe(1); // never two steps of one project at once
+    expect(track.maxPerRepo.get(b.repo)).toBe(1);
+    for (const id of ["a1", "a2"]) expect((await store.get(id))?.frontmatter.status).toBe("done");
+    for (const id of ["b1", "b2"]) expect((await b.store.get(id))?.frontmatter.status).toBe("done");
+  });
+
+  it("concurrency=2 with a single project still runs its tasks one after the other", async () => {
+    await engine.settingsStore.update({ runner: { concurrency: 2 } });
+    await store.create(newTask(fm({ id: "t1", priority: 50 }), "t1"));
+    await store.create(newTask(fm({ id: "t2", priority: 40 }), "t2"));
+    const track = trackConcurrency([workDir]);
+
+    expect(order(await engine.runUntilIdle())).toEqual(["default/t1", "default/t2"]);
+    expect(track.maxTotal()).toBe(1);
+  });
+
+  it("selectNext skips a project that has a task in flight", async () => {
+    await engine.settingsStore.update({ runner: { concurrency: 2 } });
+    await store.create(newTask(fm({ id: "t1", priority: 50 }), "t1"));
+    await store.create(newTask(fm({ id: "t2", priority: 40 }), "t2"));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const running = new Promise<void>((r) => (started = r));
+    mockState.onRun = async () => {
+      started();
+      await gate;
+    };
+    const first = engine.tick();
+    await running;
+    expect(await engine.selectNext()).toBeNull(); // t2 waits: its project is busy
+    release();
+    expect((await first).kind).toBe("ran");
+    expect((await engine.selectNext())?.task.frontmatter.id).toBe("t2");
+  });
+
+  it("loop() drains two projects and stops cooperatively", async () => {
+    const b = await addProject("b");
+    await store.create(newTask(fm({ id: "a1" }), "a1"));
+    await b.store.create(newTask(fm({ id: "b1" }), "b1"));
+    const done = engine.loop();
+    for (let i = 0; i < 400; i += 1) {
+      const a = await store.get("a1");
+      const c = await b.store.get("b1");
+      if (a?.frontmatter.status === "done" && c?.frontmatter.status === "done") break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    engine.stop();
+    await done;
+    expect((await store.get("a1"))?.frontmatter.status).toBe("done");
+    expect((await b.store.get("b1"))?.frontmatter.status).toBe("done");
   });
 });
