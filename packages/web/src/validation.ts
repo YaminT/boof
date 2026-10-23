@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { isKebabId, StatusSchema } from "@boof-runner/shared";
+import {
+  ClientKindSchema,
+  isKebabId,
+  ScopeSchema,
+  StatusSchema,
+  TrustSchema,
+} from "@boof-runner/shared";
 import { ServiceError } from "./service.js";
 
 /** Route params that become filesystem path segments must be kebab-case ids. */
@@ -69,4 +75,17 @@ export const InjectBody = z.object({ prompt: z.string().max(100_000) }).strict()
 export const AnswersBody = z.object({ answers: z.string().max(200_000) }).strict();
 export const CommandBody = z
   .object({ name: z.string().trim().min(1).max(200), body: z.string().max(200_000).optional() })
+  .strict();
+
+const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+export const CreateClientBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    kind: ClientKindSchema.optional(),
+    scopes: z.array(ScopeSchema).min(1),
+    projects: z.union([z.literal("*"), z.array(kebabId)]).optional(),
+    trust: TrustSchema.optional(),
+    /** Duration like "30d"; omitted = never expires. */
+    expiresIn: z.string().max(20).optional(),
+  })
   .strict();

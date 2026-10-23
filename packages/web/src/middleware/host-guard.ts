@@ -18,11 +18,13 @@ export function hostnameOf(host: string): string {
  * allowed host. This blocks DNS-rebinding attacks: a website whose DNS flips
  * to 127.0.0.1 still sends its own name in Host, so it never reaches the API.
  */
-export function hostGuard(allowedHosts: () => readonly string[] = () => []): MiddlewareHandler {
+export function hostGuard(
+  allowedHosts: () => readonly string[] | Promise<readonly string[]> = () => [],
+): MiddlewareHandler {
   return async (c, next) => {
     const raw = c.req.header("host") ?? new URL(c.req.url).host;
     const name = hostnameOf(raw);
-    const extra = allowedHosts().map((h) => hostnameOf(h));
+    const extra = (await allowedHosts()).map((h) => hostnameOf(h));
     if (!LOOPBACK_HOSTS.has(name) && !extra.includes(name)) {
       return c.json(
         { error: { code: "host_not_allowed", message: "Host not allowed" } },
