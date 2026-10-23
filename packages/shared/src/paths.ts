@@ -1,6 +1,30 @@
 import { join } from "node:path";
 import type { Status } from "./schema.js";
 
+const KEBAB_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** Thrown when an id that would become part of a filesystem path is not kebab-case. */
+export class InvalidIdError extends Error {
+  constructor(public readonly id: string) {
+    super(`Invalid id: ${JSON.stringify(id)} (must be kebab-case [a-z0-9-])`);
+    this.name = "InvalidIdError";
+  }
+}
+
+export function isKebabId(id: unknown): id is string {
+  return typeof id === "string" && id.length <= 200 && KEBAB_ID.test(id);
+}
+
+/**
+ * Guard for every path builder that joins an id: rejects anything that is not
+ * kebab-case, so `..`, `/`, `%2F`-decoded segments and empty ids can never
+ * escape the data root.
+ */
+export function assertKebabId(id: string): string {
+  if (!isKebabId(id)) throw new InvalidIdError(id);
+  return id;
+}
+
 /** Maps each status to its directory name under <data-root>/tasks/. */
 export const STATUS_DIRS: Record<Status, string> = {
   draft: "drafts",
@@ -46,13 +70,14 @@ export function statusDir(root: string, status: Status): string {
  * as a flat file (<status-dir>/<id>.md).
  */
 export function taskFilePath(root: string, status: Status, id: string): string {
+  assertKebabId(id);
   if (status === "running") return join(statusDir(root, status), id, "task.md");
   return join(statusDir(root, status), `${id}.md`);
 }
 
 /** Working-area directory for a running task: <root>/tasks/ongoing/<id>/. */
 export function workingAreaDir(root: string, id: string): string {
-  return join(statusDir(root, "running"), id);
+  return join(statusDir(root, "running"), assertKebabId(id));
 }
 
 /** Runtime control directory for a running task. */
@@ -75,7 +100,7 @@ export function taskPromptInjectionsPath(root: string, id: string): string {
  * Keyed by id only, so attachments survive the task moving between status dirs.
  */
 export function taskAssetsDir(root: string, id: string): string {
-  return join(root, "tasks", "assets", id);
+  return join(root, "tasks", "assets", assertKebabId(id));
 }
 
 /** Path to a single attachment file within a task's asset directory. */
@@ -84,7 +109,7 @@ export function taskAssetPath(root: string, id: string, name: string): string {
 }
 
 export function commandFilePath(root: string, id: string): string {
-  return join(root, "commands", `${id}.md`);
+  return join(root, "commands", `${assertKebabId(id)}.md`);
 }
 
 export const ALL_STATUSES: Status[] = [

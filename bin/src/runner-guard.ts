@@ -21,9 +21,9 @@ export class RunnerGuard {
       process.kill(pid, 0);
       return true;
     } catch (err) {
-      // ESRCH = no such process → stale pidfile, not held.
-      if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
-      return false;
+      // EPERM = the process exists but belongs to another user → held.
+      // ESRCH (no such process) or an unreadable pidfile → stale, not held.
+      return (err as NodeJS.ErrnoException).code === "EPERM";
     }
   }
 

@@ -9,6 +9,8 @@ export interface StartServerOptions {
   port?: number;
   host?: string;
   uiDir?: string;
+  /** Extra Host header names accepted besides loopback. */
+  allowedHosts?: string[];
   registry?: ToolRegistry;
 }
 
@@ -32,7 +34,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const watcher = new DataWatcher(opts.root);
   watcher.start();
 
-  const app = createApp({ service, watcher, uiDir: opts.uiDir });
+  const app = createApp({ service, watcher, uiDir: opts.uiDir, allowedHosts: opts.allowedHosts });
   const host = opts.host ?? "127.0.0.1";
 
   const server = await new Promise<ServerType>((resolve) => {

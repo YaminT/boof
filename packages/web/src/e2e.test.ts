@@ -13,7 +13,7 @@ let service: TaskService;
 let app: ReturnType<typeof createApp>;
 let engine: RunnerEngine;
 
-const req = (path: string, init?: RequestInit) => app.request("http://local" + path, init);
+const req = (path: string, init?: RequestInit) => app.request("http://localhost" + path, init);
 const post = (path: string, body: unknown) =>
   req(path, {
     method: "POST",

@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { Modal } from "./Modal.js";
-import type { HealthResult, RoleAssignment, Settings, TokenUsage } from "../types.js";
+import type { RoleAssignment, Settings, TokenUsage } from "@boof-runner/shared/schema";
+import type { HealthResult } from "../api-types.js";
 
 type Role = "planner" | "developer" | "observer" | "reviewer";
 const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
 
 export function SettingsPage({ settings, onChange }: { settings: Settings; onChange: () => void }) {
   const [workingDir, setWorkingDir] = useState(settings.workingDirectory);
-  const [subdir, setSubdir] = useState(settings.selectedSubdirectory ?? "");
   const [roles, setRoles] = useState<Settings["roles"]>(settings.roles);
   const [models, setModels] = useState<Record<string, string[]>>(
     withRoleModels(settings.models, settings.roles),
@@ -23,7 +23,6 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
 
   useEffect(() => {
     setWorkingDir(settings.workingDirectory);
-    setSubdir(settings.selectedSubdirectory ?? "");
     setRoles(settings.roles);
     setModels((m) => withRoleModels(mergeModels(settings.models, m), settings.roles));
   }, [settings]);
@@ -83,7 +82,6 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
   const save = async () => {
     await api.updateSettings({
       workingDirectory: workingDir,
-      selectedSubdirectory: subdir || null,
       roles,
       models,
     });
@@ -99,10 +97,6 @@ export function SettingsPage({ settings, onChange }: { settings: Settings; onCha
         <label>
           Path (must be a git repo for isolated runs)
           <input value={workingDir} onChange={(e) => setWorkingDir(e.target.value)} />
-        </label>
-        <label>
-          Subdirectory (optional)
-          <input value={subdir} onChange={(e) => setSubdir(e.target.value)} placeholder="(none)" />
         </label>
       </section>
 

@@ -15,7 +15,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { api } from "../api.js";
-import type { Status, Task } from "../types.js";
+import type { Status } from "@boof-runner/shared/schema";
+import type { Task } from "@boof-runner/shared/task-types";
 
 const STATUS_LABEL: Record<Status, string> = {
   draft: "Draft",

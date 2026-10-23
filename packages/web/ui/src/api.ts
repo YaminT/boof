@@ -1,4 +1,6 @@
-import type { CommandTemplate, HealthResult, Settings, Status, Task, TokenUsage } from "./types.js";
+import type { Settings, Status, TokenUsage } from "@boof-runner/shared/schema";
+import type { Task } from "@boof-runner/shared/task-types";
+import type { CommandTemplate, HealthResult } from "./api-types.js";
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -6,7 +8,11 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = (data as { error?: { message?: string } | string }).error;
+    const message = typeof err === "string" ? err : err?.message;
+    throw new Error(message ?? `HTTP ${res.status}`);
+  }
   return data as T;
 }
 
@@ -62,7 +68,11 @@ export const api = {
     // No content-type header: the browser sets the multipart boundary.
     const res = await fetch(`/api/tasks/${id}/attachments`, { method: "POST", body: form });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+    if (!res.ok) {
+      const err = (data as { error?: { message?: string } | string }).error;
+      const message = typeof err === "string" ? err : err?.message;
+      throw new Error(message ?? `HTTP ${res.status}`);
+    }
     return data as Task;
   },
   deleteAttachment: (id: string, name: string) =>

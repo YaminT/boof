@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
-import type { CommandTemplate } from "../types.js";
+import type { CommandTemplate } from "../api-types.js";
 
 export function CommandsTab({ onChange }: { onChange: () => void }) {
   const [commands, setCommands] = useState<CommandTemplate[]>([]);

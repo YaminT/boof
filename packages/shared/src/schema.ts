@@ -152,9 +152,6 @@ export type RetrySettings = z.infer<typeof RetrySettingsSchema>;
 export const SettingsSchema = z.object({
   runner: z.object({ enabled: z.boolean() }),
   workingDirectory: z.string(),
-  selectedSubdirectory: z.string().nullable().default(null),
-  blockHours: z.array(z.unknown()).default([]),
-  tokens: z.record(z.unknown()).default({}),
   roles: z.object({
     planner: RoleAssignmentSchema,
     developer: RoleAssignmentSchema,
@@ -167,3 +164,20 @@ export const SettingsSchema = z.object({
   models: z.record(z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
+
+/**
+ * Fields a client may change through PUT /api/settings. Unknown keys are
+ * rejected. Nested objects are replaced as a whole, matching SettingsStore.update.
+ */
+export const SettingsPatchSchema = SettingsSchema.pick({
+  runner: true,
+  workingDirectory: true,
+  roles: true,
+  review: true,
+  worktree: true,
+  retries: true,
+  models: true,
+})
+  .partial()
+  .strict();
+export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;

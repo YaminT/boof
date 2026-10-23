@@ -18,7 +18,7 @@ let root: string;
 let app: ReturnType<typeof createApp>;
 let service: TaskService;
 
-const req = (path: string, init?: RequestInit) => app.request("http://local" + path, init);
+const req = (path: string, init?: RequestInit) => app.request("http://localhost" + path, init);
 const json = (body: unknown): RequestInit => ({
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -65,7 +65,7 @@ describe("task API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status: "done" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
   });
 
   it("enqueues a draft via status transition and moves the file", async () => {

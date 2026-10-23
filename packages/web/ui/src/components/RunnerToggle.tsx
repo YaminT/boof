@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import type { Settings } from "../types.js";
+import type { Settings } from "@boof-runner/shared/schema";
 
 export function RunnerToggle({
   settings,

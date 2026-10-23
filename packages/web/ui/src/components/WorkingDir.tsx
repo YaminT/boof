@@ -4,7 +4,7 @@ import { FolderOpenIcon } from "./Icons.js";
 import { RunnerToggle } from "./RunnerToggle.js";
 import { boofRunnerLogoUrl } from "../assets.js";
 import { useWorkingDir } from "../useWorkingDir.js";
-import type { Settings } from "../types.js";
+import type { Settings } from "@boof-runner/shared/schema";
 
 /** Browser-only modal for typing a working-directory path. */
 function WorkingDirModal({

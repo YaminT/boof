@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
-import type { Task } from "../types.js";
+import type { Task } from "@boof-runner/shared/task-types";
 
 /** Pull the most recent "### Step" header out of the log as the current phase. */
 function currentStep(log: string): string | null {

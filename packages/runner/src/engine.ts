@@ -7,7 +7,6 @@ import {
   SettingsStore,
   TaskStore,
   workingAreaDir,
-  type Settings,
   type Task,
 } from "@boof-runner/shared";
 import { Pipeline, type PipelineOutcome } from "./pipeline.js";
@@ -61,14 +60,6 @@ export class RunnerEngine {
         return a.frontmatter.updated.localeCompare(b.frontmatter.updated); // older first
       });
     return eligible[0] ?? null;
-  }
-
-  /**
-   * Block-hours placeholder (settings spec): empty list means never idle. Real
-   * time-window evaluation will be added in a later iteration.
-   */
-  private isBlocked(settings: Settings): boolean {
-    return settings.blockHours.length > 0 && false;
   }
 
   /** Transition pending → running and scaffold the working area. */
@@ -131,7 +122,6 @@ export class RunnerEngine {
   async tick(): Promise<TickResult> {
     const settings = await this.settingsStore.load();
     if (!settings.runner.enabled) return { kind: "disabled" };
-    if (this.isBlocked(settings)) return { kind: "blocked" };
 
     const next = await this.selectNext();
     if (!next) return { kind: "idle" };
