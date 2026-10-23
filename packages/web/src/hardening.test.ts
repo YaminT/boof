@@ -27,7 +27,7 @@ beforeEach(async () => {
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.tasks.ensureDirs();
   await new SettingsStore(root).save(defaultSettings(root));
-  app = createApp({ service });
+  app = createApp({ service, peerAddress: () => "127.0.0.1" });
 });
 
 afterEach(async () => {
@@ -49,7 +49,7 @@ describe("host guard", () => {
   );
 
   it("accepts explicitly allowed hosts", async () => {
-    app = createApp({ service, allowedHosts: ["boof.lan"] });
+    app = createApp({ service, peerAddress: () => "127.0.0.1", allowedHosts: ["boof.lan"] });
     expect((await req("/api/tasks", undefined, "boof.lan:80")).status).toBe(200);
   });
 

@@ -9,6 +9,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   newTask,
   SettingsStore,
+  securitySettings,
   taskControlDir,
   taskPromptInjectionsPath,
   taskStopRequestPath,
@@ -17,6 +18,8 @@ import {
   uniqueKebabId,
   workingAreaDir,
   type Attachment,
+  type Principal,
+  type TaskOrigin,
   type Settings,
   type SettingsPatch,
   type Status,
@@ -81,10 +84,34 @@ export class TaskService {
     return this.tasks.get(id);
   }
 
-  async create(input: CreateTaskInput): Promise<Task> {
+  /** True when `actor` is a review-trust client and approval is required (the default). */
+  private async needsApproval(actor?: Principal): Promise<boolean> {
+    if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
+    return securitySettings(await this.loadSettings()).externalTasksRequireApproval;
+  }
+
+  /** A review-trust client may not move work into the queue; a human or trusted principal does. */
+  private async assertMayQueue(actor?: Principal): Promise<void> {
+    if (await this.needsApproval(actor)) {
+      throw new ServiceError(
+        403,
+        "This client has review trust and cannot queue tasks; a human must approve them",
+        "forbidden_trust",
+      );
+    }
+  }
+
+  async create(input: CreateTaskInput, actor?: Principal): Promise<Task> {
     const existing = (await this.tasks.list()).map((t) => t.frontmatter.id);
     const id = uniqueKebabId(input.title, existing);
-    const status = input.status ?? "draft";
+    const review = await this.needsApproval(actor);
+    const status = review ? "draft" : (input.status ?? "draft");
+    const labels = [...(input.labels ?? [])];
+    if (review && actor) labels.push(`external:${actor.id}`);
+    const origin: TaskOrigin | undefined =
+      actor?.kind === "client"
+        ? { kind: ORIGIN_KIND[actor.clientKind ?? "harness"], client: actor.id }
+        : undefined;
     const task = newTask(
       {
         id,
@@ -92,12 +119,13 @@ export class TaskService {
         status,
         priority: input.priority ?? 50,
         skip: false,
-        labels: input.labels ?? [],
+        labels,
         command: null,
         attachments: [],
         questions: "none",
         runs: Math.max(1, Math.floor(input.runs ?? 1)),
         completedRuns: 0,
+        ...(origin ? { origin } : {}),
         created: "",
         updated: "",
       },
@@ -117,7 +145,8 @@ export class TaskService {
   }
 
   /** Update task fields in place; transition if `status` changes. */
-  async update(id: string, input: UpdateTaskInput): Promise<Task> {
+  async update(id: string, input: UpdateTaskInput, actor?: Principal): Promise<Task> {
+    if (input.status === "pending") await this.assertMayQueue(actor);
     const task = await this.tasks.get(id);
     if (!task) throw new ServiceError(404, `Task not found: ${id}`);
 
@@ -166,7 +195,8 @@ export class TaskService {
     return out;
   }
 
-  async retry(id: string): Promise<Task> {
+  async retry(id: string, actor?: Principal): Promise<Task> {
+    await this.assertMayQueue(actor);
     return this.tasks.transition(id, "pending");
   }
 
@@ -176,7 +206,8 @@ export class TaskService {
   }
 
   /** Unarchive a task back into the pending queue. */
-  async unarchive(id: string): Promise<Task> {
+  async unarchive(id: string, actor?: Principal): Promise<Task> {
+    await this.assertMayQueue(actor);
     return this.tasks.transition(id, "pending");
   }
 
@@ -248,7 +279,8 @@ export class TaskService {
   }
 
   /** Submit answers for a parked task: write answers, mark answered, resume. */
-  async submitAnswers(id: string, answers: string): Promise<Task> {
+  async submitAnswers(id: string, answers: string, actor?: Principal): Promise<Task> {
+    await this.assertMayQueue(actor);
     return this.tasks.transition(id, "pending", (t) => {
       t.body.answers = answers;
       t.frontmatter.questions = "answered";
@@ -368,6 +400,8 @@ export class TaskService {
     return this.usage.load();
   }
 }
+
+const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
 
 function defaultCodeFor(status: number): string {
   if (status === 400) return "invalid_input";

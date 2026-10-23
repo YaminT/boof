@@ -50,7 +50,7 @@ beforeEach(async () => {
   };
   await new SettingsStore(dataRoot).save(s);
 
-  app = createApp({ service });
+  app = createApp({ service, peerAddress: () => "127.0.0.1" });
   engine = new RunnerEngine({ root: dataRoot, pollIntervalMs: 10 });
   resetMock();
 });

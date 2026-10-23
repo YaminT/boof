@@ -6,12 +6,16 @@ import { RunnerEngine } from "@boof-runner/runner";
 import { startServer } from "@boof-runner/web";
 import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
+import { authCommand } from "./auth-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 
 interface ServeArgs {
   dataRoot: string;
   port: number;
   noRunner: boolean;
+  host: string;
+  tlsCert?: string;
+  tlsKey?: string;
 }
 
 function defaultDataRoot(): string {
@@ -46,6 +50,7 @@ Usage:
   boof-runner run --file <path> [...]  Same, reading the prompt from a file
   boof-runner run --all [options]      Drive the whole pending queue to completion
   boof-runner scan <repo> [options]    Turn a repo's not-done goal.boof.xml units into tasks
+  boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
   boof-runner --help                   Show this help
 
 Common options:
@@ -54,6 +59,10 @@ Common options:
 serve options:
   -p, --port <n>      Web server port (default: 4319, or $BOOF_RUNNER_PORT)
       --no-runner     Start the web server only (do not start the runner)
+      --host <addr>   Bind address (default: 127.0.0.1, or $BOOF_RUNNER_HOST). Non-loopback needs
+                      security.auth.mode = "required" and at least one client (auth add)
+      --tls-cert <f>  PEM certificate; with --tls-key serves HTTPS
+      --tls-key <f>   PEM private key
 
 run options:
   -f, --file <path>   Read the prompt from a file instead of an argument
@@ -87,6 +96,9 @@ function parseServeArgs(argv: string[]): ServeArgs {
     dataRoot: dataOpt ? absPath(dataOpt) : defaultDataRoot(),
     port: Number(portOpt ?? process.env.BOOF_RUNNER_PORT ?? 4319),
     noRunner: hasFlag(argv, ["--no-runner"]),
+    host: getOpt(argv, ["--host"]) ?? process.env.BOOF_RUNNER_HOST ?? "127.0.0.1",
+    tlsCert: getOpt(argv, ["--tls-cert"]),
+    tlsKey: getOpt(argv, ["--tls-key"]),
   };
 }
 
@@ -98,9 +110,25 @@ export async function serve(argv: string[]): Promise<void> {
   console.log(`${created ? "Scaffolded" : "Using"} data root: ${root}`);
 
   const uiDir = resolveUiDir();
-  const running = await startServer({ root, port: args.port, uiDir });
-  console.log(`Web UI:  http://127.0.0.1:${running.port}`);
-  console.log(`API:     http://127.0.0.1:${running.port}/api`);
+  let running;
+  try {
+    running = await startServer({
+      root,
+      port: args.port,
+      host: args.host,
+      uiDir,
+      tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
+      tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
+    });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
+  const scheme = args.tlsCert ? "https" : "http";
+  const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
+  const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
+  console.log(`Web UI:  ${scheme}://${hostPart}:${running.port}`);
+  console.log(`API:     ${scheme}://${hostPart}:${running.port}/api`);
 
   let engine: RunnerEngine | null = null;
   const guard = new RunnerGuard(root);
@@ -203,6 +231,9 @@ export function firstPositional(argv: string[]): string | undefined {
     "--bump",
     "--port",
     "-p",
+    "--host",
+    "--tls-cert",
+    "--tls-key",
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -219,7 +250,7 @@ export function firstPositional(argv: string[]): string | undefined {
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const [cmd, ...rest] = argv;
   // Top-level --help (but let `run`/`scan --help` fall through to their handlers).
-  if (hasFlag(argv, ["--help", "-h"]) && cmd !== "run" && cmd !== "scan") {
+  if (hasFlag(argv, ["--help", "-h"]) && cmd !== "run" && cmd !== "scan" && cmd !== "auth") {
     console.log(HELP);
     return;
   }
@@ -232,6 +263,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "scan":
       if (hasFlag(rest, ["--help", "-h"])) console.log(HELP);
       else code = await scanCommand(rest);
+      break;
+    case "auth":
+      code = await authCommand(rest, defaultDataRoot);
       break;
     case "serve":
       await serve(rest);
