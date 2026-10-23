@@ -15,7 +15,15 @@ function currentStep(log: string): string | null {
  * buffers --print output so its blocks land per step). Auto-scrolls while the
  * view is pinned to the bottom.
  */
-export function LivePanel({ task, onChange }: { task: Task; onChange: () => void }) {
+export function LivePanel({
+  projectId,
+  task,
+  onChange,
+}: {
+  projectId: string;
+  task: Task;
+  onChange: () => void;
+}) {
   const [log, setLog] = useState("");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState<"inject" | "stop" | null>(null);
@@ -28,7 +36,7 @@ export function LivePanel({ task, onChange }: { task: Task; onChange: () => void
     let alive = true;
     const tick = () => {
       void api
-        .liveLog(id)
+        .liveLog(projectId, id)
         .then((r) => {
           if (alive) setLog(r.log);
         })
@@ -40,7 +48,7 @@ export function LivePanel({ task, onChange }: { task: Task; onChange: () => void
       alive = false;
       clearInterval(timer);
     };
-  }, [id]);
+  }, [projectId, id]);
 
   // Auto-scroll to newest output unless the user scrolled up to read history.
   useEffect(() => {
@@ -60,7 +68,7 @@ export function LivePanel({ task, onChange }: { task: Task; onChange: () => void
     setError(null);
     setBusy("inject");
     try {
-      await api.injectPrompt(id, text);
+      await api.injectPrompt(projectId, id, text);
       setPrompt("");
       onChange();
     } catch (err) {
@@ -74,7 +82,7 @@ export function LivePanel({ task, onChange }: { task: Task; onChange: () => void
     setError(null);
     setBusy("stop");
     try {
-      await api.stopTask(id);
+      await api.stopTask(projectId, id);
       onChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

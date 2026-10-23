@@ -39,10 +39,12 @@ const STATUS_FILTERS: Status[] = [
 ];
 
 function Row({
+  projectId,
   task,
   onEdit,
   onChange,
 }: {
+  projectId: string;
   task: Task;
   onEdit: (id: string) => void;
   onChange: () => void;
@@ -79,7 +81,7 @@ function Row({
           className="retry-btn"
           title="Clear the failed status and re-queue this task"
           onClick={async () => {
-            await api.retry(f.id);
+            await api.retry(projectId, f.id);
             onChange();
           }}
         >
@@ -91,7 +93,7 @@ function Row({
           className="retry-btn"
           title="Unarchive and re-queue this task"
           onClick={async () => {
-            await api.unarchive(f.id);
+            await api.unarchive(projectId, f.id);
             onChange();
           }}
         >
@@ -103,7 +105,7 @@ function Row({
             className="archive-btn"
             title="Archive this task"
             onClick={async () => {
-              await api.archive(f.id);
+              await api.archive(projectId, f.id);
               onChange();
             }}
           >
@@ -116,7 +118,7 @@ function Row({
           type="checkbox"
           checked={f.skip}
           onChange={async (e) => {
-            await api.setSkip(f.id, e.target.checked);
+            await api.setSkip(projectId, f.id, e.target.checked);
             onChange();
           }}
         />
@@ -128,7 +130,7 @@ function Row({
           title="Delete this task permanently"
           onClick={async () => {
             if (!confirm(`Delete “${f.title}” permanently? This cannot be undone.`)) return;
-            await api.deleteTask(f.id);
+            await api.deleteTask(projectId, f.id);
             onChange();
           }}
         >
@@ -140,11 +142,13 @@ function Row({
 }
 
 export function TaskList({
+  projectId,
   tasks,
   onEdit,
   onChange,
   onNew,
 }: {
+  projectId: string;
   tasks: Task[];
   onEdit: (id: string) => void;
   onChange: () => void;
@@ -211,7 +215,7 @@ export function TaskList({
     const from = ids.indexOf(String(active.id));
     const to = ids.indexOf(String(over.id));
     const next = arrayMove(ids, from, to);
-    await api.reorder(next);
+    await api.reorder(projectId, next);
     onChange();
   };
 
@@ -277,7 +281,13 @@ export function TaskList({
             >
               <ul>
                 {g.items.map((t) => (
-                  <Row key={t.frontmatter.id} task={t} onEdit={onEdit} onChange={onChange} />
+                  <Row
+                    key={t.frontmatter.id}
+                    projectId={projectId}
+                    task={t}
+                    onEdit={onEdit}
+                    onChange={onChange}
+                  />
                 ))}
               </ul>
             </SortableContext>

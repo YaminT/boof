@@ -1,5 +1,6 @@
 import type {
   Project,
+  ProjectPatch,
   Settings,
   SettingsPatch,
   Status,
@@ -27,19 +28,37 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+/** A task as returned by the project routes: the task plus the project that owns it. */
+export type TaskView = Task & { projectId: string };
+
+const P = (pid: string) => `/api/projects/${encodeURIComponent(pid)}`;
+const T = (pid: string, id: string) => `${P(pid)}/tasks/${encodeURIComponent(id)}`;
+
+export interface CreateProjectInput {
+  workingDirectory: string;
+  id?: string;
+  name?: string;
+  defaultBase?: string;
+  labels?: string[];
+}
+
 export const api = {
-  listTasks: () => http<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
-  getTask: (id: string) => http<Task>(`/api/tasks/${id}`),
-  createTask: (input: {
-    title: string;
-    prompt?: string;
-    priority?: number;
-    labels?: string[];
-    command?: string | null;
-    status?: "draft" | "pending";
-    runs?: number;
-  }) => http<Task>("/api/tasks", { method: "POST", body: JSON.stringify(input) }),
+  listTasks: (pid: string) => http<{ tasks: TaskView[] }>(`${P(pid)}/tasks`).then((r) => r.tasks),
+  getTask: (pid: string, id: string) => http<TaskView>(T(pid, id)),
+  createTask: (
+    pid: string,
+    input: {
+      title: string;
+      prompt?: string;
+      priority?: number;
+      labels?: string[];
+      command?: string | null;
+      status?: "draft" | "pending";
+      runs?: number;
+    },
+  ) => http<TaskView>(`${P(pid)}/tasks`, { method: "POST", body: JSON.stringify(input) }),
   updateTask: (
+    pid: string,
     id: string,
     input: Partial<{
       title: string;
@@ -51,45 +70,49 @@ export const api = {
       runs: number;
       status: Status;
     }>,
-  ) => http<Task>(`/api/tasks/${id}`, { method: "PUT", body: JSON.stringify(input) }),
-  setSkip: (id: string, skip: boolean) =>
-    http<Task>(`/api/tasks/${id}/skip`, { method: "POST", body: JSON.stringify({ skip }) }),
-  reorder: (order: string[]) =>
-    http<{ tasks: Task[] }>("/api/tasks/reorder", {
+  ) => http<TaskView>(T(pid, id), { method: "PUT", body: JSON.stringify(input) }),
+  setSkip: (pid: string, id: string, skip: boolean) =>
+    http<TaskView>(`${T(pid, id)}/skip`, { method: "POST", body: JSON.stringify({ skip }) }),
+  reorder: (pid: string, order: string[]) =>
+    http<{ tasks: TaskView[] }>(`${P(pid)}/tasks/reorder`, {
       method: "POST",
       body: JSON.stringify({ order }),
     }),
-  retry: (id: string) => http<Task>(`/api/tasks/${id}/retry`, { method: "POST" }),
-  archive: (id: string) => http<Task>(`/api/tasks/${id}/archive`, { method: "POST" }),
-  unarchive: (id: string) => http<Task>(`/api/tasks/${id}/unarchive`, { method: "POST" }),
-  deleteTask: (id: string) => http<{ ok: true }>(`/api/tasks/${id}`, { method: "DELETE" }),
-  liveLog: (id: string) => http<{ log: string; running: boolean }>(`/api/tasks/${id}/live-log`),
-  stopTask: (id: string) => http<{ ok: true }>(`/api/tasks/${id}/stop`, { method: "POST" }),
-  injectPrompt: (id: string, prompt: string) =>
-    http<{ ok: true }>(`/api/tasks/${id}/inject`, {
+  retry: (pid: string, id: string) => http<TaskView>(`${T(pid, id)}/retry`, { method: "POST" }),
+  archive: (pid: string, id: string) => http<TaskView>(`${T(pid, id)}/archive`, { method: "POST" }),
+  unarchive: (pid: string, id: string) =>
+    http<TaskView>(`${T(pid, id)}/unarchive`, { method: "POST" }),
+  deleteTask: (pid: string, id: string) => http<{ ok: true }>(T(pid, id), { method: "DELETE" }),
+  liveLog: (pid: string, id: string) =>
+    http<{ log: string; running: boolean }>(`${T(pid, id)}/live-log`),
+  stopTask: (pid: string, id: string) =>
+    http<{ ok: true }>(`${T(pid, id)}/stop`, { method: "POST" }),
+  injectPrompt: (pid: string, id: string, prompt: string) =>
+    http<{ ok: true }>(`${T(pid, id)}/inject`, {
       method: "POST",
       body: JSON.stringify({ prompt }),
     }),
-  submitAnswers: (id: string, answers: string) =>
-    http<Task>(`/api/tasks/${id}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
+  submitAnswers: (pid: string, id: string, answers: string) =>
+    http<TaskView>(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
+  actions: () => http<{ actions: TaskView[] }>("/api/actions").then((r) => r.actions),
 
-  uploadAttachment: async (id: string, file: File): Promise<Task> => {
+  uploadAttachment: async (pid: string, id: string, file: File): Promise<TaskView> => {
     const form = new FormData();
     form.append("file", file);
     // No content-type header: the browser sets the multipart boundary.
-    const res = await fetch(`/api/tasks/${id}/attachments`, {
+    const res = await fetch(`${T(pid, id)}/attachments`, {
       method: "POST",
       body: form,
       headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return failure(res, data);
-    return data as Task;
+    return data as TaskView;
   },
-  deleteAttachment: (id: string, name: string) =>
-    http<Task>(`/api/tasks/${id}/attachments/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  attachmentUrl: (id: string, name: string) =>
-    `/api/tasks/${id}/attachments/${encodeURIComponent(name)}`,
+  deleteAttachment: (pid: string, id: string, name: string) =>
+    http<TaskView>(`${T(pid, id)}/attachments/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  attachmentUrl: (pid: string, id: string, name: string) =>
+    `${T(pid, id)}/attachments/${encodeURIComponent(name)}`,
 
   listCommands: () =>
     http<{ commands: CommandTemplate[] }>("/api/commands").then((r) => r.commands),
@@ -112,16 +135,27 @@ export const api = {
   health: () => http<{ tools: Record<string, HealthResult> }>("/api/health").then((r) => r.tools),
   models: () => http<{ models: Record<string, string[]> }>("/api/models").then((r) => r.models),
   usage: () => http<TokenUsage>("/api/usage"),
-  // Minimal project support: the UI still works against the default project (legacy /api/tasks).
-  getProject: (id: string) => http<Project>(`/api/projects/${id}`),
-  createProject: (input: { workingDirectory: string }) =>
+  projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
+
+  listProjects: (includeArchived = false) =>
+    http<{ projects: Project[] }>(
+      `/api/projects${includeArchived ? "?includeArchived=1" : ""}`,
+    ).then((r) => r.projects),
+  getProject: (pid: string) => http<Project>(P(pid)),
+  createProject: (input: CreateProjectInput) =>
     http<Project>("/api/projects", { method: "POST", body: JSON.stringify(input) }),
-  updateProject: (id: string, patch: { workingDirectory?: string }) =>
-    http<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  updateProject: (pid: string, patch: ProjectPatch) =>
+    http<Project>(P(pid), { method: "PUT", body: JSON.stringify(patch) }),
+  archiveProject: (pid: string) => http<Project>(`${P(pid)}/archive`, { method: "POST" }),
+  unarchiveProject: (pid: string) => http<Project>(`${P(pid)}/unarchive`, { method: "POST" }),
+  pauseProject: (pid: string) => http<Project>(`${P(pid)}/pause`, { method: "POST" }),
+  resumeProject: (pid: string) => http<Project>(`${P(pid)}/resume`, { method: "POST" }),
+  deleteProject: (pid: string, purge = false) =>
+    http<{ ok: true }>(`${P(pid)}${purge ? "?purge=1" : ""}`, { method: "DELETE" }),
 
   /** Fetch an attachment with the auth header and return a blob: URL for <img>/<a>. */
-  attachmentBlobUrl: async (id: string, name: string): Promise<string> => {
-    const res = await fetch(api.attachmentUrl(id, name), { headers: authHeaders() });
+  attachmentBlobUrl: async (pid: string, id: string, name: string): Promise<string> => {
+    const res = await fetch(api.attachmentUrl(pid, id, name), { headers: authHeaders() });
     if (!res.ok) return failure(res, await res.json().catch(() => ({})));
     return URL.createObjectURL(await res.blob());
   },
