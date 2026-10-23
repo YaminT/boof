@@ -28,7 +28,7 @@ const kebab = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "must be kebab-case (
  */
 const isoDatetime = z.preprocess(
   (v) => (v instanceof Date ? v.toISOString() : v),
-  z.string().datetime(),
+  z.iso.datetime(),
 );
 
 /** A tool+model assignment for a single role. */
@@ -39,14 +39,12 @@ export const RoleAssignmentSchema = z.object({
 export type RoleAssignment = z.infer<typeof RoleAssignmentSchema>;
 
 /** Optional per-task override of the global role assignments. */
-export const TaskToolsSchema = z
-  .object({
-    planner: RoleAssignmentSchema.optional(),
-    developer: RoleAssignmentSchema.optional(),
-    observer: RoleAssignmentSchema.optional(),
-    reviewer: RoleAssignmentSchema.optional(),
-  })
-  .strict();
+export const TaskToolsSchema = z.strictObject({
+  planner: RoleAssignmentSchema.optional(),
+  developer: RoleAssignmentSchema.optional(),
+  observer: RoleAssignmentSchema.optional(),
+  reviewer: RoleAssignmentSchema.optional(),
+});
 export type TaskTools = z.infer<typeof TaskToolsSchema>;
 
 /** A file attached to a task (image or PDF), stored under tasks/assets/<id>/. */
@@ -205,7 +203,7 @@ export type PublicClient = Omit<Client, "keyHash">;
 export const SecuritySettingsSchema = z.object({
   /** Extra Host header values accepted besides loopback. */
   allowedHosts: z.array(z.string()).default([]),
-  auth: z.object({ mode: z.enum(["local-trust", "required"]).default("local-trust") }).default({}),
+  auth: z.object({ mode: z.enum(["local-trust", "required"]).default("local-trust") }).prefault({}),
   /** Roots under which non-local principals may register projects (e.g. ["~/codes"]). */
   allowedProjectRoots: z.array(z.string()).default([]),
   /** review-trust clients land in draft and cannot queue work. */
@@ -215,13 +213,13 @@ export const SecuritySettingsSchema = z.object({
       perMinute: z.number().int().min(1).default(600),
       attachmentsPerMinute: z.number().int().min(1).default(30),
     })
-    .default({}),
+    .prefault({}),
   audit: z
     .object({
       enabled: z.boolean().default(true),
       retentionDays: z.number().int().min(1).default(90),
     })
-    .default({}),
+    .prefault({}),
 });
 export type SecuritySettings = z.infer<typeof SecuritySettingsSchema>;
 
@@ -239,7 +237,7 @@ export const SettingsSchema = z.object({
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
-  models: z.record(z.array(z.string())),
+  models: z.record(z.string(), z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

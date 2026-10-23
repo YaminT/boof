@@ -24,7 +24,7 @@
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
         "hono": "^4.13.13",
-        "zod": "^3.24.1",
+        "zod": "^4.6.7",
       },
     },
     "packages/desktop": {
@@ -38,7 +38,7 @@
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
         "hono": "^4.13.13",
-        "zod": "^3.24.1",
+        "zod": "^4.6.7",
       },
       "devDependencies": {
         "electron": "^45.0.0",
@@ -58,7 +58,7 @@
       "dependencies": {
         "fast-xml-parser": "^5.11.2",
         "gray-matter": "^4.0.3",
-        "zod": "^3.24.1",
+        "zod": "^4.6.7",
       },
     },
     "packages/web": {
@@ -70,7 +70,7 @@
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "hono": "^4.13.13",
-        "zod": "^3.24.1",
+        "zod": "^4.6.7",
       },
       "devDependencies": {
         "@dnd-kit/core": "^6.3.1",
@@ -925,7 +925,7 @@
 
     "yocto-queue": ["yocto-queue@0.1.0", "", {}, "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q=="],
 
-    "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
+    "zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
 
     "@electron/asar/commander": ["commander@5.1.0", "", {}, "sha512-P0CysNDQ7rtVw4QIQtm+MRxV66vKFSvlsQvGYXZWR3qFU0jlMKHZZZgw8e+8DSah4UDKMqnknRDQz+xuQXQ/Zg=="],
 

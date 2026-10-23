@@ -15,7 +15,7 @@ export function paramId(value: string | undefined, what = "id"): string {
 }
 
 /** Parse a JSON body against a schema; map failures to a 400 with readable details. */
-export async function parseJson<T extends z.ZodTypeAny>(
+export async function parseJson<T extends z.ZodType>(
   req: { json: () => Promise<unknown> },
   schema: T,
 ): Promise<z.infer<T>> {
