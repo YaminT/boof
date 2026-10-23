@@ -12,7 +12,8 @@ import {
   TaskStore,
   workingAreaDir,
   worktreeSettings,
-  type Settings,
+  type EffectiveSettings,
+  type Project,
   type Task,
   type TokenUsage,
   type Verdict,
@@ -33,10 +34,14 @@ import {
 } from "./worktree.js";
 
 export interface PipelineDeps {
+  /** The project directory (projects/<id>): the root of its TaskStore and UsageStore. */
   root: string;
   store: TaskStore;
   registry: ToolRegistry;
-  settings: Settings;
+  /** Global settings merged with the project's overrides (effectiveSettings). */
+  settings: EffectiveSettings;
+  /** The project being run; absent only in unit tests that build a Pipeline directly. */
+  project?: Project;
 }
 
 const VERDICT_PROTOCOL =
@@ -387,9 +392,9 @@ export class Pipeline {
       // Set up isolation when the working directory is a git repo. Reused
       // across iterations so later runs build on the prior run's work.
       if (await isGitRepo(workingDirectory)) {
-        const base = task.frontmatter.base;
+        const base = task.frontmatter.base ?? this.deps.project?.defaultBase;
         const made = await ensureWorktree(workingDirectory, id, {
-          root: resolveWorktreeRoot(this.deps.settings),
+          root: resolveWorktreeRoot(worktreeSettings(this.deps.settings), workingDirectory),
           base,
         });
         worktree = made.worktree;
