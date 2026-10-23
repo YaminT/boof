@@ -80,6 +80,13 @@ export const BoofGoalRefSchema = z.object({
 });
 export type BoofGoalRef = z.infer<typeof BoofGoalRefSchema>;
 
+/** Where a task came from; set when an authenticated client created it (api-security). */
+export const TaskOriginSchema = z.object({
+  kind: z.enum(["ui", "cli", "api", "mcp"]),
+  client: kebab.optional(),
+});
+export type TaskOrigin = z.infer<typeof TaskOriginSchema>;
+
 /** Canonical task frontmatter (task-file spec). */
 export const TaskFrontmatterSchema = z.object({
   id: kebab,
@@ -103,6 +110,8 @@ export const TaskFrontmatterSchema = z.object({
   // Set on scan-created tasks: on successful completion the runner appends a
   // <version> to this unit's goal.boof.xml, bumping its status (goal-ingestion).
   boofGoal: BoofGoalRefSchema.optional(),
+  // Set when the task was submitted by an external client (drives the prompt's Provenance section).
+  origin: TaskOriginSchema.optional(),
   created: isoDatetime,
   updated: isoDatetime,
 });
@@ -148,6 +157,74 @@ export const RetrySettingsSchema = z.object({
 });
 export type RetrySettings = z.infer<typeof RetrySettingsSchema>;
 
+/** Authorization scopes (api-security). `admin` implies every other scope. */
+export const SCOPES = [
+  "projects:read",
+  "projects:write",
+  "plans:read",
+  "plans:write",
+  "tasks:read",
+  "tasks:write",
+  "tasks:control",
+  "settings:read",
+  "settings:write",
+  "runner:control",
+  "auth:admin",
+  "admin",
+] as const;
+export const ScopeSchema = z.enum(SCOPES);
+export type Scope = z.infer<typeof ScopeSchema>;
+
+export const TrustSchema = z.enum(["trusted", "review"]);
+export type Trust = z.infer<typeof TrustSchema>;
+
+export const ClientKindSchema = z.enum(["harness", "mcp", "ui", "cli"]);
+export type ClientKind = z.infer<typeof ClientKindSchema>;
+
+/** An API client stored in <data>/auth/clients.json. The secret is never stored, only its hash. */
+export const ClientSchema = z.object({
+  id: kebab,
+  name: z.string().min(1).max(200),
+  kind: ClientKindSchema,
+  /** sha256(secret), hex. */
+  keyHash: z.string().regex(/^[0-9a-f]{64}$/),
+  scopes: z.array(ScopeSchema),
+  projects: z.union([z.literal("*"), z.array(kebab)]).default("*"),
+  trust: TrustSchema.default("review"),
+  created: z.string(),
+  lastUsedAt: z.string().optional(),
+  expiresAt: z.string().optional(),
+  revokedAt: z.string().optional(),
+});
+export type Client = z.infer<typeof ClientSchema>;
+
+/** A client as exposed over the API / CLI: never includes the key hash. */
+export type PublicClient = Omit<Client, "keyHash">;
+
+/** Security settings (api-security section 2); every key optional with a default. */
+export const SecuritySettingsSchema = z.object({
+  /** Extra Host header values accepted besides loopback. */
+  allowedHosts: z.array(z.string()).default([]),
+  auth: z.object({ mode: z.enum(["local-trust", "required"]).default("local-trust") }).default({}),
+  /** Roots under which non-local principals may register projects (e.g. ["~/codes"]). */
+  allowedProjectRoots: z.array(z.string()).default([]),
+  /** review-trust clients land in draft and cannot queue work. */
+  externalTasksRequireApproval: z.boolean().default(true),
+  rateLimit: z
+    .object({
+      perMinute: z.number().int().min(1).default(600),
+      attachmentsPerMinute: z.number().int().min(1).default(30),
+    })
+    .default({}),
+  audit: z
+    .object({
+      enabled: z.boolean().default(true),
+      retentionDays: z.number().int().min(1).default(90),
+    })
+    .default({}),
+});
+export type SecuritySettings = z.infer<typeof SecuritySettingsSchema>;
+
 /** settings.json schema (settings spec). */
 export const SettingsSchema = z.object({
   runner: z.object({ enabled: z.boolean() }),
@@ -161,6 +238,7 @@ export const SettingsSchema = z.object({
   review: ReviewSettingsSchema.optional(),
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
+  security: SecuritySettingsSchema.optional(),
   models: z.record(z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;

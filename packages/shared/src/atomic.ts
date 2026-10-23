@@ -29,16 +29,20 @@ export async function withFileLock<T>(path: string, fn: () => Promise<T>): Promi
 }
 
 /** Atomically write `contents` to `path` (temp file + rename), creating dirs. */
-export async function atomicWrite(path: string, contents: string): Promise<void> {
+export async function atomicWrite(path: string, contents: string, mode?: number): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = join(dirname(path), `.${randomBytes(8).toString("hex")}.tmp`);
-  await writeFile(tmp, contents, "utf8");
+  await writeFile(tmp, contents, mode === undefined ? "utf8" : { encoding: "utf8", mode });
   await rename(tmp, path);
 }
 
 /** Atomic write guarded by the per-path lock. */
-export async function lockedAtomicWrite(path: string, contents: string): Promise<void> {
-  await withFileLock(path, () => atomicWrite(path, contents));
+export async function lockedAtomicWrite(
+  path: string,
+  contents: string,
+  mode?: number,
+): Promise<void> {
+  await withFileLock(path, () => atomicWrite(path, contents, mode));
 }
 
 export async function readText(path: string): Promise<string> {

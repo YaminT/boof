@@ -11,3 +11,5 @@ export * from "./attachments.js";
 export * from "./settings.js";
 export * from "./boof-goal.js";
 export * from "./verdict.js";
+export * from "./scopes.js";
+export * from "./auth-store.js";
