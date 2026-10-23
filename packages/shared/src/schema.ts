@@ -223,16 +223,31 @@ export const SecuritySettingsSchema = z.object({
 });
 export type SecuritySettings = z.infer<typeof SecuritySettingsSchema>;
 
-/** settings.json schema (settings spec). */
+const RolesSchema = z.object({
+  planner: RoleAssignmentSchema,
+  developer: RoleAssignmentSchema,
+  observer: RoleAssignmentSchema.optional(),
+  reviewer: RoleAssignmentSchema,
+});
+
+/** Runner section of settings.json. */
+export const RunnerSettingsSchema = z.object({
+  enabled: z.boolean(),
+  /** Tasks the engine may run at once; at most one per project (multi-project spec). */
+  concurrency: z.number().int().min(1).default(1),
+});
+export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
+
+/** The `schemaVersion` written by this release. Absent in settings.json means v1. */
+export const SETTINGS_SCHEMA_VERSION = 2 as const;
+
+/** settings.json schema, v2 (global settings; per-project directories live in projects/). */
 export const SettingsSchema = z.object({
-  runner: z.object({ enabled: z.boolean() }),
-  workingDirectory: z.string(),
-  roles: z.object({
-    planner: RoleAssignmentSchema,
-    developer: RoleAssignmentSchema,
-    observer: RoleAssignmentSchema.optional(),
-    reviewer: RoleAssignmentSchema,
-  }),
+  schemaVersion: z.literal(SETTINGS_SCHEMA_VERSION),
+  runner: RunnerSettingsSchema,
+  /** Project the legacy /api/tasks routes and the UI start on; null when unset. */
+  defaultProject: kebab.nullable().default(null),
+  roles: RolesSchema,
   review: ReviewSettingsSchema.optional(),
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
@@ -242,18 +257,117 @@ export const SettingsSchema = z.object({
 export type Settings = z.infer<typeof SettingsSchema>;
 
 /**
- * Fields a client may change through PUT /api/settings. Unknown keys are
- * rejected. Nested objects are replaced as a whole, matching SettingsStore.update.
+ * settings.json as written by v1 (no `schemaVersion`). Used only by the v1 -> v2
+ * migration; unknown keys (blockHours, tokens, selectedSubdirectory, ...) are dropped.
  */
-export const SettingsPatchSchema = SettingsSchema.pick({
-  runner: true,
-  workingDirectory: true,
-  roles: true,
-  review: true,
-  worktree: true,
-  retries: true,
-  models: true,
-})
-  .partial()
-  .strict();
+export const LegacySettingsSchema = z.object({
+  runner: z.object({ enabled: z.boolean() }),
+  workingDirectory: z.string().default(""),
+  roles: RolesSchema,
+  review: ReviewSettingsSchema.optional(),
+  worktree: WorktreeSettingsSchema.optional(),
+  retries: RetrySettingsSchema.optional(),
+  security: SecuritySettingsSchema.optional(),
+  models: z.record(z.string(), z.array(z.string())),
+});
+export type LegacySettings = z.infer<typeof LegacySettingsSchema>;
+
+/**
+ * Fields a client may change through PUT /api/settings. Unknown keys are
+ * rejected (the working directory is per project now). Nested objects are
+ * replaced as a whole, except `runner`, which merges per key.
+ */
+export const SettingsPatchSchema = z
+  .strictObject({
+    runner: z
+      .strictObject({
+        enabled: z.boolean().optional(),
+        concurrency: z.number().int().min(1).optional(),
+      })
+      .optional(),
+    defaultProject: kebab.nullable().optional(),
+    roles: RolesSchema.optional(),
+    review: ReviewSettingsSchema.optional(),
+    worktree: WorktreeSettingsSchema.optional(),
+    retries: RetrySettingsSchema.optional(),
+    models: z.record(z.string(), z.array(z.string())).optional(),
+  })
+  .partial();
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
+
+// --- Projects (multi-project spec) ---
+
+/** Per-project overrides: every key optional and WITHOUT defaults, so unset keys inherit. */
+export const ProjectRolesOverrideSchema = z.strictObject({
+  planner: RoleAssignmentSchema.optional(),
+  developer: RoleAssignmentSchema.optional(),
+  observer: RoleAssignmentSchema.optional(),
+  reviewer: RoleAssignmentSchema.optional(),
+});
+export const ProjectReviewOverrideSchema = z.strictObject({
+  gate: z.boolean().optional(),
+  maxFixRounds: z.number().int().min(0).optional(),
+  maxInlineDiffBytes: z.number().int().positive().optional(),
+});
+export const ProjectWorktreeOverrideSchema = z.strictObject({
+  root: z.string().min(1).optional(),
+  onDone: z.enum(["keep-branch", "keep", "delete"]).optional(),
+  onFailure: z.enum(["keep", "delete"]).optional(),
+});
+export const ProjectRetriesOverrideSchema = z.strictObject({
+  transient: z.number().int().min(0).optional(),
+  backoffMs: z.array(z.number().int().min(0)).optional(),
+  idleTimeoutMs: z.number().int().positive().optional(),
+});
+
+export const ProjectOriginSchema = z.object({
+  kind: z.enum(["ui", "cli", "api", "migration"]),
+  client: z.string().optional(),
+});
+export type ProjectOrigin = z.infer<typeof ProjectOriginSchema>;
+
+/** projects/<id>/project.json. */
+export const ProjectSchema = z.object({
+  /** Directory name under projects/. */
+  id: kebab,
+  name: z.string().min(1),
+  /**
+   * Absolute, realpath-resolved at create time. Empty only for a project migrated from a v1
+   * data root that never had a working directory; the runner skips such projects.
+   */
+  workingDirectory: z.string(),
+  /** The runner skips a paused project. */
+  paused: z.boolean().default(false),
+  archived: z.boolean().default(false),
+  /** Default task `base` ref. */
+  defaultBase: z.string().min(1).optional(),
+  roles: ProjectRolesOverrideSchema.optional(),
+  review: ProjectReviewOverrideSchema.optional(),
+  worktree: ProjectWorktreeOverrideSchema.optional(),
+  retries: ProjectRetriesOverrideSchema.optional(),
+  /** Plan 03: write goal status back into the repo XML. */
+  planWriteBack: z.boolean().default(true),
+  labels: z.array(z.string()).default([]),
+  origin: ProjectOriginSchema,
+  created: isoDatetime,
+  updated: isoDatetime,
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+/** Fields PUT /api/projects/:pid may change. `null` clears an optional field. */
+export const ProjectPatchSchema = z
+  .strictObject({
+    name: z.string().trim().min(1).max(200),
+    workingDirectory: z.string().min(1),
+    paused: z.boolean(),
+    archived: z.boolean(),
+    defaultBase: z.string().min(1).nullable(),
+    roles: ProjectRolesOverrideSchema.nullable(),
+    review: ProjectReviewOverrideSchema.nullable(),
+    worktree: ProjectWorktreeOverrideSchema.nullable(),
+    retries: ProjectRetriesOverrideSchema.nullable(),
+    planWriteBack: z.boolean(),
+    labels: z.array(z.string().max(100)).max(50),
+  })
+  .partial();
+export type ProjectPatch = z.infer<typeof ProjectPatchSchema>;

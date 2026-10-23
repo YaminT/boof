@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  dataPaths,
+  dataRootPaths,
   InvalidIdError,
+  projectPaths,
   taskAssetsDir,
   taskControlDir,
   taskFilePath,
@@ -21,6 +24,7 @@ describe("path builders reject non-kebab ids", () => {
     ["taskStopRequestPath", taskStopRequestPath],
     ["workingAreaDir", workingAreaDir],
     ["taskFilePath", (r, id) => taskFilePath(r, "pending", id)],
+    ["projectPaths", projectPaths],
   ];
   for (const [name, fn] of builders) {
     it(`${name} throws InvalidIdError`, () => {
@@ -30,6 +34,37 @@ describe("path builders reject non-kebab ids", () => {
 
   it("accepts a valid id", () => {
     expect(() => taskAssetsDir("/data", "my-task-1")).not.toThrow();
+  });
+});
+
+describe("data root layout v2 paths", () => {
+  it("dataRootPaths and projectPaths", () => {
+    expect(dataRootPaths("/d")).toMatchObject({
+      root: "/d",
+      settings: "/d/settings.json",
+      runnerPid: "/d/.runner.pid",
+      commands: "/d/commands",
+      projects: "/d/projects",
+      auth: "/d/auth",
+      audit: "/d/audit",
+    });
+    expect(projectPaths("/d", "app")).toEqual({
+      dir: "/d/projects/app",
+      json: "/d/projects/app/project.json",
+      tasks: "/d/projects/app/tasks",
+      plans: "/d/projects/app/plans",
+      usage: "/d/projects/app/usage.json",
+      events: "/d/projects/app/events.jsonl",
+    });
+  });
+
+  it("dataPaths stays as a deprecated alias", () => {
+    expect(dataPaths("/d")).toMatchObject({ settings: "/d/settings.json", tasks: "/d/tasks" });
+  });
+
+  it("a project dir is a valid root for the task path helpers", () => {
+    const { dir } = projectPaths("/d", "app");
+    expect(taskFilePath(dir, "pending", "t1")).toBe("/d/projects/app/tasks/pending/t1.md");
   });
 });
 
