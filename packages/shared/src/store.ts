@@ -41,12 +41,11 @@ async function listMdFiles(dir: string): Promise<string[]> {
 export class TaskStore {
   constructor(private readonly root: string) {}
 
-  /** Ensure all status directories and commands/ exist. */
+  /** Ensure all status directories exist (under the handed root: a project directory in v2). */
   async ensureDirs(): Promise<void> {
     for (const status of ALL_STATUSES) {
       await mkdir(statusDir(this.root, status), { recursive: true });
     }
-    await mkdir(join(this.root, "commands"), { recursive: true });
   }
 
   /** Read and reconcile every task across all status directories. */

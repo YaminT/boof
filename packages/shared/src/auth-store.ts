@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 import { lockedAtomicWrite, withFileLock } from "./atomic.js";
 import { uniqueKebabId } from "./ids.js";
-import { dataPaths } from "./paths.js";
+import { dataRootPaths } from "./paths.js";
 import {
   ClientSchema,
   type Client,
@@ -80,7 +80,7 @@ export class AuthStore {
     root: string,
     private readonly now: () => number = Date.now,
   ) {
-    const p = dataPaths(root);
+    const p = dataRootPaths(root);
     this.path = p.authClients;
     this.dir = p.auth;
   }

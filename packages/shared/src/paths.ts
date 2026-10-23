@@ -41,28 +41,62 @@ export const DIR_TO_STATUS: Record<string, Status> = Object.fromEntries(
   Object.entries(STATUS_DIRS).map(([status, dir]) => [dir, status as Status]),
 ) as Record<string, Status>;
 
-export interface DataPaths {
+/** Locations directly under the data root (layout v2). */
+export interface DataRootPaths {
   root: string;
-  tasks: string;
-  commands: string;
   settings: string;
   runnerPid: string;
+  commands: string;
+  projects: string;
   auth: string;
   authClients: string;
   audit: string;
 }
 
-export function dataPaths(root: string): DataPaths {
+export function dataRootPaths(root: string): DataRootPaths {
   return {
     root,
-    tasks: join(root, "tasks"),
-    commands: join(root, "commands"),
     settings: join(root, "settings.json"),
     runnerPid: join(root, ".runner.pid"),
+    commands: join(root, "commands"),
+    projects: join(root, "projects"),
     auth: join(root, "auth"),
     authClients: join(root, "auth", "clients.json"),
     audit: join(root, "audit"),
   };
+}
+
+/** Locations of one project; `dir` is the `root` to hand to TaskStore, AttachmentStore, UsageStore. */
+export interface ProjectPaths {
+  dir: string;
+  json: string;
+  tasks: string;
+  plans: string;
+  usage: string;
+  events: string;
+}
+
+/** Paths of project `id` (kebab-checked: the id becomes a directory name). */
+export function projectPaths(root: string, id: string): ProjectPaths {
+  const dir = join(root, "projects", assertKebabId(id));
+  return {
+    dir,
+    json: join(dir, "project.json"),
+    tasks: join(dir, "tasks"),
+    plans: join(dir, "plans"),
+    usage: join(dir, "usage.json"),
+    events: join(dir, "events.jsonl"),
+  };
+}
+
+export interface DataPaths extends DataRootPaths {
+  /** v1 location of the task tree; in v2 tasks live under projects/<id>/tasks. */
+  tasks: string;
+}
+
+/** @deprecated Use {@link dataRootPaths} and {@link projectPaths}. Kept for one release. */
+export function dataPaths(root: string): DataPaths {
+  return { ...dataRootPaths(root), tasks: join(root, "tasks") };
 }
 
 /** Directory for a given status, e.g. <root>/tasks/pending. */

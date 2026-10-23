@@ -2,13 +2,15 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { lockedAtomicWrite, readText } from "./atomic.js";
-import { dataPaths } from "./paths.js";
+import { dataRootPaths } from "./paths.js";
 import {
   RetrySettingsSchema,
   ReviewSettingsSchema,
   SecuritySettingsSchema,
   SettingsSchema,
+  SETTINGS_SCHEMA_VERSION,
   WorktreeSettingsSchema,
+  type Project,
   type RetrySettings,
   type ReviewSettings,
   type RoleAssignment,
@@ -19,11 +21,12 @@ import {
 import type { Role } from "./schema.js";
 import type { Task } from "./task-file.js";
 
-/** Default settings used when scaffolding a fresh data root. */
-export function defaultSettings(workingDirectory = process.cwd()): Settings {
+/** Default (v2) settings used when scaffolding a fresh data root: no projects. */
+export function defaultSettings(): Settings {
   return {
-    runner: { enabled: false },
-    workingDirectory,
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    runner: { enabled: false, concurrency: 1 },
+    defaultProject: null,
     roles: {
       planner: { tool: "claude-code", model: "opus" },
       developer: { tool: "codex", model: "gpt-5.5" },
@@ -51,7 +54,7 @@ async function exists(p: string): Promise<boolean> {
 export class SettingsStore {
   private readonly path: string;
   constructor(root: string) {
-    this.path = dataPaths(root).settings;
+    this.path = dataRootPaths(root).settings;
   }
 
   async load(): Promise<Settings> {
@@ -60,7 +63,13 @@ export class SettingsStore {
       await this.save(s);
       return s;
     }
-    return SettingsSchema.parse(JSON.parse(await readText(this.path)));
+    const raw: unknown = JSON.parse(await readText(this.path));
+    if (raw && typeof raw === "object" && !("schemaVersion" in raw)) {
+      throw new Error(
+        `${this.path} is a v1 settings file; start boof-runner (any command) to migrate the data root to v2`,
+      );
+    }
+    return SettingsSchema.parse(raw);
   }
 
   async save(settings: Settings): Promise<Settings> {
@@ -69,11 +78,25 @@ export class SettingsStore {
     return validated;
   }
 
-  /** Partial update merged over the current settings. */
-  async update(patch: Partial<Settings>): Promise<Settings> {
+  /** Partial update merged over the current settings; `runner` merges per key. */
+  async update(patch: SettingsUpdate): Promise<Settings> {
     const current = await this.load();
-    return this.save({ ...current, ...patch });
+    const { runner, ...rest } = patch;
+    return this.save({
+      ...current,
+      ...rest,
+      ...(runner ? { runner: { ...current.runner, ...stripUndefined(runner) } } : {}),
+    } as Settings);
   }
+}
+
+/** What {@link SettingsStore.update} accepts: any settings key, `runner` partial. */
+export type SettingsUpdate = Omit<Partial<Settings>, "runner"> & {
+  runner?: Partial<Settings["runner"]>;
+};
+
+function stripUndefined<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
 /**
@@ -124,15 +147,41 @@ export function securitySettings(settings: Settings): SecuritySettings {
   return SecuritySettingsSchema.parse(settings.security ?? {});
 }
 
+/** Settings of one project: the global settings with the project's overrides and working directory. */
+export type EffectiveSettings = Settings & { workingDirectory: string };
+
+/**
+ * Merge a project over the global settings. `roles`, `review`, `worktree` and `retries` merge
+ * per key (the project wins); everything else is global. Adds `workingDirectory`.
+ */
+export function effectiveSettings(global: Settings, project: Project): EffectiveSettings {
+  const merged: EffectiveSettings = { ...global, workingDirectory: project.workingDirectory };
+  if (project.roles) merged.roles = { ...global.roles, ...definedOnly(project.roles) };
+  if (project.review) merged.review = { ...global.review, ...definedOnly(project.review) } as never;
+  if (project.worktree) {
+    merged.worktree = { ...global.worktree, ...definedOnly(project.worktree) } as never;
+  }
+  if (project.retries) {
+    merged.retries = { ...global.retries, ...definedOnly(project.retries) } as never;
+  }
+  return merged;
+}
+
+function definedOnly<T extends object>(o: T): Partial<T> {
+  return stripUndefined(o);
+}
+
 /**
  * Absolute directory holding task worktrees. Unset: `<workingDirectory>/.boof-runner-worktrees`.
  * `~` and `~/x` expand to the home directory; a relative path resolves against workingDirectory.
  */
-export function resolveWorktreeRoot(settings: Settings): string {
-  const root = worktreeSettings(settings).root;
-  const wd = settings.workingDirectory;
-  if (!root) return join(wd, ".boof-runner-worktrees");
+export function resolveWorktreeRoot(
+  worktree: Pick<WorktreeSettings, "root">,
+  workingDirectory: string,
+): string {
+  const root = worktree.root;
+  if (!root) return join(workingDirectory, ".boof-runner-worktrees");
   if (root === "~") return homedir();
   if (root.startsWith("~/")) return join(homedir(), root.slice(2));
-  return isAbsolute(root) ? root : resolve(wd, root);
+  return isAbsolute(root) ? root : resolve(workingDirectory, root);
 }

@@ -2,7 +2,7 @@ import matter from "gray-matter";
 import { readdir, rm, stat } from "node:fs/promises";
 import { lockedAtomicWrite, readText } from "./atomic.js";
 import { toKebabId } from "./ids.js";
-import { commandFilePath, dataPaths } from "./paths.js";
+import { commandFilePath, dataRootPaths } from "./paths.js";
 import { CommandTemplateFrontmatterSchema } from "./schema.js";
 import type { Task } from "./task-file.js";
 
@@ -54,7 +54,7 @@ export class CommandStore {
   async list(): Promise<CommandTemplate[]> {
     let names: string[] = [];
     try {
-      const entries = await readdir(dataPaths(this.root).commands, { withFileTypes: true });
+      const entries = await readdir(dataRootPaths(this.root).commands, { withFileTypes: true });
       names = entries.filter((e) => e.isFile() && e.name.endsWith(".md")).map((e) => e.name);
     } catch {
       names = [];
