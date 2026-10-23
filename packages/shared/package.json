@@ -21,7 +21,7 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "fast-xml-parser": "^5.9.3",
+    "fast-xml-parser": "^5.11.2",
     "gray-matter": "^4.0.3",
     "zod": "^3.24.1"
   }

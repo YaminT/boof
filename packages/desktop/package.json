@@ -2,7 +2,7 @@
   "name": "@boof-runner/desktop",
   "version": "0.2.0",
   "private": true,
-  "description": "Boof Runner desktop app (Electron) — runs the server and UI in one window",
+  "description": "Boof Runner desktop app (Electron) \u2014 runs the server and UI in one window",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsup",
@@ -14,17 +14,17 @@
     "dist:win": "npm run stage && electron-builder --win --publish never"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^1.19.17",
     "@boof-runner/runner": "workspace:*",
     "@boof-runner/shared": "workspace:*",
     "@boof-runner/web": "workspace:*",
     "chokidar": "^4.0.1",
     "gray-matter": "^4.0.3",
-    "hono": "^4.6.14",
+    "hono": "^4.13.13",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "electron": "^42.0.0",
+    "electron": "^42.11.18",
     "electron-builder": "^26.15.3"
   }
 }
