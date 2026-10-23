@@ -1185,3 +1185,84 @@ input[type="number"] {
   gap: 4px;
   margin-right: 12px;
 }
+
+/* ---------- Multi-project ---------- */
+.topbar {
+  flex-wrap: wrap;
+}
+.project-select {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.project-select select {
+  max-width: 200px;
+}
+.paused-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+}
+.project-tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-weak);
+}
+.path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.path-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.path-row button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+label.check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+label.check input {
+  width: auto;
+  flex: 0 0 auto;
+}
+.role-row label.inherit {
+  white-space: nowrap;
+}
+.settings-heading {
+  margin: 24px 0 8px;
+  font-size: 18px;
+}
+.settings-heading:first-child {
+  margin-top: 0;
+}
+.gate-card form label {
+  text-align: left;
+}
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 1100px) {
+  .topbar-dir {
+    max-width: 200px;
+  }
+}

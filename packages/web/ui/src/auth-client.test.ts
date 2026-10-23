@@ -60,10 +60,10 @@ describe("api fetch wrapper", () => {
         return new Response(JSON.stringify({ tasks: [] }), { status: 200 });
       }),
     );
-    await api.listTasks();
+    await api.listTasks("demo");
     expect(seen[0].authorization).toBeUndefined();
     setToken("boof_a_secret");
-    await api.listTasks();
+    await api.listTasks("demo");
     expect(seen[1].authorization).toBe("Bearer boof_a_secret");
     expect(seen[1]["content-type"]).toBe("application/json");
   });
@@ -80,7 +80,7 @@ describe("api fetch wrapper", () => {
     );
     const seen = vi.fn();
     const off = onUnauthorized(seen);
-    await expect(api.listTasks()).rejects.toThrow("nope");
+    await expect(api.listTasks("demo")).rejects.toThrow("nope");
     expect(seen).toHaveBeenCalledTimes(1);
     off();
   });

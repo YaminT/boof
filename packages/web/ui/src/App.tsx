@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { api } from "./api.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type TaskView } from "./api.js";
 import { boofRunnerLogoUrl } from "./assets.js";
 import { useLive } from "./useLive.js";
-import type { Project, Settings } from "@boof-runner/shared/schema";
-import type { Task } from "@boof-runner/shared/task-types";
+import { useProjects } from "./useProjects.js";
+import type { Settings } from "@boof-runner/shared/schema";
 import { TaskList } from "./components/TaskList.js";
 import { LivePanel } from "./components/LivePanel.js";
 import { Editor } from "./components/Editor.js";
@@ -12,26 +12,42 @@ import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
 import { onUnauthorized } from "./token.js";
-import { WorkingDirGate, WorkingDirHeader } from "./components/WorkingDir.js";
+import { AddProjectGate, ProjectSwitcher } from "./components/Projects.js";
 
 type Tab = "tasks" | "commands" | "actions" | "settings";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("tasks");
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<TaskView[]>([]);
+  const [actions, setActions] = useState<TaskView[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const { projects, selected, selectedId, select, reload: reloadProjects } = useProjects(settings);
 
-  const refresh = useCallback(async () => {
-    const s = await api.getSettings();
-    // Minimal project support: act on the default project through the legacy task routes.
-    const p = s.defaultProject ? await api.getProject(s.defaultProject).catch(() => null) : null;
-    const t = p ? await api.listTasks() : [];
-    setTasks(t);
-    setProject(p);
-    setSettings(s);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selectedId;
+
+  const loadTasks = useCallback(async (pid: string | null) => {
+    if (!pid) return setTasks([]);
+    const t = await api.listTasks(pid);
+    // Ignore a response for a project the user has already switched away from.
+    if (selectedRef.current === pid) setTasks(t);
   }, []);
+
+  /** Refresh everything; tasks only when the change concerns the selected project. */
+  const refresh = useCallback(
+    async (project?: string) => {
+      const [s] = await Promise.all([
+        api.getSettings(),
+        reloadProjects(),
+        api.actions().then(setActions),
+      ]);
+      setSettings(s);
+      const pid = selectedRef.current;
+      if (pid && (!project || project === pid)) await loadTasks(pid);
+    },
+    [reloadProjects, loadTasks],
+  );
 
   const [needsToken, setNeedsToken] = useState(false);
   useEffect(() => onUnauthorized(() => setNeedsToken(true)), []);
@@ -41,7 +57,14 @@ export function App() {
   }, [refresh]);
   useLive(refresh);
 
-  const pendingActions = tasks.filter((t) => t.frontmatter.questions === "pending").length;
+  // Switching project: drop the old list and any open editor, then load the new one.
+  useEffect(() => {
+    setTasks([]);
+    setEditingId(null);
+    void loadTasks(selectedId).catch(() => {});
+  }, [selectedId, loadTasks]);
+
+  const pendingActions = actions.length;
 
   // Short activity summary shown in the runner banner.
   const runningTask = tasks.find((t) => t.frontmatter.status === "running");
@@ -69,10 +92,16 @@ export function App() {
     );
   }
 
-  // First-run gate: block the app until a working directory is chosen. It then
-  // persists to settings.json, so the user is never asked again.
-  if (settings && !project?.workingDirectory.trim()) {
-    return <WorkingDirGate onChange={refresh} />;
+  // First-run gate: block the app until the first project is added.
+  if (settings && projects && projects.length === 0) {
+    return (
+      <AddProjectGate
+        onAdded={(p) => {
+          select(p.id);
+          void refresh().catch(() => {});
+        }}
+      />
+    );
   }
 
   return (
@@ -102,20 +131,32 @@ export function App() {
       </aside>
 
       <main>
-        {settings && (
-          <WorkingDirHeader
+        {settings && projects && selected && (
+          <ProjectSwitcher
             settings={settings}
-            workingDir={project?.workingDirectory ?? ""}
+            projects={projects}
+            selected={selected}
             runnerReport={runnerReport}
-            onChange={refresh}
+            onSelect={select}
+            onAdded={(p) => {
+              select(p.id);
+              void refresh().catch(() => {});
+            }}
+            onChange={() => void refresh()}
           />
         )}
-        {tab === "tasks" && !editingId && (
+        {selectedId && tab === "tasks" && !editingId && (
           <>
             {runningTask && (
-              <LivePanel key={runningTask.frontmatter.id} task={runningTask} onChange={refresh} />
+              <LivePanel
+                key={runningTask.frontmatter.id}
+                projectId={selectedId}
+                task={runningTask}
+                onChange={refresh}
+              />
             )}
             <TaskList
+              projectId={selectedId}
               tasks={tasks}
               onEdit={setEditingId}
               onChange={refresh}
@@ -123,15 +164,24 @@ export function App() {
             />
           </>
         )}
-        {tab === "tasks" && editingId && (
-          <Editor taskId={editingId} onClose={() => setEditingId(null)} onChange={refresh} />
+        {selectedId && tab === "tasks" && editingId && (
+          <Editor
+            projectId={selectedId}
+            taskId={editingId}
+            onClose={() => setEditingId(null)}
+            onChange={refresh}
+          />
         )}
         {tab === "commands" && <CommandsTab onChange={refresh} />}
-        {tab === "actions" && <ActionsTab tasks={tasks} onChange={refresh} />}
-        {tab === "settings" && settings && (
+        {tab === "actions" && (
+          <ActionsTab actions={actions} projects={projects ?? []} onChange={refresh} />
+        )}
+        {tab === "settings" && settings && selected && (
           <SettingsPage
+            key={selected.id}
             settings={settings}
-            workingDir={project?.workingDirectory ?? ""}
+            projects={projects ?? []}
+            project={selected}
             onChange={refresh}
           />
         )}

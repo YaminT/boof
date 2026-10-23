@@ -20,10 +20,12 @@ function formatSize(bytes: number): string {
 }
 
 function AttachmentChip({
+  projectId,
   taskId,
   attachment,
   onRemove,
 }: {
+  projectId: string;
   taskId: string;
   attachment: Attachment;
   onRemove: () => void;
@@ -36,7 +38,7 @@ function AttachmentChip({
     let url: string | null = null;
     let cancelled = false;
     void api
-      .attachmentBlobUrl(taskId, attachment.name)
+      .attachmentBlobUrl(projectId, taskId, attachment.name)
       .then((u) => {
         if (cancelled) URL.revokeObjectURL(u);
         else {
@@ -49,7 +51,7 @@ function AttachmentChip({
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [isImage, taskId, attachment.name]);
+  }, [isImage, projectId, taskId, attachment.name]);
   return (
     <div className="attachment-chip" title={`${attachment.name} · ${formatSize(attachment.size)}`}>
       {isImage ? (
@@ -74,10 +76,12 @@ function AttachmentChip({
 }
 
 export function Editor({
+  projectId,
   taskId,
   onClose,
   onChange,
 }: {
+  projectId: string;
   taskId: string;
   onClose: () => void;
   onChange: () => void;
@@ -111,7 +115,7 @@ export function Editor({
   useEffect(() => {
     void api.listCommands().then(setCommands);
     if (!isNew) {
-      void api.getTask(taskId).then((t) => {
+      void api.getTask(projectId, taskId).then((t) => {
         setTask(t);
         setTitle(t.frontmatter.title);
         setPrompt(t.body.prompt);
@@ -121,27 +125,27 @@ export function Editor({
         setCommand(t.frontmatter.command);
       });
     }
-  }, [taskId, isNew]);
+  }, [projectId, taskId, isNew]);
 
   // Live-refresh only the task object (reports/log/status) while the editor is
   // open, so a running task's output streams in without clobbering form edits.
   const refreshTask = useCallback(() => {
     const id = effectiveId;
     if (!id) return;
-    void api.getTask(id).then((t) => {
+    void api.getTask(projectId, id).then((t) => {
       setTask(t);
       // While running, pull the streaming log tail; otherwise the durable
       // body.log (shown directly) is authoritative, so drop the live buffer.
       if (t.frontmatter.status === "running") {
         void api
-          .liveLog(id)
+          .liveLog(projectId, id)
           .then((r) => setLiveLog(r.log))
           .catch(() => {});
       } else {
         setLiveLog(null);
       }
     });
-  }, [effectiveId]);
+  }, [projectId, effectiveId]);
   useLive(refreshTask);
 
   // Keep the log view pinned to the newest output while streaming.
@@ -162,9 +166,9 @@ export function Editor({
     try {
       const payload = { title, prompt, priority, runs, labels: parsedLabels(), command };
       if (effectiveId) {
-        await api.updateTask(effectiveId, { ...payload, ...(status ? { status } : {}) });
+        await api.updateTask(projectId, effectiveId, { ...payload, ...(status ? { status } : {}) });
       } else {
-        await api.createTask({ ...payload, status: status ?? "draft" });
+        await api.createTask(projectId, { ...payload, status: status ?? "draft" });
       }
       onChange();
       onClose();
@@ -177,7 +181,7 @@ export function Editor({
   // saving a draft with the current form values.
   const ensureTaskId = async (): Promise<string> => {
     if (effectiveId) return effectiveId;
-    const created = await api.createTask({
+    const created = await api.createTask(projectId, {
       title: title.trim() || "Untitled task",
       prompt,
       priority,
@@ -201,7 +205,7 @@ export function Editor({
       const id = await ensureTaskId();
       let latest: Task | null = null;
       for (const f of list) {
-        latest = await api.uploadAttachment(id, f);
+        latest = await api.uploadAttachment(projectId, id, f);
       }
       if (latest) setTask(latest);
       onChange();
@@ -215,7 +219,7 @@ export function Editor({
   const removeAttachment = async (name: string) => {
     if (!effectiveId) return;
     try {
-      const updated = await api.deleteAttachment(effectiveId, name);
+      const updated = await api.deleteAttachment(projectId, effectiveId, name);
       setTask(updated);
       onChange();
     } catch (e) {
@@ -340,6 +344,7 @@ export function Editor({
             {attachments.map((a) => (
               <AttachmentChip
                 key={a.name}
+                projectId={projectId}
                 taskId={effectiveId}
                 attachment={a}
                 onRemove={() => removeAttachment(a.name)}
@@ -372,7 +377,7 @@ export function Editor({
                 className="retry-btn"
                 title="Clear the failed status and re-queue this task"
                 onClick={async () => {
-                  await api.retry(task.frontmatter.id);
+                  await api.retry(projectId, task.frontmatter.id);
                   onChange();
                   refreshTask();
                 }}
