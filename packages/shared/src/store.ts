@@ -2,7 +2,7 @@ import { readdir, mkdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
-import { formatInjectedEntry } from "./injected.js";
+import { formatInjectedEntry, parseInjected, type InjectMode } from "./injected.js";
 import { assertTransition } from "./lifecycle.js";
 import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import { nowIso } from "./runtime.js";
@@ -174,17 +174,40 @@ export class TaskStore {
    * Append an injected prompt to the task's durable `## Injected` section (the control-dir copy
    * is deleted when the task leaves `running`). `by` is the principal name, default "user".
    */
-  async appendInjected(id: string, text: string, by = "user"): Promise<Task> {
+  async appendInjected(
+    id: string,
+    text: string,
+    by = "user",
+    mode?: InjectMode,
+  ): Promise<Task> {
     const located = await this.locate(id);
     if (!located) throw new TaskNotFoundError(id);
     return withFileLock(located.path, async () => {
       const task = await this.readReconciled(located.path, located.status);
-      const entry = formatInjectedEntry({ at: nowIso(), by, text });
+      const entry = formatInjectedEntry({ at: nowIso(), by, text, ...(mode ? { mode } : {}) });
       task.body.injected = task.body.injected.trim()
         ? `${task.body.injected.trimEnd()}\n\n${entry}`
         : entry;
       await atomicWrite(located.path, serializeTask(task));
       return task;
+    });
+  }
+
+  /**
+   * Stamp every injected entry that has no `applied` time yet: its prompt just reached the
+   * agent. Writes nothing when there is nothing to stamp.
+   */
+  async markInjectedApplied(id: string, at = nowIso()): Promise<void> {
+    const located = await this.locate(id);
+    if (!located) return;
+    await withFileLock(located.path, async () => {
+      const task = await this.readReconciled(located.path, located.status);
+      const entries = parseInjected(task.body.injected);
+      if (entries.every((e) => e.appliedAt)) return;
+      task.body.injected = entries
+        .map((e) => formatInjectedEntry(e.appliedAt ? e : { ...e, appliedAt: at }))
+        .join("\n\n");
+      await atomicWrite(located.path, serializeTask(task));
     });
   }
 

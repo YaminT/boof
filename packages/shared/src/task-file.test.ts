@@ -174,4 +174,34 @@ describe("task-file injected section", () => {
       ["ci-bot", "two\nlines"],
     ]);
   });
+
+  it("round-trips the inject mode and applied time, and reads entries without them", () => {
+    const md = [
+      formatInjectedEntry({
+        at: "2026-06-04T10:05:00.000Z",
+        by: "user",
+        text: "steer\nme",
+        mode: "now",
+        appliedAt: "2026-06-04T10:05:02.000Z",
+      }),
+      formatInjectedEntry({ at: "2026-06-04T10:06:00.000Z", by: "user", text: "plain" }),
+      formatInjectedEntry({
+        at: "2026-06-04T10:07:00.000Z",
+        by: "user",
+        text: "later",
+        mode: "next-step",
+      }),
+    ].join("\n\n");
+    expect(parseInjected(md)).toEqual([
+      {
+        at: "2026-06-04T10:05:00.000Z",
+        by: "user",
+        text: "steer\nme",
+        mode: "now",
+        appliedAt: "2026-06-04T10:05:02.000Z",
+      },
+      { at: "2026-06-04T10:06:00.000Z", by: "user", text: "plain" },
+      { at: "2026-06-04T10:07:00.000Z", by: "user", text: "later", mode: "next-step" },
+    ]);
+  });
 });

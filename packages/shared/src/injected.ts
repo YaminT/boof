@@ -7,8 +7,15 @@ export interface InjectedEntry {
   /** Who injected it: a principal name, or "user". */
   by: string;
   text: string;
+  /** `now` interrupted the running step; `next-step` (the default when absent) waited for the next one. */
+  mode?: InjectMode;
+  /** ISO-8601 time the prompt reached the agent (the next step started, or the steered step reran). */
+  appliedAt?: string;
 }
 
+export type InjectMode = "next-step" | "now";
+
+const META = /^<!-- boof: (.*) -->$/;
 const HEADER = /^### (\d{4}-\d{2}-\d{2}T\S+) — (.*)$/;
 
 /**
@@ -22,7 +29,12 @@ export function formatInjectedEntry(entry: InjectedEntry): string {
     .split("\n")
     .map((l) => (l.startsWith("## ") ? ` ${l}` : l))
     .join("\n");
-  return `### ${entry.at} — ${by}\n\n${text}`;
+  const meta = [
+    entry.mode ? `mode=${entry.mode}` : "",
+    entry.appliedAt ? `applied=${entry.appliedAt}` : "",
+  ].filter(Boolean);
+  const head = `### ${entry.at} — ${by}\n\n`;
+  return meta.length > 0 ? `${head}<!-- boof: ${meta.join(" ")} -->\n${text}` : `${head}${text}`;
 }
 
 /** Parse the section body into entries; text before the first heading is ignored. */
@@ -30,7 +42,21 @@ export function parseInjected(md: string): InjectedEntry[] {
   const out: InjectedEntry[] = [];
   let cur: { at: string; by: string; lines: string[] } | null = null;
   const flush = () => {
-    if (cur) out.push({ at: cur.at, by: cur.by, text: cur.lines.join("\n").trim() });
+    if (!cur) return;
+    const entry: InjectedEntry = { at: cur.at, by: cur.by, text: "" };
+    const lines = [...cur.lines];
+    const first = lines.findIndex((l) => l.trim() !== "");
+    const meta = first >= 0 ? META.exec(lines[first]!.trim()) : null;
+    if (meta) {
+      lines.splice(first, 1);
+      for (const part of meta[1]!.split(" ")) {
+        const [k, v] = part.split("=");
+        if (k === "mode" && (v === "now" || v === "next-step")) entry.mode = v;
+        if (k === "applied" && v) entry.appliedAt = v;
+      }
+    }
+    entry.text = lines.join("\n").trim();
+    out.push(entry);
   };
   for (const line of md.split("\n")) {
     const m = HEADER.exec(line);

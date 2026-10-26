@@ -197,6 +197,19 @@ describe("TaskStore stopped and injected", () => {
     const after = (await store.get("t1"))!;
     expect(after.body.injected).toBe(mid.body.injected);
   });
+
+  it("records the inject mode and stamps when entries were applied", async () => {
+    await store.create(newTask(fm({ status: "running" }), "p"));
+    await store.appendInjected("t1", "now please", "user", "now");
+    await store.markInjectedApplied("t1", "2026-06-04T10:00:00.000Z");
+    await store.appendInjected("t1", "later", "user", "next-step");
+    await store.markInjectedApplied("t1", "2026-06-04T11:00:00.000Z");
+    const entries = parseInjected((await store.get("t1"))!.body.injected);
+    expect(entries.map((e) => [e.text, e.mode, e.appliedAt])).toEqual([
+      ["now please", "now", "2026-06-04T10:00:00.000Z"],
+      ["later", "next-step", "2026-06-04T11:00:00.000Z"],
+    ]);
+  });
 });
 
 void readFile;

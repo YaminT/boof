@@ -138,6 +138,15 @@ export function taskStopRequestPath(root: string, id: string): string {
   return join(taskControlDir(root, id), "stop");
 }
 
+/**
+ * Presence of this file asks the pipeline to interrupt the running step and rerun it with the
+ * newly injected prompt (inject mode `now`). One JSON object per line: `{ "at", "text" }`.
+ * The pipeline consumes (removes) it.
+ */
+export function taskSteerRequestPath(root: string, id: string): string {
+  return join(taskControlDir(root, id), "steer");
+}
+
 /** User prompts injected while a task is running, consumed between pipeline steps. */
 export function taskPromptInjectionsPath(root: string, id: string): string {
   return join(taskControlDir(root, id), "prompts.md");

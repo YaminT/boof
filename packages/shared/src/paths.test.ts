@@ -11,6 +11,7 @@ import {
   taskControlDir,
   taskFilePath,
   taskStopRequestPath,
+  taskSteerRequestPath,
   workingAreaDir,
 } from "./paths.js";
 import { TaskStore } from "./store.js";
@@ -22,6 +23,7 @@ describe("path builders reject non-kebab ids", () => {
     ["taskAssetsDir", taskAssetsDir],
     ["taskControlDir", taskControlDir],
     ["taskStopRequestPath", taskStopRequestPath],
+    ["taskSteerRequestPath", taskSteerRequestPath],
     ["workingAreaDir", workingAreaDir],
     ["taskFilePath", (r, id) => taskFilePath(r, "pending", id)],
     ["projectPaths", projectPaths],
