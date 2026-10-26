@@ -329,6 +329,20 @@ describe("CodexTool report", () => {
     await expect(access(outPath)).rejects.toThrow();
   });
 
+  it("health probe runs outside a git repo with --skip-git-repo-check", async () => {
+    // Fake codex: --version and --help succeed; exec fails like the real CLI
+    // ("Not inside a trusted directory") unless --skip-git-repo-check is passed.
+    const tool = await setup(
+      [
+        'case "$1" in --version) echo "codex-cli 0.0.0"; exit 0;; --help) exit 0;; esac',
+        'for a in "$@"; do [ "$a" = "--skip-git-repo-check" ] && { echo hi; exit 0; }; done',
+        'echo "Not inside a trusted directory" >&2; exit 1',
+      ].join("\n"),
+    );
+    const health = await tool.detect();
+    expect(health.status).toBe("available");
+  });
+
   it("falls back to stdout when the last-message file is missing", async () => {
     const tool = await setup('printf "x\\nVERDICT: REJECT\\n"');
     const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });

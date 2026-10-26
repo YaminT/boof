@@ -30,9 +30,12 @@ export class CodexTool implements Tool {
     const model = (await this.listModels())[0] ?? this.defaultModels[0];
     const probe = await execCommand(
       this.bin,
-      ["exec", "--model", model, "Reply with exactly: hi"],
+      // The probe runs outside any repository (the server's cwd); codex refuses
+      // that without --skip-git-repo-check. Empty stdin so it never waits for input.
+      ["exec", "--skip-git-repo-check", "--model", model, "Reply with exactly: hi"],
       {
         cwd: process.cwd(),
+        input: "",
         timeoutMs: 60000,
       },
     );
