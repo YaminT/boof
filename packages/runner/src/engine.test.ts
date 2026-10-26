@@ -1,5 +1,14 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile, stat, readFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+  stat,
+  readFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,9 +22,11 @@ import {
   serializeTask,
   SettingsStore,
   TaskStore,
+  parseInjected,
   taskControlDir,
   taskFilePath,
   taskPromptInjectionsPath,
+  taskSteerRequestPath,
   taskStopRequestPath,
   workingAreaDir,
   type Project,
@@ -1168,6 +1179,172 @@ const order = (results: Awaited<ReturnType<RunnerEngine["runUntilIdle"]>>) =>
   results.flatMap((r) =>
     r.kind === "ran" ? [`${r.projectId}/${r.outcome.task.frontmatter.id}`] : [],
   );
+
+describe("steering a running step (mock tool)", () => {
+  const STEER_TEXT = "use tabs, not spaces";
+  const liveLog = () =>
+    readFile(join(workingAreaDir(projectDir, "t1"), "log.txt"), "utf8").catch(() => "");
+  const devHeaders = (log: string) =>
+    (log.match(/^### Developer( \(steer \d+\))?$/gm) ?? []).length;
+  const devCalls = () => mockState.calls.filter((c) => c === "developer").length;
+
+  /** What the inject API does for mode `now`: durable entry, prompts.md and the steer request. */
+  const requestSteer = async (text: string) => {
+    await store.appendInjected("t1", text, "user", "now");
+    await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+    await appendFile(taskPromptInjectionsPath(projectDir, "t1"), `\n\n## now\n${text}\n`);
+    await appendFile(
+      taskSteerRequestPath(projectDir, "t1"),
+      JSON.stringify({ at: new Date().toISOString(), text }) + "\n",
+    );
+  };
+
+  /** Steer `times` times, each once a fresh Developer attempt has started and the last steer is gone. */
+  const steerDeveloper = (times: number) => {
+    let sent = 0;
+    const timer = setInterval(() => {
+      void (async () => {
+        if (sent >= times || existsSync(taskSteerRequestPath(projectDir, "t1"))) return;
+        if (devHeaders(await liveLog()) !== sent + 1) return;
+        sent++;
+        await requestSteer(sent === 1 ? STEER_TEXT : `${STEER_TEXT} ${sent}`);
+      })().catch(() => {});
+    }, 40);
+    return () => clearInterval(timer);
+  };
+
+  const runTask = async (prompt: string) => {
+    await store.create(newTask(fm(), prompt));
+    const r = await engine.tick();
+    if (r.kind !== "ran") throw new Error(`expected ran, got ${r.kind}`);
+    return r.outcome;
+  };
+
+  it("kills the running step, resumes its session with the new prompt and finishes", async () => {
+    const stop = steerDeveloper(1);
+    let outcome;
+    try {
+      outcome = await runTask("Build it. [[mock-stall developer=1]]");
+    } finally {
+      stop();
+    }
+    expect(outcome.kind).toBe("done");
+    expect(devCalls()).toBe(2);
+    expect(mockState.resumes).toHaveLength(1);
+    const resumed = mockState.resumes[0]!;
+    expect(resumed.role).toBe("developer");
+    expect(resumed.sessionId).toMatch(/^mock-session-\d+$/);
+    expect(resumed.prompt).toBe(
+      "The user sent new instructions while you were working. Continue the same task from where " +
+        `you stopped and apply them:\n\n${STEER_TEXT}`,
+    );
+    const done = (await store.get("t1"))!;
+    expect(done.body.log).toContain(`### Steered\n${STEER_TEXT}`);
+    expect(done.body.log).toContain("### Developer (steer 1)");
+    // The interrupted attempt is counted: planner, refinement, developer x2 and reviewer.
+    expect(done.frontmatter.tokens?.costUsd).toBeCloseTo(0.05);
+    // The control request is consumed and the durable entry records mode and application.
+    expect(await exists(taskSteerRequestPath(projectDir, "t1"))).toBe(false);
+    const [entry] = parseInjected(done.body.injected);
+    expect(entry?.mode).toBe("now");
+    expect(entry?.appliedAt).toBeTruthy();
+  });
+
+  it("a tool that cannot resume restarts the step with its prompt, the new text and the interruption note", async () => {
+    mockState.resumeSupported = false;
+    const stop = steerDeveloper(1);
+    try {
+      const outcome = await runTask("Build it. [[mock-stall developer=1]]");
+      expect(outcome.kind).toBe("done");
+    } finally {
+      stop();
+    }
+    expect(mockState.resumes).toHaveLength(0);
+    const devPrompts = mockState.prompts.filter((_, i) => mockState.calls[i] === "developer");
+    expect(devPrompts).toHaveLength(2);
+    expect(devPrompts[1]).toContain("Build it.");
+    expect(devPrompts[1]).toContain("## Plan");
+    expect(devPrompts[1]).toContain(STEER_TEXT);
+    expect(devPrompts[1]).toContain("## Previous attempt interrupted");
+    expect(devPrompts[1]).toContain("git status");
+    expect(devPrompts[0]).not.toContain("## Previous attempt interrupted");
+  });
+
+  it("steers do not use the transient retry budget", async () => {
+    await engine.settingsStore.update({ retries: { transient: 0 } });
+    mockState.resumeSupported = false;
+    const stop = steerDeveloper(2);
+    try {
+      const outcome = await runTask("Build it. [[mock-stall developer=2]]");
+      expect(outcome.kind).toBe("done");
+    } finally {
+      stop();
+    }
+    expect(devCalls()).toBe(3);
+  });
+
+  it("stops steering one step after the cap; later prompts wait for the next step", async () => {
+    mockState.resumeSupported = false;
+    // The 6th run stalls with no steer path and is cut by the idle watchdog, then retried.
+    await engine.settingsStore.update({
+      retries: { transient: 2, backoffMs: [0], idleTimeoutMs: 1500 },
+    });
+    const stop = steerDeveloper(6);
+    let outcome;
+    try {
+      outcome = await runTask("Build it. [[mock-stall developer=6]]");
+    } finally {
+      stop();
+    }
+    expect(outcome.kind === "failed" ? outcome.error : outcome.kind).toBe("done");
+    const done = (await store.get("t1"))!;
+    expect(done.body.log).toContain("Steer limit reached for Developer (5)");
+    expect(done.body.log).toContain("### Developer (steer 5)");
+    expect(done.body.log).not.toContain("### Developer (steer 6)");
+    // 5 steered runs, the stalled sixth, its transient retry.
+    expect(devCalls()).toBe(7);
+  }, 30000);
+
+  it("a steer that arrives between steps applies to the next step without a kill", async () => {
+    let first = true;
+    mockState.onRun = async (opts) => {
+      if (opts.role === "planner" && first) {
+        first = false;
+        await requestSteer(STEER_TEXT);
+      }
+    };
+    const outcome = await runTask("Build it.");
+    expect(outcome.kind).toBe("done");
+    expect(mockState.calls).toEqual(["planner", "planner", "developer", "reviewer"]);
+    expect(mockState.resumes).toHaveLength(0);
+    const refine = mockState.prompts[1]!;
+    expect(refine).toContain(STEER_TEXT);
+    // Injected once: the prompt already carried it from prompts.md.
+    expect(refine.split(STEER_TEXT)).toHaveLength(2);
+    const done = (await store.get("t1"))!;
+    expect(done.body.log).toContain(`### Steered\n${STEER_TEXT}`);
+    expect(await exists(taskSteerRequestPath(projectDir, "t1"))).toBe(false);
+    expect(parseInjected(done.body.injected)[0]?.appliedAt).toBeTruthy();
+  });
+
+  it("a stop request wins over a steer", async () => {
+    const timer = setInterval(() => {
+      void (async () => {
+        if (devHeaders(await liveLog()) !== 1) return;
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await writeFile(taskStopRequestPath(projectDir, "t1"), "stop\n");
+        await requestSteer(STEER_TEXT);
+      })().catch(() => {});
+    }, 40);
+    try {
+      const outcome = await runTask("Build it. [[mock-stall developer=1]]");
+      expect(outcome.kind).toBe("stopped");
+    } finally {
+      clearInterval(timer);
+    }
+    expect(devCalls()).toBe(1);
+  });
+});
 
 describe("multi-project engine (mock tool)", () => {
   it("serves projects in global priority order, interleaved", async () => {

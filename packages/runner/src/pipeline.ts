@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   blockingScopes,
@@ -15,6 +15,7 @@ import {
   reviewSettings,
   taskAssetPath,
   taskPromptInjectionsPath,
+  taskSteerRequestPath,
   taskStopRequestPath,
   TaskStore,
   workingAreaDir,
@@ -25,7 +26,7 @@ import {
   type TokenUsage,
   type Verdict,
 } from "@boof-runner/shared";
-import { transientReason } from "./tools/errors.js";
+import { ToolRunError, transientReason } from "./tools/errors.js";
 import { sumUsage } from "./tools/usage.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -201,6 +202,13 @@ export type PipelineOutcome =
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
+/** Steer requests one step takes before further ones wait for the next step (loop guard). */
+export const MAX_STEERS_PER_STEP = 5;
+
+const RESUME_PROMPT_PREFIX =
+  "The user sent new instructions while you were working. Continue the same task from where " +
+  "you stopped and apply them:\n\n";
+
 /** First word of a stop-request file written by RunnerEngine.shutdown. */
 export const SHUTDOWN_STOP_MARKER = "shutdown";
 
@@ -263,21 +271,86 @@ export class Pipeline {
     await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
-    let prompt = opts.prompt;
-    for (let attempt = 0; ; attempt++) {
+    // Prompts the user steered in, accumulated for a rerun that cannot resume the tool session.
+    const steerTexts: string[] = [];
+    // A steer that arrived between steps (or before this step started): it is simply applied
+    // here, no kill. The prompt was built earlier, so add what it may have missed.
+    const early = await this.takeSteer(id);
+    if (early.length > 0) {
+      steerTexts.push(...early.filter((t) => !opts.prompt.includes(t)));
+      await this.log(id, `\n### Steered\n${early.join("\n\n")}`);
+    }
+    this.deps.store.markInjectedApplied(id).catch(() => {});
+    const compose = (interruptedBy: string | null): string => {
+      let text = opts.prompt;
+      if (steerTexts.length > 0) {
+        text += `\n\n## New instructions from the user (sent while this task was running)\n${steerTexts.join("\n\n")}`;
+      }
+      if (interruptedBy) {
+        text +=
+          "\n\n## Previous attempt interrupted\n" +
+          `The previous attempt of this step was interrupted by ${interruptedBy}. The working ` +
+          "directory may hold its partial changes. Run `git status` and `git diff` to inspect " +
+          "them, then continue where it left off rather than restarting from scratch.";
+      }
+      return text;
+    };
+    let prompt = compose(null);
+    let resumeSessionId: string | undefined;
+    const interrupted: TokenUsage[] = [];
+    const finish = (result: RunResult): RunResult =>
+      interrupted.length === 0
+        ? result
+        : { ...result, usage: sumUsage([...interrupted, ...(result.usage ? [result.usage] : [])]) };
+    let steers = 0;
+    let failures = 0;
+    for (;;) {
+      const canSteer = steers < MAX_STEERS_PER_STEP;
       try {
         const result = await tool.run({
           ...opts,
           prompt,
+          resumeSessionId,
           idleTimeoutMs,
           stopSignalPath: taskStopRequestPath(this.deps.root, id),
+          steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
           onChunk: (c) => void this.streamChunk(id, c),
         });
         await this.recordStepCost(id, tool.id, result.usage);
-        return result;
+        return finish(result);
       } catch (err) {
+        if (err instanceof ToolRunError && err.steered) {
+          if (err.usage) {
+            interrupted.push(err.usage);
+            await this.recordStepCost(id, tool.id, err.usage);
+          }
+          // A stop request that arrived together with the steer wins.
+          await this.assertNotStopped(id);
+          const texts = await this.takeSteer(id);
+          steers++;
+          steerTexts.push(...texts);
+          this.deps.store.markInjectedApplied(id).catch(() => {});
+          await this.log(id, `\n### Steered\n${texts.join("\n\n")}`);
+          if (err.sessionId && tool.supportsResume) {
+            resumeSessionId = err.sessionId;
+            prompt = RESUME_PROMPT_PREFIX + texts.join("\n\n");
+          } else {
+            resumeSessionId = undefined;
+            prompt = compose("new instructions from the user");
+          }
+          if (steers >= MAX_STEERS_PER_STEP) {
+            await this.log(
+              id,
+              `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
+            );
+          }
+          await this.log(id, `\n### ${label} (steer ${steers})`);
+          continue;
+        }
+        resumeSessionId = undefined;
         const reason = transientReason(err);
-        if (reason === null || attempt >= transient) throw err;
+        if (reason === null || failures >= transient) throw err;
+        const attempt = failures++;
         const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
         await this.log(
           id,
@@ -286,15 +359,36 @@ export class Pipeline {
         );
         await this.backoff(id, delay);
         await this.log(id, `\n### ${label} (retry ${attempt + 1})`);
-        prompt =
-          opts.prompt +
-          "\n\n## Previous attempt interrupted\n" +
-          "The previous attempt of this step was interrupted by a transient error (API or " +
-          "network failure, or a stalled stream). The working directory may hold its partial " +
-          "changes. Run `git status` and `git diff` to inspect them, then continue where it " +
-          "left off rather than restarting from scratch.";
+        prompt = compose("a transient error (API or network failure, or a stalled stream)");
       }
     }
+  }
+
+  /**
+   * Take the pending steer request: the prompts it carries (written by the inject API next to the
+   * durable copies), removing the file. Empty when there is none.
+   */
+  private async takeSteer(id: string): Promise<string[]> {
+    const path = taskSteerRequestPath(this.deps.root, id);
+    const taken = `${path}.taken`;
+    try {
+      await rename(path, taken);
+    } catch {
+      return [];
+    }
+    const raw = await readFile(taken, "utf8").catch(() => "");
+    await rm(taken, { force: true });
+    const texts: string[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const text = (JSON.parse(line) as { text?: unknown }).text;
+        if (typeof text === "string" && text.trim()) texts.push(text.trim());
+      } catch {
+        /* a hand-written marker file: nothing to carry */
+      }
+    }
+    return texts;
   }
 
   /** Add a finished step's cost to the run total and the daily ledgers; never fails the step. */
