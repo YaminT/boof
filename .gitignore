@@ -24,3 +24,6 @@ AGENTS.md
 .cursor/
 .windsurf/
 .aider*
+
+# Vitest cache
+.vitest/
