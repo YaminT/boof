@@ -1,7 +1,7 @@
 # boof-runner REST API (v1)
 
 The API is generated from one operations registry (`packages/api`), so REST and the MCP tools
-(planned) stay identical. The machine-readable contract is the OpenAPI 3.1 document at
+(see "MCP" below) stay identical. The machine-readable contract is the OpenAPI 3.1 document at
 `GET /api/v1/openapi.json` (a sorted copy is committed as `packages/api/openapi/openapi.json`).
 Generate a client from it, or use the examples below.
 
@@ -207,6 +207,92 @@ curl -s "${H[@]}" -X POST $B/projects/shop/plans/q4/sync   # rewrites pending pr
 # 6. Answer questions a task parked in `action`
 curl -s "${H[@]}" "$B/actions"
 curl -s "${H[@]}" -X POST $B/projects/shop/tasks/<task-id>/answers -d '{"answers":"Use OAuth."}'
+```
+
+## MCP
+
+The same operations are served over the Model Context Protocol: `boof-runner mcp` (stdio, for a
+local agent host) and `POST /mcp` on the HTTP server (Streamable HTTP, for remote harnesses).
+Each tool calls the same operation as its REST route, so scopes, project restrictions, trust
+rules, input validation and error codes are identical, and every call is audited.
+
+- **Auth.** HTTP: `Authorization: Bearer boof_...` (or no header from a loopback peer under
+  `local-trust`), after the Host guard, an `Origin` check (absent, or an allowed host; else
+  `403 origin_not_allowed`), the body limit and the rate limit. stdio: `--client <id>` (no key
+  needed), or the local principal under `local-trust`; with `auth.mode = "required"` and no
+  `--client` the command refuses to start.
+- **Stateless.** One request, one answer (`application/json`). No sessions, so GET and DELETE on
+  `/mcp` answer `405` and there are no server-initiated notifications. Use `boof_wait_task`
+  (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress.
+- **Results.** Success: `content[0]` is a one-line summary, `content[1]` the JSON result,
+  `structuredContent` the result. Failure: `isError: true` and text `<code>: <message> <details>`
+  with the codes of the Errors section (`plan_version_conflict`, `forbidden_scope`, ...).
+- **Switch.** `settings.mcp.enabled` (default `true`); `false` makes `/mcp` answer 404 and
+  `boof-runner mcp` refuse to start.
+- **Audit.** `action` is `mcp:<tool>` for a tool call and `mcp:<method>` otherwise.
+- `boof-runner mcp --project <id>` fills in `projectId` for every project-scoped tool, removes
+  it from the tool schemas and hides `boof_create_project` and other projects.
+- `tools/list` shows only the tools the client's scopes allow.
+
+Tools (the names are stable). Plan tools take `expectedVersion`, task updates `expectedUpdated`
+(the ETag/If-Match values of the REST API). Attachments, settings writes, commands, clients
+and webhooks are REST only; archive/pause/usage and similar low-value operations are REST only
+to keep the tool list short.
+
+| Tool                   | Scope                                | Kind        | Does                                  |
+| ---------------------- | ------------------------------------ | ----------- | ------------------------------------- |
+| `boof_list_projects`   | `projects:read`                      | read-only   | List projects                         |
+| `boof_create_project`  | `projects:write`                     | write       | Create a project                      |
+| `boof_get_project`     | `projects:read`                      | read-only   | Get a project                         |
+| `boof_update_project`  | `projects:write`                     | idempotent  | Update a project                      |
+| `boof_list_plans`      | `plans:read`                         | read-only   | List plans                            |
+| `boof_create_plan`     | `plans:write`                        | write       | Create a plan                         |
+| `boof_get_plan`        | `plans:read`                         | read-only   | Get a plan                            |
+| `boof_update_plan`     | `plans:write`                        | idempotent  | Update a plan                         |
+| `boof_replace_goals`   | `plans:write`                        | idempotent  | Replace all goals of a plan           |
+| `boof_upsert_goal`     | `plans:write`                        | idempotent  | Add or change a goal                  |
+| `boof_remove_goal`     | `plans:write`                        | destructive | Remove a goal                         |
+| `boof_reorder_goals`   | `plans:write`                        | idempotent  | Reorder goals                         |
+| `boof_set_goal_status` | `plans:write`                        | idempotent  | Set a goal's status                   |
+| `boof_import_plan`     | `plans:write`                        | write       | Import plan files from the repository |
+| `boof_export_plan`     | `plans:read`                         | read-only   | Export a plan as boof-planner files   |
+| `boof_sync_plan`       | `plans:write`                        | write       | Sync a plan to tasks                  |
+| `boof_list_tasks`      | `tasks:read`                         | read-only   | List tasks                            |
+| `boof_get_task`        | `tasks:read`                         | read-only   | Get a task                            |
+| `boof_create_task`     | `tasks:write`                        | write       | Create a task                         |
+| `boof_update_task`     | `tasks:write`                        | idempotent  | Update a task                         |
+| `boof_queue_task`      | `tasks:write`                        | idempotent  | Queue a task                          |
+| `boof_retry_task`      | `tasks:write`                        | write       | Retry a task                          |
+| `boof_archive_task`    | `tasks:write`                        | idempotent  | Archive a task                        |
+| `boof_answer_task`     | `tasks:write`                        | write       | Answer a task's questions             |
+| `boof_stop_task`       | `tasks:control`                      | destructive | Stop a running task                   |
+| `boof_inject_prompt`   | `tasks:control`                      | write       | Inject a prompt into a running task   |
+| `boof_get_task_log`    | `tasks:read`                         | read-only   | Read a task's live log                |
+| `boof_wait_task`       | `tasks:read`                         | read-only   | Wait for a task status change         |
+| `boof_runner_status`   | `settings:read`                      | read-only   | Runner and queue status               |
+| `boof_set_runner`      | `runner:control` or `settings:write` | idempotent  | Start or pause the runner             |
+| `boof_list_actions`    | `tasks:read`                         | read-only   | List tasks needing an answer          |
+
+Resources (read-only, same scopes as the matching tools; the lists support browsing):
+
+| URI                                                 | MIME               | Content                              |
+| --------------------------------------------------- | ------------------ | ------------------------------------ |
+| `boof://projects`                                   | `application/json` | project list                         |
+| `boof://projects/{pid}`                             | `application/json` | one project                          |
+| `boof://projects/{pid}/plans/{planId}`              | `application/json` | plan with goals                      |
+| `boof://projects/{pid}/plans/{planId}/xml`          | `text/plain`       | exported `plan.boof.xml`             |
+| `boof://projects/{pid}/plans/{planId}/xml/{goalId}` | `text/plain`       | exported `goal.boof.xml` of one goal |
+| `boof://projects/{pid}/tasks/{taskId}`              | `application/json` | task without its log                 |
+| `boof://projects/{pid}/tasks/{taskId}/log`          | `text/plain`       | live or stored log                   |
+
+Prompts: `boof_plan_project` (goal and repository summary to a plan ready for
+`boof_create_plan`) and `boof_review_plan` (critique a plan's dependency graph and tests).
+
+```bash
+curl -s http://127.0.0.1:4319/mcp \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boof_list_projects","arguments":{}}}'
 ```
 
 ## Operations

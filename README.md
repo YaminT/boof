@@ -285,6 +285,44 @@ For offline tests the `mock` tool takes a marker in the prompt:
 verdict per round, last repeats; also `NONE`, `GARBLED`, `CONFLICT`). The marker must
 sit on one line, the last complete marker wins, and unknown tokens throw.
 
+## Connect an agent over MCP
+
+Boof speaks the Model Context Protocol, so Claude Code, Codex or a harness built on the Claude API can register projects, submit plans, queue tasks and answer parked questions with the same rules as the REST API (same scopes, trust and audit). The tool list is in [docs/api.md](docs/api.md#mcp).
+
+**Local agent (stdio).** The agent host starts `boof-runner mcp`; no server and no key are needed.
+
+```bash
+# one repository: the projectId argument is filled in and hidden
+claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --project pim
+# everything the data root serves, limited to an API client's scopes and projects
+claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1
+```
+
+Without `--client` the agent is the local admin principal, which only works while `security.auth.mode` is `local-trust`; with `"required"` the command refuses to start. Create a narrow client first with `boof-runner auth add --name agent-1 --scopes projects:read,plans:write,tasks:read,tasks:write` (the key is not needed for stdio). The server writes logs to stderr only.
+
+**Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback, see "Remote access") and point the client at `/mcp`:
+
+```bash
+claude mcp add --transport http boof https://boof.example.com/mcp \
+  --header "Authorization: Bearer boof_<client>_<secret>"
+```
+
+or in a JSON config (`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "boof": {
+      "type": "http",
+      "url": "https://boof.example.com/mcp",
+      "headers": { "Authorization": "Bearer boof_<client>_<secret>" }
+    }
+  }
+}
+```
+
+A client with `plans:write,tasks:read` can submit and change plans but cannot stop tasks or change settings. Clients with the default `review` trust only create `draft` tasks that a human approves. The endpoint is stateless (no sessions); use `boof_wait_task` to follow a task. Set `settings.mcp.enabled` to `false` to switch MCP off.
+
 ## Security model
 
 - The server binds 127.0.0.1 by default and rejects requests whose Host header is not a loopback name. This blocks DNS-rebinding attacks from websites open in your browser.
@@ -318,6 +356,7 @@ boof-runner --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
 
 ```
 packages/shared    task-file format, schemas, project registry, v1→v2 migration, lifecycle state machine, atomic store
+packages/mcp       MCP server (stdio + Streamable HTTP) generated from the operations registry
 packages/runner    tool adapters, git worktree isolation, the pipeline engine
 packages/web        Hono server + file-watch SSE; React UI under packages/web/ui
 packages/desktop    Electron app: boots the server + runner in-process, opens the UI window
