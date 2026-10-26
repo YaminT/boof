@@ -35,6 +35,7 @@ import {
 } from "./events.js";
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 import { mcpRoute } from "./mcp-route.js";
+import { HARNESS_MD } from "./generated/harness.js";
 
 export interface AppDeps {
   service: TaskService;
@@ -52,6 +53,20 @@ export interface AppDeps {
   /** Clock override for tests (rate limit, client cache, audit). */
   now?: () => number;
 }
+
+const MARKDOWN = "text/markdown; charset=utf-8";
+const PLAIN = "text/plain; charset=utf-8";
+
+/** llms.txt (llmstxt.org): what boof is and where an agent starts. */
+const LLMS_TXT = `# boof-runner
+
+> boof-runner is a local task runner for coding agents. Register a git repository as a project, submit plans of goals or single prompts, and boof runs them through a planner, developer, observer and reviewer pipeline in git worktrees. You operate it over a REST API or MCP with a host URL and an API key.
+
+## Docs
+
+- [Harness guide](/harness.txt): the complete guide for an AI agent: connection, concepts, every REST operation, workflows
+- [OpenAPI](/api/v1/openapi.json): the machine-readable REST contract (needs an API key)
+`;
 
 const JSON_BODY_LIMIT = 1_000_000;
 const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
@@ -74,6 +89,11 @@ export function createApp(deps: AppDeps): Hono {
     hostGuard(async () => [...(deps.allowedHosts ?? []), ...(await security()).allowedHosts]),
   );
   app.use("*", secureHeaders());
+  // Public, unauthenticated docs for AI agents. They hold no secrets and sit behind the Host
+  // guard only; the text is `docs/harness.md` embedded at build time (see generated/harness.ts).
+  app.get("/harness.md", (c) => c.body(HARNESS_MD, 200, { "Content-Type": MARKDOWN }));
+  app.get("/harness.txt", (c) => c.body(HARNESS_MD, 200, { "Content-Type": PLAIN }));
+  app.get("/llms.txt", (c) => c.body(LLMS_TXT, 200, { "Content-Type": PLAIN }));
   // Outermost on /api so rejected requests (401/403/429) are audited too.
   // `/mcp` (the MCP endpoint) runs through the same chain as `/api/*`.
   const guarded = ["/api/*", "/mcp"];
