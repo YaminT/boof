@@ -12,7 +12,7 @@ import {
   type AnyOperation,
   type TaskService,
 } from "@boof-runner/api";
-import { hostGuard } from "./middleware/host-guard.js";
+import { hostGuard, isHostAllowed } from "./middleware/host-guard.js";
 import {
   authenticate,
   defaultPeerAddress,
@@ -34,6 +34,7 @@ import {
   type FeedCursor,
 } from "./events.js";
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
+import { mcpRoute } from "./mcp-route.js";
 
 export interface AppDeps {
   service: TaskService;
@@ -74,20 +75,48 @@ export function createApp(deps: AppDeps): Hono {
   );
   app.use("*", secureHeaders());
   // Outermost on /api so rejected requests (401/403/429) are audited too.
-  app.use("/api/*", audit({ root: service.root, security, now: deps.now }));
+  // `/mcp` (the MCP endpoint) runs through the same chain as `/api/*`.
+  const guarded = ["/api/*", "/mcp"];
+  const auditor = audit({ root: service.root, security, now: deps.now });
+  for (const path of guarded) app.use(path, auditor);
 
   const tooLarge = (c: Context) =>
     c.json({ error: { code: "payload_too_large", message: "Request body too large" } }, 413);
   const jsonLimit = bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: tooLarge });
   const attachmentLimit = bodyLimit({ maxSize: ATTACHMENT_BODY_LIMIT, onError: tooLarge });
+  app.use("/mcp", jsonLimit);
   app.use("/api/*", (c, next) =>
     c.req.method === "POST" &&
     /^\/api\/(v1\/)?(projects\/[^/]+\/)?tasks\/[^/]+\/attachments\/?$/.test(c.req.path)
       ? attachmentLimit(c, next)
       : jsonLimit(c, next),
   );
-  app.use("/api/*", authenticate({ store: authStore, security, peerAddress, now: deps.now }));
-  app.use("/api/*", rateLimit({ security, now: deps.now }));
+  // A browser page must not drive the MCP endpoint: an Origin, when sent, has to name an allowed host.
+  app.use("/mcp", async (c, next) => {
+    const origin = c.req.header("origin");
+    if (origin !== undefined) {
+      let ok = false;
+      try {
+        const extra = [...(deps.allowedHosts ?? []), ...(await security()).allowedHosts];
+        ok = isHostAllowed(new URL(origin).host, extra);
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        return c.json(
+          { error: { code: "origin_not_allowed", message: "Origin not allowed" } },
+          403,
+        );
+      }
+    }
+    await next();
+  });
+  const authenticator = authenticate({ store: authStore, security, peerAddress, now: deps.now });
+  const limiter = rateLimit({ security, now: deps.now });
+  for (const path of guarded) {
+    app.use(path, authenticator);
+    app.use(path, limiter);
+  }
 
   app.onError((err, c) => {
     const e = toOpError(err);
@@ -234,6 +263,8 @@ export function createApp(deps: AppDeps): Hono {
       });
     }),
   );
+
+  app.all("/mcp", mcpRoute({ service, authStore }));
 
   app.route("/api", api);
   app.all("/api/*", (c) =>

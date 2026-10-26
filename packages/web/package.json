@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@boof-runner/api": "workspace:*",
+    "@boof-runner/mcp": "workspace:*",
     "@boof-runner/runner": "workspace:*",
     "@boof-runner/shared": "workspace:*",
     "@hono/node-server": "^2.0.0",

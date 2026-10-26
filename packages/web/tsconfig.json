@@ -6,7 +6,12 @@
     "composite": true,
     "lib": ["ES2022"]
   },
-  "references": [{ "path": "../shared" }, { "path": "../runner" }, { "path": "../api" }],
+  "references": [
+    { "path": "../shared" },
+    { "path": "../runner" },
+    { "path": "../api" },
+    { "path": "../mcp" }
+  ],
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts", "ui/**/*"]
 }
