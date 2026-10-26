@@ -2,13 +2,13 @@
 
 Boof Runner is the code-execution runner of the boof project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code and Codex.
 
-Boof Runner is local-first. It runs on the user's machine, stores tasks as markdown files, serves a local web UI, and executes one task at a time against the configured working directory.
+Boof Runner is local-first. It runs on the user's machine, stores tasks as markdown files, serves a local web UI and API, and executes tasks against the registered git repositories (at most one task per project at a time).
 
 ## What It Does
 
 Boof Runner manages the full lifecycle of coding-agent work:
 
-- It accepts task prompts from the UI or API.
+- It accepts task prompts and plans of goals from the UI, the CLI, the REST API or MCP.
 - It stores each task as a markdown file with validated frontmatter.
 - It queues pending tasks by priority.
 - It runs each task through planner, planner refinement, developer, and reviewer steps.
@@ -28,7 +28,9 @@ In this repository, Boof Runner includes:
 
 - `packages/runner`: the execution engine, pipeline, tool adapters, worktree handling, usage tracking, and process execution.
 - `packages/shared`: the task file format, schemas, lifecycle state machine, settings, paths, attachment storage, and atomic file writes.
-- `packages/web`: the local HTTP API, file watcher, SSE updates, and service layer over the stores.
+- `packages/api`: the operations registry (`defineOp`), the services over the stores (`TaskService`, `ProjectService`, `PlanService`), the error table and the OpenAPI generator.
+- `packages/mcp`: the MCP server (stdio and Streamable HTTP), generated from the registry.
+- `packages/web`: the Hono server: the security middleware chain, the REST routes generated from the registry, the event stream, webhook delivery, the `/mcp` mount and the public agent docs.
 - `packages/web/ui`: the React UI for task management, settings, live logs, actions, and runtime controls.
 - `packages/desktop`: the Electron wrapper that runs the same server, runner, and UI in a native window.
 - `bin`: the `boof-runner` command that scaffolds the data root, starts the web server, and ensures only one runner is active.
@@ -43,12 +45,17 @@ The default data root (layout v2, `settings.json` has `schemaVersion: 2`) contai
 
 ```text
 settings.json
+events.jsonl
 commands/
 auth/
 audit/
+idempotency/
+webhooks/
 projects/
   <projectId>/
     project.json
+    events.jsonl
+    plans/
     tasks/
       drafts/
       pending/
@@ -337,43 +344,62 @@ Because Claude Code and Codex are currently run non-interactively, injected prom
 
 This gives the user a practical way to steer a long-running task between steps without changing the whole tool architecture.
 
+## Architecture of the API layer
+
+Everything a client can do is one **operation**, defined once with `defineOp()` in `packages/api/src/ops/` (projects, plans, tasks, admin, webhooks, whoami). An operation holds its name (`plans.sync`), scope(s), Zod input and output schemas, a REST mapping (method, path, status, `If-Match` field, ETag, idempotency), an optional MCP mapping (tool name and annotations) and a handler. The list is the **registry** (`registry.ts`). Three things are generated from it, so they cannot drift apart:
+
+- **REST routes.** `packages/web/src/rest.ts` mounts one Hono route per operation under `/api/v1` (and the deprecated unversioned `/api` copies). It maps path and query parameters, JSON bodies, `If-Match` and `Idempotency-Key` onto the input.
+- **MCP tools.** `packages/mcp` serves every operation with `mcp.expose` as a tool (32 today, `boof_<verb>_<noun>`), plus resources and two prompts.
+- **OpenAPI and the harness guide.** `buildOpenApi(registry)` produces the OpenAPI 3.1 document (`GET /api/v1/openapi.json`, committed as `packages/api/openapi/openapi.json`). `scripts/gen-harness-reference.ts` turns it into the REST reference of `docs/harness.md` and writes `packages/web/src/generated/harness.ts`, the copy the server embeds.
+
+`Operation.execute` is the only way in. It checks the scope (an empty scope list, as in `auth.whoami`, means any authenticated caller), validates the input (`400 invalid_input` or `invalid_plan`), authorizes the project (`403 forbidden_project`), runs the handler, validates the output and maps every failure to an `OpError` with a stable code from `ERROR_CODES`. REST and MCP therefore share scopes, project restrictions, trust rules, validation and error codes.
+
+### Request chain
+
+For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, so rejected calls are logged), body limit (`413`), for `/mcp` an `Origin` check, `authenticate`, rate limit (`429`), then the route. The public routes `GET /harness.md`, `/harness.txt` and `/llms.txt` are registered after the host guard and secure headers and before authentication: they hold no secrets and serve `docs/harness.md` as embedded text.
+
+### Events and webhooks
+
+Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature, retries and a dead-letter directory. See [api.md](api.md).
+
+### MCP
+
+`boof-runner mcp` serves stdio (`--client` picks an API client, `--project` fixes the project); `POST /mcp` serves Streamable HTTP in stateless mode (a fresh server per request, JSON responses, no sessions). The principal comes from the same authenticator as REST, so revocations apply at once. A tool call runs `op.execute` and is audited as `mcp:<tool>`.
+
 ## Web API And UI
 
-The Hono server exposes a local REST API for:
+The REST surface is the registry (see above); the full list with inputs, outputs, scopes and errors is the generated reference in [harness.md](harness.md) and the OpenAPI document. In short:
 
-- projects: `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:pid` (`?purge=1` deletes the data, otherwise it archives; refused with `409 project_busy` while a task runs), `POST /api/projects/:pid/archive|unarchive|pause|resume`, `GET /api/projects/:pid/usage`
-- per-project tasks under `/api/projects/:pid/tasks…`: CRUD, queue reordering, skip toggles, retry/archive/unarchive/delete, answers for parked tasks, attachments, live logs, stop and prompt injection (task responses carry `projectId`)
-- per-project plans under `/api/projects/:pid/plans…` (scopes `plans:read`/`plans:write`): list, create, get, update, replace goals, upsert/delete a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`; responses carry an `ETag`
-- `GET /api/actions`: tasks parked in `action` across the projects the caller may read
-- command templates (global)
-- settings (global; `defaultProject` is settable, the working directory is not)
-- tool health
-- model lists
-- token usage: `GET /api/usage` is the sum over projects
+- projects: list, create, get, update, archive, unarchive, pause, resume, delete (`?purge=true` removes the data and is refused with `409 project_busy` while a task runs), usage
+- per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll), stop and prompt injection
+- per-project plans under `/api/v1/projects/{p}/plans…`: list, create, get, update, replace goals, upsert and remove a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`
+- `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates, settings, tool health, models, token usage, API clients (`auth:admin`) and webhooks (`admin`)
 
-The legacy `/api/tasks…` routes are aliases of `/api/projects/<settings.defaultProject>/tasks…`. They answer `Deprecation: true`, and `404 no_default_project` while no default is set. The same operations are served at `/api/v1` (see `docs/api.md`: error table, ETags, idempotency, pagination, events, webhooks); every unversioned route now answers `Deprecation: true` and `Sunset`, and they go away after the sunset date. Webhooks are delivered by the web server process only; headless `run`/`scan` do not deliver.
+The unversioned routes (`/api/projects/…`, and `/api/tasks…` as aliases of `settings.defaultProject`) still work but answer `Deprecation: true` and `Sunset`. They keep their old shapes. New code uses `/api/v1`.
 
-All `/api` requests must carry a loopback Host header (`localhost`, `127.0.0.1` or `[::1]`); other hosts get `421`. Errors have the shape `{ "error": { "code": "…", "message": "…" } }`. Status changes through the API are limited to `draft`, `pending` and `archived`; the runner owns `running`, `action`, `done` and `failed`.
+Requests need a loopback `Host` header (`localhost`, `127.0.0.1`, `[::1]`) or a name in `security.allowedHosts`; others get `421`. Errors have the shape `{ "error": { "code": "…", "message": "…", "details"?: … } }`. Status changes through the API are limited to `draft`, `pending` and `archived`; the runner owns `running`, `action`, `done` and `failed`.
 
-The React UI consumes that API and listens to server-sent events from the file watcher. The watcher covers `projects/` (depth 6), `commands/` and `settings.json`; each `changed` event carries the JSON `{ "project": "<id>" }` when the path is under `projects/<id>/` and `{}` otherwise, and a client restricted to some projects only receives the events of its own. SSE events are only hints. After an event, the UI reloads current state from the filesystem-backed API.
+The React UI consumes that API and listens to the event stream. SSE `changed` hints come from a file watcher over `projects/` (depth 6), `commands/` and `settings.json`; each carries `{ "project": "<id>" }` when the path is under a project. After an event, the UI reloads current state from the filesystem-backed API.
 
 Important UI areas:
 
-- Tasks: queue, priority, status filters, running task live panel
+- Tasks: queue, priority, status filters, proposed-by-clients filter, running task live panel
 - Editor: task prompt, labels, runs, command template, attachments, reports, logs
+- Plans: goals with dependencies, approve, sync preview, auto-sync
 - Actions: parked planner questions awaiting user answers
 - Commands: reusable instruction templates
-- Settings: runner toggle, tool health, model lists, role assignments, usage
+- Settings: concurrency, default project, tool health, model lists, roles, review, worktree, retries, usage, API clients, per-project overrides
 
 ## API Authentication
 
-Authentication is middleware in `packages/web/src/middleware/`. Order on `/api`: host guard, secure headers, audit (outermost, so rejected calls are logged), body limit, `authenticate`, rate limit, then the route, which declares its scope with `requireScope`.
+Authentication is middleware in `packages/web/src/middleware/`. The operations declare their scope in the registry, `execute` enforces it, and `authorizeProject()` runs before any project access.
 
-- Principals: `local` (loopback peer, no `Authorization` header, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`.
-- Scopes: `tasks:read`, `tasks:write`, `tasks:control` (stop, inject), `settings:read`, `settings:write`, `auth:admin`, `admin` (everything); `projects:*`, `plans:*` and `runner:control` are defined for the multi-project work. Current mapping: health, models and settings reads need `settings:read`; SSE events, commands reads and attachment reads need `tasks:read`; commands and attachment writes follow `tasks:write`; toggling the runner is a settings write. Project routes need `projects:read` (list, get, usage) or `projects:write` (create, update, archive, delete); pause and resume accept `runner:control` or `projects:write`; `/api/usage` and `/api/projects/:pid/usage` also accept `tasks:read`; task routes keep their task scopes. Every route with a project calls `authorizeProject()` before anything else (`403 forbidden_project`, so existence is not probed) and list routes filter to the allowed projects. A non-local principal registering a project (or moving its working directory) must pass `security.allowedProjectRoots`, the git and data-root checks and the `/`/home exclusion, else `403 project_root_not_allowed` (the allowed roots are listed in the error only for `admin`).
-- Trust: `review` clients (the default) create tasks as `draft` with label `external:<id>` and an `origin` in the task frontmatter, and cannot move tasks to `pending` (retry, unarchive, answers, status update): `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this for tasks. `trusted` clients behave like local.
-- Admin API (`auth:admin`): `GET/POST /api/auth/clients`, `POST /api/auth/clients/:id/revoke`, `POST /api/auth/clients/:id/rotate`. Responses never contain `keyHash`; a caller cannot grant scopes or trust it does not hold.
-- Settings (`settings.security`, edited in `settings.json`, not through `PUT /api/settings`): `allowedHosts`, `auth.mode`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.
+- Principals: `local` (loopback peer, no `Authorization` header, no `X-Forwarded-For`, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`.
+- Scopes: `projects:read|write`, `plans:read|write`, `tasks:read|write|control` (stop, inject), `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Pause and resume accept `runner:control` or `projects:write`; toggling the runner accepts `runner:control` or `settings:write`; usage accepts `projects:read` or `tasks:read`. `auth.whoami` needs no scope.
+- Project restriction: a client may be limited to a list of projects; other projects answer `403 forbidden_project` (so existence is not probed) and list routes filter. A non-local principal registering a project (or moving its working directory) must pass `security.allowedProjectRoots`, the git and data-root checks and the `/`/home exclusion, else `403 project_root_not_allowed`.
+- Trust: `review` clients (the default) create tasks and plans as `draft` (tasks get the label `external:<id>` and an `origin`), and cannot queue, retry, unarchive, answer, activate a plan or edit an active plan: `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this. `trusted` clients behave like local.
+- Admin API (`auth:admin`): list, create, revoke and rotate clients. Responses never contain `keyHash`; a caller cannot grant scopes or trust it does not hold.
+- Settings (`settings.security`, edited in `settings.json`, not through `PUT /settings`): `allowedHosts`, `auth.mode`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`. `settings.mcp.enabled` switches MCP off.
 - Binding: `--host`/`BOOF_RUNNER_HOST`; a non-loopback bind needs `auth.mode = "required"` and an active client; the bind host is added to the Host allow-list. `--tls-cert`/`--tls-key` serve HTTPS.
 
 ## Persistence And Safety
@@ -395,7 +421,7 @@ Boof Runner deliberately keeps the first version local, single-user, and file-ba
 
 - There is no multi-user permission model.
 - There is no remote queue or hosted control plane.
-- The runner processes one task at a time.
+- The runner runs at most one task per project at a time (`runner.concurrency` allows tasks of different projects to overlap).
 - Stop is best-effort and process-level, not a semantic rollback.
 - Prompt injection is applied between non-interactive tool runs, not inside a currently running request.
 - Token/cost handling is tracking-only; it does not enforce budgets yet.
@@ -434,13 +460,13 @@ The highest-value next improvements are:
 
    The settings page currently shows model names. It could also show model source, availability, default role fit, and whether a health probe succeeded for that model.
 
-8. Add structured event history
+8. Push notifications to MCP clients
 
-   Logs are useful but free-form. A structured event stream would make it easier to debug task lifecycle transitions, stops, injections, tool failures, and retries.
+   Events exist (replayable SSE and signed webhooks), but the stateless MCP endpoint cannot push them. A stateful transport with resource subscriptions would let agent hosts react without polling `boof_wait_task`.
 
-9. Prepare for multiple runners cautiously
+9. Raise concurrency within one project safely
 
-   The current one-task-at-a-time model is simple and safe. If concurrency is added, it should preserve per-task worktree isolation and add explicit resource limits.
+   Different projects already run side by side (`runner.concurrency`). Running two tasks of one repository needs race-safe worktree and branch creation first, plus explicit resource limits.
 
 ## Summary
 

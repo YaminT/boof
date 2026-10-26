@@ -5,6 +5,8 @@ The API is generated from one operations registry (`packages/api`), so REST and 
 `GET /api/v1/openapi.json` (a sorted copy is committed as `packages/api/openapi/openapi.json`).
 Generate a client from it, or use the examples below.
 
+**Using an AI agent?** Point it at `<boof-host>/harness.txt` (public, no key; also `/harness.md` and `/llms.txt`), or `https://nodets.com/boof/harness.txt`. That guide, [harness.md](harness.md), holds a complete generated reference of every operation below.
+
 Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an id
 (`projects.create`), a scope, JSON input and JSON output.
 
@@ -32,6 +34,7 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 - Registering a project as an API client needs the directory to be inside
   `security.allowedProjectRoots` (settings.json).
 - `GET /api/v1/openapi.json` needs any valid principal.
+- `GET /api/v1/whoami` (MCP `boof_whoami`) needs no scope: it returns `{ principal: { kind, id, name, trust, scopes[], projects }, server: { version, authMode, mcpEnabled } }`. Call it first to learn what a key may do.
 
 ## Versioning
 
@@ -241,6 +244,7 @@ to keep the tool list short.
 
 | Tool                   | Scope                                | Kind        | Does                                  |
 | ---------------------- | ------------------------------------ | ----------- | ------------------------------------- |
+| `boof_whoami`          | none (any authenticated client)      | read-only   | Who am I and server facts             |
 | `boof_list_projects`   | `projects:read`                      | read-only   | List projects                         |
 | `boof_create_project`  | `projects:write`                     | write       | Create a project                      |
 | `boof_get_project`     | `projects:read`                      | read-only   | Get a project                         |
@@ -299,7 +303,7 @@ curl -s http://127.0.0.1:4319/mcp \
 
 The full list, inputs and outputs are in the OpenAPI document. Areas: `projects.*`, `plans.*`
 (goals, import/export, sync), `tasks.*` (queue, answers, stop, inject, attachments),
-`actions.list`, `settings.*`, `runner.*`, `usage.global`, `commands.*`, `auth.clients.*`,
+`auth.whoami`, `actions.list`, `settings.*`, `runner.*`, `usage.global`, `commands.*`, `auth.clients.*`,
 `webhooks.*`. Request bodies are strict: unknown keys are `400 invalid_input`. GET and DELETE
 inputs come from the query string (`?purge=1`, `?cascade=true`); path placeholders are input
 fields; everything else is the JSON body. Bodies are limited to 1 MB (attachments 25 MB).
