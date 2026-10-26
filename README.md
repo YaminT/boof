@@ -123,7 +123,8 @@ boof-runner run --all --project my-api                # ... or of one project
 # creating one task per unit (ordered by plan.boof.xml order + depends-on, so a
 # unit's dependencies run first). Each task instructs the developer to implement
 # the unit strictly from its goal.boof.xml, TDD; on success the runner appends a
-# <version> to that goal file bumping its status.
+# <version> to that goal file bumping its status. Under the hood scan is
+# `project add-or-get` + `plan import` + `plan sync` (see "Plans" below).
 boof-runner scan /path/to/repo --dry-run   # list what it would create
 boof-runner scan /path/to/repo             # create the tasks (registers the repo if needed)
 boof-runner run --all -d ./data            # then drive them to completion
@@ -145,6 +146,30 @@ and, for `scan`, `--bump review|done` (status recorded on success, default `done
 
 `scan`/`run` are **universal**: nothing about any specific project is hardcoded — the
 target repo is always taken from the argument.
+
+### Plans
+
+A plan is a stored, versioned DAG of goals (units of work) for one project, kept in
+`projects/<id>/plans/<planId>.json`. A harness, the REST API or an import from a repo's
+`plan.boof.xml` / `goal.boof.xml` files creates it; boof turns its goals into tasks and keeps
+those tasks in line when a goal changes, then records the goal's status when the task finishes.
+
+```bash
+boof-runner plan import --project my-api              # repo XML -> plan "repo" (merges on re-run)
+boof-runner plan sync   --project my-api --plan repo   # goals -> tasks (--dry-run to preview)
+boof-runner plan export --project my-api --plan repo --out ./xml   # plan + goal XML files
+```
+
+REST (scopes `plans:read` / `plans:write`, project restriction applies): `GET/POST
+/api/projects/:pid/plans`, `GET/PUT /plans/:planId`, `PUT /plans/:planId/goals` (replace the
+DAG), `PUT/DELETE /plans/:planId/goals/:goalId`, `POST /plans/:planId/reorder`, `POST
+/plans/:planId/goals/:goalId/status`, `POST /plans/import`, `GET /plans/:planId/export` and
+`POST /plans/:planId/sync` (`{ "dryRun": true }`). Writes are conditional: send `If-Match: "<version>"`
+(or `expectedVersion` in the body); a stale version gets `409 plan_version_conflict` with
+`details.currentVersion`. Clients with `review` trust create `draft` plans, cannot activate or
+edit an active plan, and sync of a draft plan is `409 plan_not_active`.
+
+See `docs/boof-runner.md` for the goal model, the sync rules and the status write-back.
 
 ### Install or update from source
 

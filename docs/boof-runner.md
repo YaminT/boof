@@ -111,6 +111,45 @@ The body stores human-readable content:
 
 This format keeps task data editable, inspectable, and portable outside the app.
 
+## Plans
+
+A plan is an ordered DAG of goals for one project, stored as `projects/<id>/plans/<planId>.json`. A goal has an id, title, optional repo-relative `path`, `order`, `dependsOn`, `status` (`plan|develop|review|done`), an optional `model` hint, a `spec` (goal, stack, do/don't rules, tests) and a `history` of status entries. The spec maps one to one onto a boof-planner `goal.boof.xml`.
+
+Plan fields: `status` (`draft`: never synced; `active`: syncable; `archived`), `autoSync` (the engine syncs the plan at the start of each tick and before it starts tasks), `bumpTo` (`review` or `done`: the status recorded when a task finishes), `source` (`ui|api|mcp|repo-import`, plus the creating client) and `version`.
+
+Validation (`validatePlan`): unique goal ids, dependencies that exist, no cycles, and an `order` consistent with the dependencies. Writes renumber `order` 1..n along the topological order that is closest to the given one. A goal path must be relative and may not contain `..`.
+
+Each goal has a `revision`. It goes up by one whenever the spec, `dependsOn` or `model` changes (title, path and order do not count). `PlanStore` keeps `version` optimistic: `save` needs the version that is stored right now or throws `PlanVersionConflict`. The API maps that to `409 plan_version_conflict`.
+
+### Sync
+
+`plan sync` / `POST …/plans/:planId/sync` works on `active` plans and is idempotent. Goals are walked in order. A goal that is not `done` and whose dependencies are all `done` gets a task if no task exists for its current revision: title `boof: <goal title>`, labels `plan:<planId>`, `goal:<goalId>` (plus `boof-scan` and `boof-status:<status>` for imported plans), priority `(open goals − position) × 10`, `planRef {planId, goalId, revision}`, `promptSource: plan`, `base` = the project's default base, status `pending`. The prompt is the unit prompt (goal, stack, rules, tests, TDD, do not edit the plan files) plus a `## Plan` section. Tasks start in `draft` when the plan was created by a `review`-trust client and `security.externalTasksRequireApproval` is on (and for any sync a `review`-trust client triggers).
+
+A goal whose dependencies are not done gets no task (reported as `skipped: blocked`). A pending task of a goal that became blocked is skipped with the label `blocked`; it is unskipped when the goal is unblocked. `scan` asks for blocked tasks up front (`includeBlocked`) so every not-done unit has a task.
+
+When a goal changes, the next sync applies this table:
+
+| Task state                             | Action                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `draft`, `pending`, `action`, `failed` | Rewrite the prompt from the new spec, set `planRef.revision`, add a `## Plan change` note to the task log. A failed task stays failed (retry it); an `action` task keeps its questions. If `promptSource` is `manual` (the prompt was edited by hand) the diff is appended instead and the label `needs-review` is added.           |
+| `running`                              | Append an instruction to the control-dir prompt injections (same mechanism as the inject endpoint) naming the new revision and the field changes, once per revision; add the label `stale-revision` (best effort, the pipeline also writes the task file). The injection is read between steps, so a change lands at the next step. |
+| `done` at an older revision            | The goal goes back to `develop` (history entry `spec changed to revision N`) and a follow-up task `Update <goal> to revision N` is created. Its prompt holds the previous spec, the new spec, the field changes and a unified diff.                                                                                                 |
+| goal removed                           | `pending`/`draft` tasks are archived with the label `goal-removed`; a running task gets a stop request only with `stopRunning`; done tasks stay.                                                                                                                                                                                    |
+
+The previous spec comes from `goal.synced`, the spec the latest task prompt was built from. A task archived by a user at the current revision is not recreated; a new revision gets a new task.
+
+### Status write-back
+
+When a plan task reaches its final `done`, the engine appends a history entry `{revision: planRef.revision, status: plan.bumpTo, description: "boof-runner completed task <id>"}` to the goal, clears `taskId` and saves the plan (retrying against concurrent API writes). If the goal has a `path` and the project's `planWriteBack` is true (the default), it also appends the same `<version>` to `<workingDirectory>/<path>/goal.boof.xml`, so boof-planner keeps working. Write-back errors are logged and never fail the task. Tasks with the old `boofGoal` frontmatter finish as before.
+
+### Import and export
+
+`plan import` scans the repo (`goal.boof.xml`, `plan.boof.xml`) into goals: path, order, dependencies, status from disk, spec and version history. Re-importing into an existing plan matches goals by path, then id; a changed spec bumps the revision, and the repo status is adopted only when it is further along than the plan's. Export returns `plan.boof.xml` and every `<path>/goal.boof.xml` as a map of file name to content (the CLI writes them under `--out`); untouched goals round-trip byte for byte. Boof never writes into the repo during export.
+
+### Trust
+
+`review`-trust clients create `draft` plans, cannot set `active`, and cannot change a plan that is `active` (their edits would reach the queue unreviewed); a human approves by setting `active`. Stopping tasks of removed goals needs `tasks:control`.
+
 ## Runner Pipeline
 
 The runner polls `tasks/pending/` of every active, non-paused project that has a working directory and chooses across all of them: highest `priority`, then oldest `updated`, then project id (then task id) so the order is deterministic. It transitions the chosen task to `projects/<id>/tasks/ongoing/<task-id>/` and builds the pipeline with the project's effective settings.
@@ -304,6 +343,7 @@ The Hono server exposes a local REST API for:
 
 - projects: `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:pid` (`?purge=1` deletes the data, otherwise it archives; refused with `409 project_busy` while a task runs), `POST /api/projects/:pid/archive|unarchive|pause|resume`, `GET /api/projects/:pid/usage`
 - per-project tasks under `/api/projects/:pid/tasks…`: CRUD, queue reordering, skip toggles, retry/archive/unarchive/delete, answers for parked tasks, attachments, live logs, stop and prompt injection (task responses carry `projectId`)
+- per-project plans under `/api/projects/:pid/plans…` (scopes `plans:read`/`plans:write`): list, create, get, update, replace goals, upsert/delete a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`; responses carry an `ETag`
 - `GET /api/actions`: tasks parked in `action` across the projects the caller may read
 - command templates (global)
 - settings (global; `defaultProject` is settable, the working directory is not)
