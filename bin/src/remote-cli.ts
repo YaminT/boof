@@ -340,8 +340,15 @@ async function setup(
   out(`        ${hostname} {`);
   out(`          reverse_proxy 127.0.0.1:${port}`);
   out("        }");
-  out("      Cloudflare tunnel:");
-  out(`        cloudflared tunnel --url http://127.0.0.1:${port}`);
+  out(`      Cloudflare named tunnel (routes ${hostname} to boof):`);
+  out(`        cloudflared tunnel route dns <tunnel-name> ${hostname}`);
+  out(`        cloudflared tunnel run --url http://127.0.0.1:${port} <tunnel-name>`);
+  out(
+    "      A quick tunnel (cloudflared tunnel --url ...) gets a random *.trycloudflare.com name;",
+  );
+  out(
+    "      add that name with: boof-runner remote setup --no-key --hostname <random-name>.trycloudflare.com",
+  );
   out(
     `      The public host name must be in security.allowedHosts (done: ${hostname}); any other Host answers 421.`,
   );

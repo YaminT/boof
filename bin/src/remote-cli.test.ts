@@ -76,7 +76,9 @@ describe("boof-runner remote setup", () => {
     expect(text).toContain("chmod 700");
     expect(text).toContain("--host 0.0.0.0 -p 4400 --tls-cert");
     expect(text).toContain("reverse_proxy 127.0.0.1:4400");
-    expect(text).toContain("cloudflared tunnel --url http://127.0.0.1:4400");
+    expect(text).toContain("cloudflared tunnel run --url http://127.0.0.1:4400");
+    expect(text).toContain("cloudflared tunnel route dns <tunnel-name> boof.example.com");
+    expect(text).toContain("--no-key --hostname <random-name>.trycloudflare.com");
     expect(text).toContain("BOOF_URL=https://boof.example.com");
     expect(text).toContain("https://nodets.com/boof/harness.txt");
   });
