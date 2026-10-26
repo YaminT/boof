@@ -1,0 +1,8 @@
+deprecated: `[features].use_legacy_landlock` is deprecated and will be removed soon.
+Remove this setting to stop opting into the legacy Linux sandbox behavior.
+warning: Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.
+  user (/home/user/.codex/config.toml): `projects./home/user/code/centrix-lms-frontend.thinking` is ignored.
+codex
+hi
+tokens used
+11,536

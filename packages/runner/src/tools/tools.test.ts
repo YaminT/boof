@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,8 @@ import { OpencodeTool } from "./opencode.js";
 import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
+
+const fixture = (name: string) => fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url));
 
 const baseOpts = {
   model: "mock-default",
@@ -343,6 +346,39 @@ describe("CodexTool report", () => {
     expect(health.status).toBe("available");
   });
 
+  it("parses --json events: report, usage, readable stream", async () => {
+    const tool = await setup(`cat "${fixture("codex-json-stdout.jsonl")}"`);
+    const chunks: string[] = [];
+    const res = await tool.run({
+      ...baseOpts,
+      role: "reviewer",
+      cwd: dir,
+      onChunk: (c) => chunks.push(c),
+    });
+    expect(res.output).toContain("--json");
+    expect(res.report).toBe("hi");
+    expect(res.usage).toEqual({ inputTokens: 11531, outputTokens: 5, costUsd: 0, known: true });
+    const live = chunks.join("");
+    expect(live).toContain("hi");
+    expect(live).toContain("[warning]");
+    expect(live).not.toContain('"type"');
+  });
+
+  it("parses the plain-mode `tokens used` total from stderr", async () => {
+    const tool = await setup(`cat "${fixture("codex-plain-stderr.txt")}" >&2`);
+    const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
+    expect(res.usage).toEqual({ inputTokens: 11536, outputTokens: 0, costUsd: 0, known: true });
+  });
+
+  it("renders command and file events compactly", async () => {
+    const tool = await setup(
+      `printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"ls","exit_code":0}}' '{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"a.ts","kind":"update"}]}}' '{"type":"item.completed","item":{"type":"weird"}}' 'plain line'`,
+    );
+    const chunks: string[] = [];
+    await tool.run({ ...baseOpts, role: "developer", cwd: dir, onChunk: (c) => chunks.push(c) });
+    expect(chunks.join("")).toBe("$ ls (exit 0)\n[files] update a.ts\n[weird]\nplain line\n");
+  });
+
   it("falls back to stdout when the last-message file is missing", async () => {
     const tool = await setup('printf "x\\nVERDICT: REJECT\\n"');
     const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
@@ -466,7 +502,17 @@ describe("OpencodeTool", () => {
       prompt: "DO",
       autoApprove: true,
     });
-    expect(auto).toEqual(["run", "--dir", "/tmp/wt", "-m", "p/m", "--auto", "SYS\n\nDO"]);
+    expect(auto).toEqual([
+      "run",
+      "--format",
+      "json",
+      "--dir",
+      "/tmp/wt",
+      "-m",
+      "p/m",
+      "--auto",
+      "SYS\n\nDO",
+    ]);
     const manual = tool.buildArgs({
       ...baseOpts,
       role: "developer",
@@ -475,7 +521,15 @@ describe("OpencodeTool", () => {
       autoApprove: false,
     });
     expect(manual).not.toContain("--auto");
-    expect(manual.slice(0, 5)).toEqual(["run", "--dir", "/tmp/wt", "-m", "p/m"]);
+    expect(manual.slice(0, 7)).toEqual([
+      "run",
+      "--format",
+      "json",
+      "--dir",
+      "/tmp/wt",
+      "-m",
+      "p/m",
+    ]);
   });
 
   it("passes the worktree via --dir, streams chunks and returns the report", async () => {
@@ -491,6 +545,59 @@ describe("OpencodeTool", () => {
     expect(res.output).toContain(`--dir ${dir}`);
     expect(res.report).toContain("done");
     expect(chunks.join("")).toContain("done");
+  });
+
+  it("parses --format json events: report, usage, ANSI-free stream", async () => {
+    const tool = await setup(`cat "${fixture("opencode-json.jsonl")}"`);
+    const chunks: string[] = [];
+    const res = await tool.run({
+      ...baseOpts,
+      role: "developer",
+      cwd: dir,
+      onChunk: (c) => chunks.push(c),
+    });
+    expect(res.report).toBe("hi");
+    expect(res.usage).toEqual({ inputTokens: 12681, outputTokens: 2, costUsd: 0, known: true });
+    expect(chunks.join("")).toBe("hi\n");
+    expect(res.output).not.toContain("\x1b[");
+  });
+
+  it("uses the last message's text and summarizes tool events", async () => {
+    const ev = (o: unknown) => JSON.stringify(o);
+    const lines = [
+      ev({ type: "text", part: { messageID: "m1", text: "first" } }),
+      ev({
+        type: "tool_use",
+        part: {
+          type: "tool",
+          tool: "bash",
+          state: { status: "completed", input: { command: "npm test" } },
+        },
+      }),
+      "\u001b[33mwarn\u001b[0m something",
+      ev({ type: "text", part: { messageID: "m2", text: "final a" } }),
+      ev({ type: "text", part: { messageID: "m2", text: "final b" } }),
+    ];
+    const tool = await setup(`cat <<'EOF'\n${lines.join("\n")}\nEOF`);
+    const chunks: string[] = [];
+    const res = await tool.run({
+      ...baseOpts,
+      role: "developer",
+      cwd: dir,
+      onChunk: (c) => chunks.push(c),
+    });
+    expect(res.report).toBe("final a\nfinal b");
+    const live = chunks.join("");
+    expect(live).toContain("[bash] npm test");
+    expect(live).toContain("warn something");
+    expect(live).not.toContain("\x1b[");
+    expect(res.usage.known).toBe(false);
+  });
+
+  it("strips ANSI from plain-text fallback output", async () => {
+    const tool = await setup(`printf '\\033[1mhello\\033[0m\\n'`);
+    const res = await tool.run({ ...baseOpts, role: "developer", cwd: dir });
+    expect(res.report).toBe("hello");
   });
 
   it("throws ToolRunError on a non-zero exit", async () => {

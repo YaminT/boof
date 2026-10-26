@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { commandExists, execCommand } from "../exec.js";
 import { ToolRunError } from "./errors.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { parseUsage } from "./usage.js";
+import type { TokenUsage } from "@boof-runner/shared";
 
 /**
  * Adapter for the `codex` CLI. Runs non-interactively via `exec`; in auto mode
@@ -74,7 +76,8 @@ export class CodexTool implements Tool {
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
-    const args = ["exec", "--model", opts.model];
+    // --json: stdout becomes a JSONL event stream (structured usage and messages).
+    const args = ["exec", "--json", "--model", opts.model];
     if (opts.autoApprove) {
       // Full auto-approval, no sandbox — the runner's equivalent of claude's
       // --dangerously-skip-permissions. Mutually exclusive with --full-auto
@@ -89,14 +92,18 @@ export class CodexTool implements Tool {
     args.push(`${opts.systemPrompt}\n\n${opts.prompt}`);
 
     try {
+      // Live view: JSON events become readable lines; anything else passes through.
+      const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
         idleTimeoutMs: opts.idleTimeoutMs,
-        onData: opts.onChunk,
+        onData: opts.onChunk ? (c) => live.push(c) : undefined,
       });
-      const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${res.stdout}\n${res.stderr}`;
+      live.flush();
+      const summary = summarizeCodexStream(res.stdout);
+      const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${res.stderr}`;
       if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
         throw new ToolRunError(
           this.id,
@@ -110,8 +117,11 @@ export class CodexTool implements Tool {
         );
       }
       const message = await readFile(last, "utf8").catch(() => "");
-      const report = message.trim() || res.stdout.trim();
-      return { output, report, usage: parseUsage(res.stdout + res.stderr) };
+      const report = message.trim() || summary.lastMessage || res.stdout.trim();
+      // Structured usage from turn.completed; fall back to scanning plain text
+      // ("tokens used" on stderr) when no JSON events were emitted.
+      const usage = summary.usage ?? parseUsage(res.stdout + res.stderr);
+      return { output, report, usage };
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -137,4 +147,79 @@ function summarizeProbe(res: {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "..." : s;
+}
+
+/** One readable line (or "") for a `codex exec --json` event. */
+export function renderCodexEvent(ev: Record<string, unknown>): string {
+  const type = str(ev.type);
+  if (type === "item.completed" || type === "item.started") {
+    const item = obj(ev.item);
+    const t = str(item.type);
+    const done = type === "item.completed";
+    switch (t) {
+      case "agent_message":
+        return done ? str(item.text) : "";
+      case "reasoning":
+        return done && str(item.text) ? `[thinking] ${oneLine(str(item.text))}` : "";
+      case "command_execution": {
+        if (!done) return "";
+        const code = item.exit_code;
+        return `$ ${oneLine(str(item.command))}${typeof code === "number" ? ` (exit ${code})` : ""}`;
+      }
+      case "file_change": {
+        if (!done) return "";
+        const changes = Array.isArray(item.changes) ? item.changes : [];
+        const list = changes.map((c) => `${str(obj(c).kind)} ${str(obj(c).path)}`.trim());
+        return `[files] ${oneLine(list.join(", ") || "changed")}`;
+      }
+      case "mcp_tool_call":
+        return done ? `[tool] ${str(item.server)}/${str(item.tool)}` : "";
+      case "web_search":
+        return done ? `[search] ${oneLine(str(item.query))}` : "";
+      case "error":
+        return `[warning] ${oneLine(str(item.message), 300)}`;
+      default:
+        return done ? `[${t || "item"}]` : "";
+    }
+  }
+  if (type === "turn.failed" || type === "error") {
+    const msg = str(obj(ev.error).message) || str(ev.message);
+    return `[error] ${oneLine(msg, 300)}`;
+  }
+  return "";
+}
+
+/** Fold a complete `--json` stdout into the last agent message, usage and a readable log. */
+export function summarizeCodexStream(stdout: string): {
+  lastMessage: string;
+  usage: TokenUsage | null;
+  rendered: string;
+} {
+  const r = new JsonlRenderer(renderCodexEvent);
+  r.push(stdout);
+  r.flush();
+  let lastMessage = "";
+  let input = 0;
+  let output = 0;
+  let seen = false;
+  for (const line of stdout.split("\n")) {
+    const ev = parseJsonLine(line);
+    if (!ev) continue;
+    if (ev.type === "item.completed") {
+      const item = obj(ev.item);
+      if (item.type === "agent_message" && str(item.text).trim()) lastMessage = str(item.text);
+    } else if (ev.type === "turn.completed") {
+      const u = obj(ev.usage);
+      // OpenAI semantics: input_tokens already includes cached input, and
+      // output_tokens already includes reasoning, so neither is added again.
+      input += num(u.input_tokens);
+      output += num(u.output_tokens);
+      seen = true;
+    }
+  }
+  return {
+    lastMessage: lastMessage.trim(),
+    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: 0, known: true } : null,
+    rendered: r.text.trimEnd(),
+  };
 }

@@ -27,12 +27,21 @@ export function parseUsage(output: string): TokenUsage {
   );
   const costMatch = output.match(/(?:cost|total cost)\D*\$?\s*([0-9]+\.?[0-9]*)/i);
 
+  // Plain `codex exec` prints a total only, label and number on separate lines:
+  // "tokens used\n11,536". The input/output split is unknown, so the total is
+  // recorded as inputTokens (the schema has no total-only field) with known:true.
+  const totalMatch = output.match(/tokens used\s*:?\s*(\d[\d,_]*)/i);
+
   if (inMatch) {
     input = Number(inMatch[1]);
     known = true;
   }
   if (outMatch) {
     outputTok = Number(outMatch[1]);
+    known = true;
+  }
+  if (totalMatch && !inMatch && !outMatch) {
+    input = Number(totalMatch[1].replace(/[,_]/g, ""));
     known = true;
   }
   if (costMatch) {

@@ -1,7 +1,9 @@
 import { commandExists, execCommand } from "../exec.js";
 import { ToolRunError } from "./errors.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str, stripAnsi } from "./jsonl.js";
 import { parseUsage } from "./usage.js";
+import type { TokenUsage } from "@boof-runner/shared";
 
 /**
  * Adapter for the `opencode` CLI. Runs non-interactively via `opencode run`;
@@ -64,7 +66,7 @@ export class OpencodeTool implements Tool {
     // Anchor the project to opts.cwd explicitly: without --dir, opencode
     // canonicalizes a git worktree cwd back to the main repository and its
     // file tools (Read/Write/Edit) would bypass the runner's isolation.
-    const args = ["run", "--dir", opts.cwd, "-m", opts.model];
+    const args = ["run", "--format", "json", "--dir", opts.cwd, "-m", opts.model];
     if (opts.autoApprove) {
       // Auto-approve permissions that are not explicitly denied: the
       // runner's equivalent of codex's bypass flag.
@@ -76,14 +78,17 @@ export class OpencodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
+    const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
       idleTimeoutMs: opts.idleTimeoutMs,
-      onData: opts.onChunk,
+      onData: opts.onChunk ? (c) => live.push(c) : undefined,
     });
-    const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${res.stdout}\n${res.stderr}`;
+    live.flush();
+    const summary = summarizeOpencodeStream(res.stdout);
+    const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${stripAnsi(res.stderr)}`;
     if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
       throw new ToolRunError(
         this.id,
@@ -96,7 +101,13 @@ export class OpencodeTool implements Tool {
         opts.idleTimeoutMs,
       );
     }
-    return { output, report: res.stdout.trim(), usage: parseUsage(res.stdout + res.stderr) };
+    // No JSON events (older CLI, plain output): fall back to ANSI-stripped text.
+    const plain = stripAnsi(res.stdout).trim();
+    return {
+      output,
+      report: summary.report || plain,
+      usage: summary.usage ?? parseUsage(plain + "\n" + stripAnsi(res.stderr)),
+    };
   }
 }
 
@@ -119,4 +130,89 @@ function summarizeProbe(res: {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "..." : s;
+}
+
+/** One readable line (or "") for an `opencode run --format json` event. */
+export function renderOpencodeEvent(ev: Record<string, unknown>): string {
+  const type = str(ev.type);
+  const part = obj(ev.part);
+  switch (type) {
+    case "text":
+      return str(part.text);
+    case "reasoning":
+      return str(part.text) ? `[thinking] ${oneLine(str(part.text))}` : "";
+    case "tool_use":
+    case "tool":
+      return renderTool(part);
+    case "step_start":
+    case "step_finish":
+      return "";
+    case "error": {
+      const e = obj(ev.error);
+      const msg = str(obj(e.data).message) || str(e.message) || str(e.name);
+      return `[error] ${oneLine(msg, 300)}`;
+    }
+    default:
+      return type ? `[${type}]` : "";
+  }
+}
+
+function renderTool(part: Record<string, unknown>): string {
+  const state = obj(part.state);
+  const status = str(state.status);
+  // Report a tool once it settles; pending/running states would only duplicate it.
+  if (status && status !== "completed" && status !== "error") return "";
+  const input = obj(state.input);
+  const arg =
+    str(input.command) ||
+    str(input.filePath) ||
+    str(input.path) ||
+    str(input.pattern) ||
+    str(input.url) ||
+    str(state.title);
+  const line = `[${str(part.tool) || "tool"}]${arg ? " " + oneLine(arg) : ""}`;
+  return status === "error" ? `${line} (failed)` : line;
+}
+
+/** Fold a complete `--format json` stdout into the final message, usage and a readable log. */
+export function summarizeOpencodeStream(stdout: string): {
+  report: string;
+  usage: TokenUsage | null;
+  rendered: string;
+} {
+  const r = new JsonlRenderer(renderOpencodeEvent);
+  r.push(stdout);
+  r.flush();
+  const texts: { messageId: string; text: string }[] = [];
+  let input = 0;
+  let output = 0;
+  let cost = 0;
+  let seen = false;
+  for (const line of stdout.split("\n")) {
+    const ev = parseJsonLine(line);
+    if (!ev) continue;
+    const part = obj(ev.part);
+    if (ev.type === "text" && str(part.text)) {
+      texts.push({ messageId: str(part.messageID), text: str(part.text) });
+    } else if (ev.type === "step_finish") {
+      const t = obj(part.tokens);
+      const cache = obj(t.cache);
+      // Cached input counts as input, as in the claude-code adapter.
+      input += num(t.input) + num(cache.read) + num(cache.write);
+      output += num(t.output) + num(t.reasoning);
+      cost += num(part.cost);
+      seen = true;
+    }
+  }
+  const lastId = texts.at(-1)?.messageId;
+  const last = texts.filter((t) => t.messageId === lastId);
+  const report = (last.length ? last : texts)
+    .map((t) => t.text)
+    .join("\n")
+    .trim();
+  return {
+    report,
+    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: cost, known: true } : null,
+    rendered: r.text.trimEnd(),
+  };
 }

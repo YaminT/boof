@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a177c2-43a8-7562-80f8-f8962f3d3215"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (/home/user/.codex/config.toml): `projects./home/user/code/centrix-lms-frontend.thinking` is ignored."}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"`[features].use_legacy_landlock` is deprecated and will be removed soon. (Remove this setting to stop opting into the legacy Linux sandbox behavior.)"}}
+{"type":"item.completed","item":{"id":"item_2","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (/home/user/.codex/config.toml): `projects./home/user/code/centrix-lms-frontend.thinking` is ignored."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"hi"}}
+{"type":"turn.completed","usage":{"input_tokens":11531,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
