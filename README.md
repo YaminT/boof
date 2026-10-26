@@ -129,7 +129,11 @@ Nothing is deleted under the defaults. A done task's uncommitted leftovers never
 bash scripts/install-or-update-boof-runner.sh
 ```
 
-The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI, and globally links the `boof-runner` command. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `git@github.com:YaminT/boof.git`.
+The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `git@github.com:YaminT/boof.git`.
+
+## Run on a server
+
+To run boof on a headless Linux server (systemd service, nginx with TLS, API key for an AI harness), follow the runbook in [deploy/README.md](deploy/README.md). In short: install with the script (it skips Electron on a machine without a display), then `boof-runner project add`, `boof-runner remote setup --hostname <host>` and `boof-runner service install`. `GET /healthz` is a public liveness check. An nginx example is in [deploy/nginx-boof.conf.example](deploy/nginx-boof.conf.example).
 
 ## Using the web UI
 
@@ -152,6 +156,7 @@ boof-runner scan <repo> [options]      Turn a repo's not-done goal.boof.xml unit
 boof-runner project <add|list|remove>  Manage projects (git repositories) of this data root
 boof-runner plan <import|sync|export>  Import goal files into a plan, sync it to tasks, export XML
 boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access
+boof-runner service <install|uninstall|status|logs>  Run as a systemd user service (Linux)
 boof-runner mcp [options]              Serve boof over MCP on stdin/stdout
 boof-runner --help                     Show help (also: <command> --help)
 ```

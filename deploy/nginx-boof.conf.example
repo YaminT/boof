@@ -1,0 +1,53 @@
+# Boof Runner behind host nginx. Copy to /etc/nginx/sites-available/boof, replace boof.example.com
+# and the certificate paths, then enable it (see deploy/README.md).
+#
+# Boof listens on 127.0.0.1:4319 only; nginx terminates TLS and forwards the original Host header,
+# which boof checks against security.allowedHosts (set by `boof-runner remote setup --hostname`).
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name boof.example.com;
+
+    # Certbot (or your ACME client) answers challenges here; everything else goes to HTTPS.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    # Ubuntu 24.04 ships nginx 1.24, which needs "http2" on the listen line. On nginx 1.25.1 or
+    # newer you can drop it and add "http2 on;" instead.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name boof.example.com;
+
+    # Replace with your certificate paths (certbot writes these under /etc/letsencrypt/live/<name>/).
+    ssl_certificate     /etc/letsencrypt/live/boof.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/boof.example.com/privkey.pem;
+
+    # Attachments are capped at 25 MB by boof; keep nginx above that.
+    client_max_body_size 30m;
+
+    location / {
+        proxy_pass http://127.0.0.1:4319;
+
+        # Boof's DNS-rebinding guard compares this with security.allowedHosts.
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Server-sent events (/api/v1/events, the live log) and long requests:
+        # no buffering, HTTP/1.1 to the upstream, a long read timeout.
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+}
