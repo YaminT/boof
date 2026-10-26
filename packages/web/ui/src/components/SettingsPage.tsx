@@ -4,7 +4,7 @@ import { desktop } from "../desktop.js";
 import { Modal } from "./Modal.js";
 import { ClientsSection } from "./ClientsSection.js";
 import type { Project, RoleAssignment, Settings, TokenUsage } from "@boof-runner/shared/schema";
-import type { HealthResult } from "../api-types.js";
+import type { HealthResult, ModelDetail, ToolModelDetails } from "../api-types.js";
 
 type Role = "planner" | "developer" | "observer" | "reviewer";
 const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
@@ -16,6 +16,37 @@ function usageLine(usage: TokenUsage | null) {
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** "checked 3 min ago" text for a health check time, or null when there is none. */
+function checkedAgo(iso: string | undefined, now = Date.now()): string | null {
+  if (!iso) return null;
+  const mins = Math.floor((now - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(mins)) return null;
+  return mins < 1 ? "checked just now" : `checked ${mins} min ago`;
+}
+
+/** Role or project usage as shown on a model chip: "planner", or "alpha: developer". */
+function usageLabel(usage: string): string {
+  const m = /^project:([^:]+):(.+)$/.exec(usage);
+  return m ? `${m[1]}: ${m[2]}` : usage;
+}
+
+/** Health badge for one tool: status, version and when the check ran. */
+function HealthBadge({ health, checkedAt }: { health: HealthResult; checkedAt?: string }) {
+  const ago = checkedAgo(checkedAt);
+  return (
+    <>
+      <span
+        className={`status-badge ${health.status === "available" ? "done" : "failed"}`}
+        title={health.message}
+      >
+        {health.status}
+      </span>
+      {health.version && <span className="muted">version {health.version}</span>}
+      {ago && <span className="muted">{ago}</span>}
+    </>
+  );
 }
 
 /** Tool + model selects for one role assignment. */
@@ -101,6 +132,7 @@ export function SettingsPage({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [health, setHealth] = useState<Record<string, HealthResult>>({});
+  const [details, setDetails] = useState<Record<string, ToolModelDetails> | null>(null);
   const [usage, setUsage] = useState<TokenUsage | null>(null);
   const [projectUsage, setProjectUsage] = useState<TokenUsage | null>(null);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -136,8 +168,21 @@ export function SettingsPage({
   useEffect(() => {
     let cancelled = false;
 
+    // Model details list no probes, so they load at once. They load again after the health check
+    // so the badges show the time of the check that just ran.
+    const loadDetails = () =>
+      api
+        .modelDetails()
+        .then((tools) => {
+          if (!cancelled) setDetails(tools);
+        })
+        .catch(() => {});
+    void loadDetails();
     void api.health().then((result) => {
-      if (!cancelled) setHealth(result);
+      if (!cancelled) {
+        setHealth(result);
+        void loadDetails();
+      }
     });
     void api
       .usage()
@@ -321,16 +366,39 @@ export function SettingsPage({
         {modelsLoading && <p className="muted">Fetching models from Claude, Codex and OpenCode…</p>}
         {modelsError && <p className="muted">Model refresh failed: {modelsError}</p>}
         <div className="model-list">
-          {tools.map((tool) => (
-            <div key={tool} className="model-group">
-              <strong>{tool}</strong>
-              <div className="model-chips">
-                {(models[tool] ?? []).map((m) => (
-                  <span key={m}>{m}</span>
-                ))}
+          {tools.map((tool) => {
+            const info = details?.[tool];
+            const toolHealth = health[tool];
+            return (
+              <div key={tool} className="model-group">
+                <div className="model-group-head">
+                  <strong>{info?.displayName ?? tool}</strong>
+                  {toolHealth && (
+                    <HealthBadge health={toolHealth} checkedAt={info?.health?.checkedAt} />
+                  )}
+                </div>
+                <div className="model-chips">
+                  {(models[tool] ?? []).map((m) => {
+                    // A model added in this session is not saved yet, so it is a settings model.
+                    const meta: ModelDetail | undefined =
+                      info && (info.models.find((d) => d.id === m) ?? unsavedModel(m));
+                    return (
+                      <span key={m} className="model-chip">
+                        {m}
+                        {meta && <span className="status-badge">{meta.source}</span>}
+                        {meta?.isDefault && <span className="badge">default</span>}
+                        {meta?.usedBy.map((u) => (
+                          <span key={u} className="paused-badge" title={u}>
+                            {usageLabel(u)}
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {tools.length === 0 && <p className="muted">No models detected yet.</p>}
         </div>
       </section>
@@ -587,6 +655,10 @@ export function SettingsPage({
       )}
     </div>
   );
+}
+
+function unsavedModel(id: string): ModelDetail {
+  return { id, source: "settings", isDefault: false, usedBy: [] };
 }
 
 function mergeModels(...maps: Record<string, string[]>[]): Record<string, string[]> {

@@ -7,7 +7,7 @@ import type {
   TokenUsage,
 } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
-import type { CommandTemplate, HealthResult, PublicClient } from "./api-types.js";
+import type { CommandTemplate, HealthResult, PublicClient, ToolModelDetails } from "./api-types.js";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
 import { authHeaders, notifyUnauthorized } from "./token.js";
 
@@ -199,6 +199,8 @@ export const api = {
     http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
   health: () => http<{ tools: Record<string, HealthResult> }>(`${V1}/health`).then((r) => r.tools),
   models: () => http<{ models: Record<string, string[]> }>(`${V1}/models`).then((r) => r.models),
+  modelDetails: () =>
+    http<{ tools: Record<string, ToolModelDetails> }>(`${V1}/models/details`).then((r) => r.tools),
   usage: () => http<TokenUsage>(`${V1}/usage`),
   projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
 

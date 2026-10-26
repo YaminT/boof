@@ -900,7 +900,17 @@ input[type="number"] {
   flex-wrap: wrap;
   gap: 6px;
 }
-.model-chips span {
+.model-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.model-chips .model-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
   overflow-wrap: anywhere;
   border: 1px solid var(--border);
@@ -909,6 +919,9 @@ input[type="number"] {
   background: var(--panel);
   font-size: 12px;
   color: var(--muted);
+}
+.model-chip .badge {
+  margin-left: 0;
 }
 .role-row {
   display: flex;
