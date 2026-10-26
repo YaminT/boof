@@ -6,6 +6,18 @@ import { ClientsSection } from "./ClientsSection.js";
 import type { Project, RoleAssignment, Settings, TokenUsage } from "@boof-runner/shared/schema";
 import type { HealthResult, ModelDetail, ToolModelDetails } from "../api-types.js";
 
+/** Short chip text per model source; "built-in" avoids clashing with the "default" chip. */
+const SOURCE_LABELS: Record<string, string> = {
+  cli: "cli",
+  default: "built-in",
+  settings: "added",
+};
+const SOURCE_TITLES: Record<string, string> = {
+  cli: "Reported by the tool's CLI",
+  default: "From the tool's built-in model list",
+  settings: "Added in Settings",
+};
+
 type Role = "planner" | "developer" | "observer" | "reviewer";
 const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
 
@@ -385,7 +397,11 @@ export function SettingsPage({
                     return (
                       <span key={m} className="model-chip">
                         {m}
-                        {meta && <span className="status-badge">{meta.source}</span>}
+                        {meta && (
+                          <span className="status-badge" title={SOURCE_TITLES[meta.source]}>
+                            {SOURCE_LABELS[meta.source]}
+                          </span>
+                        )}
                         {meta?.isDefault && <span className="badge">default</span>}
                         {meta?.usedBy.map((u) => (
                           <span key={u} className="paused-badge" title={u}>
