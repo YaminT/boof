@@ -34,6 +34,7 @@ import {
   type Status,
   type Task,
 } from "@boof-runner/shared";
+import { PlanService } from "./plans.js";
 import {
   isGitRepo,
   sumUsage,
@@ -82,6 +83,8 @@ export function toTaskView(projectId: string, task: Task): TaskView {
 export class ProjectService {
   readonly tasks: TaskStore;
   readonly attachments: AttachmentStore;
+  /** The plans of this project (plan model). */
+  readonly plans: PlanService;
   private readonly usage: UsageStore;
   /** The project directory: the `root` of this project's stores. */
   readonly root: string;
@@ -94,6 +97,7 @@ export class ProjectService {
     this.tasks = new TaskStore(this.root);
     this.attachments = new AttachmentStore(this.root);
     this.usage = new UsageStore(this.root);
+    this.plans = new PlanService(parent, projectId, this.root);
   }
 
   list(): Promise<Task[]> {
@@ -171,7 +175,13 @@ export class ProjectService {
     if (!task) throw new ServiceError(404, `Task not found: ${id}`);
 
     if (input.title !== undefined) task.frontmatter.title = input.title;
-    if (input.prompt !== undefined) task.body.prompt = input.prompt;
+    if (input.prompt !== undefined) {
+      // A hand edit of a plan task: plan sync must append changes instead of overwriting it.
+      if (task.frontmatter.planRef && input.prompt !== task.body.prompt) {
+        task.frontmatter.promptSource = "manual";
+      }
+      task.body.prompt = input.prompt;
+    }
     if (input.priority !== undefined) task.frontmatter.priority = input.priority;
     if (input.labels !== undefined) task.frontmatter.labels = input.labels;
     if (input.skip !== undefined) task.frontmatter.skip = input.skip;

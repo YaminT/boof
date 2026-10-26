@@ -1,0 +1,493 @@
+import { ZodError } from "zod";
+import {
+  applyGoalInputs,
+  exportPlanXml,
+  GoalInputSchema,
+  hasScope,
+  isValidTopologicalOrder,
+  PlanExistsError,
+  PlanNotFoundError,
+  PlanStore,
+  PlanValidationError,
+  PlanVersionConflict,
+  securitySettings,
+  uniqueKebabId,
+  withGoalStatus,
+  type Goal,
+  type GoalStatus,
+  type Plan,
+  type PlanSource,
+  type PlanStatus,
+  type Principal,
+} from "@boof-runner/shared";
+import {
+  archiveRemovedGoalTasks,
+  importFromRepo,
+  mergeImportedGoals,
+  PlanNotActiveError,
+  syncPlan,
+  taskStatusForPlan,
+  type SyncResult,
+} from "@boof-runner/runner";
+import type { z } from "zod";
+import { formatIssues } from "./validation.js";
+import { ServiceError, type TaskService } from "./service.js";
+
+type GoalInputParsed = z.output<typeof GoalInputSchema>;
+
+/** A plan in a listing: everything but the goals, plus counts. */
+export interface PlanSummary extends Omit<Plan, "goals"> {
+  goalCount: number;
+  doneCount: number;
+}
+
+export interface CreatePlanInput {
+  id?: string;
+  title: string;
+  description?: string;
+  status?: PlanStatus;
+  autoSync?: boolean;
+  bumpTo?: Plan["bumpTo"];
+  goals?: GoalInputParsed[];
+}
+
+export interface UpdatePlanInput {
+  title?: string;
+  description?: string;
+  status?: PlanStatus;
+  autoSync?: boolean;
+  bumpTo?: Plan["bumpTo"];
+}
+
+export interface ImportInput {
+  planId?: string;
+  /** Update an existing plan (matching goals by path, then id) instead of refusing. */
+  merge?: boolean;
+  title?: string;
+  status?: PlanStatus;
+  autoSync?: boolean;
+  bumpTo?: Plan["bumpTo"];
+}
+
+export interface ImportResult {
+  plan: Plan;
+  added: string[];
+  updated: string[];
+  unchanged: string[];
+  warnings: string[];
+}
+
+const SOURCE_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "api" } as const;
+
+/** Turn the errors of the plan layer into API errors (status + stable code). */
+export function mapPlanError(err: unknown): unknown {
+  if (err instanceof PlanVersionConflict) {
+    return new ServiceError(409, err.message, "plan_version_conflict", {
+      currentVersion: err.currentVersion,
+      expectedVersion: err.expectedVersion,
+    });
+  }
+  if (err instanceof PlanNotFoundError) {
+    return new ServiceError(404, err.message, "plan_not_found");
+  }
+  if (err instanceof PlanExistsError) {
+    return new ServiceError(409, err.message, "plan_exists");
+  }
+  if (err instanceof PlanNotActiveError) {
+    return new ServiceError(409, err.message, "plan_not_active", { status: err.status });
+  }
+  if (err instanceof PlanValidationError) {
+    return new ServiceError(400, err.message, "invalid_plan", err.issues);
+  }
+  if (err instanceof ZodError) {
+    return new ServiceError(400, "Invalid plan", "invalid_plan", formatIssues(err));
+  }
+  return err;
+}
+
+/**
+ * Plan operations for ONE project (plan model, section 3). Every write goes through
+ * PlanStore.modify, so the stored version is checked (`expectedVersion`) or, when the caller
+ * gives none, the change is applied to the latest version.
+ */
+export class PlanService {
+  private readonly store: PlanStore;
+
+  constructor(
+    private readonly parent: TaskService,
+    readonly projectId: string,
+    private readonly projectDir: string,
+  ) {
+    this.store = new PlanStore(projectDir);
+  }
+
+  /** True for a review-trust client while `externalTasksRequireApproval` is on (the default). */
+  private async restricted(actor?: Principal): Promise<boolean> {
+    if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
+    return securitySettings(await this.parent.loadSettings()).externalTasksRequireApproval;
+  }
+
+  /** A restricted client may not change a plan a human activated: its edits would reach the queue unreviewed. */
+  private async assertMayEdit(plan: Plan, actor?: Principal): Promise<void> {
+    if (plan.status === "active" && (await this.restricted(actor))) {
+      throw new ServiceError(
+        403,
+        "This client has review trust and cannot change an active plan; a human must change it or set it back to draft",
+        "forbidden_trust",
+      );
+    }
+  }
+
+  private async run<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      throw mapPlanError(err);
+    }
+  }
+
+  async list(): Promise<PlanSummary[]> {
+    return this.run(async () =>
+      (await this.store.list()).map(({ goals, ...rest }) => ({
+        ...rest,
+        goalCount: goals.length,
+        doneCount: goals.filter((g) => g.status === "done").length,
+      })),
+    );
+  }
+
+  async get(planId: string): Promise<Plan> {
+    return this.run(() => this.store.require(planId));
+  }
+
+  async createPlan(input: CreatePlanInput, actor?: Principal): Promise<Plan> {
+    const restricted = await this.restricted(actor);
+    return this.run(async () => {
+      const existing = (await this.store.list()).map((p) => p.id);
+      const id = input.id ?? uniqueKebabId(input.title, existing);
+      const source: PlanSource =
+        actor?.kind === "client"
+          ? { kind: SOURCE_KIND[actor.clientKind ?? "harness"], client: actor.id }
+          : { kind: "ui" };
+      const goals = applyGoalInputs([], input.goals ?? [], { replace: true });
+      return this.store.create({
+        id,
+        title: input.title,
+        description: input.description ?? "",
+        status: restricted ? "draft" : (input.status ?? "draft"),
+        autoSync: input.autoSync ?? false,
+        bumpTo: input.bumpTo ?? "done",
+        source,
+        goals,
+      });
+    });
+  }
+
+  async updatePlan(
+    planId: string,
+    patch: UpdatePlanInput,
+    expectedVersion: number | undefined,
+    actor?: Principal,
+  ): Promise<Plan> {
+    const restricted = await this.restricted(actor);
+    if (restricted && patch.status === "active") {
+      throw new ServiceError(
+        403,
+        "This client has review trust and cannot activate a plan; a human must approve it",
+        "forbidden_trust",
+      );
+    }
+    return this.run(() =>
+      this.store.modify(
+        planId,
+        async (plan) => {
+          await this.assertMayEdit(plan, actor);
+          return {
+            ...plan,
+            ...(patch.title !== undefined ? { title: patch.title } : {}),
+            ...(patch.description !== undefined ? { description: patch.description } : {}),
+            ...(patch.status !== undefined ? { status: patch.status } : {}),
+            ...(patch.autoSync !== undefined ? { autoSync: patch.autoSync } : {}),
+            ...(patch.bumpTo !== undefined ? { bumpTo: patch.bumpTo } : {}),
+          };
+        },
+        { expectedVersion },
+      ),
+    );
+  }
+
+  /** Whole-DAG replacement: goals not listed are removed; revisions bump per changed goal. */
+  async replaceGoals(
+    planId: string,
+    goals: GoalInputParsed[],
+    expectedVersion: number | undefined,
+    actor?: Principal,
+  ): Promise<Plan> {
+    return this.run(() =>
+      this.store.modify(
+        planId,
+        async (plan) => {
+          await this.assertMayEdit(plan, actor);
+          return { ...plan, goals: applyGoalInputs(plan.goals, goals, { replace: true }) };
+        },
+        { expectedVersion },
+      ),
+    );
+  }
+
+  async upsertGoal(
+    planId: string,
+    goal: GoalInputParsed,
+    expectedVersion: number | undefined,
+    actor?: Principal,
+  ): Promise<Plan> {
+    return this.run(() =>
+      this.store.modify(
+        planId,
+        async (plan) => {
+          await this.assertMayEdit(plan, actor);
+          return { ...plan, goals: applyGoalInputs(plan.goals, [goal], { replace: false }) };
+        },
+        { expectedVersion },
+      ),
+    );
+  }
+
+  /**
+   * Remove a goal. Refused (409 `goal_has_dependents`) while other goals depend on it, unless
+   * `cascade` also removes everything downstream. Pending/draft tasks of the removed goals are
+   * archived; running ones are asked to stop only with `stopRunning` (needs `tasks:control`).
+   */
+  async removeGoal(
+    planId: string,
+    goalId: string,
+    expectedVersion: number | undefined,
+    opts: { cascade?: boolean; stopRunning?: boolean } = {},
+    actor?: Principal,
+  ): Promise<Plan> {
+    if (opts.stopRunning && actor && !hasScope(actor, "tasks:control")) {
+      throw new ServiceError(
+        403,
+        "Stopping a running task needs the tasks:control scope",
+        "forbidden_scope",
+        {
+          scopes: ["tasks:control"],
+        },
+      );
+    }
+    return this.run(async () => {
+      const plan = await this.store.modify(
+        planId,
+        async (current) => {
+          await this.assertMayEdit(current, actor);
+          if (!current.goals.some((g) => g.id === goalId)) {
+            throw new ServiceError(404, `Goal not found: ${goalId}`, "goal_not_found");
+          }
+          const doomed = new Set([goalId]);
+          for (let grew = true; grew;) {
+            grew = false;
+            for (const g of current.goals) {
+              if (!doomed.has(g.id) && g.dependsOn.some((d) => doomed.has(d))) {
+                doomed.add(g.id);
+                grew = true;
+              }
+            }
+          }
+          if (doomed.size > 1 && !opts.cascade) {
+            const dependents = [...doomed].filter((id) => id !== goalId);
+            throw new ServiceError(
+              409,
+              `Other goals depend on ${goalId}: ${dependents.join(", ")}`,
+              "goal_has_dependents",
+              { dependents },
+            );
+          }
+          return { ...current, goals: current.goals.filter((g) => !doomed.has(g.id)) };
+        },
+        { expectedVersion },
+      );
+      await archiveRemovedGoalTasks({
+        projectDir: this.projectDir,
+        plan,
+        stopRunning: opts.stopRunning,
+      });
+      return plan;
+    });
+  }
+
+  /** `orderedIds` must list every goal once, dependencies first. */
+  async reorderGoals(
+    planId: string,
+    orderedIds: string[],
+    expectedVersion: number | undefined,
+    actor?: Principal,
+  ): Promise<Plan> {
+    return this.run(() =>
+      this.store.modify(
+        planId,
+        async (plan) => {
+          await this.assertMayEdit(plan, actor);
+          if (!isValidTopologicalOrder(plan.goals, orderedIds)) {
+            throw new PlanValidationError([
+              {
+                path: "order",
+                message:
+                  "order must list every goal exactly once with each goal after its dependencies",
+              },
+            ]);
+          }
+          const position = new Map(orderedIds.map((id, i) => [id, i + 1]));
+          return {
+            ...plan,
+            goals: plan.goals.map((g) => ({ ...g, order: position.get(g.id)! })),
+          };
+        },
+        { expectedVersion },
+      ),
+    );
+  }
+
+  async setGoalStatus(
+    planId: string,
+    goalId: string,
+    status: GoalStatus,
+    description: string | undefined,
+    expectedVersion: number | undefined,
+    actor?: Principal,
+  ): Promise<Plan> {
+    return this.run(() =>
+      this.store.modify(
+        planId,
+        async (plan) => {
+          await this.assertMayEdit(plan, actor);
+          if (!plan.goals.some((g) => g.id === goalId)) {
+            throw new ServiceError(404, `Goal not found: ${goalId}`, "goal_not_found");
+          }
+          const by = actor ? `${actor.kind === "client" ? "client " : ""}${actor.id}` : "a user";
+          return {
+            ...plan,
+            goals: plan.goals.map((g): Goal =>
+              g.id === goalId
+                ? withGoalStatus(g, status, description?.trim() || `status set by ${by}`)
+                : g,
+            ),
+          };
+        },
+        { expectedVersion },
+      ),
+    );
+  }
+
+  /**
+   * Import the project's goal.boof.xml / plan.boof.xml files. A new plan has
+   * `source.kind = "repo-import"`; an existing one is only touched with `merge`.
+   */
+  async importFromRepo(
+    input: ImportInput,
+    expectedVersion: number | undefined,
+    actor?: Principal,
+  ): Promise<ImportResult> {
+    const restricted = await this.restricted(actor);
+    return this.run(async () => {
+      const project = await this.parent.getProject(this.projectId);
+      if (!project.workingDirectory) {
+        throw new ServiceError(400, "The project has no working directory", "invalid_input");
+      }
+      const imported = await importFromRepo(project.workingDirectory);
+      if (imported.goals.length === 0) {
+        throw new ServiceError(
+          400,
+          `No goal.boof.xml files found under ${project.workingDirectory}`,
+          "nothing_to_import",
+        );
+      }
+      const planId = input.planId ?? "repo";
+      const existing = await this.store.get(planId);
+      if (!existing) {
+        const plan = await this.store.create({
+          id: planId,
+          title: input.title ?? `Imported from ${project.name}`,
+          status: restricted ? "draft" : (input.status ?? "draft"),
+          autoSync: input.autoSync ?? false,
+          bumpTo: input.bumpTo ?? "done",
+          source: {
+            kind: "repo-import",
+            ...(actor?.kind === "client" ? { client: actor.id } : {}),
+            importedFrom: project.workingDirectory,
+          },
+          goals: imported.goals,
+        });
+        return {
+          plan,
+          added: plan.goals.map((g) => g.id),
+          updated: [],
+          unchanged: [],
+          warnings: imported.warnings,
+        };
+      }
+      if (!input.merge) {
+        throw new ServiceError(
+          409,
+          `Plan already exists: ${planId}; pass merge to update it from the repository`,
+          "plan_exists",
+        );
+      }
+      let summary = { added: [] as string[], updated: [] as string[], unchanged: [] as string[] };
+      const plan = await this.store.modify(
+        planId,
+        async (current) => {
+          await this.assertMayEdit(current, actor);
+          const merged = mergeImportedGoals(current.goals, imported.goals);
+          summary = merged;
+          return { ...current, goals: merged.goals };
+        },
+        { expectedVersion },
+      );
+      return { plan, ...summary, warnings: imported.warnings };
+    });
+  }
+
+  /** The plan as boof-planner files: `{ "plan.boof.xml": …, "<path>/goal.boof.xml": … }`. Never written into the repo. */
+  async exportToXml(planId: string): Promise<Record<string, string>> {
+    return this.run(async () => exportPlanXml(await this.store.require(planId)));
+  }
+
+  /**
+   * Sync an active plan to tasks (see runner/plan-sync). Tasks start in `draft` when the plan
+   * came from a review-trust client or the caller is one. 409 `plan_not_active` otherwise.
+   */
+  async syncTasks(
+    planId: string,
+    opts: { dryRun?: boolean; stopRunning?: boolean } = {},
+    actor?: Principal,
+  ): Promise<SyncResult> {
+    if (opts.stopRunning && actor && !hasScope(actor, "tasks:control")) {
+      throw new ServiceError(
+        403,
+        "Stopping a running task needs the tasks:control scope",
+        "forbidden_scope",
+        {
+          scopes: ["tasks:control"],
+        },
+      );
+    }
+    const restricted = await this.restricted(actor);
+    return this.run(async () => {
+      const plan = await this.store.require(planId);
+      if (plan.status !== "active") throw new PlanNotActiveError(plan.id, plan.status);
+      const project = await this.parent.getProject(this.projectId);
+      const settings = await this.parent.loadSettings();
+      const createStatus = restricted
+        ? "draft"
+        : await taskStatusForPlan(this.parent.root, plan, settings);
+      return syncPlan({
+        projectDir: this.projectDir,
+        project,
+        planId,
+        dryRun: opts.dryRun,
+        stopRunning: opts.stopRunning,
+        createStatus,
+      });
+    });
+  }
+}

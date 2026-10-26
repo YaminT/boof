@@ -1,7 +1,10 @@
 import { z } from "zod";
 import {
   ClientKindSchema,
+  GoalInputSchema,
+  GoalStatusSchema,
   isKebabId,
+  PlanStatusSchema,
   ProjectRolesOverrideSchema,
   ProjectReviewOverrideSchema,
   ProjectRetriesOverrideSchema,
@@ -22,6 +25,7 @@ export function paramId(value: string | undefined, what = "id"): string {
 export async function parseJson<T extends z.ZodType>(
   req: { json: () => Promise<unknown> },
   schema: T,
+  code = "invalid_input",
 ): Promise<z.infer<T>> {
   let raw: unknown;
   try {
@@ -31,14 +35,20 @@ export async function parseJson<T extends z.ZodType>(
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    throw new ServiceError(
-      400,
-      "Invalid request body",
-      "invalid_input",
-      formatIssues(parsed.error),
-    );
+    throw new ServiceError(400, "Invalid request body", code, formatIssues(parsed.error));
   }
   return parsed.data;
+}
+
+/** Like {@link parseJson} but an empty body counts as `{}` (POST actions whose options are all optional). */
+export async function parseJsonOptional<T extends z.ZodType>(
+  req: { text: () => Promise<string>; json: () => Promise<unknown> },
+  schema: T,
+  code = "invalid_input",
+): Promise<z.infer<T>> {
+  const text = await req.text();
+  if (text.trim() === "") return parseJson({ json: async () => ({}) }, schema, code);
+  return parseJson({ json: async () => JSON.parse(text) }, schema, code);
 }
 
 export function formatIssues(err: z.ZodError): { path: string; message: string }[] {
@@ -101,6 +111,82 @@ export const CreateProjectBody = z
   .strict();
 
 const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+
+// --- Plans (a body-level `expectedVersion` is the alternative to the If-Match header) ---
+
+const expectedVersion = z.number().int().min(1).optional();
+const bumpTo = z.enum(["review", "done"]);
+
+export const CreatePlanBody = z
+  .object({
+    id: kebabId.max(200).optional(),
+    title: z.string().trim().min(1).max(200),
+    description: z.string().max(20_000).optional(),
+    status: PlanStatusSchema.optional(),
+    autoSync: z.boolean().optional(),
+    bumpTo: bumpTo.optional(),
+    goals: z.array(GoalInputSchema).max(2000).optional(),
+  })
+  .strict();
+
+export const UpdatePlanBody = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    description: z.string().max(20_000).optional(),
+    status: PlanStatusSchema.optional(),
+    autoSync: z.boolean().optional(),
+    bumpTo: bumpTo.optional(),
+    expectedVersion,
+  })
+  .strict();
+
+export const ReplaceGoalsBody = z
+  .object({ goals: z.array(GoalInputSchema).max(2000), expectedVersion })
+  .strict();
+
+/** A goal for PUT goals/:goalId; `id` may be left out (the path names it). */
+export const UpsertGoalBody = z
+  .object({
+    ...GoalInputSchema.shape,
+    id: kebabId.max(200).optional(),
+    expectedVersion,
+  })
+  .strict();
+
+export const ReorderGoalsBody = z
+  .object({ order: z.array(z.string()).max(10_000), expectedVersion })
+  .strict();
+
+export const GoalStatusBody = z
+  .object({
+    status: GoalStatusSchema,
+    description: z.string().max(2000).optional(),
+    expectedVersion,
+  })
+  .strict();
+
+export const ImportPlanBody = z
+  .object({
+    planId: kebabId.max(200).optional(),
+    merge: z.boolean().optional(),
+    title: z.string().trim().min(1).max(200).optional(),
+    status: PlanStatusSchema.optional(),
+    autoSync: z.boolean().optional(),
+    bumpTo: bumpTo.optional(),
+    expectedVersion,
+  })
+  .strict();
+
+export const SyncPlanBody = z
+  .object({ dryRun: z.boolean().optional(), stopRunning: z.boolean().optional() })
+  .strict();
+
+/** Query flags of DELETE goals/:goalId (a DELETE has no body). */
+export const RemoveGoalQuery = z.object({
+  cascade: z.enum(["1", "true"]).optional(),
+  stopRunning: z.enum(["1", "true"]).optional(),
+  expectedVersion: z.coerce.number().int().min(1).optional(),
+});
 export const CreateClientBody = z
   .object({
     name: z.string().trim().min(1).max(200),

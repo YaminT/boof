@@ -32,14 +32,24 @@ import {
   CommandBody,
   CreateClientBody,
   CreateProjectBody,
+  CreatePlanBody,
   CreateTaskBody,
+  GoalStatusBody,
+  ImportPlanBody,
   InjectBody,
+  RemoveGoalQuery,
   ReorderBody,
+  ReorderGoalsBody,
+  ReplaceGoalsBody,
   SkipBody,
+  SyncPlanBody,
+  UpdatePlanBody,
   UpdateTaskBody,
+  UpsertGoalBody,
   formatIssues,
   paramId,
   parseJson,
+  parseJsonOptional,
 } from "./validation.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { existsSync } from "node:fs";
@@ -407,6 +417,168 @@ export function createApp(deps: AppDeps): Hono {
   };
   registerTaskRoutes("/projects/:pid", projectFromParam);
   registerTaskRoutes("", projectFromDefault);
+
+  // --- Plans: `/projects/:pid/plans…` (plan model) ---
+  /**
+   * The version a write is conditional on: the `If-Match` header (`"3"`, `W/"3"` or `3`) or the
+   * body's `expectedVersion`; the header wins. Neither: the change applies to the latest version.
+   */
+  const expectedVersionOf = (c: Context, fromBody?: number): number | undefined => {
+    const header = c.req.header("If-Match");
+    if (header !== undefined && header.trim() !== "*") {
+      const m = /^\s*(?:W\/)?"?(\d+)"?\s*$/.exec(header);
+      if (!m) {
+        throw new ServiceError(400, 'If-Match must be a plan version such as "3"', "invalid_input");
+      }
+      return Number(m[1]);
+    }
+    return fromBody;
+  };
+  const planId = (c: Context) => paramId(c.req.param("planId"), "plan id");
+  const goalId = (c: Context) => paramId(c.req.param("goalId"), "goal id");
+  /** Like `wrap`, plus an `ETag` header carrying the plan version of the result. */
+  const planRoute =
+    (fn: (svc: ProjectService, c: Context) => Promise<unknown>) => async (c: Context) => {
+      try {
+        const result = (await fn(await projectFromParam(c), c)) as {
+          version?: number;
+          plan?: { version: number };
+        };
+        const version = result.version ?? result.plan?.version;
+        if (typeof version === "number") c.header("ETag", `"${version}"`);
+        return c.json(result as object);
+      } catch (err) {
+        const { status, body } = toErrorResponse(err);
+        return c.json(body, status as 400);
+      }
+    };
+  const PLAN_BODY = "invalid_plan";
+
+  api.get(
+    "/projects/:pid/plans",
+    requireScope("plans:read"),
+    planRoute(async (svc) => ({ plans: await svc.plans.list() })),
+  );
+  api.post(
+    "/projects/:pid/plans",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) =>
+      svc.plans.createPlan(await parseJson(c.req, CreatePlanBody, PLAN_BODY), who(c)),
+    ),
+  );
+  api.get(
+    "/projects/:pid/plans/:planId",
+    requireScope("plans:read"),
+    planRoute((svc, c) => svc.plans.get(planId(c))),
+  );
+  api.get(
+    "/projects/:pid/plans/:planId/export",
+    requireScope("plans:read"),
+    planRoute((svc, c) => svc.plans.exportToXml(planId(c))),
+  );
+  api.put(
+    "/projects/:pid/plans/:planId",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const { expectedVersion, ...patch } = await parseJson(c.req, UpdatePlanBody);
+      return svc.plans.updatePlan(planId(c), patch, expectedVersionOf(c, expectedVersion), who(c));
+    }),
+  );
+  api.put(
+    "/projects/:pid/plans/:planId/goals",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const body = await parseJson(c.req, ReplaceGoalsBody, PLAN_BODY);
+      return svc.plans.replaceGoals(
+        planId(c),
+        body.goals,
+        expectedVersionOf(c, body.expectedVersion),
+        who(c),
+      );
+    }),
+  );
+  api.put(
+    "/projects/:pid/plans/:planId/goals/:goalId",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const {
+        expectedVersion,
+        id: bodyId,
+        ...rest
+      } = await parseJson(c.req, UpsertGoalBody, PLAN_BODY);
+      const id = goalId(c);
+      if (bodyId !== undefined && bodyId !== id) {
+        throw new ServiceError(400, "The goal id in the body must match the URL", PLAN_BODY);
+      }
+      return svc.plans.upsertGoal(
+        planId(c),
+        { ...rest, id },
+        expectedVersionOf(c, expectedVersion),
+        who(c),
+      );
+    }),
+  );
+  api.delete(
+    "/projects/:pid/plans/:planId/goals/:goalId",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const parsed = RemoveGoalQuery.safeParse(c.req.query());
+      if (!parsed.success) {
+        throw new ServiceError(400, "Invalid query", "invalid_input", formatIssues(parsed.error));
+      }
+      const q = parsed.data;
+      return svc.plans.removeGoal(
+        planId(c),
+        goalId(c),
+        expectedVersionOf(c, q.expectedVersion),
+        { cascade: q.cascade !== undefined, stopRunning: q.stopRunning !== undefined },
+        who(c),
+      );
+    }),
+  );
+  api.post(
+    "/projects/:pid/plans/:planId/reorder",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const body = await parseJson(c.req, ReorderGoalsBody, PLAN_BODY);
+      return svc.plans.reorderGoals(
+        planId(c),
+        body.order,
+        expectedVersionOf(c, body.expectedVersion),
+        who(c),
+      );
+    }),
+  );
+  api.post(
+    "/projects/:pid/plans/:planId/goals/:goalId/status",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const body = await parseJson(c.req, GoalStatusBody);
+      return svc.plans.setGoalStatus(
+        planId(c),
+        goalId(c),
+        body.status,
+        body.description,
+        expectedVersionOf(c, body.expectedVersion),
+        who(c),
+      );
+    }),
+  );
+  api.post(
+    "/projects/:pid/plans/import",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) => {
+      const { expectedVersion, ...input } = await parseJsonOptional(c.req, ImportPlanBody);
+      return svc.plans.importFromRepo(input, expectedVersionOf(c, expectedVersion), who(c));
+    }),
+  );
+  api.post(
+    "/projects/:pid/plans/:planId/sync",
+    requireScope("plans:write"),
+    planRoute(async (svc, c) =>
+      svc.plans.syncTasks(planId(c), await parseJsonOptional(c.req, SyncPlanBody), who(c)),
+    ),
+  );
 
   // --- Commands ---
   api.get(
