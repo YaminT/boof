@@ -86,6 +86,66 @@ describe("usage parsing", () => {
   });
 });
 
+describe("claude usage (stream-json)", () => {
+  const feed = (lines: unknown[]) => {
+    const r = new StreamRenderer(() => {});
+    r.push(lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    return r.usage;
+  };
+
+  it("counts cache creation and read tokens as input from the result event", () => {
+    const u = feed([
+      {
+        type: "result",
+        total_cost_usd: 0.0129,
+        usage: {
+          input_tokens: 16,
+          cache_creation_input_tokens: 5200,
+          cache_read_input_tokens: 12000,
+          output_tokens: 3496,
+        },
+      },
+    ]);
+    expect(u).toEqual({
+      inputTokens: 17216,
+      outputTokens: 3496,
+      costUsd: 0.0129,
+      known: true,
+    });
+  });
+
+  it("falls back to per-message usage without double counting repeated ids", () => {
+    const msg = (id: string, i: number, c: number, r: number, o: number) => ({
+      type: "assistant",
+      message: {
+        id,
+        usage: {
+          input_tokens: i,
+          cache_creation_input_tokens: c,
+          cache_read_input_tokens: r,
+          output_tokens: o,
+        },
+      },
+    });
+    const u = feed([msg("m1", 3, 100, 0, 1), msg("m1", 3, 100, 0, 20), msg("m2", 2, 0, 100, 30)]);
+    expect(u?.inputTokens).toBe(3 + 100 + 2 + 100);
+    expect(u?.outputTokens).toBe(50);
+  });
+
+  it("prefers the result event over earlier per-message usage", () => {
+    const u = feed([
+      { type: "assistant", message: { id: "m1", usage: { input_tokens: 1, output_tokens: 1 } } },
+      {
+        type: "result",
+        total_cost_usd: 1,
+        usage: { input_tokens: 10, cache_read_input_tokens: 90, output_tokens: 5 },
+      },
+    ]);
+    expect(u?.inputTokens).toBe(100);
+    expect(u?.costUsd).toBe(1);
+  });
+});
+
 describe("exec cancellation", () => {
   it("stops a child process when the stop signal file appears", async () => {
     const dir = await mkdtemp(join(tmpdir(), "boof-runner-stop-"));

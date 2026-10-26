@@ -20,10 +20,10 @@ export function parseUsage(output: string): TokenUsage {
 
   // JSON-ish: "input_tokens": 123 / "output_tokens": 456
   const inMatch = output.match(
-    /["']?(?:input_tokens|inputTokens|prompt_tokens)["']?\s*[:=]\s*(\d+)/i,
+    /(?<![A-Za-z_])["']?(?:input_tokens|inputTokens|prompt_tokens)["']?\s*[:=]\s*(\d+)/i,
   );
   const outMatch = output.match(
-    /["']?(?:output_tokens|outputTokens|completion_tokens)["']?\s*[:=]\s*(\d+)/i,
+    /(?<![A-Za-z_])["']?(?:output_tokens|outputTokens|completion_tokens)["']?\s*[:=]\s*(\d+)/i,
   );
   const costMatch = output.match(/(?:cost|total cost)\D*\$?\s*([0-9]+\.?[0-9]*)/i);
 

@@ -150,6 +150,9 @@ export class StreamRenderer {
   transcript = "";
   report = "";
   usage?: TokenUsage;
+  /** Per-message usage from `assistant` events, keyed by message id (fallback when no `result`). */
+  private messageUsage = new Map<string, Record<string, unknown>>();
+  private resultUsage = false;
   private buf = "";
   private blocks = new Map<number, { type?: string; name?: string; json: string }>();
 
@@ -194,10 +197,30 @@ export class StreamRenderer {
         break;
       case "result":
         if (typeof obj.result === "string") this.report = obj.result;
-        this.usage = usageFromResult(obj);
+        {
+          const u = usageFromResult(obj);
+          if (u) {
+            this.usage = u;
+            this.resultUsage = true;
+          }
+        }
         break;
-      // "system"/"assistant" ignored: text already arrives via stream_event deltas.
+      case "assistant":
+        this.assistantUsage(obj.message as Record<string, unknown> | undefined);
+        break;
+      // "system" ignored: text already arrives via stream_event deltas.
     }
+  }
+
+  private assistantUsage(message?: Record<string, unknown>): void {
+    const u = message?.usage as Record<string, unknown> | undefined;
+    if (!u || this.resultUsage) return;
+    // One message can be streamed as several events; the last one per id is authoritative.
+    this.messageUsage.set(
+      typeof message?.id === "string" ? message.id : `#${this.messageUsage.size}`,
+      u,
+    );
+    this.usage = sumClaudeUsages([...this.messageUsage.values()], 0);
   }
 
   private streamEvent(ev?: Record<string, unknown>): void {
@@ -262,11 +285,33 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
+function num(v: unknown): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Claude splits input into fresh, cache-creation and cache-read tokens; all count as input. */
+function sumClaudeUsages(usages: Record<string, unknown>[], costUsd: number): TokenUsage {
+  let fresh = 0;
+  let created = 0;
+  let read = 0;
+  let outputTokens = 0;
+  for (const u of usages) {
+    fresh += num(u.input_tokens);
+    created += num(u.cache_creation_input_tokens);
+    read += num(u.cache_read_input_tokens);
+    outputTokens += num(u.output_tokens);
+  }
+  return {
+    inputTokens: fresh + created + read,
+    outputTokens,
+    costUsd,
+    known: true,
+  };
+}
+
 function usageFromResult(obj: Record<string, unknown>): TokenUsage | undefined {
   const u = obj.usage as Record<string, unknown> | undefined;
   if (!u) return undefined;
-  const inputTokens = Number(u.input_tokens ?? 0);
-  const outputTokens = Number(u.output_tokens ?? 0);
-  const costUsd = Number(obj.total_cost_usd ?? 0);
-  return { inputTokens, outputTokens, costUsd, known: true };
+  return sumClaudeUsages([u], num(obj.total_cost_usd));
 }
