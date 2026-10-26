@@ -1266,3 +1266,134 @@ textarea:focus-visible {
     max-width: 200px;
   }
 }
+
+/* ---------- Plans ---------- */
+.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.plan-table th,
+.plan-table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: 14px;
+}
+.plan-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.plan-table select {
+  width: auto;
+  margin: 0;
+  padding: 3px 6px;
+}
+.plan-id,
+.plan-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+.plan-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 6px;
+}
+.plan-header h2 {
+  margin: 0;
+}
+.plan-desc {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.plan-actions {
+  flex-wrap: wrap;
+}
+.plan-notice {
+  background: var(--accent-weak);
+  color: var(--accent);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.status-badge.plan-active {
+  background: rgba(47, 128, 85, 0.12);
+  border-color: transparent;
+  color: var(--green);
+}
+.status-badge.plan-archived {
+  opacity: 0.7;
+}
+.goal-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.goal-actions button {
+  margin-left: 4px;
+  cursor: pointer;
+}
+.plan-task-link {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
+}
+.plan-task-link:hover {
+  color: var(--accent);
+}
+.spec-row td {
+  background: var(--inset);
+}
+.spec-view p {
+  margin: 4px 0;
+}
+.spec-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.spec-list {
+  margin: 4px 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+.sync-section h4 {
+  margin: 10px 0 2px;
+}
+.goal-form-row {
+  display: flex;
+  gap: 12px;
+}
+.goal-form-row > label {
+  flex: 1;
+}
+.label.plan-chip {
+  background: var(--accent-weak);
+  border-color: transparent;
+  color: var(--accent);
+}
+.label.plan-label {
+  border-color: var(--border-strong);
+}
+.label.warn {
+  color: var(--amber);
+}
+.plan-actions label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.plan-actions input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+.plan-detail .plan-table {
+  margin-bottom: 12px;
+}

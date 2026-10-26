@@ -29,8 +29,10 @@ function persist(id: string): void {
   } catch {
     // Storage can be blocked; the URL hash still carries the selection.
   }
+  // Keep a tab suffix (`#/p/<pid>/plans`) of the same project.
   const hash = `#/p/${encodeURIComponent(id)}`;
-  if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
+  const cur = window.location.hash;
+  if (cur !== hash && !cur.startsWith(`${hash}/`)) window.history.replaceState(null, "", hash);
 }
 
 /**

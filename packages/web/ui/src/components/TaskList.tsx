@@ -38,6 +38,9 @@ const STATUS_FILTERS: Status[] = [
   "archived",
 ];
 
+/** Labels the plan sync puts on tasks; shown with an accent. */
+const PLAN_LABELS = new Set(["blocked", "needs-review", "stale-revision", "goal-removed"]);
+
 function Row({
   projectId,
   task,
@@ -70,8 +73,16 @@ function Row({
         </span>
       )}
       <span className="labels">
+        {f.planRef && (
+          <span className="label plan-chip" title="Created from a plan goal">
+            plan: {f.planRef.planId} · goal: {f.planRef.goalId}
+          </span>
+        )}
         {f.labels.map((l) => (
-          <span key={l} className="label">
+          <span
+            key={l}
+            className={`label${PLAN_LABELS.has(l) ? " plan-label" : ""}${l === "stale-revision" || l === "goal-removed" ? " warn" : ""}`}
+          >
             {l}
           </span>
         ))}

@@ -8,14 +8,33 @@ import type {
 } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
 import type { CommandTemplate, HealthResult, PublicClient } from "./api-types.js";
+import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
 import { authHeaders, notifyUnauthorized } from "./token.js";
+
+/** An error response of the v1 API, with its machine-readable code and details. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+  }
+}
 
 /** Throw a readable error for a failed response; a 401 also opens the token gate. */
 async function failure(res: Response, data: unknown): Promise<never> {
   if (res.status === 401) notifyUnauthorized();
-  const err = (data as { error?: { message?: string } | string }).error;
+  const err = (data as { error?: { message?: string; code?: string; details?: unknown } | string })
+    .error;
   const message = typeof err === "string" ? err : err?.message;
-  throw new Error(message ?? `HTTP ${res.status}`);
+  throw new ApiError(
+    message ?? `HTTP ${res.status}`,
+    res.status,
+    typeof err === "object" ? err?.code : undefined,
+    typeof err === "object" ? err?.details : undefined,
+  );
 }
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
@@ -39,6 +58,34 @@ const T = (pid: string, id: string) => `${P(pid)}/tasks/${encodeURIComponent(id)
 /** The v1 API leaves `body.log` out of most task responses; the UI types expect a string. */
 const withLog = (t: TaskView): TaskView => ({ ...t, body: { ...t.body, log: t.body.log ?? "" } });
 const httpTask = (path: string, init?: RequestInit) => http<TaskView>(path, init).then(withLog);
+
+/** A plan in the list: no goals, with progress counters. */
+export type PlanSummary = Omit<Plan, "goals"> & { goalCount: number; doneCount: number };
+
+export interface SyncReport {
+  created: { goalId: string; taskId: string; revision: number; status: string; skip: boolean }[];
+  updated: { goalId: string; taskId: string; revision: number; action: string }[];
+  skipped: { goalId: string; taskId: string; reason: string }[];
+  archived: { goalId: string; taskId: string; action: string; reason: string }[];
+  dryRun: boolean;
+  plan: Plan;
+}
+
+export interface ImportReport {
+  plan: Plan;
+  added: string[];
+  updated: string[];
+  unchanged: string[];
+  warnings: string[];
+}
+
+const PL = (pid: string, planId: string) => `${P(pid)}/plans/${encodeURIComponent(planId)}`;
+const ifMatch = (version: number) => ({ "If-Match": `"${version}"` });
+const json = (method: string, body: unknown, version?: number): RequestInit => ({
+  method,
+  body: JSON.stringify(body),
+  ...(version !== undefined ? { headers: ifMatch(version) } : {}),
+});
 
 export interface CreateProjectInput {
   workingDirectory: string;
@@ -197,4 +244,56 @@ export const api = {
     http<{ client: PublicClient; key: string }>(`${V1}/auth/clients/${id}/rotate`, {
       method: "POST",
     }),
+
+  listPlans: (pid: string) =>
+    http<{ plans: PlanSummary[] }>(`${P(pid)}/plans`).then((r) => r.plans),
+  getPlan: (pid: string, planId: string) => http<Plan>(PL(pid, planId)),
+  createPlan: (pid: string, input: { title: string; description?: string; goals?: GoalInput[] }) =>
+    http<Plan>(`${P(pid)}/plans`, json("POST", { goals: [], ...input })),
+  updatePlan: (
+    pid: string,
+    plan: { id: string; version: number },
+    patch: Partial<{
+      title: string;
+      description: string;
+      status: PlanStatus;
+      autoSync: boolean;
+      bumpTo: "review" | "done";
+    }>,
+  ) => http<Plan>(PL(pid, plan.id), json("PUT", patch, plan.version)),
+  putGoal: (pid: string, plan: { id: string; version: number }, goal: GoalInput) =>
+    http<Plan>(
+      `${PL(pid, plan.id)}/goals/${encodeURIComponent(goal.id)}`,
+      json("PUT", goal, plan.version),
+    ),
+  deleteGoal: (
+    pid: string,
+    plan: { id: string; version: number },
+    goalId: string,
+    cascade = false,
+  ) =>
+    http<Plan>(
+      `${PL(pid, plan.id)}/goals/${encodeURIComponent(goalId)}${cascade ? "?cascade=1&stopRunning=1" : ""}`,
+      { method: "DELETE", headers: ifMatch(plan.version) },
+    ),
+  reorderGoals: (pid: string, plan: { id: string; version: number }, order: string[]) =>
+    http<Plan>(`${PL(pid, plan.id)}/reorder`, json("POST", { order }, plan.version)),
+  setGoalStatus: (
+    pid: string,
+    plan: { id: string; version: number },
+    goalId: string,
+    status: GoalStatus,
+  ) =>
+    http<Plan>(
+      `${PL(pid, plan.id)}/goals/${encodeURIComponent(goalId)}/status`,
+      json("POST", { status }, plan.version),
+    ),
+  importPlan: (pid: string, input: { planId?: string; merge?: boolean } = {}) =>
+    http<ImportReport>(`${P(pid)}/plans/import`, json("POST", input)),
+  exportPlan: (pid: string, planId: string) =>
+    http<Record<string, string>>(`${PL(pid, planId)}/export`),
+  syncPlan: (pid: string, planId: string, dryRun: boolean) =>
+    http<SyncReport>(`${PL(pid, planId)}/sync`, json("POST", { dryRun })),
 };
+
+export type { Goal, GoalInput, GoalStatus, Plan, PlanStatus };

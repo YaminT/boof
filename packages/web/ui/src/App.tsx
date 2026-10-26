@@ -12,12 +12,21 @@ import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
 import { onUnauthorized } from "./token.js";
+import { PlansTab } from "./components/PlansTab.js";
 import { AddProjectGate, ProjectSwitcher } from "./components/Projects.js";
 
-type Tab = "tasks" | "commands" | "actions" | "settings";
+type Tab = "tasks" | "plans" | "commands" | "actions" | "settings";
+
+const PLANS_HASH = /^#\/p\/[^/?#]+\/plans(?:\/([^/?#]+))?/;
+function readPlansHash(): { open: boolean; planId: string | null } {
+  const m = PLANS_HASH.exec(window.location.hash);
+  return { open: !!m, planId: m?.[1] ? decodeURIComponent(m[1]) : null };
+}
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("tasks");
+  const [tab, setTab] = useState<Tab>(() => (readPlansHash().open ? "plans" : "tasks"));
+  const [planId, setPlanId] = useState<string | null>(() => readPlansHash().planId);
+  const [planTick, setPlanTick] = useState(0);
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [actions, setActions] = useState<TaskView[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -73,7 +82,10 @@ export function App() {
       if (e.type === "runner.enabled") void refreshSettings().catch(() => {});
       else if (e.type.startsWith("task.")) {
         void Promise.all([refreshTasks(e.project), refreshActions()]).catch(() => {});
-      } else if (e.type.startsWith("plan.")) void refreshTasks(e.project).catch(() => {});
+      } else if (e.type.startsWith("plan.")) {
+        if (!e.project || e.project === selectedRef.current) setPlanTick((n) => n + 1);
+        void refreshTasks(e.project).catch(() => {});
+      }
     },
     onChanged: (project) => {
       if (Date.now() - (lastTyped.current.get(project ?? "") ?? 0) < 500) return;
@@ -88,6 +100,15 @@ export function App() {
     setEditingId(null);
     void loadTasks(selectedId).catch(() => {});
   }, [selectedId, loadTasks]);
+
+  // Keep the URL hash in step with the tab: `#/p/<pid>/plans[/<planId>]` is linkable.
+  useEffect(() => {
+    if (!selectedId) return;
+    const base = `#/p/${encodeURIComponent(selectedId)}`;
+    const want =
+      tab === "plans" ? `${base}/plans${planId ? `/${encodeURIComponent(planId)}` : ""}` : base;
+    if (window.location.hash !== want) window.history.replaceState(null, "", want);
+  }, [tab, planId, selectedId]);
 
   const pendingActions = actions.length;
 
@@ -143,6 +164,9 @@ export function App() {
           <button className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>
             Tasks
           </button>
+          <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>
+            Plans
+          </button>
           <button className={tab === "commands" ? "active" : ""} onClick={() => setTab("commands")}>
             Commands
           </button>
@@ -188,6 +212,21 @@ export function App() {
               onNew={() => setEditingId("__new__")}
             />
           </>
+        )}
+        {selectedId && tab === "plans" && (
+          <PlansTab
+            key={selectedId}
+            projectId={selectedId}
+            tasks={tasks}
+            tick={planTick}
+            planId={planId}
+            onSelectPlan={setPlanId}
+            onOpenTask={(id) => {
+              setEditingId(id);
+              setTab("tasks");
+            }}
+            onChange={refresh}
+          />
         )}
         {selectedId && tab === "tasks" && editingId && (
           <Editor
