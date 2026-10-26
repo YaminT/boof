@@ -76,8 +76,10 @@ The migration refuses to run while a task is `ongoing` and the runner process is
 the runner and start again. It is idempotent and finishes by itself if a previous run was
 interrupted.
 
-The old `/api/tasks…` routes keep working for one release as aliases of the default project
-and answer with `Deprecation: true`; use `/api/projects/<id>/tasks…` instead.
+The old unversioned routes (`/api/projects/…`, and `/api/tasks…` as aliases of the default
+project) keep working for one release and answer with `Deprecation: true` and a `Sunset`
+header; use `/api/v1/…` instead. The v1 API, its OpenAPI document (`GET /api/v1/openapi.json`),
+events (SSE and signed webhooks) and curl examples are in [docs/api.md](docs/api.md).
 
 ### Desktop app
 

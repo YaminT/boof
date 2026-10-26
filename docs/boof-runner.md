@@ -351,7 +351,7 @@ The Hono server exposes a local REST API for:
 - model lists
 - token usage: `GET /api/usage` is the sum over projects
 
-The legacy `/api/tasks…` routes are aliases of `/api/projects/<settings.defaultProject>/tasks…`. They answer `Deprecation: true`, and `404 no_default_project` while no default is set. They go away in the release after the REST v1 work.
+The legacy `/api/tasks…` routes are aliases of `/api/projects/<settings.defaultProject>/tasks…`. They answer `Deprecation: true`, and `404 no_default_project` while no default is set. The same operations are served at `/api/v1` (see `docs/api.md`: error table, ETags, idempotency, pagination, events, webhooks); every unversioned route now answers `Deprecation: true` and `Sunset`, and they go away after the sunset date. Webhooks are delivered by the web server process only; headless `run`/`scan` do not deliver.
 
 All `/api` requests must carry a loopback Host header (`localhost`, `127.0.0.1` or `[::1]`); other hosts get `421`. Errors have the shape `{ "error": { "code": "…", "message": "…" } }`. Status changes through the API are limited to `draft`, `pending` and `archived`; the runner owns `running`, `action`, `done` and `failed`.
 
