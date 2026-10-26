@@ -1,6 +1,6 @@
 # Boof Runner
 
-Boof Runner is the code-execution runner of the boof project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code and Codex.
+Boof Runner is the code-execution runner of the boof project. It turns user tasks into a controlled local workflow that can plan, implement, review, and record code changes using coding-agent CLIs such as Claude Code, Codex and OpenCode.
 
 Boof Runner is local-first. It runs on the user's machine, stores tasks as markdown files, serves a local web UI and API, and executes tasks against the registered git repositories (at most one task per project at a time).
 
@@ -306,12 +306,13 @@ With `runs > 1`, from iteration 2 on, every step's prompt gains `## Findings fro
 
 ## Tool Adapters
 
-Tools are behind a shared `Tool` interface. The pipeline does not know how Claude Code or Codex are invoked; it only calls the registered tool.
+Tools are behind a shared `Tool` interface. The pipeline does not know how Claude Code, Codex or OpenCode are invoked; it only calls the registered tool.
 
 Built-in tools:
 
 - `claude-code`: runs the `claude` CLI in non-interactive mode.
 - `codex`: runs the `codex` CLI in non-interactive mode.
+- `opencode`: runs `opencode run --dir <worktree> -m <model>` (adding `--auto` in auto mode). Models come from `opencode models`; default `opencode-go/kimi-k3`. Override the binary with `BOOF_RUNNER_OPENCODE_BIN`.
 - `mock`: deterministic offline tool used by tests.
 
 Each tool can:
@@ -324,7 +325,7 @@ Each tool can:
 - optionally return questions
 - return best-effort token usage
 
-The Settings page refreshes available models from the tools and uses a smoke prompt to confirm Claude and Codex are authenticated, not just installed.
+The Settings page refreshes available models from the tools and uses a smoke prompt to confirm Claude, Codex and OpenCode are authenticated, not just installed.
 
 ## Runtime Controls
 

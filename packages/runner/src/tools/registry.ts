@@ -1,6 +1,7 @@
 import { ClaudeCodeTool } from "./claude-code.js";
 import { CodexTool } from "./codex.js";
 import { MockTool } from "./mock.js";
+import { OpencodeTool } from "./opencode.js";
 import type { HealthResult, Tool } from "./types.js";
 
 /**
@@ -65,5 +66,5 @@ export class ToolRegistry {
 }
 
 export function defaultTools(): Tool[] {
-  return [new ClaudeCodeTool(), new CodexTool(), new MockTool()];
+  return [new ClaudeCodeTool(), new CodexTool(), new MockTool(), new OpencodeTool()];
 }

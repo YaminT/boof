@@ -436,7 +436,7 @@ Observer and reviewer reports end with exactly one line: `VERDICT: APPROVE`, `VE
 - `REJECT`, a missing or invalid verdict, or spent fix rounds fail the task. The log then contains `review not approved: <role> <verdict>`.
 - Questions from the developer or reviewer go to the planner. They never reach you.
 
-Which tool and model run each role is set in `settings.roles` (default planner `claude-code`/`opus`, developer `codex`/`gpt-5.5`, reviewer `claude-code`/`sonnet`). A project may override roles. The agent tools must be installed on the boof machine (`GET /api/v1/health` shows their status).
+Which tool and model run each role is set in `settings.roles` (default planner `claude-code`/`opus`, developer `codex`/`gpt-5.5`, reviewer `claude-code`/`sonnet`; `opencode` with ids like `opencode-go/kimi-k3` is also available). A project may override roles. The agent tools must be installed on the boof machine (`GET /api/v1/health` shows their status).
 
 ### Worktrees and branches
 
@@ -1579,7 +1579,7 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.health`
 - Scope: `settings:read`
 - MCP tool: none (REST only)
-- What it does: Checks that each agent tool (claude-code, codex) is installed and usable. No input. Runs version probes.
+- What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable. No input. Runs version probes.
 - Success: HTTP 200 with `{ tools: { [key: string]: { message: string, status: "available" | "unavailable", version?: string } } }`.
 - Errors: `403 forbidden_scope`
 

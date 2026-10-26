@@ -39,6 +39,7 @@ export function defaultSettings(): Settings {
       // like "claude-opus-4-8" also work; aliases survive model bumps.
       "claude-code": ["opus", "sonnet", "haiku"],
       codex: ["gpt-5.5"],
+      opencode: ["opencode-go/kimi-k3"],
       mock: ["mock-default"],
     },
   };

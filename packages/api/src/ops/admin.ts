@@ -66,7 +66,7 @@ export const settingsHealth = defineOp({
   name: "settings.health",
   title: "Tool health",
   description:
-    "Checks that each agent tool (claude-code, codex) is installed and usable. No input. Runs version probes.",
+    "Checks that each agent tool (claude-code, codex, opencode) is installed and usable. No input. Runs version probes.",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({}),

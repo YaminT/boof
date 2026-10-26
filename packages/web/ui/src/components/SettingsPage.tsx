@@ -318,7 +318,7 @@ export function SettingsPage({
 
       <section>
         <h3>Available models</h3>
-        {modelsLoading && <p className="muted">Fetching models from Claude and Codex…</p>}
+        {modelsLoading && <p className="muted">Fetching models from Claude, Codex and OpenCode…</p>}
         {modelsError && <p className="muted">Model refresh failed: {modelsError}</p>}
         <div className="model-list">
           {tools.map((tool) => (

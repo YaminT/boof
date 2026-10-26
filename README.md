@@ -2,7 +2,7 @@
 
 > Installs the `boof-runner` command.
 
-Boof Runner queues coding tasks and runs them through a disciplined **planner → developer → observer → reviewer** pipeline, driven by coding agents such as Claude Code and Codex. It is **local-first**: every task is a markdown file on disk, each task runs in its own git worktree, and nothing is merged or pushed for you. You drive it from a web UI, a desktop app, the command line, a REST API or MCP, so a person or another AI agent can submit work, answer the planner's questions and review the result.
+Boof Runner queues coding tasks and runs them through a disciplined **planner → developer → observer → reviewer** pipeline, driven by coding agents such as Claude Code, Codex and OpenCode. It is **local-first**: every task is a markdown file on disk, each task runs in its own git worktree, and nothing is merged or pushed for you. You drive it from a web UI, a desktop app, the command line, a REST API or MCP, so a person or another AI agent can submit work, answer the planner's questions and review the result.
 
 - **Projects** — register any number of git repositories. Each has its own queue, plans, usage and settings overrides; one runner serves them all.
 - **Plans and goals** — a plan is a versioned graph of goals with dependencies. Sync turns ready goals into tasks and keeps the tasks in line when a goal changes.
@@ -23,7 +23,7 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 
 - **Node.js ≥ 22.22** or **Bun** (the code runs on both)
 - **git** — the runner isolates each task in a git worktree, so every project's _working directory_ must be a git repository with at least one commit
-- Optional CLIs detected at runtime via health checks: `claude-code`, `codex` (the `mock` tool covers offline use)
+- Optional CLIs detected at runtime via health checks: `claude-code`, `codex`, `opencode` (the `mock` tool covers offline use)
 
 ## Quick start
 
@@ -174,18 +174,18 @@ Exit codes: 0 success; 1 a task failed, parked, nothing was actionable, or bad u
 
 Settings live in `<data>/settings.json` (created on first run, schema version 2). Edit it in the UI, with `PUT /api/v1/settings`, or by hand; the `security` and `webhooks` keys are edited by hand or through their own operations. All keys except the schema version are optional.
 
-| Key                  | Default                                                                                    | Meaning                                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `runner.enabled`     | `false`                                                                                    | Whether the background runner picks tasks.                                                                  |
-| `runner.concurrency` | `1`                                                                                        | Tasks in flight at once. At most one task per project runs at a time.                                       |
-| `defaultProject`     | `null`                                                                                     | Project used by `run` without `--project` and by the legacy `/api/tasks` routes.                            |
-| `roles`              | planner `claude-code`/`opus`, developer `codex`/`gpt-5.5`, reviewer `claude-code`/`sonnet` | `{ tool, model }` per role. Add `observer` to enable the observer step.                                     |
-| `review`             | `gate: true`, `maxFixRounds: 2`, `maxInlineDiffBytes: 120000`                              | Verdict gate and fix loop (see [How it works](#how-it-works)).                                              |
-| `worktree`           | `onDone: "keep-branch"`, `onFailure: "keep"`                                               | Worktree location and retention (see [Worktrees, retention and retries](#worktrees-retention-and-retries)). |
-| `retries`            | `transient: 2`, `backoffMs: [30000, 120000]`                                               | Retry and stall handling.                                                                                   |
-| `security`           | see [Security model](#security-model)                                                      | `auth.mode`, `allowedHosts`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.   |
-| `mcp.enabled`        | `true`                                                                                     | `false` switches MCP off (`/mcp` answers 404, `boof-runner mcp` refuses to start).                          |
-| `webhooks`           | none                                                                                       | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations.                              |
+| Key                  | Default                                                                                    | Meaning                                                                                                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runner.enabled`     | `false`                                                                                    | Whether the background runner picks tasks.                                                                                                                                         |
+| `runner.concurrency` | `1`                                                                                        | Tasks in flight at once. At most one task per project runs at a time.                                                                                                              |
+| `defaultProject`     | `null`                                                                                     | Project used by `run` without `--project` and by the legacy `/api/tasks` routes.                                                                                                   |
+| `roles`              | planner `claude-code`/`opus`, developer `codex`/`gpt-5.5`, reviewer `claude-code`/`sonnet` | `{ tool, model }` per role. Add `observer` to enable the observer step. Tools: `claude-code`, `codex`, `opencode` (e.g. `{ "tool": "opencode", "model": "opencode-go/kimi-k3" }`). |
+| `review`             | `gate: true`, `maxFixRounds: 2`, `maxInlineDiffBytes: 120000`                              | Verdict gate and fix loop (see [How it works](#how-it-works)).                                                                                                                     |
+| `worktree`           | `onDone: "keep-branch"`, `onFailure: "keep"`                                               | Worktree location and retention (see [Worktrees, retention and retries](#worktrees-retention-and-retries)).                                                                        |
+| `retries`            | `transient: 2`, `backoffMs: [30000, 120000]`                                               | Retry and stall handling.                                                                                                                                                          |
+| `security`           | see [Security model](#security-model)                                                      | `auth.mode`, `allowedHosts`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.                                                                          |
+| `mcp.enabled`        | `true`                                                                                     | `false` switches MCP off (`/mcp` answers 404, `boof-runner mcp` refuses to start).                                                                                                 |
+| `webhooks`           | none                                                                                       | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations.                                                                                                     |
 
 A project can override `roles`, `review`, `worktree` and `retries` per key in its `project.json`.
 

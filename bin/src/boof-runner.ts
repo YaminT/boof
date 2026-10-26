@@ -81,7 +81,7 @@ run options:
                       registered (its id printed) when unknown. Default: the default project
       --base <ref>    Branch or commit the task's worktree starts from (default: HEAD)
       --title <text>  Task title (default: first line of the prompt)
-      --tool <id>     Force all roles to this tool (e.g. mock, claude-code, codex)
+      --tool <id>     Force all roles to this tool (e.g. mock, claude-code, codex, opencode)
       --model <name>  Model for --tool
       --runs <n>      Run the pipeline N times for the task (default 1)
 

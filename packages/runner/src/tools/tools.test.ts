@@ -10,6 +10,7 @@ import { ToolRegistry } from "./registry.js";
 import { ClaudeCodeTool, StreamRenderer } from "./claude-code.js";
 import { isTransientToolError, ToolRunError } from "./errors.js";
 import { CodexTool } from "./codex.js";
+import { OpencodeTool } from "./opencode.js";
 import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
@@ -247,19 +248,22 @@ describe("health detection", () => {
   it("registry runs health for all tools and never throws", async () => {
     process.env.BOOF_RUNNER_CLAUDE_BIN = "definitely-not-real-claude-xyz";
     process.env.BOOF_RUNNER_CODEX_BIN = "definitely-not-real-codex-xyz";
+    process.env.BOOF_RUNNER_OPENCODE_BIN = "definitely-not-real-opencode-xyz";
     const reg = new ToolRegistry();
     const health = await reg.healthAll();
     expect(health.mock.status).toBe("available");
     expect(health["claude-code"].status).toBe("unavailable");
     expect(health.codex.status).toBe("unavailable");
+    expect(health.opencode.status).toBe("unavailable");
     expect(
       reg
         .list()
         .map((t) => t.id)
         .sort(),
-    ).toEqual(["claude-code", "codex", "mock"]);
+    ).toEqual(["claude-code", "codex", "mock", "opencode"]);
     delete process.env.BOOF_RUNNER_CLAUDE_BIN;
     delete process.env.BOOF_RUNNER_CODEX_BIN;
+    delete process.env.BOOF_RUNNER_OPENCODE_BIN;
     void CodexTool;
   });
 
@@ -415,5 +419,97 @@ describe("execCommand idle watchdog", () => {
     });
     expect(res.stalled).toBe(false);
     expect(res.code).toBe(0);
+  });
+});
+
+describe("OpencodeTool", () => {
+  let dir: string;
+  let prevBin: string | undefined;
+
+  const setup = async (script: string) => {
+    prevBin = process.env.BOOF_RUNNER_OPENCODE_BIN;
+    dir = await mkdtemp(join(tmpdir(), "boof-opencode-test-"));
+    const bin = join(dir, "opencode");
+    await writeFile(bin, `#!/bin/sh\n${script}\n`);
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_OPENCODE_BIN = bin;
+    return new OpencodeTool();
+  };
+  afterEach(async () => {
+    if (prevBin === undefined) delete process.env.BOOF_RUNNER_OPENCODE_BIN;
+    else process.env.BOOF_RUNNER_OPENCODE_BIN = prevBin;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("builds args anchored to the worktree, with --auto only in auto mode", async () => {
+    const tool = await setup("exit 0");
+    const auto = tool.buildArgs({
+      ...baseOpts,
+      role: "developer",
+      cwd: "/tmp/wt",
+      model: "p/m",
+      systemPrompt: "SYS",
+      prompt: "DO",
+      autoApprove: true,
+    });
+    expect(auto).toEqual(["run", "--dir", "/tmp/wt", "-m", "p/m", "--auto", "SYS\n\nDO"]);
+    const manual = tool.buildArgs({
+      ...baseOpts,
+      role: "developer",
+      cwd: "/tmp/wt",
+      model: "p/m",
+      autoApprove: false,
+    });
+    expect(manual).not.toContain("--auto");
+    expect(manual.slice(0, 5)).toEqual(["run", "--dir", "/tmp/wt", "-m", "p/m"]);
+  });
+
+  it("passes the worktree via --dir, streams chunks and returns the report", async () => {
+    const tool = await setup('printf "args:%s\\n" "$*"; printf "done\\n"');
+    const chunks: string[] = [];
+    const res = await tool.run({
+      ...baseOpts,
+      role: "developer",
+      cwd: dir,
+      model: "p/m",
+      onChunk: (c) => chunks.push(c),
+    });
+    expect(res.output).toContain(`--dir ${dir}`);
+    expect(res.report).toContain("done");
+    expect(chunks.join("")).toContain("done");
+  });
+
+  it("throws ToolRunError on a non-zero exit", async () => {
+    const tool = await setup('echo "bad thing" >&2; exit 3');
+    const err = await tool
+      .run({ ...baseOpts, role: "developer", cwd: dir })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ToolRunError);
+    expect((err as ToolRunError).code).toBe(3);
+    expect((err as ToolRunError).stderr).toContain("bad thing");
+    expect(isTransientToolError(err)).toBe(false);
+  });
+
+  it("maps transient API errors so the pipeline can retry", async () => {
+    const tool = await setup('echo "API Error: 503 Service Unavailable" >&2; exit 1');
+    const err = await tool
+      .run({ ...baseOpts, role: "developer", cwd: dir })
+      .catch((e: unknown) => e);
+    expect(isTransientToolError(err)).toBe(true);
+  });
+
+  it("marks a stalled run via the idle timeout", async () => {
+    const tool = await setup("exec sleep 30");
+    const err = (await tool
+      .run({ ...baseOpts, role: "developer", cwd: dir, idleTimeoutMs: 100 })
+      .catch((e: unknown) => e)) as ToolRunError;
+    expect(err.stalled).toBe(true);
+  });
+
+  it("lists models from `opencode models`, falling back to the default", async () => {
+    const tool = await setup('printf "a/one\\nnoise\\nb/two\\n"');
+    expect(await tool.listModels()).toEqual(["a/one", "b/two"]);
+    const failing = await setup("exit 1");
+    expect(await failing.listModels()).toEqual(["opencode-go/kimi-k3"]);
   });
 });

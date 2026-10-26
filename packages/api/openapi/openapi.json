@@ -2679,7 +2679,7 @@
     },
     "/health": {
       "get": {
-        "description": "Checks that each agent tool (claude-code, codex) is installed and usable. No input. Runs version probes.",
+        "description": "Checks that each agent tool (claude-code, codex, opencode) is installed and usable. No input. Runs version probes.",
         "operationId": "settings.health",
         "parameters": [],
         "responses": {

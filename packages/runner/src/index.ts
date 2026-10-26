@@ -5,6 +5,7 @@ export * from "./tools/errors.js";
 export * from "./tools/mock.js";
 export * from "./tools/claude-code.js";
 export * from "./tools/codex.js";
+export * from "./tools/opencode.js";
 export * from "./tools/registry.js";
 export * from "./worktree.js";
 export * from "./usage-store.js";
