@@ -112,14 +112,15 @@ server starts.
 Every status change and plan write appends a line to `<project>/events.jsonl` (runner toggles go
 to `<data>/events.jsonl`); files rotate monthly. Event types:
 
-| Type             | Fields (besides `ts`, `type`)                 |
-| ---------------- | --------------------------------------------- |
-| `task.created`   | `project`, `task`, `status`, `by`             |
-| `task.status`    | `project`, `task`, `from`, `to`, `by`         |
-| `task.questions` | `project`, `task`, `count`, `by`              |
-| `plan.updated`   | `project`, `plan`, `version`, `by`            |
-| `plan.synced`    | `project`, `plan`, `created`, `updated`, `by` |
-| `runner.enabled` | `value`, `by`                                 |
+| Type                     | Fields (besides `ts`, `type`)                             |
+| ------------------------ | --------------------------------------------------------- |
+| `task.created`           | `project`, `task`, `status`, `by`                         |
+| `task.status`            | `project`, `task`, `from`, `to`, `by`                     |
+| `task.questions`         | `project`, `task`, `count`, `by`                          |
+| `plan.updated`           | `project`, `plan`, `version`, `by`                        |
+| `plan.synced`            | `project`, `plan`, `created`, `updated`, `by`             |
+| `runner.enabled`         | `value`, `by`                                             |
+| `runner.budget_exceeded` | `scope`, `date`, `spentUsd`, `limitUsd`, `project?`, `by` |
 
 `by` is the principal id or `runner`.
 
@@ -152,7 +153,7 @@ curl -X POST http://127.0.0.1:4319/api/v1/webhooks -H "Authorization: Bearer $BO
 ```
 
 - `events`: types or `prefix.*` patterns (default `*`); `projects`: `"*"` or a list. Events
-  without a project (`runner.enabled`) reach webhooks with `projects: "*"` only.
+  without a project (`runner.enabled`, and `runner.budget_exceeded` for `global` and `tool:` scopes) reach webhooks with `projects: "*"` only.
 - The URL must be http or https and must not point at the boof server itself.
 - A delivery is `POST <url>` with body `{ "id": "<delivery id>", "ts", "type", ...event }` and
   headers `X-Boof-Event`, `X-Boof-Delivery` (uuid, same for retries) and
@@ -303,7 +304,7 @@ curl -s http://127.0.0.1:4319/mcp \
 
 The full list, inputs and outputs are in the OpenAPI document. Areas: `projects.*`, `plans.*`
 (goals, import/export, sync), `tasks.*` (queue, answers, stop, inject, attachments),
-`auth.whoami`, `actions.list`, `settings.*`, `runner.*`, `usage.global`, `commands.*`, `auth.clients.*`,
+`auth.whoami`, `actions.list`, `settings.*`, `runner.*`, `usage.global`, `usage.budget`, `commands.*`, `auth.clients.*`,
 `webhooks.*`. Request bodies are strict: unknown keys are `400 invalid_input`. GET and DELETE
 inputs come from the query string (`?purge=1`, `?cascade=true`); path placeholders are input
 fields; everything else is the JSON body. Bodies are limited to 1 MB (attachments 25 MB).

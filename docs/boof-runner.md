@@ -70,7 +70,7 @@ projects/
 
 ### Projects
 
-A project is one git repository with its own queue. `project.json` (`ProjectSchema`) holds the `id` (the directory name, kebab-case), `name`, `workingDirectory` (a realpath, resolved when the project is created), `paused`, `archived`, an optional `defaultBase` ref, `labels`, `origin` (`ui`, `cli`, `api` or `migration`) and optional per-project overrides of `roles`, `review`, `worktree` and `retries`. Global settings stay in `settings.json`; the runner merges them per key with the project's overrides (`effectiveSettings`), the project winning, and takes the working directory from the project.
+A project is one git repository with its own queue. `project.json` (`ProjectSchema`) holds the `id` (the directory name, kebab-case), `name`, `workingDirectory` (a realpath, resolved when the project is created), `paused`, `archived`, an optional `defaultBase` ref, `labels`, `origin` (`ui`, `cli`, `api` or `migration`) and optional per-project overrides of `roles`, `review`, `worktree`, `retries` and `budget`. Global settings stay in `settings.json`; the runner merges them per key with the project's overrides (`effectiveSettings`), the project winning, and takes the working directory from the project.
 
 Every task path helper takes a `root`. For a project that root is `projects/<id>/`, so `TaskStore`, `AttachmentStore` and `UsageStore` are used unchanged, one instance per project. Tasks do not store their project: the directory is authoritative, as it is for status. Ids are per project (two projects can both have a task `fix-login`); API responses add `projectId`.
 
@@ -296,6 +296,18 @@ A failure is transient when it is a tool error that was neither stopped nor time
 
 The mock tool can simulate both: `[[mock-transient developer=1]]` fails the first N runs of a role with `API Error: 503`, and `[[mock-stall developer=1]]` makes them go silent.
 
+## Budget Limits
+
+`settings.budget` and the project's `budget` override stop spending; the README's [Budget limits](../README.md#budget-limits) table lists the keys. Design points:
+
+- The choke point is `Pipeline.runStep`. After a tool step returns, its cost is added to the run total and to the daily ledgers (`recordSpend` in `packages/shared/src/budget.ts`: `<data>/usage/daily/<date>.json` for everything, `<project>/usage/daily/<date>.json` for one project; atomic writes under the per-path lock; the date is the day in `budget.timezone`). Before the next step starts, `assertBudget` compares the run total with `perTaskUsd` and evaluates the day scopes that apply (`global`, `project:<id>`, `tool:<t>`, `project:<id>/tool:<t>`); a spent scope throws `BudgetExceededError` (`budget exceeded: <scope> <spent>/<limit> USD`) and the task fails through the normal failure path. A step is never killed for budget, because a CLI step cannot be interrupted at a cost boundary; the last step of a run can overshoot, and its cost is recorded without failing the run.
+- Selection (`RunnerEngine.selectWithBudget`) skips projects and tasks (by the tools of all four roles) whose day scope is spent and reports them. When nothing can start and something was skipped, `tick()` returns `{ kind: "budget", scopes }` and `runUntilIdle()` ends with that result instead of `idle`. `runner.budget_exceeded` is appended to `<data>/events.jsonl` once per day and scope (the marker is the `notified` list in the global ledger, so a restart does not repeat it); project scopes carry `project`.
+- `onExceed: "pause"` keeps the worktree and branch whatever `worktree.onFailure` says; `"fail"` follows it. Both fail the task; a day budget that is spent blocks new work in its scope until midnight (in the budget zone) for both.
+- Usage with `known: false` counts as 0 and increments `unknownSteps`; a tool without cost reporting is therefore unlimited.
+- Spent means `spent >= limit`. Per-task cost counts the current pipeline run only.
+- Read side: `evaluateBudget` (shared) powers `GET /api/v1/usage/budget`, the `budgetExceeded` list in `runner.status` and `runner.overview`, and the UI.
+- The mock tool takes `[[mock-cost 0.5]]` (every step costs $0.50) or `[[mock-cost unknown]]` (no usage reported); the default is $0.01.
+
 ## Non-Interactive Guard
 
 Every role's system prompt (planner, refinement, developer, observer, reviewer, planner-answering) ends with a guard: the tool runs non-interactively, its process exits when the turn ends and kills anything in the background, so the agent must never end its turn while waiting on background work. Commands longer than about 10 minutes run in the background with an exit-status marker file and are awaited with repeated foreground loops under 10 minutes.
@@ -365,7 +377,7 @@ For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, s
 
 ### Events and webhooks
 
-Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature, retries and a dead-letter directory. See [api.md](api.md).
+Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles and `runner.budget_exceeded` to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature, retries and a dead-letter directory. See [api.md](api.md).
 
 ### MCP
 
@@ -393,7 +405,7 @@ Important UI areas:
 - Plans: goals with dependencies, approve, sync preview, auto-sync
 - Actions: parked planner questions awaiting user answers
 - Commands: reusable instruction templates
-- Settings: concurrency, default project, tool health, model lists, roles, review, worktree, retries, usage, API clients, per-project overrides
+- Settings: concurrency, default project, tool health, model lists, roles, review, worktree, retries, budget, usage, API clients, per-project overrides
 
 ## API Authentication
 

@@ -123,6 +123,30 @@ Each task runs in its own git worktree on branch `boof-runner/<id>`. Task frontm
 
 Nothing is deleted under the defaults. A done task's uncommitted leftovers never land on the task branch: they are saved on `boof-runner/<id>--leftovers`. With `runs > 1`, each iteration after the first sees the previous iteration's final observer and reviewer reports. See [docs/boof-runner.md](docs/boof-runner.md) for details.
 
+### Budget limits
+
+Usage (tokens and `costUsd`) is recorded per step. Optional limits in `settings.budget` (and a per-project override in `project.json`) turn it into enforcement. Every key is optional; no `budget` means no limit and nothing changes.
+
+| Key                       | Meaning                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `budget.perTaskUsd`       | Cost of one pipeline run of one task (a retry or the next iteration of `runs` starts at 0).       |
+| `budget.perDayUsd`        | Cost of all work in one day.                                                                      |
+| `budget.perProjectDayUsd` | Cost of one project's work in one day.                                                            |
+| `budget.perToolDayUsd`    | `{ "codex": 5, "claude-code": 10 }`: cost per tool id in one day, over all projects.              |
+| `budget.onExceed`         | `"pause"` (default) or `"fail"`, see below.                                                       |
+| `budget.timezone`         | IANA zone that defines a day, for example `Europe/Berlin`. Default: the server's local time zone. |
+
+A project overrides `perTaskUsd`, `perProjectDayUsd`, `onExceed` and its own `perToolDayUsd` (a cap on that project's spend per tool; the global per-tool limits still apply). `perDayUsd` and `timezone` are global only.
+
+Exactly what happens:
+
+- **Ledger.** Each finished step adds its cost to the daily ledger: `<data>/usage/daily/YYYY-MM-DD.json` (total, per project, per tool) and `<data>/projects/<id>/usage/daily/YYYY-MM-DD.json`. The date is the calendar day in `budget.timezone`. Steps with unknown usage (`known: false`) add 0 and are counted in `unknownSteps`, so a tool that reports no cost is not limited. The ledger is written even when no limit is set.
+- **A limit is spent when spent >= limit.**
+- **Before a task starts**, the runner skips projects whose day limit is spent, and tasks that use a tool (of any role) whose day limit is spent. If the global day limit is spent it starts nothing. The tick result is `{ kind: "budget", scopes }` and the tasks stay `pending`; they start again after the reset. This holds for both `onExceed` values. The event `runner.budget_exceeded` (`scope`, `date`, `spentUsd`, `limitUsd`, `project?`) is recorded once per day and scope.
+- **Between steps**, before each step starts, the pipeline checks the run's cost against `perTaskUsd` and the day budgets that apply to the step (global, project, the step's tool, project plus tool). If one is spent the task fails with `budget exceeded: <scope> <spent>/<limit> USD` (scope `task:<id>`, `global`, `project:<id>`, `tool:<tool>` or `project:<id>/tool:<tool>`). A step that runs is **never** stopped for budget: a CLI step cannot be interrupted at a cost boundary, so it can finish above the limit. The cost of a task's last step is recorded but cannot fail the task.
+- **`onExceed`.** In both modes the task becomes `failed` with the reason above. `"pause"` always keeps the worktree and branch (even with `worktree.onFailure: "delete"`) so a retry continues the work; `"fail"` follows `worktree.onFailure`. After a day budget stops a task, the spent scope also blocks new tasks until the reset (above); other scopes keep running.
+- **See it.** `GET /api/v1/usage/budget` (scope `settings:read` or `tasks:read`) returns the limits, today's spend, remaining amount and `exceeded` flag per scope, `unknownSteps` and `resetsAt`. `GET /api/v1/runner` and `GET /api/v1/runner/status` (MCP `boof_runner_status`) carry `budgetExceeded`. The UI shows it under Settings (Budget, Token usage) and a banner while a budget is spent.
+
 ### Install or update from source
 
 ```bash
@@ -143,7 +167,7 @@ Pick a project at the top (or add one); every tab works on that project. The run
 - **Plans** — create plans with goals and dependencies, edit them, import them from a repository's `goal.boof.xml` files or export them. **Approve** a draft plan to activate it, preview a sync (dry run), then **Sync to tasks**. Enable auto-sync to let the runner sync before it picks tasks.
 - **Actions** — tasks parked because the planner has questions. Answer them and the task resumes.
 - **Commands** — reusable instruction templates that any task can attach.
-- **Settings** — concurrency and default project, tool health and model lists, role assignments (planner, developer, observer, reviewer), review gate, worktree, retries, token usage, API clients (create, rotate, revoke keys) and per-project overrides.
+- **Settings** — concurrency and default project, tool health and model lists, role assignments (planner, developer, observer, reviewer), review gate, worktree, retries, budget limits, token usage with today's spend, API clients (create, rotate, revoke keys) and per-project overrides.
 
 ## CLI reference
 
@@ -188,21 +212,23 @@ Settings live in `<data>/settings.json` (created on first run, schema version 2)
 | `review`             | `gate: true`, `maxFixRounds: 2`, `maxInlineDiffBytes: 120000`                              | Verdict gate and fix loop (see [How it works](#how-it-works)).                                                                                                                     |
 | `worktree`           | `onDone: "keep-branch"`, `onFailure: "keep"`                                               | Worktree location and retention (see [Worktrees, retention and retries](#worktrees-retention-and-retries)).                                                                        |
 | `retries`            | `transient: 2`, `backoffMs: [30000, 120000]`                                               | Retry and stall handling.                                                                                                                                                          |
+| `budget`             | none (unlimited)                                                                           | Spending limits in USD, see [Budget limits](#budget-limits).                                                                                                                       |
 | `security`           | see [Security model](#security-model)                                                      | `auth.mode`, `allowedHosts`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.                                                                          |
 | `mcp.enabled`        | `true`                                                                                     | `false` switches MCP off (`/mcp` answers 404, `boof-runner mcp` refuses to start).                                                                                                 |
 | `webhooks`           | none                                                                                       | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations.                                                                                                     |
 
-A project can override `roles`, `review`, `worktree` and `retries` per key in its `project.json`.
+A project can override `roles`, `review`, `worktree`, `retries` and `budget` per key in its `project.json`.
 
 ### Data root layout
 
 ```text
 <data>/
-  settings.json          # schemaVersion 2: runner, roles, models, review, worktree, retries, security, mcp, webhooks
+  settings.json          # schemaVersion 2: runner, roles, models, review, worktree, retries, budget, security, mcp, webhooks
   commands/              # command templates, shared by all projects
   auth/  audit/          # API clients and the request audit log
   idempotency/           # stored responses of Idempotency-Key requests (24 h)
-  events.jsonl           # global events (runner toggles)
+  events.jsonl           # global events (runner toggles, budget events)
+  usage/daily/           # <YYYY-MM-DD>.json: cost per day, project and tool (budget ledger)
   projects/
     <projectId>/
       project.json       # name, working directory, paused/archived, overrides
@@ -210,6 +236,7 @@ A project can override `roles`, `review`, `worktree` and `retries` per key in it
       plans/             # <planId>.json
       events.jsonl       # structured events of this project
       usage.json         # token usage of this project
+      usage/daily/       # <YYYY-MM-DD>.json: this project's cost per day and tool
   migration-v2.log       # only after a migration from a v1 data root
 ```
 
