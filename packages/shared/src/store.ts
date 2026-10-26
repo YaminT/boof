@@ -1,6 +1,7 @@
 import { readdir, mkdir, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { atomicWrite, lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
+import { appendEvent } from "./events.js";
 import { assertTransition } from "./lifecycle.js";
 import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import { nowIso } from "./runtime.js";
@@ -121,8 +122,15 @@ export class TaskStore {
    * Transition a task to a new status: validate, write the file with the new
    * status, then remove the old location (write-then-move ordering). Returns
    * the moved task. `mutate` lets the caller adjust frontmatter/body atomically.
+   * Appends a `task.status` event (and `task.questions` when the task parks with questions);
+   * `opts.by` names the actor (principal id), default `runner`.
    */
-  async transition(id: string, to: Status, mutate?: (t: Task) => void): Promise<Task> {
+  async transition(
+    id: string,
+    to: Status,
+    mutate?: (t: Task) => void,
+    opts: { by?: string } = {},
+  ): Promise<Task> {
     const located = await this.locate(id);
     if (!located) throw new TaskNotFoundError(id);
     assertTransition(located.status, to);
@@ -149,6 +157,20 @@ export class TaskStore {
         }
       }
     });
+    const by = opts.by ?? "runner";
+    const project = basename(this.root);
+    await appendEvent(this.root, {
+      type: "task.status",
+      project,
+      task: id,
+      from: fromStatus,
+      to,
+      by,
+    });
+    if (to === "action" && task.frontmatter.questions === "pending") {
+      const count = task.body.questions.split("\n").filter((l) => l.trim() !== "").length;
+      await appendEvent(this.root, { type: "task.questions", project, task: id, count, by });
+    }
     return task;
   }
 

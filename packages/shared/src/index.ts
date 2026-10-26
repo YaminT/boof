@@ -22,3 +22,4 @@ export * from "./plan-diff.js";
 export * from "./plan-ops.js";
 export * from "./plan-xml.js";
 export * from "./plan-fixtures.js";
+export * from "./events.js";

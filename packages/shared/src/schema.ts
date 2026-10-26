@@ -242,6 +242,24 @@ export const SecuritySettingsSchema = z.object({
 });
 export type SecuritySettings = z.infer<typeof SecuritySettingsSchema>;
 
+/**
+ * A webhook subscription (settings.webhooks). `events` holds event types or `prefix.*` patterns
+ * (`task.status`, `plan.*`, `*`). The secret signs every delivery and is shown only at creation.
+ */
+export const WebhookSchema = z.object({
+  id: kebab,
+  url: z.string().min(1),
+  secret: z.string().min(16),
+  events: z.array(z.string().min(1)).min(1),
+  projects: z.union([z.literal("*"), z.array(kebab)]).default("*"),
+  enabled: z.boolean().default(true),
+  createdBy: z.string(),
+  created: z.string(),
+});
+export type Webhook = z.infer<typeof WebhookSchema>;
+/** A webhook as listed over the API: never includes the secret. */
+export type PublicWebhook = Omit<Webhook, "secret">;
+
 const RolesSchema = z.object({
   planner: RoleAssignmentSchema,
   developer: RoleAssignmentSchema,
@@ -271,6 +289,8 @@ export const SettingsSchema = z.object({
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
+  /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
+  webhooks: z.array(WebhookSchema).optional(),
   models: z.record(z.string(), z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;

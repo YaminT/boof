@@ -1,6 +1,7 @@
 import { readdir, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { atomicWrite, readText, withFileLock } from "./atomic.js";
+import { appendEvent } from "./events.js";
 import { assertKebabId } from "./paths.js";
 import { PlanSchema, type Plan } from "./plan-schema.js";
 import { validatePlan } from "./plan-validate.js";
@@ -60,6 +61,16 @@ const MODIFY_RETRIES = 4;
 export class PlanStore {
   constructor(private readonly projectDir: string) {}
 
+  private emit(plan: Plan, by = "runner"): Promise<void> {
+    return appendEvent(this.projectDir, {
+      type: "plan.updated",
+      project: basename(this.projectDir),
+      plan: plan.id,
+      version: plan.version,
+      by,
+    });
+  }
+
   private path(id: string): string {
     return join(this.projectDir, "plans", `${assertKebabId(id)}.json`);
   }
@@ -104,7 +115,7 @@ export class PlanStore {
   }
 
   /** Create a plan at version 1 (goals validated, order normalised). Throws PlanExistsError. */
-  async create(input: CreatePlanInput): Promise<Plan> {
+  async create(input: CreatePlanInput, opts: { by?: string } = {}): Promise<Plan> {
     const path = this.path(input.id);
     const now = nowIso();
     const plan = validatePlan(
@@ -115,6 +126,7 @@ export class PlanStore {
       if (await exists(path)) throw new PlanExistsError(input.id);
       await atomicWrite(path, JSON.stringify(plan, null, 2) + "\n");
     });
+    await this.emit(plan, opts.by);
     return plan;
   }
 
@@ -122,10 +134,11 @@ export class PlanStore {
    * Write `plan` over the stored one when the stored version is `expectedVersion`; otherwise
    * throw {@link PlanVersionConflict}. Validates and normalises the goals, bumps `version`,
    * refreshes `updated`, keeps `created`. Returns the plan as stored.
+   * Appends a `plan.updated` event (`opts.by`: the actor, default `runner`).
    */
-  async save(plan: Plan, opts: { expectedVersion: number }): Promise<Plan> {
+  async save(plan: Plan, opts: { expectedVersion: number; by?: string }): Promise<Plan> {
     const path = this.path(plan.id);
-    return withFileLock(path, async () => {
+    const saved = await withFileLock(path, async () => {
       const stored = await this.get(plan.id);
       if (!stored) throw new PlanNotFoundError(plan.id);
       if (stored.version !== opts.expectedVersion) {
@@ -143,6 +156,8 @@ export class PlanStore {
       await atomicWrite(path, JSON.stringify(next, null, 2) + "\n");
       return next;
     });
+    await this.emit(saved, opts.by);
+    return saved;
   }
 
   /**
@@ -154,7 +169,7 @@ export class PlanStore {
   async modify(
     id: string,
     fn: (plan: Plan) => Plan | Promise<Plan>,
-    opts: { expectedVersion?: number } = {},
+    opts: { expectedVersion?: number; by?: string } = {},
   ): Promise<Plan> {
     for (let attempt = 0; ; attempt += 1) {
       const current = await this.require(id);
@@ -164,7 +179,7 @@ export class PlanStore {
       const next = await fn(structuredClone(current));
       if (JSON.stringify(next) === JSON.stringify(current)) return current;
       try {
-        return await this.save(next, { expectedVersion: current.version });
+        return await this.save(next, { expectedVersion: current.version, by: opts.by });
       } catch (err) {
         const retry =
           err instanceof PlanVersionConflict &&

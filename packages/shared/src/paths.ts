@@ -51,6 +51,10 @@ export interface DataRootPaths {
   auth: string;
   authClients: string;
   audit: string;
+  /** Global events (runner toggles); project events live in the project directory. */
+  events: string;
+  idempotency: string;
+  webhooks: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -63,6 +67,9 @@ export function dataRootPaths(root: string): DataRootPaths {
     auth: join(root, "auth"),
     authClients: join(root, "auth", "clients.json"),
     audit: join(root, "audit"),
+    events: join(root, "events.jsonl"),
+    idempotency: join(root, "idempotency"),
+    webhooks: join(root, "webhooks"),
   };
 }
 

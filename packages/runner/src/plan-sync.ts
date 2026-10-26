@@ -4,8 +4,9 @@
  * run without changes writes nothing.
  */
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
+  appendEvent,
   AuthStore,
   diffGoalContent,
   isKebabId,
@@ -64,6 +65,8 @@ export interface SyncOptions {
    * tasks that unskip when the dependencies finish. `scan` uses this to keep one task per unit.
    */
   includeBlocked?: boolean;
+  /** The actor, recorded on the plan's events (default `runner`). */
+  by?: string;
 }
 
 export interface SyncCreated {
@@ -556,6 +559,23 @@ async function syncOnce(
  * (it finds the tasks it already made).
  */
 export async function syncPlan(opts: SyncOptions): Promise<SyncResult> {
+  const result = await syncPlanInner(opts);
+  const created = result.created.length;
+  const updated = result.updated.length + result.archived.length;
+  if (!result.dryRun && created + updated > 0) {
+    await appendEvent(opts.projectDir, {
+      type: "plan.synced",
+      project: basename(opts.projectDir),
+      plan: result.planId,
+      created,
+      updated,
+      by: opts.by ?? "runner",
+    });
+  }
+  return result;
+}
+
+async function syncPlanInner(opts: SyncOptions): Promise<SyncResult> {
   const plans = new PlanStore(opts.projectDir);
   for (let attempt = 0; ; attempt += 1) {
     const plan = await plans.require(opts.planId);
@@ -565,7 +585,10 @@ export async function syncPlan(opts: SyncOptions): Promise<SyncResult> {
       return { ...result, plan: opts.dryRun ? next : plan };
     }
     try {
-      return { ...result, plan: await plans.save(next, { expectedVersion: plan.version }) };
+      return {
+        ...result,
+        plan: await plans.save(next, { expectedVersion: plan.version, by: opts.by }),
+      };
     } catch (err) {
       if (!(err instanceof PlanVersionConflict) || attempt >= 3) throw err;
     }
