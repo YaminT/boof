@@ -20,12 +20,14 @@ import {
   securitySettings,
   taskControlDir,
   taskPromptInjectionsPath,
+  taskSteerRequestPath,
   taskStopRequestPath,
   taskAssetsDir,
   TaskStore,
   uniqueKebabId,
   workingAreaDir,
   type Attachment,
+  type InjectMode,
   type CreateProjectInput,
   type Project,
   type ProjectPatch,
@@ -385,7 +387,12 @@ export class ProjectService {
     return { ok: true };
   }
 
-  async injectPrompt(id: string, prompt: string, actor?: Principal): Promise<{ ok: true }> {
+  async injectPrompt(
+    id: string,
+    prompt: string,
+    actor?: Principal,
+    mode: InjectMode = "next-step",
+  ): Promise<{ ok: true; mode: InjectMode; applied: "pending" }> {
     const text = prompt.trim();
     if (!text) throw new OpError(400, "Prompt is required");
     const task = await this.tasks.get(id);
@@ -402,13 +409,22 @@ export class ProjectService {
       id,
       text,
       actor && actor.kind === "client" ? actor.name : "user",
+      mode,
     );
+    if (mode === "now") {
+      // The pipeline interrupts the running step on this file and consumes (removes) it.
+      await appendFile(
+        taskSteerRequestPath(this.root, id),
+        JSON.stringify({ at: now, text }) + "\n",
+        "utf8",
+      );
+    }
     await appendFile(
       join(workingAreaDir(this.root, id), "log.txt"),
-      `\n\n### Injected prompt\n${text}\n`,
+      `\n\n### Injected prompt${mode === "now" ? " (apply now)" : ""}\n${text}\n`,
       "utf8",
     ).catch(() => {});
-    return { ok: true };
+    return { ok: true, mode, applied: "pending" };
   }
 
   /** Submit answers for a parked task: write answers, mark answered, resume. */

@@ -44,7 +44,13 @@ export const UpdateTaskBody = z
 
 export const SkipBody = z.object({ skip: z.boolean() }).strict();
 export const ReorderBody = z.object({ order: z.array(z.string()).max(10_000) }).strict();
-export const InjectBody = z.object({ prompt: z.string().max(100_000) }).strict();
+export const InjectModeSchema = z.enum(["next-step", "now"]).meta({
+  description:
+    "`next-step` (default): the prompt is picked up before the next pipeline step. `now`: also interrupts the running step, which is resumed (or rerun) with the prompt.",
+});
+export const InjectBody = z
+  .object({ prompt: z.string().max(100_000), mode: InjectModeSchema.default("next-step") })
+  .strict();
 export const AnswersBody = z.object({ answers: z.string().max(200_000) }).strict();
 export const CommandBody = z
   .object({ name: z.string().trim().min(1).max(200), body: z.string().max(200_000).optional() })

@@ -11,7 +11,13 @@ import {
   SkipBody,
   UpdateTaskBody,
 } from "../validation.js";
-import { OkSchema, TaskCreateResultSchema, TaskDiffSchema, TaskViewSchema } from "../schemas.js";
+import {
+  InjectResultSchema,
+  OkSchema,
+  TaskCreateResultSchema,
+  TaskDiffSchema,
+  TaskViewSchema,
+} from "../schemas.js";
 import {
   DESTRUCTIVE,
   IDEMPOTENT_WRITE,
@@ -407,11 +413,11 @@ export const tasksInject = defineOp({
   name: "tasks.inject",
   title: "Inject a prompt into a running task",
   description:
-    "Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. The prompt is also kept, with a timestamp and who injected it, in the task's body.injected so it survives after the run.",
+    "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied.",
   scope: "tasks:control",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...InjectBody.shape }),
-  output: OkSchema,
+  output: InjectResultSchema,
   rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/inject" },
   mcp: { expose: true, name: "boof_inject_prompt", annotations: WRITE },
   summary: () => "Prompt injected",
@@ -420,6 +426,7 @@ export const tasksInject = defineOp({
       input.taskId,
       input.prompt,
       ctx.principal,
+      input.mode,
     ),
 });
 

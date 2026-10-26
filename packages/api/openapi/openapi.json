@@ -7830,7 +7830,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/inject": {
       "post": {
-        "description": "Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. The prompt is also kept, with a timestamp and who injected it, in the task's body.injected so it survives after the run.",
+        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied.",
         "operationId": "tasks.inject",
         "parameters": [
           {
@@ -7862,6 +7862,15 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "mode": {
+                    "default": "next-step",
+                    "description": "`next-step` (default): the prompt is picked up before the next pipeline step. `now`: also interrupts the running step, which is resumed (or rerun) with the prompt.",
+                    "enum": [
+                      "next-step",
+                      "now"
+                    ],
+                    "type": "string"
+                  },
                   "prompt": {
                     "maxLength": 100000,
                     "type": "string"
@@ -7883,13 +7892,27 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "applied": {
+                      "const": "pending",
+                      "description": "The prompt is saved; it reaches the agent when the next step starts (`next-step`) or once the running step is interrupted (`now`). Watch the task log for `### Steered`.",
+                      "type": "string"
+                    },
+                    "mode": {
+                      "enum": [
+                        "next-step",
+                        "now"
+                      ],
+                      "type": "string"
+                    },
                     "ok": {
                       "const": true,
                       "type": "boolean"
                     }
                   },
                   "required": [
-                    "ok"
+                    "ok",
+                    "mode",
+                    "applied"
                   ],
                   "type": "object"
                 }

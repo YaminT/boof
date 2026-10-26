@@ -97,6 +97,15 @@ export const ProjectViewSchema = ProjectSchema.extend({
 
 export const OkSchema = z.object({ ok: z.literal(true) });
 
+export const InjectResultSchema = z.object({
+  ok: z.literal(true),
+  mode: z.enum(["next-step", "now"]),
+  applied: z.literal("pending").meta({
+    description:
+      "The prompt is saved; it reaches the agent when the next step starts (`next-step`) or once the running step is interrupted (`now`). Watch the task log for `### Steered`.",
+  }),
+});
+
 export const PlanSummarySchema = PlanSchema.omit({ goals: true }).extend({
   goalCount: z.number().int(),
   doneCount: z.number().int(),

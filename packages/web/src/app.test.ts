@@ -8,6 +8,8 @@ import {
   taskFilePath,
   taskPromptInjectionsPath,
   taskStopRequestPath,
+  taskSteerRequestPath,
+  parseInjected,
   workingAreaDir,
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
@@ -247,6 +249,36 @@ describe("running task controls", () => {
     await expect(
       readFile(taskStopRequestPath(service.projects.dir("default"), "runtime"), "utf8"),
     ).resolves.toContain("T");
+  });
+
+  it("inject mode now writes a steer request; next-step (the default) does not", async () => {
+    await (await req("/api/tasks", json({ title: "Steer", status: "pending" }))).json();
+    await service.forProject("default").tasks.transition("steer", "running");
+    await writeFile(join(workingAreaDir(service.projects.dir("default"), "steer"), "log.txt"), "");
+    const dir = service.projects.dir("default");
+
+    const next = await req("/api/tasks/steer/inject", json({ prompt: "Later." }));
+    expect(next.status).toBe(200);
+    expect(await next.json()).toEqual({ ok: true, mode: "next-step", applied: "pending" });
+    await expect(readFile(taskSteerRequestPath(dir, "steer"), "utf8")).rejects.toThrow();
+
+    const now = await req("/api/tasks/steer/inject", json({ prompt: "Right now.", mode: "now" }));
+    expect(now.status).toBe(200);
+    expect(await now.json()).toEqual({ ok: true, mode: "now", applied: "pending" });
+    const steer = (await readFile(taskSteerRequestPath(dir, "steer"), "utf8")).trim();
+    expect(JSON.parse(steer)).toMatchObject({ text: "Right now." });
+    await expect(readFile(taskPromptInjectionsPath(dir, "steer"), "utf8")).resolves.toContain(
+      "Right now.",
+    );
+    const view = await (await req("/api/tasks/steer")).json();
+    const entries = parseInjected(view.body.injected);
+    expect(entries.map((e) => [e.text, e.mode])).toEqual([
+      ["Later.", "next-step"],
+      ["Right now.", "now"],
+    ]);
+
+    const bad = await req("/api/tasks/steer/inject", json({ prompt: "x", mode: "soon" }));
+    expect(bad.status).toBe(400);
   });
 
   it("rejects runtime controls for non-running tasks", async () => {
