@@ -155,7 +155,7 @@ export class PlanService {
     if (plan.status === "active" && (await this.restricted(actor))) {
       throw new OpError(
         403,
-        "This client has review trust and cannot change an active plan; a human must change it or set it back to draft",
+        "This client has review trust and cannot change an active plan; set it back to draft (PUT status draft) or ask a human",
         "forbidden_trust",
       );
     }
@@ -311,11 +311,17 @@ export class PlanService {
         "forbidden_trust",
       );
     }
+    // A restricted client may pull an active plan back to draft (and nothing else in that edit):
+    // that stops new task creation and clears the approval, and leaves running tasks alone.
+    const selfDraft =
+      restricted &&
+      patch.status === "draft" &&
+      Object.entries(patch).every(([k, v]) => k === "status" || v === undefined);
     return this.run(() =>
       this.store.modify(
         planId,
         async (plan) => {
-          await this.assertMayEdit(plan, actor);
+          if (!selfDraft) await this.assertMayEdit(plan, actor);
           const next: Plan = {
             ...plan,
             ...(patch.title !== undefined ? { title: patch.title } : {}),
@@ -326,7 +332,7 @@ export class PlanService {
           };
           // Approval follows the status: a trusted principal that activates a plan approves it,
           // staying active keeps the approval, leaving active clears it.
-          return restricted ? next : withApproval(plan, next, actor?.id ?? "local");
+          return restricted && !selfDraft ? next : withApproval(plan, next, actor?.id ?? "local");
         },
         { expectedVersion, by: actor?.id ?? "local" },
       ),

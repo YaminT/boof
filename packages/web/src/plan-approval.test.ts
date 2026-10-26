@@ -204,6 +204,47 @@ describe("approval of a plan approves its tasks", () => {
     expect((await json(await call(`${P}/site`, {}, key))).version).toBe(version);
   });
 
+  it("a review client may set its active plan back to draft itself; tasks stay as they are", async () => {
+    const key = await mint(["plans:write", "plans:read", "tasks:read"], "review");
+    await proposeAndApprove(key);
+    await call(`${P}/site/sync`, send("POST", {}));
+    peer = REMOTE;
+    const version = (await json(await call(`${P}/site`, {}, key))).version;
+    const res = await call(
+      `${P}/site`,
+      {
+        ...send("PUT", { status: "draft" }),
+        headers: { "content-type": "application/json", "if-match": `"${version}"` },
+      },
+      key,
+    );
+    expect(res.status).toBe(200);
+    const draft = await json(res);
+    expect(draft.status).toBe("draft");
+    expect(draft.approvedBy).toBeUndefined();
+    // Goals can now be edited; new tasks cannot be created until a human approves again.
+    const edit = await call(
+      `${P}/site/goals/about`,
+      send("PUT", { ...goal("about"), spec: spec("About v2"), id: undefined }),
+      key,
+    );
+    expect(edit.status).toBe(200);
+    expect((await call(`${P}/site/sync`, send("POST", {}), key)).status).toBe(409);
+    const tasks = (await json(await call(T, {}, key))).items;
+    expect(
+      tasks.every((t: { frontmatter: { status: string } }) => t.frontmatter.status === "pending"),
+    ).toBe(true);
+    // The client cannot activate the plan again, and a mixed edit of an active plan stays refused.
+    const act = await call(`${P}/site`, send("PUT", { status: "active" }), key);
+    expect(act.status).toBe(403);
+    peer = LOOPBACK;
+    await call(`${P}/site`, send("PUT", { status: "active" }));
+    peer = REMOTE;
+    const mixed = await call(`${P}/site`, send("PUT", { status: "draft", title: "x" }), key);
+    expect(mixed.status).toBe(403);
+    expect((await mixed.json()).error.code).toBe("forbidden_trust");
+  });
+
   it("a review client cannot rewrite the prompt of a pending plan task", async () => {
     const key = await mint(["plans:write", "plans:read", "tasks:write", "tasks:read"], "review");
     await proposeAndApprove(key);
