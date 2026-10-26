@@ -357,7 +357,7 @@ Boof sets these goal fields. You never send them:
 
 - `revision`: starts at 1, rises by 1 when `spec`, `dependsOn` or `model` changes. A change of `title`, `path` or `order` does not count.
 - `status`: `plan`, `develop`, `review` or `done`. A new goal starts at `plan`. Boof sets `bumpTo` (`done` by default) when the goal's task finishes.
-- `taskId`: the live task of the goal (`draft`, `pending`, `running`, `action` or `failed`). It is `null` when there is none, for example after the task finished.
+- `taskId`: the live task of the goal (`draft`, `pending`, `running`, `action`, `failed` or `stopped`). It is `null` when there is none, for example after the task finished.
 - `tasks`: every task boof made for the goal, oldest first: `[{ "taskId", "revision", "status", "branch" }]`. `branch` is `boof-runner/<taskId>`. The last entry is the newest task. Boof keeps `status` current as the task moves. Use `tasks` to find finished tasks and their branches. You need no labels for that.
 - `history`: status entries `{ revision, status, description, at, taskId? }`. The entry that records a finished task has its `taskId`.
 
@@ -401,17 +401,22 @@ Advice for the user when merging (you do not merge):
 
 A task is one prompt that the runner executes. Its `frontmatter.status` is one of:
 
-| Status     | Meaning                                      | Who moves it out of this status                                                 |
-| ---------- | -------------------------------------------- | ------------------------------------------------------------------------------- |
-| `draft`    | Waiting for approval. The runner ignores it. | A human or a `trusted` client: to `pending` (queue) or `archived`.              |
-| `pending`  | In the queue.                                | The runner: to `running`. A user: to `archived`.                                |
-| `running`  | An agent pipeline is working on it.          | Only the runner: to `done`, `failed`, `action` or back to `pending` (next run). |
-| `action`   | Parked. The planner asked questions.         | A user answers (`answers` operation): to `pending`. Or archive it.              |
-| `done`     | Finished. The reviewer approved.             | A user may archive it.                                                          |
-| `failed`   | Failed or stopped.                           | A user: retry (to `pending`) or archive.                                        |
-| `archived` | Out of the way.                              | A user: unarchive (to `pending`).                                               |
+| Status     | Meaning                                                | Who moves it out of this status                                                            |
+| ---------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `draft`    | Waiting for approval. The runner ignores it.           | A human or a `trusted` client: to `pending` (queue) or `archived`.                         |
+| `pending`  | In the queue.                                          | The runner: to `running`. A user: to `archived`.                                           |
+| `running`  | An agent pipeline is working on it.                    | Only the runner: to `done`, `failed`, `stopped`, `action` or back to `pending` (next run). |
+| `action`   | Parked. The planner asked questions.                   | A user answers (`answers` operation): to `pending`. Or archive it.                         |
+| `done`     | Finished. The reviewer approved.                       | A user may archive it.                                                                     |
+| `failed`   | The run failed.                                        | A user: retry (to `pending`) or archive.                                                   |
+| `stopped`  | Stopped on request (a user stop or a server shutdown). | A user: retry (to `pending`, continues in the kept worktree) or archive.                   |
+| `archived` | Out of the way.                                        | A user: unarchive (to `pending`).                                                          |
 
-Through `tasks.update` you can move a task only to `pending` or `archived`. The statuses `running`, `action`, `done` and `failed` belong to the runner. An illegal move answers `409 invalid_transition`.
+Through `tasks.update` you can move a task only to `pending` or `archived`. The statuses `running`, `action`, `done`, `failed` and `stopped` belong to the runner. An illegal move answers `409 invalid_transition`.
+
+A stop (`tasks.stop`, or a server shutdown) ends the task as `stopped`, not `failed`. Its worktree and branch stay. A retry runs the pipeline in the same worktree and tells the agent that the previous run was stopped, so it inspects `git status` and `git diff` and continues. A `failed` task is one that broke on its own.
+
+Prompts you inject into a running task (`tasks.inject`) are kept in `body.injected` (entries `### <time> — <who>`), also after the task is done, failed or stopped. When the task runs again, the agent gets them again under `## Earlier injected instructions`.
 
 A task can be `failed` because the runner process died while it ran (crash, `SIGKILL`, reboot). When the runner starts again it moves such a task to `failed` with an `### Interrupted` block in its log and keeps the worktree and branch, so you can retry it.
 
@@ -444,7 +449,7 @@ Which tool and model run each role is set in `settings.roles` (default planner `
 
 - Each task runs in its own git worktree on the branch `boof-runner/<task-id>`. The worktree directory is `<project workingDirectory>/.boof-runner-worktrees/<task-id>` by default.
 - Boof never merges, rebases, pushes or deletes your branches. The result of a task is the branch `boof-runner/<task-id>` in the repository at `project.workingDirectory`. It lives on the boof machine.
-- After `done` the worktree directory is removed and the branch stays (`worktree.onDone: "keep-branch"`). After `failed` or a stop, the worktree and branch stay.
+- After `done` the worktree directory is removed and the branch stays (`worktree.onDone: "keep-branch"`). After `failed` or `stopped`, the worktree and branch stay.
 - Uncommitted leftovers of a done task are saved on the branch `boof-runner/<task-id>--leftovers`.
 - A task starts from `HEAD` of the repository, or from the project's `defaultBase`, or from the task's `base`. Sync sets `base` for a follow-up task (the branch of the goal's previous task) and for a task whose goal has finished dependencies (see "Goal revisions and follow-up tasks" and "Dependency branches").
 - The log line `base <ref> → <sha>` names the ref and the commit the worktree started from. `<ref>` is the task's base, or else the branch checked out in the project directory at task start, or `HEAD` when that is detached. The task view shows them as `baseRef` and `baseSha`, and `baseReason` says why sync chose the base (`dependency`, `dependencies-merged`, `dependency-conflict`, `follow-up`, `project-default` or `head`).
@@ -657,7 +662,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `baseReason`: `"dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head"`, optional
 - `baseRef`: `string`, optional
 - `baseSha`: `string`, optional
-- `body`: `{ answers: string, command: string, log?: string, prompt: string, questions: string, reports: { developer: string, observer: string, planner: string, reviewer: string } }`, required
+- `body`: `{ answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: { developer: string, observer: string, planner: string, reviewer: string } }`, required
 - `branch`: `string`, optional
 - `finalVerdict`: `{ observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }`, required
 - `frontmatter`: `TaskFrontmatter`, required
@@ -681,7 +686,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `questions`: `"none" | "pending" | "answered"`, required; default `"none"`
 - `runs`: `integer >= 1`, required; default `1`
 - `skip`: `boolean`, required
-- `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "archived"`, required
+- `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, required
 - `title`: `string`, required
 - `tokens`: `TokenUsage`, optional
 - `tools`: `{ developer?: { model: string, tool: string }, observer?: { model: string, tool: string }, planner?: { model: string, tool: string }, reviewer?: { model: string, tool: string } }`, optional
@@ -715,7 +720,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `status`: `"plan" | "develop" | "review" | "done"`, required; default `"plan"`
 - `synced`: `{ dependsOn: kebab-id[], model?: string, revision: integer >= 1, spec: { goal: string, rules: object, stack: string, tests: object } }`, optional
 - `taskId`: `kebab-id | null`, required; default `null`
-- `tasks`: `{ branch: string, revision: integer >= 1, status: "draft" | "pending" | "running" | "action" | "done" | "failed" | "archived", taskId: kebab-id }[]`, required; default `[]`
+- `tasks`: `{ branch: string, revision: integer >= 1, status: "draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived", taskId: kebab-id }[]`, required; default `[]`
 - `title`: `string`, required
 
 #### `GoalInput`
@@ -1228,7 +1233,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.wait`
 - Scope: `plans:read`
 - MCP tool: `boof_wait_plan`
-- What it does: Long-polls a plan for up to 60 seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.
+- What it does: Long-polls a plan for up to 60 seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed, was stopped or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.
 - Success: HTTP 200 with `{ awaitingApproval: boolean, changed: boolean, complete: boolean, plan: Plan, stuck: boolean, stuckReasons: { goalId: string, status: string, taskId: string | null }[], timedOut: boolean, version: integer }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_plan`
 
@@ -1259,7 +1264,7 @@ Path parameters (all required):
 
 Query parameters:
 
-- `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "archived"`, optional
+- `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, optional
 - `plan`: `kebab-id`, optional; Plan id (kebab-case)
 - `label`: `string`, optional; max length 100
 - `limit`: `integer 1..500`, optional; Page size, default 100, max 500
@@ -1309,7 +1314,7 @@ Query parameters:
 - Scope: `tasks:write`
 - MCP tool: `boof_create_task`
 - What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.
-- Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
+- Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`
 
@@ -1351,7 +1356,7 @@ JSON body (unknown keys are rejected):
 - `prompt`: `string`, optional; max length 500000
 - `runs`: `integer 1..100`, optional
 - `skip`: `boolean`, optional
-- `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "archived"`, optional
+- `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, optional
 - `title`: `string`, optional; max length 200
 
 #### `POST /api/v1/projects/{projectId}/tasks/{taskId}/queue` (Queue a task)
@@ -1408,7 +1413,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.retry`
 - Scope: `tasks:write`
 - MCP tool: `boof_retry_task`
-- What it does: Moves a failed task back to pending. Inputs: projectId, taskId. Review-trust clients are refused.
+- What it does: Moves a failed or stopped task back to pending (a stopped task continues in its kept worktree). Inputs: projectId, taskId. Review-trust clients are refused.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
 
@@ -1482,7 +1487,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.stop`
 - Scope: `tasks:control`
 - MCP tool: `boof_stop_task`
-- What it does: Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on.
+- What it does: Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there.
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
 
@@ -1496,7 +1501,7 @@ Path parameters (all required):
 - Operation: `tasks.inject`
 - Scope: `tasks:control`
 - MCP tool: `boof_inject_prompt`
-- What it does: Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. Appends to the task's injection file.
+- What it does: Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. The prompt is also kept, with a timestamp and who injected it, in the task's body.injected so it survives after the run.
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
 
@@ -1532,7 +1537,7 @@ Query parameters:
 - Operation: `tasks.wait`
 - Scope: `tasks:read`
 - MCP tool: `boof_wait_task`
-- What it does: Waits up to 60 seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, archived), task. No side effects; call it again after a timeout.
+- What it does: Waits up to 60 seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, stopped, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, stopped, archived), task. No side effects; call it again after a timeout.
 - Success: HTTP 200 with `{ changed: boolean, task: Task, terminal: boolean, timedOut: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
 
@@ -1543,8 +1548,8 @@ Path parameters (all required):
 
 Query parameters:
 
-- `since`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "archived"`, optional; Return once the status differs from this one (default: the status now)
-- `until`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "archived"`, optional; Also return once the status equals this
+- `since`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, optional; Return once the status differs from this one (default: the status now)
+- `until`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, optional; Also return once the status equals this
 - `timeoutSeconds`: `integer 1..60`, optional; Longest wait in seconds, default 30, max 60
 
 #### `POST /api/v1/projects/{projectId}/tasks/{taskId}/attachments` (Attach a file to a task)
@@ -1932,8 +1937,8 @@ curl -sS -H "Authorization: Bearer $BOOF_KEY" \
 
 The result is `{ "changed": true|false, "timedOut": true|false, "terminal": true|false, "task": {...} }`.
 
-- The call never blocks on a finished task. If the task is already `done`, `failed`, `action` or `archived` (or already has the status given in `until`), it returns at once with `changed: false` and `timedOut: false`.
-- `terminal` is `true` when the status is `done`, `failed` or `archived`. Stop waiting then.
+- The call never blocks on a finished task. If the task is already `done`, `failed`, `stopped`, `action` or `archived` (or already has the status given in `until`), it returns at once with `changed: false` and `timedOut: false`.
+- `terminal` is `true` when the status is `done`, `failed`, `stopped` or `archived`. Stop waiting then.
 - `action` returns at once and is not terminal: answer the questions (recipe 5), then wait again.
 - If `timedOut` is `true`, call again. Pass `since=<status>` to wait for a change from a known status.
 - To follow a whole plan, use `plans.wait` instead (recipe 10).
@@ -1957,6 +1962,7 @@ Stop conditions. Stop waiting for a task when its status is:
 
 - `done`: read the results (recipe 8).
 - `failed`: read the log (recipe 8). Report the reason. Do not retry without asking the user, unless the user told you to.
+- `stopped`: someone stopped the task (or the server shut down). Ask the user whether to retry it; a retry continues in the kept worktree.
 - `action`: the task has questions (recipe 5).
 - `archived`: someone archived it.
 - `draft` for more than a few minutes: the task waits for human approval. Tell the user and stop waiting.
@@ -2024,7 +2030,7 @@ What happens to existing tasks when a goal changes (`revision` rises):
 | No task yet                        | Nothing to change. The sync creates the task when the dependencies are `done`.                                                                                                                                                    |
 | `draft`, `pending`                 | Boof rewrites the task prompt from the new spec and records the new revision.                                                                                                                                                     |
 | `action`                           | Same rewrite. The questions stay.                                                                                                                                                                                                 |
-| `failed`                           | Same rewrite. The task stays `failed`. Retry it to run the new prompt.                                                                                                                                                            |
+| `failed`, `stopped`                | Same rewrite. The task keeps its status. Retry it to run the new prompt.                                                                                                                                                          |
 | `running`                          | Boof does not stop it. It appends an instruction about the change to the task. The agent reads it before its next step. The label `stale-revision` is set. Ask the user whether to stop the task.                                 |
 | `done` (older revision)            | The goal goes back to `develop` as soon as you save the change. The next sync creates a follow-up task `Update <goal> to revision N`. It holds the old spec, the new spec and a diff, and starts from the previous task's branch. |
 | A task whose prompt a human edited | Boof appends the change to the prompt instead of rewriting it, and sets the label `needs-review`.                                                                                                                                 |
@@ -2041,9 +2047,9 @@ Other changes:
 ### Recipe 7. Retry, stop, archive
 
 ```bash
-# retry a failed task (it goes to pending)
+# retry a failed or stopped task (it goes to pending)
 curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/retry" -H "Authorization: Bearer $BOOF_KEY"
-# stop a running task (scope tasks:control); the task ends as failed and keeps its worktree
+# stop a running task (scope tasks:control); the task ends as stopped and keeps its worktree
 curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/stop" -H "Authorization: Bearer $BOOF_KEY"
 # archive a task that does not run
 curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/archive" -H "Authorization: Bearer $BOOF_KEY"
@@ -2055,7 +2061,7 @@ curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/inject" \
 MCP: `boof_retry_task`, `boof_stop_task`, `boof_archive_task`, `boof_inject_prompt`.
 
 - Ask the user before you stop a running task. A stop is best effort and can leave partial changes in the kept worktree.
-- A retry runs the pipeline again on the same branch.
+- A retry runs the pipeline again on the same branch. After a stop it also tells the agent to continue from the partial changes.
 - Before you retry a failed task, read its log and tell the user why it failed.
 - `tasks.update` with `{"status":"archived"}` also archives. A running task answers `409 invalid_transition`.
 
@@ -2141,6 +2147,7 @@ Use this when the user wants the whole plan built and a final report.
    | ----------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `action`          | The task has questions.                              | Read `body.questions`. Ask the user. Answer with recipe 5. Then continue the loop.                                                                                                                                                                                                                                                      |
    | `failed`          | The task failed.                                     | Read the log and the reports (recipe 8). Report the reason to the user. Retry (recipe 7) only if the user agrees. Then continue the loop.                                                                                                                                                                                               |
+   | `stopped`         | Someone stopped the task, or the server shut down.   | Ask the user whether to retry it (recipe 7). A retry continues in the kept worktree. Then continue the loop.                                                                                                                                                                                                                            |
    | `draft`           | The task waits for human approval.                   | A plan task is draft only if the plan has no approval. Tell the user to click Approve in the Plans tab. If the plan already shows active (approved before boof recorded approvals), the user queues the tasks in the Tasks tab. An ad-hoc task: Tasks tab, "Proposed by clients". Wait a few minutes. Stop the loop if nothing happens. |
    | `no-task`         | The goal has no task yet and the plan is not synced. | Sync (`POST .../sync`) or set `autoSync: true`. Then continue the loop.                                                                                                                                                                                                                                                                 |
    | `plan-not-active` | The plan is `draft` (`awaitingApproval: true`).      | Set the plan `active` (or ask the user to Approve it if you are `review` trust; template in section 1). Then continue the loop.                                                                                                                                                                                                         |
@@ -2244,7 +2251,7 @@ Rules for the report:
 - Take the verdicts from `finalVerdict` and quote the `summary` of the last round of that role from `reviews`. Do not parse the report text yourself.
 - Name the branch of the final task of each goal. For a goal with follow-up tasks it holds all revisions.
 - Give `baseRef`, `baseReason` and `baseSha`. Give the merge order from `mergeOrder`. Say if a goal got a `## Dependencies` section in its prompt (read the prompt or the log): then the agent had to merge dependency branches itself.
-- Say which goals are not finished and why (`failed`, `action`, `draft`, timeout).
+- Say which goals are not finished and why (`failed`, `stopped`, `action`, `draft`, timeout).
 - Add the size of the change per final task: `GET .../tasks/<task-id>/diff` gives `stats` (`files`, `additions`, `deletions`) and `commits`. Do not paste the patch; name the biggest files.
 - Do not paste logs or secrets. Quote at most a few lines of a report.
 
@@ -2278,7 +2285,7 @@ PUT  /api/v1/projects/{p}/plans/{pl}/goals/{g}        upsert goal (If-Match: "<v
 POST /api/v1/projects/{p}/plans/{pl}/sync             goals -> tasks ({"dryRun":true} to preview)
 POST /api/v1/projects/{p}/tasks                       ad-hoc task (status "pending" if trusted)
 POST /api/v1/projects/{p}/tasks/{t}/queue             draft -> pending (trusted only)
-GET  /api/v1/projects/{p}/tasks/{t}/wait              long poll, max 60 s; returns at once if done/failed/action
+GET  /api/v1/projects/{p}/tasks/{t}/wait              long poll, max 60 s; returns at once if done/failed/stopped/action
 GET  /api/v1/projects/{p}/plans/{pl}/wait?sinceVersion=n   plan long poll: complete / stuck / changed
 GET  /api/v1/runner/status                            enabled? budgetExceeded? (scope settings:read)
 GET  /api/v1/usage/budget                             limits, today's spend, resetsAt (settings:read or tasks:read)
@@ -2289,7 +2296,7 @@ GET  /api/v1/projects/{p}/tasks/{t}                   reviews, finalVerdict, bra
 GET  /api/v1/projects/{p}/tasks/{t}/live-log          JSON {log,running}; add ?format=text for text/plain
 Task result: branch boof-runner/<task-id> in project.workingDirectory. Nothing is merged.
 Review trust: plan lands draft (warnings, Boof-Warning header) -> user Approve in Plans tab -> tasks pending.
-Statuses: draft pending running action done failed archived. Runner owns running/action/done/failed.
+Statuses: draft pending running action done failed stopped archived. Runner owns running/action/done/failed/stopped.
 Errors: {"error":{"code","message","details"}}. 409 -> re-read and retry. 429 -> wait Retry-After.
 MCP: POST $BOOF_URL/mcp (Bearer). Tools: boof_whoami, boof_create_plan, boof_sync_plan, boof_wait_plan, boof_wait_task, ...
 Docs: GET $BOOF_URL/harness.txt (no key), GET $BOOF_URL/api/v1/openapi.json (key)

@@ -63,6 +63,7 @@ projects/
       actions/
       done/
       failed/
+      stopped/
       archived/
       assets/
     usage.json
@@ -136,12 +137,12 @@ A goal whose dependencies are not done gets no task (reported as `skipped: block
 
 When a goal changes, the next sync applies this table:
 
-| Task state                             | Action                                                                                                                                                                                                                                                                                                                              |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `draft`, `pending`, `action`, `failed` | Rewrite the prompt from the new spec, set `planRef.revision`, add a `## Plan change` note to the task log. A failed task stays failed (retry it); an `action` task keeps its questions. If `promptSource` is `manual` (the prompt was edited by hand) the diff is appended instead and the label `needs-review` is added.           |
-| `running`                              | Append an instruction to the control-dir prompt injections (same mechanism as the inject endpoint) naming the new revision and the field changes, once per revision; add the label `stale-revision` (best effort, the pipeline also writes the task file). The injection is read between steps, so a change lands at the next step. |
-| `done` at an older revision            | The goal goes back to `develop` (history entry `spec changed to revision N`) and a follow-up task `Update <goal> to revision N` is created. Its prompt holds the previous spec, the new spec, the field changes and a unified diff.                                                                                                 |
-| goal removed                           | `pending`/`draft` tasks are archived with the label `goal-removed`; a running task gets a stop request only with `stopRunning`; done tasks stay.                                                                                                                                                                                    |
+| Task state                                        | Action                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `draft`, `pending`, `action`, `failed`, `stopped` | Rewrite the prompt from the new spec, set `planRef.revision`, add a `## Plan change` note to the task log. A failed or stopped task keeps its status (retry it); an `action` task keeps its questions. If `promptSource` is `manual` (the prompt was edited by hand) the diff is appended instead and the label `needs-review` is added. |
+| `running`                                         | Append an instruction to the control-dir prompt injections (same mechanism as the inject endpoint) naming the new revision and the field changes, once per revision; add the label `stale-revision` (best effort, the pipeline also writes the task file). The injection is read between steps, so a change lands at the next step.      |
+| `done` at an older revision                       | The goal goes back to `develop` (history entry `spec changed to revision N`) and a follow-up task `Update <goal> to revision N` is created. Its prompt holds the previous spec, the new spec, the field changes and a unified diff.                                                                                                      |
+| goal removed                                      | `pending`/`draft` tasks are archived with the label `goal-removed`; a running task gets a stop request only with `stopRunning`; done tasks stay.                                                                                                                                                                                         |
 
 The previous spec comes from `goal.synced`, the spec the latest task prompt was built from. A task archived by a user at the current revision is not recreated; a new revision gets a new task.
 
@@ -245,7 +246,7 @@ This matters because the agents run in auto-approve mode. Worktree isolation giv
 - work that is never destroyed under the defaults:
   - Task branches `boof-runner/<id>` are never deleted unless you opt in (see Retention Policies).
   - On done, the task branch keeps only the commits the agents made deliberately. Uncommitted leftovers (including untracked files and scratch directories) are **not** committed onto it. They are saved on a side branch `boof-runner/<id>--leftovers`, created from the task branch head with a temporary index, so the task branch and its worktree stay untouched. The log records the side branch name and sha. Then the worktree directory is removed (`git worktree remove --force`; safe because leftovers are saved). If saving the leftovers or the removal fails, the directory is kept and the reason is logged.
-  - On failed or stopped, the worktree directory and the branch are kept as they are. The directory path, branch name and HEAD sha are logged.
+  - On `failed` or `stopped`, the worktree directory and the branch are kept as they are. The directory path, branch name and HEAD sha are logged.
   - On retry, an existing task branch is reused (and `base` is ignored, which the log says). An unregistered directory at the worktree path fails the task and is never touched.
   - For done and failed tasks the branch name and HEAD sha are recorded in the task log.
 - protection against one task corrupting the main working tree
@@ -347,7 +348,11 @@ Boof Runner supports two runtime controls while a task is running.
 
 The UI can request a stop for the active task. The API writes a stop signal into the running task's control directory. The active child process polls for that signal and receives `SIGTERM`, followed by `SIGKILL` if it does not exit promptly.
 
-The task is then recorded as failed with a clear stopped message. This is intentionally conservative: a stopped run may have partial changes in its worktree, its worktree and branch are kept for inspection or resume, so review them before retrying.
+The task is then recorded with the status `stopped` (directory `tasks/stopped/`), not `failed`: the user asked for it, nothing broke. The log gets a `### Stopped` block (`stopped by user`). Only the runner moves a task to `stopped`, and only from `running`. A stopped task can be retried (to `pending`) or archived.
+
+A stopped run may have partial changes in its worktree. The worktree and branch are always kept (`worktree.onFailure: "delete"` never applies to a stop). A retry continues in that worktree: the pipeline tells the agent that the previous run was stopped and to inspect `git status` and `git diff` before it continues, like the "Previous attempt interrupted" note for transient retries.
+
+A graceful shutdown (`SIGTERM`, for example under systemd) is intentional too: the engine asks each running task to stop and the task ends as `stopped` with the note `stopped by server shutdown`. Only a crash (below) ends as `failed`. A plan sync with `--stop-running` for a removed goal also ends the task as `stopped`. Older data roots have no `tasks/stopped/`; the runner creates it at start, and tasks that were stopped before stay `failed`.
 
 ### Recovery after a crash or restart
 
@@ -358,6 +363,10 @@ If the runner process dies hard (`SIGKILL`, out of memory, power loss, reboot), 
 The UI can inject an additional prompt while a task is running. Boof Runner writes that prompt to the running task's control directory and appends a note to the live log.
 
 Because Claude Code and Codex are currently run non-interactively, injected prompts do not alter the already-executing CLI invocation. They are picked up before the next pipeline step and included in subsequent prompts under a dedicated injected-prompts section.
+
+Injected prompts are also kept in the task file, in the body section `## Injected`, written when the prompt is injected (the control directory is deleted when the task leaves `running`). Each entry is `### <ISO time> — <who>` followed by the text; who is the API client name, or `user` for the local principal and the UI. Files without the section still parse. The section is append-only: saving a task never drops entries. The task Editor shows it in the "Injected" tab, and the task view of the API and MCP has `body.injected` (the raw section text).
+
+When a task runs again (a retry of a stopped or failed task, or the next of several runs), the earlier injected prompts are not lost: the prompts of every step include them under `## Earlier injected instructions`, so the agent keeps following them. Prompts injected during the new run use the live mechanism above.
 
 This gives the user a practical way to steer a long-running task between steps without changing the whole tool architecture.
 
@@ -449,39 +458,31 @@ These tradeoffs are acceptable for a local code-execution runner, but they shoul
 
 The highest-value next improvements are:
 
-1. Add an explicit stopped status
-
-   Today a stopped task is recorded as failed. A separate `stopped` status would make user intent clearer and allow different retry behavior.
-
-2. Make injected prompts visible in the task editor
-
-   Prompt injections are persisted in the running task control area and included in later prompts. They should also be mirrored into a durable task body section so users can inspect them after the task finishes.
-
-3. Add a worktree review screen
+1. Add a worktree review screen
 
    The reviewer sees the diff, but users would benefit from a UI view that shows the actual branch/worktree diff before retrying, archiving, or accepting a result.
 
-4. Support interactive tool sessions when available
+2. Support interactive tool sessions when available
 
    True mid-run prompt injection would require interactive sessions or a tool-specific control protocol. If Claude Code or Codex expose stable session APIs, Boof Runner should add adapters that can send input into an active session.
 
-5. Add budget controls
+3. Add budget controls
 
    Usage tracking exists, but there are no hard limits. Add optional per-run, per-day, or per-tool caps with clear behavior when a limit is reached.
 
-6. Improve stop cleanup policy
+4. Improve stop cleanup policy
 
    A stopped task keeps its partially modified worktree and branch today. Making this policy configurable (keep or discard) and adding UI choices such as retry from current state are follow-ups.
 
-7. Expand model metadata
+5. Expand model metadata
 
    The settings page currently shows model names. It could also show model source, availability, default role fit, and whether a health probe succeeded for that model.
 
-8. Push notifications to MCP clients
+6. Push notifications to MCP clients
 
    Events exist (replayable SSE and signed webhooks), but the stateless MCP endpoint cannot push them. A stateful transport with resource subscriptions would let agent hosts react without polling `boof_wait_task`.
 
-9. Raise concurrency within one project safely
+7. Raise concurrency within one project safely
 
    Different projects already run side by side (`runner.concurrency`). Running two tasks of one repository needs race-safe worktree and branch creation first, plus explicit resource limits.
 

@@ -163,7 +163,7 @@ To run boof on a headless Linux server (systemd service, nginx with TLS, API key
 
 Pick a project at the top (or add one); every tab works on that project. The runner on/off toggle sits next to the project picker.
 
-- **Tasks** — the queue with status filters (draft, pending, running, action, done, failed, archived) and drag-to-reorder priority. Open a task to edit its prompt, labels, runs, command template and attachments (images and PDFs), read the planner, developer, observer and reviewer reports, and watch the live agent output. Stop a running task or inject an extra instruction. The **Changes** tab (and a **Review changes** button on done and failed tasks and on plan goals) shows what the task branch changed: the commits, the changed files with +/- counts and a line-numbered unified diff per file (loaded on demand for large diffs), including uncommitted work of a running or kept worktree, with buttons to copy the branch name and the git log, diff and merge commands. Filter "Proposed by clients" to approve drafts that API clients created.
+- **Tasks** — the queue with status filters (draft, pending, running, action, done, failed, stopped, archived) and drag-to-reorder priority. Open a task to edit its prompt, labels, runs, command template and attachments (images and PDFs), read the planner, developer, observer and reviewer reports, and watch the live agent output. Stop a running task or inject an extra instruction. Filter "Proposed by clients" to approve drafts that API clients created.
 - **Plans** — create plans with goals and dependencies, edit them, import them from a repository's `goal.boof.xml` files or export them. **Approve** a draft plan to activate it, preview a sync (dry run), then **Sync to tasks**. Enable auto-sync to let the runner sync before it picks tasks.
 - **Actions** — tasks parked because the planner has questions. Answer them and the task resumes.
 - **Commands** — reusable instruction templates that any task can attach.
@@ -197,7 +197,7 @@ Common option: `-d, --data <path>` (data root, default `./data` or `$BOOF_RUNNER
 | `auth`    | `add --name <text> --scopes <a,b,c> [--projects <id,id>\|*] [--trust trusted\|review] [--expires 30d] [--kind harness\|mcp\|cli]`, `list`, `revoke <id>`, `rotate <id>` |
 | `mcp`     | `--client <id>`, `--project <id>`                                                                                                                                       |
 
-Exit codes: 0 success; 1 a task failed, parked, nothing was actionable, or bad usage.
+Exit codes: 0 success; 1 a task failed, was stopped, parked, nothing was actionable, or bad usage.
 
 ## Configuration
 
@@ -232,7 +232,7 @@ A project can override `roles`, `review`, `worktree`, `retries` and `budget` per
   projects/
     <projectId>/
       project.json       # name, working directory, paused/archived, overrides
-      tasks/             # drafts/ pending/ ongoing/ actions/ done/ failed/ archived/ assets/
+      tasks/             # drafts/ pending/ ongoing/ actions/ done/ failed/ stopped/ archived/ assets/
       plans/             # <planId>.json
       events.jsonl       # structured events of this project
       usage.json         # token usage of this project
@@ -342,7 +342,7 @@ A task moves physically between status directories under `<data>/projects/<id>/t
 
 ```
 drafts/ → pending/ → ongoing/ → done/
-                  ↘ actions/ (awaiting your answers)  ↘ failed/
+                  ↘ actions/ (awaiting your answers)  ↘ failed/ or stopped/
 ```
 
 The runner polls the `pending/` directory of every active, non-paused project, picks the highest-priority task (ties: oldest `updated`, then project id), and runs **planner → planner-refinement → developer → observer (optional) → reviewer**, writing a report at every step. If the planner raises clarifying questions, the task parks in `actions/` and the runner moves on; you answer in the **Actions** tab and it resumes. Developer and reviewer questions are routed back to the planner via file and never reach you.

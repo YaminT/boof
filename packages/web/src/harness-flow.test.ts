@@ -94,6 +94,7 @@ beforeEach(async () => {
         "plans:write",
         "tasks:write",
         "tasks:read",
+        "tasks:control",
         "plans:read",
         "projects:read",
       ],
@@ -300,5 +301,29 @@ describe("harness flow over /api/v1", () => {
       await call("/projects/shop/tasks/boof-a/wait?timeoutSeconds=30")
     ).json();
     expect(taskWait).toMatchObject({ changed: false, timedOut: false, terminal: true });
+
+    // A stopped task is just as stuck and just as terminal; retry and inject by a client.
+    await store.transition("boof-a", "pending");
+    await store.transition("boof-a", "running");
+    const inj = await call(
+      "/projects/shop/tasks/boof-a/inject",
+      send("POST", { prompt: "Mind the edge cases." }),
+    );
+    expect(inj.status).toBe(200);
+    await store.transition("boof-a", "stopped");
+    const stopped = await (await call("/projects/shop/plans/w/wait?timeoutSeconds=1")).json();
+    expect(stopped.stuck).toBe(true);
+    expect(stopped.stuckReasons).toEqual([{ goalId: "a", taskId: "boof-a", status: "stopped" }]);
+    const stoppedWait = await (
+      await call("/projects/shop/tasks/boof-a/wait?timeoutSeconds=30")
+    ).json();
+    expect(stoppedWait).toMatchObject({ changed: false, timedOut: false, terminal: true });
+    expect(stoppedWait.task.frontmatter.status).toBe("stopped");
+    // The injected prompt is on the task view, with its author, after the run ended.
+    expect(stoppedWait.task.body.injected).toContain("Mind the edge cases.");
+    expect(stoppedWait.task.body.injected).toContain("— harness");
+    const retried = await call("/projects/shop/tasks/boof-a/retry", send("POST"));
+    expect(retried.status).toBe(200);
+    expect((await retried.json()).frontmatter.status).toBe("pending");
   });
 });

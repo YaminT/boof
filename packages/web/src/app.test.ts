@@ -238,6 +238,10 @@ describe("running task controls", () => {
       readFile(taskPromptInjectionsPath(service.projects.dir("default"), "runtime"), "utf8"),
     ).resolves.toContain("Focus on tests.");
 
+    const view = await (await req("/api/tasks/runtime")).json();
+    expect(view.body.injected).toContain("Focus on tests.");
+    expect(view.body.injected).toMatch(/— user\n/);
+
     const stopped = await req("/api/tasks/runtime/stop", { method: "POST" });
     expect(stopped.status).toBe(200);
     await expect(

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useLive } from "../useLive.js";
 import type { Attachment } from "@boof-runner/shared/schema";
+import { parseInjected } from "@boof-runner/shared/injected";
 import type { Task } from "@boof-runner/shared/task-types";
 import type { CommandTemplate } from "../api-types.js";
 import { FileIcon, PaperclipIcon, XIcon } from "./Icons.js";
@@ -12,13 +13,20 @@ const NEW = "__new__";
 const ATTACH_ACCEPT =
   ".png,.jpg,.jpeg,.gif,.webp,.pdf,image/png,image/jpeg,image/gif,image/webp,application/pdf";
 
-type OutputTab = "planner" | "developer" | "observer" | "reviewer" | "log";
+type OutputTab = "planner" | "developer" | "observer" | "reviewer" | "log" | "injected";
 
 /** A mutation response has no log (v1 leaves it out): keep the one already loaded. */
 function keepLog(prev: Task | null, next: Task): Task {
   return prev && next.body.log === ""
     ? { ...next, body: { ...next.body, log: prev.body.log } }
     : next;
+}
+
+/** The injected prompts as a readable list: time and author, then the instruction. */
+function injectedText(md: string | undefined): string {
+  const entries = parseInjected(md ?? "");
+  if (entries.length === 0) return "No prompts were injected while this task ran.";
+  return entries.map((e) => `${new Date(e.at).toLocaleString()} — ${e.by}\n${e.text}`).join("\n\n");
 }
 
 function formatSize(bytes: number): string {
@@ -436,10 +444,14 @@ export function Editor({
               <span className={`status-pill status-${task.frontmatter.status}`}>
                 {task.frontmatter.status}
               </span>
-              {task.frontmatter.status === "failed" && (
+              {(task.frontmatter.status === "failed" || task.frontmatter.status === "stopped") && (
                 <button
                   className="retry-btn"
-                  title="Clear the failed status and re-queue this task"
+                  title={
+                    task.frontmatter.status === "stopped"
+                      ? "Re-queue this stopped task; it continues in its kept worktree"
+                      : "Clear the failed status and re-queue this task"
+                  }
                   onClick={async () => {
                     await api.retry(projectId, task.frontmatter.id);
                     onChange();
@@ -451,30 +463,38 @@ export function Editor({
               )}
             </div>
             <div className="output-tabs">
-              {(["planner", "developer", "observer", "reviewer", "log"] as const).map((k) => {
-                const hasContent =
-                  k === "log" ? !!(liveLog ?? task.body.log) : !!task.body.reports[k];
-                return (
-                  <button
-                    key={k}
-                    className={outTab === k ? "active" : ""}
-                    onClick={() => setOutTab(k)}
-                    title={hasContent ? undefined : "No content yet"}
-                  >
-                    {k === "log" ? "Log" : k[0].toUpperCase() + k.slice(1)}
-                    {k === "log" && liveLog !== null ? (
-                      <span className="live-dot" title="Streaming live" />
-                    ) : hasContent ? (
-                      <span className="dot" />
-                    ) : null}
-                  </button>
-                );
-              })}
+              {(["planner", "developer", "observer", "reviewer", "log", "injected"] as const).map(
+                (k) => {
+                  const hasContent =
+                    k === "log"
+                      ? !!(liveLog ?? task.body.log)
+                      : k === "injected"
+                        ? !!task.body.injected?.trim()
+                        : !!task.body.reports[k];
+                  return (
+                    <button
+                      key={k}
+                      className={outTab === k ? "active" : ""}
+                      onClick={() => setOutTab(k)}
+                      title={hasContent ? undefined : "No content yet"}
+                    >
+                      {k[0].toUpperCase() + k.slice(1)}
+                      {k === "log" && liveLog !== null ? (
+                        <span className="live-dot" title="Streaming live" />
+                      ) : hasContent ? (
+                        <span className="dot" />
+                      ) : null}
+                    </button>
+                  );
+                },
+              )}
             </div>
             <pre className="output-body" ref={logRef}>
               {outTab === "log"
                 ? (liveLog ?? task.body.log) || "No agent output captured yet."
-                : task.body.reports[outTab] || `No ${outTab} report yet.`}
+                : outTab === "injected"
+                  ? injectedText(task.body.injected)
+                  : task.body.reports[outTab] || `No ${outTab} report yet.`}
             </pre>
           </section>
         )}
