@@ -189,7 +189,7 @@ export function buildOpenApi(ops: readonly AnyOperation[]): Json {
       operationId: "events.stream",
       summary: "Stream events (SSE)",
       description:
-        "Server-Sent Events of task, plan and runner changes. Each event has `event: <type>`, `id: <cursor>` and the event JSON as data. Reconnect with Last-Event-ID (or since=<cursor>) to replay what you missed; since=start replays everything; without it only new events arrive. Needs tasks:read; only projects the client may access are sent.",
+        "Server-Sent Events of task, plan and runner changes, plus ephemeral `event: changed` hints (data {project}) for file changes that are not events; hints have no id and are not replayed. Each event has `event: <type>`, `id: <cursor>` and the event JSON as data. Reconnect with Last-Event-ID (or since=<cursor>) to replay what you missed; since=start replays everything; without it only new events arrive. Needs tasks:read; only projects the client may access are sent.",
       tags: ["events"],
       "x-boof-scope": "tasks:read",
       parameters: [

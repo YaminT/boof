@@ -154,7 +154,12 @@ describe("GET /api/v1/events", () => {
     const events = (await stream("?since=start")).events
       .filter((e) => e.event !== "ready")
       .map((e) => JSON.parse(e.data));
-    expect(events.map((e) => e.type)).toEqual(["plan.updated", "task.status", "runner.enabled"]);
-    expect(events[1]).toMatchObject({ from: "draft", to: "pending", by: "local" });
+    expect(events.map((e) => e.type)).toEqual([
+      "plan.updated",
+      "task.created",
+      "task.status",
+      "runner.enabled",
+    ]);
+    expect(events[2]).toMatchObject({ from: "draft", to: "pending", by: "local" });
   });
 });

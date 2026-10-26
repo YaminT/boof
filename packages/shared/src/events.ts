@@ -13,6 +13,14 @@ import { withFileLock } from "./atomic.js";
 const by = z.string().min(1);
 const project = z.string().min(1);
 
+export const TaskCreatedEventSchema = z.object({
+  type: z.literal("task.created"),
+  ts: z.string(),
+  project,
+  task: z.string(),
+  status: z.string(),
+  by,
+});
 export const TaskStatusEventSchema = z.object({
   type: z.literal("task.status"),
   ts: z.string(),
@@ -55,6 +63,7 @@ export const RunnerEnabledEventSchema = z.object({
 });
 
 export const BoofEventSchema = z.discriminatedUnion("type", [
+  TaskCreatedEventSchema,
   TaskStatusEventSchema,
   TaskQuestionsEventSchema,
   PlanUpdatedEventSchema,
@@ -64,6 +73,7 @@ export const BoofEventSchema = z.discriminatedUnion("type", [
 export type BoofEvent = z.infer<typeof BoofEventSchema>;
 export type BoofEventType = BoofEvent["type"];
 export const EVENT_TYPES = [
+  "task.created",
   "task.status",
   "task.questions",
   "plan.updated",

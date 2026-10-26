@@ -96,14 +96,15 @@ describe("events", () => {
     await plans.modify("p", (p) => ({ ...p, title: "P2" }), { by: "client:h" });
     const events = (await readEvents(dir, null)).map((e) => e.event);
     expect(events.map((e) => e.type)).toEqual([
+      "task.created",
       "task.status",
       "task.status",
       "task.questions",
       "plan.updated",
       "plan.updated",
     ]);
-    expect(events[1]).toMatchObject({ from: "running", to: "action", by: "client:x" });
-    expect(events[2]).toMatchObject({ count: 2 });
-    expect(events[4]).toMatchObject({ plan: "p", version: plan.version + 1, by: "client:h" });
+    expect(events[2]).toMatchObject({ from: "running", to: "action", by: "client:x" });
+    expect(events[3]).toMatchObject({ count: 2 });
+    expect(events[5]).toMatchObject({ plan: "p", version: plan.version + 1, by: "client:h" });
   });
 });

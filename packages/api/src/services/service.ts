@@ -171,7 +171,7 @@ export class ProjectService {
       input.prompt ?? "",
     );
     if (input.command) await this.applyCommand(task, input.command);
-    return this.tasks.create(task);
+    return this.tasks.create(task, { by: actor?.id ?? "local" });
   }
 
   private async applyCommand(task: Task, commandId: string | null): Promise<void> {

@@ -108,13 +108,20 @@ export class TaskStore {
     return task;
   }
 
-  /** Create a brand-new task file. */
-  async create(task: Task): Promise<Task> {
+  /** Create a brand-new task file and append a `task.created` event (`opts.by`: the actor). */
+  async create(task: Task, opts: { by?: string } = {}): Promise<Task> {
     const now = nowIso();
     task.frontmatter.created = task.frontmatter.created || now;
     task.frontmatter.updated = now;
     const path = taskFilePath(this.root, task.frontmatter.status, task.frontmatter.id);
     await lockedAtomicWrite(path, serializeTask(task));
+    await appendEvent(this.root, {
+      type: "task.created",
+      project: basename(this.root),
+      task: task.frontmatter.id,
+      status: task.frontmatter.status,
+      by: opts.by ?? "runner",
+    });
     return task;
   }
 

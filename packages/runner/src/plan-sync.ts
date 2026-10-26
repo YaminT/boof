@@ -382,7 +382,7 @@ async function syncOnce(
       status: createStatus,
       skip,
     });
-    if (!dry) await store.create(task);
+    if (!dry) await store.create(task, { by: opts.by });
     return task;
   };
 

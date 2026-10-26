@@ -153,6 +153,41 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "project": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "task.created",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "project",
+              "task",
+              "status",
+              "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
               "from": {
                 "type": "string"
               },
@@ -2409,7 +2444,7 @@
     },
     "/events": {
       "get": {
-        "description": "Server-Sent Events of task, plan and runner changes. Each event has `event: <type>`, `id: <cursor>` and the event JSON as data. Reconnect with Last-Event-ID (or since=<cursor>) to replay what you missed; since=start replays everything; without it only new events arrive. Needs tasks:read; only projects the client may access are sent.",
+        "description": "Server-Sent Events of task, plan and runner changes, plus ephemeral `event: changed` hints (data {project}) for file changes that are not events; hints have no id and are not replayed. Each event has `event: <type>`, `id: <cursor>` and the event JSON as data. Reconnect with Last-Event-ID (or since=<cursor>) to replay what you missed; since=start replays everything; without it only new events arrive. Needs tasks:read; only projects the client may access are sent.",
         "operationId": "events.stream",
         "parameters": [
           {

@@ -190,7 +190,15 @@ export function createApp(deps: AppDeps): Hono {
       };
       await drain();
       if (!deps.watcher) return; // no live source (tests): replay only
-      const unsub = deps.watcher.subscribe(() => void drain().catch(() => {}));
+      const unsub = deps.watcher.subscribe((_event, data) => {
+        // Typed events first (replayable); then a `changed` hint for file changes that are not
+        // events (a streaming log, an edited prompt). Hints are never replayed.
+        if (data.project && !authorizeProject(principal, data.project)) return;
+        if (project && data.project && data.project !== project) return;
+        void drain()
+          .then(() => stream.writeSSE({ event: "changed", data: JSON.stringify(data) }))
+          .catch(() => {});
+      });
       const poll = setInterval(() => void drain().catch(() => {}), 2000);
       const beat = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), 15000);
       await new Promise<void>((resolve) => {
