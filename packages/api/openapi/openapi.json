@@ -824,6 +824,31 @@
       "Plan": {
         "additionalProperties": false,
         "properties": {
+          "approvedBy": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "type": "string"
+              },
+              "principalId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "principalId",
+              "at",
+              "version"
+            ],
+            "type": "object"
+          },
           "autoSync": {
             "default": false,
             "type": "boolean"
@@ -1491,6 +1516,9 @@
       "Task": {
         "additionalProperties": false,
         "properties": {
+          "baseSha": {
+            "type": "string"
+          },
           "body": {
             "additionalProperties": false,
             "properties": {
@@ -1543,17 +1571,92 @@
             ],
             "type": "object"
           },
+          "branch": {
+            "type": "string"
+          },
+          "finalVerdict": {
+            "additionalProperties": false,
+            "properties": {
+              "observer": {
+                "enum": [
+                  "APPROVE",
+                  "CHANGES_REQUESTED",
+                  "REJECT",
+                  "INVALID"
+                ],
+                "type": "string"
+              },
+              "reviewer": {
+                "enum": [
+                  "APPROVE",
+                  "CHANGES_REQUESTED",
+                  "REJECT",
+                  "INVALID"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "frontmatter": {
             "$ref": "#/components/schemas/TaskFrontmatter"
           },
           "projectId": {
             "type": "string"
+          },
+          "reviews": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "iteration": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "role": {
+                  "enum": [
+                    "observer",
+                    "reviewer"
+                  ],
+                  "type": "string"
+                },
+                "round": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "summary": {
+                  "description": "First non-empty, non-heading line of the report.",
+                  "type": "string"
+                },
+                "verdict": {
+                  "enum": [
+                    "APPROVE",
+                    "CHANGES_REQUESTED",
+                    "REJECT",
+                    "INVALID"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "round",
+                "iteration",
+                "verdict",
+                "summary"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           }
         },
         "required": [
           "frontmatter",
           "body",
-          "projectId"
+          "projectId",
+          "reviews",
+          "finalVerdict"
         ],
         "type": "object"
       },
@@ -3469,6 +3572,31 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "approvedBy": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "at": {
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                                "type": "string"
+                              },
+                              "principalId": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "version": {
+                                "maximum": 9007199254740991,
+                                "minimum": 1,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "principalId",
+                              "at",
+                              "version"
+                            ],
+                            "type": "object"
+                          },
                           "autoSync": {
                             "default": false,
                             "type": "boolean"
@@ -3600,7 +3728,7 @@
         "x-mcp-tool": "boof_list_plans"
       },
       "post": {
-        "description": "Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan.",
+        "description": "Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan; the result then has warnings (status_downgraded) and the HTTP header Boof-Warning. A human approves the plan (sets it active); its tasks are then created pending.",
         "operationId": "plans.create",
         "parameters": [
           {
@@ -3685,7 +3813,159 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Plan"
+                  "additionalProperties": false,
+                  "properties": {
+                    "approvedBy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                          "type": "string"
+                        },
+                        "principalId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "version": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "principalId",
+                        "at",
+                        "version"
+                      ],
+                      "type": "object"
+                    },
+                    "autoSync": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "bumpTo": {
+                      "default": "done",
+                      "enum": [
+                        "review",
+                        "done"
+                      ],
+                      "type": "string"
+                    },
+                    "created": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "description": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "goals": {
+                      "items": {
+                        "$ref": "#/components/schemas/Goal"
+                      },
+                      "type": "array"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "source": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "type": "string"
+                        },
+                        "importedFrom": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "api",
+                            "mcp",
+                            "repo-import"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "status": {
+                      "default": "draft",
+                      "enum": [
+                        "draft",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "updated": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "version": {
+                      "default": 1,
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "warnings": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "applied": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "const": "status_downgraded",
+                            "type": "string"
+                          },
+                          "field": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "requested": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "field",
+                          "requested",
+                          "applied"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "description",
+                    "status",
+                    "autoSync",
+                    "bumpTo",
+                    "source",
+                    "goals",
+                    "version",
+                    "created",
+                    "updated"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -5317,7 +5597,7 @@
         "x-mcp-tool": "boof_list_tasks"
       },
       "post": {
-        "description": "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft; a human approves it.",
+        "description": "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.",
         "operationId": "tasks.create",
         "parameters": [
           {
@@ -5403,7 +5683,183 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Task"
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "answers": {
+                          "type": "string"
+                        },
+                        "command": {
+                          "type": "string"
+                        },
+                        "log": {
+                          "type": "string"
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "questions": {
+                          "type": "string"
+                        },
+                        "reports": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "developer": {
+                              "type": "string"
+                            },
+                            "observer": {
+                              "type": "string"
+                            },
+                            "planner": {
+                              "type": "string"
+                            },
+                            "reviewer": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "planner",
+                            "developer",
+                            "observer",
+                            "reviewer"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "prompt",
+                        "command",
+                        "questions",
+                        "answers",
+                        "reports"
+                      ],
+                      "type": "object"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "finalVerdict": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "observer": {
+                          "enum": [
+                            "APPROVE",
+                            "CHANGES_REQUESTED",
+                            "REJECT",
+                            "INVALID"
+                          ],
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "enum": [
+                            "APPROVE",
+                            "CHANGES_REQUESTED",
+                            "REJECT",
+                            "INVALID"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "frontmatter": {
+                      "$ref": "#/components/schemas/TaskFrontmatter"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "reviews": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "iteration": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "role": {
+                            "enum": [
+                              "observer",
+                              "reviewer"
+                            ],
+                            "type": "string"
+                          },
+                          "round": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "summary": {
+                            "description": "First non-empty, non-heading line of the report.",
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "enum": [
+                              "APPROVE",
+                              "CHANGES_REQUESTED",
+                              "REJECT",
+                              "INVALID"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "round",
+                          "iteration",
+                          "verdict",
+                          "summary"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "warnings": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "applied": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "const": "status_downgraded",
+                            "type": "string"
+                          },
+                          "field": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "requested": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "field",
+                          "requested",
+                          "applied"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "frontmatter",
+                    "body",
+                    "projectId",
+                    "reviews",
+                    "finalVerdict"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -6152,7 +6608,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/live-log": {
       "get": {
-        "description": "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId. No side effects.",
+        "description": "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional format=text (REST: text/plain instead of JSON). No side effects.",
         "operationId": "tasks.liveLog",
         "parameters": [
           {
@@ -6174,6 +6630,19 @@
               "description": "Task id (kebab-case).",
               "maxLength": 200,
               "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "description": "text: the REST route answers text/plain with the log only.",
+              "enum": [
+                "json",
+                "text"
+              ],
               "type": "string"
             }
           }

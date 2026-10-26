@@ -2,6 +2,7 @@ export * from "./errors.js";
 export * from "./define-op.js";
 export * from "./registry.js";
 export * from "./schemas.js";
+export * from "./warnings.js";
 export * from "./audit.js";
 export * from "./validation.js";
 export * from "./services/service.js";

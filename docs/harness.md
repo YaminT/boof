@@ -530,9 +530,13 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 
 #### `Task`
 
+- `baseSha`: `string`, optional
 - `body`: `{ answers: string, command: string, log?: string, prompt: string, questions: string, reports: { developer: string, observer: string, planner: string, reviewer: string } }`, required
+- `branch`: `string`, optional
+- `finalVerdict`: `{ observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }`, required
 - `frontmatter`: `TaskFrontmatter`, required
 - `projectId`: `string`, required
+- `reviews`: `{ iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[]`, required
 
 #### `TaskFrontmatter`
 
@@ -559,6 +563,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 
 #### `Plan`
 
+- `approvedBy`: `{ at: ISO-8601 string, principalId: string, version: integer >= 1 }`, optional
 - `autoSync`: `boolean`, required; default `false`
 - `bumpTo`: `"review" | "done"`, required; default `"done"`
 - `created`: `ISO-8601 string`, required
@@ -852,7 +857,7 @@ Path parameters (all required):
 - Scope: `plans:read`
 - MCP tool: `boof_list_plans`
 - What it does: Lists a project's plans with goal counts, without the goals. Input: projectId. No side effects.
-- Success: HTTP 200 with `{ plans: { autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, doneCount: integer, goalCount: integer, id: kebab-id, source: object, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1 }[] }`.
+- Success: HTTP 200 with `{ plans: { approvedBy?: object, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, doneCount: integer, goalCount: integer, id: kebab-id, source: object, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1 }[] }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -864,8 +869,8 @@ Path parameters (all required):
 - Operation: `plans.create`
 - Scope: `plans:write`
 - MCP tool: `boof_create_plan`
-- What it does: Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan.
-- Success: HTTP 201 with `Plan`. The response has an `ETag` header.
+- What it does: Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan; the result then has warnings (status_downgraded) and the HTTP header Boof-Warning. A human approves the plan (sets it active); its tasks are then created pending.
+- Success: HTTP 201 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, goals: Goal[], id: kebab-id, source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1, warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_plan`, `409 idempotency_conflict`, `409 plan_exists`
 
@@ -1155,8 +1160,8 @@ Query parameters:
 - Operation: `tasks.create`
 - Scope: `tasks:write`
 - MCP tool: `boof_create_task`
-- What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft; a human approves it.
-- Success: HTTP 201 with `Task`. The response has an `ETag` header.
+- What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.
+- Success: HTTP 201 with `{ baseSha?: string, body: { answers: string, command: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`
 
@@ -1361,7 +1366,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.liveLog`
 - Scope: `tasks:read`
 - MCP tool: `boof_get_task_log`
-- What it does: Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId. No side effects.
+- What it does: Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional format=text (REST: text/plain instead of JSON). No side effects.
 - Success: HTTP 200 with `{ log: string, running: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
 
@@ -1369,6 +1374,10 @@ Path parameters (all required):
 
 - `projectId`: `kebab-id`, required; Project id (kebab-case)
 - `taskId`: `kebab-id`, required; Task id (kebab-case)
+
+Query parameters:
+
+- `format`: `"json" | "text"`, optional; text: the REST route answers text/plain with the log only
 
 #### `GET /api/v1/projects/{projectId}/tasks/{taskId}/wait` (Wait for a task status change)
 

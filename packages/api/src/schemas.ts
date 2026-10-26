@@ -9,6 +9,7 @@ import {
   TokenUsageSchema,
   WebhookSchema,
 } from "@boof-runner/shared";
+import { WarningSchema } from "./warnings.js";
 
 export const TaskViewSchema = z.object({
   frontmatter: TaskFrontmatterSchema,
@@ -27,6 +28,35 @@ export const TaskViewSchema = z.object({
     log: z.string().optional(),
   }),
   projectId: z.string(),
+  /** Observer and reviewer rounds parsed from the reports, oldest first. */
+  reviews: z.array(
+    z.object({
+      role: z.enum(["observer", "reviewer"]),
+      round: z.number().int(),
+      iteration: z.number().int(),
+      verdict: z.enum(["APPROVE", "CHANGES_REQUESTED", "REJECT", "INVALID"]),
+      summary: z.string().meta({ description: "First non-empty, non-heading line of the report." }),
+    }),
+  ),
+  /** The verdict of the last round of each role that reviewed. */
+  finalVerdict: z.object({
+    observer: z.enum(["APPROVE", "CHANGES_REQUESTED", "REJECT", "INVALID"]).optional(),
+    reviewer: z.enum(["APPROVE", "CHANGES_REQUESTED", "REJECT", "INVALID"]).optional(),
+  }),
+  /** `boof-runner/<id>` when the task ran in a git worktree. */
+  branch: z.string().optional(),
+  /** The commit the task's worktree started from, when the task log recorded it. */
+  baseSha: z.string().optional(),
+});
+
+/** The result of a create: the task plus the warnings when the server changed the requested status. */
+export const TaskCreateResultSchema = TaskViewSchema.extend({
+  warnings: z.array(WarningSchema).optional(),
+});
+
+/** The result of a plan create: the plan plus the warnings when the server changed the requested status. */
+export const PlanCreateResultSchema = PlanSchema.extend({
+  warnings: z.array(WarningSchema).optional(),
 });
 
 export const OkSchema = z.object({ ok: z.literal(true) });

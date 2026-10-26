@@ -45,6 +45,11 @@ export interface RestSpec {
   idempotent?: boolean;
   /** multipart/form-data request (`file` field) or a binary response; everything else is JSON. */
   kind?: "json" | "multipart" | "binary";
+  /**
+   * Plain-text alternative: when the request has `?format=text` the REST layer answers
+   * `text/plain` with this string instead of the JSON result.
+   */
+  text?: (output: never) => string;
   /** Reshape the result for the unversioned routes. */
   legacyOutput?: (output: never) => unknown;
 }

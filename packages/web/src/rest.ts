@@ -4,6 +4,7 @@ import {
   IdempotencyStore,
   OpError,
   toOpError,
+  warningsOf,
   type AnyOperation,
   type OpContext,
 } from "@boof-runner/api";
@@ -59,6 +60,12 @@ function coerce(kind: FieldKind | undefined, value: string): unknown {
   }
   if (kind === "number") return value.trim() === "" ? value : Number(value);
   return value;
+}
+
+/** `Boof-Warning: status_downgraded` when the result carries warnings. */
+function setWarningHeader(c: Context, result: unknown): void {
+  const codes = [...new Set(warningsOf(result).map((w) => w.code))];
+  if (codes.length > 0) c.header("Boof-Warning", codes.join(", "));
 }
 
 function parseIfMatch(header: string, field: "expectedVersion" | "expectedUpdated"): unknown {
@@ -209,6 +216,7 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
         }
         if (stored.etag) c.header("ETag", stored.etag);
         c.header("Idempotency-Replayed", "true");
+        setWarningHeader(c, stored.body);
         return c.json(stored.body as object, stored.status as 200);
       }
     }
@@ -227,10 +235,15 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
         "Cache-Control": "no-cache",
       });
     }
+    if (op.rest.text && input["format"] === "text") {
+      c.header("Cache-Control", "no-cache");
+      return c.text(op.rest.text(out as never), 200);
+    }
     const status = legacy ? 200 : (op.rest.status ?? 200);
     const body = legacy && op.rest.legacyOutput ? op.rest.legacyOutput(out as never) : out;
     const etag = op.rest.etag?.(out as never);
     if (etag) c.header("ETag", etag);
+    setWarningHeader(c, out);
     if (key !== undefined) {
       await deps.idempotency.put(principal.id, op.name, key, { fingerprint, status, body, etag });
     }

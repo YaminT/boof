@@ -12,7 +12,12 @@ import {
   UpdatePlanBody,
   UpsertGoalBody,
 } from "../validation.js";
-import { ImportResultSchema, PlanSummarySchema, SyncResultSchema } from "../schemas.js";
+import {
+  ImportResultSchema,
+  PlanCreateResultSchema,
+  PlanSummarySchema,
+  SyncResultSchema,
+} from "../schemas.js";
 import {
   DESTRUCTIVE,
   goalIdParam,
@@ -53,11 +58,11 @@ export const plansCreate = defineOp({
   name: "plans.create",
   title: "Create a plan",
   description:
-    "Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan.",
+    "Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan; the result then has warnings (status_downgraded) and the HTTP header Boof-Warning. A human approves the plan (sets it active); its tasks are then created pending.",
   scope: "plans:write",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, ...CreatePlanBody.shape }),
-  output: PlanSchema,
+  output: PlanCreateResultSchema,
   rest: {
     method: "POST",
     path: "/projects/{projectId}/plans",

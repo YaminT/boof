@@ -34,8 +34,11 @@ import {
   type SettingsPatch,
   type Status,
   type Task,
+  taskReviewInfo,
+  type TaskReviewInfo,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
+import { statusDowngraded, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
   isGitRepo,
@@ -76,18 +79,19 @@ export interface UpdateTaskInput {
 export type TaskView = Omit<Task, "body"> & {
   body: Omit<Task["body"], "log"> & { log?: string };
   projectId: string;
-};
+} & TaskReviewInfo;
 
 /**
  * The task as the API shows it. `log` (the raw agent output, often megabytes) is left out
  * unless asked for.
  */
 export function toTaskView(projectId: string, task: Task, opts: { log?: boolean } = {}): TaskView {
+  const info = taskReviewInfo(task);
   if (opts.log === false) {
     const { log: _log, ...body } = task.body;
-    return { ...task, body, projectId };
+    return { ...task, body, projectId, ...info };
   }
-  return { ...task, projectId };
+  return { ...task, projectId, ...info };
 }
 
 /**
@@ -141,6 +145,14 @@ export class ProjectService {
   }
 
   async create(input: CreateTaskInput, actor?: Principal): Promise<Task> {
+    return (await this.createWithWarnings(input, actor)).task;
+  }
+
+  /** Like {@link create}, plus a `status_downgraded` warning when a review client asked for `pending`. */
+  async createWithWarnings(
+    input: CreateTaskInput,
+    actor?: Principal,
+  ): Promise<{ task: Task; warnings: Warning[] }> {
     const existing = (await this.tasks.list()).map((t) => t.frontmatter.id);
     const id = uniqueKebabId(input.title, existing);
     const review = await this.needsApproval(actor);
@@ -171,7 +183,11 @@ export class ProjectService {
       input.prompt ?? "",
     );
     if (input.command) await this.applyCommand(task, input.command);
-    return this.tasks.create(task, { by: actor?.id ?? "local" });
+    const warnings =
+      review && input.status && input.status !== status
+        ? [statusDowngraded("task", input.status, status)]
+        : [];
+    return { task: await this.tasks.create(task, { by: actor?.id ?? "local" }), warnings };
   }
 
   private async applyCommand(task: Task, commandId: string | null): Promise<void> {
@@ -193,6 +209,19 @@ export class ProjectService {
         currentUpdated: task.frontmatter.updated,
         expectedUpdated: input.expectedUpdated,
       });
+    }
+
+    // A review client may shape its own drafts, but not rewrite work a human already released.
+    if (
+      task.frontmatter.status !== "draft" &&
+      (input.prompt !== undefined || input.command !== undefined || input.runs !== undefined) &&
+      (await this.needsApproval(actor))
+    ) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot change the prompt of a task that is not a draft",
+        "forbidden_trust",
+      );
     }
 
     if (input.title !== undefined) task.frontmatter.title = input.title;

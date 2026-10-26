@@ -372,17 +372,17 @@ describe("scopes and trust", () => {
     ).toBe(200);
   });
 
-  it("after a human approves, tasks of a review client's plan land in draft; the client cannot edit it", async () => {
+  it("after a human approves, tasks of a review client's plan are pending; the client cannot edit it", async () => {
     peer = REMOTE;
     const key = await mint(["plans:write", "plans:read"], "review");
     await createPlan({ id: "r" }, key);
     peer = LOOPBACK;
     await call(`${P}/r`, send("PUT", { status: "active" }));
     const sync = await (await call(`${P}/r/sync`, send("POST", {}))).json();
-    expect(sync.created.every((c: { status: string }) => c.status === "draft")).toBe(true);
+    expect(sync.created.every((c: { status: string }) => c.status === "pending")).toBe(true);
     const tasks = (await (await call("/api/projects/demo/tasks")).json()).tasks;
     expect(
-      tasks.every((t: { frontmatter: { status: string } }) => t.frontmatter.status === "draft"),
+      tasks.every((t: { frontmatter: { status: string } }) => t.frontmatter.status === "pending"),
     ).toBe(true);
     peer = REMOTE;
     const edit = await call(`${P}/r`, send("PUT", { title: "hack" }), key);

@@ -11,6 +11,7 @@ import { z } from "zod";
 import {
   registry,
   toOpError,
+  warningsOf,
   TaskService,
   type AnyOperation,
   type OpContext,
@@ -118,11 +119,12 @@ function successResult(op: AnyOperation, result: unknown): CallToolResult {
     typeof result === "object" && result !== null && !Array.isArray(result)
       ? (result as Record<string, unknown>)
       : undefined;
+  const warnings = warningsOf(result).map((w) => ({
+    type: "text" as const,
+    text: `Warning (${w.code}): ${w.message}`,
+  }));
   return {
-    content: [
-      { type: "text", text: summary },
-      { type: "text", text: json },
-    ],
+    content: [{ type: "text", text: summary }, { type: "text", text: json }, ...warnings],
     ...(structured ? { structuredContent: structured } : {}),
   };
 }
@@ -170,8 +172,8 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
         "Boof runs coding-agent tasks in git repositories. Typical flow: boof_list_projects, " +
         "boof_create_plan (or boof_import_plan), boof_sync_plan, boof_list_tasks, boof_wait_task, " +
         "boof_wait_plan, boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
-        "read the plan again and retry. Tasks created with review trust start as draft and need " +
-        "a human to approve them.",
+        "read the plan again and retry. With review trust a plan starts as draft (see warnings) until a " +
+        "human approves it; its tasks are then created pending. Ad-hoc tasks stay draft until a human queues them.",
     },
   );
 

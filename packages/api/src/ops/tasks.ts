@@ -11,7 +11,7 @@ import {
   SkipBody,
   UpdateTaskBody,
 } from "../validation.js";
-import { OkSchema, TaskViewSchema } from "../schemas.js";
+import { OkSchema, TaskCreateResultSchema, TaskViewSchema } from "../schemas.js";
 import {
   DESTRUCTIVE,
   IDEMPOTENT_WRITE,
@@ -152,11 +152,11 @@ export const tasksCreate = defineOp({
   name: "tasks.create",
   title: "Create a task",
   description:
-    "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft; a human approves it.",
+    "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.",
   scope: "tasks:write",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, ...CreateTaskBody.shape }),
-  output: TaskViewSchema,
+  output: TaskCreateResultSchema,
   rest: {
     method: "POST",
     path: "/projects/{projectId}/tasks",
@@ -169,7 +169,8 @@ export const tasksCreate = defineOp({
   summary: taskResult,
   handler: async (ctx, { projectId, ...body }) => {
     const svc = await requireProject(ctx, projectId);
-    return taskView(ctx, projectId, await svc.create(body, ctx.principal));
+    const { task, warnings } = await svc.createWithWarnings(body, ctx.principal);
+    return { ...taskView(ctx, projectId, task), ...(warnings.length > 0 ? { warnings } : {}) };
   },
 });
 
@@ -391,12 +392,22 @@ export const tasksLiveLog = defineOp({
   name: "tasks.liveLog",
   title: "Read a task's live log",
   description:
-    "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId. No side effects.",
+    "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional format=text (REST: text/plain instead of JSON). No side effects.",
   scope: "tasks:read",
   projectScoped: true,
-  input: byTask,
+  input: z.strictObject({
+    ...byTask.shape,
+    format: z
+      .enum(["json", "text"])
+      .optional()
+      .meta({ description: "text: the REST route answers text/plain with the log only." }),
+  }),
   output: z.object({ log: z.string(), running: z.boolean() }),
-  rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}/live-log" },
+  rest: {
+    method: "GET",
+    path: "/projects/{projectId}/tasks/{taskId}/live-log",
+    text: (out: { log: string }) => out.log,
+  },
   mcp: { expose: true, name: "boof_get_task_log", annotations: READ },
   summary: (r) => (r.running ? "Task is running; log attached" : "Task finished; log attached"),
   handler: async (ctx, input) => (await requireProject(ctx, input.projectId)).liveLog(input.taskId),

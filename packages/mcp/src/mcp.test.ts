@@ -427,3 +427,71 @@ describe("stdio principal", () => {
     await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/disabled/);
   });
 });
+
+describe("warnings and structured reviews over MCP", () => {
+  it("carries status_downgraded in structuredContent and appends the text", async () => {
+    const admin = await connect(LOCAL_PRINCIPAL);
+    await call(admin, "boof_create_project", { workingDirectory: repo, id: "shop" });
+    const reviewer = await connect(
+      await clientPrincipal(["plans:write", "plans:read", "tasks:write", "tasks:read"], "review", [
+        "shop",
+      ]),
+    );
+    const plan = await call(reviewer, "boof_create_plan", {
+      projectId: "shop",
+      id: "q4",
+      title: "Q4",
+      status: "active",
+      goals: [goal("a")],
+    });
+    expect(plan.structuredContent?.status).toBe("draft");
+    expect(plan.structuredContent?.warnings).toEqual([
+      expect.objectContaining({ code: "status_downgraded", requested: "active", applied: "draft" }),
+    ]);
+    expect(plan.content.map((c) => c.text).join("\n")).toContain("Warning (status_downgraded)");
+    expect(plan.content[1]!.text.startsWith("{")).toBe(true);
+
+    const task = await call(reviewer, "boof_create_task", {
+      projectId: "shop",
+      title: "Idea",
+      status: "pending",
+    });
+    expect(task.structuredContent?.frontmatter.status).toBe("draft");
+    expect(task.structuredContent?.warnings[0]).toMatchObject({
+      field: "status",
+      requested: "pending",
+      applied: "draft",
+    });
+    expect(task.content.at(-1)!.text).toContain("Warning (status_downgraded)");
+
+    const plain = await call(reviewer, "boof_create_task", { projectId: "shop", title: "Plain" });
+    expect(plain.structuredContent).not.toHaveProperty("warnings");
+    expect(plain.content).toHaveLength(2);
+  });
+
+  it("boof_get_task returns reviews, finalVerdict and branch after a run", async () => {
+    const admin = await connect(LOCAL_PRINCIPAL);
+    await call(admin, "boof_create_project", { workingDirectory: repo, id: "shop" });
+    await call(admin, "boof_create_plan", {
+      projectId: "shop",
+      id: "q4",
+      title: "Q4",
+      status: "active",
+      goals: [goal("a")],
+    });
+    const sync = await call(admin, "boof_sync_plan", { projectId: "shop", planId: "q4" });
+    const taskId = sync.structuredContent!.created[0].taskId as string;
+    await new RunnerEngine({ root, pollIntervalMs: 10 }).runUntilIdle();
+    const got = await call(admin, "boof_get_task", { projectId: "shop", taskId });
+    expect(got.structuredContent?.frontmatter.status).toBe("done");
+    expect(got.structuredContent?.branch).toBe(`boof-runner/${taskId}`);
+    expect(got.structuredContent?.baseSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(got.structuredContent?.finalVerdict.reviewer).toBe("APPROVE");
+    expect(got.structuredContent?.reviews.at(-1)).toMatchObject({
+      role: "reviewer",
+      round: 1,
+      iteration: 1,
+      verdict: "APPROVE",
+    });
+  });
+});

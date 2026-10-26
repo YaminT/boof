@@ -13,6 +13,7 @@ import {
   securitySettings,
   TaskStore,
   uniqueKebabId,
+  withApproval,
   withGoalStatus,
   type Goal,
   type GoalStatus,
@@ -32,6 +33,7 @@ import {
 } from "@boof-runner/runner";
 import type { z } from "zod";
 import { formatIssues, OpError } from "../errors.js";
+import { statusDowngraded, type Warning } from "../warnings.js";
 import type { TaskService } from "./service.js";
 
 type GoalInputParsed = z.output<typeof GoalInputSchema>;
@@ -255,9 +257,18 @@ export class PlanService {
     }
   }
 
-  async createPlan(input: CreatePlanInput, actor?: Principal): Promise<Plan> {
+  async createPlan(
+    input: CreatePlanInput,
+    actor?: Principal,
+  ): Promise<Plan & { warnings?: Warning[] }> {
     const restricted = await this.restricted(actor);
-    return this.run(async () => {
+    const status: PlanStatus = restricted ? "draft" : (input.status ?? "draft");
+    const warnings =
+      restricted && input.status && input.status !== "draft"
+        ? [statusDowngraded("plan", input.status, "draft")]
+        : [];
+    const by = actor?.id ?? "local";
+    const plan = await this.run(async () => {
       const existing = (await this.store.list()).map((p) => p.id);
       const id = input.id ?? uniqueKebabId(input.title, existing);
       const source: PlanSource =
@@ -270,15 +281,20 @@ export class PlanService {
           id,
           title: input.title,
           description: input.description ?? "",
-          status: restricted ? "draft" : (input.status ?? "draft"),
+          status,
           autoSync: input.autoSync ?? false,
           bumpTo: input.bumpTo ?? "done",
+          // A trusted or local principal that creates an active plan approves it at once.
+          ...(status === "active"
+            ? { approvedBy: { principalId: by, at: new Date().toISOString(), version: 1 } }
+            : {}),
           source,
           goals,
         },
-        { by: actor?.id ?? "local" },
+        { by },
       );
     });
+    return warnings.length > 0 ? { ...plan, warnings } : plan;
   }
 
   async updatePlan(
@@ -300,7 +316,7 @@ export class PlanService {
         planId,
         async (plan) => {
           await this.assertMayEdit(plan, actor);
-          return {
+          const next: Plan = {
             ...plan,
             ...(patch.title !== undefined ? { title: patch.title } : {}),
             ...(patch.description !== undefined ? { description: patch.description } : {}),
@@ -308,6 +324,9 @@ export class PlanService {
             ...(patch.autoSync !== undefined ? { autoSync: patch.autoSync } : {}),
             ...(patch.bumpTo !== undefined ? { bumpTo: patch.bumpTo } : {}),
           };
+          // Approval follows the status: a trusted principal that activates a plan approves it,
+          // staying active keeps the approval, leaving active clears it.
+          return restricted ? next : withApproval(plan, next, actor?.id ?? "local");
         },
         { expectedVersion, by: actor?.id ?? "local" },
       ),
@@ -487,6 +506,8 @@ export class PlanService {
   ): Promise<ImportResult> {
     const restricted = await this.restricted(actor);
     return this.run(async () => {
+      const current = input.merge ? await this.store.get(input.planId ?? "repo") : null;
+      if (current) await this.assertMayEdit(current, actor);
       const project = await this.parent.getProject(this.projectId);
       if (!project.workingDirectory) {
         throw new OpError(400, "The project has no working directory", "invalid_input");
@@ -502,11 +523,16 @@ export class PlanService {
       const planId = input.planId ?? "repo";
       const existing = await this.store.get(planId);
       if (!existing) {
+        const status: PlanStatus = restricted ? "draft" : (input.status ?? "draft");
+        const by = actor?.id ?? "local";
         const plan = await this.store.create(
           {
             id: planId,
             title: input.title ?? `Imported from ${project.name}`,
-            status: restricted ? "draft" : (input.status ?? "draft"),
+            status,
+            ...(status === "active"
+              ? { approvedBy: { principalId: by, at: new Date().toISOString(), version: 1 } }
+              : {}),
             autoSync: input.autoSync ?? false,
             bumpTo: input.bumpTo ?? "done",
             source: {
@@ -516,14 +542,18 @@ export class PlanService {
             },
             goals: imported.goals,
           },
-          { by: actor?.id ?? "local" },
+          { by },
         );
+        const downgraded =
+          restricted && input.status && input.status !== "draft"
+            ? [statusDowngraded("plan", input.status, "draft").message]
+            : [];
         return {
           plan,
           added: plan.goals.map((g) => g.id),
           updated: [],
           unchanged: [],
-          warnings: imported.warnings,
+          warnings: [...imported.warnings, ...downgraded],
         };
       }
       if (!input.merge) {
@@ -578,9 +608,11 @@ export class PlanService {
       if (plan.status !== "active") throw new PlanNotActiveError(plan.id, plan.status);
       const project = await this.parent.getProject(this.projectId);
       const settings = await this.parent.loadSettings();
-      const createStatus = restricted
-        ? "draft"
-        : await taskStatusForPlan(this.parent.root, plan, settings);
+      // A review client's sync stays draft unless a human approved the plan's content.
+      const createStatus =
+        restricted && !plan.approvedBy
+          ? "draft"
+          : await taskStatusForPlan(this.parent.root, plan, settings);
       return syncPlan({
         projectDir: this.projectDir,
         project,
