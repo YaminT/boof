@@ -1444,3 +1444,40 @@ textarea:focus-visible {
 .plan-detail .plan-table {
   margin-bottom: 12px;
 }
+
+/* Budget: banner while a day budget stops the runner, and spend bars. */
+.budget-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  background: var(--inset);
+  color: var(--text);
+}
+.spend {
+  margin: 8px 0;
+}
+.spend-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9em;
+}
+.spend-bar {
+  height: 6px;
+  margin-top: 4px;
+  border-radius: 3px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.spend-fill {
+  height: 100%;
+  background: var(--green);
+}
+.spend.over .spend-fill {
+  background: var(--red);
+}
+.spend.over .spend-row {
+  color: var(--red);
+}

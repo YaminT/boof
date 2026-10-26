@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type TaskView } from "./api.js";
+import type { BudgetStatus } from "./api-types.js";
+import { BudgetBanner } from "./components/Budget.js";
 import { boofRunnerLogoUrl } from "./assets.js";
 import { useLive } from "./useLive.js";
 import { useProjects } from "./useProjects.js";
@@ -52,18 +54,28 @@ export function App() {
   );
   const refreshActions = useCallback(() => api.actions().then(setActions), []);
   const refreshSettings = useCallback(() => api.getSettings().then(setSettings), []);
+  const [budget, setBudget] = useState<BudgetStatus | null>(null);
+  const refreshBudget = useCallback(
+    () =>
+      api
+        .budget()
+        .then(setBudget)
+        .catch(() => {}),
+    [],
+  );
 
   /** Refresh everything; tasks only when the change concerns the selected project. */
   const refresh = useCallback(
     async (project?: string) => {
       await Promise.all([
         refreshSettings(),
+        refreshBudget(),
         reloadProjects(),
         refreshActions(),
         refreshTasks(project),
       ]);
     },
-    [reloadProjects, refreshSettings, refreshActions, refreshTasks],
+    [reloadProjects, refreshSettings, refreshBudget, refreshActions, refreshTasks],
   );
 
   const [needsToken, setNeedsToken] = useState(false);
@@ -80,8 +92,11 @@ export function App() {
       const key = e.project ?? "";
       lastTyped.current.set(key, Date.now());
       if (e.type === "runner.enabled") void refreshSettings().catch(() => {});
+      else if (e.type === "runner.budget_exceeded") void refreshBudget();
       else if (e.type.startsWith("task.")) {
-        void Promise.all([refreshTasks(e.project), refreshActions()]).catch(() => {});
+        void Promise.all([refreshTasks(e.project), refreshActions(), refreshBudget()]).catch(
+          () => {},
+        );
       } else if (e.type.startsWith("plan.")) {
         if (!e.project || e.project === selectedRef.current) setPlanTick((n) => n + 1);
         void refreshTasks(e.project).catch(() => {});
@@ -180,6 +195,7 @@ export function App() {
       </aside>
 
       <main>
+        {budget && <BudgetBanner budget={budget} />}
         {settings && projects && selected && (
           <ProjectSwitcher
             settings={settings}

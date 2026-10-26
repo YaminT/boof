@@ -4,7 +4,8 @@ import { desktop } from "../desktop.js";
 import { Modal } from "./Modal.js";
 import { ClientsSection } from "./ClientsSection.js";
 import type { Project, RoleAssignment, Settings, TokenUsage } from "@boof-runner/shared/schema";
-import type { HealthResult, ModelDetail, ToolModelDetails } from "../api-types.js";
+import type { BudgetStatus, HealthResult, ModelDetail, ToolModelDetails } from "../api-types.js";
+import { TodaySpend } from "./Budget.js";
 
 /** Short chip text per model source; "built-in" avoids clashing with the "default" chip. */
 const SOURCE_LABELS: Record<string, string> = {
@@ -20,6 +21,34 @@ const SOURCE_TITLES: Record<string, string> = {
 
 type Role = "planner" | "developer" | "observer" | "reviewer";
 const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
+
+/** A blank field means "no limit"; otherwise a positive number of USD. */
+function parseLimit(text: string, what: string): number | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`${what} must be a number above 0`);
+  return n;
+}
+
+/** `codex=5` lines (or comma separated) to a tool -> USD map. */
+function parseToolLimits(text: string): Record<string, number> | undefined {
+  const out: Record<string, number> = {};
+  for (const part of text.split(/[\n,]/)) {
+    const entry = part.trim();
+    if (!entry) continue;
+    const [tool, value] = entry.split("=").map((s) => s.trim());
+    const limit = parseLimit(value ?? "", `Limit for ${tool || "tool"}`);
+    if (!tool || limit === undefined) throw new Error(`Use tool=USD per line, got "${entry}"`);
+    out[tool] = limit;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const toolLimitsText = (m: Record<string, number> | undefined) =>
+  Object.entries(m ?? {})
+    .map(([tool, usd]) => `${tool}=${usd}`)
+    .join("\n");
 
 function usageLine(usage: TokenUsage | null) {
   if (!usage) return "Loading…";
@@ -140,6 +169,15 @@ export function SettingsPage({
   const [onDone, setOnDone] = useState(settings.worktree?.onDone ?? "keep-branch");
   const [onFailure, setOnFailure] = useState(settings.worktree?.onFailure ?? "keep");
   const [transient, setTransient] = useState(String(settings.retries?.transient ?? 2));
+  const [perTask, setPerTask] = useState(String(settings.budget?.perTaskUsd ?? ""));
+  const [perDay, setPerDay] = useState(String(settings.budget?.perDayUsd ?? ""));
+  const [perProjectDay, setPerProjectDay] = useState(
+    String(settings.budget?.perProjectDayUsd ?? ""),
+  );
+  const [perToolDay, setPerToolDay] = useState(toolLimitsText(settings.budget?.perToolDayUsd));
+  const [onExceed, setOnExceed] = useState(settings.budget?.onExceed ?? "pause");
+  const [timezone, setTimezone] = useState(settings.budget?.timezone ?? "");
+  const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -158,6 +196,11 @@ export function SettingsPage({
   const [paused, setPaused] = useState(project.paused);
   const [defaultBase, setDefaultBase] = useState(project.defaultBase ?? "");
   const [overrides, setOverrides] = useState<NonNullable<Project["roles"]>>(project.roles ?? {});
+  const pb = project.budget;
+  const [pbPerTask, setPbPerTask] = useState(String(pb?.perTaskUsd ?? ""));
+  const [pbPerDay, setPbPerDay] = useState(String(pb?.perProjectDayUsd ?? ""));
+  const [pbPerTool, setPbPerTool] = useState(toolLimitsText(pb?.perToolDayUsd));
+  const [pbOnExceed, setPbOnExceed] = useState<string>(pb?.onExceed ?? "");
   const [projectSaved, setProjectSaved] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -175,6 +218,10 @@ export function SettingsPage({
     setPaused(project.paused);
     setDefaultBase(project.defaultBase ?? "");
     setOverrides(project.roles ?? {});
+    setPbPerTask(String(project.budget?.perTaskUsd ?? ""));
+    setPbPerDay(String(project.budget?.perProjectDayUsd ?? ""));
+    setPbPerTool(toolLimitsText(project.budget?.perToolDayUsd));
+    setPbOnExceed(project.budget?.onExceed ?? "");
   }, [project]);
 
   useEffect(() => {
@@ -200,6 +247,12 @@ export function SettingsPage({
       .usage()
       .then((result) => {
         if (!cancelled) setUsage(result);
+      })
+      .catch(() => {});
+    void api
+      .budget()
+      .then((result) => {
+        if (!cancelled) setBudget(result);
       })
       .catch(() => {});
     void api
@@ -273,7 +326,15 @@ export function SettingsPage({
   const saveGlobal = async () => {
     setSaveError(null);
     try {
+      const limits = {
+        perTaskUsd: parseLimit(perTask, "Per-task limit"),
+        perDayUsd: parseLimit(perDay, "Per-day limit"),
+        perProjectDayUsd: parseLimit(perProjectDay, "Per-project day limit"),
+        perToolDayUsd: parseToolLimits(perToolDay),
+        timezone: timezone.trim() || undefined,
+      };
       await api.updateSettings({
+        budget: { ...limits, onExceed } as NonNullable<Settings["budget"]>,
         roles,
         models,
         runner: { concurrency: Math.max(1, Math.floor(Number(concurrency) || 1)) },
@@ -299,7 +360,15 @@ export function SettingsPage({
   const saveProject = async () => {
     setProjectError(null);
     try {
+      const own = {
+        perTaskUsd: parseLimit(pbPerTask, "Per-task limit"),
+        perProjectDayUsd: parseLimit(pbPerDay, "Per-day limit"),
+        perToolDayUsd: parseToolLimits(pbPerTool),
+        onExceed: pbOnExceed || undefined,
+      };
+      const hasBudget = Object.values(own).some((v) => v !== undefined);
       await api.updateProject(project.id, {
+        budget: hasBudget ? (own as NonNullable<Project["budget"]>) : null,
         name: name.trim() || project.name,
         ...(workingDir.trim() && workingDir.trim() !== project.workingDirectory
           ? { workingDirectory: workingDir.trim() }
@@ -494,6 +563,66 @@ export function SettingsPage({
       </section>
 
       <section>
+        <h3>Budget</h3>
+        <p className="muted">
+          Limits in USD; leave a field empty for no limit. A running step is never stopped: limits
+          are checked between steps, so a step can go over. Day limits block new work until the day
+          resets.
+        </p>
+        <label>
+          Per task (one run)
+          <input
+            inputMode="decimal"
+            value={perTask}
+            onChange={(e) => setPerTask(e.target.value)}
+            placeholder="no limit"
+          />
+        </label>
+        <label>
+          Per day, all work
+          <input
+            inputMode="decimal"
+            value={perDay}
+            onChange={(e) => setPerDay(e.target.value)}
+            placeholder="no limit"
+          />
+        </label>
+        <label>
+          Per day, each project
+          <input
+            inputMode="decimal"
+            value={perProjectDay}
+            onChange={(e) => setPerProjectDay(e.target.value)}
+            placeholder="no limit"
+          />
+        </label>
+        <label>
+          Per day, each tool (one <code>tool=USD</code> per line)
+          <textarea
+            rows={2}
+            value={perToolDay}
+            onChange={(e) => setPerToolDay(e.target.value)}
+            placeholder={"codex=5\nclaude-code=10"}
+          />
+        </label>
+        <label>
+          When a limit is spent
+          <select value={onExceed} onChange={(e) => setOnExceed(e.target.value as typeof onExceed)}>
+            <option value="pause">Fail the task, keep its worktree (pause)</option>
+            <option value="fail">Fail the task, follow the worktree failure setting</option>
+          </select>
+        </label>
+        <label>
+          Time zone for a day (IANA name, empty uses the server's)
+          <input
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            placeholder="e.g. Europe/Berlin"
+          />
+        </label>
+      </section>
+
+      <section>
         <h3>Token usage</h3>
         <p>
           <strong>{project.name}:</strong> {usageLine(projectUsage)}
@@ -501,6 +630,7 @@ export function SettingsPage({
         <p>
           <strong>All projects:</strong> {usageLine(usage)}
         </p>
+        <TodaySpend budget={budget} projectId={project.id} />
       </section>
 
       <div className="editor-actions">
@@ -602,6 +732,44 @@ export function SettingsPage({
             </div>
           );
         })}
+      </section>
+
+      <section>
+        <h3>Budget override</h3>
+        <p className="muted">
+          Empty fields use the global budget. The day limit counts this project's spend; a tool
+          limit caps this project's spend on that tool.
+        </p>
+        <label>
+          Per task (one run)
+          <input
+            inputMode="decimal"
+            value={pbPerTask}
+            onChange={(e) => setPbPerTask(e.target.value)}
+            placeholder="inherit"
+          />
+        </label>
+        <label>
+          Per day
+          <input
+            inputMode="decimal"
+            value={pbPerDay}
+            onChange={(e) => setPbPerDay(e.target.value)}
+            placeholder="inherit"
+          />
+        </label>
+        <label>
+          Per day, each tool (one <code>tool=USD</code> per line)
+          <textarea rows={2} value={pbPerTool} onChange={(e) => setPbPerTool(e.target.value)} />
+        </label>
+        <label>
+          When a limit is spent
+          <select value={pbOnExceed} onChange={(e) => setPbOnExceed(e.target.value)}>
+            <option value="">Inherit global</option>
+            <option value="pause">Fail the task, keep its worktree (pause)</option>
+            <option value="fail">Fail the task, follow the worktree failure setting</option>
+          </select>
+        </label>
       </section>
 
       <div className="editor-actions">

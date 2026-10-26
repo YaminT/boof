@@ -7,7 +7,13 @@ import type {
   TokenUsage,
 } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
-import type { CommandTemplate, HealthResult, PublicClient, ToolModelDetails } from "./api-types.js";
+import type {
+  BudgetStatus,
+  CommandTemplate,
+  HealthResult,
+  PublicClient,
+  ToolModelDetails,
+} from "./api-types.js";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
 import { authHeaders, notifyUnauthorized } from "./token.js";
 
@@ -202,6 +208,7 @@ export const api = {
   modelDetails: () =>
     http<{ tools: Record<string, ToolModelDetails> }>(`${V1}/models/details`).then((r) => r.tools),
   usage: () => http<TokenUsage>(`${V1}/usage`),
+  budget: () => http<BudgetStatus>(`${V1}/usage/budget`),
   projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
 
   listProjects: (includeArchived = false) =>

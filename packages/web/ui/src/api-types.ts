@@ -28,6 +28,26 @@ export interface ToolModelDetails {
   models: ModelDetail[];
 }
 
+/** One budget scope as GET /usage/budget returns it. */
+export interface BudgetScope {
+  /** `global`, `project:<id>`, `tool:<tool>` or `project:<id>/tool:<tool>`. */
+  scope: string;
+  spentUsd: number;
+  limitUsd: number | null;
+  remainingUsd: number | null;
+  exceeded: boolean;
+}
+
+/** GET /usage/budget. */
+export interface BudgetStatus {
+  date: string;
+  timezone: string;
+  resetsAt: string;
+  unknownSteps: number;
+  scopes: BudgetScope[];
+  exceeded: BudgetScope[];
+}
+
 /** An API client as returned by /api/auth/clients (never includes the key hash). */
 export interface PublicClient {
   id: string;
