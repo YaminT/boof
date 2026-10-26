@@ -128,15 +128,17 @@ update_checkout() {
     return 0
   }
 
-  if tracked_changes_exist "$dir"; then
-    if [[ "$FORCE_UPDATE" == "1" ]]; then
-      backup_local_changes "$dir"
-      git -C "$dir" reset --hard HEAD
-    else
-      die "uncommitted changes exist in $dir; nothing was changed.
+  if [[ "$FORCE_UPDATE" == "1" && -n "$(git -C "$dir" status --porcelain)" ]]; then
+    # Tracked changes or untracked (not ignored) files: either can block the
+    # fast-forward. Save both, then reset and remove the untracked files.
+    # Ignored paths (data/, node_modules/, dist/) are never touched.
+    backup_local_changes "$dir"
+    git -C "$dir" reset --hard HEAD
+    git -C "$dir" clean -fd
+  elif tracked_changes_exist "$dir"; then
+    die "uncommitted changes exist in $dir; nothing was changed.
 Commit or stash them (git -C $dir stash), or run with BOOF_RUNNER_SKIP_UPDATE=1 to build as is,
 or BOOF_RUNNER_FORCE_UPDATE=1 to save them to a backup patch and reset to the latest source."
-    fi
   fi
 
   log "Fetching latest source"
