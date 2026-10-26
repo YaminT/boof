@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,6 +101,17 @@ function resolveUiDir(): string {
   return resolve(here, "..", "..", "packages", "web", "ui", "dist");
 }
 
+/** Version from the package.json two levels above bin/src or bin/dist. */
+function readVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(resolve(here, "..", "..", "package.json"), "utf8"));
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function parseServeArgs(argv: string[]): ServeArgs {
   const dataOpt = getOpt(argv, ["--data", "-d"]);
   const portOpt = getOpt(argv, ["--port", "-p"]);
@@ -123,12 +134,15 @@ export async function serve(argv: string[]): Promise<void> {
 
   const uiDir = resolveUiDir();
   let running;
+  let engine: RunnerEngine | null = null;
   try {
     running = await startServer({
       root,
       port: args.port,
       host: args.host,
       uiDir,
+      version: readVersion(),
+      runnerRunning: () => engine !== null,
       tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
       tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
     });
@@ -142,7 +156,6 @@ export async function serve(argv: string[]): Promise<void> {
   console.log(`Web UI:  ${scheme}://${hostPart}:${running.port}`);
   console.log(`API:     ${scheme}://${hostPart}:${running.port}/api`);
 
-  let engine: RunnerEngine | null = null;
   const guard = new RunnerGuard(root);
   if (!args.noRunner) {
     if (await guard.acquire()) {
@@ -154,15 +167,26 @@ export async function serve(argv: string[]): Promise<void> {
     }
   }
 
-  const shutdown = async () => {
-    console.log("\nShutting down…");
-    engine?.stop();
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      console.log(`\n${signal} again: exiting now`);
+      process.exit(1);
+    }
+    shuttingDown = true;
+    console.log(`\nShutting down (${signal})…`);
+    const graceMs = Number(process.env.BOOF_RUNNER_SHUTDOWN_GRACE_MS ?? 30_000);
+    if (engine) {
+      const { stopped, timedOut } = await engine.shutdown(graceMs);
+      if (stopped.length > 0) console.log(`Stopped running task(s): ${stopped.join(", ")}`);
+      if (timedOut) console.log(`Grace period of ${graceMs} ms elapsed; exiting anyway`);
+    }
     await guard.release();
     await running.stop();
     process.exit(0);
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 /** `run` subcommand. Returns a process exit code. */

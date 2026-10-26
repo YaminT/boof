@@ -24,6 +24,10 @@ export interface StartServerOptions {
   /** PEM file paths; when both are set the server speaks HTTPS. */
   tlsCert?: string;
   tlsKey?: string;
+  /** Version reported by /healthz. */
+  version?: string;
+  /** Whether the runner loop runs in this process (reported by /healthz). */
+  runnerRunning?: () => boolean;
   /** Receives non-fatal startup warnings (default: console.warn). */
   warn?: (message: string) => void;
 }
@@ -130,6 +134,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     allowedHosts,
     authStore,
     isSelfUrl,
+    version: opts.version,
+    runnerRunning: opts.runnerRunning,
   });
 
   const server = await new Promise<ServerType>((resolve, reject) => {
@@ -165,7 +171,11 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     stop: async () => {
       webhooks.stop();
       await watcher.stop();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        // Long-lived SSE streams and keep-alive sockets would hold close() open forever.
+        (server as { closeAllConnections?: () => void }).closeAllConnections?.();
+      });
     },
   };
 }

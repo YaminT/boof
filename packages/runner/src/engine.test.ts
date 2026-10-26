@@ -25,6 +25,7 @@ import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
 import { ensureWorktree } from "./worktree.js";
+import { ToolRunError } from "./tools/errors.js";
 import { mockState, resetMock } from "./tools/mock.js";
 import type { RunOptions } from "./tools/types.js";
 
@@ -1386,5 +1387,49 @@ describe("multi-project engine (mock tool)", () => {
     await done;
     expect((await store.get("a1"))?.frontmatter.status).toBe("done");
     expect((await b.store.get("b1"))?.frontmatter.status).toBe("done");
+  });
+});
+
+describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
+  it("stops the running task, kills the agent process group and leaves the task failed (retryable)", async () => {
+    await store.create(newTask(fm(), "Long job."));
+    const pidFile = join(dataRoot, "agent.pid");
+    let started!: () => void;
+    const up = new Promise<void>((r) => (started = r));
+    mockState.onRun = async (opts) => {
+      // A stand-in agent: a shell that spawns a grandchild and waits for it.
+      const watch = setInterval(() => {
+        if (existsSync(pidFile)) {
+          clearInterval(watch);
+          started();
+        }
+      }, 20);
+      const res = await execCommand("sh", ["-c", `sleep 300 & echo $! > "${pidFile}"; wait`], {
+        cwd: opts.cwd,
+        stopSignalPath: opts.stopSignalPath,
+        stopPollMs: 25,
+      });
+      clearInterval(watch);
+      throw new ToolRunError("mock", res.code, res.timedOut, res.stopped, "stopped", res.stderr);
+    };
+    const loop = engine.loop();
+    await up;
+    const grandchild = Number((await readFile(pidFile, "utf8")).trim());
+    expect(() => process.kill(grandchild, 0)).not.toThrow();
+
+    const result = await engine.shutdown(15000);
+    expect(result).toEqual({ stopped: ["t1"], timedOut: false });
+    await loop;
+
+    expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
+    // failed -> pending is a legal transition, so the task can be retried after a restart.
+    await store.transition("t1", "pending");
+    expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+  });
+
+  it("returns at once when nothing is running", async () => {
+    expect(await engine.shutdown(1000)).toEqual({ stopped: [], timedOut: false });
   });
 });

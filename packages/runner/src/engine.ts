@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import {
   appendVersion,
@@ -12,6 +12,8 @@ import {
   workingAreaDir,
   type Project,
   type Status,
+  taskControlDir,
+  taskStopRequestPath,
   type Task,
 } from "@boof-runner/shared";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
@@ -55,6 +57,8 @@ export class RunnerEngine {
   private readonly onlyProject?: string;
   /** In-flight pipelines by project id (the at-most-one-per-project invariant). */
   private readonly inflight = new Map<string, Promise<TickResult>>();
+  /** Task id in flight per project id (so a shutdown can ask each one to stop). */
+  private readonly runningTasks = new Map<string, string>();
   private looping = false;
   private stopRequested = false;
 
@@ -315,6 +319,7 @@ export class RunnerEngine {
       const dir = this.projects.dir(project.id);
       const store = this.storeFor(project);
       const id = sel.task.frontmatter.id;
+      this.runningTasks.set(project.id, id);
       await this.startTask(project, store, dir, id);
       const running = await store.get(id);
       const settings = await this.settingsStore.load();
@@ -329,7 +334,10 @@ export class RunnerEngine {
       await this.finalize(project, store, outcome);
       return { kind: "ran", outcome, projectId: project.id };
     };
-    const p = run().finally(() => this.inflight.delete(project.id));
+    const p = run().finally(() => {
+      this.inflight.delete(project.id);
+      this.runningTasks.delete(project.id);
+    });
     this.inflight.set(project.id, p);
     return p;
   }
@@ -352,7 +360,7 @@ export class RunnerEngine {
   private async fill(concurrency: number): Promise<Promise<TickResult>[]> {
     const started: Promise<TickResult>[] = [];
     await this.syncAutoPlans();
-    while (this.inflight.size < concurrency) {
+    while (this.inflight.size < concurrency && !this.stopRequested) {
       const next = await this.selectNext();
       if (!next) break;
       const p = this.start(next);
@@ -429,6 +437,41 @@ export class RunnerEngine {
 
   stop(): void {
     this.stopRequested = true;
+  }
+
+  /**
+   * Graceful shutdown (SIGTERM under systemd): stop selecting new work, ask every running task
+   * to stop through its stop-request file (the tool process group gets SIGTERM, then SIGKILL;
+   * the pipeline records the task as failed with its worktree kept, so it can be retried), and
+   * wait up to `graceMs` for the pipelines to finish. Returns the ids asked to stop and whether
+   * some were still running when the grace period ended.
+   */
+  async shutdown(graceMs = 30_000): Promise<{ stopped: string[]; timedOut: boolean }> {
+    this.stop();
+    const stopped: string[] = [];
+    for (const [projectId, id] of [...this.runningTasks]) {
+      const dir = this.projects.dir(projectId);
+      try {
+        await mkdir(taskControlDir(dir, id), { recursive: true });
+        await writeFile(taskStopRequestPath(dir, id), new Date().toISOString() + "\n", "utf8");
+        await appendFile(
+          join(workingAreaDir(dir, id), "log.txt"),
+          `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
+          "utf8",
+        ).catch(() => {});
+        stopped.push(id);
+      } catch (err) {
+        console.error(`could not request stop for ${id}:`, err);
+      }
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((res) => {
+      timer = setTimeout(() => res("timeout"), graceMs);
+    });
+    const drained = Promise.allSettled([...this.inflight.values()]).then(() => "drained" as const);
+    const result = await Promise.race([drained, timeout]);
+    if (timer) clearTimeout(timer);
+    return { stopped, timedOut: result === "timeout" };
   }
 
   private sleep(ms: number): Promise<void> {

@@ -51,7 +51,22 @@ export function execCommand(
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      // Own process group (POSIX): a stop, timeout or stall kills the agent CLI and
+      // everything it spawned, not just the top process.
+      detached: process.platform !== "win32",
     });
+    const kill = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          /* already gone */
+        }
+      }
+    };
 
     let stdout = "";
     let stderr = "";
@@ -75,8 +90,8 @@ export function execCommand(
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         stalled = true;
-        child.kill("SIGTERM");
-        killTimer = setTimeout(() => child.kill("SIGKILL"), 1500);
+        kill("SIGTERM");
+        killTimer = setTimeout(() => kill("SIGKILL"), 1500);
       }, opts.idleTimeoutMs);
     };
     armIdle();
@@ -84,7 +99,7 @@ export function execCommand(
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        child.kill("SIGKILL");
+        kill("SIGKILL");
       }, opts.timeoutMs);
     }
 
@@ -92,8 +107,8 @@ export function execCommand(
       stopTimer = setInterval(() => {
         if (stopped || !opts.stopSignalPath || !existsSync(opts.stopSignalPath)) return;
         stopped = true;
-        child.kill("SIGTERM");
-        killTimer = setTimeout(() => child.kill("SIGKILL"), 1500);
+        kill("SIGTERM");
+        killTimer = setTimeout(() => kill("SIGKILL"), 1500);
       }, opts.stopPollMs ?? 500);
     }
 
