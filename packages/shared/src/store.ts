@@ -34,6 +34,39 @@ async function listMdFiles(dir: string): Promise<string[]> {
   }
 }
 
+async function listSubdirs(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+function isNotFound(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
+/**
+ * Read and reconcile the task file at `path` for a directory with `dirStatus`.
+ * Returns null when the file disappeared after it was listed or located (the
+ * runner moves tasks between status directories while readers run). Other
+ * read errors are rethrown.
+ */
+export async function readTaskIfExists(path: string, dirStatus: Status): Promise<Task | null> {
+  let raw: string;
+  try {
+    raw = await readText(path);
+  } catch (err) {
+    if (isNotFound(err)) return null;
+    throw err;
+  }
+  const task = parseTask(raw);
+  // Location is authoritative: repair the frontmatter status if it drifted.
+  if (task.frontmatter.status !== dirStatus) task.frontmatter.status = dirStatus;
+  return task;
+}
+
 /**
  * File-backed task repository. The directory a task lives in is authoritative
  * for its status; on read we reconcile the frontmatter `status` to match the
@@ -49,27 +82,39 @@ export class TaskStore {
     }
   }
 
-  /** Read and reconcile every task across all status directories. */
+  /**
+   * Read and reconcile every task across all status directories. Files removed
+   * mid-read are skipped. A task seen in two status directories (a transition
+   * writes the destination before removing the source) is reported once, using
+   * the copy with the later `updated`; on a tie the first copy found wins.
+   */
   async list(): Promise<Task[]> {
-    const out: Task[] = [];
+    const byId = new Map<string, Task>();
     for (const status of ALL_STATUSES) {
-      const dir = statusDir(this.root, status);
-      if (status === "running") {
-        let subdirs: string[] = [];
-        try {
-          const entries = await readdir(dir, { withFileTypes: true });
-          subdirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-        } catch {
-          subdirs = [];
+      for (const task of await this.listStatus(status)) {
+        const id = task.frontmatter.id;
+        const prev = byId.get(id);
+        if (!prev || Date.parse(task.frontmatter.updated) > Date.parse(prev.frontmatter.updated)) {
+          byId.set(id, task);
         }
-        for (const id of subdirs) {
-          const p = join(dir, id, "task.md");
-          if (await exists(p)) out.push(await this.readReconciled(p, status));
-        }
-      } else {
-        for (const name of await listMdFiles(dir)) {
-          out.push(await this.readReconciled(join(dir, name), status));
-        }
+      }
+    }
+    return [...byId.values()];
+  }
+
+  /** Read every task file in one status directory, skipping files that vanish. */
+  private async listStatus(status: Status): Promise<Task[]> {
+    const dir = statusDir(this.root, status);
+    const out: Task[] = [];
+    if (status === "running") {
+      for (const id of await listSubdirs(dir)) {
+        const task = await readTaskIfExists(join(dir, id, "task.md"), status);
+        if (task) out.push(task);
+      }
+    } else {
+      for (const name of await listMdFiles(dir)) {
+        const task = await readTaskIfExists(join(dir, name), status);
+        if (task) out.push(task);
       }
     }
     return out;
@@ -82,10 +127,18 @@ export class TaskStore {
     return task;
   }
 
-  /** Find a single task by id (searches all status dirs). */
+  /**
+   * Find a single task by id (searches all status dirs). If the located file
+   * is removed before it is read (the task moved), locate again once.
+   */
   async get(id: string): Promise<Task | null> {
-    const located = await this.locate(id);
-    return located ? this.readReconciled(located.path, located.status) : null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const located = await this.locate(id);
+      if (!located) return null;
+      const task = await readTaskIfExists(located.path, located.status);
+      if (task) return task;
+    }
+    return null;
   }
 
   /** Locate a task's current file path + dir-status, or null. */
