@@ -790,6 +790,34 @@ input[type="number"] {
 .live-inject button {
   white-space: nowrap;
 }
+.live-inject .live-mode {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 13px;
+}
+.live-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.live-mode .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.live-steering {
+  margin: 0;
+  padding: 0 14px 12px;
+  font-size: 13px;
+  color: var(--muted, inherit);
+}
 .live-error {
   margin: 0;
   padding: 0 14px 12px;

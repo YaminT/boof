@@ -26,7 +26,13 @@ function keepLog(prev: Task | null, next: Task): Task {
 function injectedText(md: string | undefined): string {
   const entries = parseInjected(md ?? "");
   if (entries.length === 0) return "No prompts were injected while this task ran.";
-  return entries.map((e) => `${new Date(e.at).toLocaleString()} — ${e.by}\n${e.text}`).join("\n\n");
+  return entries
+    .map((e) => {
+      const how = e.mode === "now" ? " (apply now)" : "";
+      const applied = e.appliedAt ? ` · applied ${new Date(e.appliedAt).toLocaleString()}` : "";
+      return `${new Date(e.at).toLocaleString()} — ${e.by}${how}${applied}\n${e.text}`;
+    })
+    .join("\n\n");
 }
 
 function formatSize(bytes: number): string {

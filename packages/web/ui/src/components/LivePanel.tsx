@@ -9,6 +9,11 @@ function currentStep(log: string): string | null {
   return matches[matches.length - 1].replace(/^### /, "");
 }
 
+/** Number of `### Steered` blocks: one is logged each time an "apply now" prompt takes effect. */
+function steeredCount(log: string): number {
+  return (log.match(/^### Steered$/gm) ?? []).length;
+}
+
 /**
  * Live output of the running task, shown on the Tasks page. Polls the live-log
  * endpoint on a short interval (codex streams chunk-by-chunk; the claude CLI
@@ -28,6 +33,9 @@ export function LivePanel({
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState<"inject" | "stop" | null>(null);
   const [stopRequested, setStopRequested] = useState(false);
+  const [mode, setMode] = useState<"next-step" | "now">("next-step");
+  // Set by an "apply now" inject: how many `### Steered` blocks the log had at that moment.
+  const [steerBaseline, setSteerBaseline] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const pinnedRef = useRef(true);
@@ -69,7 +77,8 @@ export function LivePanel({
     setError(null);
     setBusy("inject");
     try {
-      await api.injectPrompt(projectId, id, text);
+      await api.injectPrompt(projectId, id, text, mode);
+      if (mode === "now") setSteerBaseline(steeredCount(log));
       setPrompt("");
       onChange();
     } catch (err) {
@@ -94,6 +103,7 @@ export function LivePanel({
   };
 
   const step = currentStep(log);
+  const steering = steerBaseline !== null && steeredCount(log) <= steerBaseline;
   return (
     <section className="live-panel">
       <div className="live-head">
@@ -122,7 +132,29 @@ export function LivePanel({
         <button className="primary" onClick={inject} disabled={busy !== null || !prompt.trim()}>
           {busy === "inject" ? "Injecting…" : "Inject prompt"}
         </button>
+        <fieldset className="live-mode">
+          <legend className="sr-only">When to apply the prompt</legend>
+          <label>
+            <input
+              type="radio"
+              name={`inject-mode-${id}`}
+              checked={mode === "next-step"}
+              onChange={() => setMode("next-step")}
+            />
+            Apply at next step
+          </label>
+          <label title="Stops the agent's current step and continues it with the prompt; costs extra tokens">
+            <input
+              type="radio"
+              name={`inject-mode-${id}`}
+              checked={mode === "now"}
+              onChange={() => setMode("now")}
+            />
+            Apply now (interrupts the current step)
+          </label>
+        </fieldset>
       </div>
+      {steering && <p className="live-steering">Steering… interrupting the current step</p>}
       {error && <p className="error live-error">{error}</p>}
     </section>
   );

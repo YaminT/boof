@@ -164,10 +164,15 @@ export const api = {
     http<{ log: string; running: boolean }>(`${T(pid, id)}/live-log`),
   stopTask: (pid: string, id: string) =>
     http<{ ok: true }>(`${T(pid, id)}/stop`, { method: "POST" }),
-  injectPrompt: (pid: string, id: string, prompt: string) =>
-    http<{ ok: true }>(`${T(pid, id)}/inject`, {
+  injectPrompt: (
+    pid: string,
+    id: string,
+    prompt: string,
+    mode: "next-step" | "now" = "next-step",
+  ) =>
+    http<{ ok: true; mode: "next-step" | "now"; applied: "pending" }>(`${T(pid, id)}/inject`, {
       method: "POST",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, mode }),
     }),
   submitAnswers: (pid: string, id: string, answers: string) =>
     httpTask(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
