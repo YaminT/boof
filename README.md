@@ -13,7 +13,7 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 - **Desktop app** — Electron wrapper that runs server, runner and UI in one window.
 - **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, no web server needed.
 - **REST API** — versioned `/api/v1` generated from one operations registry, with an OpenAPI 3.1 document, ETags, idempotency keys and paging.
-- **MCP** — the same operations as 33 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
+- **MCP** — the same operations as 34 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
 - **Events and webhooks** — replayable server-sent events and HMAC-signed webhooks.
 - **Security** — loopback by default; API keys with scopes, project restrictions and trust levels; Host guard, rate limit and audit log.
 
@@ -163,7 +163,7 @@ To run boof on a headless Linux server (systemd service, nginx with TLS, API key
 
 Pick a project at the top (or add one); every tab works on that project. The runner on/off toggle sits next to the project picker.
 
-- **Tasks** — the queue with status filters (draft, pending, running, action, done, failed, archived) and drag-to-reorder priority. Open a task to edit its prompt, labels, runs, command template and attachments (images and PDFs), read the planner, developer, observer and reviewer reports, and watch the live agent output. Stop a running task or inject an extra instruction. Filter "Proposed by clients" to approve drafts that API clients created.
+- **Tasks** — the queue with status filters (draft, pending, running, action, done, failed, archived) and drag-to-reorder priority. Open a task to edit its prompt, labels, runs, command template and attachments (images and PDFs), read the planner, developer, observer and reviewer reports, and watch the live agent output. Stop a running task or inject an extra instruction. The **Changes** tab (and a **Review changes** button on done and failed tasks and on plan goals) shows what the task branch changed: the commits, the changed files with +/- counts and a line-numbered unified diff per file (loaded on demand for large diffs), including uncommitted work of a running or kept worktree, with buttons to copy the branch name and the git log, diff and merge commands. Filter "Proposed by clients" to approve drafts that API clients created.
 - **Plans** — create plans with goals and dependencies, edit them, import them from a repository's `goal.boof.xml` files or export them. **Approve** a draft plan to activate it, preview a sync (dry run), then **Sync to tasks**. Enable auto-sync to let the runner sync before it picks tasks.
 - **Actions** — tasks parked because the planner has questions. Answer them and the task resumes.
 - **Commands** — reusable instruction templates that any task can attach.

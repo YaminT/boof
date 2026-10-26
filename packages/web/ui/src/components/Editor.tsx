@@ -5,6 +5,7 @@ import type { Attachment } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
 import type { CommandTemplate } from "../api-types.js";
 import { FileIcon, PaperclipIcon, XIcon } from "./Icons.js";
+import { ChangesPanel } from "./ChangesPanel.js";
 
 const NEW = "__new__";
 
@@ -85,11 +86,16 @@ function AttachmentChip({
 export function Editor({
   projectId,
   taskId,
+  initialView = "edit",
+  onViewChange,
   onClose,
   onChange,
 }: {
   projectId: string;
   taskId: string;
+  /** Which tab to open: the form, or what the task's branch changed. */
+  initialView?: "edit" | "changes";
+  onViewChange?: (view: "edit" | "changes") => void;
   onClose: () => void;
   onChange: () => void;
 }) {
@@ -110,6 +116,13 @@ export function Editor({
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [outTab, setOutTab] = useState<OutputTab>("log");
+  const [view, setViewState] = useState<"edit" | "changes">(isNew ? "edit" : initialView);
+  const setView = (v: "edit" | "changes") => {
+    setViewState(v);
+    onViewChange?.(v);
+  };
+  // Bumped on live events so the Changes tab refreshes while the task runs.
+  const [liveTick, setLiveTick] = useState(0);
   // Live streaming agent output while the task runs (chunk-by-chunk from the
   // server's log.txt tail). Null when the task isn't running.
   const [liveLog, setLiveLog] = useState<string | null>(null);
@@ -154,7 +167,16 @@ export function Editor({
     });
   }, [projectId, effectiveId]);
   // A running task streams into its log file: every `changed` hint refreshes this task.
-  useLive({ onChanged: () => refreshTask(), onReconnect: refreshTask });
+  useLive({
+    onChanged: () => {
+      refreshTask();
+      setLiveTick((n) => n + 1);
+    },
+    onEvent: (e) => {
+      if (e.task === effectiveId) setLiveTick((n) => n + 1);
+    },
+    onReconnect: refreshTask,
+  });
 
   // Keep the log view pinned to the newest output while streaming.
   useEffect(() => {
@@ -253,175 +275,210 @@ export function Editor({
       </div>
       {error && <p className="error">{error}</p>}
 
-      <label>
-        Title
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title" />
-      </label>
-
-      <label>
-        Priority
-        <input
-          type="number"
-          value={priority}
-          onChange={(e) => setPriority(Number(e.target.value))}
-        />
-      </label>
-
-      <label>
-        Runs
-        <input
-          type="number"
-          min={1}
-          value={runs}
-          onChange={(e) => setRuns(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-        />
-        <small className="muted">
-          How many times to run the pipeline. Runs after the first review and refine the prior run's
-          work, treating it critically as another AI's solution.
-        </small>
-      </label>
-
-      <label>
-        Labels (comma-separated)
-        <input
-          value={labels}
-          onChange={(e) => setLabels(e.target.value)}
-          placeholder="backend, auth"
-        />
-      </label>
-
-      <label>
-        Command template
-        <select value={command ?? ""} onChange={(e) => setCommand(e.target.value || null)}>
-          <option value="">(none)</option>
-          {commands.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="prompt-field">
-        Prompt (markdown)
-        <div
-          className={`prompt-drop${dragging ? " dragging" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={16}
-            placeholder="Describe what you want done… (drop images or PDFs here to attach)"
-          />
-          {dragging && <div className="prompt-drop-hint">Drop to attach</div>}
-        </div>
-      </label>
-
-      <div className="attachments">
-        <div className="attachments-bar">
-          <button
-            type="button"
-            className="attach-btn"
-            onClick={() => fileInput.current?.click()}
-            disabled={uploading}
-          >
-            <PaperclipIcon /> {uploading ? "Uploading…" : "Attach image or PDF"}
-          </button>
-          <small className="muted">PNG, JPG, GIF, WebP, or PDF — up to 25 MB each.</small>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            accept={ATTACH_ACCEPT}
-            style={{ display: "none" }}
-            onChange={(e) => {
-              if (e.target.files) void onFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </div>
-        {attachError && <p className="error">{attachError}</p>}
-        {attachments.length > 0 && effectiveId && (
-          <div className="attachment-list">
-            {attachments.map((a) => (
-              <AttachmentChip
-                key={a.name}
-                projectId={projectId}
-                taskId={effectiveId}
-                attachment={a}
-                onRemove={() => removeAttachment(a.name)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="editor-actions">
-        <button onClick={() => save()} disabled={!title}>
-          Save {isNew && !effectiveId ? "draft" : ""}
-        </button>
-        {canEnqueue && (
-          <button className="primary" onClick={() => save("pending")} disabled={!title}>
-            Save & enqueue
-          </button>
-        )}
-      </div>
-
       {!isNew && task && (
-        <section className="output">
-          <div className="output-head">
-            <h3>Agent output</h3>
-            <span className={`status-pill status-${task.frontmatter.status}`}>
-              {task.frontmatter.status}
-            </span>
-            {task.frontmatter.status === "failed" && (
-              <button
-                className="retry-btn"
-                title="Clear the failed status and re-queue this task"
-                onClick={async () => {
-                  await api.retry(projectId, task.frontmatter.id);
-                  onChange();
-                  refreshTask();
-                }}
-              >
-                ↻ Retry
-              </button>
-            )}
-          </div>
-          <div className="output-tabs">
-            {(["planner", "developer", "observer", "reviewer", "log"] as const).map((k) => {
-              const hasContent =
-                k === "log" ? !!(liveLog ?? task.body.log) : !!task.body.reports[k];
-              return (
-                <button
-                  key={k}
-                  className={outTab === k ? "active" : ""}
-                  onClick={() => setOutTab(k)}
-                  title={hasContent ? undefined : "No content yet"}
-                >
-                  {k === "log" ? "Log" : k[0].toUpperCase() + k.slice(1)}
-                  {k === "log" && liveLog !== null ? (
-                    <span className="live-dot" title="Streaming live" />
-                  ) : hasContent ? (
-                    <span className="dot" />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-          <pre className="output-body" ref={logRef}>
-            {outTab === "log"
-              ? (liveLog ?? task.body.log) || "No agent output captured yet."
-              : task.body.reports[outTab] || `No ${outTab} report yet.`}
-          </pre>
-        </section>
+        <div className="output-tabs editor-views" role="tablist" aria-label="Task view">
+          <button
+            role="tab"
+            aria-selected={view === "edit"}
+            className={view === "edit" ? "active" : ""}
+            onClick={() => setView("edit")}
+          >
+            Task
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "changes"}
+            className={view === "changes" ? "active" : ""}
+            onClick={() => setView("changes")}
+          >
+            Changes
+          </button>
+        </div>
       )}
+      {!isNew && task && view === "changes" && (
+        <ChangesPanel
+          projectId={projectId}
+          taskId={task.frontmatter.id}
+          status={task.frontmatter.status}
+          tick={liveTick}
+        />
+      )}
+
+      <div className="editor-form" hidden={view === "changes" && !isNew && !!task}>
+        <label>
+          Title
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Task title"
+          />
+        </label>
+
+        <label>
+          Priority
+          <input
+            type="number"
+            value={priority}
+            onChange={(e) => setPriority(Number(e.target.value))}
+          />
+        </label>
+
+        <label>
+          Runs
+          <input
+            type="number"
+            min={1}
+            value={runs}
+            onChange={(e) => setRuns(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+          />
+          <small className="muted">
+            How many times to run the pipeline. Runs after the first review and refine the prior
+            run's work, treating it critically as another AI's solution.
+          </small>
+        </label>
+
+        <label>
+          Labels (comma-separated)
+          <input
+            value={labels}
+            onChange={(e) => setLabels(e.target.value)}
+            placeholder="backend, auth"
+          />
+        </label>
+
+        <label>
+          Command template
+          <select value={command ?? ""} onChange={(e) => setCommand(e.target.value || null)}>
+            <option value="">(none)</option>
+            {commands.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="prompt-field">
+          Prompt (markdown)
+          <div
+            className={`prompt-drop${dragging ? " dragging" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+          >
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={16}
+              placeholder="Describe what you want done… (drop images or PDFs here to attach)"
+            />
+            {dragging && <div className="prompt-drop-hint">Drop to attach</div>}
+          </div>
+        </label>
+
+        <div className="attachments">
+          <div className="attachments-bar">
+            <button
+              type="button"
+              className="attach-btn"
+              onClick={() => fileInput.current?.click()}
+              disabled={uploading}
+            >
+              <PaperclipIcon /> {uploading ? "Uploading…" : "Attach image or PDF"}
+            </button>
+            <small className="muted">PNG, JPG, GIF, WebP, or PDF — up to 25 MB each.</small>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              accept={ATTACH_ACCEPT}
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files) void onFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          {attachError && <p className="error">{attachError}</p>}
+          {attachments.length > 0 && effectiveId && (
+            <div className="attachment-list">
+              {attachments.map((a) => (
+                <AttachmentChip
+                  key={a.name}
+                  projectId={projectId}
+                  taskId={effectiveId}
+                  attachment={a}
+                  onRemove={() => removeAttachment(a.name)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="editor-actions">
+          <button onClick={() => save()} disabled={!title}>
+            Save {isNew && !effectiveId ? "draft" : ""}
+          </button>
+          {canEnqueue && (
+            <button className="primary" onClick={() => save("pending")} disabled={!title}>
+              Save & enqueue
+            </button>
+          )}
+        </div>
+
+        {!isNew && task && (
+          <section className="output">
+            <div className="output-head">
+              <h3>Agent output</h3>
+              <span className={`status-pill status-${task.frontmatter.status}`}>
+                {task.frontmatter.status}
+              </span>
+              {task.frontmatter.status === "failed" && (
+                <button
+                  className="retry-btn"
+                  title="Clear the failed status and re-queue this task"
+                  onClick={async () => {
+                    await api.retry(projectId, task.frontmatter.id);
+                    onChange();
+                    refreshTask();
+                  }}
+                >
+                  ↻ Retry
+                </button>
+              )}
+            </div>
+            <div className="output-tabs">
+              {(["planner", "developer", "observer", "reviewer", "log"] as const).map((k) => {
+                const hasContent =
+                  k === "log" ? !!(liveLog ?? task.body.log) : !!task.body.reports[k];
+                return (
+                  <button
+                    key={k}
+                    className={outTab === k ? "active" : ""}
+                    onClick={() => setOutTab(k)}
+                    title={hasContent ? undefined : "No content yet"}
+                  >
+                    {k === "log" ? "Log" : k[0].toUpperCase() + k.slice(1)}
+                    {k === "log" && liveLog !== null ? (
+                      <span className="live-dot" title="Streaming live" />
+                    ) : hasContent ? (
+                      <span className="dot" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+            <pre className="output-body" ref={logRef}>
+              {outTab === "log"
+                ? (liveLog ?? task.body.log) || "No agent output captured yet."
+                : task.body.reports[outTab] || `No ${outTab} report yet.`}
+            </pre>
+          </section>
+        )}
+      </div>
     </div>
   );
 }

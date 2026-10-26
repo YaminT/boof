@@ -48,6 +48,27 @@ export interface BudgetStatus {
   exceeded: BudgetScope[];
 }
 
+export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed" | "binary";
+
+/** What `GET .../tasks/{id}/diff` returns (see docs/api.md). */
+export interface TaskDiff {
+  base: { ref: string; sha: string };
+  head: { ref: string; sha: string };
+  files: {
+    path: string;
+    oldPath?: string;
+    status: DiffFileStatus;
+    additions: number;
+    deletions: number;
+  }[];
+  stats: { files: number; additions: number; deletions: number };
+  patch?: string;
+  truncated: boolean;
+  commits: { sha: string; subject: string; author: string; date: string }[];
+  includesUncommitted?: boolean;
+  leftovers?: { ref: string; sha: string };
+}
+
 /** An API client as returned by /api/auth/clients (never includes the key hash). */
 export interface PublicClient {
   id: string;

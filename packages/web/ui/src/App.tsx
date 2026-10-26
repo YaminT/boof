@@ -25,14 +25,37 @@ function readPlansHash(): { open: boolean; planId: string | null } {
   return { open: !!m, planId: m?.[1] ? decodeURIComponent(m[1]) : null };
 }
 
+/** `#/p/<pid>/tasks/<taskId>[/changes]`: an open task editor, optionally on its Changes tab. */
+const TASK_HASH = /^#\/p\/([^/?#]+)\/tasks\/([^/?#]+)(\/changes)?/;
+function readTaskHash(): { pid: string; taskId: string; view: "edit" | "changes" } | null {
+  const m = TASK_HASH.exec(window.location.hash);
+  if (!m) return null;
+  try {
+    return {
+      pid: decodeURIComponent(m[1]!),
+      taskId: decodeURIComponent(m[2]!),
+      view: m[3] ? "changes" : "edit",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>(() => (readPlansHash().open ? "plans" : "tasks"));
+  // An editor linked from the URL hash is restored once the projects have loaded.
+  const restoreTask = useRef(readTaskHash());
   const [planId, setPlanId] = useState<string | null>(() => readPlansHash().planId);
   const [planTick, setPlanTick] = useState(0);
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [actions, setActions] = useState<TaskView[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(
+    () => restoreTask.current?.taskId ?? null,
+  );
+  const [editorView, setEditorView] = useState<"edit" | "changes">(
+    () => restoreTask.current?.view ?? "edit",
+  );
   const { projects, selected, selectedId, select, reload: reloadProjects } = useProjects(settings);
 
   const selectedRef = useRef<string | null>(null);
@@ -111,19 +134,38 @@ export function App() {
 
   // Switching project: drop the old list and any open editor, then load the new one.
   useEffect(() => {
+    const r = restoreTask.current;
+    if (r) {
+      if (!selectedId) return; // projects not loaded yet
+      restoreTask.current = null;
+      if (selectedId === r.pid) {
+        void loadTasks(selectedId).catch(() => {});
+        return;
+      }
+    }
     setTasks([]);
     setEditingId(null);
     void loadTasks(selectedId).catch(() => {});
   }, [selectedId, loadTasks]);
+
+  const openEditor = (id: string, view: "edit" | "changes") => {
+    setEditorView(view);
+    setEditingId(id);
+  };
 
   // Keep the URL hash in step with the tab: `#/p/<pid>/plans[/<planId>]` is linkable.
   useEffect(() => {
     if (!selectedId) return;
     const base = `#/p/${encodeURIComponent(selectedId)}`;
     const want =
-      tab === "plans" ? `${base}/plans${planId ? `/${encodeURIComponent(planId)}` : ""}` : base;
+      tab === "plans"
+        ? `${base}/plans${planId ? `/${encodeURIComponent(planId)}` : ""}`
+        : tab === "tasks" && editingId && editingId !== "__new__"
+          ? `${base}/tasks/${encodeURIComponent(editingId)}${editorView === "changes" ? "/changes" : ""}`
+          : base;
+    if (restoreTask.current) return; // keep the linked hash until it has been restored
     if (window.location.hash !== want) window.history.replaceState(null, "", want);
-  }, [tab, planId, selectedId]);
+  }, [tab, planId, selectedId, editingId, editorView]);
 
   const pendingActions = actions.length;
 
@@ -223,9 +265,10 @@ export function App() {
             <TaskList
               projectId={selectedId}
               tasks={tasks}
-              onEdit={setEditingId}
+              onEdit={(id) => openEditor(id, "edit")}
+              onReview={(id) => openEditor(id, "changes")}
               onChange={refresh}
-              onNew={() => setEditingId("__new__")}
+              onNew={() => openEditor("__new__", "edit")}
             />
           </>
         )}
@@ -238,7 +281,11 @@ export function App() {
             planId={planId}
             onSelectPlan={setPlanId}
             onOpenTask={(id) => {
-              setEditingId(id);
+              openEditor(id, "edit");
+              setTab("tasks");
+            }}
+            onReviewTask={(id) => {
+              openEditor(id, "changes");
               setTab("tasks");
             }}
             onChange={refresh}
@@ -247,7 +294,10 @@ export function App() {
         {selectedId && tab === "tasks" && editingId && (
           <Editor
             projectId={selectedId}
+            key={editingId}
             taskId={editingId}
+            initialView={editorView}
+            onViewChange={setEditorView}
             onClose={() => setEditingId(null)}
             onChange={refresh}
           />

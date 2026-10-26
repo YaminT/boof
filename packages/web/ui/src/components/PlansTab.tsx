@@ -18,6 +18,7 @@ export function PlansTab({
   planId,
   onSelectPlan,
   onOpenTask,
+  onReviewTask,
   onChange,
 }: {
   projectId: string;
@@ -27,6 +28,7 @@ export function PlansTab({
   planId: string | null;
   onSelectPlan: (id: string | null) => void;
   onOpenTask: (taskId: string) => void;
+  onReviewTask: (taskId: string) => void;
   onChange: () => void;
 }) {
   const [plans, setPlans] = useState<PlanSummary[] | null>(null);
@@ -81,6 +83,7 @@ export function PlansTab({
           void load();
         }}
         onOpenTask={onOpenTask}
+        onReviewTask={onReviewTask}
         onChange={() => {
           void load();
           onChange();

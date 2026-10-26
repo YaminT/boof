@@ -1481,3 +1481,255 @@ textarea:focus-visible {
 .spend.over .spend-row {
   color: var(--red);
 }
+
+/* ---------- Task changes (branch review) ---------- */
+.editor-views {
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.editor-views button {
+  margin-bottom: -1px;
+}
+.editor-form[hidden] {
+  display: none;
+}
+.changes {
+  min-width: 0;
+}
+.changes-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-bottom: 10px;
+}
+.changes-summary {
+  font-size: 14px;
+}
+.changes-actions {
+  display: flex;
+  gap: 8px;
+}
+.changes-actions .btn-secondary {
+  padding: 5px 10px;
+}
+.changes-note {
+  margin: 8px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--accent-weak);
+  border-radius: 8px;
+}
+.changes-h {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.changes code,
+.diff-table,
+.file-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.changes code {
+  font-size: 12px;
+}
+.diff-add-count {
+  color: var(--green);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.diff-del-count {
+  color: var(--red);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.commit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+.commit-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.commit-list li:last-child {
+  border-bottom: none;
+}
+.commit-sha {
+  color: var(--accent);
+}
+.commit-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-meta {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.changes-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 560px;
+  overflow: auto;
+}
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.file-item:hover {
+  background: var(--inset);
+}
+.file-item.active {
+  background: var(--accent-weak);
+}
+.file-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-counts {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.file-status {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--inset);
+  color: var(--muted);
+}
+.file-added {
+  color: var(--green);
+}
+.file-deleted {
+  color: var(--red);
+}
+.file-renamed,
+.file-modified {
+  color: var(--amber);
+}
+.changes-file {
+  min-width: 0;
+}
+.changes-file-head {
+  padding: 6px 12px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  overflow-wrap: anywhere;
+}
+.diff-box {
+  overflow: auto;
+  max-height: 640px;
+  border: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+  background: var(--panel);
+}
+.diff-box:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.diff-table {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.diff-table td {
+  padding: 0 8px;
+  vertical-align: top;
+}
+.diff-no {
+  width: 1%;
+  min-width: 44px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+  background: var(--inset);
+  font-variant-numeric: tabular-nums;
+}
+.diff-sign {
+  width: 1%;
+  padding: 0 4px !important;
+  user-select: none;
+  text-align: center;
+}
+.diff-code {
+  white-space: pre;
+}
+.diff-add {
+  background: rgba(47, 128, 85, 0.14);
+}
+.diff-add .diff-sign {
+  color: var(--green);
+  font-weight: 700;
+}
+.diff-del {
+  background: rgba(194, 59, 52, 0.13);
+}
+.diff-del .diff-sign {
+  color: var(--red);
+  font-weight: 700;
+}
+.diff-hunk {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+.diff-note {
+  color: var(--muted);
+  font-style: italic;
+}
+.diff-empty {
+  padding: 12px;
+  margin: 0;
+}
+@media (max-width: 800px) {
+  .changes-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

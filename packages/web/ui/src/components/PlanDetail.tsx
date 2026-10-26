@@ -74,6 +74,7 @@ export function PlanDetail({
   tick,
   onBack,
   onOpenTask,
+  onReviewTask,
   onChange,
 }: {
   projectId: string;
@@ -82,6 +83,7 @@ export function PlanDetail({
   tick: number;
   onBack: () => void;
   onOpenTask: (taskId: string) => void;
+  onReviewTask: (taskId: string) => void;
   onChange: () => void;
 }) {
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -361,6 +363,20 @@ export function PlanDetail({
                     ) : (
                       "–"
                     )}
+                    {g.taskId &&
+                      (task?.frontmatter.status === "done" ||
+                        task?.frontmatter.status === "failed") && (
+                        <>
+                          {" "}
+                          <button
+                            className="retry-btn"
+                            title="See what this goal's task changed"
+                            onClick={() => onReviewTask(g.taskId!)}
+                          >
+                            Review changes
+                          </button>
+                        </>
+                      )}
                   </td>
                   <td className="goal-actions">
                     <button

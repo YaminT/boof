@@ -45,11 +45,13 @@ function Row({
   projectId,
   task,
   onEdit,
+  onReview,
   onChange,
 }: {
   projectId: string;
   task: Task;
   onEdit: (id: string) => void;
+  onReview: (id: string) => void;
   onChange: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -87,6 +89,15 @@ function Row({
           </span>
         ))}
       </span>
+      {(f.status === "done" || f.status === "failed") && (
+        <button
+          className="retry-btn"
+          title="See what this task changed before you retry, archive or merge it"
+          onClick={() => onReview(f.id)}
+        >
+          Review changes
+        </button>
+      )}
       {f.status === "failed" && (
         <button
           className="retry-btn"
@@ -156,12 +167,14 @@ export function TaskList({
   projectId,
   tasks,
   onEdit,
+  onReview,
   onChange,
   onNew,
 }: {
   projectId: string;
   tasks: Task[];
   onEdit: (id: string) => void;
+  onReview: (id: string) => void;
   onChange: () => void;
   onNew: () => void;
 }) {
@@ -297,6 +310,7 @@ export function TaskList({
                     projectId={projectId}
                     task={t}
                     onEdit={onEdit}
+                    onReview={onReview}
                     onChange={onChange}
                   />
                 ))}

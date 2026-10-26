@@ -12,6 +12,7 @@ import type {
   CommandTemplate,
   HealthResult,
   PublicClient,
+  TaskDiff,
   ToolModelDetails,
 } from "./api-types.js";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
@@ -117,6 +118,11 @@ export const api = {
   },
   /** One task with its log (`include=log`; the v1 default leaves the log out). */
   getTask: (pid: string, id: string) => http<TaskView>(`${T(pid, id)}?include=log`).then(withLog),
+  /** What the task's branch changed; `path` limits the patch to one file. */
+  getTaskDiff: (pid: string, id: string, opts: { path?: string } = {}) =>
+    http<TaskDiff>(
+      `${T(pid, id)}/diff${opts.path !== undefined ? `?path=${encodeURIComponent(opts.path)}` : ""}`,
+    ),
   createTask: (
     pid: string,
     input: {
