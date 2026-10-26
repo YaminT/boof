@@ -123,7 +123,12 @@ function operationObject(op: AnyOperation): Json {
     summary: op.title,
     description: op.description,
     tags: [op.name.split(".")[0]],
-    "x-boof-scope": op.scopes.length === 1 ? op.scopes[0] : { anyOf: op.scopes },
+    "x-boof-scope":
+      op.scopes.length === 0
+        ? "authenticated"
+        : op.scopes.length === 1
+          ? op.scopes[0]
+          : { anyOf: op.scopes },
     ...(op.mcp.expose && op.mcp.name ? { "x-mcp-tool": op.mcp.name } : {}),
     parameters,
   };

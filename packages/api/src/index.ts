@@ -11,3 +11,4 @@ export { DEFAULT_PAGE, MAX_PAGE } from "./ops/tasks.js";
 export * from "./idempotency.js";
 export * from "./openapi.js";
 export { assertWebhookUrl, eventMatches } from "./ops/webhooks.js";
+export { WhoamiSchema } from "./ops/whoami.js";

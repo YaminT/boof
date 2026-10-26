@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AuthStore,
+  BOOF_VERSION,
   defaultSettings,
   LOCAL_PRINCIPAL,
   SettingsStore,
@@ -102,6 +103,7 @@ describe("tools generated from the registry", () => {
     const names = tools.map((t) => t.name);
     expect(names).toMatchInlineSnapshot(`
       [
+        "boof_whoami",
         "boof_list_projects",
         "boof_create_project",
         "boof_get_project",
@@ -135,7 +137,7 @@ describe("tools generated from the registry", () => {
         "boof_list_actions",
       ]
     `);
-    expect(names.length).toBeLessThanOrEqual(35);
+    expect(names.length).toBeLessThanOrEqual(32);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("@boof-runner/api").then((m) => m.registry)).map((o) => [
         o.mcp.name,
@@ -155,6 +157,24 @@ describe("tools generated from the registry", () => {
       expect(t.description, t.name).toBeTruthy();
       expect(t.annotations, t.name).toBeDefined();
     }
+  });
+
+  it("boof_whoami needs no scope and reports the principal", async () => {
+    const principal = await clientPrincipal(["plans:read"], "review", ["shop"]);
+    const client = await connect(principal);
+    expect((await client.listTools()).tools.map((t) => t.name)).toContain("boof_whoami");
+    const r = await call(client, "boof_whoami");
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({
+      principal: {
+        kind: "client",
+        name: "agent",
+        trust: "review",
+        scopes: ["plans:read"],
+        projects: ["shop"],
+      },
+      server: { version: BOOF_VERSION, authMode: "local-trust", mcpEnabled: true },
+    });
   });
 
   it("lists only the tools the client's scopes allow", async () => {

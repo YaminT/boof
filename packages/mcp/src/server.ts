@@ -16,7 +16,7 @@ import {
   type OpContext,
   type OpError,
 } from "@boof-runner/api";
-import { authorize, type AuthStore, type Principal } from "@boof-runner/shared";
+import { authorize, BOOF_VERSION, type AuthStore, type Principal } from "@boof-runner/shared";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
 
@@ -164,7 +164,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
   };
 
   const server = new McpServer(
-    { name: SERVER_NAME, version: options.version ?? "0.2.0" },
+    { name: SERVER_NAME, version: options.version ?? BOOF_VERSION },
     {
       instructions:
         "Boof runs coding-agent tasks in git repositories. Typical flow: boof_list_projects, " +
@@ -183,7 +183,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     const principal = await resolve();
     return {
       tools: ops
-        .filter((op) => op.scopes.some((s) => authorize(principal, s)))
+        .filter((op) => op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s)))
         .map((op) => toolDefinition(op, options.project)),
     };
   });

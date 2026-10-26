@@ -7473,6 +7473,140 @@
         ],
         "x-boof-scope": "admin"
       }
+    },
+    "/whoami": {
+      "get": {
+        "description": "Returns the calling principal (kind, id, name, trust, scopes, projects) and basic server facts (version, auth mode, whether MCP is enabled). No input. Needs no scope; any authenticated caller may use it. No side effects.",
+        "operationId": "auth.whoami",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "principal": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "local",
+                            "client"
+                          ],
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "projects": {
+                          "anyOf": [
+                            {
+                              "const": "*",
+                              "type": "string"
+                            },
+                            {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          ]
+                        },
+                        "scopes": {
+                          "items": {
+                            "enum": [
+                              "projects:read",
+                              "projects:write",
+                              "plans:read",
+                              "plans:write",
+                              "tasks:read",
+                              "tasks:write",
+                              "tasks:control",
+                              "settings:read",
+                              "settings:write",
+                              "runner:control",
+                              "auth:admin",
+                              "admin"
+                            ],
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "trust": {
+                          "enum": [
+                            "trusted",
+                            "review"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "id",
+                        "name",
+                        "trust",
+                        "scopes",
+                        "projects"
+                      ],
+                      "type": "object"
+                    },
+                    "server": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "authMode": {
+                          "enum": [
+                            "local-trust",
+                            "required"
+                          ],
+                          "type": "string"
+                        },
+                        "mcpEnabled": {
+                          "type": "boolean"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "authMode",
+                        "mcpEnabled"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "principal",
+                    "server"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Who am I",
+        "tags": [
+          "auth"
+        ],
+        "x-boof-scope": "authenticated",
+        "x-mcp-tool": "boof_whoami"
+      }
     }
   },
   "security": [

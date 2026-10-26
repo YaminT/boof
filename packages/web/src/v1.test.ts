@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSettings, SettingsStore } from "@boof-runner/shared";
+import { AuthStore, BOOF_VERSION, defaultSettings, SettingsStore } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
@@ -186,5 +186,46 @@ describe("v1 conventions", () => {
     const res = await call(`${V1}/nope`);
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe("not_found");
+  });
+
+  it("GET /whoami tells any authenticated principal who it is, with no scope", async () => {
+    const authStore = new AuthStore(root);
+    const { key } = await authStore.create({
+      name: "watcher",
+      scopes: ["plans:read"],
+      trust: "review",
+      projects: ["demo"],
+    });
+    const remote = createApp({
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
+      authStore,
+      peerAddress: () => "10.1.2.3",
+    });
+    const url = "http://localhost/api/v1/whoami";
+    expect((await remote.request(url)).status).toBe(401);
+    const res = await remote.request(url, { headers: { authorization: `Bearer ${key}` } });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.principal).toMatchObject({
+      kind: "client",
+      name: "watcher",
+      trust: "review",
+      scopes: ["plans:read"],
+      projects: ["demo"],
+    });
+    expect(body.server).toEqual({
+      version: BOOF_VERSION,
+      authMode: "local-trust",
+      mcpEnabled: true,
+    });
+    const local = await (await call(`${V1}/whoami`)).json();
+    expect(local.principal).toMatchObject({ kind: "local", scopes: ["admin"], projects: "*" });
+  });
+
+  it("keeps BOOF_VERSION equal to the root package.json version", async () => {
+    const pkg = JSON.parse(
+      await readFile(join(import.meta.dirname, "..", "..", "..", "package.json"), "utf8"),
+    );
+    expect(BOOF_VERSION).toBe(pkg.version);
   });
 });

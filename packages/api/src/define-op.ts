@@ -70,7 +70,7 @@ export interface OperationSpec<I extends z.ZodObject, O extends z.ZodType> {
   title: string;
   /** One sentence what, one sentence inputs, one sentence side effects. */
   description: string;
-  /** The scope needed; an array means any one of them suffices. */
+  /** The scope needed; an array means any one of them suffices; an empty array: any authenticated caller. */
   scope: Scope | Scope[];
   /** The input has a `projectId` the principal must be allowed to touch. */
   projectScoped: boolean;
@@ -121,7 +121,7 @@ export function defineOp<I extends z.ZodObject, O extends z.ZodType>(
   const pathParams = [...spec.rest.path.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
 
   const assertScope = (principal: Principal): void => {
-    if (scopes.some((s) => authorize(principal, s))) return;
+    if (scopes.length === 0 || scopes.some((s) => authorize(principal, s))) return;
     throw new OpError(
       403,
       `Missing required scope: ${scopes.join(" or ")}`,

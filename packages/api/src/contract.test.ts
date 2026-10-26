@@ -13,7 +13,6 @@ describe("operations registry contract", () => {
 
   it("declares a known scope, a description and a REST mapping for every operation", () => {
     for (const op of registry) {
-      expect(op.scopes.length, op.name).toBeGreaterThan(0);
       for (const s of op.scopes) expect(SCOPES, op.name).toContain(s);
       expect(op.description.length, op.name).toBeGreaterThan(20);
       expect(op.name, op.name).toMatch(/^[a-z]+(\.[a-zA-Z]+)+$/);
@@ -29,7 +28,7 @@ describe("operations registry contract", () => {
     const names: string[] = [];
     for (const op of registry.filter((o) => o.mcp.expose)) {
       expect(op.mcp.name, op.name).toMatch(MCP_NAME);
-      expect(op.mcp.name, op.name).toMatch(/^boof_[a-z]+_[a-z_]+$/);
+      expect(op.mcp.name, op.name).toMatch(/^boof_[a-z]+(_[a-z_]+)?$/);
       expect(op.mcp.annotations, op.name).toBeDefined();
       expect(op.summary, op.name).toBeTypeOf("function");
       names.push(op.mcp.name!);
