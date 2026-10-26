@@ -2,7 +2,11 @@ import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promise
 import { isAbsolute, join, relative } from "node:path";
 import {
   appendVersion,
+  blockingScopes,
   effectiveSettings,
+  evaluateBudget,
+  resolveRole,
+  type BudgetScope,
   parseGoal,
   PlanStore,
   ProjectStore,
@@ -17,6 +21,7 @@ import {
   taskStopRequestPath,
   type Task,
 } from "@boof-runner/shared";
+import { announceBudgetExceeded } from "./budget.js";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
 import { Pipeline, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
@@ -37,7 +42,9 @@ export type TickResult =
   | { kind: "ran"; outcome: PipelineOutcome; projectId: string }
   | { kind: "idle" }
   | { kind: "disabled" }
-  | { kind: "blocked" };
+  | { kind: "blocked" }
+  /** Nothing started because a day budget is spent (`scopes`); work resumes when it resets. */
+  | { kind: "budget"; scopes: string[] };
 
 /** The next task to run and the project it belongs to. */
 export interface Selection {
@@ -63,6 +70,8 @@ export class RunnerEngine {
   private readonly inflight = new Map<string, Promise<TickResult>>();
   /** Task id in flight per project id (so a shutdown can ask each one to stop). */
   private readonly runningTasks = new Map<string, string>();
+  /** Day-budget scopes that kept work from starting in the last selection. */
+  private budgetBlocked: BudgetScope[] = [];
   private looping = false;
   private stopRequested = false;
 
@@ -95,15 +104,49 @@ export class RunnerEngine {
    * flight are excluded.
    */
   async selectNext(): Promise<Selection | null> {
+    return (await this.selectWithBudget()).selection;
+  }
+
+  /**
+   * {@link selectNext} plus the spent day budgets that kept projects or tasks out of the
+   * selection. A project whose day budget is spent, and a task that needs a tool whose day
+   * budget is spent (any role's tool), are skipped; a spent global budget skips everything.
+   * Each blocking scope is announced once per day with a `runner.budget_exceeded` event.
+   */
+  private async selectWithBudget(): Promise<{
+    selection: Selection | null;
+    blocked: BudgetScope[];
+  }> {
+    const settings = await this.settingsStore.load();
+    const projects = await this.runnableProjects();
+    const limited = settings.budget !== undefined || projects.some((p) => p.budget !== undefined);
+    const status = limited ? await evaluateBudget(this.root, settings, projects) : null;
+    const blocked = new Map<string, BudgetScope>();
+    const global = status?.exceeded.find((s) => s.scope === "global");
+    if (global) blocked.set(global.scope, global);
     let best: Selection | null = null;
-    for (const project of await this.runnableProjects()) {
+    for (const project of projects) {
       if (this.inflight.has(project.id)) continue;
       for (const task of await this.storeFor(project).list()) {
         if (task.frontmatter.status !== "pending" || task.frontmatter.skip) continue;
+        if (status) {
+          const eff = effectiveSettings(settings, project);
+          const tools = (["planner", "developer", "reviewer", "observer"] as const)
+            .map((role) => resolveRole(eff, task, role as "observer")?.tool)
+            .filter((t): t is string => t !== undefined);
+          const hits = blockingScopes(status, project.id, tools);
+          if (hits.length > 0) {
+            for (const h of hits) blocked.set(h.scope, h);
+            continue;
+          }
+        }
         if (!best || compareSelection({ project, task }, best) < 0) best = { project, task };
       }
     }
-    return best;
+    if (status) {
+      for (const scope of blocked.values()) await announceBudgetExceeded(this.root, status, scope);
+    }
+    return { selection: best, blocked: [...blocked.values()] };
   }
 
   /**
@@ -174,7 +217,12 @@ export class RunnerEngine {
         await this.bumpGoalFile(project, outcome.task).catch(() => {});
       }
     } else if (outcome.kind === "failed") {
-      await store.transition(id, "failed");
+      await store.transition(
+        id,
+        "failed",
+        undefined,
+        outcome.budget ? { reason: outcome.error } : undefined,
+      );
       await this.noteGoalTaskStatus(project, outcome.task, "failed");
     } else {
       // Parked: record questions, set questions=pending, move to actions/.
@@ -333,6 +381,7 @@ export class RunnerEngine {
         registry: this.registry,
         settings: effectiveSettings(settings, project),
         project,
+        dataRoot: this.root,
       });
       const outcome = await pipeline.run(running!);
       await this.finalize(project, store, outcome);
@@ -352,9 +401,13 @@ export class RunnerEngine {
     if (!settings.runner.enabled) return { kind: "disabled" };
 
     await this.syncAutoPlans();
-    const next = await this.selectNext();
-    if (!next) return { kind: "idle" };
-    return this.start(next);
+    const { selection, blocked } = await this.selectWithBudget();
+    if (!selection) {
+      return blocked.length > 0
+        ? { kind: "budget", scopes: blocked.map((b) => b.scope) }
+        : { kind: "idle" };
+    }
+    return this.start(selection);
   }
 
   /**
@@ -364,8 +417,10 @@ export class RunnerEngine {
   private async fill(concurrency: number): Promise<Promise<TickResult>[]> {
     const started: Promise<TickResult>[] = [];
     await this.syncAutoPlans();
+    this.budgetBlocked = [];
     while (this.inflight.size < concurrency && !this.stopRequested) {
-      const next = await this.selectNext();
+      const { selection: next, blocked } = await this.selectWithBudget();
+      this.budgetBlocked = blocked;
       if (!next) break;
       const p = this.start(next);
       p.catch((err) => console.error("task failed to run:", err)); // runUntilIdle rethrows via race
@@ -402,7 +457,13 @@ export class RunnerEngine {
       }
       if (this.inflight.size === 0) {
         await Promise.all(all);
-        results.push(settings.runner.enabled ? { kind: "idle" } : { kind: "disabled" });
+        results.push(
+          !settings.runner.enabled
+            ? { kind: "disabled" }
+            : this.budgetBlocked.length > 0
+              ? { kind: "budget", scopes: this.budgetBlocked.map((b) => b.scope) }
+              : { kind: "idle" },
+        );
         return results;
       }
       await Promise.race(this.inflight.values());

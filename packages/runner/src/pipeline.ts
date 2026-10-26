@@ -1,7 +1,13 @@
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  blockingScopes,
+  budgetExceededMessage,
+  budgetTimeZone,
+  evaluateBudget,
   parseVerdict,
+  projectTaskBudget,
+  recordSpend,
   resolveRole,
   resolveWorktreeRoot,
   retrySettings,
@@ -22,6 +28,7 @@ import { transientReason } from "./tools/errors.js";
 import { sumUsage } from "./tools/usage.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
+import { announceBudgetExceeded } from "./budget.js";
 import { UsageStore } from "./usage-store.js";
 import {
   branchHead,
@@ -43,6 +50,8 @@ export interface PipelineDeps {
   settings: EffectiveSettings;
   /** The project being run; absent only in unit tests that build a Pipeline directly. */
   project?: Project;
+  /** The data root: set it (with `project`) to record the daily spend ledger and enforce budgets. */
+  dataRoot?: string;
 }
 
 const VERDICT_PROTOCOL =
@@ -168,14 +177,31 @@ class ReviewNotApprovedError extends Error {
   }
 }
 
+/**
+ * Thrown before a step starts when a budget is spent. A step that is running is never
+ * interrupted for budget: the check runs between steps, on the cost recorded so far.
+ */
+class BudgetExceededError extends Error {
+  constructor(
+    readonly scope: string,
+    spentUsd: number,
+    limitUsd: number,
+  ) {
+    super(budgetExceededMessage(scope, spentUsd, limitUsd));
+    this.name = "BudgetExceededError";
+  }
+}
+
 /** Outcome of running the pipeline for a single task. */
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string };
+  | { kind: "failed"; task: Task; error: string; budget?: true };
 
 export class Pipeline {
   private readonly usageStore: UsageStore;
+  /** Cost of this run's steps so far, per task id (the per-task budget). */
+  private readonly runCost = new Map<string, number>();
   /** Previous iteration's final observer/reviewer reports, per task id (runs > 1). */
   private readonly previousFindings = new Map<string, string>();
   constructor(private readonly deps: PipelineDeps) {
@@ -220,18 +246,21 @@ export class Pipeline {
     opts: RunOptions,
   ): Promise<RunResult> {
     await this.assertNotStopped(id);
+    await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
     let prompt = opts.prompt;
     for (let attempt = 0; ; attempt++) {
       try {
-        return await tool.run({
+        const result = await tool.run({
           ...opts,
           prompt,
           idleTimeoutMs,
           stopSignalPath: taskStopRequestPath(this.deps.root, id),
           onChunk: (c) => void this.streamChunk(id, c),
         });
+        await this.recordStepCost(id, tool.id, result.usage);
+        return result;
       } catch (err) {
         const reason = transientReason(err);
         if (reason === null || attempt >= transient) throw err;
@@ -252,6 +281,50 @@ export class Pipeline {
           "left off rather than restarting from scratch.";
       }
     }
+  }
+
+  /** Add a finished step's cost to the run total and the daily ledgers; never fails the step. */
+  private async recordStepCost(
+    id: string,
+    toolId: string,
+    usage: TokenUsage | undefined,
+  ): Promise<void> {
+    const known = usage?.known === true;
+    this.runCost.set(id, (this.runCost.get(id) ?? 0) + (known ? usage!.costUsd : 0));
+    const { project, dataRoot, settings } = this.deps;
+    if (!project || !dataRoot) return;
+    try {
+      await recordSpend({
+        dataRoot,
+        projectId: project.id,
+        projectDir: this.deps.root,
+        tool: toolId,
+        usage: usage ?? { costUsd: 0, known: false },
+        timezone: budgetTimeZone(settings),
+      });
+    } catch (err) {
+      console.error(`could not record the spend of ${id} in the daily ledger:`, err);
+    }
+  }
+
+  /**
+   * Between steps: throw when this run spent its per-task limit, or a day budget that stops
+   * `toolId` in this project is spent (global, project, tool, project+tool).
+   */
+  private async assertBudget(id: string, toolId: string): Promise<void> {
+    const { project, dataRoot, settings } = this.deps;
+    if (!project || !dataRoot) return;
+    const perTask = projectTaskBudget(settings, project).perTaskUsd;
+    const spent = this.runCost.get(id) ?? 0;
+    if (perTask !== null && spent >= perTask) {
+      throw new BudgetExceededError(`task:${id}`, spent, perTask);
+    }
+    if (!settings.budget && !project.budget) return;
+    const status = await evaluateBudget(dataRoot, settings, [project]);
+    const hit = blockingScopes(status, project.id, [toolId])[0];
+    if (!hit) return;
+    await announceBudgetExceeded(dataRoot, status, hit, project.id);
+    throw new BudgetExceededError(hit.scope, hit.spentUsd, hit.limitUsd!);
   }
 
   /** Wait `ms`, checking the stop signal every 250 ms; a stop request throws like any other stop. */
@@ -650,8 +723,9 @@ export class Pipeline {
       await this.persistUsage(task, usages);
       return { kind: "done", task };
     } catch (err) {
+      const overBudget = err instanceof BudgetExceededError;
       const message =
-        err instanceof ReviewNotApprovedError
+        err instanceof ReviewNotApprovedError || overBudget
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -663,7 +737,15 @@ export class Pipeline {
       if (worktree) {
         // A stop request always keeps the work, whatever onFailure says.
         const stoppedByUser = await this.stopRequested(id);
-        if (worktreeSettings(this.deps.settings).onFailure === "delete" && !stoppedByUser) {
+        // A budget stop with onExceed "pause" keeps the work too, so a retry resumes it.
+        const keepForBudget =
+          overBudget &&
+          projectTaskBudget(this.deps.settings, this.deps.project).onExceed === "pause";
+        if (
+          worktreeSettings(this.deps.settings).onFailure === "delete" &&
+          !stoppedByUser &&
+          !keepForBudget
+        ) {
           for (const line of await discardWorktree(workingDirectory, worktree)) {
             await appendLog(line).catch(() => {});
           }
@@ -676,7 +758,12 @@ export class Pipeline {
       }
       await this.mirrorLiveLog(task).catch(() => {});
       await this.persistUsage(task, usages).catch(() => {});
-      return { kind: "failed", task, error: message };
+      return {
+        kind: "failed",
+        task,
+        error: message,
+        ...(overBudget ? { budget: true as const } : {}),
+      };
     }
   }
 

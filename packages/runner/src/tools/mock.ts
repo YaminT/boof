@@ -130,7 +130,19 @@ function verdictBlock(role: Role, round: number, token: string): string {
   }
 }
 
-const usageLine = "input_tokens: 100 output_tokens: 42 cost: $0.01";
+/**
+ * Cost of each mock step, embedded in the task prompt: `[[mock-cost 0.5]]` makes every step cost
+ * $0.50, `[[mock-cost unknown]]` makes steps report no usage at all. Default $0.01. Last marker wins.
+ */
+const COST_MARKER = /\[\[mock-cost[ \t]+([^\]\n]*)\]\]/g;
+
+function usageLineFor(prompt: string): string {
+  const m = [...prompt.matchAll(COST_MARKER)].at(-1);
+  const value = m?.[1]?.trim();
+  if (value === "unknown") return "";
+  const cost = value !== undefined && Number.isFinite(Number(value)) ? Number(value) : 0.01;
+  return `input_tokens: 100 output_tokens: 42 cost: $${cost}`;
+}
 
 export class MockTool implements Tool {
   readonly id = "mock";
@@ -190,7 +202,7 @@ export class MockTool implements Tool {
     // Planner asks its configured questions exactly once (ask-once-then-resume).
     if (opts.role === "planner" && mockState.plannerQuestions.length > 0 && !mockState.hasAsked) {
       mockState.hasAsked = true;
-      const output = `MOCK planner questions\n${usageLine}`;
+      const output = `MOCK planner questions\n${usageLineFor(opts.prompt)}`;
       return {
         output,
         report: "Planner needs clarification before producing a plan.",
@@ -203,7 +215,7 @@ export class MockTool implements Tool {
     const asked = mockState.roleQuestions[opts.role];
     if (opts.role !== "planner" && asked && asked.length > 0) {
       delete mockState.roleQuestions[opts.role];
-      const output = `MOCK ${opts.role} questions\n${usageLine}`;
+      const output = `MOCK ${opts.role} questions\n${usageLineFor(opts.prompt)}`;
       return {
         output,
         report: reportFor(opts.role),
@@ -223,7 +235,7 @@ export class MockTool implements Tool {
       if (block) report += `\n\n${block}`;
     }
 
-    const output = `MOCK ${opts.role} (${opts.model}) ran in ${opts.cwd}\n${usageLine}`;
+    const output = `MOCK ${opts.role} (${opts.model}) ran in ${opts.cwd}\n${usageLineFor(opts.prompt)}`;
     return {
       output,
       report,
