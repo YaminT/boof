@@ -9,6 +9,7 @@ import {
   specFromBoofGoal,
   toKebabId,
   uniqueKebabId,
+  reopenDoneGoal,
   withGoalStatus,
   type Goal,
   type GoalStatus,
@@ -50,6 +51,7 @@ export function goalsFromScan(scan: ScanResult, at: string = nowIso()): Imported
       spec: specFromBoofGoal(u.goal),
       revision: 1,
       taskId: null,
+      tasks: [],
       history: historyFromBoofGoal(u.goal, at),
     };
   });
@@ -129,6 +131,7 @@ export function mergeImportedGoals(
     if (imp.path) goal.path = imp.path;
     if (imp.model) goal.model = imp.model;
     else delete goal.model;
+    if (changed) goal = reopenDoneGoal(goal, at);
     const moved = RANK[imp.status] > RANK[old.status];
     if (moved) goal = withGoalStatus(goal, imp.status, "status synced from the repository", at);
     merged.set(id, goal);

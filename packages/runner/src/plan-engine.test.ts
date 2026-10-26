@@ -17,7 +17,7 @@ import {
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
-import { resetMock } from "./tools/mock.js";
+import { mockState, resetMock } from "./tools/mock.js";
 
 let dataRoot: string;
 let workDir: string;
@@ -133,6 +133,7 @@ describe("plan tasks finishing (mock tool)", () => {
       revision: 1,
       status: "done",
       description: "boof-runner completed task pt",
+      taskId: "pt",
     });
     expect(plan.version).toBe(2);
 
@@ -158,7 +159,9 @@ describe("plan tasks finishing (mock tool)", () => {
     await planTask("p", "core");
     await engine.tick();
     const goal = (await plans.require("p")).goals[0]!;
-    expect(goal.history.at(-1)).toMatchObject({ revision: 1, status: "done" });
+    expect(goal.history.at(-2)).toMatchObject({ revision: 1, status: "done" });
+    expect(goal.history.at(-1)).toMatchObject({ revision: 3, status: "develop" });
+    expect(goal.status).toBe("develop");
     expect(goal.revision).toBe(3);
   });
 
@@ -201,6 +204,67 @@ describe("plan tasks finishing (mock tool)", () => {
     expect(
       currentStatus(parseGoal(await readFile(join(workDir, "core", "goal.boof.xml"), "utf8"))),
     ).toBe("done");
+  });
+});
+
+describe("goal.tasks (mock tool)", () => {
+  it("records the finished task", async () => {
+    await makePlan();
+    await plans.modify("p", (p) => ({
+      ...p,
+      goals: p.goals.map((g) => ({
+        ...g,
+        tasks: [
+          { taskId: "pt", revision: 1, status: "pending" as const, branch: "boof-runner/pt" },
+        ],
+      })),
+    }));
+    await planTask("p", "core");
+    await engine.tick();
+    const goal = (await plans.require("p")).goals[0]!;
+    expect(goal.tasks).toEqual([
+      { taskId: "pt", revision: 1, status: "done", branch: "boof-runner/pt" },
+    ]);
+  });
+
+  it("records failed and action statuses", async () => {
+    const entry = {
+      taskId: "pt",
+      revision: 1,
+      status: "pending" as const,
+      branch: "boof-runner/pt",
+    };
+    await makePlan({ goals: [testGoal("core", 1, [], { taskId: "pt", tasks: [entry] })] });
+    await planTask("p", "core");
+    mockState.plannerQuestions = ["Which database?"];
+    await engine.tick();
+    expect((await plans.require("p")).goals[0]!.tasks[0]!.status).toBe("action");
+    resetMock();
+    await store.transition("pt", "pending");
+    mockState.failRole = "developer";
+    await engine.tick();
+    expect((await store.get("pt"))!.frontmatter.status).toBe("failed");
+    expect((await plans.require("p")).goals[0]!.tasks[0]!.status).toBe("failed");
+  });
+
+  it("an unblocked goal gets its task without a manual sync (autoSync)", async () => {
+    await plans.create({
+      id: "auto",
+      title: "Auto",
+      status: "active",
+      autoSync: true,
+      source: { kind: "api" },
+      goals: [testGoal("a", 1), testGoal("b", 2, ["a"])],
+    });
+    // Run only one task: `a`. Then `b` must be created by the engine's own sync.
+    await engine.tick();
+    expect((await store.list()).map((t) => t.frontmatter.id)).toEqual(["boof-a"]);
+    await engine.syncAutoPlans();
+    const ids = (await store.list()).map((t) => t.frontmatter.id).sort();
+    expect(ids).toEqual(["boof-a", "boof-b"]);
+    const b = (await plans.require("auto")).goals[1]!;
+    expect(b.taskId).toBe("boof-b");
+    expect(b.tasks.map((t) => t.taskId)).toEqual(["boof-b"]);
   });
 });
 

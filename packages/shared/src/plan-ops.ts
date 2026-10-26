@@ -17,6 +17,16 @@ export function withGoalStatus(
 }
 
 /**
+ * A done goal whose content changed goes back to `develop` right away, so a harness sees that
+ * work is open again without waiting for a sync. Other statuses are left alone.
+ */
+export function reopenDoneGoal(goal: Goal, at: string = nowIso()): Goal {
+  return goal.status === "done"
+    ? withGoalStatus(goal, "develop", `spec changed to revision ${goal.revision}`, at)
+    : goal;
+}
+
+/**
  * Turn client goals into stored goals. A goal that already exists keeps its history, taskId,
  * synced snapshot and (unless the client sets one) status; its `revision` goes up by one when
  * the spec, dependsOn or model changed. Title, path and order changes never bump the revision.
@@ -49,6 +59,7 @@ export function applyGoalInputs(
         spec: input.spec,
         revision: 1,
         taskId: null,
+        tasks: [],
         history:
           status === "plan"
             ? []
@@ -70,9 +81,10 @@ export function applyGoalInputs(
     if (input.path) goal.path = input.path; // omitted: the stored path stays
     if (model) goal.model = model;
     else delete goal.model;
-    return input.status && input.status !== old.status
-      ? withGoalStatus(goal, input.status, "status set by a plan edit", at)
-      : goal;
+    if (input.status && input.status !== old.status) {
+      return withGoalStatus(goal, input.status, "status set by a plan edit", at);
+    }
+    return changed ? reopenDoneGoal(goal, at) : goal;
   });
   if (opts.replace) return built;
   const ids = new Set(built.map((g) => g.id));

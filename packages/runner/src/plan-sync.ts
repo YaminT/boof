@@ -5,6 +5,7 @@
  */
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { execCommand } from "./exec.js";
 import {
   appendEvent,
   AuthStore,
@@ -27,6 +28,7 @@ import {
   PlanVersionConflict,
   type Goal,
   type GoalSynced,
+  type GoalTaskRef,
   type Plan,
   type Project,
   type Settings,
@@ -122,6 +124,66 @@ function removeLabel(task: Task, label: string): boolean {
   return true;
 }
 
+/** The git branch boof-runner gives a task. */
+export function taskBranch(taskId: string): string {
+  return `boof-runner/${taskId}`;
+}
+
+function taskRef(t: Task): GoalTaskRef {
+  return {
+    taskId: t.frontmatter.id,
+    revision: t.frontmatter.planRef!.revision,
+    status: t.frontmatter.status,
+    branch: taskBranch(t.frontmatter.id),
+  };
+}
+
+/**
+ * `goal.tasks` brought in line with the task files: known entries take the task's status, tasks
+ * of the goal that are not listed yet (plans made before the list existed) are appended.
+ */
+function refreshTaskRefs(g: Goal, goalTasks: Task[]): GoalTaskRef[] {
+  const byId = new Map(goalTasks.map((t) => [t.frontmatter.id, t]));
+  const refs = g.tasks.map((r) => {
+    const t = byId.get(r.taskId);
+    return t && t.frontmatter.status !== r.status ? { ...r, status: t.frontmatter.status } : r;
+  });
+  const known = new Set(refs.map((r) => r.taskId));
+  const extra = goalTasks
+    .filter((t) => !known.has(t.frontmatter.id) && t.frontmatter.status !== "archived")
+    .sort((a, b) => a.frontmatter.created.localeCompare(b.frontmatter.created))
+    .map(taskRef);
+  return extra.length > 0 ? [...refs, ...extra] : refs;
+}
+
+/**
+ * The branch of the goal's latest finished task when it still exists in the repository: a
+ * follow-up task starts from it so revision N builds on revision N-1.
+ */
+async function previousTaskBase(repoRoot: string, goalTasks: Task[]): Promise<string | undefined> {
+  const done = goalTasks
+    .filter((t) => t.frontmatter.status === "done")
+    .sort(
+      (a, b) =>
+        b.frontmatter.planRef!.revision - a.frontmatter.planRef!.revision ||
+        b.frontmatter.created.localeCompare(a.frontmatter.created),
+    );
+  for (const t of done) {
+    const branch = taskBranch(t.frontmatter.id);
+    try {
+      const res = await execCommand(
+        "git",
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+        { cwd: repoRoot, timeoutMs: 15000 },
+      );
+      if (res.code === 0 && res.stdout.trim()) return branch;
+    } catch {
+      /* not a repository or git missing: fall back to the default base */
+    }
+  }
+  return undefined;
+}
+
 function snapshotOf(g: Goal): GoalSynced {
   return {
     revision: g.revision,
@@ -158,7 +220,9 @@ export function buildGoalPrompt(goal: Goal, planId: string, repoRoot: string): s
     `## Tests (${t.strategy})\n- Technology: ${t.technology}\n- Run: ${t.run}` +
       (t.coverage ? `\n- Coverage: ${t.coverage}` : ""),
     "## How to work\n" +
-      `- Follow the test strategy: write a failing test first, then implement until \`${t.run}\` is green.\n` +
+      (/^(none|n\/a|-)$/i.test(t.run.trim())
+        ? `- Follow the test strategy (${t.strategy}). There is no automated test command: check your result against the goal and the rules above.\n`
+        : `- Follow the test strategy: write a failing test first, then implement until \`${t.run}\` is green.\n`) +
       "- Keep changes within this unit's scope/directory unless the goal explicitly requires otherwise.\n" +
       "- Do NOT edit goal.boof.xml or plan.boof.xml — boof-runner records the unit's status when the task completes.",
     `## Plan\n- Plan: ${planId}\n- Goal: ${goal.id}\n- Revision: ${goal.revision}`,
@@ -334,6 +398,7 @@ async function syncOnce(
     followUp: boolean,
     skip: boolean,
     doneRev: number,
+    base: string | undefined,
   ): Promise<Task | null> => {
     const id = uniqueKebabId(
       followUp ? `update ${g.id} to revision ${g.revision}` : `boof ${g.id}`,
@@ -364,7 +429,7 @@ async function syncOnce(
         questions: "none",
         runs: 1,
         completedRuns: 0,
-        ...(opts.project.defaultBase ? { base: opts.project.defaultBase } : {}),
+        ...(base ? { base } : {}),
         ...(opts.tools ? { tools: opts.tools } : {}),
         planRef: { planId: plan.id, goalId: g.id, revision: g.revision },
         promptSource: "plan",
@@ -453,6 +518,10 @@ async function syncOnce(
 
   // Pass 2: goals in order.
   for (const g of goals) {
+    g.tasks = refreshTaskRefs(
+      g,
+      mine.filter((t) => t.frontmatter.planRef!.goalId === g.id),
+    );
     const reopened = reopen.has(g.id);
     if (reopened) {
       Object.assign(g, withGoalStatus(g, "develop", `spec changed to revision ${g.revision}`, now));
@@ -534,8 +603,11 @@ async function syncOnce(
       continue;
     }
     const followUp = reopened || settled.some((t) => t.frontmatter.status === "done");
-    const created = await create(g, followUp, blocked, settledRevision || doneRevisionOf(g));
+    const base =
+      (await previousTaskBase(repoRoot, settled)) ?? opts.project.defaultBase ?? undefined;
+    const created = await create(g, followUp, blocked, settledRevision || doneRevisionOf(g), base);
     g.taskId = created?.frontmatter.id ?? null;
+    if (created) g.tasks = [...g.tasks, taskRef(created)];
     g.synced = snapshotOf(g);
     if (blocked)
       result.skipped.push({ goalId: g.id, taskId: g.taskId ?? undefined, reason: "blocked" });

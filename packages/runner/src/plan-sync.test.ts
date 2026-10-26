@@ -15,6 +15,7 @@ import {
   type Plan,
   type Project,
 } from "@boof-runner/shared";
+import { execCommand } from "./exec.js";
 import { buildGoalPrompt, PlanNotActiveError, syncPlan } from "./plan-sync.js";
 
 let dataRoot: string;
@@ -371,5 +372,66 @@ describe("syncPlan: goal changes (section 5)", () => {
     // A new revision does get a task.
     await editGoal("a", "again");
     expect((await sync()).created).toHaveLength(1);
+  });
+});
+
+describe("buildGoalPrompt: goals without an automated test", () => {
+  it("does not ask for a failing test when tests.run is none", () => {
+    const g = testGoal("docs", 1);
+    g.spec.tests = { strategy: "manual review", technology: "none", run: "none" };
+    const prompt = buildGoalPrompt(g, "p", "/repo");
+    expect(prompt).toContain("There is no automated test command");
+    expect(prompt).not.toContain("until `none` is green");
+  });
+});
+
+describe("syncPlan: follow-up base and goal.tasks", () => {
+  const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  async function initRepo(): Promise<void> {
+    await git(["init", "-b", "main"]);
+    await git(["config", "user.email", "t@e.com"]);
+    await git(["config", "user.name", "T"]);
+    await git(["commit", "--allow-empty", "-m", "init"]);
+  }
+
+  it("starts a follow-up from the previous task branch when it exists", async () => {
+    await initRepo();
+    await makePlan([testGoal("a", 1)]);
+    await sync();
+    await git(["branch", "boof-runner/boof-a"]);
+    await finishTask("boof-a");
+    await editGoal("a", "Spec v2");
+    const res = await sync();
+    const follow = (await tasks.get(res.created[0]!.taskId))!;
+    expect(follow.frontmatter.base).toBe("boof-runner/boof-a");
+  });
+
+  it("falls back to the project default base when the previous branch is gone", async () => {
+    await initRepo();
+    project = await new ProjectStore(dataRoot).update("proj", { defaultBase: "main" });
+    await makePlan([testGoal("a", 1)]);
+    await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.base).toBe("main");
+    await finishTask("boof-a"); // no branch was ever created
+    await editGoal("a", "Spec v2");
+    const res = await sync();
+    expect((await tasks.get(res.created[0]!.taskId))!.frontmatter.base).toBe("main");
+  });
+
+  it("lists every task of a goal with its branch and keeps the statuses current", async () => {
+    await makePlan([testGoal("a", 1)]);
+    const first = await sync();
+    expect(first.plan.goals[0]!.tasks).toEqual([
+      { taskId: "boof-a", revision: 1, status: "pending", branch: "boof-runner/boof-a" },
+    ]);
+    await finishTask("boof-a");
+    await editGoal("a", "Spec v2");
+    const res = await sync();
+    const followId = res.created[0]!.taskId;
+    expect(res.plan.goals[0]!.tasks).toEqual([
+      { taskId: "boof-a", revision: 1, status: "done", branch: "boof-runner/boof-a" },
+      { taskId: followId, revision: 2, status: "pending", branch: `boof-runner/${followId}` },
+    ]);
+    expect(res.plan.goals[0]!.taskId).toBe(followId);
   });
 });

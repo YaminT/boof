@@ -11,6 +11,7 @@ import {
   TaskStore,
   workingAreaDir,
   type Project,
+  type Status,
   type Task,
 } from "@boof-runner/shared";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
@@ -97,9 +98,42 @@ export class RunnerEngine {
     return best;
   }
 
+  /**
+   * Record a plan task's new status in its goal's `tasks` list. Best effort: it never fails the
+   * task, and a goal without that entry (an older plan) is left for the next sync to fill in.
+   */
+  private async noteGoalTaskStatus(project: Project, task: Task, status: Status): Promise<void> {
+    const ref = task.frontmatter.planRef;
+    if (!ref) return;
+    const id = task.frontmatter.id;
+    try {
+      await new PlanStore(this.projects.dir(project.id)).modify(ref.planId, (plan) => {
+        const goal = plan.goals.find((g) => g.id === ref.goalId);
+        const entry = goal?.tasks.find((t) => t.taskId === id);
+        if (!goal || !entry || entry.status === status) return plan;
+        return {
+          ...plan,
+          goals: plan.goals.map((g) =>
+            g.id !== goal.id
+              ? g
+              : { ...g, tasks: g.tasks.map((t) => (t.taskId === id ? { ...t, status } : t)) },
+          ),
+        };
+      });
+    } catch (err) {
+      console.error(`could not record the status of ${id} in its plan:`, err);
+    }
+  }
+
   /** Transition pending → running and scaffold the working area. */
-  private async startTask(store: TaskStore, dir: string, id: string): Promise<Task> {
+  private async startTask(
+    project: Project,
+    store: TaskStore,
+    dir: string,
+    id: string,
+  ): Promise<Task> {
     const task = await store.transition(id, "running");
+    await this.noteGoalTaskStatus(project, task, "running");
     const area = workingAreaDir(dir, id);
     await mkdir(join(area, "reports"), { recursive: true });
     await writeFile(join(area, "log.txt"), "", { flag: "a" });
@@ -122,6 +156,7 @@ export class RunnerEngine {
       await store.transition(id, next, (t) => {
         t.frontmatter.completedRuns = completed;
       });
+      if (next === "pending") await this.noteGoalTaskStatus(project, outcome.task, "pending");
       if (next === "done" && outcome.task.frontmatter.planRef) {
         await this.recordPlanDone(project, outcome.task).catch((err) =>
           console.error(`plan status write-back failed for ${id}:`, err),
@@ -132,12 +167,14 @@ export class RunnerEngine {
       }
     } else if (outcome.kind === "failed") {
       await store.transition(id, "failed");
+      await this.noteGoalTaskStatus(project, outcome.task, "failed");
     } else {
       // Parked: record questions, set questions=pending, move to actions/.
       await store.transition(id, "action", (t) => {
         t.frontmatter.questions = "pending";
         t.body.questions = outcome.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
       });
+      await this.noteGoalTaskStatus(project, outcome.task, "action");
     }
   }
 
@@ -167,8 +204,10 @@ export class RunnerEngine {
             ? g
             : {
                 ...g,
-                status: plan.bumpTo,
+                // A task that finished at an older revision leaves the goal open again.
+                status: ref.revision < g.revision ? "develop" : plan.bumpTo,
                 taskId: g.taskId === taskId ? null : g.taskId,
+                tasks: g.tasks.map((t) => (t.taskId === taskId ? { ...t, status: "done" } : t)),
                 history: [
                   ...g.history,
                   {
@@ -176,7 +215,18 @@ export class RunnerEngine {
                     status: plan.bumpTo,
                     description,
                     at: new Date().toISOString(),
+                    taskId,
                   },
+                  ...(ref.revision < g.revision
+                    ? [
+                        {
+                          revision: g.revision,
+                          status: "develop" as const,
+                          description: `spec changed to revision ${g.revision}`,
+                          at: new Date().toISOString(),
+                        },
+                      ]
+                    : []),
                 ],
               },
         ),
@@ -265,7 +315,7 @@ export class RunnerEngine {
       const dir = this.projects.dir(project.id);
       const store = this.storeFor(project);
       const id = sel.task.frontmatter.id;
-      await this.startTask(store, dir, id);
+      await this.startTask(project, store, dir, id);
       const running = await store.get(id);
       const settings = await this.settingsStore.load();
       const pipeline = new Pipeline({

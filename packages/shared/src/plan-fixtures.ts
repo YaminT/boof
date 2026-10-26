@@ -21,6 +21,7 @@ export function testGoal(
     },
     revision: 1,
     taskId: null,
+    tasks: [],
     history: [],
     ...over,
   };

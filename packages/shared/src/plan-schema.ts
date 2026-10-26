@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { IsoDatetimeSchema as isoDatetime, KebabIdSchema as kebab } from "./schema.js";
+import {
+  IsoDatetimeSchema as isoDatetime,
+  KebabIdSchema as kebab,
+  StatusSchema,
+} from "./schema.js";
 
 /** A directory path relative to the repo root that cannot climb out of it. */
 const relPath = z
@@ -46,8 +50,22 @@ export const GoalHistoryEntrySchema = z.object({
   at: isoDatetime,
   /** The <version number> of an entry imported from a goal file; keeps export lossless. */
   number: z.number().int().min(1).optional(),
+  /** The task whose completion this entry records (runtime only; never exported to XML). */
+  taskId: kebab.optional(),
 });
 export type GoalHistoryEntry = z.infer<typeof GoalHistoryEntrySchema>;
+
+/** A task created for a goal (runtime only; never exported to XML). */
+export const GoalTaskRefSchema = z.object({
+  taskId: kebab,
+  /** Goal revision the task was built for. */
+  revision: z.number().int().min(1),
+  /** Last known task status; the task file is the source of truth. */
+  status: StatusSchema,
+  /** The git branch of the task, `boof-runner/<taskId>`. */
+  branch: z.string().min(1),
+});
+export type GoalTaskRef = z.infer<typeof GoalTaskRefSchema>;
 
 /** The spec a task prompt was last built from; lets sync diff old against new. */
 export const GoalSyncedSchema = z.object({
@@ -73,6 +91,8 @@ export const GoalSchema = z.object({
   revision: z.number().int().min(1).default(1),
   /** The live task materialised for this goal, if any. */
   taskId: kebab.nullable().default(null),
+  /** Every task created for this goal, oldest first (runtime only; the last one holds the final state). */
+  tasks: z.array(GoalTaskRefSchema).default([]),
   history: z.array(GoalHistoryEntrySchema).default([]),
   synced: GoalSyncedSchema.optional(),
 });
