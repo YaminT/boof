@@ -6,7 +6,7 @@ import { AuthStore, migrateDataRoot, securitySettings, type Settings } from "@bo
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
-import { TaskService } from "./service.js";
+import { TaskService } from "@boof-runner/api";
 import { DataWatcher } from "./watch.js";
 
 export interface StartServerOptions {

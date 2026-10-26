@@ -5,7 +5,7 @@ import {
   securitySettings,
   type SecuritySettings,
 } from "@boof-runner/shared";
-import type { TaskService } from "./service.js";
+import type { TaskService } from "@boof-runner/api";
 
 /**
  * Security settings read through the settings file, reloaded when its mtime or

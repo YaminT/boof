@@ -30,8 +30,8 @@ import {
   type SyncResult,
 } from "@boof-runner/runner";
 import type { z } from "zod";
-import { formatIssues } from "./validation.js";
-import { ServiceError, type TaskService } from "./service.js";
+import { formatIssues, OpError } from "../errors.js";
+import type { TaskService } from "./service.js";
 
 type GoalInputParsed = z.output<typeof GoalInputSchema>;
 
@@ -82,25 +82,25 @@ const SOURCE_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "api" } as cons
 /** Turn the errors of the plan layer into API errors (status + stable code). */
 export function mapPlanError(err: unknown): unknown {
   if (err instanceof PlanVersionConflict) {
-    return new ServiceError(409, err.message, "plan_version_conflict", {
+    return new OpError(409, err.message, "plan_version_conflict", {
       currentVersion: err.currentVersion,
       expectedVersion: err.expectedVersion,
     });
   }
   if (err instanceof PlanNotFoundError) {
-    return new ServiceError(404, err.message, "plan_not_found");
+    return new OpError(404, err.message, "plan_not_found");
   }
   if (err instanceof PlanExistsError) {
-    return new ServiceError(409, err.message, "plan_exists");
+    return new OpError(409, err.message, "plan_exists");
   }
   if (err instanceof PlanNotActiveError) {
-    return new ServiceError(409, err.message, "plan_not_active", { status: err.status });
+    return new OpError(409, err.message, "plan_not_active", { status: err.status });
   }
   if (err instanceof PlanValidationError) {
-    return new ServiceError(400, err.message, "invalid_plan", err.issues);
+    return new OpError(400, err.message, "invalid_plan", err.issues);
   }
   if (err instanceof ZodError) {
-    return new ServiceError(400, "Invalid plan", "invalid_plan", formatIssues(err));
+    return new OpError(400, "Invalid plan", "invalid_plan", formatIssues(err));
   }
   return err;
 }
@@ -130,7 +130,7 @@ export class PlanService {
   /** A restricted client may not change a plan a human activated: its edits would reach the queue unreviewed. */
   private async assertMayEdit(plan: Plan, actor?: Principal): Promise<void> {
     if (plan.status === "active" && (await this.restricted(actor))) {
-      throw new ServiceError(
+      throw new OpError(
         403,
         "This client has review trust and cannot change an active plan; a human must change it or set it back to draft",
         "forbidden_trust",
@@ -170,16 +170,19 @@ export class PlanService {
           ? { kind: SOURCE_KIND[actor.clientKind ?? "harness"], client: actor.id }
           : { kind: "ui" };
       const goals = applyGoalInputs([], input.goals ?? [], { replace: true });
-      return this.store.create({
-        id,
-        title: input.title,
-        description: input.description ?? "",
-        status: restricted ? "draft" : (input.status ?? "draft"),
-        autoSync: input.autoSync ?? false,
-        bumpTo: input.bumpTo ?? "done",
-        source,
-        goals,
-      });
+      return this.store.create(
+        {
+          id,
+          title: input.title,
+          description: input.description ?? "",
+          status: restricted ? "draft" : (input.status ?? "draft"),
+          autoSync: input.autoSync ?? false,
+          bumpTo: input.bumpTo ?? "done",
+          source,
+          goals,
+        },
+        { by: actor?.id ?? "local" },
+      );
     });
   }
 
@@ -191,7 +194,7 @@ export class PlanService {
   ): Promise<Plan> {
     const restricted = await this.restricted(actor);
     if (restricted && patch.status === "active") {
-      throw new ServiceError(
+      throw new OpError(
         403,
         "This client has review trust and cannot activate a plan; a human must approve it",
         "forbidden_trust",
@@ -211,7 +214,7 @@ export class PlanService {
             ...(patch.bumpTo !== undefined ? { bumpTo: patch.bumpTo } : {}),
           };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       ),
     );
   }
@@ -230,7 +233,7 @@ export class PlanService {
           await this.assertMayEdit(plan, actor);
           return { ...plan, goals: applyGoalInputs(plan.goals, goals, { replace: true }) };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       ),
     );
   }
@@ -248,7 +251,7 @@ export class PlanService {
           await this.assertMayEdit(plan, actor);
           return { ...plan, goals: applyGoalInputs(plan.goals, [goal], { replace: false }) };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       ),
     );
   }
@@ -266,7 +269,7 @@ export class PlanService {
     actor?: Principal,
   ): Promise<Plan> {
     if (opts.stopRunning && actor && !hasScope(actor, "tasks:control")) {
-      throw new ServiceError(
+      throw new OpError(
         403,
         "Stopping a running task needs the tasks:control scope",
         "forbidden_scope",
@@ -281,7 +284,7 @@ export class PlanService {
         async (current) => {
           await this.assertMayEdit(current, actor);
           if (!current.goals.some((g) => g.id === goalId)) {
-            throw new ServiceError(404, `Goal not found: ${goalId}`, "goal_not_found");
+            throw new OpError(404, `Goal not found: ${goalId}`, "goal_not_found");
           }
           const doomed = new Set([goalId]);
           for (let grew = true; grew;) {
@@ -295,7 +298,7 @@ export class PlanService {
           }
           if (doomed.size > 1 && !opts.cascade) {
             const dependents = [...doomed].filter((id) => id !== goalId);
-            throw new ServiceError(
+            throw new OpError(
               409,
               `Other goals depend on ${goalId}: ${dependents.join(", ")}`,
               "goal_has_dependents",
@@ -304,7 +307,7 @@ export class PlanService {
           }
           return { ...current, goals: current.goals.filter((g) => !doomed.has(g.id)) };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       );
       await archiveRemovedGoalTasks({
         projectDir: this.projectDir,
@@ -342,7 +345,7 @@ export class PlanService {
             goals: plan.goals.map((g) => ({ ...g, order: position.get(g.id)! })),
           };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       ),
     );
   }
@@ -361,7 +364,7 @@ export class PlanService {
         async (plan) => {
           await this.assertMayEdit(plan, actor);
           if (!plan.goals.some((g) => g.id === goalId)) {
-            throw new ServiceError(404, `Goal not found: ${goalId}`, "goal_not_found");
+            throw new OpError(404, `Goal not found: ${goalId}`, "goal_not_found");
           }
           const by = actor ? `${actor.kind === "client" ? "client " : ""}${actor.id}` : "a user";
           return {
@@ -373,7 +376,7 @@ export class PlanService {
             ),
           };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       ),
     );
   }
@@ -391,11 +394,11 @@ export class PlanService {
     return this.run(async () => {
       const project = await this.parent.getProject(this.projectId);
       if (!project.workingDirectory) {
-        throw new ServiceError(400, "The project has no working directory", "invalid_input");
+        throw new OpError(400, "The project has no working directory", "invalid_input");
       }
       const imported = await importFromRepo(project.workingDirectory);
       if (imported.goals.length === 0) {
-        throw new ServiceError(
+        throw new OpError(
           400,
           `No goal.boof.xml files found under ${project.workingDirectory}`,
           "nothing_to_import",
@@ -404,19 +407,22 @@ export class PlanService {
       const planId = input.planId ?? "repo";
       const existing = await this.store.get(planId);
       if (!existing) {
-        const plan = await this.store.create({
-          id: planId,
-          title: input.title ?? `Imported from ${project.name}`,
-          status: restricted ? "draft" : (input.status ?? "draft"),
-          autoSync: input.autoSync ?? false,
-          bumpTo: input.bumpTo ?? "done",
-          source: {
-            kind: "repo-import",
-            ...(actor?.kind === "client" ? { client: actor.id } : {}),
-            importedFrom: project.workingDirectory,
+        const plan = await this.store.create(
+          {
+            id: planId,
+            title: input.title ?? `Imported from ${project.name}`,
+            status: restricted ? "draft" : (input.status ?? "draft"),
+            autoSync: input.autoSync ?? false,
+            bumpTo: input.bumpTo ?? "done",
+            source: {
+              kind: "repo-import",
+              ...(actor?.kind === "client" ? { client: actor.id } : {}),
+              importedFrom: project.workingDirectory,
+            },
+            goals: imported.goals,
           },
-          goals: imported.goals,
-        });
+          { by: actor?.id ?? "local" },
+        );
         return {
           plan,
           added: plan.goals.map((g) => g.id),
@@ -426,7 +432,7 @@ export class PlanService {
         };
       }
       if (!input.merge) {
-        throw new ServiceError(
+        throw new OpError(
           409,
           `Plan already exists: ${planId}; pass merge to update it from the repository`,
           "plan_exists",
@@ -441,7 +447,7 @@ export class PlanService {
           summary = merged;
           return { ...current, goals: merged.goals };
         },
-        { expectedVersion },
+        { expectedVersion, by: actor?.id ?? "local" },
       );
       return { plan, ...summary, warnings: imported.warnings };
     });
@@ -462,7 +468,7 @@ export class PlanService {
     actor?: Principal,
   ): Promise<SyncResult> {
     if (opts.stopRunning && actor && !hasScope(actor, "tasks:control")) {
-      throw new ServiceError(
+      throw new OpError(
         403,
         "Stopping a running task needs the tasks:control scope",
         "forbidden_scope",
@@ -487,6 +493,7 @@ export class PlanService {
         dryRun: opts.dryRun,
         stopRunning: opts.stopRunning,
         createStatus,
+        by: actor?.id ?? "local",
       });
     });
   }

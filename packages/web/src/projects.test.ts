@@ -11,7 +11,7 @@ import {
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
-import { TaskService } from "./service.js";
+import { TaskService } from "@boof-runner/api";
 import { DataWatcher } from "./watch.js";
 
 let base: string; // holds the data root and the repositories
@@ -317,7 +317,7 @@ describe("task routes under /api/projects/:pid", () => {
     const file = await call(`${P}/tasks/two/attachments/shot.png`);
     expect(file.status).toBe(200);
     expect(file.headers.get("content-type")).toBe("image/png");
-    expect(file.headers.get("deprecation")).toBeNull();
+    expect(file.headers.get("deprecation")).toBe("true");
     expect((await call(`${P}/tasks/two/attachments/shot.png`, send("DELETE"))).status).toBe(200);
 
     expect((await call(`${P}/tasks/two`, send("DELETE"))).status).toBe(200);
@@ -326,8 +326,11 @@ describe("task routes under /api/projects/:pid", () => {
     expect((await (await call("/api/projects/b/tasks")).json()).tasks).toEqual([]);
   });
 
-  it("does not send a Deprecation header", async () => {
-    expect((await call("/api/projects/a/tasks")).headers.get("deprecation")).toBeNull();
+  it("marks every unversioned route deprecated, and /api/v1 not", async () => {
+    const old = await call("/api/projects/a/tasks");
+    expect(old.headers.get("deprecation")).toBe("true");
+    expect(old.headers.get("sunset")).toMatch(/GMT$/);
+    expect((await call("/api/v1/projects/a/tasks")).headers.get("deprecation")).toBeNull();
   });
 });
 

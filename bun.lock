@@ -27,6 +27,15 @@
         "zod": "^4.6.7",
       },
     },
+    "packages/api": {
+      "name": "@boof-runner/api",
+      "version": "0.2.0",
+      "dependencies": {
+        "@boof-runner/runner": "workspace:*",
+        "@boof-runner/shared": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
     "packages/desktop": {
       "name": "@boof-runner/desktop",
       "version": "0.2.0",
@@ -65,6 +74,7 @@
       "name": "@boof-runner/web",
       "version": "0.2.0",
       "dependencies": {
+        "@boof-runner/api": "workspace:*",
         "@boof-runner/runner": "workspace:*",
         "@boof-runner/shared": "workspace:*",
         "@hono/node-server": "^2.0.0",
@@ -95,6 +105,8 @@
     "tar": "^7.5.22",
   },
   "packages": {
+    "@boof-runner/api": ["@boof-runner/api@workspace:packages/api"],
+
     "@boof-runner/cli": ["@boof-runner/cli@workspace:bin"],
 
     "@boof-runner/desktop": ["@boof-runner/desktop@workspace:packages/desktop"],

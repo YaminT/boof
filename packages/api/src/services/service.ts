@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, realpath, rm, writeFile } from "node:fs/pr
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
+  appendEvent,
   AttachmentStore,
   assertKebabId,
   CommandStore,
@@ -34,7 +35,8 @@ import {
   type Status,
   type Task,
 } from "@boof-runner/shared";
-import { PlanService } from "./plans.js";
+import { OpError } from "../errors.js";
+import { PlanService } from "./plan-service.js";
 import {
   isGitRepo,
   sumUsage,
@@ -66,12 +68,25 @@ export interface UpdateTaskInput {
   runs?: number;
   /** If set and different from the current status, a transition is attempted. */
   status?: Status;
+  /** The task's `updated` timestamp the caller last saw (HTTP If-Match); a newer one is a 409. */
+  expectedUpdated?: string;
 }
 
 /** A task as sent over the API: the task file plus the project it lives in. */
-export type TaskView = Task & { projectId: string };
+export type TaskView = Omit<Task, "body"> & {
+  body: Omit<Task["body"], "log"> & { log?: string };
+  projectId: string;
+};
 
-export function toTaskView(projectId: string, task: Task): TaskView {
+/**
+ * The task as the API shows it. `log` (the raw agent output, often megabytes) is left out
+ * unless asked for.
+ */
+export function toTaskView(projectId: string, task: Task, opts: { log?: boolean } = {}): TaskView {
+  if (opts.log === false) {
+    const { log: _log, ...body } = task.body;
+    return { ...task, body, projectId };
+  }
   return { ...task, projectId };
 }
 
@@ -117,7 +132,7 @@ export class ProjectService {
   /** A review-trust client may not move work into the queue; a human or trusted principal does. */
   private async assertMayQueue(actor?: Principal): Promise<void> {
     if (await this.needsApproval(actor)) {
-      throw new ServiceError(
+      throw new OpError(
         403,
         "This client has review trust and cannot queue tasks; a human must approve them",
         "forbidden_trust",
@@ -172,7 +187,13 @@ export class ProjectService {
   async update(id: string, input: UpdateTaskInput, actor?: Principal): Promise<Task> {
     if (input.status === "pending") await this.assertMayQueue(actor);
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
+    if (input.expectedUpdated !== undefined && input.expectedUpdated !== task.frontmatter.updated) {
+      throw new OpError(409, "The task was changed by someone else", "task_modified", {
+        currentUpdated: task.frontmatter.updated,
+        expectedUpdated: input.expectedUpdated,
+      });
+    }
 
     if (input.title !== undefined) task.frontmatter.title = input.title;
     if (input.prompt !== undefined) {
@@ -192,7 +213,7 @@ export class ProjectService {
     if (targetStatus && targetStatus !== task.frontmatter.status) {
       const from = task.frontmatter.status;
       if (!isUserTransition(from, targetStatus)) {
-        throw new ServiceError(
+        throw new OpError(
           409,
           `Invalid status transition: ${from} → ${targetStatus}`,
           "invalid_transition",
@@ -200,7 +221,7 @@ export class ProjectService {
       }
       // Persist field edits first, then transition (which re-reads + moves).
       await this.tasks.save(task);
-      return this.tasks.transition(id, targetStatus);
+      return this.tasks.transition(id, targetStatus, undefined, { by: actor?.id ?? "local" });
     }
     return this.tasks.save(task);
   }
@@ -227,18 +248,18 @@ export class ProjectService {
 
   async retry(id: string, actor?: Principal): Promise<Task> {
     await this.assertMayQueue(actor);
-    return this.tasks.transition(id, "pending");
+    return this.tasks.transition(id, "pending", undefined, { by: actor?.id ?? "local" });
   }
 
   /** Archive a task (any non-running status → archived). */
-  async archive(id: string): Promise<Task> {
-    return this.tasks.transition(id, "archived");
+  async archive(id: string, actor?: Principal): Promise<Task> {
+    return this.tasks.transition(id, "archived", undefined, { by: actor?.id ?? "local" });
   }
 
   /** Unarchive a task back into the pending queue. */
   async unarchive(id: string, actor?: Principal): Promise<Task> {
     await this.assertMayQueue(actor);
-    return this.tasks.transition(id, "pending");
+    return this.tasks.transition(id, "pending", undefined, { by: actor?.id ?? "local" });
   }
 
   /**
@@ -247,9 +268,9 @@ export class ProjectService {
    */
   async deleteTask(id: string): Promise<{ ok: true }> {
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     if (task.frontmatter.status === "running") {
-      throw new ServiceError(400, "Cannot delete a running task; wait for it to finish first");
+      throw new OpError(400, "Cannot delete a running task; wait for it to finish first");
     }
     await this.tasks.delete(id);
     await rm(taskAssetsDir(this.root, id), { recursive: true, force: true }).catch(() => {});
@@ -264,7 +285,7 @@ export class ProjectService {
    */
   async liveLog(id: string): Promise<{ log: string; running: boolean }> {
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     const running = task.frontmatter.status === "running";
     if (!running) return { log: task.body.log, running };
     const path = join(workingAreaDir(this.root, id), "log.txt");
@@ -274,9 +295,9 @@ export class ProjectService {
 
   async stopTask(id: string): Promise<{ ok: true }> {
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     if (task.frontmatter.status !== "running") {
-      throw new ServiceError(400, "Task is not running");
+      throw new OpError(400, "Task is not running");
     }
     await mkdir(taskControlDir(this.root, id), { recursive: true });
     await writeFile(taskStopRequestPath(this.root, id), new Date().toISOString() + "\n", "utf8");
@@ -290,11 +311,11 @@ export class ProjectService {
 
   async injectPrompt(id: string, prompt: string): Promise<{ ok: true }> {
     const text = prompt.trim();
-    if (!text) throw new ServiceError(400, "Prompt is required");
+    if (!text) throw new OpError(400, "Prompt is required");
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     if (task.frontmatter.status !== "running") {
-      throw new ServiceError(400, "Task is not running");
+      throw new OpError(400, "Task is not running");
     }
 
     const now = new Date().toISOString();
@@ -311,10 +332,15 @@ export class ProjectService {
   /** Submit answers for a parked task: write answers, mark answered, resume. */
   async submitAnswers(id: string, answers: string, actor?: Principal): Promise<Task> {
     await this.assertMayQueue(actor);
-    return this.tasks.transition(id, "pending", (t) => {
-      t.body.answers = answers;
-      t.frontmatter.questions = "answered";
-    });
+    return this.tasks.transition(
+      id,
+      "pending",
+      (t) => {
+        t.body.answers = answers;
+        t.frontmatter.questions = "answered";
+      },
+      { by: actor?.id ?? "local" },
+    );
   }
 
   // --- Attachments ---
@@ -330,12 +356,12 @@ export class ProjectService {
     bytes: Uint8Array,
   ): Promise<Task> {
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     if (!isAllowedAttachmentType(type)) {
-      throw new ServiceError(400, `Unsupported attachment type: ${type || "unknown"}`);
+      throw new OpError(400, `Unsupported attachment type: ${type || "unknown"}`);
     }
     if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
-      throw new ServiceError(400, "Attachment exceeds the 25 MB limit");
+      throw new OpError(400, "Attachment exceeds the 25 MB limit");
     }
     const name = await this.attachments.write(id, filename, bytes);
     const entry: Attachment = { name, type, size: bytes.byteLength };
@@ -349,7 +375,7 @@ export class ProjectService {
   /** Remove an attachment's file and frontmatter entry. */
   async removeAttachment(id: string, name: string): Promise<Task> {
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     await this.attachments.remove(id, name);
     task.frontmatter.attachments = task.frontmatter.attachments.filter((a) => a.name !== name);
     return this.tasks.save(task);
@@ -358,14 +384,14 @@ export class ProjectService {
   /** Read an attachment's bytes + its recorded MIME type for serving. */
   async getAttachment(id: string, name: string): Promise<{ bytes: Buffer; type: string }> {
     const task = await this.tasks.get(id);
-    if (!task) throw new ServiceError(404, `Task not found: ${id}`);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
     const meta = task.frontmatter.attachments.find((a) => a.name === name);
-    if (!meta) throw new ServiceError(404, `Attachment not found: ${name}`);
+    if (!meta) throw new OpError(404, `Attachment not found: ${name}`);
     try {
       const bytes = await this.attachments.read(id, name);
       return { bytes, type: meta.type };
     } catch {
-      throw new ServiceError(404, `Attachment file missing: ${name}`);
+      throw new OpError(404, `Attachment file missing: ${name}`);
     }
   }
 
@@ -490,34 +516,34 @@ export class TaskService {
     const remote = actor !== undefined && actor.kind !== "local";
     switch (err.code) {
       case "not_found":
-        return new ServiceError(404, err.message, "project_not_found");
+        return new OpError(404, err.message, "project_not_found");
       case "id_taken":
       case "duplicate":
-        return new ServiceError(
+        return new OpError(
           409,
           err.message,
           err.code === "duplicate" ? "project_exists" : "conflict",
         );
       case "has_running_task":
-        return new ServiceError(409, err.message, "project_busy");
+        return new OpError(409, err.message, "project_busy");
       case "not_git_repo":
       case "inside_data_root":
         return remote
-          ? new ServiceError(403, err.message, "project_root_not_allowed")
-          : new ServiceError(
+          ? new OpError(403, err.message, "project_root_not_allowed")
+          : new OpError(
               400,
               err.message,
               err.code === "not_git_repo" ? "not_a_git_repo" : "invalid_input",
             );
       default:
-        return new ServiceError(400, err.message, "invalid_input");
+        return new OpError(400, err.message, "invalid_input");
     }
   }
 
   private async assertRegistrationAllowed(actor: Principal, dir: string): Promise<void> {
     const { allowedProjectRoots } = securitySettings(await this.loadSettings());
-    const deny = (why: string): ServiceError =>
-      new ServiceError(
+    const deny = (why: string): OpError =>
+      new OpError(
         403,
         `Project root not allowed: ${why}`,
         "project_root_not_allowed",
@@ -528,7 +554,7 @@ export class TaskService {
     try {
       real = await realpath(dir);
     } catch {
-      throw new ServiceError(400, `Directory does not exist: ${dir}`, "invalid_input");
+      throw new OpError(400, `Directory does not exist: ${dir}`, "invalid_input");
     }
     if (real === resolve("/") || real === (await realpath(homedir()).catch(() => homedir()))) {
       throw deny("the filesystem root and the home directory cannot be projects");
@@ -626,9 +652,20 @@ export class TaskService {
     return this.settingsStore.load();
   }
 
-  async updateSettings(patch: SettingsPatch): Promise<Settings> {
+  /** Apply a settings patch; a change of `runner.enabled` appends a global `runner.enabled` event. */
+  async updateSettings(patch: SettingsPatch, actor?: Principal): Promise<Settings> {
     if (patch.defaultProject) await this.getProject(patch.defaultProject);
-    return this.settingsStore.update(patch);
+    const before =
+      patch.runner?.enabled !== undefined ? (await this.loadSettings()).runner.enabled : undefined;
+    const next = await this.settingsStore.update(patch);
+    if (before !== undefined && before !== next.runner.enabled) {
+      await appendEvent(this.root, {
+        type: "runner.enabled",
+        value: next.runner.enabled,
+        by: actor?.id ?? "local",
+      });
+    }
+    return next;
   }
 
   health(): Promise<Record<string, HealthResult>> {
@@ -640,27 +677,8 @@ export class TaskService {
   }
 }
 
-function projectNotFound(id: string): ServiceError {
-  return new ServiceError(404, `Project not found: ${id}`, "project_not_found");
+function projectNotFound(id: string): OpError {
+  return new OpError(404, `Project not found: ${id}`, "project_not_found");
 }
 
 const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
-
-function defaultCodeFor(status: number): string {
-  if (status === 400) return "invalid_input";
-  if (status === 404) return "not_found";
-  if (status === 409) return "conflict";
-  return "error";
-}
-
-export class ServiceError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-    public readonly code: string = defaultCodeFor(status),
-    public readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = "ServiceError";
-  }
-}

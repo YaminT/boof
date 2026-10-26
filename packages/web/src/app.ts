@@ -2,59 +2,28 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
-import { ZodError } from "zod";
+import { AuthStore, authorizeProject, MAX_ATTACHMENT_BYTES } from "@boof-runner/shared";
 import {
-  AuthStore,
-  hasScope,
-  InvalidIdError,
-  InvalidTransitionError,
-  MAX_ATTACHMENT_BYTES,
-  authorizeProject,
-  ProjectPatchSchema,
-  SettingsPatchSchema,
-  TaskNotFoundError,
-  toPublicClient,
-  parseDuration,
-} from "@boof-runner/shared";
+  IdempotencyStore,
+  registry,
+  toOpError,
+  type AnyOperation,
+  type TaskService,
+} from "@boof-runner/api";
 import { hostGuard } from "./middleware/host-guard.js";
 import {
   authenticate,
   defaultPeerAddress,
-  requireAnyScope,
   requireScope,
   type PeerAddressResolver,
 } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rate-limit.js";
-import { audit, promptFingerprint } from "./middleware/audit.js";
+import { audit } from "./middleware/audit.js";
 import { securityConfigReader } from "./security-config.js";
-import {
-  AnswersBody,
-  CommandBody,
-  CreateClientBody,
-  CreateProjectBody,
-  CreatePlanBody,
-  CreateTaskBody,
-  GoalStatusBody,
-  ImportPlanBody,
-  InjectBody,
-  RemoveGoalQuery,
-  ReorderBody,
-  ReorderGoalsBody,
-  ReplaceGoalsBody,
-  SkipBody,
-  SyncPlanBody,
-  UpdatePlanBody,
-  UpdateTaskBody,
-  UpsertGoalBody,
-  formatIssues,
-  paramId,
-  parseJson,
-  parseJsonOptional,
-} from "./validation.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { existsSync } from "node:fs";
-import { ServiceError, TaskService, toTaskView, type ProjectService } from "./service.js";
 import { DataWatcher } from "./watch.js";
+import { LEGACY_SUNSET, mountOps } from "./rest.js";
 
 export interface AppDeps {
   service: TaskService;
@@ -73,41 +42,6 @@ export interface AppDeps {
 
 const JSON_BODY_LIMIT = 1_000_000;
 const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
-
-interface ErrorBody {
-  error: { code: string; message: string; details?: unknown };
-}
-
-/** Map any thrown value to a status + the public error envelope. Never leaks internals. */
-function toErrorResponse(err: unknown): { status: number; body: ErrorBody } {
-  if (err instanceof ServiceError) {
-    const e: ErrorBody["error"] = { code: err.code, message: err.message };
-    if (err.details !== undefined) e.details = err.details;
-    return { status: err.status, body: { error: e } };
-  }
-  if (err instanceof TaskNotFoundError) {
-    return { status: 404, body: { error: { code: "not_found", message: err.message } } };
-  }
-  if (err instanceof InvalidTransitionError) {
-    return {
-      status: 409,
-      body: { error: { code: "invalid_transition", message: err.message } },
-    };
-  }
-  if (err instanceof InvalidIdError) {
-    return { status: 400, body: { error: { code: "invalid_input", message: err.message } } };
-  }
-  if (err instanceof ZodError) {
-    return {
-      status: 400,
-      body: {
-        error: { code: "invalid_input", message: "Invalid input", details: formatIssues(err) },
-      },
-    };
-  }
-  console.error(err);
-  return { status: 500, body: { error: { code: "internal", message: "Internal error" } } };
-}
 
 /**
  * Build the Hono app: a file-backed REST API plus an SSE stream and (optionally)
@@ -136,7 +70,7 @@ export function createApp(deps: AppDeps): Hono {
   const attachmentLimit = bodyLimit({ maxSize: ATTACHMENT_BODY_LIMIT, onError: tooLarge });
   app.use("/api/*", (c, next) =>
     c.req.method === "POST" &&
-    /^\/api\/(projects\/[^/]+\/)?tasks\/[^/]+\/attachments\/?$/.test(c.req.path)
+    /^\/api\/(v1\/)?(projects\/[^/]+\/)?tasks\/[^/]+\/attachments\/?$/.test(c.req.path)
       ? attachmentLimit(c, next)
       : jsonLimit(c, next),
   );
@@ -144,560 +78,34 @@ export function createApp(deps: AppDeps): Hono {
   app.use("/api/*", rateLimit({ security, now: deps.now }));
 
   app.onError((err, c) => {
-    const { status, body } = toErrorResponse(err);
-    return c.json(body, status as 400);
+    const e = toOpError(err);
+    return c.json(e.toBody(), e.status as 400);
   });
-
-  const wrap = (fn: (c: Context) => Promise<unknown>) => async (c: Context) => {
-    try {
-      const result = await fn(c);
-      return c.json(result as object);
-    } catch (err) {
-      const { status, body } = toErrorResponse(err);
-      return c.json(body, status as 400);
-    }
-  };
-
-  const id = (c: Context) => paramId(c.req.param("id"));
-  const who = (c: Context) => c.get("principal");
 
   const api = new Hono();
 
-  /** Check the principal may touch project `pid` (403 before 404, so existence is not probed). */
-  const allow = (c: Context, pid: string): void => {
-    if (!authorizeProject(who(c), pid)) {
-      throw new ServiceError(
-        403,
-        `This client may not access project: ${pid}`,
-        "forbidden_project",
-        { project: pid },
-      );
-    }
-  };
-  const allowed = (c: Context) => (pid: string) => authorizeProject(who(c), pid);
-
-  /** Resolve `:pid` -> an existing project the principal may access. */
-  const projectFromParam = async (c: Context): Promise<ProjectService> => {
-    const pid = paramId(c.req.param("pid"), "project id");
-    allow(c, pid);
-    return service.requireProject(pid);
-  };
-
-  /** Legacy `/api/tasks…`: the project named by `settings.defaultProject`. */
-  const projectFromDefault = async (c: Context): Promise<ProjectService> => {
-    c.header("Deprecation", "true");
-    const pid = (await service.loadSettings()).defaultProject;
-    if (!pid) {
-      throw new ServiceError(
-        404,
-        "No default project is set; use /api/projects/:pid/tasks",
-        "no_default_project",
-      );
-    }
-    allow(c, pid);
-    return service.requireProject(pid);
-  };
-
-  // --- Projects ---
-  api.get(
-    "/projects",
-    requireScope("projects:read"),
-    wrap(async (c) => ({
-      projects: (
-        await service.listProjects({ includeArchived: c.req.query("includeArchived") === "1" })
-      ).filter((p) => authorizeProject(who(c), p.id)),
-    })),
-  );
-  api.post(
-    "/projects",
-    requireScope("projects:write"),
-    wrap(async (c) => service.createProject(await parseJson(c.req, CreateProjectBody), who(c))),
-  );
-  api.get(
-    "/projects/:pid",
-    requireScope("projects:read"),
-    wrap(async (c) => {
-      const pid = paramId(c.req.param("pid"), "project id");
-      allow(c, pid);
-      return service.getProject(pid);
-    }),
-  );
-  const projectAction = (
-    path: string,
-    scope: "projects:write" | "runner:control",
-    run: (pid: string, c: Context) => Promise<unknown>,
-    method: "post" | "put" | "delete" = "post",
-  ) =>
-    api[method](
-      `/projects/:pid${path}`,
-      scope === "runner:control"
-        ? requireAnyScope(["runner:control", "projects:write"])
-        : requireScope(scope),
-      wrap(async (c) => {
-        const pid = paramId(c.req.param("pid"), "project id");
-        allow(c, pid);
-        return run(pid, c);
-      }),
-    );
-  projectAction(
-    "",
-    "projects:write",
-    async (pid, c) =>
-      service.updateProject(pid, await parseJson(c.req, ProjectPatchSchema), who(c)),
-    "put",
-  );
-  projectAction("/archive", "projects:write", (pid) => service.archiveProject(pid));
-  projectAction("/unarchive", "projects:write", (pid) => service.unarchiveProject(pid));
-  projectAction("/pause", "runner:control", (pid) => service.pauseProject(pid));
-  projectAction("/resume", "runner:control", (pid) => service.resumeProject(pid));
-  projectAction(
-    "",
-    "projects:write",
-    (pid, c) => service.removeProject(pid, { purge: c.req.query("purge") === "1" }),
-    "delete",
-  );
-  api.get(
-    "/projects/:pid/usage",
-    requireAnyScope(["projects:read", "tasks:read"]),
-    wrap(async (c) => {
-      const pid = paramId(c.req.param("pid"), "project id");
-      allow(c, pid);
-      return service.projectUsage(pid);
-    }),
-  );
-  api.get(
-    "/actions",
-    requireScope("tasks:read"),
-    wrap(async (c) => ({ actions: await service.listActions(allowed(c)) })),
-  );
-
-  // --- Tasks: `/projects/:pid/tasks…`, plus the deprecated `/tasks…` alias to the default project ---
-  const registerTaskRoutes = (
-    prefix: string,
-    resolveProject: (c: Context) => Promise<ProjectService>,
-  ) => {
-    const p = (path: string) => `${prefix}${path}`;
-    const task = (fn: (svc: ProjectService, c: Context) => Promise<unknown>) =>
-      wrap(async (c) => fn(await resolveProject(c), c));
-    const view = (svc: ProjectService, t: Parameters<typeof toTaskView>[1]) =>
-      toTaskView(svc.projectId, t);
-
-    api.get(
-      p("/tasks"),
-      requireScope("tasks:read"),
-      task(async (svc) => ({ tasks: (await svc.list()).map((t) => view(svc, t)) })),
-    );
-    api.get(
-      p("/tasks/:id"),
-      requireScope("tasks:read"),
-      task(async (svc, c) => {
-        const t = await svc.get(id(c));
-        if (!t) throw new ServiceError(404, "Task not found");
-        return view(svc, t);
-      }),
-    );
-    api.post(
-      p("/tasks"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => {
-        const body = await parseJson(c.req, CreateTaskBody);
-        c.set("auditExtra", promptFingerprint(body.prompt ?? ""));
-        return view(svc, await svc.create(body, who(c)));
-      }),
-    );
-    api.put(
-      p("/tasks/:id"),
-      requireScope("tasks:write"),
-      task(async (svc, c) =>
-        view(svc, await svc.update(id(c), await parseJson(c.req, UpdateTaskBody), who(c))),
-      ),
-    );
-    api.post(
-      p("/tasks/:id/skip"),
-      requireScope("tasks:write"),
-      task(async (svc, c) =>
-        view(svc, await svc.setSkip(id(c), (await parseJson(c.req, SkipBody)).skip)),
-      ),
-    );
-    api.post(
-      p("/tasks/reorder"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => ({
-        tasks: (await svc.reorder((await parseJson(c.req, ReorderBody)).order)).map((t) =>
-          view(svc, t),
-        ),
-      })),
-    );
-    api.post(
-      p("/tasks/:id/retry"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => view(svc, await svc.retry(id(c), who(c)))),
-    );
-    api.get(
-      p("/tasks/:id/live-log"),
-      requireScope("tasks:read"),
-      task(async (svc, c) => svc.liveLog(id(c))),
-    );
-    api.post(
-      p("/tasks/:id/stop"),
-      requireScope("tasks:control"),
-      task(async (svc, c) => svc.stopTask(id(c))),
-    );
-    api.post(
-      p("/tasks/:id/inject"),
-      requireScope("tasks:control"),
-      task(async (svc, c) => svc.injectPrompt(id(c), (await parseJson(c.req, InjectBody)).prompt)),
-    );
-    api.post(
-      p("/tasks/:id/archive"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => view(svc, await svc.archive(id(c)))),
-    );
-    api.post(
-      p("/tasks/:id/unarchive"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => view(svc, await svc.unarchive(id(c), who(c)))),
-    );
-    api.delete(
-      p("/tasks/:id"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => svc.deleteTask(id(c))),
-    );
-    api.post(
-      p("/tasks/:id/answers"),
-      requireScope("tasks:write"),
-      task(async (svc, c) =>
-        view(
-          svc,
-          await svc.submitAnswers(id(c), (await parseJson(c.req, AnswersBody)).answers, who(c)),
-        ),
-      ),
-    );
-
-    // Attachments (images / PDFs on a task's prompt)
-    api.post(
-      p("/tasks/:id/attachments"),
-      requireScope("tasks:write"),
-      task(async (svc, c) => {
-        const body = await c.req.parseBody();
-        const file = body["file"];
-        if (!(file instanceof File)) throw new ServiceError(400, "No file provided");
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        return view(svc, await svc.addAttachment(id(c), file.name, file.type, bytes));
-      }),
-    );
-    api.delete(
-      p("/tasks/:id/attachments/:name"),
-      requireScope("tasks:write"),
-      task(async (svc, c) =>
-        view(svc, await svc.removeAttachment(id(c), decodeURIComponent(c.req.param("name")!))),
-      ),
-    );
-    api.get(p("/tasks/:id/attachments/:name"), requireScope("tasks:read"), async (c) => {
-      try {
-        const svc = await resolveProject(c);
-        const { bytes, type } = await svc.getAttachment(
-          id(c),
-          decodeURIComponent(c.req.param("name")!),
-        );
-        // Return a native Response: a Uint8Array is a valid BodyInit, sidestepping
-        // Hono's c.body() typing which doesn't accept Node Buffers directly.
-        return new Response(new Uint8Array(bytes), {
-          headers: {
-            "Content-Type": type,
-            "Cache-Control": "no-cache",
-            ...(prefix === "" ? { Deprecation: "true" } : {}),
-          },
-        });
-      } catch (err) {
-        const { status, body } = toErrorResponse(err);
-        return c.json(body, status as 400);
-      }
-    });
-  };
-  registerTaskRoutes("/projects/:pid", projectFromParam);
-  registerTaskRoutes("", projectFromDefault);
-
-  // --- Plans: `/projects/:pid/plans…` (plan model) ---
-  /**
-   * The version a write is conditional on: the `If-Match` header (`"3"`, `W/"3"` or `3`) or the
-   * body's `expectedVersion`; the header wins. Neither: the change applies to the latest version.
-   */
-  const expectedVersionOf = (c: Context, fromBody?: number): number | undefined => {
-    const header = c.req.header("If-Match");
-    if (header !== undefined && header.trim() !== "*") {
-      const m = /^\s*(?:W\/)?"?(\d+)"?\s*$/.exec(header);
-      if (!m) {
-        throw new ServiceError(400, 'If-Match must be a plan version such as "3"', "invalid_input");
-      }
-      return Number(m[1]);
-    }
-    return fromBody;
-  };
-  const planId = (c: Context) => paramId(c.req.param("planId"), "plan id");
-  const goalId = (c: Context) => paramId(c.req.param("goalId"), "goal id");
-  /** Like `wrap`, plus an `ETag` header carrying the plan version of the result. */
-  const planRoute =
-    (fn: (svc: ProjectService, c: Context) => Promise<unknown>) => async (c: Context) => {
-      try {
-        const result = (await fn(await projectFromParam(c), c)) as {
-          version?: number;
-          plan?: { version: number };
-        };
-        const version = result.version ?? result.plan?.version;
-        if (typeof version === "number") c.header("ETag", `"${version}"`);
-        return c.json(result as object);
-      } catch (err) {
-        const { status, body } = toErrorResponse(err);
-        return c.json(body, status as 400);
-      }
-    };
-  const PLAN_BODY = "invalid_plan";
-
-  api.get(
-    "/projects/:pid/plans",
-    requireScope("plans:read"),
-    planRoute(async (svc) => ({ plans: await svc.plans.list() })),
-  );
-  api.post(
-    "/projects/:pid/plans",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) =>
-      svc.plans.createPlan(await parseJson(c.req, CreatePlanBody, PLAN_BODY), who(c)),
-    ),
-  );
-  api.get(
-    "/projects/:pid/plans/:planId",
-    requireScope("plans:read"),
-    planRoute((svc, c) => svc.plans.get(planId(c))),
-  );
-  api.get(
-    "/projects/:pid/plans/:planId/export",
-    requireScope("plans:read"),
-    planRoute((svc, c) => svc.plans.exportToXml(planId(c))),
-  );
-  api.put(
-    "/projects/:pid/plans/:planId",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const { expectedVersion, ...patch } = await parseJson(c.req, UpdatePlanBody);
-      return svc.plans.updatePlan(planId(c), patch, expectedVersionOf(c, expectedVersion), who(c));
-    }),
-  );
-  api.put(
-    "/projects/:pid/plans/:planId/goals",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const body = await parseJson(c.req, ReplaceGoalsBody, PLAN_BODY);
-      return svc.plans.replaceGoals(
-        planId(c),
-        body.goals,
-        expectedVersionOf(c, body.expectedVersion),
-        who(c),
-      );
-    }),
-  );
-  api.put(
-    "/projects/:pid/plans/:planId/goals/:goalId",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const {
-        expectedVersion,
-        id: bodyId,
-        ...rest
-      } = await parseJson(c.req, UpsertGoalBody, PLAN_BODY);
-      const id = goalId(c);
-      if (bodyId !== undefined && bodyId !== id) {
-        throw new ServiceError(400, "The goal id in the body must match the URL", PLAN_BODY);
-      }
-      return svc.plans.upsertGoal(
-        planId(c),
-        { ...rest, id },
-        expectedVersionOf(c, expectedVersion),
-        who(c),
-      );
-    }),
-  );
-  api.delete(
-    "/projects/:pid/plans/:planId/goals/:goalId",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const parsed = RemoveGoalQuery.safeParse(c.req.query());
-      if (!parsed.success) {
-        throw new ServiceError(400, "Invalid query", "invalid_input", formatIssues(parsed.error));
-      }
-      const q = parsed.data;
-      return svc.plans.removeGoal(
-        planId(c),
-        goalId(c),
-        expectedVersionOf(c, q.expectedVersion),
-        { cascade: q.cascade !== undefined, stopRunning: q.stopRunning !== undefined },
-        who(c),
-      );
-    }),
-  );
-  api.post(
-    "/projects/:pid/plans/:planId/reorder",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const body = await parseJson(c.req, ReorderGoalsBody, PLAN_BODY);
-      return svc.plans.reorderGoals(
-        planId(c),
-        body.order,
-        expectedVersionOf(c, body.expectedVersion),
-        who(c),
-      );
-    }),
-  );
-  api.post(
-    "/projects/:pid/plans/:planId/goals/:goalId/status",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const body = await parseJson(c.req, GoalStatusBody);
-      return svc.plans.setGoalStatus(
-        planId(c),
-        goalId(c),
-        body.status,
-        body.description,
-        expectedVersionOf(c, body.expectedVersion),
-        who(c),
-      );
-    }),
-  );
-  api.post(
-    "/projects/:pid/plans/import",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) => {
-      const { expectedVersion, ...input } = await parseJsonOptional(c.req, ImportPlanBody);
-      return svc.plans.importFromRepo(input, expectedVersionOf(c, expectedVersion), who(c));
-    }),
-  );
-  api.post(
-    "/projects/:pid/plans/:planId/sync",
-    requireScope("plans:write"),
-    planRoute(async (svc, c) =>
-      svc.plans.syncTasks(planId(c), await parseJsonOptional(c.req, SyncPlanBody), who(c)),
-    ),
-  );
-
-  // --- Commands ---
-  api.get(
-    "/commands",
-    requireScope("tasks:read"),
-    wrap(async () => ({ commands: await service.listCommands() })),
-  );
-  api.post(
-    "/commands",
-    requireScope("tasks:write"),
-    wrap(async (c) => {
-      const { name, body } = await parseJson(c.req, CommandBody);
-      return service.upsertCommand(name, body ?? "");
-    }),
-  );
-  api.put(
-    "/commands/:id",
-    requireScope("tasks:write"),
-    wrap(async (c) => {
-      const { name, body } = await parseJson(c.req, CommandBody);
-      return service.renameCommand(id(c), name, body ?? "");
-    }),
-  );
-  api.delete(
-    "/commands/:id",
-    requireScope("tasks:write"),
-    wrap(async (c) => service.deleteCommand(id(c))),
-  );
-
-  // --- Settings / health / usage ---
-  api.get(
-    "/settings",
-    requireScope("settings:read"),
-    wrap(async () => service.loadSettings()),
-  );
-  api.put(
-    "/settings",
-    requireScope("settings:write"),
-    wrap(async (c) => service.updateSettings(await parseJson(c.req, SettingsPatchSchema))),
-  );
-  api.get(
-    "/health",
-    requireScope("settings:read"),
-    wrap(async () => ({ tools: await service.health() })),
-  );
-  api.get(
-    "/models",
-    requireScope("settings:read"),
-    wrap(async () => ({ models: await service.listModels() })),
-  );
-  api.get(
-    "/usage",
-    requireAnyScope(["projects:read", "tasks:read"]),
-    wrap(async (c) => service.totalUsage(allowed(c))),
-  );
-
-  // --- Auth administration (never exposes key hashes) ---
-  api.get(
-    "/auth/clients",
-    requireScope("auth:admin"),
-    wrap(async () => ({ clients: (await authStore.list()).map(toPublicClient) })),
-  );
-  api.post(
-    "/auth/clients",
-    requireScope("auth:admin"),
-    wrap(async (c) => {
-      const body = await parseJson(c.req, CreateClientBody);
-      const me = who(c);
-      // Never grant more than you hold.
-      const missing = body.scopes.filter((sc) => !hasScope(me, sc));
-      if (missing.length > 0) {
-        throw new ServiceError(
-          403,
-          `Cannot grant scopes you do not hold: ${missing.join(", ")}`,
-          "forbidden_scope",
-          { scopes: missing },
+  // The unversioned routes are deprecated: say so on every response.
+  app.use("/api/*", async (c, next) => {
+    if (!c.req.path.startsWith("/api/v1/") && c.req.path !== "/api/v1") {
+      c.header("Deprecation", "true");
+      c.header("Sunset", LEGACY_SUNSET);
+      if (!c.req.path.startsWith("/api/events")) {
+        c.header(
+          "Link",
+          `<${c.req.path.replace(/^\/api\//, "/api/v1/")}>; rel="successor-version"`,
         );
       }
-      if (body.trust === "trusted" && me.trust !== "trusted") {
-        throw new ServiceError(403, "Cannot grant trusted trust", "forbidden_trust");
-      }
-      let expiresAt: string | undefined;
-      if (body.expiresIn) {
-        try {
-          expiresAt = new Date(Date.now() + parseDuration(body.expiresIn)).toISOString();
-        } catch (err) {
-          throw new ServiceError(400, (err as Error).message, "invalid_input");
-        }
-      }
-      return authStore.create({
-        name: body.name,
-        kind: body.kind,
-        scopes: body.scopes,
-        projects: body.projects,
-        trust: body.trust,
-        expiresAt,
-      });
-    }),
-  );
-  api.post(
-    "/auth/clients/:id/revoke",
-    requireScope("auth:admin"),
-    wrap(async (c) => {
-      const client = await authStore.revoke(id(c));
-      if (!client) throw new ServiceError(404, "Client not found");
-      return { client };
-    }),
-  );
-  api.post(
-    "/auth/clients/:id/rotate",
-    requireScope("auth:admin"),
-    wrap(async (c) => {
-      const out = await authStore.rotate(id(c));
-      if (!out) throw new ServiceError(404, "Client not found or revoked");
-      return out;
-    }),
-  );
+    }
+    await next();
+  });
+
+  const idempotency = new IdempotencyStore(service.root);
+  const restDeps = { service, authStore, idempotency };
+  mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
+  mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "", legacy: true });
 
   // --- SSE live updates ---
+  const who = (c: Context) => c.get("principal");
   api.get("/events", requireScope("tasks:read"), (c) =>
     streamSSE(c, async (stream) => {
       await stream.writeSSE({ event: "ready", data: "connected" });
@@ -721,6 +129,12 @@ export function createApp(deps: AppDeps): Hono {
   );
 
   app.route("/api", api);
+  app.all("/api/*", (c) =>
+    c.json(
+      { error: { code: "not_found", message: `No such route: ${c.req.method} ${c.req.path}` } },
+      404,
+    ),
+  );
 
   // --- Static UI (optional) ---
   if (deps.uiDir && existsSync(deps.uiDir)) {

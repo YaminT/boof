@@ -1,18 +1,9 @@
-import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { dataRootPaths, type SecuritySettings } from "@boof-runner/shared";
 
 const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
-
-/** Fields recorded for a task-creating prompt: a hash and length, never the text. */
-export function promptFingerprint(prompt: string): { promptSha256: string; promptLength: number } {
-  return {
-    promptSha256: createHash("sha256").update(prompt).digest("hex"),
-    promptLength: prompt.length,
-  };
-}
 
 /**
  * Append one JSON line per /api request to <data>/audit/<YYYY-MM-DD>.jsonl.
@@ -35,9 +26,9 @@ export function audit(opts: {
         const { audit: cfg } = await opts.security();
         if (cfg.enabled) {
           const principal = c.get("principal");
-          const id = c.req.param("id");
-          const name = c.req.param("name");
-          const project = c.req.param("pid");
+          const id = c.req.param("id") ?? c.req.param("taskId");
+          const name = c.req.param("name") ?? c.req.param("attachmentName");
+          const project = c.req.param("pid") ?? c.req.param("projectId");
           const line = {
             ts: new Date(start).toISOString(),
             principal: principal?.id ?? "anonymous",

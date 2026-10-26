@@ -12,7 +12,7 @@ import {
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
-import { TaskService } from "./service.js";
+import { TaskService } from "@boof-runner/api";
 
 let root: string;
 let repo: string;

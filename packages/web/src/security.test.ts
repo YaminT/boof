@@ -24,7 +24,7 @@ import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { pruneAudit } from "./middleware/audit.js";
 import { assertBindAllowed, startServer } from "./server.js";
-import { TaskService } from "./service.js";
+import { TaskService } from "@boof-runner/api";
 
 let root: string;
 let repo: string;

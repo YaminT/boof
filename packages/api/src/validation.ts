@@ -3,7 +3,6 @@ import {
   ClientKindSchema,
   GoalInputSchema,
   GoalStatusSchema,
-  isKebabId,
   PlanStatusSchema,
   ProjectRolesOverrideSchema,
   ProjectReviewOverrideSchema,
@@ -13,47 +12,6 @@ import {
   StatusSchema,
   TrustSchema,
 } from "@boof-runner/shared";
-import { ServiceError } from "./service.js";
-
-/** Route params that become filesystem path segments must be kebab-case ids. */
-export function paramId(value: string | undefined, what = "id"): string {
-  if (!isKebabId(value)) throw new ServiceError(400, `Invalid ${what}`, "invalid_input");
-  return value;
-}
-
-/** Parse a JSON body against a schema; map failures to a 400 with readable details. */
-export async function parseJson<T extends z.ZodType>(
-  req: { json: () => Promise<unknown> },
-  schema: T,
-  code = "invalid_input",
-): Promise<z.infer<T>> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    throw new ServiceError(400, "Request body must be valid JSON", "invalid_input");
-  }
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success) {
-    throw new ServiceError(400, "Invalid request body", code, formatIssues(parsed.error));
-  }
-  return parsed.data;
-}
-
-/** Like {@link parseJson} but an empty body counts as `{}` (POST actions whose options are all optional). */
-export async function parseJsonOptional<T extends z.ZodType>(
-  req: { text: () => Promise<string>; json: () => Promise<unknown> },
-  schema: T,
-  code = "invalid_input",
-): Promise<z.infer<T>> {
-  const text = await req.text();
-  if (text.trim() === "") return parseJson({ json: async () => ({}) }, schema, code);
-  return parseJson({ json: async () => JSON.parse(text) }, schema, code);
-}
-
-export function formatIssues(err: z.ZodError): { path: string; message: string }[] {
-  return err.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
-}
 
 const labels = z.array(z.string().max(100)).max(50);
 const commandRef = z.string().nullable();
@@ -196,5 +154,21 @@ export const CreateClientBody = z
     trust: TrustSchema.optional(),
     /** Duration like "30d"; omitted = never expires. */
     expiresIn: z.string().max(20).optional(),
+  })
+  .strict();
+
+// --- Webhooks ---
+
+export const CreateWebhookBody = z
+  .object({
+    url: z.string().trim().min(1).max(2000),
+    /** Event types or `prefix.*` patterns; default: every event. */
+    events: z
+      .array(z.string().regex(/^(\*|[a-z]+(\.[a-z]+|\.\*)?)$/))
+      .min(1)
+      .max(20)
+      .optional(),
+    projects: z.union([z.literal("*"), z.array(kebabId).max(200)]).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();

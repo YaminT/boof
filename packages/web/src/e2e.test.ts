@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSettings, SettingsStore } from "@boof-runner/shared";
 import { RunnerEngine, execCommand, mockState, resetMock } from "@boof-runner/runner";
 import { createApp } from "./app.js";
-import { TaskService } from "./service.js";
+import { TaskService } from "@boof-runner/api";
 
 let dataRoot: string;
 let workDir: string;

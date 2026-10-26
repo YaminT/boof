@@ -1,0 +1,514 @@
+import { z } from "zod";
+import { StatusSchema } from "@boof-runner/shared";
+import { defineOp, type OpContext } from "../define-op.js";
+import { OpError } from "../errors.js";
+import { promptFingerprint } from "../audit.js";
+import {
+  AnswersBody,
+  CreateTaskBody,
+  InjectBody,
+  ReorderBody,
+  SkipBody,
+  UpdateTaskBody,
+} from "../validation.js";
+import { OkSchema, TaskViewSchema } from "../schemas.js";
+import {
+  DESTRUCTIVE,
+  IDEMPOTENT_WRITE,
+  planIdParam,
+  projectIdParam,
+  READ,
+  requireProject,
+  taskEtag,
+  taskIdParam,
+  taskView,
+  WRITE,
+} from "./common.js";
+
+const byTask = z.strictObject({ projectId: projectIdParam, taskId: taskIdParam });
+const taskResult = (t: z.output<typeof TaskViewSchema>) =>
+  `Task ${t.frontmatter.id} is ${t.frontmatter.status}`;
+
+export const DEFAULT_PAGE = 100;
+export const MAX_PAGE = 500;
+
+function encodeCursor(updated: string, id: string): string {
+  return Buffer.from(JSON.stringify([updated, id])).toString("base64url");
+}
+
+function decodeCursor(cursor: string): [string, string] {
+  try {
+    const v: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (Array.isArray(v) && typeof v[0] === "string" && typeof v[1] === "string") {
+      return [v[0], v[1]];
+    }
+  } catch {
+    /* fall through */
+  }
+  throw new OpError(400, "Invalid cursor", "invalid_input", [
+    { path: "cursor", message: "Invalid cursor" },
+  ]);
+}
+
+export const tasksList = defineOp({
+  name: "tasks.list",
+  title: "List tasks",
+  description:
+    "Lists a project's tasks, newest update first, without their logs. Inputs: projectId, optional status, plan, label filters and limit/cursor paging. No side effects.",
+  scope: "tasks:read",
+  projectScoped: true,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    status: StatusSchema.optional(),
+    plan: planIdParam.optional(),
+    label: z.string().max(100).optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_PAGE)
+      .optional()
+      .meta({ description: `Page size, default ${DEFAULT_PAGE}, max ${MAX_PAGE}.` }),
+    cursor: z
+      .string()
+      .max(500)
+      .optional()
+      .meta({ description: "nextCursor of the previous page." }),
+  }),
+  output: z.object({ items: z.array(TaskViewSchema), nextCursor: z.string().nullable() }),
+  rest: {
+    method: "GET",
+    path: "/projects/{projectId}/tasks",
+    legacyOutput: (out: { items: unknown[] }) => ({ tasks: out.items }),
+  },
+  mcp: { expose: true, name: "boof_list_tasks", annotations: READ },
+  summary: (r) =>
+    `${r.items.length} task(s)${r.nextCursor ? " (more available)" : ""}: ${r.items
+      .map((t) => `${t.frontmatter.id}[${t.frontmatter.status}]`)
+      .join(", ")}`,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    let tasks = await svc.list();
+    if (input.status) tasks = tasks.filter((t) => t.frontmatter.status === input.status);
+    if (input.plan) tasks = tasks.filter((t) => t.frontmatter.planRef?.planId === input.plan);
+    if (input.label) tasks = tasks.filter((t) => t.frontmatter.labels.includes(input.label!));
+    if (ctx.legacy) {
+      return { items: tasks.map((t) => taskView(ctx, svc.projectId, t)), nextCursor: null };
+    }
+    tasks.sort(
+      (a, b) =>
+        b.frontmatter.updated.localeCompare(a.frontmatter.updated) ||
+        a.frontmatter.id.localeCompare(b.frontmatter.id),
+    );
+    if (input.cursor) {
+      const [updated, id] = decodeCursor(input.cursor);
+      tasks = tasks.filter(
+        (t) =>
+          t.frontmatter.updated < updated ||
+          (t.frontmatter.updated === updated && t.frontmatter.id > id),
+      );
+    }
+    const limit = input.limit ?? DEFAULT_PAGE;
+    const page = tasks.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((t) => taskView(ctx, svc.projectId, t)),
+      nextCursor:
+        tasks.length > limit && last
+          ? encodeCursor(last.frontmatter.updated, last.frontmatter.id)
+          : null,
+    };
+  },
+});
+
+export const tasksGet = defineOp({
+  name: "tasks.get",
+  title: "Get a task",
+  description:
+    "Returns one task with its prompt, questions, answers and reports. Inputs: projectId, taskId, and include=log to add the raw agent log (large). No side effects.",
+  scope: "tasks:read",
+  projectScoped: true,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    taskId: taskIdParam,
+    include: z
+      .enum(["log"])
+      .optional()
+      .meta({ description: "log: add body.log (can be megabytes)." }),
+  }),
+  output: TaskViewSchema,
+  rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}", etag: taskEtag },
+  mcp: { expose: true, name: "boof_get_task", annotations: READ },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    const t = await svc.get(input.taskId);
+    if (!t) throw new OpError(404, "Task not found");
+    return taskView(ctx, svc.projectId, t, input.include === "log");
+  },
+});
+
+export const tasksCreate = defineOp({
+  name: "tasks.create",
+  title: "Create a task",
+  description:
+    "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft; a human approves it.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, ...CreateTaskBody.shape }),
+  output: TaskViewSchema,
+  rest: {
+    method: "POST",
+    path: "/projects/{projectId}/tasks",
+    status: 201,
+    idempotent: true,
+    etag: taskEtag,
+  },
+  mcp: { expose: true, name: "boof_create_task", annotations: WRITE },
+  audit: (input) => promptFingerprint(input.prompt ?? ""),
+  summary: taskResult,
+  handler: async (ctx, { projectId, ...body }) => {
+    const svc = await requireProject(ctx, projectId);
+    return taskView(ctx, projectId, await svc.create(body, ctx.principal));
+  },
+});
+
+export const tasksUpdate = defineOp({
+  name: "tasks.update",
+  title: "Update a task",
+  description:
+    "Edits task fields; a changed status is a transition. Inputs: projectId, taskId, fields to change, and expectedUpdated (HTTP If-Match) to refuse a stale edit. Rewrites the task file.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    taskId: taskIdParam,
+    ...UpdateTaskBody.shape,
+    expectedUpdated: z.string().max(100).optional().meta({
+      description: "The task's `updated` stamp you last saw (HTTP: If-Match with the ETag).",
+    }),
+  }),
+  output: TaskViewSchema,
+  rest: {
+    method: "PUT",
+    path: "/projects/{projectId}/tasks/{taskId}",
+    ifMatch: "expectedUpdated",
+    etag: taskEtag,
+  },
+  mcp: { expose: true, name: "boof_update_task", annotations: IDEMPOTENT_WRITE },
+  summary: taskResult,
+  handler: async (ctx, { projectId, taskId, ...patch }) => {
+    const svc = await requireProject(ctx, projectId);
+    return taskView(ctx, projectId, await svc.update(taskId, patch, ctx.principal));
+  },
+});
+
+export const tasksQueue = defineOp({
+  name: "tasks.queue",
+  title: "Queue a task",
+  description:
+    "Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. Review-trust clients are refused (403 forbidden_trust).",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: byTask,
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/queue", etag: taskEtag },
+  mcp: { expose: true, name: "boof_queue_task", annotations: IDEMPOTENT_WRITE },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(
+      ctx,
+      input.projectId,
+      await svc.update(input.taskId, { status: "pending" }, ctx.principal),
+    );
+  },
+});
+
+export const tasksSkip = defineOp({
+  name: "tasks.skip",
+  title: "Skip or unskip a task",
+  description:
+    "Sets the skip flag of a task; the runner ignores skipped tasks. Inputs: projectId, taskId, skip.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...SkipBody.shape }),
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/skip" },
+  mcp: { expose: true, name: "boof_skip_task", annotations: IDEMPOTENT_WRITE },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(ctx, input.projectId, await svc.setSkip(input.taskId, input.skip));
+  },
+});
+
+export const tasksReorder = defineOp({
+  name: "tasks.reorder",
+  title: "Reorder tasks",
+  description:
+    "Sets the priority order of tasks. Inputs: projectId, order (task ids, first runs first). Rewrites the priority of each listed task.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, ...ReorderBody.shape }),
+  output: z.object({ tasks: z.array(TaskViewSchema) }),
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/reorder" },
+  mcp: { expose: true, name: "boof_reorder_tasks", annotations: IDEMPOTENT_WRITE },
+  summary: (r) => `Reordered ${r.tasks.length} task(s)`,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return {
+      tasks: (await svc.reorder(input.order)).map((t) => taskView(ctx, input.projectId, t)),
+    };
+  },
+});
+
+export const tasksRetry = defineOp({
+  name: "tasks.retry",
+  title: "Retry a task",
+  description:
+    "Moves a failed task back to pending. Inputs: projectId, taskId. Review-trust clients are refused.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: byTask,
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/retry" },
+  mcp: { expose: true, name: "boof_retry_task", annotations: WRITE },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(ctx, input.projectId, await svc.retry(input.taskId, ctx.principal));
+  },
+});
+
+export const tasksArchive = defineOp({
+  name: "tasks.archive",
+  title: "Archive a task",
+  description:
+    "Archives a task that is not running. Inputs: projectId, taskId. Moves the task file to archived.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: byTask,
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/archive" },
+  mcp: { expose: true, name: "boof_archive_task", annotations: IDEMPOTENT_WRITE },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(ctx, input.projectId, await svc.archive(input.taskId, ctx.principal));
+  },
+});
+
+export const tasksUnarchive = defineOp({
+  name: "tasks.unarchive",
+  title: "Unarchive a task",
+  description:
+    "Moves an archived task back to pending. Inputs: projectId, taskId. Review-trust clients are refused.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: byTask,
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/unarchive" },
+  mcp: { expose: true, name: "boof_unarchive_task", annotations: WRITE },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(ctx, input.projectId, await svc.unarchive(input.taskId, ctx.principal));
+  },
+});
+
+export const tasksDelete = defineOp({
+  name: "tasks.delete",
+  title: "Delete a task",
+  description:
+    "Permanently deletes a task and its attachments; a running task must finish first. Inputs: projectId, taskId. Removes files.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: byTask,
+  output: OkSchema,
+  rest: { method: "DELETE", path: "/projects/{projectId}/tasks/{taskId}" },
+  mcp: { expose: true, name: "boof_delete_task", annotations: DESTRUCTIVE },
+  summary: () => "Task deleted",
+  handler: async (ctx, input) =>
+    (await requireProject(ctx, input.projectId)).deleteTask(input.taskId),
+});
+
+export const tasksAnswers = defineOp({
+  name: "tasks.answers",
+  title: "Answer a task's questions",
+  description:
+    "Answers the planner's questions of a parked task and resumes it. Inputs: projectId, taskId, answers (text). Moves the task from action to pending.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...AnswersBody.shape }),
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/answers" },
+  mcp: { expose: true, name: "boof_answer_task", annotations: WRITE },
+  summary: taskResult,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(
+      ctx,
+      input.projectId,
+      await svc.submitAnswers(input.taskId, input.answers, ctx.principal),
+    );
+  },
+});
+
+export const tasksStop = defineOp({
+  name: "tasks.stop",
+  title: "Stop a running task",
+  description:
+    "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on.",
+  scope: "tasks:control",
+  projectScoped: true,
+  input: byTask,
+  output: OkSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/stop" },
+  mcp: { expose: true, name: "boof_stop_task", annotations: DESTRUCTIVE },
+  summary: () => "Stop requested",
+  handler: async (ctx, input) =>
+    (await requireProject(ctx, input.projectId)).stopTask(input.taskId),
+});
+
+export const tasksInject = defineOp({
+  name: "tasks.inject",
+  title: "Inject a prompt into a running task",
+  description:
+    "Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. Appends to the task's injection file.",
+  scope: "tasks:control",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...InjectBody.shape }),
+  output: OkSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/inject" },
+  mcp: { expose: true, name: "boof_inject_prompt", annotations: WRITE },
+  summary: () => "Prompt injected",
+  handler: async (ctx, input) =>
+    (await requireProject(ctx, input.projectId)).injectPrompt(input.taskId, input.prompt),
+});
+
+export const tasksLiveLog = defineOp({
+  name: "tasks.liveLog",
+  title: "Read a task's live log",
+  description:
+    "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId. No side effects.",
+  scope: "tasks:read",
+  projectScoped: true,
+  input: byTask,
+  output: z.object({ log: z.string(), running: z.boolean() }),
+  rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}/live-log" },
+  mcp: { expose: true, name: "boof_get_task_log", annotations: READ },
+  summary: (r) => (r.running ? "Task is running; log attached" : "Task finished; log attached"),
+  handler: async (ctx, input) => (await requireProject(ctx, input.projectId)).liveLog(input.taskId),
+});
+
+/** An uploaded file as the REST layer hands it over (multipart `file` field). */
+export interface UploadedFile {
+  name: string;
+  type: string;
+  bytes: Uint8Array;
+}
+const uploadedFile = z.custom<UploadedFile>(
+  (v) => typeof v === "object" && v !== null && (v as UploadedFile).bytes instanceof Uint8Array,
+  "No file provided",
+);
+
+export const attachmentName = z
+  .string()
+  .min(1)
+  .max(255)
+  .meta({ description: "Stored attachment file name." });
+
+export const attachmentsAdd = defineOp({
+  name: "tasks.attachments.add",
+  title: "Attach a file to a task",
+  description:
+    "Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, file: uploadedFile }),
+  output: TaskViewSchema,
+  rest: {
+    method: "POST",
+    path: "/projects/{projectId}/tasks/{taskId}/attachments",
+    kind: "multipart",
+  },
+  mcp: { expose: false },
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    const { name, type, bytes } = input.file;
+    return taskView(ctx, input.projectId, await svc.addAttachment(input.taskId, name, type, bytes));
+  },
+});
+
+export const attachmentsRemove = defineOp({
+  name: "tasks.attachments.remove",
+  title: "Remove a task attachment",
+  description:
+    "Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, attachmentName }),
+  output: TaskViewSchema,
+  rest: {
+    method: "DELETE",
+    path: "/projects/{projectId}/tasks/{taskId}/attachments/{attachmentName}",
+  },
+  mcp: { expose: false },
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    return taskView(
+      ctx,
+      input.projectId,
+      await svc.removeAttachment(input.taskId, input.attachmentName),
+    );
+  },
+});
+
+export const attachmentsGet = defineOp({
+  name: "tasks.attachments.get",
+  title: "Download a task attachment",
+  description:
+    "Returns an attachment's bytes with its content type. Inputs: projectId, taskId, attachmentName. No side effects.",
+  scope: "tasks:read",
+  projectScoped: true,
+  input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, attachmentName }),
+  output: z.object({
+    bytes: z.custom<Uint8Array>((v) => v instanceof Uint8Array),
+    type: z.string(),
+  }),
+  rest: {
+    method: "GET",
+    path: "/projects/{projectId}/tasks/{taskId}/attachments/{attachmentName}",
+    kind: "binary",
+  },
+  mcp: { expose: false },
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    const { bytes, type } = await svc.getAttachment(input.taskId, input.attachmentName);
+    return { bytes: new Uint8Array(bytes), type };
+  },
+});
+
+export const taskOps = [
+  tasksList,
+  tasksGet,
+  tasksCreate,
+  tasksUpdate,
+  tasksQueue,
+  tasksSkip,
+  tasksReorder,
+  tasksRetry,
+  tasksArchive,
+  tasksUnarchive,
+  tasksDelete,
+  tasksAnswers,
+  tasksStop,
+  tasksInject,
+  tasksLiveLog,
+  attachmentsAdd,
+  attachmentsRemove,
+  attachmentsGet,
+];
+
+export type { OpContext };

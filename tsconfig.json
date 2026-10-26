@@ -1,10 +1,23 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/shared" },
-    { "path": "./packages/runner" },
-    { "path": "./packages/web" },
-    { "path": "./packages/desktop" },
-    { "path": "./bin" }
+    {
+      "path": "./packages/shared"
+    },
+    {
+      "path": "./packages/runner"
+    },
+    {
+      "path": "./packages/api"
+    },
+    {
+      "path": "./packages/web"
+    },
+    {
+      "path": "./packages/desktop"
+    },
+    {
+      "path": "./bin"
+    }
   ]
 }

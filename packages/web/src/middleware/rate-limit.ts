@@ -7,7 +7,8 @@ interface Bucket {
 }
 
 const isAttachmentUpload = (method: string, path: string) =>
-  method === "POST" && /^\/api\/tasks\/[^/]+\/attachments\/?$/.test(path);
+  method === "POST" &&
+  /^\/api\/(v1\/)?(projects\/[^/]+\/)?tasks\/[^/]+\/attachments\/?$/.test(path);
 
 /**
  * In-memory token bucket per principal (capacity = limit per minute, refilled
@@ -22,7 +23,7 @@ export function rateLimit(opts: {
   const buckets = new Map<string, Bucket>();
 
   return async (c, next) => {
-    if (c.req.path === "/api/events") return next();
+    if (c.req.path === "/api/events" || c.req.path === "/api/v1/events") return next();
     const { rateLimit: cfg } = await opts.security();
     const attach = isAttachmentUpload(c.req.method, c.req.path);
     const limit = attach ? cfg.attachmentsPerMinute : cfg.perMinute;
