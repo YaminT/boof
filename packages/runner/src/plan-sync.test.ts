@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applyGoalInputs,
+  AuthStore,
+  defaultSettings,
   PlanStore,
   ProjectStore,
   taskPromptInjectionsPath,
@@ -16,7 +18,7 @@ import {
   type Project,
 } from "@boof-runner/shared";
 import { execCommand } from "./exec.js";
-import { buildGoalPrompt, PlanNotActiveError, syncPlan } from "./plan-sync.js";
+import { buildGoalPrompt, PlanNotActiveError, syncPlan, taskStatusForPlan } from "./plan-sync.js";
 
 let dataRoot: string;
 let repo: string;
@@ -433,5 +435,73 @@ describe("syncPlan: follow-up base and goal.tasks", () => {
       { taskId: followId, revision: 2, status: "pending", branch: `boof-runner/${followId}` },
     ]);
     expect(res.plan.goals[0]!.taskId).toBe(followId);
+  });
+});
+
+describe("syncPlan: dependency base and follow-ups", () => {
+  const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  async function branchWithCommit(name: string): Promise<void> {
+    await git(["checkout", "-q", "-b", name, "main"]);
+    await git(["commit", "--allow-empty", "-m", name]);
+    await git(["checkout", "-q", "main"]);
+  }
+
+  it("a follow-up keeps its own previous branch and lists dependency branches it does not contain", async () => {
+    await git(["init", "-b", "main"]);
+    await git(["config", "user.email", "t@e.com"]);
+    await git(["config", "user.name", "T"]);
+    await git(["commit", "--allow-empty", "-m", "init"]);
+    await makePlan([testGoal("a", 1), testGoal("b", 2, ["a"])]);
+    await sync();
+    await branchWithCommit("boof-runner/boof-a");
+    await finishTask("boof-a");
+    const second = await sync();
+    expect(second.created.map((c) => c.goalId)).toEqual(["b"]);
+    expect((await tasks.get("boof-b"))!.frontmatter.base).toBe("boof-runner/boof-a");
+    // b's own branch was made before a existed: it does not contain a's commit.
+    await branchWithCommit("boof-runner/boof-b");
+    await finishTask("boof-b");
+    await editGoal("b", "Spec v2");
+    const res = await sync();
+    const follow = (await tasks.get(res.created[0]!.taskId))!;
+    expect(follow.frontmatter.base).toBe("boof-runner/boof-b");
+    expect(follow.body.prompt).toContain("## Dependencies");
+    expect(follow.body.prompt).toContain("- boof-runner/boof-a");
+    expect(follow.body.log).toContain("previous task");
+    expect(follow.body.log).toContain("boof-runner/boof-a");
+  });
+
+  it("no dependency branch: falls back to the project default base and says so", async () => {
+    await git(["init", "-b", "main"]);
+    project = await new ProjectStore(dataRoot).update("proj", { defaultBase: "main" });
+    await makePlan([testGoal("a", 1), testGoal("b", 2, ["a"])]);
+    await sync();
+    await finishTask("boof-a"); // no branch exists
+    await sync();
+    const b = (await tasks.get("boof-b"))!;
+    expect(b.frontmatter.base).toBe("main");
+    expect(b.body.log).toContain("project default base");
+  });
+});
+
+describe("taskStatusForPlan: approval", () => {
+  it("an approved active plan of a review client creates pending tasks; without approval, draft", async () => {
+    const { client } = await new AuthStore(dataRoot).create({
+      name: "r",
+      scopes: ["plans:write"],
+      trust: "review",
+      projects: "*",
+    });
+    const plan = await makePlan([testGoal("a", 1)], { source: { kind: "api", client: client.id } });
+    const settings = defaultSettings();
+    expect(await taskStatusForPlan(dataRoot, plan, settings)).toBe("draft");
+    const approved = {
+      ...plan,
+      approvedBy: { principalId: "local", at: new Date().toISOString(), version: 2 },
+    };
+    expect(await taskStatusForPlan(dataRoot, approved, settings)).toBe("pending");
+    expect(await taskStatusForPlan(dataRoot, { ...approved, status: "draft" }, settings)).toBe(
+      "draft",
+    );
   });
 });

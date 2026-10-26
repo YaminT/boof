@@ -109,6 +109,15 @@ export const PlanSourceSchema = z.object({
 });
 export type PlanSource = z.infer<typeof PlanSourceSchema>;
 
+/** Who approved the content of an active plan, and when (a trusted or local principal set it `active`). */
+export const PlanApprovalSchema = z.object({
+  principalId: z.string().min(1),
+  at: isoDatetime,
+  /** The plan version the approval produced. */
+  version: z.number().int().min(1),
+});
+export type PlanApproval = z.infer<typeof PlanApprovalSchema>;
+
 export const PlanSchema = z.object({
   id: kebab,
   title: z.string().min(1),
@@ -118,6 +127,8 @@ export const PlanSchema = z.object({
   /** The engine syncs the plan before it picks a task. */
   autoSync: z.boolean().default(false),
   bumpTo: z.enum(["review", "done"]).default("done"),
+  /** Set while the plan is active and a trusted or local principal approved it; cleared otherwise. */
+  approvedBy: PlanApprovalSchema.optional(),
   source: PlanSourceSchema,
   goals: z.array(GoalSchema),
   /** Optimistic concurrency token, bumped on every write. */

@@ -6,6 +6,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { execCommand } from "./exec.js";
+import { createIntegrationBranch, isAncestor } from "./plan-base.js";
 import {
   appendEvent,
   AuthStore,
@@ -260,12 +261,25 @@ export function buildFollowUpPrompt(
   ].join("\n\n");
 }
 
+/** The `## Dependencies` section of a prompt: dependency branches the agent merges itself. */
+export function dependenciesSection(base: string | undefined, branches: string[]): string {
+  return [
+    "## Dependencies",
+    `The work of goals this goal depends on is on other branches${base ? ` than your base (${base})` : ""}. ` +
+      "Before you start, merge each branch below into your task branch with `git merge <branch>` " +
+      "and resolve conflicts:",
+    ...branches.map((b) => `- ${b}`),
+  ].join("\n");
+}
+
 // --- Trust ---
 
 /**
- * Status for tasks that sync creates for `plan`: `draft` when the plan was created by a
- * review-trust client (or one that no longer exists) and `security.externalTasksRequireApproval`
- * is on, so a human approves each task; `pending` otherwise.
+ * Status for tasks that sync creates for `plan`: `pending` when a trusted or local principal
+ * approved the active plan (`approvedBy`: the human saw the content), `draft` when the plan
+ * was created by a review-trust client (or one that no longer exists) and
+ * `security.externalTasksRequireApproval` is on, so a human approves each task; `pending`
+ * otherwise.
  */
 export async function taskStatusForPlan(
   root: string,
@@ -274,6 +288,7 @@ export async function taskStatusForPlan(
 ): Promise<"pending" | "draft"> {
   const clientId = plan.source.client;
   if (!clientId) return "pending";
+  if (plan.status === "active" && plan.approvedBy) return "pending";
   if (!securitySettings(settings).externalTasksRequireApproval) return "pending";
   try {
     const client = await new AuthStore(root).get(clientId);
@@ -393,21 +408,117 @@ async function syncOnce(
   const open = goals.filter((g) => !isDone(g));
   const priorityOf = (g: Goal) => (open.length - open.indexOf(g)) * 10;
 
+  /** Finished branch of each goal `g` depends on, in dependsOn order, when it exists in the repo. */
+  const dependencyBranches = async (g: Goal): Promise<{ goalId: string; branch: string }[]> => {
+    const out: { goalId: string; branch: string }[] = [];
+    for (const d of g.dependsOn) {
+      const branch = await previousTaskBase(
+        repoRoot,
+        mine.filter((t) => t.frontmatter.planRef!.goalId === d),
+      );
+      if (branch && !out.some((o) => o.branch === branch)) out.push({ goalId: d, branch });
+    }
+    return out;
+  };
+
+  /**
+   * Where the task of goal `g` starts: the goal's own previous branch (follow-up), else the
+   * dependencies' branches (one: that branch; several: an integration branch, or the first
+   * when they conflict), else the project default base. `mergeFirst` lists the dependency
+   * branches the agent must merge itself; `log` says what was chosen and why.
+   */
+  const chooseBase = async (
+    g: Goal,
+    taskId: string,
+    ownBase: string | undefined,
+  ): Promise<{ base: string | undefined; mergeFirst: string[]; log: string }> => {
+    const deps = await dependencyBranches(g);
+    if (ownBase) {
+      const missing: string[] = [];
+      for (const d of deps)
+        if (!(await isAncestor(repoRoot, d.branch, ownBase))) missing.push(d.branch);
+      return {
+        base: ownBase,
+        mergeFirst: missing,
+        log:
+          `Base: ${ownBase} (the finished branch of this goal's previous task).` +
+          (missing.length > 0
+            ? ` Dependency branches not contained in it, listed in the prompt to merge: ${missing.join(", ")}.`
+            : ""),
+      };
+    }
+    const names = (list: typeof deps) =>
+      list.map((d) => `${d.branch} (goal ${d.goalId})`).join(", ");
+    if (deps.length === 1) {
+      return {
+        base: deps[0]!.branch,
+        mergeFirst: [],
+        log: `Base: ${deps[0]!.branch} (the finished branch of goal ${deps[0]!.goalId}, which this goal depends on).`,
+      };
+    }
+    if (deps.length > 1) {
+      const integration = `${taskBranch(taskId)}--base`;
+      if (dry) {
+        return {
+          base: integration,
+          mergeFirst: [],
+          log: `Base: ${integration} (would merge ${names(deps)}).`,
+        };
+      }
+      const merged = await createIntegrationBranch(
+        repoRoot,
+        integration,
+        deps.map((d) => d.branch),
+      );
+      if (merged.ok) {
+        return {
+          base: integration,
+          mergeFirst: [],
+          log: `Base: ${integration} (merge of ${names(deps)}).`,
+        };
+      }
+      return {
+        base: deps[0]!.branch,
+        mergeFirst: deps.slice(1).map((d) => d.branch),
+        log:
+          `Base: ${deps[0]!.branch} (first dependency; no integration branch because ${merged.reason}). ` +
+          `Other dependency branches to merge first: ${deps
+            .slice(1)
+            .map((d) => d.branch)
+            .join(", ")}.`,
+      };
+    }
+    const fallback = opts.project.defaultBase ?? undefined;
+    return {
+      base: fallback,
+      mergeFirst: [],
+      log: fallback
+        ? `Base: ${fallback} (the project default base; no finished dependency branch found).`
+        : "Base: HEAD of the project repository (no finished dependency branch and no default base).",
+    };
+  };
+
   const create = async (
     g: Goal,
     followUp: boolean,
     skip: boolean,
     doneRev: number,
-    base: string | undefined,
+    ownBase: string | undefined,
   ): Promise<Task | null> => {
     const id = uniqueKebabId(
       followUp ? `update ${g.id} to revision ${g.revision}` : `boof ${g.id}`,
       taken,
     );
     taken.add(id);
-    const prompt = followUp
+    const chosen = await chooseBase(g, id, ownBase);
+    const base = chosen.base;
+    const basePrompt = followUp
       ? buildFollowUpPrompt(g, plan.id, repoRoot, g.synced, doneRev)
       : buildGoalPrompt(g, plan.id, repoRoot);
+    const prompt =
+      chosen.mergeFirst.length > 0
+        ? `${basePrompt}\n\n${dependenciesSection(chosen.base, chosen.mergeFirst)}`
+        : basePrompt;
     const labels = [
       ...(plan.source.kind === "repo-import" ? ["boof-scan", `boof-status:${g.status}`] : []),
       `plan:${plan.id}`,
@@ -439,6 +550,7 @@ async function syncOnce(
       },
       prompt,
     );
+    task.body.log = `## Base\n${chosen.log}`;
     result.created.push({
       goalId: g.id,
       taskId: id,
@@ -603,9 +715,14 @@ async function syncOnce(
       continue;
     }
     const followUp = reopened || settled.some((t) => t.frontmatter.status === "done");
-    const base =
-      (await previousTaskBase(repoRoot, settled)) ?? opts.project.defaultBase ?? undefined;
-    const created = await create(g, followUp, blocked, settledRevision || doneRevisionOf(g), base);
+    const ownBase = await previousTaskBase(repoRoot, settled);
+    const created = await create(
+      g,
+      followUp,
+      blocked,
+      settledRevision || doneRevisionOf(g),
+      ownBase,
+    );
     g.taskId = created?.frontmatter.id ?? null;
     if (created) g.tasks = [...g.tasks, taskRef(created)];
     g.synced = snapshotOf(g);

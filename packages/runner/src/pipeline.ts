@@ -384,6 +384,14 @@ export class Pipeline {
       await this.log(id, line);
     };
 
+    // The live log replaces the body log when the run ends: carry the base note plan sync
+    // wrote (which base was chosen and why) into it once, so it survives.
+    const baseNote = /^## Base\n[^\n]*/m.exec(task.body.log)?.[0];
+    if (baseNote) {
+      const live = await readFile(join(this.areaDir(id), "log.txt"), "utf8").catch(() => "");
+      if (!live.includes(baseNote)) await this.log(id, baseNote);
+    }
+
     let worktree: Worktree | null = null;
     const { workingDirectory } = this.deps.settings;
     const cwd = workingDirectory;
@@ -403,8 +411,8 @@ export class Pipeline {
         );
         if (made.baseIgnored) {
           await appendLog(`base ${base} ignored: reusing existing branch ${worktree.branch}`);
-        } else if (base && !made.reused) {
-          await appendLog(`base ${base} → ${worktree.base}`);
+        } else if (!made.reused) {
+          await appendLog(`base ${base ?? "HEAD"} → ${worktree.base}`);
         }
       } else {
         await appendLog(

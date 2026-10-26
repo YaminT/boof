@@ -1,5 +1,5 @@
 import { sameGoalContent } from "./plan-diff.js";
-import type { Goal, GoalInputParsed, GoalStatus } from "./plan-schema.js";
+import type { Goal, GoalInputParsed, GoalStatus, Plan } from "./plan-schema.js";
 import { nowIso } from "./runtime.js";
 
 /** Append a status entry to a goal's history and make it the goal's status. */
@@ -89,4 +89,25 @@ export function applyGoalInputs(
   if (opts.replace) return built;
   const ids = new Set(built.map((g) => g.id));
   return [...existing.filter((g) => !ids.has(g.id)), ...built];
+}
+
+/**
+ * Record or clear the approval of `next`, the plan a trusted or local principal `by` is about to
+ * save over `before` (undefined for a new plan). Going `active` from another status stamps
+ * `approvedBy`; staying `active` keeps the existing approval; any other status clears it.
+ */
+export function withApproval(
+  before: Plan | undefined,
+  next: Plan,
+  by: string,
+  at: string = nowIso(),
+): Plan {
+  if (next.status !== "active") {
+    const { approvedBy: _drop, ...rest } = next;
+    return rest;
+  }
+  if (before?.status === "active" && before.approvedBy) {
+    return { ...next, approvedBy: before.approvedBy };
+  }
+  return { ...next, approvedBy: { principalId: by, at, version: (before?.version ?? 0) + 1 } };
 }
