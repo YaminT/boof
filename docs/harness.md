@@ -413,6 +413,8 @@ A task is one prompt that the runner executes. Its `frontmatter.status` is one o
 
 Through `tasks.update` you can move a task only to `pending` or `archived`. The statuses `running`, `action`, `done` and `failed` belong to the runner. An illegal move answers `409 invalid_transition`.
 
+A task can be `failed` because the runner process died while it ran (crash, `SIGKILL`, reboot). When the runner starts again it moves such a task to `failed` with an `### Interrupted` block in its log and keeps the worktree and branch, so you can retry it.
+
 A task has a `priority` (higher runs first; default 50), `labels`, `skip` (the runner ignores a skipped task), `runs` (how many times the pipeline runs; default 1) and `completedRuns`.
 
 The runner picks the pending task with the highest priority across all projects. At most one task per project runs at a time (`settings.runner.concurrency`, default 1, is the number of tasks in flight over all projects).

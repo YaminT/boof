@@ -29,6 +29,8 @@ export const TaskStatusEventSchema = z.object({
   from: z.string(),
   to: z.string(),
   by,
+  /** Why the runner moved the task on its own (e.g. recovery after a crash). */
+  reason: z.string().optional(),
 });
 export const TaskQuestionsEventSchema = z.object({
   type: z.literal("task.questions"),

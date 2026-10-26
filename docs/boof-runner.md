@@ -337,6 +337,10 @@ The UI can request a stop for the active task. The API writes a stop signal into
 
 The task is then recorded as failed with a clear stopped message. This is intentionally conservative: a stopped run may have partial changes in its worktree, its worktree and branch are kept for inspection or resume, so review them before retrying.
 
+### Recovery after a crash or restart
+
+If the runner process dies hard (`SIGKILL`, out of memory, power loss, reboot), a task stays in `ongoing/` as `running`. When the runner starts, the process that holds the runner guard (`.runner.pid`) recovers every `running` task in every project before it selects work. It mirrors `log.txt` into the task body, appends an `### Interrupted` block, and moves the task to `failed` (event `task.status` with `by: "runner"` and a `reason`). The worktree and branch are kept, so retrying the task continues from them. A web process started with `--no-runner` never recovers tasks. The startup log shows `Recovered N interrupted task(s): id, id`.
+
 ### Prompt Injection
 
 The UI can inject an additional prompt while a task is running. Boof Runner writes that prompt to the running task's control directory and appends a note to the live log.

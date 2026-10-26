@@ -1432,4 +1432,70 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
   it("returns at once when nothing is running", async () => {
     expect(await engine.shutdown(1000)).toEqual({ stopped: [], timedOut: false });
   });
+  describe("recovery of interrupted tasks", () => {
+    /** A task a dead runner left in running: worktree, live log, no pipeline driving it. */
+    const crash = async (id = "t1", withLog = true) => {
+      await store.create(newTask(fm({ id }), "Build it."));
+      await store.transition(id, "running");
+      await ensureWorktree(workDir, id, { root: join(workDir, ".boof-runner-worktrees") });
+      if (withLog) {
+        await mkdir(workingAreaDir(projectDir, id), { recursive: true });
+        await writeFile(join(workingAreaDir(projectDir, id), "log.txt"), "live output line\n");
+      }
+    };
+    const loopBriefly = async () => {
+      const done = engine.loop();
+      await new Promise((r) => setTimeout(r, 150));
+      engine.stop();
+      await done;
+    };
+
+    it("fails a task left running, keeps the worktree, and allows a retry", async () => {
+      await crash();
+      await loopBriefly();
+      const t = await store.get("t1");
+      expect(t?.frontmatter.status).toBe("failed");
+      expect(t?.body.log).toContain("live output line");
+      expect(t?.body.log).toContain("### Interrupted\nThe runner stopped unexpectedly");
+      expect(await exists(wtPath())).toBe(true);
+      expect(await exists(workingAreaDir(projectDir, "t1"))).toBe(false);
+      const events = (await readFile(join(projectDir, "events.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(events.at(-1)).toMatchObject({
+        type: "task.status",
+        task: "t1",
+        from: "running",
+        to: "failed",
+        by: "runner",
+      });
+      expect(events.at(-1).reason).toContain("interrupted");
+
+      await store.transition("t1", "pending");
+      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+    });
+
+    it("is idempotent: a second start recovers nothing", async () => {
+      await crash();
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      const before = (await store.get("t1"))?.body.log;
+      expect(await engine.recoverInterrupted()).toEqual([]);
+      expect((await store.get("t1"))?.body.log).toBe(before);
+      expect(before?.match(/### Interrupted/g)).toHaveLength(1);
+    });
+
+    it("recovers a task with no log.txt and skips an entry with no task.md", async () => {
+      await crash("t1", false);
+      await mkdir(workingAreaDir(projectDir, "ghost"), { recursive: true });
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+      expect(await exists(workingAreaDir(projectDir, "ghost"))).toBe(true);
+    });
+
+    it("does nothing when no engine loop runs (the --no-runner path)", async () => {
+      await crash();
+      expect((await store.get("t1"))?.frontmatter.status).toBe("running");
+    });
+  });
 });

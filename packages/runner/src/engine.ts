@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import {
   appendVersion,
@@ -8,6 +8,7 @@ import {
   ProjectStore,
   serializeGoal,
   SettingsStore,
+  statusDir,
   TaskStore,
   workingAreaDir,
   type Project,
@@ -28,6 +29,9 @@ export interface EngineOptions {
   /** Only serve this project (headless `run --all --project`). */
   onlyProject?: string;
 }
+
+const INTERRUPTED_NOTE =
+  "The runner stopped unexpectedly (server restart or crash) while this task was running. Its worktree and branch are kept. Retry it to continue from the kept worktree.";
 
 export type TickResult =
   | { kind: "ran"; outcome: PipelineOutcome; projectId: string }
@@ -405,11 +409,65 @@ export class RunnerEngine {
     }
   }
 
+  /**
+   * Recover tasks a dead runner left in `running` (crash, SIGKILL, OOM, reboot). Call it only
+   * from the process that holds the runner guard, before selecting work: nothing else is
+   * driving those tasks. Each one gets an Interrupted block (live log mirrored into the body
+   * first) and moves to `failed`; its worktree and branch are kept so a retry resumes there.
+   * Entries with no readable task.md are skipped with a warning. Returns the recovered ids.
+   */
+  async recoverInterrupted(): Promise<string[]> {
+    const recovered: string[] = [];
+    for (const project of await this.projects.list().catch(() => [] as Project[])) {
+      const dir = this.projects.dir(project.id);
+      const store = this.storeFor(project);
+      let ids: string[];
+      try {
+        ids = (await readdir(statusDir(dir, "running"), { withFileTypes: true }))
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name);
+      } catch {
+        continue;
+      }
+      for (const id of ids) {
+        try {
+          const located = await store.locate(id);
+          if (!located || located.status !== "running") {
+            console.warn(`recovery: skipping ${project.id}/${id}: no task.md in ongoing/${id}`);
+            continue;
+          }
+          const live = await readFile(join(workingAreaDir(dir, id), "log.txt"), "utf8").catch(
+            () => "",
+          );
+          const task = await store.transition(
+            id,
+            "failed",
+            (t) => {
+              if (live.trim()) t.body.log = live;
+              const block = `### Interrupted\n${INTERRUPTED_NOTE}`;
+              t.body.log = t.body.log.trim() ? `${t.body.log.trimEnd()}\n\n${block}` : block;
+            },
+            { reason: "interrupted: runner stopped unexpectedly" },
+          );
+          await this.noteGoalTaskStatus(project, task, "failed");
+          recovered.push(id);
+        } catch (err) {
+          console.warn(`recovery: skipping ${project.id}/${id}:`, err);
+        }
+      }
+    }
+    if (recovered.length > 0) {
+      console.log(`Recovered ${recovered.length} interrupted task(s): ${recovered.join(", ")}`);
+    }
+    return recovered;
+  }
+
   /** Long-running loop. Honors cooperative stop and the enabled flag. */
   async loop(): Promise<void> {
     if (this.looping) return;
     this.looping = true;
     this.stopRequested = false;
+    await this.recoverInterrupted().catch((err) => console.error("task recovery failed:", err));
     for (const project of await this.projects.list().catch(() => [])) {
       if (project.workingDirectory) {
         await pruneStaleWorktrees(project.workingDirectory).catch(() => {});

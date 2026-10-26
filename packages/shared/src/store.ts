@@ -183,13 +183,13 @@ export class TaskStore {
    * status, then remove the old location (write-then-move ordering). Returns
    * the moved task. `mutate` lets the caller adjust frontmatter/body atomically.
    * Appends a `task.status` event (and `task.questions` when the task parks with questions);
-   * `opts.by` names the actor (principal id), default `runner`.
+   * `opts.by` names the actor (principal id), default `runner`; `opts.reason` is recorded on the event.
    */
   async transition(
     id: string,
     to: Status,
     mutate?: (t: Task) => void,
-    opts: { by?: string } = {},
+    opts: { by?: string; reason?: string } = {},
   ): Promise<Task> {
     const located = await this.locate(id);
     if (!located) throw new TaskNotFoundError(id);
@@ -226,6 +226,7 @@ export class TaskStore {
       from: fromStatus,
       to,
       by,
+      ...(opts.reason ? { reason: opts.reason } : {}),
     });
     if (to === "action" && task.frontmatter.questions === "pending") {
       const count = task.body.questions.split("\n").filter((l) => l.trim() !== "").length;

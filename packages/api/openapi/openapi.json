@@ -195,6 +195,9 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "reason": {
+                "type": "string"
+              },
               "task": {
                 "type": "string"
               },
