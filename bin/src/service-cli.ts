@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ export const SERVICE_HELP = `boof-runner service — run boof-runner as a system
 
 Usage:
   boof-runner service install [--data <dir>] [--port 4319] [--host 127.0.0.1] [--name boof-runner]
-                              [--env KEY=VALUE]...
+                              [--env KEY=VALUE]... [--env-file <path>]
   boof-runner service uninstall [--name boof-runner]
   boof-runner service status [--name boof-runner]
   boof-runner service logs [--name boof-runner] [-f] [-n <lines>]
@@ -23,6 +23,10 @@ install    Writes ~/.config/systemd/user/<name>.service (node, the CLI and your 
            then runs systemctl --user daemon-reload and enable --now. A running service is restarted.
            Refuses a --host the server itself would refuse (see: boof-runner remote setup).
            Run it again after an upgrade or to change options.
+           --env-file loads KEY=VALUE lines (for example ANTHROPIC_BASE_URL and
+           ANTHROPIC_AUTH_TOKEN) from a private file (chmod 600) instead of writing
+           secrets into the unit. Variables set only in your shell (e.g. fish universal
+           variables) are not seen by systemd services.
 uninstall  Disables and stops the service, removes the unit file and reloads systemd.
 status     Shows systemctl --user status and the result of GET /healthz.
 logs       Runs journalctl --user -u <name> (-f follows).
@@ -151,6 +155,8 @@ export interface UnitOptions {
   home: string;
   /** Extra KEY=VALUE pairs; they replace a PATH or HOME of the same name. */
   env: [string, string][];
+  /** Absolute path of a KEY=VALUE file loaded by systemd (EnvironmentFile=); keeps secrets out of the unit. */
+  envFile?: string;
 }
 
 /** Contents of the systemd user unit. */
@@ -186,6 +192,7 @@ export function buildUnit(o: UnitOptions): string {
       "RestartSec=5",
       "TimeoutStopSec=60",
       ...[...env].map(([k, v]) => envLine(k, v)),
+      ...(o.envFile ? [`EnvironmentFile=${o.envFile}`] : []),
       "NoNewPrivileges=yes",
       "UMask=0077",
       "",
@@ -263,6 +270,7 @@ export async function serviceCommand(
         host: { type: "string" },
         name: { type: "string" },
         env: { type: "string", multiple: true },
+        "env-file": { type: "string" },
         follow: { type: "boolean", short: "f" },
         lines: { type: "string", short: "n" },
         help: { type: "boolean", short: "h" },
@@ -330,6 +338,24 @@ async function install(
     }
     extra.push([key, kv.slice(eq + 1)]);
   }
+  const envFileOpt = v["env-file"] as string | undefined;
+  let envFile: string | undefined;
+  if (envFileOpt !== undefined) {
+    envFile = isAbsolute(envFileOpt) ? envFileOpt : resolve(process.cwd(), envFileOpt);
+    let mode: number;
+    try {
+      mode = (await stat(envFile)).mode;
+    } catch {
+      err(`service install: --env-file ${envFile} does not exist`);
+      return 1;
+    }
+    if (mode & 0o077) {
+      err(
+        `service install: --env-file ${envFile} is readable by other users; run: chmod 600 "${envFile}"`,
+      );
+      return 1;
+    }
+  }
   const dataOpt = v.data as string | undefined;
   const data = dataOpt
     ? isAbsolute(dataOpt)
@@ -369,6 +395,7 @@ async function install(
     path: env.path,
     home: env.home,
     env: extra,
+    envFile,
   });
   const file = unitPath(env, name);
   const wasActive =

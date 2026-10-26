@@ -149,6 +149,25 @@ describe("service install", () => {
     expect(out.join("\n")).not.toContain("lingering is off");
   });
 
+  it("--env-file adds EnvironmentFile= and keeps the secret out of the unit", async () => {
+    const envFile = join(home, "boof.env");
+    await writeFile(envFile, "ANTHROPIC_AUTH_TOKEN=secret-token\n", { mode: 0o600 });
+    expect(await run(["install", "--data", data, "--env-file", envFile])).toBe(0);
+    const text = await readFile(unitFile(), "utf8");
+    expect(text).toContain(`EnvironmentFile=${envFile}\n`);
+    expect(text).not.toContain("secret-token");
+  });
+
+  it("--env-file refuses a missing or group/world-readable file and writes nothing", async () => {
+    expect(await run(["install", "--data", data, "--env-file", join(home, "nope.env")])).toBe(1);
+    expect(errs.join("\n")).toContain("does not exist");
+    const loose = join(home, "loose.env");
+    await writeFile(loose, "A=1\n", { mode: 0o644 });
+    expect(await run(["install", "--data", data, "--env-file", loose])).toBe(1);
+    expect(errs.join("\n")).toContain("chmod 600");
+    expect(existsSync(unitFile())).toBe(false);
+  });
+
   it("restarts a service that was already active and honours --name, --port, --host", async () => {
     active = true;
     expect(await run(["install", "-d", data, "--name", "boof2", "-p", "5000"])).toBe(0);
