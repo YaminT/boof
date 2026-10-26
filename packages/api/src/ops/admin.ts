@@ -41,7 +41,7 @@ export const settingsGet = defineOp({
   input: z.strictObject({}),
   output: PublicSettingsSchema,
   rest: { method: "GET", path: "/settings" },
-  mcp: { expose: true, name: "boof_get_settings", annotations: READ },
+  mcp: { expose: false, name: "boof_get_settings", annotations: READ },
   summary: (s) =>
     `Runner ${s.runner.enabled ? "enabled" : "disabled"}, default project ${s.defaultProject ?? "none"}`,
   handler: async (ctx) => publicSettings(await ctx.services.loadSettings()),
@@ -72,7 +72,7 @@ export const settingsHealth = defineOp({
   input: z.strictObject({}),
   output: z.object({ tools: z.record(z.string(), HealthResultSchema) }),
   rest: { method: "GET", path: "/health" },
-  mcp: { expose: true, name: "boof_get_health", annotations: READ },
+  mcp: { expose: false, name: "boof_get_health", annotations: READ },
   summary: (r) =>
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.status}`)
@@ -89,7 +89,7 @@ export const settingsModels = defineOp({
   input: z.strictObject({}),
   output: z.object({ models: z.record(z.string(), z.array(z.string())) }),
   rest: { method: "GET", path: "/models" },
-  mcp: { expose: true, name: "boof_list_models", annotations: READ },
+  mcp: { expose: false, name: "boof_list_models", annotations: READ },
   summary: (r) => Object.keys(r.models).join(", "),
   handler: async (ctx) => ({ models: await ctx.services.listModels() }),
 });
@@ -104,7 +104,7 @@ export const usageGlobal = defineOp({
   input: z.strictObject({}),
   output: TokenUsageSchema,
   rest: { method: "GET", path: "/usage" },
-  mcp: { expose: true, name: "boof_get_usage", annotations: READ },
+  mcp: { expose: false, name: "boof_get_usage", annotations: READ },
   summary: (u) => `${u.inputTokens} in / ${u.outputTokens} out tokens, $${u.costUsd.toFixed(2)}`,
   handler: (ctx) => ctx.services.totalUsage((pid) => authorizeProject(ctx.principal, pid)),
 });
@@ -119,11 +119,59 @@ export const runnerStatus = defineOp({
   input: z.strictObject({}),
   output: z.object({ enabled: z.boolean(), concurrency: z.number().int() }),
   rest: { method: "GET", path: "/runner" },
-  mcp: { expose: true, name: "boof_get_runner", annotations: READ },
+  mcp: { expose: false, name: "boof_get_runner", annotations: READ },
   summary: (r) => `Runner ${r.enabled ? "enabled" : "disabled"} (concurrency ${r.concurrency})`,
   handler: async (ctx) => {
     const { runner } = await ctx.services.loadSettings();
     return { enabled: runner.enabled, concurrency: runner.concurrency };
+  },
+});
+
+export const runnerOverview = defineOp({
+  name: "runner.overview",
+  title: "Runner and queue status",
+  description:
+    "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.",
+  scope: "settings:read",
+  projectScoped: false,
+  input: z.strictObject({}),
+  output: z.object({
+    enabled: z.boolean(),
+    concurrency: z.number().int(),
+    projects: z.array(
+      z.object({
+        id: z.string(),
+        paused: z.boolean(),
+        running: z.array(z.string()),
+        counts: z.record(z.string(), z.number().int()),
+      }),
+    ),
+  }),
+  rest: { method: "GET", path: "/runner/status" },
+  mcp: { expose: true, name: "boof_runner_status", annotations: READ },
+  summary: (r) =>
+    `Runner ${r.enabled ? "enabled" : "disabled"}; ` +
+    (r.projects
+      .map((p) => `${p.id}${p.paused ? " (paused)" : ""}: ${p.running.length} running`)
+      .join(", ") || "no projects"),
+  handler: async (ctx) => {
+    const { runner } = await ctx.services.loadSettings();
+    const projects = [];
+    for (const p of await ctx.services.listProjects()) {
+      if (!authorizeProject(ctx.principal, p.id)) continue;
+      const tasks = await ctx.services.forProject(p.id).list();
+      const counts: Record<string, number> = {};
+      for (const t of tasks) counts[t.frontmatter.status] = (counts[t.frontmatter.status] ?? 0) + 1;
+      projects.push({
+        id: p.id,
+        paused: p.paused,
+        running: tasks
+          .filter((t) => t.frontmatter.status === "running")
+          .map((t) => t.frontmatter.id),
+        counts,
+      });
+    }
+    return { enabled: runner.enabled, concurrency: runner.concurrency, projects };
   },
 });
 
@@ -336,6 +384,7 @@ export const adminOps = [
   settingsModels,
   usageGlobal,
   runnerStatus,
+  runnerOverview,
   runnerSetEnabled,
   actionsList,
   commandsList,

@@ -81,7 +81,7 @@ export const projectsArchive = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/archive" },
-  mcp: { expose: true, name: "boof_archive_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: false, name: "boof_archive_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Archived project ${p.id}`,
   handler: (ctx, input) => ctx.services.archiveProject(input.projectId),
 });
@@ -95,7 +95,7 @@ export const projectsUnarchive = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/unarchive" },
-  mcp: { expose: true, name: "boof_unarchive_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: false, name: "boof_unarchive_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Unarchived project ${p.id}`,
   handler: (ctx, input) => ctx.services.unarchiveProject(input.projectId),
 });
@@ -110,7 +110,7 @@ export const projectsPause = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/pause" },
-  mcp: { expose: true, name: "boof_pause_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: false, name: "boof_pause_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Paused project ${p.id}`,
   handler: (ctx, input) => ctx.services.pauseProject(input.projectId),
 });
@@ -125,7 +125,7 @@ export const projectsResume = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/resume" },
-  mcp: { expose: true, name: "boof_resume_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: false, name: "boof_resume_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Resumed project ${p.id}`,
   handler: (ctx, input) => ctx.services.resumeProject(input.projectId),
 });
@@ -155,7 +155,7 @@ export const projectsUsage = defineOp({
   input: byProject,
   output: TokenUsageSchema,
   rest: { method: "GET", path: "/projects/{projectId}/usage" },
-  mcp: { expose: true, name: "boof_get_project_usage", annotations: READ },
+  mcp: { expose: false, name: "boof_get_project_usage", annotations: READ },
   summary: (u) => `${u.inputTokens} in / ${u.outputTokens} out tokens, $${u.costUsd.toFixed(2)}`,
   handler: (ctx, input) => ctx.services.projectUsage(input.projectId),
 });

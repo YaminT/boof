@@ -242,6 +242,12 @@ export const SecuritySettingsSchema = z.object({
 });
 export type SecuritySettings = z.infer<typeof SecuritySettingsSchema>;
 
+/** MCP server settings; `enabled: false` turns the HTTP endpoint (and the stdio command) off. */
+export const McpSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+});
+export type McpSettings = z.infer<typeof McpSettingsSchema>;
+
 /**
  * A webhook subscription (settings.webhooks). `events` holds event types or `prefix.*` patterns
  * (`task.status`, `plan.*`, `*`). The secret signs every delivery and is shown only at creation.
@@ -289,6 +295,7 @@ export const SettingsSchema = z.object({
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
+  mcp: McpSettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
   webhooks: z.array(WebhookSchema).optional(),
   models: z.record(z.string(), z.array(z.string())),

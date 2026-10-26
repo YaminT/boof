@@ -235,7 +235,7 @@ export const tasksSkip = defineOp({
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...SkipBody.shape }),
   output: TaskViewSchema,
   rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/skip" },
-  mcp: { expose: true, name: "boof_skip_task", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: false, name: "boof_skip_task", annotations: IDEMPOTENT_WRITE },
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
@@ -253,7 +253,7 @@ export const tasksReorder = defineOp({
   input: z.strictObject({ projectId: projectIdParam, ...ReorderBody.shape }),
   output: z.object({ tasks: z.array(TaskViewSchema) }),
   rest: { method: "POST", path: "/projects/{projectId}/tasks/reorder" },
-  mcp: { expose: true, name: "boof_reorder_tasks", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: false, name: "boof_reorder_tasks", annotations: IDEMPOTENT_WRITE },
   summary: (r) => `Reordered ${r.tasks.length} task(s)`,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
@@ -309,7 +309,7 @@ export const tasksUnarchive = defineOp({
   input: byTask,
   output: TaskViewSchema,
   rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/unarchive" },
-  mcp: { expose: true, name: "boof_unarchive_task", annotations: WRITE },
+  mcp: { expose: false, name: "boof_unarchive_task", annotations: WRITE },
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
@@ -327,7 +327,7 @@ export const tasksDelete = defineOp({
   input: byTask,
   output: OkSchema,
   rest: { method: "DELETE", path: "/projects/{projectId}/tasks/{taskId}" },
-  mcp: { expose: true, name: "boof_delete_task", annotations: DESTRUCTIVE },
+  mcp: { expose: false, name: "boof_delete_task", annotations: DESTRUCTIVE },
   summary: () => "Task deleted",
   handler: async (ctx, input) =>
     (await requireProject(ctx, input.projectId)).deleteTask(input.taskId),
@@ -400,6 +400,62 @@ export const tasksLiveLog = defineOp({
   mcp: { expose: true, name: "boof_get_task_log", annotations: READ },
   summary: (r) => (r.running ? "Task is running; log attached" : "Task finished; log attached"),
   handler: async (ctx, input) => (await requireProject(ctx, input.projectId)).liveLog(input.taskId),
+});
+
+export const WAIT_MAX_SECONDS = 60;
+const WAIT_POLL_MS = 400;
+
+export const tasksWait = defineOp({
+  name: "tasks.wait",
+  title: "Wait for a task status change",
+  description: `Waits up to ${WAIT_MAX_SECONDS} seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. Inputs: projectId, taskId, optional since, until, timeoutSeconds. No side effects; call it again after a timeout.`,
+  scope: "tasks:read",
+  projectScoped: true,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    taskId: taskIdParam,
+    since: StatusSchema.optional().meta({
+      description: "Return once the status differs from this one (default: the status now).",
+    }),
+    until: StatusSchema.optional().meta({
+      description: "Also return once the status equals this.",
+    }),
+    timeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(WAIT_MAX_SECONDS)
+      .optional()
+      .meta({ description: `Longest wait in seconds, default 30, max ${WAIT_MAX_SECONDS}.` }),
+  }),
+  output: z.object({ changed: z.boolean(), timedOut: z.boolean(), task: TaskViewSchema }),
+  rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}/wait" },
+  mcp: { expose: true, name: "boof_wait_task", annotations: READ },
+  summary: (r) =>
+    r.timedOut
+      ? `Task ${r.task.frontmatter.id} is still ${r.task.frontmatter.status} (timed out)`
+      : `Task ${r.task.frontmatter.id} is ${r.task.frontmatter.status}`,
+  handler: async (ctx, input) => {
+    const svc = await requireProject(ctx, input.projectId);
+    const first = await svc.get(input.taskId);
+    if (!first) throw new OpError(404, "Task not found");
+    const since = input.since ?? first.frontmatter.status;
+    const deadline = Date.now() + (input.timeoutSeconds ?? 30) * 1000;
+    let task = first;
+    for (;;) {
+      const status = task.frontmatter.status;
+      if (status !== since || status === input.until) {
+        return { changed: true, timedOut: false, task: taskView(ctx, svc.projectId, task) };
+      }
+      if (Date.now() >= deadline) {
+        return { changed: false, timedOut: true, task: taskView(ctx, svc.projectId, task) };
+      }
+      await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, deadline - Date.now())));
+      const next = await svc.get(input.taskId);
+      if (!next) throw new OpError(404, "Task not found");
+      task = next;
+    }
+  },
 });
 
 /** An uploaded file as the REST layer hands it over (multipart `file` field). */
@@ -506,6 +562,7 @@ export const taskOps = [
   tasksStop,
   tasksInject,
   tasksLiveLog,
+  tasksWait,
   attachmentsAdd,
   attachmentsRemove,
   attachmentsGet,

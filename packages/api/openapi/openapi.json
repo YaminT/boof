@@ -1117,6 +1117,19 @@
             ],
             "default": null
           },
+          "mcp": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled"
+            ],
+            "type": "object"
+          },
           "models": {
             "additionalProperties": {
               "items": {
@@ -2567,8 +2580,7 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read",
-        "x-mcp-tool": "boof_get_health"
+        "x-boof-scope": "settings:read"
       }
     },
     "/models": {
@@ -2620,8 +2632,7 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read",
-        "x-mcp-tool": "boof_list_models"
+        "x-boof-scope": "settings:read"
       }
     },
     "/projects": {
@@ -3330,8 +3341,7 @@
         "tags": [
           "projects"
         ],
-        "x-boof-scope": "projects:write",
-        "x-mcp-tool": "boof_archive_project"
+        "x-boof-scope": "projects:write"
       }
     },
     "/projects/{projectId}/pause": {
@@ -3382,8 +3392,7 @@
             "runner:control",
             "projects:write"
           ]
-        },
-        "x-mcp-tool": "boof_pause_project"
+        }
       }
     },
     "/projects/{projectId}/plans": {
@@ -4987,8 +4996,7 @@
             "runner:control",
             "projects:write"
           ]
-        },
-        "x-mcp-tool": "boof_resume_project"
+        }
       }
     },
     "/projects/{projectId}/tasks": {
@@ -5297,8 +5305,7 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write",
-        "x-mcp-tool": "boof_delete_task"
+        "x-boof-scope": "tasks:write"
       },
       "get": {
         "description": "Returns one task with its prompt, questions, answers and reports. Inputs: projectId, taskId, and include=log to add the raw agent log (large). No side effects.",
@@ -6216,8 +6223,7 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write",
-        "x-mcp-tool": "boof_skip_task"
+        "x-boof-scope": "tasks:write"
       }
     },
     "/projects/{projectId}/tasks/{taskId}/stop": {
@@ -6342,8 +6348,129 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write",
-        "x-mcp-tool": "boof_unarchive_task"
+        "x-boof-scope": "tasks:write"
+      }
+    },
+    "/projects/{projectId}/tasks/{taskId}/wait": {
+      "get": {
+        "description": "Waits up to 60 seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. Inputs: projectId, taskId, optional since, until, timeoutSeconds. No side effects; call it again after a timeout.",
+        "operationId": "tasks.wait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "description": "Task id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "description": "Return once the status differs from this one (default: the status now).",
+              "enum": [
+                "draft",
+                "pending",
+                "running",
+                "action",
+                "done",
+                "failed",
+                "archived"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "description": "Also return once the status equals this.",
+              "enum": [
+                "draft",
+                "pending",
+                "running",
+                "action",
+                "done",
+                "failed",
+                "archived"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "timeoutSeconds",
+            "required": false,
+            "schema": {
+              "description": "Longest wait in seconds, default 30, max 60.",
+              "maximum": 60,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "changed": {
+                      "type": "boolean"
+                    },
+                    "task": {
+                      "$ref": "#/components/schemas/Task"
+                    },
+                    "timedOut": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "changed",
+                    "timedOut",
+                    "task"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Wait for a task status change",
+        "tags": [
+          "tasks"
+        ],
+        "x-boof-scope": "tasks:read",
+        "x-mcp-tool": "boof_wait_task"
       }
     },
     "/projects/{projectId}/tasks/reorder": {
@@ -6424,8 +6551,7 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write",
-        "x-mcp-tool": "boof_reorder_tasks"
+        "x-boof-scope": "tasks:write"
       }
     },
     "/projects/{projectId}/unarchive": {
@@ -6471,8 +6597,7 @@
         "tags": [
           "projects"
         ],
-        "x-boof-scope": "projects:write",
-        "x-mcp-tool": "boof_unarchive_project"
+        "x-boof-scope": "projects:write"
       }
     },
     "/projects/{projectId}/usage": {
@@ -6523,8 +6648,7 @@
             "projects:read",
             "tasks:read"
           ]
-        },
-        "x-mcp-tool": "boof_get_project_usage"
+        }
       }
     },
     "/runner": {
@@ -6573,8 +6697,7 @@
         "tags": [
           "runner"
         ],
-        "x-boof-scope": "settings:read",
-        "x-mcp-tool": "boof_get_runner"
+        "x-boof-scope": "settings:read"
       },
       "put": {
         "description": "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event.",
@@ -6649,6 +6772,95 @@
         "x-mcp-tool": "boof_set_runner"
       }
     },
+    "/runner/status": {
+      "get": {
+        "description": "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.",
+        "operationId": "runner.overview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "concurrency": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "projects": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "counts": {
+                            "additionalProperties": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "paused": {
+                            "type": "boolean"
+                          },
+                          "running": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "paused",
+                          "running",
+                          "counts"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "concurrency",
+                    "projects"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Runner and queue status",
+        "tags": [
+          "runner"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_runner_status"
+      }
+    },
     "/settings": {
       "get": {
         "description": "Returns the global settings (runner, roles, review, security, models). No side effects.",
@@ -6680,8 +6892,7 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read",
-        "x-mcp-tool": "boof_get_settings"
+        "x-boof-scope": "settings:read"
       },
       "put": {
         "description": "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, models). Rewrites settings.json.",
@@ -6956,8 +7167,7 @@
             "projects:read",
             "tasks:read"
           ]
-        },
-        "x-mcp-tool": "boof_get_usage"
+        }
       }
     },
     "/webhooks": {

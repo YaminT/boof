@@ -4,12 +4,14 @@ import { isAbsolute, join, resolve } from "node:path";
 import { lockedAtomicWrite, readText } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
 import {
+  McpSettingsSchema,
   RetrySettingsSchema,
   ReviewSettingsSchema,
   SecuritySettingsSchema,
   SettingsSchema,
   SETTINGS_SCHEMA_VERSION,
   WorktreeSettingsSchema,
+  type McpSettings,
   type Project,
   type RetrySettings,
   type ReviewSettings,
@@ -140,6 +142,11 @@ export function worktreeSettings(settings: Settings): WorktreeSettings {
 /** Retry settings with defaults applied. */
 export function retrySettings(settings: Settings): RetrySettings {
   return RetrySettingsSchema.parse(settings.retries ?? {});
+}
+
+/** MCP settings with defaults applied. */
+export function mcpSettings(settings: Settings): McpSettings {
+  return McpSettingsSchema.parse(settings.mcp ?? {});
 }
 
 /** Security settings with defaults applied. */
