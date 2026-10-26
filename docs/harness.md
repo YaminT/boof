@@ -601,7 +601,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 63 operations. Every path below starts with `/api/v1`.
+There are 64 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -1592,6 +1592,17 @@ JSON body (unknown keys are rejected):
 - MCP tool: none (REST only)
 - What it does: Lists the models each tool offers. No input. Queries the tools.
 - Success: HTTP 200 with `{ models: { [key: string]: string[] } }`.
+- Errors: `403 forbidden_scope`
+
+### models
+
+#### `GET /api/v1/models/details` (Model details)
+
+- Operation: `models.details`
+- Scope: `settings:read`
+- MCP tool: none (REST only)
+- What it does: Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no health probe or smoke prompt.
+- Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[] } } }`.
 - Errors: `403 forbidden_scope`
 
 ### Usage

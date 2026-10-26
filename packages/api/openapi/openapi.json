@@ -2801,6 +2801,140 @@
         "x-boof-scope": "settings:read"
       }
     },
+    "/models/details": {
+      "get": {
+        "description": "Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no health probe or smoke prompt.",
+        "operationId": "models.details",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "tools": {
+                      "additionalProperties": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "health": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "checkedAt": {
+                                    "description": "ISO-8601 time the health check ran in this server process.",
+                                    "type": "string"
+                                  },
+                                  "message": {
+                                    "type": "string"
+                                  },
+                                  "status": {
+                                    "enum": [
+                                      "available",
+                                      "unavailable"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "version": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "status",
+                                  "message",
+                                  "checkedAt"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Last health result of this process, or null if no check ran."
+                          },
+                          "models": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "isDefault": {
+                                  "description": "True when it is the tool's first default model.",
+                                  "type": "boolean"
+                                },
+                                "source": {
+                                  "description": "cli: the tool's live model list has it. default: only the built-in defaults have it. settings: only settings.models (or a role) names it.",
+                                  "enum": [
+                                    "cli",
+                                    "default",
+                                    "settings"
+                                  ],
+                                  "type": "string"
+                                },
+                                "usedBy": {
+                                  "description": "Roles (planner, developer, observer, reviewer) whose global assignment uses this tool and model, and project:<id>:<role> for project overrides the caller may access.",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "source",
+                                "isDefault",
+                                "usedBy"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "displayName",
+                          "health",
+                          "models"
+                        ],
+                        "type": "object"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "tools"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Model details",
+        "tags": [
+          "models"
+        ],
+        "x-boof-scope": "settings:read"
+      }
+    },
     "/projects": {
       "get": {
         "description": "Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.",

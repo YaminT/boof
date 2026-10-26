@@ -8,10 +8,12 @@ import {
 } from "@boof-runner/shared";
 import { defineOp } from "../define-op.js";
 import { OpError } from "../errors.js";
+import { buildModelDetails } from "../services/model-details.js";
 import { CommandBody, CreateClientBody } from "../validation.js";
 import {
   CommandTemplateSchema,
   HealthResultSchema,
+  ModelDetailsSchema,
   PublicClientSchema,
   PublicSettingsSchema,
   TaskViewSchema,
@@ -92,6 +94,39 @@ export const settingsModels = defineOp({
   mcp: { expose: false, name: "boof_list_models", annotations: READ },
   summary: (r) => Object.keys(r.models).join(", "),
   handler: async (ctx) => ({ models: await ctx.services.listModels() }),
+});
+
+export const settingsModelDetails = defineOp({
+  name: "models.details",
+  title: "Model details",
+  description:
+    "Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no health probe or smoke prompt.",
+  scope: "settings:read",
+  projectScoped: false,
+  input: z.strictObject({}),
+  output: ModelDetailsSchema,
+  rest: { method: "GET", path: "/models/details" },
+  mcp: { expose: false },
+  summary: (r) =>
+    Object.entries(r.tools)
+      .map(([k, v]) => `${k}: ${v.models.length} model(s)`)
+      .join(", "),
+  handler: async (ctx) => {
+    const settings = await ctx.services.loadSettings();
+    const projects = (await ctx.services.listProjects()).filter((p) =>
+      authorizeProject(ctx.principal, p.id),
+    );
+    const { registry } = ctx.services;
+    return {
+      tools: buildModelDetails({
+        tools: registry.list(),
+        live: await registry.liveModels(),
+        settings,
+        projects,
+        health: registry.lastHealth(),
+      }),
+    };
+  },
 });
 
 export const usageGlobal = defineOp({
@@ -382,6 +417,7 @@ export const adminOps = [
   settingsUpdate,
   settingsHealth,
   settingsModels,
+  settingsModelDetails,
   usageGlobal,
   runnerStatus,
   runnerOverview,

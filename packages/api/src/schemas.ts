@@ -153,6 +153,37 @@ export const HealthResultSchema = z.object({
   version: z.string().optional(),
 });
 
+/** One model of a tool, as `models.details` reports it. */
+export const ModelDetailSchema = z.object({
+  id: z.string(),
+  source: z.enum(["cli", "default", "settings"]).meta({
+    description:
+      "cli: the tool's live model list has it. default: only the built-in defaults have it. settings: only settings.models (or a role) names it.",
+  }),
+  isDefault: z.boolean().meta({ description: "True when it is the tool's first default model." }),
+  usedBy: z.array(z.string()).meta({
+    description:
+      "Roles (planner, developer, observer, reviewer) whose global assignment uses this tool and model, and project:<id>:<role> for project overrides the caller may access.",
+  }),
+});
+
+export const ModelDetailsSchema = z.object({
+  tools: z.record(
+    z.string(),
+    z.object({
+      displayName: z.string(),
+      health: HealthResultSchema.extend({
+        checkedAt: z.string().meta({
+          description: "ISO-8601 time the health check ran in this server process.",
+        }),
+      })
+        .nullable()
+        .meta({ description: "Last health result of this process, or null if no check ran." }),
+      models: z.array(ModelDetailSchema),
+    }),
+  ),
+});
+
 export const CommandTemplateSchema = z.object({
   id: z.string(),
   name: z.string(),
