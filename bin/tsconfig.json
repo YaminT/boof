@@ -11,6 +11,7 @@
   "references": [
     { "path": "../packages/shared" },
     { "path": "../packages/runner" },
+    { "path": "../packages/mcp" },
     { "path": "../packages/web" }
   ],
   "include": ["src/**/*"]

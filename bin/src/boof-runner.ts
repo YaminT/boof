@@ -9,6 +9,7 @@ import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
 import { projectCommand } from "./project-cli.js";
 import { planCommand } from "./plan-cli.js";
+import { mcpCommand } from "./mcp-cli.js";
 import { drainQueue, ProjectResolutionError, runTask, scanRepoToTasks } from "./headless.js";
 import { MigrationError } from "@boof-runner/shared";
 
@@ -56,6 +57,7 @@ Usage:
   boof-runner project <add|list|remove>  Manage projects (git repositories) served by this data root
   boof-runner plan <import|sync|export>  Import a repo's goal files into a plan, sync it to tasks, export XML (see: plan --help)
   boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
+  boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
   boof-runner --help                   Show this help
 
 Common options:
@@ -268,7 +270,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     cmd !== "scan" &&
     cmd !== "auth" &&
     cmd !== "plan" &&
-    cmd !== "project"
+    cmd !== "project" &&
+    cmd !== "mcp"
   ) {
     console.log(HELP);
     return;
@@ -310,6 +313,9 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "project":
       code = await projectCommand(rest, defaultDataRoot);
+      break;
+    case "mcp":
+      code = await mcpCommand(rest, defaultDataRoot);
       break;
     case "serve":
       await serve(rest);
