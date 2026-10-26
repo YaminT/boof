@@ -8,6 +8,7 @@ import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
 import { remoteCommand } from "./remote-cli.js";
+import { serviceCommand } from "./service-cli.js";
 import { projectCommand } from "./project-cli.js";
 import { planCommand } from "./plan-cli.js";
 import { mcpCommand } from "./mcp-cli.js";
@@ -59,6 +60,7 @@ Usage:
   boof-runner plan <import|sync|export>  Import a repo's goal files into a plan, sync it to tasks, export XML (see: plan --help)
   boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
+  boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
   boof-runner --help                   Show this help
 
@@ -296,6 +298,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     cmd !== "scan" &&
     cmd !== "auth" &&
     cmd !== "remote" &&
+    cmd !== "service" &&
     cmd !== "plan" &&
     cmd !== "project" &&
     cmd !== "mcp"
@@ -337,6 +340,9 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "remote":
       code = await remoteCommand(rest, defaultDataRoot);
+      break;
+    case "service":
+      code = await serviceCommand(rest, defaultDataRoot);
       break;
     case "plan":
       code = await planCommand(rest, defaultDataRoot);
