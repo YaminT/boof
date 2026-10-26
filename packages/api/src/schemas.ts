@@ -25,6 +25,10 @@ export const TaskViewSchema = z.object({
       observer: z.string(),
       reviewer: z.string(),
     }),
+    injected: z.string().meta({
+      description:
+        "Prompts injected while the task ran, as `### <iso time> — <who>` entries; kept after the run.",
+    }),
     /** Only with `include=log` (tasks.get) and on the unversioned routes. */
     log: z.string().optional(),
   }),

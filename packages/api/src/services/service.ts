@@ -385,7 +385,7 @@ export class ProjectService {
     return { ok: true };
   }
 
-  async injectPrompt(id: string, prompt: string): Promise<{ ok: true }> {
+  async injectPrompt(id: string, prompt: string, actor?: Principal): Promise<{ ok: true }> {
     const text = prompt.trim();
     if (!text) throw new OpError(400, "Prompt is required");
     const task = await this.tasks.get(id);
@@ -397,6 +397,12 @@ export class ProjectService {
     const now = new Date().toISOString();
     await mkdir(taskControlDir(this.root, id), { recursive: true });
     await appendFile(taskPromptInjectionsPath(this.root, id), `\n\n## ${now}\n${text}\n`, "utf8");
+    // Durable copy: the control directory is deleted when the task leaves `running`.
+    await this.tasks.appendInjected(
+      id,
+      text,
+      actor && actor.kind === "client" ? actor.name : "user",
+    );
     await appendFile(
       join(workingAreaDir(this.root, id), "log.txt"),
       `\n\n### Injected prompt\n${text}\n`,

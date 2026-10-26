@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { allowedTransitions, assertTransition, canTransition } from "./lifecycle.js";
+import {
+  allowedTransitions,
+  assertTransition,
+  canTransition,
+  isUserTransition,
+} from "./lifecycle.js";
 
 describe("state machine", () => {
   it("allows the documented transitions", () => {
@@ -13,7 +18,7 @@ describe("state machine", () => {
   });
 
   it("allows archiving any non-running task and unarchiving", () => {
-    for (const s of ["draft", "pending", "action", "done", "failed"] as const) {
+    for (const s of ["draft", "pending", "action", "done", "failed", "stopped"] as const) {
       expect(canTransition(s, "archived")).toBe(true);
     }
     expect(canTransition("running", "archived")).toBe(false);
@@ -25,6 +30,19 @@ describe("state machine", () => {
     expect(canTransition("draft", "done")).toBe(false);
     expect(canTransition("pending", "action")).toBe(false);
     expect(() => assertTransition("done", "running")).toThrow();
+  });
+
+  it("stopped is entered only from running and leaves by retry or archive", () => {
+    expect(canTransition("running", "stopped")).toBe(true);
+    for (const s of ["draft", "pending", "action", "done", "failed", "archived"] as const) {
+      expect(canTransition(s, "stopped")).toBe(false);
+    }
+    expect(allowedTransitions("stopped")).toEqual(["pending", "archived"]);
+    expect(() => assertTransition("stopped", "running")).toThrow();
+    // A user can retry or archive a stopped task, but never set stopped by hand.
+    expect(isUserTransition("stopped", "pending")).toBe(true);
+    expect(isUserTransition("stopped", "archived")).toBe(true);
+    expect(isUserTransition("running", "stopped")).toBe(false);
   });
 
   it("done is terminal except for archiving", () => {

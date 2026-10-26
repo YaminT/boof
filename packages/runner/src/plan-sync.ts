@@ -110,7 +110,14 @@ export interface SyncResult {
   plan: Plan;
 }
 
-const LIVE: ReadonlySet<Status> = new Set(["draft", "pending", "running", "action", "failed"]);
+const LIVE: ReadonlySet<Status> = new Set([
+  "draft",
+  "pending",
+  "running",
+  "action",
+  "failed",
+  "stopped",
+]);
 const BLOCKED_LABEL = "blocked";
 
 function addLabel(task: Task, label: string): boolean {
@@ -589,6 +596,7 @@ async function syncOnce(
           `\n\n## ${now}\n${text}\n`,
           "utf8",
         );
+        await store.appendInjected(id, text, "plan sync").catch(() => {});
         await appendFile(
           join(workingAreaDir(opts.projectDir, id), "log.txt"),
           `\n\n### Injected prompt\n${text}\n`,
@@ -604,7 +612,7 @@ async function syncOnce(
       return;
     }
 
-    // draft, pending, action (questions kept) and failed (stays failed for a retry)
+    // draft, pending, action (questions kept), failed and stopped (both stay put for a retry)
     const manual = task.frontmatter.promptSource === "manual";
     const note = `## Plan change\nGoal ${g.id} is now at revision ${g.revision} (was ${ref.revision}).\n${summary}`;
     if (!dry) {

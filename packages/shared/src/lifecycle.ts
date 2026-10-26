@@ -9,10 +9,12 @@ const TRANSITIONS: Record<Status, Status[]> = {
   draft: ["pending", "archived"],
   pending: ["running", "archived"],
   // running → pending re-queues the task for its next iteration (multi-run).
-  running: ["pending", "action", "done", "failed"],
+  running: ["pending", "action", "done", "failed", "stopped"],
   action: ["pending", "archived"],
   done: ["archived"],
   failed: ["pending", "archived"],
+  // A user stop (or a server shutdown): retry continues in the kept worktree.
+  stopped: ["pending", "archived"],
   // Unarchive back into the queue.
   archived: ["pending"],
 };
@@ -41,8 +43,8 @@ export function allowedTransitions(from: Status): Status[] {
 }
 
 /**
- * Statuses a user (UI/API) may move a task to. `running`, `action`, `done` and
- * `failed` are owned by the runner: setting them by hand would create a task
+ * Statuses a user (UI/API) may move a task to. `running`, `action`, `done`,
+ * `failed` and `stopped` are owned by the runner: setting them by hand would create a task
  * in `ongoing/` with no working area and nothing driving it.
  */
 export const USER_TARGET_STATUSES: readonly Status[] = ["draft", "pending", "archived"];

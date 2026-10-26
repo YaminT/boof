@@ -23,7 +23,7 @@ import {
 } from "@boof-runner/shared";
 import { announceBudgetExceeded } from "./budget.js";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
-import { Pipeline, type PipelineOutcome } from "./pipeline.js";
+import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { isGitRepo, pruneStaleWorktrees } from "./worktree.js";
 
@@ -224,6 +224,11 @@ export class RunnerEngine {
         outcome.budget ? { reason: outcome.error } : undefined,
       );
       await this.noteGoalTaskStatus(project, outcome.task, "failed");
+    } else if (outcome.kind === "stopped") {
+      // Only a stop request gets here (user stop, plan goal removed, server shutdown). The
+      // worktree and branch are kept; retrying the task continues in them.
+      await store.transition(id, "stopped", undefined, { reason: outcome.note });
+      await this.noteGoalTaskStatus(project, outcome.task, "stopped");
     } else {
       // Parked: record questions, set questions=pending, move to actions/.
       await store.transition(id, "action", (t) => {
@@ -561,7 +566,8 @@ export class RunnerEngine {
   /**
    * Graceful shutdown (SIGTERM under systemd): stop selecting new work, ask every running task
    * to stop through its stop-request file (the tool process group gets SIGTERM, then SIGKILL;
-   * the pipeline records the task as failed with its worktree kept, so it can be retried), and
+   * the pipeline records the task as `stopped` ("stopped by server shutdown") with its worktree
+   * kept, so it can be retried), and
    * wait up to `graceMs` for the pipelines to finish. Returns the ids asked to stop and whether
    * some were still running when the grace period ended.
    */
@@ -572,7 +578,11 @@ export class RunnerEngine {
       const dir = this.projects.dir(projectId);
       try {
         await mkdir(taskControlDir(dir, id), { recursive: true });
-        await writeFile(taskStopRequestPath(dir, id), new Date().toISOString() + "\n", "utf8");
+        await writeFile(
+          taskStopRequestPath(dir, id),
+          `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
+          "utf8",
+        );
         await appendFile(
           join(workingAreaDir(dir, id), "log.txt"),
           `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,

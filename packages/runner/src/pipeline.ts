@@ -5,6 +5,7 @@ import {
   budgetExceededMessage,
   budgetTimeZone,
   evaluateBudget,
+  parseInjected,
   parseVerdict,
   projectTaskBudget,
   recordSpend,
@@ -196,7 +197,12 @@ class BudgetExceededError extends Error {
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true };
+  | { kind: "failed"; task: Task; error: string; budget?: true }
+  /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
+  | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
+
+/** First word of a stop-request file written by RunnerEngine.shutdown. */
+export const SHUTDOWN_STOP_MARKER = "shutdown";
 
 export class Pipeline {
   private readonly usageStore: UsageStore;
@@ -204,6 +210,8 @@ export class Pipeline {
   private readonly runCost = new Map<string, number>();
   /** Previous iteration's final observer/reviewer reports, per task id (runs > 1). */
   private readonly previousFindings = new Map<string, string>();
+  /** Per task id: what the agent is told about the earlier run (stopped, injected prompts). */
+  private readonly resumeNotes = new Map<string, string>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
   }
@@ -228,6 +236,12 @@ export class Pipeline {
     } catch {
       return false;
     }
+  }
+
+  /** Why a stop was requested: the engine's shutdown writes "shutdown <iso>" into the file. */
+  private async stopReason(id: string): Promise<"user" | "shutdown"> {
+    const text = await readFile(taskStopRequestPath(this.deps.root, id), "utf8").catch(() => "");
+    return text.trim().startsWith(SHUTDOWN_STOP_MARKER) ? "shutdown" : "user";
   }
 
   private async assertNotStopped(id: string): Promise<void> {
@@ -388,6 +402,35 @@ export class Pipeline {
     );
   }
 
+  /**
+   * Notes for a run that continues earlier work: the previous run was stopped (its log ends
+   * with a `### Stopped` block newer than the last worktree line), and/or prompts were injected
+   * into an earlier run (`## Injected`, kept after the control file is gone).
+   */
+  private earlierRunNotes(task: Task): string | null {
+    const parts: string[] = [];
+    const log = task.body.log;
+    if (log.lastIndexOf("\n### Stopped") > log.lastIndexOf("— worktree at")) {
+      parts.push(
+        "## Previous run stopped\n" +
+          "The previous run of this task was stopped before it finished (by the user or a server " +
+          "shutdown). The working directory holds its partial changes. Run `git status` and " +
+          "`git diff` to inspect them, then continue where it left off rather than restarting " +
+          "from scratch.",
+      );
+    }
+    const injected = parseInjected(task.body.injected);
+    if (injected.length > 0) {
+      parts.push(
+        "## Earlier injected instructions\n" +
+          "The user injected these instructions while an earlier run of this task was running. " +
+          "Keep following them:\n" +
+          injected.map((e) => `- (${e.at}, ${e.by}) ${e.text.replace(/\n/g, "\n  ")}`).join("\n"),
+      );
+    }
+    return parts.length > 0 ? parts.join("\n\n") : null;
+  }
+
   private async injectedPromptsSection(task: Task): Promise<string | null> {
     const text = await readFile(
       taskPromptInjectionsPath(this.deps.root, task.frontmatter.id),
@@ -418,6 +461,8 @@ export class Pipeline {
     if (task.frontmatter.questions === "answered" && task.body.answers.trim()) {
       parts.push(`## Answers to earlier questions\n${task.body.answers}`);
     }
+    const resume = this.resumeNotes.get(task.frontmatter.id);
+    if (resume) parts.push(resume);
     const injected = await this.injectedPromptsSection(task);
     if (injected) parts.push(injected);
     const framing = iterationFraming(task);
@@ -460,6 +505,12 @@ export class Pipeline {
 
     // The live log replaces the body log when the run ends: carry the base note plan sync
     // wrote (which base was chosen and why) into it once, so it survives.
+    // Resuming after an earlier run: that run's stop, and prompts injected into it, are carried
+    // into every prompt. The body log still holds the earlier run (this run appends below).
+    const earlier = this.earlierRunNotes(task);
+    if (earlier) this.resumeNotes.set(id, earlier);
+    else this.resumeNotes.delete(id);
+
     const baseNote = /^## Base\n[^\n]*/m.exec(task.body.log)?.[0];
     if (baseNote) {
       const live = await readFile(join(this.areaDir(id), "log.txt"), "utf8").catch(() => "");
@@ -733,17 +784,20 @@ export class Pipeline {
       // Capture the failing tool's captured output (stdout/stderr) when present,
       // so the Log tab shows *why* it failed even after the run ends.
       const detail = (err as { output?: string })?.output;
-      await appendLog(`ERROR: ${message}${detail ? `\n${detail}` : ""}`);
+      // A stop request always keeps the work, whatever onFailure says, and ends as `stopped`.
+      const stopped = await this.stopRequested(id);
+      const stopReason = stopped ? await this.stopReason(id) : null;
+      const stopNote = stopReason === "shutdown" ? "stopped by server shutdown" : "stopped by user";
+      if (stopped) await appendLog(`### Stopped\n${stopNote}`);
+      else await appendLog(`ERROR: ${message}${detail ? `\n${detail}` : ""}`);
       if (worktree) {
-        // A stop request always keeps the work, whatever onFailure says.
-        const stoppedByUser = await this.stopRequested(id);
         // A budget stop with onExceed "pause" keeps the work too, so a retry resumes it.
         const keepForBudget =
           overBudget &&
           projectTaskBudget(this.deps.settings, this.deps.project).onExceed === "pause";
         if (
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
-          !stoppedByUser &&
+          !stopped &&
           !keepForBudget
         ) {
           for (const line of await discardWorktree(workingDirectory, worktree)) {
@@ -758,6 +812,7 @@ export class Pipeline {
       }
       await this.mirrorLiveLog(task).catch(() => {});
       await this.persistUsage(task, usages).catch(() => {});
+      if (stopReason) return { kind: "stopped", task, reason: stopReason, note: stopNote };
       return {
         kind: "failed",
         task,

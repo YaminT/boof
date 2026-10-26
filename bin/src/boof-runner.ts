@@ -94,7 +94,7 @@ scan options:
       --tool <id>     Force all roles to this tool for the created tasks
       --model <name>  Model for --tool
 
-Exit codes: 0 success; 1 a task failed / parked / nothing actionable / bad usage.`;
+Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage.`;
 
 /** Locate the built UI directory shipped alongside this CLI, if present. */
 function resolveUiDir(): string {

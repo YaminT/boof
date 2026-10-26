@@ -279,7 +279,7 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(p).toContain("report them instead of executing them");
   });
 
-  it("fails before the next step when stop has been requested", async () => {
+  it("stops before the next step when stop has been requested", async () => {
     await store.create(newTask(fm(), "Build it."));
     const running = await store.transition("t1", "running");
     const { worktree: wt } = await ensureWorktree(workDir, "t1", {
@@ -297,14 +297,19 @@ describe("RunnerEngine integration (mock tool)", () => {
     });
     const outcome = await pipeline.run(running);
 
-    expect(outcome.kind).toBe("failed");
-    if (outcome.kind === "failed") expect(outcome.error).toContain("stopped by user");
+    expect(outcome.kind).toBe("stopped");
+    if (outcome.kind === "stopped") {
+      expect(outcome.reason).toBe("user");
+      expect(outcome.note).toBe("stopped by user");
+    }
 
     // Stopped work is kept: worktree directory and task branch survive.
     expect(await exists(wtPath())).toBe(true);
     expect((await gitOut(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
     expect((await gitOut(["status", "--porcelain"], wtPath())).stdout).toContain("wip.txt");
-    if (outcome.kind === "failed") expect(outcome.task.body.log).toContain("Kept worktree");
+    expect(outcome.task.body.log).toContain("Kept worktree");
+    expect(outcome.task.body.log).toContain("### Stopped\nstopped by user");
+    expect(outcome.task.body.log).not.toContain("ERROR:");
   });
 
   it("bumps a scanned unit's goal.boof.xml status on successful completion", async () => {
@@ -562,7 +567,7 @@ describe("retention policies", () => {
       settings: effectiveSettings(await engine.settingsStore.load(), project),
     });
     const outcome = await pipeline.run(running);
-    expect(outcome.kind).toBe("failed");
+    expect(outcome.kind).toBe("stopped");
     expect(await exists(wtPath())).toBe(true);
     expect(await hasBranch("boof-runner/t1")).toBe(true);
   });
@@ -987,8 +992,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     const started = Date.now();
     try {
       const outcome = await run("Build it. [[mock-transient developer=1]]");
-      expect(outcome.kind).toBe("failed");
-      if (outcome.kind === "failed") expect(outcome.error).toContain("stopped by user");
+      expect(outcome.kind).toBe("stopped");
     } finally {
       clearInterval(poll);
     }
@@ -1390,8 +1394,127 @@ describe("multi-project engine (mock tool)", () => {
   });
 });
 
+describe("stopped status and durable injected prompts (mock tool)", () => {
+  /** First planner call: inject a prompt (as the API does) and request a stop. */
+  const stopDuringPlanner = (note?: string) => {
+    let first = true;
+    mockState.onRun = async () => {
+      if (!first) return;
+      first = false;
+      await store.appendInjected("t1", "use tabs, not spaces", "alice");
+      await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+      await writeFile(taskStopRequestPath(projectDir, "t1"), note ?? "stop\n");
+    };
+  };
+
+  it("a user stop records the task as stopped, keeps the worktree and the injected prompt", async () => {
+    stopDuringPlanner();
+    await store.create(newTask(fm(), "Build it."));
+    const r = await engine.tick();
+    expect(r.kind === "ran" && r.outcome.kind).toBe("stopped");
+
+    const t = await store.get("t1");
+    expect(t?.frontmatter.status).toBe("stopped");
+    expect(await exists(taskFilePath(projectDir, "stopped", "t1"))).toBe(true);
+    expect(await exists(workingAreaDir(projectDir, "t1"))).toBe(false);
+    expect(t?.body.log).toContain("### Stopped\nstopped by user");
+    expect(await exists(wtPath())).toBe(true);
+    expect(await exists(join(taskControlDir(projectDir, "t1"), "prompts.md"))).toBe(false);
+    expect(t?.body.injected).toContain("alice");
+    expect(t?.body.injected).toContain("use tabs, not spaces");
+    const events = (await readFile(join(projectDir, "events.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(events.at(-1)).toMatchObject({ type: "task.status", from: "running", to: "stopped" });
+  });
+
+  it("retrying a stopped task continues in the same worktree and re-states the injected prompt", async () => {
+    stopDuringPlanner();
+    await store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    await writeFile(join(wtPath(), "wip.txt"), "wip\n");
+    expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
+
+    mockState.prompts = [];
+    const cwds: string[] = [];
+    mockState.onRun = async (opts) => void cwds.push(opts.cwd);
+    await store.transition("t1", "pending");
+    const r = await engine.tick();
+    expect(r.kind === "ran" && r.outcome.kind).toBe("done");
+
+    expect(cwds.every((c) => c === wtPath())).toBe(true);
+    const first = mockState.prompts[0];
+    expect(first).toContain("## Previous run stopped");
+    expect(first).toContain("git status");
+    expect(first).toContain("## Earlier injected instructions");
+    expect(first).toContain("use tabs, not spaces");
+    // The injected prompts stay on the finished task.
+    expect((await store.get("t1"))?.body.injected).toContain("use tabs, not spaces");
+  });
+
+  it("a later retry after a completed run no longer says the run was stopped", async () => {
+    stopDuringPlanner();
+    await store.create(newTask(fm({ runs: 2 }), "Build it."));
+    await engine.tick();
+    await store.transition("t1", "pending");
+    await engine.tick(); // iteration 1 completes, task re-queued for iteration 2
+    mockState.prompts = [];
+    mockState.onRun = null;
+    await engine.tick();
+    expect(mockState.prompts[0]).not.toContain("## Previous run stopped");
+  });
+
+  it("server shutdown records the task as stopped with a shutdown note", async () => {
+    let started!: () => void;
+    const up = new Promise<void>((r) => (started = r));
+    mockState.onRun = async (opts) => {
+      started();
+      // Wait for the stop request like a real tool would, then fail as a stopped tool.
+      for (let i = 0; i < 400; i++) {
+        if (opts.stopSignalPath && (await exists(opts.stopSignalPath))) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new ToolRunError("mock", null, false, true, "stopped", "");
+    };
+    await store.create(newTask(fm(), "Build it."));
+    const loop = engine.loop();
+    await up;
+    await engine.shutdown(10000);
+    await loop;
+    const t = await store.get("t1");
+    expect(t?.frontmatter.status).toBe("stopped");
+    expect(t?.body.log).toContain("### Stopped\nstopped by server shutdown");
+  });
+
+  it("a failed run still ends as failed, with its injected prompt kept", async () => {
+    mockState.onRun = async () => {
+      await store.appendInjected("t1", "be careful");
+    };
+    mockState.failRole = "developer";
+    await store.create(newTask(fm(), "Build it."));
+    const r = await engine.tick();
+    expect(r.kind === "ran" && r.outcome.kind).toBe("failed");
+    const t = await store.get("t1");
+    expect(t?.frontmatter.status).toBe("failed");
+    expect(t?.body.injected).toContain("be careful");
+    expect(t?.body.injected).toContain("user");
+  });
+
+  it("a done run keeps its injected prompts", async () => {
+    mockState.onRun = async () => {
+      if (!(await store.get("t1"))?.body.injected) await store.appendInjected("t1", "one", "bot");
+    };
+    await store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    const t = await store.get("t1");
+    expect(t?.frontmatter.status).toBe("done");
+    expect(t?.body.injected).toContain("bot");
+  });
+});
+
 describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
-  it("stops the running task, kills the agent process group and leaves the task failed (retryable)", async () => {
+  it("stops the running task, kills the agent process group and leaves the task stopped (retryable)", async () => {
     await store.create(newTask(fm(), "Long job."));
     const pidFile = join(dataRoot, "agent.pid");
     let started!: () => void;
@@ -1421,10 +1544,12 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
     expect(result).toEqual({ stopped: ["t1"], timedOut: false });
     await loop;
 
-    expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+    const after = await store.get("t1");
+    expect(after?.frontmatter.status).toBe("stopped");
+    expect(after?.body.log).toContain("stopped by server shutdown");
     await new Promise((r) => setTimeout(r, 100));
     expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
-    // failed -> pending is a legal transition, so the task can be retried after a restart.
+    // stopped -> pending is a legal transition, so the task can be retried after a restart.
     await store.transition("t1", "pending");
     expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
   });

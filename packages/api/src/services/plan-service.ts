@@ -187,7 +187,7 @@ export class PlanService {
 
   /**
    * Where a plan stands: `complete` when every goal is done; `stuck` when a goal's live task
-   * failed or waits for answers, or when no task can run (blocked goals, draft tasks, goals
+   * failed, was stopped or waits for answers, or when no task can run (blocked goals, draft tasks, goals
    * without a task). Task statuses are read from the task files.
    */
   async progress(planId: string): Promise<PlanProgress> {
@@ -213,7 +213,7 @@ export class PlanService {
       if (g.status === "done") continue;
       const task = g.taskId ? await tasks.get(g.taskId) : null;
       const status = task?.frontmatter.status;
-      if (task && (status === "failed" || status === "action")) {
+      if (task && (status === "failed" || status === "stopped" || status === "action")) {
         reasons.push({ goalId: g.id, taskId: g.taskId, status });
       } else if (task && status === "running") {
         runnable = true;

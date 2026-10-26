@@ -25,6 +25,7 @@ const STATUS_LABEL: Record<Status, string> = {
   action: "Action",
   done: "Done",
   failed: "Failed",
+  stopped: "Stopped",
   archived: "Archived",
 };
 
@@ -35,6 +36,7 @@ const STATUS_FILTERS: Status[] = [
   "action",
   "done",
   "failed",
+  "stopped",
   "archived",
 ];
 
@@ -89,7 +91,7 @@ function Row({
           </span>
         ))}
       </span>
-      {(f.status === "done" || f.status === "failed") && (
+      {(f.status === "done" || f.status === "failed" || f.status === "stopped") && (
         <button
           className="retry-btn"
           title="See what this task changed before you retry, archive or merge it"
@@ -98,10 +100,14 @@ function Row({
           Review changes
         </button>
       )}
-      {f.status === "failed" && (
+      {(f.status === "failed" || f.status === "stopped") && (
         <button
           className="retry-btn"
-          title="Clear the failed status and re-queue this task"
+          title={
+            f.status === "stopped"
+              ? "Re-queue this stopped task; it continues in its kept worktree"
+              : "Clear the failed status and re-queue this task"
+          }
           onClick={async () => {
             await api.retry(projectId, f.id);
             onChange();

@@ -33,6 +33,7 @@ export const STATUS_DIRS: Record<Status, string> = {
   action: "actions",
   done: "done",
   failed: "failed",
+  stopped: "stopped",
   archived: "archived",
 };
 
@@ -166,5 +167,6 @@ export const ALL_STATUSES: Status[] = [
   "action",
   "done",
   "failed",
+  "stopped",
   "archived",
 ];

@@ -334,7 +334,7 @@ export const PLAN_WAIT_MAX_SECONDS = 60;
 export const plansWait = defineOp({
   name: "plans.wait",
   title: "Wait for a plan to change, finish or get stuck",
-  description: `Long-polls a plan for up to ${PLAN_WAIT_MAX_SECONDS} seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.`,
+  description: `Long-polls a plan for up to ${PLAN_WAIT_MAX_SECONDS} seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed, was stopped or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.`,
   scope: "plans:read",
   projectScoped: true,
   input: z.strictObject({
@@ -366,7 +366,7 @@ export const plansWait = defineOp({
         taskId: z.string().nullable(),
         status: z.string().meta({
           description:
-            "Task status (failed, action, draft, pending), blocked, no-task or plan-not-active.",
+            "Task status (failed, stopped, action, draft, pending), blocked, no-task or plan-not-active.",
         }),
       }),
     ),

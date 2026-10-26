@@ -299,7 +299,7 @@ export const tasksRetry = defineOp({
   name: "tasks.retry",
   title: "Retry a task",
   description:
-    "Moves a failed task back to pending. Inputs: projectId, taskId. Review-trust clients are refused.",
+    "Moves a failed or stopped task back to pending (a stopped task continues in its kept worktree). Inputs: projectId, taskId. Review-trust clients are refused.",
   scope: "tasks:write",
   projectScoped: true,
   input: byTask,
@@ -391,7 +391,7 @@ export const tasksStop = defineOp({
   name: "tasks.stop",
   title: "Stop a running task",
   description:
-    "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on.",
+    "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there.",
   scope: "tasks:control",
   projectScoped: true,
   input: byTask,
@@ -407,7 +407,7 @@ export const tasksInject = defineOp({
   name: "tasks.inject",
   title: "Inject a prompt into a running task",
   description:
-    "Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. Appends to the task's injection file.",
+    "Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. The prompt is also kept, with a timestamp and who injected it, in the task's body.injected so it survives after the run.",
   scope: "tasks:control",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...InjectBody.shape }),
@@ -416,7 +416,11 @@ export const tasksInject = defineOp({
   mcp: { expose: true, name: "boof_inject_prompt", annotations: WRITE },
   summary: () => "Prompt injected",
   handler: async (ctx, input) =>
-    (await requireProject(ctx, input.projectId)).injectPrompt(input.taskId, input.prompt),
+    (await requireProject(ctx, input.projectId)).injectPrompt(
+      input.taskId,
+      input.prompt,
+      ctx.principal,
+    ),
 });
 
 export const tasksLiveLog = defineOp({
@@ -448,14 +452,14 @@ export const WAIT_MAX_SECONDS = 60;
 const WAIT_POLL_MS = 400;
 
 /** Statuses a task does not leave by itself: waiting on it would block for nothing. */
-const SETTLED = new Set(["done", "failed", "action", "archived"]);
+const SETTLED = new Set(["done", "failed", "stopped", "action", "archived"]);
 /** Statuses that end a task for good (until a human retries or unarchives it). */
-const TERMINAL = new Set(["done", "failed", "archived"]);
+const TERMINAL = new Set(["done", "failed", "stopped", "archived"]);
 
 export const tasksWait = defineOp({
   name: "tasks.wait",
   title: "Wait for a task status change",
-  description: `Waits up to ${WAIT_MAX_SECONDS} seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, archived), task. No side effects; call it again after a timeout.`,
+  description: `Waits up to ${WAIT_MAX_SECONDS} seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, stopped, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, stopped, archived), task. No side effects; call it again after a timeout.`,
   scope: "tasks:read",
   projectScoped: true,
   input: z.strictObject({
@@ -478,9 +482,9 @@ export const tasksWait = defineOp({
   output: z.object({
     changed: z.boolean(),
     timedOut: z.boolean(),
-    terminal: z
-      .boolean()
-      .meta({ description: "True when the task is done, failed or archived: stop waiting." }),
+    terminal: z.boolean().meta({
+      description: "True when the task is done, failed, stopped or archived: stop waiting.",
+    }),
     task: TaskViewSchema,
   }),
   rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}/wait" },

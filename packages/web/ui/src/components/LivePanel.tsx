@@ -27,6 +27,7 @@ export function LivePanel({
   const [log, setLog] = useState("");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState<"inject" | "stop" | null>(null);
+  const [stopRequested, setStopRequested] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const pinnedRef = useRef(true);
@@ -83,6 +84,7 @@ export function LivePanel({
     setBusy("stop");
     try {
       await api.stopTask(projectId, id);
+      setStopRequested(true);
       onChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -98,8 +100,13 @@ export function LivePanel({
         <span className="live-dot" title="Streaming live" />
         <strong>Working on “{task.frontmatter.title}”</strong>
         {step && <span className="live-step">{step}</span>}
-        <button className="live-stop" onClick={stop} disabled={busy !== null}>
-          {busy === "stop" ? "Stopping…" : "Stop"}
+        <button
+          className="live-stop"
+          onClick={stop}
+          disabled={busy !== null || stopRequested}
+          title="Stop the agent; the task moves to Stopped and keeps its worktree"
+        >
+          {busy === "stop" || stopRequested ? "Stopping…" : "Stop"}
         </button>
       </div>
       <pre className="live-body" ref={preRef} onScroll={onScroll}>

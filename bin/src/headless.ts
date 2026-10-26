@@ -253,7 +253,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   for (;;) {
     const located = await store.locate(id);
     const status = located?.status;
-    if (!status || ["done", "failed", "action", "archived"].includes(status)) break;
+    if (!status || ["done", "failed", "stopped", "action", "archived"].includes(status)) break;
     const res = await streamTick(engine, out);
     if (res.kind === "disabled" || res.kind === "blocked") break;
     if (res.kind === "idle") break;
@@ -261,7 +261,9 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
 
   const finalStatus = (await store.locate(id))?.status ?? "failed";
   const ok = finalStatus === "done";
-  out(`\n${ok ? "[done]" : "[not done]"} task ${project.id}/${id}: ${finalStatus}\n`);
+  out(
+    `\n${ok ? "[done]" : finalStatus === "stopped" ? "[stopped]" : "[not done]"} task ${project.id}/${id}: ${finalStatus}\n`,
+  );
   return { id, projectId: project.id, status: finalStatus as Status, ok };
 }
 
@@ -286,14 +288,20 @@ export async function drainQueue(opts: {
   });
   let ran = 0;
   let failed = 0;
+  let stopped = 0;
   for (;;) {
     const res = await streamTick(engine, out);
     if (res.kind !== "ran") break;
     ran += 1;
     if (res.outcome.kind === "failed") failed += 1;
+    if (res.outcome.kind === "stopped") stopped += 1;
   }
-  out(`\nqueue drained: ${ran} task(s) ran, ${failed} failed\n`);
-  return { ran, failed };
+  out(
+    `\nqueue drained: ${ran} task(s) ran, ${failed} failed` +
+      `${stopped > 0 ? `, ${stopped} stopped` : ""}\n`,
+  );
+  // A stopped task did not finish: it counts against the exit code like a failure.
+  return { ran, failed: failed + stopped };
 }
 
 export interface ScanOptions {

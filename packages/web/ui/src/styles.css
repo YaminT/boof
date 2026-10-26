@@ -464,6 +464,11 @@ label small {
   border-color: transparent;
   color: var(--red);
 }
+.status-badge.stopped {
+  background: rgba(169, 121, 31, 0.14);
+  border-color: transparent;
+  color: var(--amber);
+}
 .status-badge.action {
   background: rgba(169, 121, 31, 0.14);
   border-color: transparent;
@@ -671,6 +676,10 @@ input[type="number"] {
 .status-pill.status-failed {
   color: var(--red);
   border-color: var(--red);
+}
+.status-pill.status-stopped {
+  color: var(--amber);
+  border-color: var(--amber);
 }
 .status-pill.status-done {
   color: var(--green);
