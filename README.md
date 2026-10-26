@@ -163,7 +163,7 @@ To run boof on a headless Linux server (systemd service, nginx with TLS, API key
 
 Pick a project at the top (or add one); every tab works on that project. The runner on/off toggle sits next to the project picker.
 
-- **Tasks** — the queue with status filters (draft, pending, running, action, done, failed, stopped, archived) and drag-to-reorder priority. Open a task to edit its prompt, labels, runs, command template and attachments (images and PDFs), read the planner, developer, observer and reviewer reports, and watch the live agent output. Stop a running task or inject an extra instruction. Filter "Proposed by clients" to approve drafts that API clients created.
+- **Tasks** — the queue with status filters (draft, pending, running, action, done, failed, stopped, archived) and drag-to-reorder priority. Open a task to edit its prompt, labels, runs, command template and attachments (images and PDFs), read the planner, developer, observer and reviewer reports, and watch the live agent output. Stop a running task or inject an extra instruction, either for the next step or, with "Apply now", interrupting the current step (the agent session is resumed where the tool supports it, otherwise the step restarts). Filter "Proposed by clients" to approve drafts that API clients created.
 - **Plans** — create plans with goals and dependencies, edit them, import them from a repository's `goal.boof.xml` files or export them. **Approve** a draft plan to activate it, preview a sync (dry run), then **Sync to tasks**. Enable auto-sync to let the runner sync before it picks tasks.
 - **Actions** — tasks parked because the planner has questions. Answer them and the task resumes.
 - **Commands** — reusable instruction templates that any task can attach.

@@ -296,7 +296,7 @@ to keep the tool list short.
 | `boof_archive_task`    | `tasks:write`                        | idempotent  | Archive a task                        |
 | `boof_answer_task`     | `tasks:write`                        | write       | Answer a task's questions             |
 | `boof_stop_task`       | `tasks:control`                      | destructive | Stop a running task                   |
-| `boof_inject_prompt`   | `tasks:control`                      | write       | Inject a prompt into a running task   |
+| `boof_inject_prompt`   | `tasks:control`                      | write       | Inject a prompt (next-step or now)    |
 | `boof_get_task_log`    | `tasks:read`                         | read-only   | Read a task's live log                |
 | `boof_wait_task`       | `tasks:read`                         | read-only   | Wait for a task status change         |
 | `boof_runner_status`   | `settings:read`                      | read-only   | Runner and queue status               |

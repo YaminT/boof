@@ -362,9 +362,27 @@ If the runner process dies hard (`SIGKILL`, out of memory, power loss, reboot), 
 
 The UI can inject an additional prompt while a task is running. Boof Runner writes that prompt to the running task's control directory and appends a note to the live log.
 
-Because Claude Code and Codex are currently run non-interactively, injected prompts do not alter the already-executing CLI invocation. They are picked up before the next pipeline step and included in subsequent prompts under a dedicated injected-prompts section.
+The prompt has a mode:
 
-Injected prompts are also kept in the task file, in the body section `## Injected`, written when the prompt is injected (the control directory is deleted when the task leaves `running`). Each entry is `### <ISO time> — <who>` followed by the text; who is the API client name, or `user` for the local principal and the UI. Files without the section still parse. The section is append-only: saving a task never drops entries. The task Editor shows it in the "Injected" tab, and the task view of the API and MCP has `body.injected` (the raw section text).
+- `next-step` (the default): the prompt is picked up before the next pipeline step and included in later prompts under a dedicated injected-prompts section. The step that is running is not touched.
+- `now`: the same, and the runner also interrupts the running step. It writes a steer request (`control/steer`, one JSON line per prompt); `exec` sees it, kills the tool process group like a stop and reports `steered` (distinct from `stopped`). The pipeline removes the request, logs a `### Steered` block with the prompt and runs the same step again. The task is not stopped, no retry is used, and the usage of the interrupted attempt is still recorded.
+
+How the step continues depends on the tool:
+
+- A tool that supports session resume gets the same session back: Claude Code `--resume <session id>`, Codex `codex exec resume <thread id>`, OpenCode `run --session <id>`. The new message is "The user sent new instructions while you were working. Continue the same task from where you stopped and apply them:" followed by the prompt. The session id is read from the output of the interrupted attempt (stream-json `session_id`, `thread.started.thread_id`, `sessionID`).
+- A tool without resume, or an interrupted attempt that printed no session id, restarts the step: the original step prompt, the new instructions and the "Previous attempt interrupted" note that tells the agent to inspect `git status` and `git diff` and continue.
+
+Limits of `now`:
+
+- Resume depends on the tool CLI. A session that the CLI cannot find, or one that is cut before the tool saved it, ends the rerun with a tool failure like any other.
+- The interrupted step may leave partial changes. A restarted step has to work from them; a resumed one has its own memory of them.
+- It costs extra tokens: the interrupted attempt is paid for, and a restart re-reads the step prompt.
+- A step takes at most 5 steers. Later `now` prompts then wait for the next step, as `next-step` prompts do.
+- A steer that arrives between two steps kills nothing: the next step simply includes the prompt.
+- A stop request that arrives with a steer wins.
+- The request is picked up within about half a second.
+
+Injected prompts are also kept in the task file, in the body section `## Injected`, written when the prompt is injected (the control directory is deleted when the task leaves `running`). Each entry is `### <ISO time> — <who>`, then a `<!-- boof: mode=now applied=<ISO time> -->` line (the inject mode, and when the prompt reached the agent: the next step started, or the steered step ran again; `applied` is added later), then the text; who is the API client name, or `user` for the local principal and the UI. Files without the section still parse. The section is append-only: saving a task never drops entries. The task Editor shows it in the "Injected" tab, and the task view of the API and MCP has `body.injected` (the raw section text).
 
 When a task runs again (a retry of a stopped or failed task, or the next of several runs), the earlier injected prompts are not lost: the prompts of every step include them under `## Earlier injected instructions`, so the agent keeps following them. Prompts injected during the new run use the live mechanism above.
 
@@ -397,7 +415,7 @@ Every status change and plan write appends one JSON line to `<project>/events.js
 The REST surface is the registry (see above); the full list with inputs, outputs, scopes and errors is the generated reference in [harness.md](harness.md) and the OpenAPI document. In short:
 
 - projects: list, create, get, update, archive, unarchive, pause, resume, delete (`?purge=true` removes the data and is refused with `409 project_busy` while a task runs), usage
-- per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll), stop and prompt injection
+- per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll), stop and prompt injection (modes `next-step` and `now`)
 - per-project plans under `/api/v1/projects/{p}/plans…`: list, create, get, update, replace goals, upsert and remove a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`
 - `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates, settings, tool health, models, token usage, API clients (`auth:admin`) and webhooks (`admin`)
 
@@ -449,7 +467,7 @@ Boof Runner deliberately keeps the first version local, single-user, and file-ba
 - There is no remote queue or hosted control plane.
 - The runner runs at most one task per project at a time (`runner.concurrency` allows tasks of different projects to overlap).
 - Stop is best-effort and process-level, not a semantic rollback.
-- Prompt injection is applied between non-interactive tool runs, not inside a currently running request.
+- A prompt injected with mode `next-step` is applied between tool runs. Mode `now` interrupts the running step and resumes the tool session (or restarts the step); it is not a live message into the running process.
 - Token/cost handling is tracking-only; it does not enforce budgets yet.
 
 These tradeoffs are acceptable for a local code-execution runner, but they should be revisited if Boof Runner becomes a multi-user or remote system.
@@ -464,7 +482,7 @@ The highest-value next improvements are:
 
 2. Support interactive tool sessions when available
 
-   True mid-run prompt injection would require interactive sessions or a tool-specific control protocol. If Claude Code or Codex expose stable session APIs, Boof Runner should add adapters that can send input into an active session.
+   Inject mode `now` interrupts the step and resumes the tool session. True mid-run injection without the interruption would require interactive sessions or a tool-specific control protocol. If Claude Code or Codex expose stable session APIs, Boof Runner should add adapters that can send input into an active session.
 
 3. Add budget controls
 

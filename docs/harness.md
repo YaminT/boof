@@ -416,7 +416,7 @@ Through `tasks.update` you can move a task only to `pending` or `archived`. The 
 
 A stop (`tasks.stop`, or a server shutdown) ends the task as `stopped`, not `failed`. Its worktree and branch stay. A retry runs the pipeline in the same worktree and tells the agent that the previous run was stopped, so it inspects `git status` and `git diff` and continues. A `failed` task is one that broke on its own.
 
-Prompts you inject into a running task (`tasks.inject`) are kept in `body.injected` (entries `### <time> — <who>`), also after the task is done, failed or stopped. When the task runs again, the agent gets them again under `## Earlier injected instructions`.
+Prompts you inject into a running task (`tasks.inject`) are kept in `body.injected` (entries `### <time> — <who>` with the mode and when the prompt was applied), also after the task is done, failed or stopped. When the task runs again, the agent gets them again under `## Earlier injected instructions`.
 
 A task can be `failed` because the runner process died while it ran (crash, `SIGKILL`, reboot). When the runner starts again it moves such a task to `failed` with an `### Interrupted` block in its log and keeps the worktree and branch, so you can retry it.
 
@@ -1501,8 +1501,8 @@ Path parameters (all required):
 - Operation: `tasks.inject`
 - Scope: `tasks:control`
 - MCP tool: `boof_inject_prompt`
-- What it does: Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. The prompt is also kept, with a timestamp and who injected it, in the task's body.injected so it survives after the run.
-- Success: HTTP 200 with `{ ok: true }`.
+- What it does: Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied.
+- Success: HTTP 200 with `{ applied: "pending", mode: "next-step" | "now", ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
 
 Path parameters (all required):
@@ -1512,6 +1512,7 @@ Path parameters (all required):
 
 JSON body (unknown keys are rejected):
 
+- `mode`: `"next-step" | "now"`, optional; default `"next-step"`; `next-step` (default): the prompt is picked up before the next pipeline step. `now`: also interrupts the running step, which is resumed (or rerun) with the prompt
 - `prompt`: `string`, required; max length 100000
 
 #### `GET /api/v1/projects/{projectId}/tasks/{taskId}/live-log` (Read a task's live log)
@@ -2056,12 +2057,17 @@ curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/archive" -H "Au
 # give a running task an extra instruction (read by the agent before its next step)
 curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/inject" \
   -H "Authorization: Bearer $BOOF_KEY" -H "Content-Type: application/json" -d '{"prompt":"Also update the README."}'
+# same, but interrupt the running step and apply it now
+curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/inject" \
+  -H "Authorization: Bearer $BOOF_KEY" -H "Content-Type: application/json" \
+  -d '{"prompt":"Stop adding the cache layer; use the existing one.","mode":"now"}'
 ```
 
 MCP: `boof_retry_task`, `boof_stop_task`, `boof_archive_task`, `boof_inject_prompt`.
 
 - Ask the user before you stop a running task. A stop is best effort and can leave partial changes in the kept worktree.
 - A retry runs the pipeline again on the same branch. After a stop it also tells the agent to continue from the partial changes.
+- `inject` takes `mode`: `next-step` (default) or `now`. Use `next-step` for extra requirements that can wait; it never disturbs the running step. Use `now` only when the agent is working in the wrong direction and waiting would waste work. `now` interrupts the running step: the tool session is resumed with your prompt where the tool supports it, otherwise the step restarts from its prompt and the partial changes. It costs extra tokens, and a step takes at most 5 steers. The response is `{ok, mode, applied: "pending"}`; the log shows `### Steered` when the prompt took effect. Ask the user before you use `now`.
 - Before you retry a failed task, read its log and tell the user why it failed.
 - `tasks.update` with `{"status":"archived"}` also archives. A running task answers `409 invalid_transition`.
 
