@@ -414,3 +414,35 @@ describe("worktree isolation", () => {
     });
   });
 });
+
+describe("worktree root exclusion", () => {
+  const excludeLines = async () => {
+    const p = (await g(["rev-parse", "--git-path", "info/exclude"])).stdout.trim();
+    const text = await readFile(join(repo, p), "utf8");
+    return text.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+  };
+
+  it("keeps the default root out of git status and is idempotent", async () => {
+    await ensureWorktree(repo, "x1");
+    await ensureWorktree(repo, "x2");
+    expect((await g(["status", "--porcelain"])).stdout.trim()).toBe("");
+    expect((await excludeLines()).filter((l) => l === "/.boof-runner-worktrees/")).toHaveLength(1);
+    expect(await exists(join(repo, ".gitignore"))).toBe(false);
+  });
+
+  it("excludes a custom relative root", async () => {
+    await ensure(repo, "x3", { root: join(repo, "tmp/wt") });
+    expect((await g(["status", "--porcelain"])).stdout.trim()).toBe("");
+    expect(await excludeLines()).toContain("/tmp/wt/");
+  });
+
+  it("does nothing for a root outside the repo", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "boof-runner-out-"));
+    try {
+      await ensure(repo, "x4", { root: outside });
+      expect(await excludeLines()).toEqual([]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});

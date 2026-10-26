@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execCommand } from "./exec.js";
 
 const BRANCH_PREFIX = "boof-runner/";
@@ -220,7 +220,42 @@ export async function ensureWorktree(
   opts: WorktreeOptions,
 ): Promise<WorktreeResult> {
   if (!(await isGitRepo(workingDir))) throw new NotAGitRepoError(workingDir);
-  return createWorktree(workingDir, taskId, opts);
+  const result = await createWorktree(workingDir, taskId, opts);
+  await excludeRootFromGit(workingDir, opts.root);
+  return result;
+}
+
+/**
+ * Keep a worktree root that lives inside the repository out of `git status` by
+ * listing it in the repo's `info/exclude` (never the tracked .gitignore).
+ * Idempotent and best-effort: failures are logged, never thrown.
+ */
+export async function excludeRootFromGit(workingDir: string, root: string): Promise<void> {
+  try {
+    const top = await git(workingDir, ["rev-parse", "--show-toplevel"]);
+    const gp = await git(workingDir, ["rev-parse", "--git-path", "info/exclude"]);
+    if (top.code !== 0 || gp.code !== 0 || !top.out || !gp.out) return;
+    const rel = relative(await canonical(top.out), await canonical(resolve(root)));
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return;
+    const entry = `/${rel.split(sep).join("/")}/`;
+    const file = resolve(workingDir, gp.out);
+    let existing = "";
+    try {
+      existing = await readFile(file, "utf8");
+    } catch {
+      /* missing: created below */
+    }
+    const norm = (l: string) => l.trim().replace(/^\//, "").replace(/\/$/, "");
+    if (
+      existing.split(/\r?\n/).some((l) => l.trim() && !l.startsWith("#") && norm(l) === norm(entry))
+    )
+      return;
+    await mkdir(dirname(file), { recursive: true });
+    const sepNl = existing && !existing.endsWith("\n") ? "\n" : "";
+    await writeFile(file, `${existing}${sepNl}${entry}\n`, "utf8");
+  } catch (err) {
+    console.warn(`[boof-runner] could not exclude worktree root from git: ${String(err)}`);
+  }
 }
 
 export interface InlineDiff {
