@@ -66,7 +66,7 @@ function AddProjectForm({
             placeholder="/Users/you/project"
           />
           {desktop && (
-            <button type="button" onClick={() => void browse()}>
+            <button type="button" className="btn-secondary" onClick={() => void browse()}>
               <FolderOpenIcon size={16} /> Browse…
             </button>
           )}

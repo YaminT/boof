@@ -363,10 +363,16 @@ export function PlanDetail({
                     )}
                   </td>
                   <td className="goal-actions">
-                    <button disabled={i === 0} title="Move up" onClick={() => move(i, -1)}>
+                    <button
+                      className="btn-icon"
+                      disabled={i === 0}
+                      title="Move up"
+                      onClick={() => move(i, -1)}
+                    >
                       ↑
                     </button>
                     <button
+                      className="btn-icon"
                       disabled={i === goals.length - 1}
                       title="Move down"
                       onClick={() => move(i, 1)}
@@ -374,6 +380,7 @@ export function PlanDetail({
                       ↓
                     </button>
                     <button
+                      className="btn-secondary"
                       onClick={() => {
                         setFormErrors([]);
                         setEditing(g);

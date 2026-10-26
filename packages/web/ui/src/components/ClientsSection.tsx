@@ -84,6 +84,7 @@ export function ClientsSection() {
               </span>
               {state === "active" && (
                 <button
+                  className="btn-secondary"
                   onClick={async () => {
                     if (!confirm(`Revoke “${c.name}”? Its key stops working immediately.`)) return;
                     await api.revokeClient(c.id).catch((e) => setError(String(e.message ?? e)));
@@ -97,7 +98,9 @@ export function ClientsSection() {
           );
         })}
       </ul>
-      <button onClick={() => setCreating(true)}>+ New client</button>
+      <button className="btn-secondary" onClick={() => setCreating(true)}>
+        + New client
+      </button>
 
       {creating && (
         <Modal title="New client" onClose={() => setCreating(false)}>

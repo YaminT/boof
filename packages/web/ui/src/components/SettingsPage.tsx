@@ -456,7 +456,7 @@ export function SettingsPage({
           <span className="path-row">
             <input value={workingDir} onChange={(e) => setWorkingDir(e.target.value)} />
             {desktop && (
-              <button type="button" onClick={() => void browse()}>
+              <button type="button" className="btn-secondary" onClick={() => void browse()}>
                 Browse…
               </button>
             )}
