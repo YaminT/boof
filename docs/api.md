@@ -49,36 +49,37 @@ creates answer 200). Use `/api/v1` for new code.
 Every error is `{ "error": { "code", "message", "details"? } }` with the status below. Never zod
 internals; validation errors list `details: [{ path, message }]`.
 
-| Code                       | Status | Meaning                                                                      |
-| -------------------------- | ------ | ---------------------------------------------------------------------------- |
-| `invalid_input`            | 400    | The input does not match the operation's schema, or an id is malformed.      |
-| `invalid_plan`             | 400    | A plan or goal in the input is invalid (schema, dangling dependency, cycle). |
-| `not_a_git_repo`           | 400    | The project directory is not a git work tree.                                |
-| `nothing_to_import`        | 400    | The repository has no goal.boof.xml files to import.                         |
-| `no_default_project`       | 404    | The unversioned task routes need settings.defaultProject, which is unset.    |
-| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key.                   |
-| `forbidden_scope`          | 403    | The client lacks the scope the operation needs.                              |
-| `forbidden_project`        | 403    | The client may not access this project.                                      |
-| `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.               |
-| `project_root_not_allowed` | 403    | The directory is outside security.allowedProjectRoots.                       |
-| `not_found`                | 404    | The task, command, client or webhook does not exist.                         |
-| `project_not_found`        | 404    | The project does not exist.                                                  |
-| `plan_not_found`           | 404    | The plan does not exist.                                                     |
-| `goal_not_found`           | 404    | The goal does not exist in the plan.                                         |
-| `conflict`                 | 409    | The change conflicts with the current state.                                 |
-| `invalid_transition`       | 409    | The task status transition is not allowed.                                   |
-| `plan_version_conflict`    | 409    | The plan changed since the version in If-Match / expectedVersion.            |
-| `task_modified`            | 409    | The task changed since the ETag in If-Match.                                 |
-| `plan_exists`              | 409    | A plan with this id already exists.                                          |
-| `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                          |
-| `goal_has_dependents`      | 409    | Other goals depend on this one; pass cascade to remove them too.             |
-| `project_exists`           | 409    | A project for this directory already exists.                                 |
-| `project_busy`             | 409    | A task of the project is running.                                            |
-| `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.               |
-| `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                   |
-| `payload_too_large`        | 413    | The request body exceeds the size limit.                                     |
-| `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                       |
-| `internal`                 | 500    | Unexpected server error; details are in the server log.                      |
+| Code                       | Status | Meaning                                                                                                 |
+| -------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| `invalid_input`            | 400    | The input does not match the operation's schema, or an id is malformed.                                 |
+| `invalid_plan`             | 400    | A plan or goal in the input is invalid (schema, dangling dependency, cycle).                            |
+| `not_a_git_repo`           | 400    | The project directory is not a git work tree.                                                           |
+| `nothing_to_import`        | 400    | The repository has no goal.boof.xml files to import.                                                    |
+| `no_default_project`       | 404    | The unversioned task routes need settings.defaultProject, which is unset.                               |
+| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key.                                              |
+| `forbidden_scope`          | 403    | The client lacks the scope the operation needs.                                                         |
+| `forbidden_project`        | 403    | The client may not access this project.                                                                 |
+| `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.                                          |
+| `project_root_not_allowed` | 403    | The directory is outside security.allowedProjectRoots.                                                  |
+| `not_found`                | 404    | The task, command, client or webhook does not exist.                                                    |
+| `project_not_found`        | 404    | The project does not exist.                                                                             |
+| `branch_not_found`         | 404    | The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete). |
+| `plan_not_found`           | 404    | The plan does not exist.                                                                                |
+| `goal_not_found`           | 404    | The goal does not exist in the plan.                                                                    |
+| `conflict`                 | 409    | The change conflicts with the current state.                                                            |
+| `invalid_transition`       | 409    | The task status transition is not allowed.                                                              |
+| `plan_version_conflict`    | 409    | The plan changed since the version in If-Match / expectedVersion.                                       |
+| `task_modified`            | 409    | The task changed since the ETag in If-Match.                                                            |
+| `plan_exists`              | 409    | A plan with this id already exists.                                                                     |
+| `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                                                     |
+| `goal_has_dependents`      | 409    | Other goals depend on this one; pass cascade to remove them too.                                        |
+| `project_exists`           | 409    | A project for this directory already exists.                                                            |
+| `project_busy`             | 409    | A task of the project is running.                                                                       |
+| `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.                                          |
+| `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                              |
+| `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                |
+| `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                                                  |
+| `internal`                 | 500    | Unexpected server error; details are in the server log.                                                 |
 
 ## Concurrency (ETag / If-Match)
 
@@ -169,6 +170,29 @@ curl -X POST http://127.0.0.1:4319/api/v1/webhooks -H "Authorization: Bearer $BO
   1 h, then the delivery moves to `<data>/webhooks/dead/<delivery id>.json`. Progress per webhook
   (cursor and pending retries) is in `<data>/webhooks/state.json`, so a restart resumes. A new
   webhook only receives events from its creation on.
+
+## Reviewing a task's changes
+
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/diff` (scope `tasks:read`, MCP `boof_get_task_diff`)
+compares the task branch `boof-runner/<id>` with its base (the recorded `baseSha`, else the
+merge-base with `baseRef` or `HEAD`). It only reads the repository.
+
+- Query: `path` (one repo-relative file; no `..`, not absolute; returns just that patch), `context`
+  (lines of context, default 3) and `maxBytes` (default 400000).
+- Result: `base` and `head` (`{ref, sha}`), `files` (`path`, `oldPath`, `status` of `added`,
+  `modified`, `deleted`, `renamed` or `binary`, `additions`, `deletions`), `stats`, `commits`
+  (`sha`, `subject`, `author`, `date`), `patch` (unified diff), `truncated`, and `leftovers`
+  (`{ref, sha}` of the `--leftovers` branch) when it exists.
+- A diff over `maxBytes` returns the file list with `truncated: true` and no `patch`; fetch the
+  files one at a time with `path`.
+- A task whose worktree is still on disk (running, failed or stopped) adds its uncommitted and
+  untracked changes and sets `includesUncommitted: true`.
+- `404 branch_not_found` when the branch does not exist, for example after `onDone: delete`.
+
+```bash
+curl -s -H "Authorization: Bearer $BOOF" \
+  "http://127.0.0.1:4319/api/v1/projects/shop/tasks/add-login/diff?path=src/auth.ts"
+```
 
 ## The harness flow with curl
 
@@ -264,6 +288,7 @@ to keep the tool list short.
 | `boof_sync_plan`       | `plans:write`                        | write       | Sync a plan to tasks                  |
 | `boof_list_tasks`      | `tasks:read`                         | read-only   | List tasks                            |
 | `boof_get_task`        | `tasks:read`                         | read-only   | Get a task                            |
+| `boof_get_task_diff`   | `tasks:read`                         | read-only   | Get what a task changed               |
 | `boof_create_task`     | `tasks:write`                        | write       | Create a task                         |
 | `boof_update_task`     | `tasks:write`                        | idempotent  | Update a task                         |
 | `boof_queue_task`      | `tasks:write`                        | idempotent  | Queue a task                          |

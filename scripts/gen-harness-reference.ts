@@ -138,6 +138,7 @@ const EXTRA_ERRORS: Record<string, string[]> = {
   "tasks.liveLog": ["404 not_found"],
   "tasks.wait": ["404 not_found"],
   "tasks.skip": ["404 not_found"],
+  "tasks.diff": ["404 not_found", "404 branch_not_found"],
   "auth.clients.create": ["403 forbidden_trust"],
   "auth.clients.revoke": ["404 not_found"],
   "auth.clients.rotate": ["404 not_found"],

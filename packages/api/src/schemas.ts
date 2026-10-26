@@ -220,3 +220,44 @@ export const BudgetStatusSchema = z.object({
 });
 
 export { PlanSchema, ProjectSchema, TokenUsageSchema };
+
+const RefShaSchema = z.object({ ref: z.string(), sha: z.string() });
+
+/** What a task changed: its branch against its base, plus a live worktree's uncommitted changes. */
+export const TaskDiffSchema = z.object({
+  base: RefShaSchema.meta({ description: "The comparison base: the recorded start commit." }),
+  head: RefShaSchema.meta({ description: "The task branch boof-runner/<id> and its head commit." }),
+  files: z.array(
+    z.object({
+      path: z.string(),
+      oldPath: z.string().optional().meta({ description: "Previous path of a renamed file." }),
+      status: z.enum(["added", "modified", "deleted", "renamed", "binary"]),
+      additions: z.number().int(),
+      deletions: z.number().int(),
+    }),
+  ),
+  stats: z.object({
+    files: z.number().int(),
+    additions: z.number().int(),
+    deletions: z.number().int(),
+  }),
+  patch: z.string().optional().meta({
+    description:
+      "Unified diff. Present when `path` is given (that file only) or the whole diff is within maxBytes.",
+  }),
+  truncated: z.boolean().meta({
+    description:
+      "True when the patch was left out (whole diff over maxBytes) or cut at maxBytes (one file).",
+  }),
+  commits: z
+    .array(z.object({ sha: z.string(), subject: z.string(), author: z.string(), date: z.string() }))
+    .meta({ description: "Commits on the branch since the base, newest first (at most 200)." }),
+  includesUncommitted: z.boolean().optional().meta({
+    description:
+      "True when the task's live worktree has uncommitted or untracked changes and they are part of files and patch.",
+  }),
+  leftovers: RefShaSchema.optional().meta({
+    description:
+      "The <branch>--leftovers side branch holding uncommitted work saved at the end of a run, when it exists.",
+  }),
+});

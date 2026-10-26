@@ -108,6 +108,7 @@
                   "project_root_not_allowed",
                   "not_found",
                   "project_not_found",
+                  "branch_not_found",
                   "plan_not_found",
                   "goal_not_found",
                   "conflict",
@@ -7552,6 +7553,267 @@
         "x-boof-scope": "tasks:read"
       }
     },
+    "/projects/{projectId}/tasks/{taskId}/diff": {
+      "get": {
+        "description": "Shows what a task's branch boof-runner/<id> changed against its base: commits, changed files with +/- counts and a unified diff. A running task or a kept worktree adds its uncommitted changes (includesUncommitted). Inputs: projectId, taskId, optional path (one repo-relative file, returns only its patch), context lines, maxBytes (default 400000; a bigger whole diff returns files without a patch and truncated=true). 404 branch_not_found when the branch is gone. Read-only.",
+        "operationId": "tasks.diff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "description": "Task id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "description": "Repo-relative file path (no '..'); returns that file's patch only.",
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "context",
+            "required": false,
+            "schema": {
+              "description": "Context lines around each change, default 3.",
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "maxBytes",
+            "required": false,
+            "schema": {
+              "description": "Largest patch to return, default 400000.",
+              "maximum": 5000000,
+              "minimum": 1000,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "base": {
+                      "additionalProperties": false,
+                      "description": "The comparison base: the recorded start commit.",
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        },
+                        "sha": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ref",
+                        "sha"
+                      ],
+                      "type": "object"
+                    },
+                    "commits": {
+                      "description": "Commits on the branch since the base, newest first (at most 200).",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "author": {
+                            "type": "string"
+                          },
+                          "date": {
+                            "type": "string"
+                          },
+                          "sha": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "subject",
+                          "author",
+                          "date"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "files": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "additions": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "deletions": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "oldPath": {
+                            "description": "Previous path of a renamed file.",
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "added",
+                              "modified",
+                              "deleted",
+                              "renamed",
+                              "binary"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "status",
+                          "additions",
+                          "deletions"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "head": {
+                      "additionalProperties": false,
+                      "description": "The task branch boof-runner/<id> and its head commit.",
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        },
+                        "sha": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ref",
+                        "sha"
+                      ],
+                      "type": "object"
+                    },
+                    "includesUncommitted": {
+                      "description": "True when the task's live worktree has uncommitted or untracked changes and they are part of files and patch.",
+                      "type": "boolean"
+                    },
+                    "leftovers": {
+                      "additionalProperties": false,
+                      "description": "The <branch>--leftovers side branch holding uncommitted work saved at the end of a run, when it exists.",
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        },
+                        "sha": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ref",
+                        "sha"
+                      ],
+                      "type": "object"
+                    },
+                    "patch": {
+                      "description": "Unified diff. Present when `path` is given (that file only) or the whole diff is within maxBytes.",
+                      "type": "string"
+                    },
+                    "stats": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "additions": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "deletions": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "files": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "files",
+                        "additions",
+                        "deletions"
+                      ],
+                      "type": "object"
+                    },
+                    "truncated": {
+                      "description": "True when the patch was left out (whole diff over maxBytes) or cut at maxBytes (one file).",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "base",
+                    "head",
+                    "files",
+                    "stats",
+                    "truncated",
+                    "commits"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get what a task changed",
+        "tags": [
+          "tasks"
+        ],
+        "x-boof-scope": "tasks:read",
+        "x-mcp-tool": "boof_get_task_diff"
+      }
+    },
     "/projects/{projectId}/tasks/{taskId}/inject": {
       "post": {
         "description": "Adds an instruction to a running task, picked up at the next step. Inputs: projectId, taskId, prompt. Appends to the task's injection file.",
@@ -9650,6 +9912,10 @@
     }
   ],
   "x-error-codes": {
+    "branch_not_found": {
+      "description": "The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).",
+      "status": 404
+    },
     "conflict": {
       "description": "The change conflicts with the current state.",
       "status": 409

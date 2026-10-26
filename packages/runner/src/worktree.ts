@@ -94,7 +94,10 @@ async function canonical(p: string): Promise<string> {
 }
 
 /** Branch checked out in the registered worktree at `path`, or null if none. */
-async function registeredWorktreeBranch(workingDir: string, path: string): Promise<string | null> {
+export async function registeredWorktreeBranch(
+  workingDir: string,
+  path: string,
+): Promise<string | null> {
   const list = await git(workingDir, ["worktree", "list", "--porcelain"]);
   if (list.code !== 0) return null;
   const target = await canonical(path);

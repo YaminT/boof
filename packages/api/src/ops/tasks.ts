@@ -11,7 +11,7 @@ import {
   SkipBody,
   UpdateTaskBody,
 } from "../validation.js";
-import { OkSchema, TaskCreateResultSchema, TaskViewSchema } from "../schemas.js";
+import { OkSchema, TaskCreateResultSchema, TaskDiffSchema, TaskViewSchema } from "../schemas.js";
 import {
   DESTRUCTIVE,
   IDEMPOTENT_WRITE,
@@ -145,6 +145,37 @@ export const tasksGet = defineOp({
     const t = await svc.get(input.taskId);
     if (!t) throw new OpError(404, "Task not found");
     return taskView(ctx, svc.projectId, t, input.include === "log");
+  },
+});
+
+export const tasksDiff = defineOp({
+  name: "tasks.diff",
+  title: "Get what a task changed",
+  description:
+    "Shows what a task's branch boof-runner/<id> changed against its base: commits, changed files with +/- counts and a unified diff. A running task or a kept worktree adds its uncommitted changes (includesUncommitted). Inputs: projectId, taskId, optional path (one repo-relative file, returns only its patch), context lines, maxBytes (default 400000; a bigger whole diff returns files without a patch and truncated=true). 404 branch_not_found when the branch is gone. Read-only.",
+  scope: "tasks:read",
+  projectScoped: true,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    taskId: taskIdParam,
+    path: z.string().min(1).max(1000).optional().meta({
+      description: "Repo-relative file path (no '..'); returns that file's patch only.",
+    }),
+    context: z.number().int().min(0).max(100).optional().meta({
+      description: "Context lines around each change, default 3.",
+    }),
+    maxBytes: z.number().int().min(1000).max(5_000_000).optional().meta({
+      description: "Largest patch to return, default 400000.",
+    }),
+  }),
+  output: TaskDiffSchema,
+  rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}/diff" },
+  mcp: { expose: true, name: "boof_get_task_diff", annotations: READ },
+  summary: (d) =>
+    `${d.head.ref}: ${d.stats.files} file(s), +${d.stats.additions} -${d.stats.deletions}, ${d.commits.length} commit(s)${d.truncated ? " (patch truncated)" : ""}`,
+  handler: async (ctx, { projectId, taskId, ...opts }) => {
+    const svc = await requireProject(ctx, projectId);
+    return svc.taskDiff(taskId, opts);
   },
 });
 
@@ -579,6 +610,7 @@ export const attachmentsGet = defineOp({
 export const taskOps = [
   tasksList,
   tasksGet,
+  tasksDiff,
   tasksCreate,
   tasksUpdate,
   tasksQueue,

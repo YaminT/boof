@@ -34,6 +34,9 @@ import {
   type TaskOrigin,
   type Settings,
   type SettingsPatch,
+  effectiveSettings,
+  resolveWorktreeRoot,
+  worktreeSettings,
   type Status,
   type Task,
   taskReviewInfo,
@@ -44,6 +47,10 @@ import { statusDowngraded, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
   isGitRepo,
+  taskDiff,
+  BranchNotFoundError,
+  InvalidDiffPathError,
+  type TaskDiff,
   sumUsage,
   ToolRegistry,
   UNKNOWN_USAGE,
@@ -322,6 +329,44 @@ export class ProjectService {
     const path = join(workingAreaDir(this.root, id), "log.txt");
     const log = await readFile(path, "utf8").catch(() => task.body.log);
     return { log, running };
+  }
+
+  /**
+   * What the task's branch changed against its base (read-only). A live worktree's uncommitted
+   * changes are included. 404 `branch_not_found` when `boof-runner/<id>` does not exist.
+   */
+  async taskDiff(
+    id: string,
+    opts: { path?: string; context?: number; maxBytes?: number } = {},
+  ): Promise<TaskDiff> {
+    const task = await this.tasks.get(id);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
+    const project = await this.parent.getProject(this.projectId);
+    if (!project.workingDirectory) {
+      throw new OpError(404, "Project has no working directory", "branch_not_found");
+    }
+    const info = taskReviewInfo(task);
+    const settings = effectiveSettings(await this.parent.loadSettings(), project);
+    const worktreeRoot = resolveWorktreeRoot(worktreeSettings(settings), project.workingDirectory);
+    try {
+      return await taskDiff({
+        workingDir: project.workingDirectory,
+        taskId: id,
+        baseSha: info.baseSha,
+        baseRef: info.baseRef,
+        worktreePath: join(worktreeRoot, id),
+        ...opts,
+      });
+    } catch (err) {
+      if (err instanceof BranchNotFoundError)
+        throw new OpError(404, err.message, "branch_not_found");
+      if (err instanceof InvalidDiffPathError) {
+        throw new OpError(400, err.message, "invalid_input", [
+          { path: "path", message: err.message },
+        ]);
+      }
+      throw err;
+    }
   }
 
   async stopTask(id: string): Promise<{ ok: true }> {

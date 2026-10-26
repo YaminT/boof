@@ -25,6 +25,10 @@ export const ERROR_CODES = {
   project_root_not_allowed: [403, "The directory is outside security.allowedProjectRoots."],
   not_found: [404, "The task, command, client or webhook does not exist."],
   project_not_found: [404, "The project does not exist."],
+  branch_not_found: [
+    404,
+    "The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).",
+  ],
   plan_not_found: [404, "The plan does not exist."],
   goal_not_found: [404, "The goal does not exist in the plan."],
   conflict: [409, "The change conflicts with the current state."],
