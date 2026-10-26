@@ -4,6 +4,8 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   appendEvent,
   AttachmentStore,
+  evaluateBudget,
+  type BudgetStatus,
   assertKebabId,
   CommandStore,
   injectCommand,
@@ -618,6 +620,15 @@ export class TaskService {
     const usages: TokenUsage[] = [];
     for (const p of all) if (allowed(p.id)) usages.push(await this.forProject(p.id).loadUsage());
     return usages.length ? sumUsage(usages) : { ...UNKNOWN_USAGE };
+  }
+
+  /**
+   * Today's budget figures for the projects `allowed` accepts (archived ones excluded). Scopes of
+   * other projects are left out; the global and tool scopes are always included.
+   */
+  async budgetStatus(allowed: (projectId: string) => boolean = () => true): Promise<BudgetStatus> {
+    const projects = (await this.projects.list()).filter((p) => allowed(p.id));
+    return evaluateBudget(this.root, await this.settingsStore.load(), projects);
   }
 
   /** Tasks parked in `action` across the projects `allowed` accepts (non-archived projects). */

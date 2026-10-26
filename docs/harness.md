@@ -179,7 +179,7 @@ Then check the runner:
 curl -sS -H "Authorization: Bearer $BOOF_KEY" "$BOOF_URL/api/v1/runner/status"
 ```
 
-The answer is `{ "enabled": true, "concurrency": 1, "projects": [...] }`. It needs the scope `settings:read`. MCP: `boof_runner_status`.
+The answer is `{ "enabled": true, "concurrency": 1, "budgetExceeded": [], "projects": [...] }`. It needs the scope `settings:read`. MCP: `boof_runner_status`. A non-empty `budgetExceeded` means a spending limit stops work (section 4, "Budget limits").
 
 - `enabled: true`: the runner picks up queued tasks.
 - `enabled: false`: no task will run, and every wait in this guide ends in a timeout. Tell the user. Turn the runner on (`PUT /api/v1/runner` with `{"enabled":true}`, MCP `boof_set_runner`) only if the user asked for it and you have the scopes `runner:control` and `settings:write`.
@@ -494,10 +494,33 @@ When a task is in `action`:
 3. Ask the user the questions. Do not invent answers.
 4. Send the answers as one text (section 8, recipe 5). The task goes to `pending` and continues. A `review` client cannot do this step (`403 forbidden_trust`): ask the user to answer in the web UI (Actions tab).
 
+### Budget limits
+
+The user can set spending limits in `settings.budget` (and per project in `project.budget`). Every limit is optional. No limit means no stop. The limits are in USD:
+
+- `perTaskUsd`: the cost of one run of one task.
+- `perDayUsd`: all work in one day. `perProjectDayUsd`: one project in one day. `perToolDayUsd`: one tool (for example `{"codex": 5}`) in one day.
+- A day is a calendar day in `budget.timezone` (default: the server's time zone). The limits reset at midnight in that zone.
+- A limit is spent when the cost reaches it (cost >= limit).
+
+What the runner does:
+
+- Before it starts a task, it skips a project whose day limit is spent, and a task that uses a tool whose day limit is spent. If the global day limit is spent, it starts nothing. Those tasks stay `pending` and start again after the reset. `GET /api/v1/runner/status` lists the spent limits in `budgetExceeded`.
+- A step that runs is never stopped for budget. The runner checks only between steps, so a step can go over a limit. If a limit is spent, the next step does not start and the task becomes `failed`. The log has the line `ERROR: budget exceeded: <scope> <spent>/<limit> USD` (`<scope>` is `task:<id>`, `global`, `project:<id>`, `tool:<tool>` or `project:<id>/tool:<tool>`). The cost of the last step of a task that has no next step is recorded, but it does not fail the task.
+- `onExceed` is `pause` (default) or `fail`. In both cases the task fails with the reason above. With `pause` the worktree and branch are always kept, so a retry continues the work. With `fail` the setting `worktree.onFailure` decides.
+- The cost of a step with unknown usage counts as 0. `GET /api/v1/usage/budget` shows `unknownSteps` for today. A tool that reports no cost is not covered by the limits. Tell the user if `unknownSteps` is not 0.
+- The runner writes the event `runner.budget_exceeded` once per day and scope.
+
+What you do when a budget stops work:
+
+1. Read `GET /api/v1/usage/budget` (scope `settings:read` or `tasks:read`). It shows the limits, today's spend and remaining amount per scope, which scopes are `exceeded`, and `resetsAt`.
+2. Tell the user which scope is spent, the spent amount and the limit, and when it resets. Do not change the limits, and do not retry the failed task, unless the user asks.
+3. A `pending` task that waits for budget needs no action. It starts after `resetsAt`. A task that failed with `budget exceeded` needs a retry (recipe 7) after the reset or after the user raises the limit. A `perTaskUsd` failure fails again unless the user raises the limit or you split the work.
+
 ### Runs and the runner
 
 - The runner is a background loop in the server process. `runner.enabled` is `false` in a fresh data root. Tasks wait in `pending` until the runner is on.
-- `GET /api/v1/runner/status` (MCP `boof_runner_status`) shows `enabled`, `concurrency`, and per project `paused`, `running` task ids and counts per status.
+- `GET /api/v1/runner/status` (MCP `boof_runner_status`) shows `enabled`, `concurrency`, `budgetExceeded` (spent budgets), and per project `paused`, `running` task ids and counts per status.
 - Turn the runner on only when the user asks (`PUT /api/v1/runner`, MCP `boof_set_runner`).
 
 ## 5. Conventions
@@ -601,7 +624,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 64 operations. Every path below starts with `/api/v1`.
+There are 65 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -612,6 +635,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 #### `Project`
 
 - `archived`: `boolean`, required; default `false`
+- `budget`: `{ onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }`, optional
 - `created`: `ISO-8601 string`, required
 - `defaultBase`: `string`, optional
 - `id`: `kebab-id`, required
@@ -798,7 +822,7 @@ Path parameters (all required):
 - Scope: `projects:read`
 - MCP tool: `boof_list_projects`
 - What it does: Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.
-- Success: HTTP 200 with `{ projects: { archived: boolean, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planWriteBack: boolean, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
+- Success: HTTP 200 with `{ projects: { archived: boolean, budget?: object, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planWriteBack: boolean, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 Query parameters:
@@ -817,6 +841,7 @@ Query parameters:
 
 JSON body (unknown keys are rejected):
 
+- `budget`: `{ onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }`, optional
 - `defaultBase`: `string`, optional; max length 200
 - `id`: `kebab-id`, optional
 - `labels`: `string[]`, optional; max 50 item(s)
@@ -834,7 +859,7 @@ JSON body (unknown keys are rejected):
 - Scope: `projects:read`
 - MCP tool: `boof_get_project`
 - What it does: Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.
-- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`.
+- Success: HTTP 200 with `{ archived: boolean, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -857,6 +882,7 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `archived`: `boolean`, optional
+- `budget`: `{ onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } } | null`, optional
 - `defaultBase`: `string | null`, optional
 - `labels`: `string[]`, optional; max 50 item(s)
 - `name`: `string`, optional; max length 200
@@ -1562,12 +1588,13 @@ Path parameters (all required):
 - Operation: `settings.update`
 - Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, models). Rewrites settings.json.
+- What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json.
 - Success: HTTP 200 with `Settings`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 JSON body (unknown keys are rejected):
 
+- `budget`: `{ onExceed?: "pause" | "fail", perDayUsd?: number, perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number }, timezone?: string }`, optional
 - `defaultProject`: `kebab-id | null`, optional
 - `models`: `{ [key: string]: string[] }`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }`, optional
@@ -1616,6 +1643,15 @@ JSON body (unknown keys are rejected):
 - Success: HTTP 200 with `TokenUsage`.
 - Errors: `403 forbidden_scope`
 
+#### `GET /api/v1/usage/budget` (Budget status)
+
+- Operation: `usage.budget`
+- Scope: any one of `settings:read`, `tasks:read`
+- MCP tool: none (REST only)
+- What it does: Returns the configured budget limits, today's spend per scope (global, per project, per tool), what remains, which budgets are spent and when they reset. Steps with unknown cost count as 0 (see unknownSteps). No input. No side effects.
+- Success: HTTP 200 with `{ date: string, exceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], limits: { onExceed: "pause" | "fail", perDayUsd?: number, perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number }, timezone?: string }, projects: { id: string, onExceed: "pause" | "fail", perTaskUsd: number | null }[], resetsAt: string, scopes: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], timezone: string, unknownSteps: integer }`.
+- Errors: `403 forbidden_scope`
+
 ### Runner
 
 #### `GET /api/v1/runner` (Runner status)
@@ -1624,7 +1660,7 @@ JSON body (unknown keys are rejected):
 - Scope: `settings:read`
 - MCP tool: none (REST only)
 - What it does: Returns whether the runner is enabled and its concurrency. No input. No side effects.
-- Success: HTTP 200 with `{ concurrency: integer, enabled: boolean }`.
+- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/runner/status` (Runner and queue status)
@@ -1633,7 +1669,7 @@ JSON body (unknown keys are rejected):
 - Scope: `settings:read`
 - MCP tool: `boof_runner_status`
 - What it does: Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.
-- Success: HTTP 200 with `{ concurrency: integer, enabled: boolean, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
+- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
 - Errors: `403 forbidden_scope`
 
 #### `PUT /api/v1/runner` (Start or pause the runner)
@@ -1888,7 +1924,7 @@ curl -sS -N -H "Authorization: Bearer $BOOF_KEY" \
   "$BOOF_URL/api/v1/events?project=shop&since=start"
 ```
 
-- Each event has `event: <type>`, `id: <cursor>` and `data: <json>`. Types: `task.created`, `task.status`, `task.questions`, `plan.updated`, `plan.synced`, `runner.enabled`. A `task.status` event has `project`, `task`, `from`, `to`, `by`.
+- Each event has `event: <type>`, `id: <cursor>` and `data: <json>`. Types: `task.created`, `task.status`, `task.questions`, `plan.updated`, `plan.synced`, `runner.enabled`, `runner.budget_exceeded`. A `task.status` event has `project`, `task`, `from`, `to`, `by`.
 - Without `since` you get only new events. `since=start` replays all. `since=<cursor>` or the header `Last-Event-ID: <cursor>` replays what follows that event.
 - Keep the last `id`. On disconnect reconnect with it.
 - `event: ready` opens the stream. `event: changed` is a hint without id. Ignore hints, or re-read the task after one.
@@ -1904,6 +1940,7 @@ Stop conditions. Stop waiting for a task when its status is:
 - `archived`: someone archived it.
 - `draft` for more than a few minutes: the task waits for human approval. Tell the user and stop waiting.
 - `pending` while `runner.enabled` is `false`: the runner is off. Tell the user.
+- `pending` while `budgetExceeded` in `GET /api/v1/runner/status` is not empty: a budget is spent. Tell the user which one and the `resetsAt` time (section 4, "Budget limits").
 
 Also set an upper limit. A task can take from minutes to hours. If a task is still `running` after the time the user accepts (ask once; suggest 60 minutes), report the status and ask whether to continue.
 
@@ -2212,7 +2249,8 @@ POST /api/v1/projects/{p}/tasks                       ad-hoc task (status "pendi
 POST /api/v1/projects/{p}/tasks/{t}/queue             draft -> pending (trusted only)
 GET  /api/v1/projects/{p}/tasks/{t}/wait              long poll, max 60 s; returns at once if done/failed/action
 GET  /api/v1/projects/{p}/plans/{pl}/wait?sinceVersion=n   plan long poll: complete / stuck / changed
-GET  /api/v1/runner/status                            enabled? (scope settings:read)
+GET  /api/v1/runner/status                            enabled? budgetExceeded? (scope settings:read)
+GET  /api/v1/usage/budget                             limits, today's spend, resetsAt (settings:read or tasks:read)
 GET  /api/v1/events?project={p}&since=start           SSE, resume with Last-Event-ID
 GET  /api/v1/actions                                  tasks with questions
 POST /api/v1/projects/{p}/tasks/{t}/answers           {"answers":"..."}
@@ -2228,22 +2266,24 @@ Docs: GET $BOOF_URL/harness.txt (no key), GET $BOOF_URL/api/v1/openapi.json (key
 
 ## 11. If something goes wrong
 
-| Symptom                                  | Likely cause                                                           | Fix                                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `401 unauthenticated`                    | Wrong, expired or revoked key; header typo.                            | Check `Authorization: Bearer <key>`. Ask the user for a new key.                              |
-| `421 host_not_allowed`                   | Host name not in `security.allowedHosts`.                              | Ask the user to add it in `settings.json`.                                                    |
-| `403 forbidden_scope`                    | The key lacks a scope.                                                 | Read `details.scope`. Ask the user for a key with that scope.                                 |
-| `403 forbidden_trust`                    | `review` trust.                                                        | Ask the user to approve in the web UI, or to issue a `trusted` key.                           |
-| `403 project_root_not_allowed`           | Directory outside `allowedProjectRoots`.                               | Ask the user to add the root in `settings.json`, or to register the project locally.          |
-| `409 plan_not_active`                    | Plan is `draft`.                                                       | Set `status` to `active` (or ask the user to).                                                |
-| `409 plan_version_conflict`              | Someone changed the plan.                                              | Read the plan again and re-apply.                                                             |
-| Tasks stay `pending`                     | Runner is off, project is paused, or another task of the project runs. | Check `GET /runner/status`. Ask the user to turn the runner on or resume the project.         |
-| `plans.wait` says `stuck`                | A task failed or asks questions, or no task can run.                   | Read `stuckReasons` and follow recipe 10, step 4.                                             |
-| Tasks stay `draft`                       | Ad-hoc tasks of a `review` client, or a plan without human approval.   | Ask the user: Plans tab, Approve (plan tasks); Tasks tab, "Proposed by clients" (ad-hoc).     |
-| A plan stays `draft` after create        | `review` trust (see `warnings`).                                       | Ask the user to click Approve in the Plans tab.                                               |
-| Task `failed` at once                    | The agent tool is missing or not logged in, or a bad `base` ref.       | Read the log (`ERROR:` line). Check `GET /api/v1/health`. Tell the user.                      |
-| Task `failed` with `review not approved` | The reviewer or observer did not approve.                              | Read the reports. Report the findings. Ask the user whether to retry or to change the prompt. |
-| `GET /mcp` answers `405`                 | The endpoint is stateless.                                             | Use `POST`.                                                                                   |
-| `/mcp` answers `404 MCP is disabled`     | `settings.mcp.enabled` is `false`.                                     | Use REST, or ask the user to enable MCP.                                                      |
-| SSE stream ends                          | Network or proxy timeout.                                              | Reconnect with the last `id` as `Last-Event-ID`.                                              |
-| A tool answers `unknown tool`            | The tool is REST only, or your scopes hide it.                         | Use the REST operation from section 7. Check `whoami`.                                        |
+| Symptom                                    | Likely cause                                                           | Fix                                                                                            |
+| ------------------------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `401 unauthenticated`                      | Wrong, expired or revoked key; header typo.                            | Check `Authorization: Bearer <key>`. Ask the user for a new key.                               |
+| `421 host_not_allowed`                     | Host name not in `security.allowedHosts`.                              | Ask the user to add it in `settings.json`.                                                     |
+| `403 forbidden_scope`                      | The key lacks a scope.                                                 | Read `details.scope`. Ask the user for a key with that scope.                                  |
+| `403 forbidden_trust`                      | `review` trust.                                                        | Ask the user to approve in the web UI, or to issue a `trusted` key.                            |
+| `403 project_root_not_allowed`             | Directory outside `allowedProjectRoots`.                               | Ask the user to add the root in `settings.json`, or to register the project locally.           |
+| `409 plan_not_active`                      | Plan is `draft`.                                                       | Set `status` to `active` (or ask the user to).                                                 |
+| `409 plan_version_conflict`                | Someone changed the plan.                                              | Read the plan again and re-apply.                                                              |
+| Tasks stay `pending`                       | Runner is off, project is paused, or another task of the project runs. | Check `GET /runner/status`. Ask the user to turn the runner on or resume the project.          |
+| `plans.wait` says `stuck`                  | A task failed or asks questions, or no task can run.                   | Read `stuckReasons` and follow recipe 10, step 4.                                              |
+| Tasks stay `draft`                         | Ad-hoc tasks of a `review` client, or a plan without human approval.   | Ask the user: Plans tab, Approve (plan tasks); Tasks tab, "Proposed by clients" (ad-hoc).      |
+| A plan stays `draft` after create          | `review` trust (see `warnings`).                                       | Ask the user to click Approve in the Plans tab.                                                |
+| Task `failed` at once                      | The agent tool is missing or not logged in, or a bad `base` ref.       | Read the log (`ERROR:` line). Check `GET /api/v1/health`. Tell the user.                       |
+| Tasks stay `pending`, `budgetExceeded` set | A day budget is spent.                                                 | Read `GET /api/v1/usage/budget`. Tell the user the scope, the amounts and `resetsAt`.          |
+| Task `failed` with `budget exceeded`       | A task or day budget was spent between two steps.                      | Read the log line. Tell the user. Retry after the reset or a higher limit, if the user agrees. |
+| Task `failed` with `review not approved`   | The reviewer or observer did not approve.                              | Read the reports. Report the findings. Ask the user whether to retry or to change the prompt.  |
+| `GET /mcp` answers `405`                   | The endpoint is stateless.                                             | Use `POST`.                                                                                    |
+| `/mcp` answers `404 MCP is disabled`       | `settings.mcp.enabled` is `false`.                                     | Use REST, or ask the user to enable MCP.                                                       |
+| SSE stream ends                            | Network or proxy timeout.                                              | Reconnect with the last `id` as `Last-Event-ID`.                                               |
+| A tool answers `unknown tool`              | The tool is REST only, or your scopes hide it.                         | Use the REST operation from section 7. Check `whoami`.                                         |

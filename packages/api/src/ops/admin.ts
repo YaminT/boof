@@ -15,6 +15,8 @@ import {
   HealthResultSchema,
   ModelDetailsSchema,
   PublicClientSchema,
+  BudgetExceededListSchema,
+  BudgetStatusSchema,
   PublicSettingsSchema,
   TaskViewSchema,
 } from "../schemas.js";
@@ -53,7 +55,7 @@ export const settingsUpdate = defineOp({
   name: "settings.update",
   title: "Update settings",
   description:
-    "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, models). Rewrites settings.json.",
+    "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json.",
   scope: "settings:write",
   projectScoped: false,
   input: SettingsPatchSchema,
@@ -144,6 +146,24 @@ export const usageGlobal = defineOp({
   handler: (ctx) => ctx.services.totalUsage((pid) => authorizeProject(ctx.principal, pid)),
 });
 
+export const usageBudget = defineOp({
+  name: "usage.budget",
+  title: "Budget status",
+  description:
+    "Returns the configured budget limits, today's spend per scope (global, per project, per tool), what remains, which budgets are spent and when they reset. Steps with unknown cost count as 0 (see unknownSteps). No input. No side effects.",
+  scope: ["settings:read", "tasks:read"],
+  projectScoped: false,
+  input: z.strictObject({}),
+  output: BudgetStatusSchema,
+  rest: { method: "GET", path: "/usage/budget" },
+  mcp: { expose: false, name: "boof_get_budget", annotations: READ },
+  summary: (b) =>
+    b.exceeded.length > 0
+      ? `Budget spent: ${b.exceeded.map((e) => e.scope).join(", ")}; resets ${b.resetsAt}`
+      : `Within budget on ${b.date} (${b.timezone})`,
+  handler: (ctx) => ctx.services.budgetStatus((pid) => authorizeProject(ctx.principal, pid)),
+});
+
 export const runnerStatus = defineOp({
   name: "runner.status",
   title: "Runner status",
@@ -152,13 +172,23 @@ export const runnerStatus = defineOp({
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({}),
-  output: z.object({ enabled: z.boolean(), concurrency: z.number().int() }),
+  output: z.object({
+    enabled: z.boolean(),
+    concurrency: z.number().int(),
+    /** Day budgets that are spent today: the runner does not start work in these scopes. */
+    budgetExceeded: BudgetExceededListSchema,
+  }),
   rest: { method: "GET", path: "/runner" },
   mcp: { expose: false, name: "boof_get_runner", annotations: READ },
   summary: (r) => `Runner ${r.enabled ? "enabled" : "disabled"} (concurrency ${r.concurrency})`,
   handler: async (ctx) => {
     const { runner } = await ctx.services.loadSettings();
-    return { enabled: runner.enabled, concurrency: runner.concurrency };
+    const budget = await ctx.services.budgetStatus((pid) => authorizeProject(ctx.principal, pid));
+    return {
+      enabled: runner.enabled,
+      concurrency: runner.concurrency,
+      budgetExceeded: budget.exceeded,
+    };
   },
 });
 
@@ -173,6 +203,8 @@ export const runnerOverview = defineOp({
   output: z.object({
     enabled: z.boolean(),
     concurrency: z.number().int(),
+    /** Day budgets that are spent today: the runner does not start work in these scopes. */
+    budgetExceeded: BudgetExceededListSchema,
     projects: z.array(
       z.object({
         id: z.string(),
@@ -185,7 +217,11 @@ export const runnerOverview = defineOp({
   rest: { method: "GET", path: "/runner/status" },
   mcp: { expose: true, name: "boof_runner_status", annotations: READ },
   summary: (r) =>
-    `Runner ${r.enabled ? "enabled" : "disabled"}; ` +
+    `Runner ${r.enabled ? "enabled" : "disabled"}` +
+    (r.budgetExceeded.length > 0
+      ? ` (budget spent: ${r.budgetExceeded.map((b) => b.scope).join(", ")})`
+      : "") +
+    "; " +
     (r.projects
       .map((p) => `${p.id}${p.paused ? " (paused)" : ""}: ${p.running.length} running`)
       .join(", ") || "no projects"),
@@ -206,7 +242,13 @@ export const runnerOverview = defineOp({
         counts,
       });
     }
-    return { enabled: runner.enabled, concurrency: runner.concurrency, projects };
+    const budget = await ctx.services.budgetStatus((pid) => authorizeProject(ctx.principal, pid));
+    return {
+      enabled: runner.enabled,
+      concurrency: runner.concurrency,
+      budgetExceeded: budget.exceeded,
+      projects,
+    };
   },
 });
 
@@ -419,6 +461,7 @@ export const adminOps = [
   settingsModels,
   settingsModelDetails,
   usageGlobal,
+  usageBudget,
   runnerStatus,
   runnerOverview,
   runnerSetEnabled,

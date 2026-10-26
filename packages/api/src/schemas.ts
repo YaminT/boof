@@ -4,6 +4,7 @@ import {
   ClientSchema,
   PlanSchema,
   ProjectSchema,
+  BudgetSettingsSchema,
   SettingsSchema,
   TaskFrontmatterSchema,
   TokenUsageSchema,
@@ -188,6 +189,34 @@ export const CommandTemplateSchema = z.object({
   id: z.string(),
   name: z.string(),
   body: z.string(),
+});
+
+export const BudgetScopeSchema = z.object({
+  scope: z.string(),
+  spentUsd: z.number(),
+  limitUsd: z.number().nullable(),
+  remainingUsd: z.number().nullable(),
+  exceeded: z.boolean(),
+});
+
+/** Spent-out budgets as `runner.status` and `runner.overview` list them. */
+export const BudgetExceededListSchema = z.array(BudgetScopeSchema);
+
+export const BudgetStatusSchema = z.object({
+  date: z.string(),
+  timezone: z.string(),
+  resetsAt: z.string(),
+  limits: BudgetSettingsSchema,
+  unknownSteps: z.number().int(),
+  scopes: z.array(BudgetScopeSchema),
+  exceeded: z.array(BudgetScopeSchema),
+  projects: z.array(
+    z.object({
+      id: z.string(),
+      perTaskUsd: z.number().nullable(),
+      onExceed: z.enum(["pause", "fail"]),
+    }),
+  ),
 });
 
 export { PlanSchema, ProjectSchema, TokenUsageSchema };
