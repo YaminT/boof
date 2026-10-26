@@ -31,6 +31,14 @@ export interface RunOptions {
   idleTimeoutMs?: number;
   /** File whose presence requests cancellation of the running tool process. */
   stopSignalPath?: string;
+  /** File whose presence interrupts the tool process so the step can be rerun with new instructions. */
+  steerSignalPath?: string;
+  /**
+   * Continue the tool's earlier session (its id from `RunResult.sessionId` or
+   * `ToolRunError.sessionId`); `prompt` is then only the new message. Used when a step is
+   * steered. Ignored by tools without `supportsResume`.
+   */
+  resumeSessionId?: string;
 }
 
 export interface RunResult {
@@ -42,6 +50,8 @@ export interface RunResult {
   questions?: string[];
   /** Best-effort token usage parsed from the output. */
   usage?: TokenUsage;
+  /** The tool's session id when its output carries one (resume support). */
+  sessionId?: string;
 }
 
 /**
@@ -54,5 +64,7 @@ export interface Tool {
   defaultModels: string[];
   detect(): Promise<HealthResult>;
   listModels(): Promise<string[]>;
+  /** True when `run` honours `resumeSessionId`; otherwise a steered step restarts. */
+  readonly supportsResume?: boolean;
   run(opts: RunOptions): Promise<RunResult>;
 }

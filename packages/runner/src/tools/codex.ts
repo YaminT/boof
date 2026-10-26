@@ -75,9 +75,18 @@ export class CodexTool implements Tool {
     }
   }
 
-  async run(opts: RunOptions): Promise<RunResult> {
+  readonly supportsResume = true;
+
+  /**
+   * Argument vector for `codex exec`, last entry the prompt. With `resumeSessionId` it is
+   * `codex exec resume <thread id> ...`, which takes the same flags and a message only (the
+   * resumed thread already holds the system prompt).
+   */
+  buildArgs(opts: RunOptions, lastMessageFile: string): string[] {
     // --json: stdout becomes a JSONL event stream (structured usage and messages).
-    const args = ["exec", "--json", "--model", opts.model];
+    const args = opts.resumeSessionId
+      ? ["exec", "resume", opts.resumeSessionId, "--json", "--model", opts.model]
+      : ["exec", "--json", "--model", opts.model];
     if (opts.autoApprove) {
       // Full auto-approval, no sandbox — the runner's equivalent of claude's
       // --dangerously-skip-permissions. Mutually exclusive with --full-auto
@@ -86,10 +95,15 @@ export class CodexTool implements Tool {
     }
     // Ask codex to write its final message to a file outside cwd: stdout also
     // carries progress and usage noise that would break verdict parsing.
+    args.push("-o", lastMessageFile);
+    args.push(opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`);
+    return args;
+  }
+
+  async run(opts: RunOptions): Promise<RunResult> {
     const dir = await mkdtemp(join(tmpdir(), "boof-codex-"));
     const last = join(dir, "last-message.txt");
-    args.push("-o", last);
-    args.push(`${opts.systemPrompt}\n\n${opts.prompt}`);
+    const args = this.buildArgs(opts, last);
 
     try {
       // Live view: JSON events become readable lines; anything else passes through.
@@ -98,13 +112,14 @@ export class CodexTool implements Tool {
         cwd: opts.cwd,
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
+        steerSignalPath: opts.steerSignalPath,
         idleTimeoutMs: opts.idleTimeoutMs,
         onData: opts.onChunk ? (c) => live.push(c) : undefined,
       });
       live.flush();
       const summary = summarizeCodexStream(res.stdout);
       const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${res.stderr}`;
-      if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
+      if (res.code !== 0 || res.timedOut || res.stopped || res.steered || res.stalled) {
         throw new ToolRunError(
           this.id,
           res.code,
@@ -114,6 +129,11 @@ export class CodexTool implements Tool {
           res.stderr,
           res.stalled,
           opts.idleTimeoutMs,
+          {
+            steered: res.steered,
+            sessionId: summary.sessionId,
+            usage: summary.usage ?? undefined,
+          },
         );
       }
       const message = await readFile(last, "utf8").catch(() => "");
@@ -121,7 +141,7 @@ export class CodexTool implements Tool {
       // Structured usage from turn.completed; fall back to scanning plain text
       // ("tokens used" on stderr) when no JSON events were emitted.
       const usage = summary.usage ?? parseUsage(res.stdout + res.stderr);
-      return { output, report, usage };
+      return { output, report, usage, sessionId: summary.sessionId };
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -194,8 +214,11 @@ export function summarizeCodexStream(stdout: string): {
   lastMessage: string;
   usage: TokenUsage | null;
   rendered: string;
+  /** `thread_id` of the `thread.started` event: what `codex exec resume` takes. */
+  sessionId?: string;
 } {
   const r = new JsonlRenderer(renderCodexEvent);
+  let sessionId: string | undefined;
   r.push(stdout);
   r.flush();
   let lastMessage = "";
@@ -205,7 +228,9 @@ export function summarizeCodexStream(stdout: string): {
   for (const line of stdout.split("\n")) {
     const ev = parseJsonLine(line);
     if (!ev) continue;
-    if (ev.type === "item.completed") {
+    if (ev.type === "thread.started" && str(ev.thread_id)) {
+      sessionId = sessionId ?? str(ev.thread_id);
+    } else if (ev.type === "item.completed") {
       const item = obj(ev.item);
       if (item.type === "agent_message" && str(item.text).trim()) lastMessage = str(item.text);
     } else if (ev.type === "turn.completed") {
@@ -221,5 +246,6 @@ export function summarizeCodexStream(stdout: string): {
     lastMessage: lastMessage.trim(),
     usage: seen ? { inputTokens: input, outputTokens: output, costUsd: 0, known: true } : null,
     rendered: r.text.trimEnd(),
+    sessionId,
   };
 }

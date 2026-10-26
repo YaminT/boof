@@ -1,3 +1,15 @@
+import type { TokenUsage } from "@boof-runner/shared";
+
+/** Optional details of a failed run that the pipeline uses to continue the step. */
+export interface ToolRunErrorExtra {
+  /** The step was interrupted by a steer request (not a stop): rerun it with the new prompt. */
+  steered?: boolean;
+  /** The tool session id seen in the output so far, to resume it. */
+  sessionId?: string;
+  /** Usage of the interrupted attempt, still recorded. */
+  usage?: TokenUsage;
+}
+
 /** A tool process failed: non-zero exit, timeout, user stop or a stalled stream. */
 export class ToolRunError extends Error {
   constructor(
@@ -10,18 +22,28 @@ export class ToolRunError extends Error {
     public readonly stalled = false,
     /** Idle limit (ms) that was exceeded when `stalled`. */
     idleMs = 0,
+    extra: ToolRunErrorExtra = {},
   ) {
     super(
-      stopped
-        ? `${toolId} stopped by user`
-        : timedOut
-          ? `${toolId} timed out`
-          : stalled
-            ? `${toolId} stalled: no output for ${+(idleMs / 60000).toFixed(1)} min`
-            : `${toolId} exited with code ${code ?? "null"}`,
+      extra.steered
+        ? `${toolId} interrupted to apply a new prompt`
+        : stopped
+          ? `${toolId} stopped by user`
+          : timedOut
+            ? `${toolId} timed out`
+            : stalled
+              ? `${toolId} stalled: no output for ${+(idleMs / 60000).toFixed(1)} min`
+              : `${toolId} exited with code ${code ?? "null"}`,
     );
     this.name = "ToolRunError";
+    this.steered = extra.steered === true;
+    this.sessionId = extra.sessionId;
+    this.usage = extra.usage;
   }
+
+  readonly steered: boolean;
+  readonly sessionId?: string;
+  readonly usage?: TokenUsage;
 }
 
 const TRANSIENT =
@@ -29,7 +51,7 @@ const TRANSIENT =
 
 /** First output line that looks like a transient API/network error, or null. */
 export function transientReason(err: unknown): string | null {
-  if (!(err instanceof ToolRunError) || err.stopped || err.timedOut) return null;
+  if (!(err instanceof ToolRunError) || err.stopped || err.steered || err.timedOut) return null;
   if (err.stalled) return err.message;
   for (const line of `${err.output}\n${err.stderr}`.split("\n")) {
     if (TRANSIENT.test(line)) return line.trim().slice(0, 200);

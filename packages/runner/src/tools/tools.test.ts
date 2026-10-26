@@ -634,3 +634,145 @@ describe("OpencodeTool", () => {
     expect(await failing.listModels()).toEqual(["opencode-go/kimi-k3"]);
   });
 });
+
+describe("session resume", () => {
+  const dirs: string[] = [];
+  const envKeys = ["BOOF_RUNNER_CLAUDE_BIN", "BOOF_RUNNER_CODEX_BIN", "BOOF_RUNNER_OPENCODE_BIN"];
+  const saved = new Map(envKeys.map((k) => [k, process.env[k]]));
+  afterEach(async () => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
+  });
+  /** A stand-in CLI that prints a fixture and records its argv next to itself. */
+  const fake = async (envKey: string, name: string, fixtureName: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-resume-test-"));
+    dirs.push(dir);
+    const bin = join(dir, name);
+    await writeFile(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/argv"\ncat "${fixture(fixtureName)}"\n`,
+    );
+    await chmod(bin, 0o755);
+    process.env[envKey] = bin;
+    return dir;
+  };
+  const opts = { ...baseOpts, role: "developer", model: "m" } as const;
+
+  it("claude-code captures session_id and resumes with --resume", async () => {
+    const dir = await fake("BOOF_RUNNER_CLAUDE_BIN", "claude", "claude-stream-json.jsonl");
+    const tool = new ClaudeCodeTool();
+    expect(tool.supportsResume).toBe(true);
+    const fresh = tool.buildArgs(opts);
+    expect(fresh).not.toContain("--resume");
+    const resumed = tool.buildArgs({ ...opts, resumeSessionId: "abc-123" });
+    expect(resumed).toContain("--print");
+    expect(resumed.slice(resumed.indexOf("--resume"), resumed.indexOf("--resume") + 2)).toEqual([
+      "--resume",
+      "abc-123",
+    ]);
+    expect(resumed).toContain("stream-json");
+    const res = await tool.run({ ...opts, cwd: dir });
+    expect(res.sessionId).toBe("6f1c2a52-9d0e-4b43-8a6e-0c1f6a7d9b11");
+    expect(res.report).toBe("hi");
+  });
+
+  it("claude-code StreamRenderer takes the session id from the init event alone", () => {
+    const r = new StreamRenderer(() => {});
+    r.push('{"type":"system","subtype":"init","session_id":"s-1"}\n');
+    expect(r.sessionId).toBe("s-1");
+  });
+
+  it("codex captures thread_id and resumes with `exec resume <id>` and only the new prompt", async () => {
+    const dir = await fake("BOOF_RUNNER_CODEX_BIN", "codex", "codex-json-stdout.jsonl");
+    const tool = new CodexTool();
+    expect(tool.supportsResume).toBe(true);
+    expect(tool.buildArgs(opts, "/tmp/last").slice(0, 2)).toEqual(["exec", "--json"]);
+    const resumed = tool.buildArgs(
+      { ...opts, resumeSessionId: "thread-9", prompt: "NEW" },
+      "/tmp/l",
+    );
+    expect(resumed).toEqual([
+      "exec",
+      "resume",
+      "thread-9",
+      "--json",
+      "--model",
+      "m",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "-o",
+      "/tmp/l",
+      "NEW",
+    ]);
+    const res = await tool.run({ ...opts, cwd: dir });
+    expect(res.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
+  });
+
+  it("opencode captures sessionID and resumes with --session and only the new prompt", async () => {
+    const dir = await fake("BOOF_RUNNER_OPENCODE_BIN", "opencode", "opencode-json.jsonl");
+    const tool = new OpencodeTool();
+    expect(tool.supportsResume).toBe(true);
+    const resumed = tool.buildArgs({
+      ...opts,
+      cwd: "/tmp/wt",
+      model: "p/m",
+      resumeSessionId: "ses_1",
+      prompt: "NEW",
+    });
+    expect(resumed).toEqual([
+      "run",
+      "--format",
+      "json",
+      "--dir",
+      "/tmp/wt",
+      "-m",
+      "p/m",
+      "--session",
+      "ses_1",
+      "--auto",
+      "NEW",
+    ]);
+    const res = await tool.run({ ...opts, cwd: dir });
+    expect(res.sessionId).toBe("ses_e883d9495ffeYJX7kHzp41UH09");
+  });
+
+  it("a steered run fails with steered, the session id and the usage so far", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-resume-test-"));
+    dirs.push(dir);
+    const bin = join(dir, "codex");
+    await writeFile(
+      bin,
+      `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\nsleep 30\n`,
+    );
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_CODEX_BIN = bin;
+    const steer = join(dir, "steer");
+    const running = new CodexTool().run({ ...opts, cwd: dir, steerSignalPath: steer });
+    await new Promise((r) => setTimeout(r, 300));
+    await writeFile(steer, "x\n");
+    const err = await running.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ToolRunError);
+    const e = err as ToolRunError;
+    expect(e.steered).toBe(true);
+    expect(e.stopped).toBe(false);
+    expect(e.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
+    expect(isTransientToolError(e)).toBe(false);
+  });
+
+  it("the mock tool reports a session id and makes a resume observable", async () => {
+    const tool = new MockTool();
+    expect(tool.supportsResume).toBe(true);
+    const first = await tool.run({ ...opts, cwd: "/tmp" });
+    expect(first.sessionId).toMatch(/^mock-session-\d+$/);
+    const again = await tool.run({ ...opts, cwd: "/tmp", resumeSessionId: first.sessionId });
+    expect(again.output).toContain(`resumed ${first.sessionId}`);
+    expect(mockState.resumes.map((r) => r.sessionId)).toEqual([first.sessionId]);
+    mockState.resumeSupported = false;
+    expect(tool.supportsResume).toBe(false);
+  });
+});

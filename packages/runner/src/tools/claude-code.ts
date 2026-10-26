@@ -61,7 +61,10 @@ export class ClaudeCodeTool implements Tool {
     return unique([...this.defaultModels, ...parseClaudeModelsFromHelp(res.stdout + res.stderr)]);
   }
 
-  async run(opts: RunOptions): Promise<RunResult> {
+  readonly supportsResume = true;
+
+  /** Argument vector for `claude --print`; the prompt goes to stdin. */
+  buildArgs(opts: RunOptions): string[] {
     // stream-json requires --verbose in --print mode; --include-partial-messages
     // adds token-level deltas for a live, CLI-like view.
     const args = [
@@ -75,10 +78,17 @@ export class ClaudeCodeTool implements Tool {
       "--append-system-prompt",
       opts.systemPrompt,
     ];
+    // Continue an earlier session (a steered step); the stdin prompt is the new message.
+    if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
     if (opts.autoApprove) {
       // --dangerously-skip-permissions bypasses every tool-permission prompt.
       args.push("--dangerously-skip-permissions");
     }
+    return args;
+  }
+
+  async run(opts: RunOptions): Promise<RunResult> {
+    const args = this.buildArgs(opts);
 
     const render = new StreamRenderer((text) => opts.onChunk?.(text));
     const res = await execCommand(this.bin, args, {
@@ -86,6 +96,7 @@ export class ClaudeCodeTool implements Tool {
       input: opts.prompt,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
+      steerSignalPath: opts.steerSignalPath,
       idleTimeoutMs: opts.idleTimeoutMs,
       onData: (chunk) => render.push(chunk),
     });
@@ -93,7 +104,7 @@ export class ClaudeCodeTool implements Tool {
 
     const header = `$ ${this.bin} --print --output-format stream-json --model ${opts.model}\n[exit ${res.code}]`;
     const output = `${header}\n${render.transcript}`;
-    if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
+    if (res.code !== 0 || res.timedOut || res.stopped || res.steered || res.stalled) {
       throw new ToolRunError(
         this.id,
         res.code,
@@ -103,12 +114,14 @@ export class ClaudeCodeTool implements Tool {
         res.stderr,
         res.stalled,
         opts.idleTimeoutMs,
+        { steered: res.steered, sessionId: render.sessionId, usage: render.usage },
       );
     }
     return {
       output,
       report: render.report || render.transcript.trim(),
       usage: render.usage ?? parseUsage(res.stdout),
+      sessionId: render.sessionId,
     };
   }
 }
@@ -150,6 +163,8 @@ export class StreamRenderer {
   transcript = "";
   report = "";
   usage?: TokenUsage;
+  /** `session_id` of the `system`/`init` and `result` events: what `--resume` takes. */
+  sessionId?: string;
   /** Per-message usage from `assistant` events, keyed by message id (fallback when no `result`). */
   private messageUsage = new Map<string, Record<string, unknown>>();
   private resultUsage = false;
@@ -188,6 +203,7 @@ export class StreamRenderer {
     } catch {
       return; // ignore non-JSON noise
     }
+    if (typeof obj.session_id === "string" && obj.session_id) this.sessionId = obj.session_id;
     switch (obj.type) {
       case "stream_event":
         this.streamEvent(obj.event as Record<string, unknown> | undefined);

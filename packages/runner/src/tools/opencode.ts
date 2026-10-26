@@ -61,18 +61,22 @@ export class OpencodeTool implements Tool {
     return unique(models.length ? models : this.defaultModels);
   }
 
+  readonly supportsResume = true;
+
   /** Argument vector for `opencode run`; exported through the class for tests. */
   buildArgs(opts: RunOptions): string[] {
     // Anchor the project to opts.cwd explicitly: without --dir, opencode
     // canonicalizes a git worktree cwd back to the main repository and its
     // file tools (Read/Write/Edit) would bypass the runner's isolation.
     const args = ["run", "--format", "json", "--dir", opts.cwd, "-m", opts.model];
+    // Continue an earlier session (a steered step): the prompt is then only the new message.
+    if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
     if (opts.autoApprove) {
       // Auto-approve permissions that are not explicitly denied: the
       // runner's equivalent of codex's bypass flag.
       args.push("--auto");
     }
-    args.push(`${opts.systemPrompt}\n\n${opts.prompt}`);
+    args.push(opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`);
     return args;
   }
 
@@ -83,13 +87,14 @@ export class OpencodeTool implements Tool {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
+      steerSignalPath: opts.steerSignalPath,
       idleTimeoutMs: opts.idleTimeoutMs,
       onData: opts.onChunk ? (c) => live.push(c) : undefined,
     });
     live.flush();
     const summary = summarizeOpencodeStream(res.stdout);
     const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${stripAnsi(res.stderr)}`;
-    if (res.code !== 0 || res.timedOut || res.stopped || res.stalled) {
+    if (res.code !== 0 || res.timedOut || res.stopped || res.steered || res.stalled) {
       throw new ToolRunError(
         this.id,
         res.code,
@@ -99,6 +104,11 @@ export class OpencodeTool implements Tool {
         res.stderr,
         res.stalled,
         opts.idleTimeoutMs,
+        {
+          steered: res.steered,
+          sessionId: summary.sessionId,
+          usage: summary.usage ?? undefined,
+        },
       );
     }
     // No JSON events (older CLI, plain output): fall back to ANSI-stripped text.
@@ -107,6 +117,7 @@ export class OpencodeTool implements Tool {
       output,
       report: summary.report || plain,
       usage: summary.usage ?? parseUsage(plain + "\n" + stripAnsi(res.stderr)),
+      sessionId: summary.sessionId,
     };
   }
 }
@@ -179,8 +190,11 @@ export function summarizeOpencodeStream(stdout: string): {
   report: string;
   usage: TokenUsage | null;
   rendered: string;
+  /** `sessionID` carried by the events: what `opencode run --session` takes. */
+  sessionId?: string;
 } {
   const r = new JsonlRenderer(renderOpencodeEvent);
+  let sessionId: string | undefined;
   r.push(stdout);
   r.flush();
   const texts: { messageId: string; text: string }[] = [];
@@ -192,6 +206,7 @@ export function summarizeOpencodeStream(stdout: string): {
     const ev = parseJsonLine(line);
     if (!ev) continue;
     const part = obj(ev.part);
+    sessionId = sessionId ?? (str(ev.sessionID) || str(part.sessionID) || undefined);
     if (ev.type === "text" && str(part.text)) {
       texts.push({ messageId: str(part.messageID), text: str(part.text) });
     } else if (ev.type === "step_finish") {
@@ -214,5 +229,6 @@ export function summarizeOpencodeStream(stdout: string): {
     report,
     usage: seen ? { inputTokens: input, outputTokens: output, costUsd: cost, known: true } : null,
     rendered: r.text.trimEnd(),
+    sessionId,
   };
 }

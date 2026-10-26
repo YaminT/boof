@@ -7,6 +7,8 @@ export interface ExecResult {
   stderr: string;
   timedOut: boolean;
   stopped: boolean;
+  /** True when the process was killed because the steer signal file appeared (not a stop). */
+  steered: boolean;
   /** True when the process was killed for printing nothing for `idleTimeoutMs`. */
   stalled: boolean;
 }
@@ -24,11 +26,17 @@ export interface ExecOptions {
   /** File whose presence requests cooperative cancellation of the child process. */
   stopSignalPath?: string;
   /**
+   * File whose presence asks to interrupt the child so the caller can rerun it with new
+   * instructions. Killed like a stop, but the result has `steered: true`. The caller removes the
+   * file; a stop request wins when both exist.
+   */
+  steerSignalPath?: string;
+  /**
    * Kill the child (SIGTERM, then SIGKILL) when it emits no stdout/stderr chunk
    * for this long; the result has `stalled: true`.
    */
   idleTimeoutMs?: number;
-  /** Poll interval for stopSignalPath. Defaults to 500 ms. */
+  /** Poll interval for stopSignalPath and steerSignalPath. Defaults to 500 ms. */
   stopPollMs?: number;
 }
 
@@ -72,6 +80,7 @@ export function execCommand(
     let stderr = "";
     let timedOut = false;
     let stopped = false;
+    let steered = false;
     let stalled = false;
     let idleTimer: NodeJS.Timeout | undefined;
     let timer: NodeJS.Timeout | undefined;
@@ -103,10 +112,12 @@ export function execCommand(
       }, opts.timeoutMs);
     }
 
-    if (opts.stopSignalPath) {
+    if (opts.stopSignalPath || opts.steerSignalPath) {
       stopTimer = setInterval(() => {
-        if (stopped || !opts.stopSignalPath || !existsSync(opts.stopSignalPath)) return;
-        stopped = true;
+        if (stopped || steered) return;
+        if (opts.stopSignalPath && existsSync(opts.stopSignalPath)) stopped = true;
+        else if (opts.steerSignalPath && existsSync(opts.steerSignalPath)) steered = true;
+        else return;
         kill("SIGTERM");
         killTimer = setTimeout(() => kill("SIGKILL"), 1500);
       }, opts.stopPollMs ?? 500);
@@ -127,12 +138,20 @@ export function execCommand(
 
     child.on("error", (err) => {
       clearTimers();
-      resolve({ code: null, stdout, stderr: stderr + String(err), timedOut, stopped, stalled });
+      resolve({
+        code: null,
+        stdout,
+        stderr: stderr + String(err),
+        timedOut,
+        stopped,
+        steered,
+        stalled,
+      });
     });
 
     child.on("close", (code) => {
       clearTimers();
-      resolve({ code, stdout, stderr, timedOut, stopped, stalled });
+      resolve({ code, stdout, stderr, timedOut, stopped, steered, stalled });
     });
 
     // A child that exits before reading its stdin makes the write fail with

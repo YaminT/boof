@@ -32,6 +32,12 @@ export interface MockState {
   transientCounts: Map<Role, number>;
   /** Internal: simulated stalls already run, per role. */
   stallCounts: Map<Role, number>;
+  /** Whether the mock reports `supportsResume`; tests turn it off to exercise the restart fallback. */
+  resumeSupported: boolean;
+  /** Internal: last session id handed out (`mock-session-N`). */
+  sessionCounter: number;
+  /** Every resumed run: the session it continued, its role and the prompt it got. */
+  resumes: { role: Role; sessionId: string; prompt: string }[];
 }
 
 export const mockState: MockState = {
@@ -46,6 +52,9 @@ export const mockState: MockState = {
   roleQuestions: {},
   transientCounts: new Map(),
   stallCounts: new Map(),
+  resumeSupported: true,
+  sessionCounter: 0,
+  resumes: [],
 };
 
 export function resetMock(): void {
@@ -60,6 +69,9 @@ export function resetMock(): void {
   mockState.roleQuestions = {};
   mockState.transientCounts = new Map();
   mockState.stallCounts = new Map();
+  mockState.resumeSupported = true;
+  mockState.sessionCounter = 0;
+  mockState.resumes = [];
 }
 
 /**
@@ -149,6 +161,10 @@ export class MockTool implements Tool {
   readonly displayName = "Mock Tool";
   readonly defaultModels = ["mock-default"];
 
+  get supportsResume(): boolean {
+    return mockState.resumeSupported;
+  }
+
   async detect(): Promise<HealthResult> {
     return { status: "available", message: "Mock tool is always available", version: "1.0.0" };
   }
@@ -161,6 +177,12 @@ export class MockTool implements Tool {
     mockState.prompts.push(opts.prompt);
     mockState.calls.push(opts.role);
     mockState.systemPrompts.push({ role: opts.role, systemPrompt: opts.systemPrompt });
+    // A session id per run; a resumed run keeps the id it continues and says so in its output.
+    const sessionId = opts.resumeSessionId ?? `mock-session-${++mockState.sessionCounter}`;
+    if (opts.resumeSessionId) {
+      mockState.resumes.push({ role: opts.role, sessionId, prompt: opts.prompt });
+    }
+    const resumed = opts.resumeSessionId ? ` resumed ${sessionId}` : "";
     await mockState.onRun?.(opts);
     if (mockState.failRole === opts.role) {
       throw new Error(`Mock failure injected for role ${opts.role}`);
@@ -180,6 +202,7 @@ export class MockTool implements Tool {
         cwd: opts.cwd,
         idleTimeoutMs: opts.idleTimeoutMs,
         stopSignalPath: opts.stopSignalPath,
+        steerSignalPath: opts.steerSignalPath,
       });
       throw new ToolRunError(
         "mock",
@@ -190,6 +213,12 @@ export class MockTool implements Tool {
         res.stderr,
         res.stalled,
         opts.idleTimeoutMs,
+        {
+          steered: res.steered,
+          sessionId,
+          // The interrupted attempt still cost something.
+          usage: res.steered ? parseUsage(usageLineFor(opts.prompt)) : undefined,
+        },
       );
     }
 
@@ -205,6 +234,7 @@ export class MockTool implements Tool {
       const output = `MOCK planner questions\n${usageLineFor(opts.prompt)}`;
       return {
         output,
+        sessionId,
         report: "Planner needs clarification before producing a plan.",
         questions: [...mockState.plannerQuestions],
         usage: parseUsage(output),
@@ -218,6 +248,7 @@ export class MockTool implements Tool {
       const output = `MOCK ${opts.role} questions\n${usageLineFor(opts.prompt)}`;
       return {
         output,
+        sessionId,
         report: reportFor(opts.role),
         questions: [...asked],
         usage: parseUsage(output),
@@ -235,9 +266,10 @@ export class MockTool implements Tool {
       if (block) report += `\n\n${block}`;
     }
 
-    const output = `MOCK ${opts.role} (${opts.model}) ran in ${opts.cwd}\n${usageLineFor(opts.prompt)}`;
+    const output = `MOCK ${opts.role} (${opts.model})${resumed} ran in ${opts.cwd}\n${usageLineFor(opts.prompt)}`;
     return {
       output,
+      sessionId,
       report,
       usage: parseUsage(output),
     };
