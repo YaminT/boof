@@ -8,6 +8,7 @@ import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
 import { projectCommand } from "./project-cli.js";
+import { planCommand } from "./plan-cli.js";
 import { drainQueue, ProjectResolutionError, runTask, scanRepoToTasks } from "./headless.js";
 import { MigrationError } from "@boof-runner/shared";
 
@@ -53,6 +54,7 @@ Usage:
   boof-runner run --all [options]      Drive the pending queue of every project to completion
   boof-runner scan <repo> [options]    Turn a repo's not-done goal.boof.xml units into tasks
   boof-runner project <add|list|remove>  Manage projects (git repositories) served by this data root
+  boof-runner plan <import|sync|export>  Import a repo's goal files into a plan, sync it to tasks, export XML (see: plan --help)
   boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
   boof-runner --help                   Show this help
 
@@ -220,8 +222,7 @@ export async function scanCommand(argv: string[]): Promise<number> {
     ...(tool ? { tool } : {}),
     ...(model ? { model } : {}),
   });
-  // Non-zero if a real scan found units but created nothing unexpected.
-  if (!summary.dryRun && summary.created.length === 0 && summary.units.length > 0) return 1;
+  void summary;
   return 0;
 }
 
@@ -266,6 +267,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     cmd !== "run" &&
     cmd !== "scan" &&
     cmd !== "auth" &&
+    cmd !== "plan" &&
     cmd !== "project"
   ) {
     console.log(HELP);
@@ -302,6 +304,9 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "auth":
       code = await authCommand(rest, defaultDataRoot);
+      break;
+    case "plan":
+      code = await planCommand(rest, defaultDataRoot);
       break;
     case "project":
       code = await projectCommand(rest, defaultDataRoot);

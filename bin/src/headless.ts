@@ -9,6 +9,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   newTask,
+  PlanStore,
   ProjectStore,
   SettingsStore,
   TaskStore,
@@ -24,12 +25,17 @@ import {
   isGitRepo,
   RunnerEngine,
   ToolRegistry,
-  buildUnitPrompt,
+  importFromRepo,
+  mergeImportedGoals,
   selectActionableUnits,
+  syncPlan,
   type ScannedUnit,
   type TickResult,
 } from "@boof-runner/runner";
 import { scaffoldDataRoot } from "./scaffold.js";
+
+/** Id of the plan `scan` keeps for a project. */
+const SCAN_PLAN_ID = "repo";
 
 /** Raw output sink (defaults to stdout). */
 export type Out = (chunk: string) => void;
@@ -348,44 +354,44 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
       `Project '${project.id}' works on ${project.workingDirectory}, not ${repo}; scan that directory or omit --project.`,
     );
   }
-  const store = new TaskStore(new ProjectStore(opts.root).dir(project.id));
+  const projectDir = new ProjectStore(opts.root).dir(project.id);
   const settings = await new SettingsStore(opts.root).load();
 
   const registry = opts.registry ?? new ToolRegistry();
   const tools = toolOverride(registry, settings, opts.tool, opts.model);
   const bumpTo = opts.bumpTo ?? "done";
-  const created: string[] = [];
-  const taken = new Set((await store.list()).map((t) => t.frontmatter.id));
 
-  // Highest priority first: units are already deps-first (blocked units last).
-  for (let i = 0; i < units.length; i += 1) {
-    const u = units[i];
-    const id = uniqueKebabId(`boof ${u.id}`, taken);
-    taken.add(id);
-    await store.create(
-      newTask(
-        {
-          id,
-          title: `boof: ${u.id}`,
-          status: "pending",
-          priority: (units.length - i) * 10,
-          skip: false,
-          labels: ["boof-scan", `boof-status:${u.status}`],
-          command: null,
-          attachments: [],
-          questions: "none",
-          runs: 1,
-          completedRuns: 0,
-          ...(tools ? { tools } : {}),
-          boofGoal: { path: u.goalPath, bumpTo },
-          created: "",
-          updated: "",
-        },
-        buildUnitPrompt(u, repo),
-      ),
-    );
-    created.push(id);
+  // scan = import the repo into the plan `repo` (merging into it on a re-scan), then sync it.
+  // Blocked units get a skipped task too (as before, one task per not-done unit); sync unskips
+  // them when their dependencies finish, and `autoSync` creates the tasks of later changes.
+  const plans = new PlanStore(projectDir);
+  const imported = await importFromRepo(project.workingDirectory);
+  if (!(await plans.get(SCAN_PLAN_ID))) {
+    await plans.create({
+      id: SCAN_PLAN_ID,
+      title: `boof scan of ${project.name}`,
+      status: "active",
+      autoSync: true,
+      bumpTo,
+      source: { kind: "repo-import", importedFrom: project.workingDirectory },
+      goals: imported.goals,
+    });
+  } else {
+    await plans.modify(SCAN_PLAN_ID, (p) => ({
+      ...p,
+      status: "active",
+      bumpTo: opts.bumpTo ?? p.bumpTo,
+      goals: mergeImportedGoals(p.goals, imported.goals).goals,
+    }));
   }
+  const synced = await syncPlan({
+    projectDir,
+    project,
+    planId: SCAN_PLAN_ID,
+    includeBlocked: true,
+    ...(tools ? { tools } : {}),
+  });
+  const created = synced.created.map((c) => c.taskId);
 
   out(
     `\nCreated ${created.length} task(s) in project '${project.id}'. Run them with:  boof-runner run --all --project ${project.id} -d ${opts.root}\n`,

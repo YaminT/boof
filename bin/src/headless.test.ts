@@ -245,7 +245,7 @@ describe("scanRepoToTasks (scan mode)", () => {
     expect(summary.projectId).toBeDefined();
     const created = await tasksOf(summary.projectId!).list();
     expect(created).toHaveLength(2);
-    expect(created.every((t) => t.frontmatter.boofGoal)).toBe(true);
+    expect(created.every((t) => t.frontmatter.planRef && !t.frontmatter.boofGoal)).toBe(true);
 
     const drain = await drainQueue({ root: dataRoot, registry: registry(), out: silent });
     expect(drain.ran).toBe(2);
@@ -421,7 +421,9 @@ describe("multi-project run and scan", () => {
     const second = await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
     expect(second.projectId).toBe(first.projectId);
     expect(await projectsOf().list()).toHaveLength(1);
-    expect(await tasksOf(first.projectId!).list()).toHaveLength(2);
+    // Re-scanning is idempotent: the plan already has its task.
+    expect(second.created).toHaveLength(0);
+    expect(await tasksOf(first.projectId!).list()).toHaveLength(1);
 
     const withProject = await scanRepoToTasks({
       root: dataRoot,
