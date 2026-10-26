@@ -411,7 +411,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 62 operations. Every path below starts with `/api/v1`.
+There are 63 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -483,7 +483,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 #### `Goal`
 
 - `dependsOn`: `kebab-id[]`, required; default `[]`
-- `history`: `{ at: ISO-8601 string, description: string, number?: integer >= 1, revision: integer >= 1, status: "plan" | "develop" | "review" | "done" }[]`, required; default `[]`
+- `history`: `{ at: ISO-8601 string, description: string, number?: integer >= 1, revision: integer >= 1, status: "plan" | "develop" | "review" | "done", taskId?: kebab-id }[]`, required; default `[]`
 - `id`: `kebab-id`, required
 - `model`: `string`, optional
 - `order`: `integer >= 1`, required
@@ -493,6 +493,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `status`: `"plan" | "develop" | "review" | "done"`, required; default `"plan"`
 - `synced`: `{ dependsOn: kebab-id[], model?: string, revision: integer >= 1, spec: { goal: string, rules: object, stack: string, tests: object } }`, optional
 - `taskId`: `kebab-id | null`, required; default `null`
+- `tasks`: `{ branch: string, revision: integer >= 1, status: "draft" | "pending" | "running" | "action" | "done" | "failed" | "archived", taskId: kebab-id }[]`, required; default `[]`
 - `title`: `string`, required
 
 #### `GoalInput`
@@ -998,6 +999,25 @@ JSON body (unknown keys are rejected):
 - `dryRun`: `boolean`, optional
 - `stopRunning`: `boolean`, optional
 
+#### `GET /api/v1/projects/{projectId}/plans/{planId}/wait` (Wait for a plan to change, finish or get stuck)
+
+- Operation: `plans.wait`
+- Scope: `plans:read`
+- MCP tool: `boof_wait_plan`
+- What it does: Long-polls a plan for up to 60 seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. Output: plan, version, complete, stuck, stuckReasons, changed, timedOut. No side effects; call it again after a timeout.
+- Success: HTTP 200 with `{ changed: boolean, complete: boolean, plan: Plan, stuck: boolean, stuckReasons: { goalId: string, status: string, taskId: string | null }[], timedOut: boolean, version: integer }`. The response has an `ETag` header.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_plan`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `planId`: `kebab-id`, required; Plan id (kebab-case)
+
+Query parameters:
+
+- `sinceVersion`: `integer >= 1`, optional; Return once the plan version is higher than this (default: now)
+- `timeoutSeconds`: `integer 1..60`, optional; Longest wait in seconds, default 30, max 60
+
 ### Tasks
 
 #### `GET /api/v1/projects/{projectId}/tasks` (List tasks)
@@ -1264,8 +1284,8 @@ Path parameters (all required):
 - Operation: `tasks.wait`
 - Scope: `tasks:read`
 - MCP tool: `boof_wait_task`
-- What it does: Waits up to 60 seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. Inputs: projectId, taskId, optional since, until, timeoutSeconds. No side effects; call it again after a timeout.
-- Success: HTTP 200 with `{ changed: boolean, task: Task, timedOut: boolean }`.
+- What it does: Waits up to 60 seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, archived), task. No side effects; call it again after a timeout.
+- Success: HTTP 200 with `{ changed: boolean, task: Task, terminal: boolean, timedOut: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
 
 Path parameters (all required):

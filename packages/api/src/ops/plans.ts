@@ -321,6 +321,68 @@ export const plansSync = defineOp({
     (await requireProject(ctx, projectId)).plans.syncTasks(planId, opts, ctx.principal),
 });
 
+export const PLAN_WAIT_MAX_SECONDS = 60;
+
+export const plansWait = defineOp({
+  name: "plans.wait",
+  title: "Wait for a plan to change, finish or get stuck",
+  description: `Long-polls a plan for up to ${PLAN_WAIT_MAX_SECONDS} seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. Output: plan, version, complete, stuck, stuckReasons, changed, timedOut. No side effects; call it again after a timeout.`,
+  scope: "plans:read",
+  projectScoped: true,
+  input: z.strictObject({
+    ...planBase,
+    sinceVersion: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .meta({ description: "Return once the plan version is higher than this (default: now)." }),
+    timeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(PLAN_WAIT_MAX_SECONDS)
+      .optional()
+      .meta({
+        description: `Longest wait in seconds, default 30, max ${PLAN_WAIT_MAX_SECONDS}.`,
+      }),
+  }),
+  output: z.object({
+    plan: PlanSchema,
+    version: z.number().int(),
+    complete: z.boolean().meta({ description: "Every goal is done." }),
+    stuck: z.boolean().meta({ description: "The plan cannot go on until someone acts." }),
+    stuckReasons: z.array(
+      z.object({
+        goalId: z.string(),
+        taskId: z.string().nullable(),
+        status: z.string().meta({
+          description:
+            "Task status (failed, action, draft, pending), blocked, no-task or plan-not-active.",
+        }),
+      }),
+    ),
+    changed: z.boolean(),
+    timedOut: z.boolean(),
+  }),
+  rest: { method: "GET", path: "/projects/{projectId}/plans/{planId}/wait", etag: planEtag },
+  mcp: { expose: true, name: "boof_wait_plan", annotations: READ },
+  summary: (r) =>
+    r.complete
+      ? `Plan ${r.plan.id} is complete`
+      : r.stuck
+        ? `Plan ${r.plan.id} is stuck: ${r.stuckReasons.map((s) => `${s.goalId}[${s.status}]`).join(", ")}`
+        : r.timedOut
+          ? `Plan ${r.plan.id} is still at version ${r.version} (timed out)`
+          : `Plan ${r.plan.id} is at version ${r.version}`,
+  ...base,
+  handler: async (ctx, input) =>
+    (await requireProject(ctx, input.projectId)).plans.waitFor(input.planId, {
+      sinceVersion: input.sinceVersion,
+      timeoutMs: (input.timeoutSeconds ?? 30) * 1000,
+    }),
+});
+
 export const planOps = [
   plansList,
   plansCreate,
@@ -334,4 +396,5 @@ export const planOps = [
   plansImport,
   plansExport,
   plansSync,
+  plansWait,
 ];

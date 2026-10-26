@@ -405,10 +405,15 @@ export const tasksLiveLog = defineOp({
 export const WAIT_MAX_SECONDS = 60;
 const WAIT_POLL_MS = 400;
 
+/** Statuses a task does not leave by itself: waiting on it would block for nothing. */
+const SETTLED = new Set(["done", "failed", "action", "archived"]);
+/** Statuses that end a task for good (until a human retries or unarchives it). */
+const TERMINAL = new Set(["done", "failed", "archived"]);
+
 export const tasksWait = defineOp({
   name: "tasks.wait",
   title: "Wait for a task status change",
-  description: `Waits up to ${WAIT_MAX_SECONDS} seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. Inputs: projectId, taskId, optional since, until, timeoutSeconds. No side effects; call it again after a timeout.`,
+  description: `Waits up to ${WAIT_MAX_SECONDS} seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, archived), task. No side effects; call it again after a timeout.`,
   scope: "tasks:read",
   projectScoped: true,
   input: z.strictObject({
@@ -428,7 +433,14 @@ export const tasksWait = defineOp({
       .optional()
       .meta({ description: `Longest wait in seconds, default 30, max ${WAIT_MAX_SECONDS}.` }),
   }),
-  output: z.object({ changed: z.boolean(), timedOut: z.boolean(), task: TaskViewSchema }),
+  output: z.object({
+    changed: z.boolean(),
+    timedOut: z.boolean(),
+    terminal: z
+      .boolean()
+      .meta({ description: "True when the task is done, failed or archived: stop waiting." }),
+    task: TaskViewSchema,
+  }),
   rest: { method: "GET", path: "/projects/{projectId}/tasks/{taskId}/wait" },
   mcp: { expose: true, name: "boof_wait_task", annotations: READ },
   summary: (r) =>
@@ -441,15 +453,22 @@ export const tasksWait = defineOp({
     if (!first) throw new OpError(404, "Task not found");
     const since = input.since ?? first.frontmatter.status;
     const deadline = Date.now() + (input.timeoutSeconds ?? 30) * 1000;
+    const reply = (task: typeof first, changed: boolean, timedOut: boolean) => ({
+      changed,
+      timedOut,
+      terminal: TERMINAL.has(task.frontmatter.status),
+      task: taskView(ctx, svc.projectId, task),
+    });
+    // Already finished, parked or at the wanted status when the call starts: nothing to wait for.
+    const startStatus = first.frontmatter.status;
+    if (startStatus === since && (SETTLED.has(startStatus) || startStatus === input.until)) {
+      return reply(first, false, false);
+    }
     let task = first;
     for (;;) {
       const status = task.frontmatter.status;
-      if (status !== since || status === input.until) {
-        return { changed: true, timedOut: false, task: taskView(ctx, svc.projectId, task) };
-      }
-      if (Date.now() >= deadline) {
-        return { changed: false, timedOut: true, task: taskView(ctx, svc.projectId, task) };
-      }
+      if (status !== since || status === input.until) return reply(task, true, false);
+      if (Date.now() >= deadline) return reply(task, false, true);
       await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, deadline - Date.now())));
       const next = await svc.get(input.taskId);
       if (!next) throw new OpError(404, "Task not found");

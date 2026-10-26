@@ -7,7 +7,13 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore, defaultSettings, SettingsStore } from "@boof-runner/shared";
+import {
+  AuthStore,
+  defaultSettings,
+  ProjectStore,
+  SettingsStore,
+  TaskStore,
+} from "@boof-runner/shared";
 import { execCommand, RunnerEngine, resetMock } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
@@ -154,6 +160,15 @@ describe("harness flow over /api/v1", () => {
       ),
     );
     expect(changed.status).toBe(200);
+    // A done goal whose spec changed is open again at once, before any sync.
+    const reopened = (await (await call("/projects/shop/plans/q4")).json()).goals.find(
+      (g: { id: string }) => g.id === "a",
+    );
+    expect(reopened.status).toBe("develop");
+    expect(reopened.history.at(-1)).toMatchObject({
+      status: "develop",
+      description: "spec changed to revision 2",
+    });
     const stale = await call(
       "/projects/shop/plans/q4/goals/a",
       send("PUT", { title: "A", spec: spec("again") }, { "If-Match": etag }),
@@ -165,6 +180,33 @@ describe("harness flow over /api/v1", () => {
     expect(resync.created).toHaveLength(1);
     expect(resync.created[0]).toMatchObject({ goalId: "a", followUp: true });
 
+    // The follow-up builds on the first task's branch and the goal lists both tasks.
+    const followUp = await (await call(`/projects/shop/tasks/${resync.created[0].taskId}`)).json();
+    expect(followUp.frontmatter.base).toBe("boof-runner/boof-a");
+    await engine.runUntilIdle();
+    const after = await (await call("/projects/shop/plans/q4")).json();
+    const a = after.goals.find((g: { id: string }) => g.id === "a");
+    expect(a.status).toBe("done");
+    expect(a.tasks).toEqual([
+      { taskId: "boof-a", revision: 1, status: "done", branch: "boof-runner/boof-a" },
+      {
+        taskId: resync.created[0].taskId,
+        revision: 2,
+        status: "done",
+        branch: `boof-runner/${resync.created[0].taskId}`,
+      },
+    ]);
+    expect(a.history.at(-1)).toMatchObject({ status: "done", taskId: resync.created[0].taskId });
+    const whole = await (await call("/projects/shop/plans/q4/wait?timeoutSeconds=1")).json();
+    expect(whole).toMatchObject({
+      complete: true,
+      stuck: false,
+      stuckReasons: [],
+      timedOut: false,
+    });
+    const doneWait = await (await call(`/projects/shop/tasks/boof-a/wait?timeoutSeconds=5`)).json();
+    expect(doneWait).toMatchObject({ changed: false, timedOut: false, terminal: true });
+
     // 5. The history is in the events stream and the contract is published.
     const events = await app.request("http://localhost/api/v1/events?since=start", {
       headers: { authorization: `Bearer ${key}` },
@@ -173,5 +215,78 @@ describe("harness flow over /api/v1", () => {
     expect(types).toContain("plan.synced");
     expect(types.filter((t) => t === "task.status").length).toBeGreaterThanOrEqual(6);
     expect((await call("/openapi.json")).status).toBe(200);
+  });
+
+  it("wait: tasks and plans return at once when there is nothing to wait for", async () => {
+    await call("/projects", send("POST", { workingDirectory: repo, id: "shop" }));
+    await call(
+      "/projects/shop/plans",
+      send("POST", {
+        id: "w",
+        title: "W",
+        status: "active",
+        goals: [goal("a"), goal("b", ["a"])],
+      }),
+    );
+    // Not synced yet: no task can run, so the plan is stuck with a reason per goal.
+    const unsynced = await (await call("/projects/shop/plans/w/wait?timeoutSeconds=1")).json();
+    expect(unsynced).toMatchObject({ complete: false, stuck: true, timedOut: false });
+    expect(unsynced.stuckReasons).toEqual([
+      { goalId: "a", taskId: null, status: "no-task" },
+      { goalId: "b", taskId: null, status: "blocked" },
+    ]);
+
+    // A plan the engine syncs by itself is not stuck while it waits for its first sync;
+    // a draft plan has no way forward at all.
+    await call(
+      "/projects/shop/plans",
+      send("POST", {
+        id: "auto",
+        title: "Auto",
+        status: "active",
+        autoSync: true,
+        goals: [goal("x")],
+      }),
+    );
+    const auto = await (await call("/projects/shop/plans/auto/wait?timeoutSeconds=1")).json();
+    expect(auto).toMatchObject({ stuck: false, timedOut: true });
+    await call(
+      "/projects/shop/plans",
+      send("POST", { id: "idea", title: "Idea", goals: [goal("y")] }),
+    );
+    const draft = await (await call("/projects/shop/plans/idea/wait?timeoutSeconds=1")).json();
+    expect(draft.stuckReasons).toEqual([{ goalId: "y", taskId: null, status: "plan-not-active" }]);
+
+    // Synced, runner idle: tasks are draft (review is off here, so pending) and the plan waits.
+    await call("/projects/shop/plans/w/sync", send("POST"));
+    const sinceNow = unsynced.version;
+    const bumped = await (
+      await call(`/projects/shop/plans/w/wait?sinceVersion=${sinceNow}&timeoutSeconds=1`)
+    ).json();
+    expect(bumped).toMatchObject({ changed: true, stuck: false, complete: false });
+    const idle = await (
+      await call(`/projects/shop/plans/w/wait?sinceVersion=${bumped.version}&timeoutSeconds=1`)
+    ).json();
+    expect(idle).toMatchObject({ changed: false, timedOut: true, stuck: false });
+
+    // A pending task: wait times out, or returns at once when it already is the `until` status.
+    const pending = await (await call("/projects/shop/tasks/boof-a/wait?timeoutSeconds=1")).json();
+    expect(pending).toMatchObject({ changed: false, timedOut: true, terminal: false });
+    const until = await (
+      await call("/projects/shop/tasks/boof-a/wait?until=pending&timeoutSeconds=30")
+    ).json();
+    expect(until).toMatchObject({ changed: false, timedOut: false, terminal: false });
+
+    // A failed task stops the plan and ends the task wait.
+    const store = new TaskStore(new ProjectStore(root).dir("shop"));
+    await store.transition("boof-a", "running");
+    await store.transition("boof-a", "failed");
+    const failed = await (await call("/projects/shop/plans/w/wait?timeoutSeconds=1")).json();
+    expect(failed.stuck).toBe(true);
+    expect(failed.stuckReasons).toEqual([{ goalId: "a", taskId: "boof-a", status: "failed" }]);
+    const taskWait = await (
+      await call("/projects/shop/tasks/boof-a/wait?timeoutSeconds=30")
+    ).json();
+    expect(taskWait).toMatchObject({ changed: false, timedOut: false, terminal: true });
   });
 });

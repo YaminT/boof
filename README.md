@@ -13,7 +13,7 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 - **Desktop app** — Electron wrapper that runs server, runner and UI in one window.
 - **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, no web server needed.
 - **REST API** — versioned `/api/v1` generated from one operations registry, with an OpenAPI 3.1 document, ETags, idempotency keys and paging.
-- **MCP** — the same operations as 32 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
+- **MCP** — the same operations as 33 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
 - **Events and webhooks** — replayable server-sent events and HMAC-signed webhooks.
 - **Security** — loopback by default; API keys with scopes, project restrictions and trust levels; Host guard, rate limit and audit log.
 

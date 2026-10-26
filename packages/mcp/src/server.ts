@@ -169,7 +169,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
       instructions:
         "Boof runs coding-agent tasks in git repositories. Typical flow: boof_list_projects, " +
         "boof_create_plan (or boof_import_plan), boof_sync_plan, boof_list_tasks, boof_wait_task, " +
-        "boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
+        "boof_wait_plan, boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
         "read the plan again and retry. Tasks created with review trust start as draft and need " +
         "a human to approve them.",
     },

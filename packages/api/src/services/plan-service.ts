@@ -11,6 +11,7 @@ import {
   PlanValidationError,
   PlanVersionConflict,
   securitySettings,
+  TaskStore,
   uniqueKebabId,
   withGoalStatus,
   type Goal,
@@ -57,6 +58,26 @@ export interface UpdatePlanInput {
   status?: PlanStatus;
   autoSync?: boolean;
   bumpTo?: Plan["bumpTo"];
+}
+
+/** Why a plan cannot go on by itself. `status` is the live task's status, `blocked`, `no-task` or `plan-not-active`. */
+export interface StuckReason {
+  goalId: string;
+  taskId: string | null;
+  status: string;
+}
+
+export interface PlanProgress {
+  plan: Plan;
+  version: number;
+  complete: boolean;
+  stuck: boolean;
+  stuckReasons: StuckReason[];
+}
+
+export interface WaitPlanResult extends PlanProgress {
+  changed: boolean;
+  timedOut: boolean;
 }
 
 export interface ImportInput {
@@ -158,6 +179,80 @@ export class PlanService {
 
   async get(planId: string): Promise<Plan> {
     return this.run(() => this.store.require(planId));
+  }
+
+  /**
+   * Where a plan stands: `complete` when every goal is done; `stuck` when a goal's live task
+   * failed or waits for answers, or when no task can run (blocked goals, draft tasks, goals
+   * without a task). Task statuses are read from the task files.
+   */
+  async progress(planId: string): Promise<PlanProgress> {
+    const plan = await this.get(planId);
+    const complete = plan.goals.length > 0 && plan.goals.every((g) => g.status === "done");
+    const base = { plan, version: plan.version, complete };
+    if (complete || plan.goals.length === 0) {
+      return { ...base, stuck: false, stuckReasons: [] };
+    }
+    const tasks = new TaskStore(this.projectDir);
+    const reasons: StuckReason[] = [];
+    const rest: StuckReason[] = [];
+    let runnable = false;
+    for (const g of plan.goals) {
+      if (g.status === "done") continue;
+      const task = g.taskId ? await tasks.get(g.taskId) : null;
+      const status = task?.frontmatter.status;
+      if (task && (status === "failed" || status === "action")) {
+        reasons.push({ goalId: g.id, taskId: g.taskId, status });
+      } else if (task && status === "running") {
+        runnable = true;
+      } else if (task && status === "pending" && !task.frontmatter.skip) {
+        runnable = true;
+      } else {
+        const blocked = g.dependsOn.some(
+          (d) => plan.goals.find((x) => x.id === d)?.status !== "done",
+        );
+        if (!task && !blocked && plan.status === "active" && plan.autoSync) {
+          runnable = true; // the runner creates this goal's task on its next sync
+        }
+        rest.push({
+          goalId: g.id,
+          taskId: g.taskId,
+          status: blocked
+            ? "blocked"
+            : task
+              ? (status ?? "no-task")
+              : plan.status === "active"
+                ? "no-task"
+                : "plan-not-active",
+        });
+      }
+    }
+    if (reasons.length === 0 && !runnable) reasons.push(...rest);
+    return { ...base, stuck: reasons.length > 0, stuckReasons: reasons };
+  }
+
+  /**
+   * Long-poll a plan: returns at once when it is complete or stuck, otherwise when its version
+   * goes past `sinceVersion` (default: the version now) or after `timeoutMs`.
+   */
+  async waitFor(
+    planId: string,
+    opts: { sinceVersion?: number; timeoutMs: number; pollMs?: number },
+  ): Promise<WaitPlanResult> {
+    const first = await this.progress(planId);
+    const since = opts.sinceVersion ?? first.version;
+    const deadline = Date.now() + opts.timeoutMs;
+    let now = first;
+    for (;;) {
+      if (now.complete || now.stuck)
+        return { ...now, changed: now.version > since, timedOut: false };
+      if (now.version > since) return { ...now, changed: true, timedOut: false };
+      if (Date.now() >= deadline) return { ...now, changed: false, timedOut: true };
+      await new Promise((r) =>
+        setTimeout(r, Math.max(1, Math.min(opts.pollMs ?? 500, deadline - Date.now()))),
+      );
+      now = await this.progress(planId);
+    }
   }
 
   async createPlan(input: CreatePlanInput, actor?: Principal): Promise<Plan> {

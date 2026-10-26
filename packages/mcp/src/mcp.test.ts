@@ -120,6 +120,7 @@ describe("tools generated from the registry", () => {
         "boof_import_plan",
         "boof_export_plan",
         "boof_sync_plan",
+        "boof_wait_plan",
         "boof_list_tasks",
         "boof_get_task",
         "boof_create_task",
@@ -137,7 +138,7 @@ describe("tools generated from the registry", () => {
         "boof_list_actions",
       ]
     `);
-    expect(names.length).toBeLessThanOrEqual(32);
+    expect(names.length).toBeLessThanOrEqual(33);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("@boof-runner/api").then((m) => m.registry)).map((o) => [
         o.mcp.name,
