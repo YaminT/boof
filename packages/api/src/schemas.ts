@@ -47,6 +47,19 @@ export const TaskViewSchema = z.object({
   branch: z.string().optional(),
   /** The commit the task's worktree started from, when the task log recorded it. */
   baseSha: z.string().optional(),
+  /** The ref the worktree started from: the task's base, else the project's checked-out branch at task start, else HEAD. */
+  baseRef: z.string().optional(),
+  /** Why plan sync chose that base (from the `## Base` block of the task log). */
+  baseReason: z
+    .enum([
+      "dependency",
+      "dependencies-merged",
+      "dependency-conflict",
+      "follow-up",
+      "project-default",
+      "head",
+    ])
+    .optional(),
 });
 
 /** The result of a create: the task plus the warnings when the server changed the requested status. */
@@ -57,6 +70,24 @@ export const TaskCreateResultSchema = TaskViewSchema.extend({
 /** The result of a plan create: the plan plus the warnings when the server changed the requested status. */
 export const PlanCreateResultSchema = PlanSchema.extend({
   warnings: z.array(WarningSchema).optional(),
+});
+
+/** A plan as `plans.get` shows it: the stored plan plus the derived merge order. */
+export const PlanViewSchema = PlanSchema.extend({
+  mergeOrder: z
+    .array(z.object({ goalId: z.string(), taskId: z.string(), branch: z.string() }))
+    .meta({
+      description:
+        "The final task branch of each goal that ran a task, in topological plan order. Merge them in this order.",
+    }),
+});
+
+/** A project as `projects.get` and `projects.list` show it: the stored project plus the live branch. */
+export const ProjectViewSchema = ProjectSchema.extend({
+  currentBranch: z.string().nullable().meta({
+    description:
+      "Branch checked out in the working directory (git symbolic-ref); null when detached or not a repository.",
+  }),
 });
 
 export const OkSchema = z.object({ ok: z.literal(true) });

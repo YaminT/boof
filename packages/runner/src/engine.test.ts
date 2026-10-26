@@ -603,6 +603,14 @@ describe("base ref (mock tool)", () => {
     expect((await store.get("t1"))?.body.log).toContain(`base release → ${baseSha}`);
   });
 
+  it("without a base the log names the branch checked out in the project", async () => {
+    await store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    const head = (await gitOut(["rev-parse", "HEAD"])).stdout.trim();
+    const branch = (await gitOut(["symbolic-ref", "--short", "HEAD"])).stdout.trim();
+    expect((await store.get("t1"))?.body.log).toContain(`base ${branch} → ${head}`);
+  });
+
   it("an unknown base fails the task clearly and creates nothing", async () => {
     await store.create(newTask(fm({ base: "no-such-ref" }), "Build it."));
     const r = await engine.tick();

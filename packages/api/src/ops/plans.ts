@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PlanSchema } from "@boof-runner/shared";
+import { mergeOrderOf, PlanSchema } from "@boof-runner/shared";
 import { defineOp } from "../define-op.js";
 import { OpError } from "../errors.js";
 import {
@@ -16,6 +16,7 @@ import {
   ImportResultSchema,
   PlanCreateResultSchema,
   PlanSummarySchema,
+  PlanViewSchema,
   SyncResultSchema,
 } from "../schemas.js";
 import {
@@ -81,16 +82,18 @@ export const plansGet = defineOp({
   name: "plans.get",
   title: "Get a plan",
   description:
-    "Returns a plan with all goals and its version. Inputs: projectId, planId. No side effects.",
+    "Returns a plan with all goals, its version and mergeOrder (the final task branch of each goal in topological plan order). Inputs: projectId, planId. No side effects.",
   scope: "plans:read",
   projectScoped: true,
   input: byPlan,
-  output: PlanSchema,
+  output: PlanViewSchema,
   rest: { method: "GET", path: "/projects/{projectId}/plans/{planId}", etag: planEtag },
   mcp: { expose: true, name: "boof_get_plan", annotations: READ },
   summary: planText,
-  handler: async (ctx, input) =>
-    (await requireProject(ctx, input.projectId)).plans.get(input.planId),
+  handler: async (ctx, input) => {
+    const plan = await (await requireProject(ctx, input.projectId)).plans.get(input.planId);
+    return { ...plan, mergeOrder: mergeOrderOf(plan) };
+  },
 });
 
 export const plansUpdate = defineOp({
@@ -331,7 +334,7 @@ export const PLAN_WAIT_MAX_SECONDS = 60;
 export const plansWait = defineOp({
   name: "plans.wait",
   title: "Wait for a plan to change, finish or get stuck",
-  description: `Long-polls a plan for up to ${PLAN_WAIT_MAX_SECONDS} seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. Output: plan, version, complete, stuck, stuckReasons, changed, timedOut. No side effects; call it again after a timeout.`,
+  description: `Long-polls a plan for up to ${PLAN_WAIT_MAX_SECONDS} seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.`,
   scope: "plans:read",
   projectScoped: true,
   input: z.strictObject({
@@ -367,6 +370,10 @@ export const plansWait = defineOp({
         }),
       }),
     ),
+    awaitingApproval: z.boolean().meta({
+      description:
+        "The plan is a draft: it returns at once with stuck true and one reason (plan-not-active, empty goalId) until a human approves it.",
+    }),
     changed: z.boolean(),
     timedOut: z.boolean(),
   }),

@@ -1,9 +1,16 @@
 import { z } from "zod";
-import { authorizeProject, ProjectPatchSchema } from "@boof-runner/shared";
+import { authorizeProject, ProjectPatchSchema, type Project } from "@boof-runner/shared";
+import { currentBranch } from "@boof-runner/runner";
 import { defineOp } from "../define-op.js";
 import { CreateProjectBody } from "../validation.js";
-import { OkSchema, ProjectSchema, TokenUsageSchema } from "../schemas.js";
+import { OkSchema, ProjectSchema, ProjectViewSchema, TokenUsageSchema } from "../schemas.js";
 import { DESTRUCTIVE, IDEMPOTENT_WRITE, projectIdParam, READ, WRITE } from "./common.js";
+
+/** The stored project plus the branch checked out in its working directory (best effort). */
+const withBranch = async (p: Project) => ({
+  ...p,
+  currentBranch: p.workingDirectory ? await currentBranch(p.workingDirectory) : null,
+});
 
 const byProject = z.strictObject({ projectId: projectIdParam });
 
@@ -15,14 +22,16 @@ export const projectsList = defineOp({
   scope: "projects:read",
   projectScoped: false,
   input: z.strictObject({ includeArchived: z.boolean().optional() }),
-  output: z.object({ projects: z.array(ProjectSchema) }),
+  output: z.object({ projects: z.array(ProjectViewSchema) }),
   rest: { method: "GET", path: "/projects" },
   mcp: { expose: true, name: "boof_list_projects", annotations: READ },
   summary: (r) => `${r.projects.length} project(s): ${r.projects.map((p) => p.id).join(", ")}`,
   handler: async (ctx, input) => ({
-    projects: (
-      await ctx.services.listProjects({ includeArchived: input.includeArchived === true })
-    ).filter((p) => authorizeProject(ctx.principal, p.id)),
+    projects: await Promise.all(
+      (await ctx.services.listProjects({ includeArchived: input.includeArchived === true }))
+        .filter((p) => authorizeProject(ctx.principal, p.id))
+        .map(withBranch),
+    ),
   }),
 });
 
@@ -44,15 +53,16 @@ export const projectsCreate = defineOp({
 export const projectsGet = defineOp({
   name: "projects.get",
   title: "Get a project",
-  description: "Returns one project by id. Input: projectId. No side effects.",
+  description:
+    "Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.",
   scope: "projects:read",
   projectScoped: true,
   input: byProject,
-  output: ProjectSchema,
+  output: ProjectViewSchema,
   rest: { method: "GET", path: "/projects/{projectId}" },
   mcp: { expose: true, name: "boof_get_project", annotations: READ },
   summary: (p) => `Project ${p.id}: ${p.name}${p.paused ? " (paused)" : ""}`,
-  handler: (ctx, input) => ctx.services.getProject(input.projectId),
+  handler: async (ctx, input) => withBranch(await ctx.services.getProject(input.projectId)),
 });
 
 export const projectsUpdate = defineOp({

@@ -1,6 +1,7 @@
 import { sameGoalContent } from "./plan-diff.js";
 import type { Goal, GoalInputParsed, GoalStatus, Plan } from "./plan-schema.js";
 import { nowIso } from "./runtime.js";
+import { topologicalByOrder } from "./plan-validate.js";
 
 /** Append a status entry to a goal's history and make it the goal's status. */
 export function withGoalStatus(
@@ -110,4 +111,23 @@ export function withApproval(
     return { ...next, approvedBy: before.approvedBy };
   }
   return { ...next, approvedBy: { principalId: by, at, version: (before?.version ?? 0) + 1 } };
+}
+
+export interface MergeOrderEntry {
+  goalId: string;
+  taskId: string;
+  branch: string;
+}
+
+/**
+ * The final task branch of each goal that has run a task, in topological plan order: merge
+ * the branches in this order and every dependency lands before its dependents.
+ */
+export function mergeOrderOf(plan: Pick<Plan, "goals">): MergeOrderEntry[] {
+  const out: MergeOrderEntry[] = [];
+  for (const g of topologicalByOrder(plan.goals)) {
+    const last = g.tasks[g.tasks.length - 1];
+    if (last) out.push({ goalId: g.id, taskId: last.taskId, branch: last.branch });
+  }
+  return out;
 }

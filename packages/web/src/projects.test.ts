@@ -93,6 +93,18 @@ describe("project routes", () => {
       "my-app",
     ]);
     expect((await (await call("/api/projects/my-app")).json()).name).toBe("My App");
+    const branch = (
+      await execCommand("git", ["symbolic-ref", "--short", "HEAD"], { cwd: dir })
+    ).stdout.trim();
+    expect((await (await call("/api/projects/my-app")).json()).currentBranch).toBe(branch);
+    expect((await (await call("/api/projects")).json()).projects[0].currentBranch).toBe(branch);
+    await execCommand(
+      "git",
+      ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x"],
+      { cwd: dir },
+    );
+    await execCommand("git", ["checkout", "-q", "--detach"], { cwd: dir });
+    expect((await (await call("/api/projects/my-app")).json()).currentBranch).toBeNull();
 
     const patched = await (
       await call(

@@ -50,6 +50,16 @@ export async function isGitRepo(dir: string): Promise<boolean> {
   return res.code === 0 && res.out === "true";
 }
 
+/** Branch checked out in `dir` (git symbolic-ref); null when detached, not a repo or git fails. */
+export async function currentBranch(dir: string): Promise<string | null> {
+  try {
+    const res = await git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    return res.code === 0 && res.out ? res.out : null;
+  } catch {
+    return null;
+  }
+}
+
 export class UnknownBaseRefError extends Error {
   constructor(
     public readonly base: string,

@@ -75,6 +75,8 @@ export interface PlanProgress {
   complete: boolean;
   stuck: boolean;
   stuckReasons: StuckReason[];
+  /** The plan is a draft: a human has to approve it before anything runs. */
+  awaitingApproval: boolean;
 }
 
 export interface WaitPlanResult extends PlanProgress {
@@ -191,7 +193,15 @@ export class PlanService {
   async progress(planId: string): Promise<PlanProgress> {
     const plan = await this.get(planId);
     const complete = plan.goals.length > 0 && plan.goals.every((g) => g.status === "done");
-    const base = { plan, version: plan.version, complete };
+    const awaitingApproval = plan.status === "draft" && !complete;
+    const base = { plan, version: plan.version, complete, awaitingApproval };
+    if (awaitingApproval) {
+      return {
+        ...base,
+        stuck: true,
+        stuckReasons: [{ goalId: "", taskId: null, status: "plan-not-active" }],
+      };
+    }
     if (complete || plan.goals.length === 0) {
       return { ...base, stuck: false, stuckReasons: [] };
     }

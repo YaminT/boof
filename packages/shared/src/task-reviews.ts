@@ -25,6 +25,31 @@ export interface TaskReviewInfo {
   branch?: string;
   /** The commit the task's worktree started from, when the task log recorded it. */
   baseSha?: string;
+  /** The ref the worktree started from (the base, or the checked-out branch at task start, or HEAD). */
+  baseRef?: string;
+  /** Why plan sync chose that base, from the `## Base` block of the task log. */
+  baseReason?: BaseReason;
+}
+
+export type BaseReason =
+  | "dependency"
+  | "dependencies-merged"
+  | "dependency-conflict"
+  | "follow-up"
+  | "project-default"
+  | "head";
+
+/** Classify the first line of the `## Base` block that plan sync writes (see runner/plan-sync). */
+export function baseReasonOf(log: string): BaseReason | undefined {
+  const line = /^## Base\n([^\n]*)/m.exec(log)?.[1];
+  if (!line) return undefined;
+  if (line.includes("finished branch of this goal's previous task")) return "follow-up";
+  if (line.includes("which this goal depends on")) return "dependency";
+  if (/\((?:would )?merge(?: of)? /.test(line)) return "dependencies-merged";
+  if (line.includes("no integration branch because")) return "dependency-conflict";
+  if (line.includes("the project default base")) return "project-default";
+  if (line.includes("HEAD of the project repository")) return "head";
+  return undefined;
 }
 
 const HEADER =
@@ -64,11 +89,16 @@ export function taskReviewInfo(task: Task): TaskReviewInfo {
   const log = task.body.log;
   const shas = [...log.matchAll(/^base \S+ → ([0-9a-f]{7,64})\s*$/gm)];
   const baseSha = shas.length > 0 ? shas[shas.length - 1]![1] : undefined;
+  const refs = [...log.matchAll(/^base (\S+) → [0-9a-f]{7,64}\s*$/gm)];
+  const baseRef = refs.length > 0 ? refs[refs.length - 1]![1] : task.frontmatter.base;
+  const baseReason = baseReasonOf(log);
   const inWorktree = /worktree at /.test(log) || baseSha !== undefined;
   return {
     reviews: [...observer, ...reviewer],
     finalVerdict,
     ...(inWorktree ? { branch: `boof-runner/${task.frontmatter.id}` } : {}),
     ...(baseSha ? { baseSha } : {}),
+    ...(baseRef ? { baseRef } : {}),
+    ...(baseReason ? { baseReason } : {}),
   };
 }

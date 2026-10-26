@@ -25,6 +25,7 @@ import type { ToolRegistry } from "./tools/registry.js";
 import { UsageStore } from "./usage-store.js";
 import {
   branchHead,
+  currentBranch,
   diffAgainstBase,
   discardWorktree,
   ensureWorktree,
@@ -412,7 +413,10 @@ export class Pipeline {
         if (made.baseIgnored) {
           await appendLog(`base ${base} ignored: reusing existing branch ${worktree.branch}`);
         } else if (!made.reused) {
-          await appendLog(`base ${base ?? "HEAD"} → ${worktree.base}`);
+          // Name the ref the worktree started from: the explicit base, else the branch checked out
+          // in the project directory, else "HEAD" (detached).
+          const ref = base ?? (await currentBranch(workingDirectory)) ?? "HEAD";
+          await appendLog(`base ${ref} → ${worktree.base}`);
         }
       } else {
         await appendLog(

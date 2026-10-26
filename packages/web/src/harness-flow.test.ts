@@ -197,6 +197,15 @@ describe("harness flow over /api/v1", () => {
       },
     ]);
     expect(a.history.at(-1)).toMatchObject({ status: "done", taskId: resync.created[0].taskId });
+    expect(after.mergeOrder.map((m: { goalId: string }) => m.goalId)).toContain("a");
+    expect(after.mergeOrder.find((m: { goalId: string }) => m.goalId === "a")).toEqual({
+      goalId: "a",
+      taskId: resync.created[0].taskId,
+      branch: `boof-runner/${resync.created[0].taskId}`,
+    });
+    const fu = await (await call(`/projects/shop/tasks/${resync.created[0].taskId}`)).json();
+    expect(fu).toMatchObject({ baseRef: "boof-runner/boof-a", baseReason: "follow-up" });
+    expect(fu.baseSha).toMatch(/^[0-9a-f]{7,}$/);
     const whole = await (await call("/projects/shop/plans/q4/wait?timeoutSeconds=1")).json();
     expect(whole).toMatchObject({
       complete: true,
@@ -255,7 +264,10 @@ describe("harness flow over /api/v1", () => {
       send("POST", { id: "idea", title: "Idea", goals: [goal("y")] }),
     );
     const draft = await (await call("/projects/shop/plans/idea/wait?timeoutSeconds=1")).json();
-    expect(draft.stuckReasons).toEqual([{ goalId: "y", taskId: null, status: "plan-not-active" }]);
+    expect(draft).toMatchObject({ stuck: true, awaitingApproval: true, timedOut: false });
+    expect(draft.stuckReasons).toEqual([{ goalId: "", taskId: null, status: "plan-not-active" }]);
+    expect(auto.awaitingApproval).toBe(false);
+    expect(unsynced.awaitingApproval).toBe(false);
 
     // Synced, runner idle: tasks are draft (review is off here, so pending) and the plan waits.
     await call("/projects/shop/plans/w/sync", send("POST"));

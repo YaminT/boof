@@ -1516,6 +1516,20 @@
       "Task": {
         "additionalProperties": false,
         "properties": {
+          "baseReason": {
+            "enum": [
+              "dependency",
+              "dependencies-merged",
+              "dependency-conflict",
+              "follow-up",
+              "project-default",
+              "head"
+            ],
+            "type": "string"
+          },
+          "baseRef": {
+            "type": "string"
+          },
           "baseSha": {
             "type": "string"
           },
@@ -2807,7 +2821,241 @@
                   "properties": {
                     "projects": {
                       "items": {
-                        "$ref": "#/components/schemas/Project"
+                        "additionalProperties": false,
+                        "properties": {
+                          "archived": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "created": {
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                            "type": "string"
+                          },
+                          "currentBranch": {
+                            "description": "Branch checked out in the working directory (git symbolic-ref); null when detached or not a repository.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "defaultBase": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "labels": {
+                            "default": [],
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "origin": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "client": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "enum": [
+                                  "ui",
+                                  "cli",
+                                  "api",
+                                  "migration"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "type": "object"
+                          },
+                          "paused": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "planWriteBack": {
+                            "default": true,
+                            "type": "boolean"
+                          },
+                          "retries": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "backoffMs": {
+                                "items": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "type": "array"
+                              },
+                              "idleTimeoutMs": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              "transient": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "review": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "gate": {
+                                "type": "boolean"
+                              },
+                              "maxFixRounds": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "maxInlineDiffBytes": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "roles": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "developer": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "model": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "tool": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "tool",
+                                  "model"
+                                ],
+                                "type": "object"
+                              },
+                              "observer": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "model": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "tool": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "tool",
+                                  "model"
+                                ],
+                                "type": "object"
+                              },
+                              "planner": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "model": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "tool": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "tool",
+                                  "model"
+                                ],
+                                "type": "object"
+                              },
+                              "reviewer": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "model": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "tool": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "tool",
+                                  "model"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "updated": {
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                            "type": "string"
+                          },
+                          "workingDirectory": {
+                            "type": "string"
+                          },
+                          "worktree": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "onDone": {
+                                "enum": [
+                                  "keep-branch",
+                                  "keep",
+                                  "delete"
+                                ],
+                                "type": "string"
+                              },
+                              "onFailure": {
+                                "enum": [
+                                  "keep",
+                                  "delete"
+                                ],
+                                "type": "string"
+                              },
+                              "root": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "workingDirectory",
+                          "paused",
+                          "archived",
+                          "planWriteBack",
+                          "labels",
+                          "origin",
+                          "created",
+                          "updated",
+                          "currentBranch"
+                        ],
+                        "type": "object"
                       },
                       "type": "array"
                     }
@@ -3137,7 +3385,7 @@
         "x-boof-scope": "projects:write"
       },
       "get": {
-        "description": "Returns one project by id. Input: projectId. No side effects.",
+        "description": "Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.",
         "operationId": "projects.get",
         "parameters": [
           {
@@ -3157,7 +3405,241 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Project"
+                  "additionalProperties": false,
+                  "properties": {
+                    "archived": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "created": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "description": "Branch checked out in the working directory (git symbolic-ref); null when detached or not a repository.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "defaultBase": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "labels": {
+                      "default": [],
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "origin": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "cli",
+                            "api",
+                            "migration"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "paused": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "planWriteBack": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "retries": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "backoffMs": {
+                          "items": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": "array"
+                        },
+                        "idleTimeoutMs": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "transient": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "review": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gate": {
+                          "type": "boolean"
+                        },
+                        "maxFixRounds": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxInlineDiffBytes": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "roles": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "developer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "observer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "planner": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "reviewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "updated": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "workingDirectory": {
+                      "type": "string"
+                    },
+                    "worktree": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "onDone": {
+                          "enum": [
+                            "keep-branch",
+                            "keep",
+                            "delete"
+                          ],
+                          "type": "string"
+                        },
+                        "onFailure": {
+                          "enum": [
+                            "keep",
+                            "delete"
+                          ],
+                          "type": "string"
+                        },
+                        "root": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "workingDirectory",
+                    "paused",
+                    "archived",
+                    "planWriteBack",
+                    "labels",
+                    "origin",
+                    "created",
+                    "updated",
+                    "currentBranch"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -3999,7 +4481,7 @@
     },
     "/projects/{projectId}/plans/{planId}": {
       "get": {
-        "description": "Returns a plan with all goals and its version. Inputs: projectId, planId. No side effects.",
+        "description": "Returns a plan with all goals, its version and mergeOrder (the final task branch of each goal in topological plan order). Inputs: projectId, planId. No side effects.",
         "operationId": "plans.get",
         "parameters": [
           {
@@ -4030,7 +4512,152 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Plan"
+                  "additionalProperties": false,
+                  "properties": {
+                    "approvedBy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                          "type": "string"
+                        },
+                        "principalId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "version": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "principalId",
+                        "at",
+                        "version"
+                      ],
+                      "type": "object"
+                    },
+                    "autoSync": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "bumpTo": {
+                      "default": "done",
+                      "enum": [
+                        "review",
+                        "done"
+                      ],
+                      "type": "string"
+                    },
+                    "created": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "description": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "goals": {
+                      "items": {
+                        "$ref": "#/components/schemas/Goal"
+                      },
+                      "type": "array"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "mergeOrder": {
+                      "description": "The final task branch of each goal that ran a task, in topological plan order. Merge them in this order.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "branch": {
+                            "type": "string"
+                          },
+                          "goalId": {
+                            "type": "string"
+                          },
+                          "taskId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "goalId",
+                          "taskId",
+                          "branch"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "source": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "type": "string"
+                        },
+                        "importedFrom": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "api",
+                            "mcp",
+                            "repo-import"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "status": {
+                      "default": "draft",
+                      "enum": [
+                        "draft",
+                        "active",
+                        "archived"
+                      ],
+                      "type": "string"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "updated": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "version": {
+                      "default": 1,
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "description",
+                    "status",
+                    "autoSync",
+                    "bumpTo",
+                    "source",
+                    "goals",
+                    "version",
+                    "created",
+                    "updated",
+                    "mergeOrder"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -5127,7 +5754,7 @@
     },
     "/projects/{projectId}/plans/{planId}/wait": {
       "get": {
-        "description": "Long-polls a plan for up to 60 seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. Output: plan, version, complete, stuck, stuckReasons, changed, timedOut. No side effects; call it again after a timeout.",
+        "description": "Long-polls a plan for up to 60 seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.",
         "operationId": "plans.wait",
         "parameters": [
           {
@@ -5182,6 +5809,10 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "awaitingApproval": {
+                      "description": "The plan is a draft: it returns at once with stuck true and one reason (plan-not-active, empty goalId) until a human approves it.",
+                      "type": "boolean"
+                    },
                     "changed": {
                       "type": "boolean"
                     },
@@ -5238,6 +5869,7 @@
                     "complete",
                     "stuck",
                     "stuckReasons",
+                    "awaitingApproval",
                     "changed",
                     "timedOut"
                   ],
@@ -5685,6 +6317,20 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "baseReason": {
+                      "enum": [
+                        "dependency",
+                        "dependencies-merged",
+                        "dependency-conflict",
+                        "follow-up",
+                        "project-default",
+                        "head"
+                      ],
+                      "type": "string"
+                    },
+                    "baseRef": {
+                      "type": "string"
+                    },
                     "baseSha": {
                       "type": "string"
                     },

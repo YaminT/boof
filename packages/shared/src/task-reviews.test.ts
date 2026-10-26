@@ -77,6 +77,33 @@ describe("taskReviewInfo", () => {
     expect(info.baseSha).toBe("abcdef1234567");
   });
 
+  it("reads baseRef from the base line and baseReason from the ## Base block", () => {
+    const base = (line: string) =>
+      taskReviewInfo(task({ log: `## Base\n${line}\n\nbase feat/x → abcdef1234567` }));
+    expect(
+      base("Base: feat/x (the project default base; no finished dependency branch found)."),
+    ).toMatchObject({
+      baseRef: "feat/x",
+      baseReason: "project-default",
+    });
+    const cases: [string, string][] = [
+      ["Base: b (the finished branch of this goal's previous task).", "follow-up"],
+      ["Base: b (the finished branch of goal a, which this goal depends on).", "dependency"],
+      ["Base: b--base (merge of b (goal a), c (goal d)).", "dependencies-merged"],
+      [
+        "Base: b (first dependency; no integration branch because conflict). Other.",
+        "dependency-conflict",
+      ],
+      [
+        "Base: HEAD of the project repository (no finished dependency branch and no default base).",
+        "head",
+      ],
+    ];
+    for (const [line, reason] of cases) expect(base(line).baseReason).toBe(reason);
+    expect(taskReviewInfo(task({ log: "base HEAD → abcdef1234567" })).baseRef).toBe("HEAD");
+    expect(taskReviewInfo(task({})).baseReason).toBeUndefined();
+  });
+
   it("has no branch or baseSha for a task that never ran, and omits roles that did not review", () => {
     const info = taskReviewInfo(task({ reviewer: "#### Round 1 — APPROVE\nOk." }));
     expect(info.finalVerdict).toEqual({ reviewer: "APPROVE" });

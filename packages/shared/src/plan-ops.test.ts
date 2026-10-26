@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyGoalInputs } from "./plan-ops.js";
+import { applyGoalInputs, mergeOrderOf } from "./plan-ops.js";
 import { testGoal } from "./plan-fixtures.js";
 import { exportPlanXml } from "./plan-xml.js";
 
@@ -58,5 +58,25 @@ describe("runtime fields stay out of the XML export", () => {
     });
     expect(exportPlanXml({ goals: [busy] })).toEqual(exportPlanXml({ goals: [withHistory] }));
     expect(Object.keys(exportPlanXml({ goals: [plain] }))).toContain("a/goal.boof.xml");
+  });
+});
+
+describe("mergeOrderOf", () => {
+  const ref = (id: string) => ({
+    taskId: `boof-${id}`,
+    revision: 1,
+    status: "done" as const,
+    branch: `boof-runner/boof-${id}`,
+  });
+  it("lists the last task branch of each goal in topological order and skips goals without one", () => {
+    const a = testGoal("a", 3, [], { tasks: [ref("a")] });
+    const b = testGoal("b", 1, ["a"], {
+      tasks: [ref("b"), { ...ref("b"), taskId: "update-b", branch: "boof-runner/update-b" }],
+    });
+    const c = testGoal("c", 2, ["a"]);
+    expect(mergeOrderOf({ goals: [b, c, a] })).toEqual([
+      { goalId: "a", taskId: "boof-a", branch: "boof-runner/boof-a" },
+      { goalId: "b", taskId: "update-b", branch: "boof-runner/update-b" },
+    ]);
   });
 });
