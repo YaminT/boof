@@ -107,7 +107,7 @@ On success the status is `200` and the body is JSON:
 Read the result:
 
 - `principal.scopes`. An operation that needs a scope you lack answers `403 forbidden_scope`. The scope `admin` includes every scope. Plan your work with the scopes you have. Tell the user which scope is missing for a task you cannot do.
-- `principal.trust`. If it is `review`, tasks and plans you create land as `draft`. Tell the user that a human must approve them in the boof web UI (Tasks tab, filter "Proposed by clients"; Plans tab).
+- `principal.trust`. If it is `review`, tasks and plans you create land as `draft`. Tell the user that a human must approve them in the boof web UI (Tasks tab, filter "Proposed by clients"; Plans tab, button Approve).
 - `principal.projects`. `"*"` means every project. A list means only those projects.
 - `server.authMode`. `local-trust` means a caller on the same machine needs no key. `required` means every caller needs a key.
 - `server.mcpEnabled`. If `false`, use REST. `/mcp` answers 404.
