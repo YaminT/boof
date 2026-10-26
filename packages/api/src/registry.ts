@@ -3,6 +3,7 @@ import { adminOps } from "./ops/admin.js";
 import { planOps } from "./ops/plans.js";
 import { projectOps } from "./ops/projects.js";
 import { taskOps } from "./ops/tasks.js";
+import { webhookOps } from "./ops/webhooks.js";
 
 /** Every operation, in the order the docs and the OpenAPI document list them. */
 export const registry: readonly AnyOperation[] = [
@@ -10,6 +11,7 @@ export const registry: readonly AnyOperation[] = [
   ...planOps,
   ...taskOps,
   ...adminOps,
+  ...webhookOps,
 ];
 
 const byName = new Map(registry.map((op) => [op.name, op]));

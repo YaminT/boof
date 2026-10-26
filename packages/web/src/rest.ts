@@ -27,6 +27,7 @@ export interface RestDeps {
   service: TaskService;
   authStore: AuthStore;
   idempotency: IdempotencyStore;
+  isSelfUrl?: (url: URL) => boolean;
 }
 
 type FieldKind = "boolean" | "number" | "string";
@@ -186,6 +187,7 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
       authStore: deps.authStore,
       now: () => new Date().toISOString(),
       legacy,
+      isSelfUrl: deps.isSelfUrl,
       audit: (extra) => c.set("auditExtra", extra),
     };
 

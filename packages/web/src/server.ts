@@ -1,3 +1,4 @@
+import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { serve, type ServerType } from "@hono/node-server";
@@ -6,8 +7,10 @@ import { AuthStore, migrateDataRoot, securitySettings, type Settings } from "@bo
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
-import { TaskService } from "@boof-runner/api";
+import { IdempotencyStore, TaskService } from "@boof-runner/api";
 import { DataWatcher } from "./watch.js";
+import { hostnameOf } from "./middleware/host-guard.js";
+import { WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
   root: string;
@@ -28,6 +31,7 @@ export interface StartServerOptions {
 export interface RunningServer {
   server: ServerType;
   watcher: DataWatcher;
+  webhooks: WebhookDispatcher;
   service: TaskService;
   port: number;
   stop: () => Promise<void>;
@@ -92,6 +96,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     await warnIfDataRootOpen(opts.root, warn);
   }
   await pruneAudit(opts.root, sec.audit.retentionDays).catch(() => []);
+  await new IdempotencyStore(opts.root).prune().catch(() => 0);
 
   const watcher = new DataWatcher(opts.root);
   watcher.start();
@@ -99,7 +104,33 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const allowedHosts = [...(opts.allowedHosts ?? [])];
   if (!loopback && !WILDCARD_HOSTS.has(host)) allowedHosts.push(host);
 
-  const app = createApp({ service, watcher, uiDir: opts.uiDir, allowedHosts, authStore });
+  // A webhook must not call back into this server: remember the names and port it answers to.
+  const selfNames = new Set(
+    [
+      "localhost",
+      "127.0.0.1",
+      "[::1]",
+      "0.0.0.0",
+      host.toLowerCase(),
+      ...allowedHosts.map(hostnameOf),
+    ].map((h) => (h.includes(":") && !h.startsWith("[") ? `[${h}]` : h)),
+  );
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list ?? []) selfNames.add(a.family === "IPv6" ? `[${a.address}]` : a.address);
+  }
+  let boundPort = opts.port ?? 4319;
+  const isSelfUrl = (url: URL): boolean =>
+    Number(url.port || (url.protocol === "https:" ? 443 : 80)) === boundPort &&
+    selfNames.has(url.hostname.toLowerCase());
+
+  const app = createApp({
+    service,
+    watcher,
+    uiDir: opts.uiDir,
+    allowedHosts,
+    authStore,
+    isSelfUrl,
+  });
 
   const server = await new Promise<ServerType>((resolve, reject) => {
     const base = { fetch: app.fetch, hostname: host, port: opts.port ?? 4319 };
@@ -119,13 +150,20 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
 
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : (opts.port ?? 4319);
+  boundPort = port;
+
+  // Webhooks are delivered by this process only (headless run/scan processes do not deliver).
+  const webhooks = new WebhookDispatcher({ root: opts.root, service });
+  webhooks.start();
 
   return {
     server,
     watcher,
+    webhooks,
     service,
     port,
     stop: async () => {
+      webhooks.stop();
       await watcher.stop();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

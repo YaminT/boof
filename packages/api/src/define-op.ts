@@ -23,6 +23,8 @@ export interface OpContext {
    * must keep the old shape (full task lists, `body.log` included). MCP and v1 leave it unset.
    */
   legacy?: boolean;
+  /** True when a URL points at this very server (webhooks must not call back into boof). */
+  isSelfUrl?: (url: URL) => boolean;
   /** Receives the operation's audit extras once the input is valid (REST puts them in the audit line). */
   audit?: (extra: Record<string, unknown>) => void;
 }

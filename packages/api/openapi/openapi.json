@@ -144,6 +144,192 @@
         ],
         "type": "object"
       },
+      "Event": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "project": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "task.status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "project",
+              "task",
+              "from",
+              "to",
+              "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "project": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "task.questions",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "project",
+              "task",
+              "count",
+              "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "plan": {
+                "type": "string"
+              },
+              "project": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "plan.updated",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "project",
+              "plan",
+              "version",
+              "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "created": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "plan": {
+                "type": "string"
+              },
+              "project": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "plan.synced",
+                "type": "string"
+              },
+              "updated": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "project",
+              "plan",
+              "created",
+              "updated",
+              "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "runner.enabled",
+                "type": "string"
+              },
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "value",
+              "by"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Goal": {
         "additionalProperties": false,
         "properties": {
@@ -2219,6 +2405,65 @@
           "commands"
         ],
         "x-boof-scope": "tasks:write"
+      }
+    },
+    "/events": {
+      "get": {
+        "description": "Server-Sent Events of task, plan and runner changes. Each event has `event: <type>`, `id: <cursor>` and the event JSON as data. Reconnect with Last-Event-ID (or since=<cursor>) to replay what you missed; since=start replays everything; without it only new events arrive. Needs tasks:read; only projects the client may access are sent.",
+        "operationId": "events.stream",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                }
+              }
+            },
+            "description": "An event stream."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Stream events (SSE)",
+        "tags": [
+          "events"
+        ],
+        "x-boof-scope": "tasks:read"
       }
     },
     "/health": {
@@ -6678,6 +6923,310 @@
           ]
         },
         "x-mcp-tool": "boof_get_usage"
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "description": "Lists the webhook subscriptions without their secrets. No input. Admin only.",
+        "operationId": "webhooks.list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "webhooks": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "created": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "default": true,
+                            "type": "boolean"
+                          },
+                          "events": {
+                            "items": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "id": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "projects": {
+                            "anyOf": [
+                              {
+                                "const": "*",
+                                "type": "string"
+                              },
+                              {
+                                "items": {
+                                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            ],
+                            "default": "*"
+                          },
+                          "url": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "url",
+                          "events",
+                          "projects",
+                          "enabled",
+                          "createdBy",
+                          "created"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "webhooks"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List webhooks",
+        "tags": [
+          "webhooks"
+        ],
+        "x-boof-scope": "admin"
+      },
+      "post": {
+        "description": "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
+        "operationId": "webhooks.create",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "events": {
+                    "items": {
+                      "pattern": "^(\\*|[a-z]+(\\.[a-z]+|\\.\\*)?)$",
+                      "type": "string"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "projects": {
+                    "anyOf": [
+                      {
+                        "const": "*",
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "maxItems": 200,
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "maxLength": 2000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "secret": {
+                      "type": "string"
+                    },
+                    "webhook": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "created": {
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "default": true,
+                          "type": "boolean"
+                        },
+                        "events": {
+                          "items": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "id": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "projects": {
+                          "anyOf": [
+                            {
+                              "const": "*",
+                              "type": "string"
+                            },
+                            {
+                              "items": {
+                                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          ],
+                          "default": "*"
+                        },
+                        "url": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "url",
+                        "events",
+                        "projects",
+                        "enabled",
+                        "createdBy",
+                        "created"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "webhook",
+                    "secret"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a webhook",
+        "tags": [
+          "webhooks"
+        ],
+        "x-boof-scope": "admin"
+      }
+    },
+    "/webhooks/{webhookId}": {
+      "delete": {
+        "description": "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped.",
+        "operationId": "webhooks.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "webhookId",
+            "required": true,
+            "schema": {
+              "description": "Webhook id.",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a webhook",
+        "tags": [
+          "webhooks"
+        ],
+        "x-boof-scope": "admin"
       }
     }
   },

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   ClientSchema,
   GoalInputSchema,
+  BoofEventSchema,
   GoalSchema,
   PlanSchema,
   ProjectSchema,
@@ -183,6 +184,31 @@ export function buildOpenApi(ops: readonly AnyOperation[]): Json {
   for (const op of ops) {
     (paths[op.rest.path] ??= {})[op.rest.method.toLowerCase()] = operationObject(op);
   }
+  paths["/events"] = {
+    get: {
+      operationId: "events.stream",
+      summary: "Stream events (SSE)",
+      description:
+        "Server-Sent Events of task, plan and runner changes. Each event has `event: <type>`, `id: <cursor>` and the event JSON as data. Reconnect with Last-Event-ID (or since=<cursor>) to replay what you missed; since=start replays everything; without it only new events arrive. Needs tasks:read; only projects the client may access are sent.",
+      tags: ["events"],
+      "x-boof-scope": "tasks:read",
+      parameters: [
+        { name: "project", in: "query", required: false, schema: { type: "string" } },
+        { name: "since", in: "query", required: false, schema: { type: "string" } },
+        { name: "Last-Event-ID", in: "header", required: false, schema: { type: "string" } },
+      ],
+      responses: {
+        "200": {
+          description: "An event stream.",
+          content: { "text/event-stream": { schema: { $ref: "#/components/schemas/Event" } } },
+        },
+        default: {
+          description: "Error",
+          content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+        },
+      },
+    },
+  };
   const shared: [string, string][] = SHARED.map(([name, schema, io]) => [
     name,
     JSON.stringify(sortKeys(toSchema(schema, io))),
@@ -206,6 +232,7 @@ export function buildOpenApi(ops: readonly AnyOperation[]): Json {
       securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
       schemas: {
         ...shapes,
+        Event: toSchema(BoofEventSchema, "output"),
         Error: {
           type: "object",
           required: ["error"],

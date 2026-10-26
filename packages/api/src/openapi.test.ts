@@ -24,6 +24,7 @@ describe("OpenAPI document", () => {
     )
       .flatMap((p) => Object.values(p))
       .map((o) => o.operationId)
+      .filter((id) => id !== "events.stream") // the SSE stream is not a registry operation
       .sort();
     expect(ids).toEqual(registry.map((o) => o.name).sort());
   });

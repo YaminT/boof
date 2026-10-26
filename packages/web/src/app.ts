@@ -2,10 +2,11 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
-import { AuthStore, authorizeProject, MAX_ATTACHMENT_BYTES } from "@boof-runner/shared";
+import { AuthStore, authorizeProject, isKebabId, MAX_ATTACHMENT_BYTES } from "@boof-runner/shared";
 import {
   buildOpenApi,
   IdempotencyStore,
+  OpError,
   registry,
   toOpError,
   type AnyOperation,
@@ -24,6 +25,14 @@ import { securityConfigReader } from "./security-config.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { existsSync } from "node:fs";
 import { DataWatcher } from "./watch.js";
+import {
+  decodeFeedCursor,
+  encodeFeedCursor,
+  liveCursor,
+  readableScopes,
+  readFeed,
+  type FeedCursor,
+} from "./events.js";
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 
 export interface AppDeps {
@@ -37,6 +46,8 @@ export interface AppDeps {
   authStore?: AuthStore;
   /** Resolves the TCP peer address (loopback detection). Default: the socket's remote address. */
   peerAddress?: PeerAddressResolver;
+  /** True when a URL points at this server itself (webhook targets must not). */
+  isSelfUrl?: (url: URL) => boolean;
   /** Clock override for tests (rate limit, client cache, audit). */
   now?: () => number;
 }
@@ -101,7 +112,7 @@ export function createApp(deps: AppDeps): Hono {
   });
 
   const idempotency = new IdempotencyStore(service.root);
-  const restDeps = { service, authStore, idempotency };
+  const restDeps = { service, authStore, idempotency, isSelfUrl: deps.isSelfUrl };
   // The contract, generated once from the registry. Any authenticated principal may read it.
   let openapi: string | undefined;
   api.get("/v1/openapi.json", (c) => {
@@ -111,8 +122,89 @@ export function createApp(deps: AppDeps): Hono {
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "", legacy: true });
 
-  // --- SSE live updates ---
   const who = (c: Context) => c.get("principal");
+
+  // --- SSE ---
+  // v1: typed events from the events files, replayable by cursor (see events.ts).
+  api.get("/v1/events", requireScope("tasks:read"), async (c) => {
+    const principal = who(c);
+    const project = c.req.query("project");
+    if (project !== undefined) {
+      if (!isKebabId(project)) throw new OpError(400, "Invalid project id", "invalid_input");
+      if (!authorizeProject(principal, project)) {
+        throw new OpError(
+          403,
+          `This client may not access project: ${project}`,
+          "forbidden_project",
+          { project },
+        );
+      }
+      await service.requireProject(project);
+    }
+    const sinceText = c.req.header("Last-Event-ID") ?? c.req.query("since");
+    const scopes = () => readableScopes(service, principal, project);
+    let cursor: FeedCursor;
+    if (sinceText === undefined || sinceText === "")
+      cursor = await liveCursor(service.root, await scopes());
+    else if (sinceText === "start") cursor = {};
+    else {
+      const decoded = decodeFeedCursor(sinceText);
+      if (!decoded)
+        throw new OpError(400, "Invalid since cursor", "invalid_input", [
+          { path: "since", message: "Invalid cursor" },
+        ]);
+      cursor = decoded;
+    }
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({
+        event: "ready",
+        data: JSON.stringify({ cursor: encodeFeedCursor(cursor) }),
+      });
+      let draining = false;
+      let again = false;
+      const drain = async () => {
+        if (draining) {
+          again = true;
+          return;
+        }
+        draining = true;
+        try {
+          do {
+            again = false;
+            for (;;) {
+              const batch = await readFeed(service.root, await scopes(), cursor, 200);
+              if (batch.length === 0) break;
+              for (const e of batch) {
+                await stream.writeSSE({
+                  event: e.event.type,
+                  id: e.cursor,
+                  data: JSON.stringify(e.event),
+                });
+              }
+              cursor = decodeFeedCursor(batch[batch.length - 1].cursor) ?? cursor;
+            }
+          } while (again);
+        } finally {
+          draining = false;
+        }
+      };
+      await drain();
+      if (!deps.watcher) return; // no live source (tests): replay only
+      const unsub = deps.watcher.subscribe(() => void drain().catch(() => {}));
+      const poll = setInterval(() => void drain().catch(() => {}), 2000);
+      const beat = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), 15000);
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => {
+          unsub();
+          clearInterval(poll);
+          clearInterval(beat);
+          resolve();
+        });
+      });
+    });
+  });
+
+  // Deprecated: untyped `changed` pings (the old UI refetches on each).
   api.get("/events", requireScope("tasks:read"), (c) =>
     streamSSE(c, async (stream) => {
       await stream.writeSSE({ event: "ready", data: "connected" });
