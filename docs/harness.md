@@ -126,13 +126,18 @@ A key can be limited to some projects with `--projects a,b`. Other projects answ
 
 Tell the user the steps to expose it safely. Never advise exposing boof without authentication.
 
-1. Edit `settings.json` in the data root. Set `"security": { "auth": { "mode": "required" }, "allowedHosts": ["<public-hostname>"], "allowedProjectRoots": ["<absolute-or-~/path-of-repos>"] }`.
-   - `auth.mode: "required"` turns off the trust given to loopback callers.
-   - `allowedHosts` lists the host names clients use in the URL. Any other `Host` header answers `421 host_not_allowed`.
-   - `allowedProjectRoots` lists the directories under which a key may register projects.
-2. Create a key with `boof-runner auth add` (see above).
-3. Start the server on a reachable address with TLS: `boof-runner serve --host 0.0.0.0 --port 4319 --tls-cert cert.pem --tls-key key.pem`. Use a specific IP instead of `0.0.0.0` to bind one interface. The server refuses to bind a non-loopback address unless `auth.mode` is `"required"` and at least one active key exists.
-4. Alternative: keep `--host 127.0.0.1` and put a reverse proxy (TLS) or a tunnel in front. Put the public host name in `allowedHosts`. The proxy must forward the original `Host` header.
+1. On the boof machine the user runs one command (add `-d <data-root>` if the data root is not `./data`): `boof-runner remote setup --hostname <public-hostname> --allowed-root <absolute-or-~/path-of-repos>`. It prints a new API key once (the user must copy it) and the next steps.
+2. The user follows the printed next steps. Either serve with TLS: `boof-runner serve --host 0.0.0.0 --port 4319 --tls-cert cert.pem --tls-key key.pem`; or keep `--host 127.0.0.1` and put a reverse proxy (TLS) or a tunnel in front that forwards `https://<public-hostname>` to `http://127.0.0.1:4319` with the original `Host` header (Caddy: `reverse_proxy 127.0.0.1:4319`; Cloudflare: `cloudflared tunnel --url http://127.0.0.1:4319`).
+3. The user gives you `BOOF_URL=https://<public-hostname>` and the key.
+
+`boof-runner remote status` shows what is configured. `boof-runner remote disable` returns to local-only. A second `remote setup` with the same client name changes nothing; use `auth rotate <id>` for a new key.
+
+What the command does, if you need to explain or do it by hand: it sets `"security": { "auth": { "mode": "required" }, "allowedHosts": ["<public-hostname>"], "allowedProjectRoots": [...] }` in `settings.json`, creates a key like `auth add` (full harness scopes, `review` trust) and runs `chmod 700` on the data root.
+
+- `auth.mode: "required"` turns off the trust given to loopback callers.
+- `allowedHosts` lists the host names clients use in the URL. Any other `Host` header answers `421 host_not_allowed`.
+- `allowedProjectRoots` lists the directories under which a key may register projects.
+- The server refuses to bind a non-loopback address unless `auth.mode` is `"required"` and at least one active key exists. Use a specific IP instead of `0.0.0.0` to bind one interface.
 
 Without TLS the key travels in clear text. Warn the user if `BOOF_URL` starts with `http://` and the host is not `127.0.0.1`, `localhost` or `[::1]`.
 

@@ -226,6 +226,18 @@ A data root from before multi-project support is migrated automatically the firs
 
 A request from a loopback peer with no `Authorization` header is the trusted `local` principal (while `security.auth.mode` is `"local-trust"`, the default). Anything else needs an API key.
 
+One command prepares the server for a remote AI harness:
+
+```bash
+boof-runner remote setup --hostname boof.example.com --allowed-root ~/codes
+```
+
+It sets `security.auth.mode = "required"`, adds the host name to `security.allowedHosts` and the directories to `security.allowedProjectRoots`, creates a `harness` API client (the key is printed once; default scopes are the full harness set, trust `review`; change with `--name`, `--scopes`, `--trust`, `--expires`, or skip with `--no-key`), restricts the data root to your user (`chmod 700`) and prints the next steps: serve with TLS (`boof-runner serve --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem`) or keep `--host 127.0.0.1` behind a tunnel or reverse proxy that forwards `https://<hostname>` to `http://127.0.0.1:4319` with the original `Host` header (for example Caddy `reverse_proxy 127.0.0.1:4319` or `cloudflared tunnel --url http://127.0.0.1:4319`). Then give the agent `BOOF_URL=https://<hostname>`, the key and `https://nodets.com/boof/harness.txt`. Running it again does not duplicate entries; a taken client name makes it stop without changes (use `auth rotate <id>`).
+
+`boof-runner remote status` shows the current state and whether a non-loopback bind is allowed; `boof-runner remote disable` sets the mode back to `local-trust` (hosts, roots and clients stay).
+
+The same by hand:
+
 ```bash
 # 1. require keys everywhere: set in settings.json
 #    "security": { "auth": { "mode": "required" }, "allowedHosts": ["boof.example.com"],
