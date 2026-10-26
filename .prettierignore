@@ -11,3 +11,4 @@ data/
 .claude/
 .codex/
 openspec/
+packages/api/openapi/

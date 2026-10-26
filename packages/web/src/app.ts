@@ -4,6 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import { AuthStore, authorizeProject, MAX_ATTACHMENT_BYTES } from "@boof-runner/shared";
 import {
+  buildOpenApi,
   IdempotencyStore,
   registry,
   toOpError,
@@ -101,6 +102,12 @@ export function createApp(deps: AppDeps): Hono {
 
   const idempotency = new IdempotencyStore(service.root);
   const restDeps = { service, authStore, idempotency };
+  // The contract, generated once from the registry. Any authenticated principal may read it.
+  let openapi: string | undefined;
+  api.get("/v1/openapi.json", (c) => {
+    openapi ??= JSON.stringify(buildOpenApi(registry));
+    return c.body(openapi, 200, { "Content-Type": "application/json" });
+  });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "", legacy: true });
 
