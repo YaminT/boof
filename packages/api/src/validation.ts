@@ -6,6 +6,7 @@ import {
   PlanStatusSchema,
   ProjectRolesOverrideSchema,
   ProjectReviewOverrideSchema,
+  ProjectBudgetOverrideSchema,
   ProjectRetriesOverrideSchema,
   ProjectWorktreeOverrideSchema,
   ScopeSchema,
@@ -64,6 +65,7 @@ export const CreateProjectBody = z
     review: ProjectReviewOverrideSchema.optional(),
     worktree: ProjectWorktreeOverrideSchema.optional(),
     retries: ProjectRetriesOverrideSchema.optional(),
+    budget: ProjectBudgetOverrideSchema.optional(),
     planWriteBack: z.boolean().optional(),
   })
   .strict();

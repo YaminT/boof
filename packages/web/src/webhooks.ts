@@ -52,7 +52,7 @@ export function wants(hook: Webhook, event: BoofEvent): boolean {
   if (!hook.enabled) return false;
   if (!hook.events.some((p) => eventMatches(p, event.type))) return false;
   if (hook.projects === "*") return true;
-  return "project" in event && hook.projects.includes(event.project);
+  return "project" in event && event.project !== undefined && hook.projects.includes(event.project);
 }
 
 /**

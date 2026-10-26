@@ -47,6 +47,7 @@ export interface CreateProjectInput {
   review?: Project["review"];
   worktree?: Project["worktree"];
   retries?: Project["retries"];
+  budget?: Project["budget"];
   planWriteBack?: boolean;
 }
 
@@ -182,6 +183,7 @@ export class ProjectStore {
       ...(input.review ? { review: input.review } : {}),
       ...(input.worktree ? { worktree: input.worktree } : {}),
       ...(input.retries ? { retries: input.retries } : {}),
+      ...(input.budget ? { budget: input.budget } : {}),
       ...(input.planWriteBack !== undefined ? { planWriteBack: input.planWriteBack } : {}),
       labels: input.labels ?? [],
       origin: input.origin ?? { kind: "api" },

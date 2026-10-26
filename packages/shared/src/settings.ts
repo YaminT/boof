@@ -159,7 +159,7 @@ export function securitySettings(settings: Settings): SecuritySettings {
 export type EffectiveSettings = Settings & { workingDirectory: string };
 
 /**
- * Merge a project over the global settings. `roles`, `review`, `worktree` and `retries` merge
+ * Merge a project over the global settings. `roles`, `review`, `worktree`, `retries` and `budget` merge
  * per key (the project wins); everything else is global. Adds `workingDirectory`.
  */
 export function effectiveSettings(global: Settings, project: Project): EffectiveSettings {
@@ -168,6 +168,11 @@ export function effectiveSettings(global: Settings, project: Project): Effective
   if (project.review) merged.review = { ...global.review, ...definedOnly(project.review) } as never;
   if (project.worktree) {
     merged.worktree = { ...global.worktree, ...definedOnly(project.worktree) } as never;
+  }
+  if (project.budget) {
+    // A project's own `perToolDayUsd` caps its spend only; the global per-tool limits stay global.
+    const { perToolDayUsd: _own, ...rest } = definedOnly(project.budget);
+    merged.budget = { onExceed: "pause", ...global.budget, ...rest };
   }
   if (project.retries) {
     merged.retries = { ...global.retries, ...definedOnly(project.retries) } as never;

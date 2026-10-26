@@ -174,6 +174,49 @@ export const RetrySettingsSchema = z.object({
 });
 export type RetrySettings = z.infer<typeof RetrySettingsSchema>;
 
+function isIanaZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const usdLimit = z.number().positive().finite();
+const ianaTimezone = z.string().refine(isIanaZone, { message: "not an IANA time zone" });
+
+/**
+ * Spending limits in USD; every limit is optional and absent means unlimited. Day limits reset at
+ * local midnight in `timezone`. `onExceed` decides what happens to a task that crosses a limit:
+ * `pause` keeps its worktree whatever `worktree.onFailure` says (so a retry resumes the work),
+ * `fail` follows `worktree.onFailure`. Either way the task fails with a `budget exceeded` reason.
+ */
+export const BudgetSettingsSchema = z.object({
+  /** Cost of one pipeline run of one task. */
+  perTaskUsd: usdLimit.optional(),
+  /** Cost of all work in one day. */
+  perDayUsd: usdLimit.optional(),
+  /** Cost of one project's work in one day (a project override replaces this). */
+  perProjectDayUsd: usdLimit.optional(),
+  /** Cost per tool id (claude-code, codex, ...) in one day, across projects. */
+  perToolDayUsd: z.record(z.string().min(1), usdLimit).optional(),
+  onExceed: z.enum(["pause", "fail"]).default("pause"),
+  /** IANA zone that defines "a day"; the server's local zone when unset. */
+  timezone: ianaTimezone.optional(),
+});
+export type BudgetSettings = z.infer<typeof BudgetSettingsSchema>;
+
+/** Per-project budget override: no global scopes, no defaults, so unset keys inherit. */
+export const ProjectBudgetOverrideSchema = z.strictObject({
+  perTaskUsd: usdLimit.optional(),
+  perProjectDayUsd: usdLimit.optional(),
+  /** Day limit per tool for this project's own spend (the global limits still apply). */
+  perToolDayUsd: z.record(z.string().min(1), usdLimit).optional(),
+  onExceed: z.enum(["pause", "fail"]).optional(),
+});
+export type ProjectBudgetOverride = z.infer<typeof ProjectBudgetOverrideSchema>;
+
 /** Authorization scopes (api-security). `admin` implies every other scope. */
 export const SCOPES = [
   "projects:read",
@@ -294,6 +337,7 @@ export const SettingsSchema = z.object({
   review: ReviewSettingsSchema.optional(),
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
+  budget: BudgetSettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
   mcp: McpSettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
@@ -336,6 +380,7 @@ export const SettingsPatchSchema = z
     review: ReviewSettingsSchema.optional(),
     worktree: WorktreeSettingsSchema.optional(),
     retries: RetrySettingsSchema.optional(),
+    budget: BudgetSettingsSchema.optional(),
     models: z.record(z.string(), z.array(z.string())).optional(),
   })
   .partial();
@@ -391,6 +436,7 @@ export const ProjectSchema = z.object({
   review: ProjectReviewOverrideSchema.optional(),
   worktree: ProjectWorktreeOverrideSchema.optional(),
   retries: ProjectRetriesOverrideSchema.optional(),
+  budget: ProjectBudgetOverrideSchema.optional(),
   /** Plan 03: write goal status back into the repo XML. */
   planWriteBack: z.boolean().default(true),
   labels: z.array(z.string()).default([]),
@@ -412,6 +458,7 @@ export const ProjectPatchSchema = z
     review: ProjectReviewOverrideSchema.nullable(),
     worktree: ProjectWorktreeOverrideSchema.nullable(),
     retries: ProjectRetriesOverrideSchema.nullable(),
+    budget: ProjectBudgetOverrideSchema.nullable(),
     planWriteBack: z.boolean(),
     labels: z.array(z.string().max(100)).max(50),
   })

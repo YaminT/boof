@@ -63,6 +63,20 @@ export const RunnerEnabledEventSchema = z.object({
   value: z.boolean(),
   by,
 });
+/** A day or task budget ran out; announced once per day and scope. */
+export const RunnerBudgetExceededEventSchema = z.object({
+  type: z.literal("runner.budget_exceeded"),
+  ts: z.string(),
+  /** `global`, `project:<id>`, `tool:<tool>` or `project:<id>/tool:<tool>`. */
+  scope: z.string(),
+  /** Local date (budget time zone) the budget belongs to. */
+  date: z.string(),
+  spentUsd: z.number(),
+  limitUsd: z.number(),
+  /** Set for project scopes. */
+  project: z.string().optional(),
+  by,
+});
 
 export const BoofEventSchema = z.discriminatedUnion("type", [
   TaskCreatedEventSchema,
@@ -71,6 +85,7 @@ export const BoofEventSchema = z.discriminatedUnion("type", [
   PlanUpdatedEventSchema,
   PlanSyncedEventSchema,
   RunnerEnabledEventSchema,
+  RunnerBudgetExceededEventSchema,
 ]);
 export type BoofEvent = z.infer<typeof BoofEventSchema>;
 export type BoofEventType = BoofEvent["type"];
@@ -81,6 +96,7 @@ export const EVENT_TYPES = [
   "plan.updated",
   "plan.synced",
   "runner.enabled",
+  "runner.budget_exceeded",
 ] as const satisfies readonly BoofEventType[];
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
