@@ -174,12 +174,7 @@ export class TaskStore {
    * Append an injected prompt to the task's durable `## Injected` section (the control-dir copy
    * is deleted when the task leaves `running`). `by` is the principal name, default "user".
    */
-  async appendInjected(
-    id: string,
-    text: string,
-    by = "user",
-    mode?: InjectMode,
-  ): Promise<Task> {
+  async appendInjected(id: string, text: string, by = "user", mode?: InjectMode): Promise<Task> {
     const located = await this.locate(id);
     if (!located) throw new TaskNotFoundError(id);
     return withFileLock(located.path, async () => {
