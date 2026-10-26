@@ -98,6 +98,15 @@ afterEach(async () => {
   await rm(repo, { recursive: true, force: true });
 });
 
+/** Poll until `check` returns true (the lastUsedAt write is fire-and-forget). */
+async function waitUntil(check: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!(await check())) {
+    if (Date.now() > end) throw new Error("condition not met in time");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 describe("authenticate", () => {
   it("local-trust: loopback peer without Authorization is the local principal", async () => {
     const res = await call(build(), "/api/tasks");
@@ -197,18 +206,19 @@ describe("authenticate", () => {
     peer = REMOTE;
     const key = await mint("harness", ["tasks:read"]);
     const app = build();
+    const lastUsed = async () => (await store.get("harness"))!.lastUsedAt;
     await call(app, "/api/tasks", {}, key);
-    await new Promise((r) => setTimeout(r, 50));
-    const first = (await store.get("harness"))!.lastUsedAt;
-    expect(first).toBe(new Date(clock).toISOString());
+    const firstAt = new Date(clock).toISOString();
+    await waitUntil(async () => (await lastUsed()) === firstAt);
     clock += 30_000;
     await call(app, "/api/tasks", {}, key);
-    await new Promise((r) => setTimeout(r, 50));
-    expect((await store.get("harness"))!.lastUsedAt).toBe(first);
+    // No write is expected inside the minute; give a stray one time to land.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await lastUsed()).toBe(firstAt);
     clock += 31_000;
     await call(app, "/api/tasks", {}, key);
-    await new Promise((r) => setTimeout(r, 50));
-    expect((await store.get("harness"))!.lastUsedAt).toBe(new Date(clock).toISOString());
+    const secondAt = new Date(clock).toISOString();
+    await waitUntil(async () => (await lastUsed()) === secondAt);
   });
 
   it("the client cache notices an out-of-process change, checked at most every 5 s", async () => {
@@ -217,7 +227,7 @@ describe("authenticate", () => {
     const app = build();
     expect((await call(app, "/api/tasks", {}, key)).status).toBe(200);
     // Let the lastUsedAt write land, then warm the cache again so it is current.
-    await new Promise((r) => setTimeout(r, 50));
+    await waitUntil(async () => Boolean((await store.get("harness"))!.lastUsedAt));
     expect((await call(app, "/api/tasks", {}, key)).status).toBe(200);
     // Another process (a different AuthStore instance) revokes it.
     const other = new AuthStore(root, () => clock);
