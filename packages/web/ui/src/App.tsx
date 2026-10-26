@@ -34,19 +34,27 @@ export function App() {
     if (selectedRef.current === pid) setTasks(t);
   }, []);
 
-  /** Refresh everything; tasks only when the change concerns the selected project. */
-  const refresh = useCallback(
+  const refreshTasks = useCallback(
     async (project?: string) => {
-      const [s] = await Promise.all([
-        api.getSettings(),
-        reloadProjects(),
-        api.actions().then(setActions),
-      ]);
-      setSettings(s);
       const pid = selectedRef.current;
       if (pid && (!project || project === pid)) await loadTasks(pid);
     },
-    [reloadProjects, loadTasks],
+    [loadTasks],
+  );
+  const refreshActions = useCallback(() => api.actions().then(setActions), []);
+  const refreshSettings = useCallback(() => api.getSettings().then(setSettings), []);
+
+  /** Refresh everything; tasks only when the change concerns the selected project. */
+  const refresh = useCallback(
+    async (project?: string) => {
+      await Promise.all([
+        refreshSettings(),
+        reloadProjects(),
+        refreshActions(),
+        refreshTasks(project),
+      ]);
+    },
+    [reloadProjects, refreshSettings, refreshActions, refreshTasks],
   );
 
   const [needsToken, setNeedsToken] = useState(false);
@@ -55,7 +63,24 @@ export function App() {
   useEffect(() => {
     void refresh().catch(() => {});
   }, [refresh]);
-  useLive(refresh);
+  // Typed events refresh only what they name; `changed` hints (file changes that are not events)
+  // refresh everything unless a typed event for the same project just did.
+  const lastTyped = useRef(new Map<string, number>());
+  useLive({
+    onEvent: (e) => {
+      const key = e.project ?? "";
+      lastTyped.current.set(key, Date.now());
+      if (e.type === "runner.enabled") void refreshSettings().catch(() => {});
+      else if (e.type.startsWith("task.")) {
+        void Promise.all([refreshTasks(e.project), refreshActions()]).catch(() => {});
+      } else if (e.type.startsWith("plan.")) void refreshTasks(e.project).catch(() => {});
+    },
+    onChanged: (project) => {
+      if (Date.now() - (lastTyped.current.get(project ?? "") ?? 0) < 500) return;
+      void refresh(project).catch(() => {});
+    },
+    onReconnect: () => void refresh().catch(() => {}),
+  });
 
   // Switching project: drop the old list and any open editor, then load the new one.
   useEffect(() => {

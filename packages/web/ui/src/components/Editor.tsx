@@ -13,6 +13,13 @@ const ATTACH_ACCEPT =
 
 type OutputTab = "planner" | "developer" | "observer" | "reviewer" | "log";
 
+/** A mutation response has no log (v1 leaves it out): keep the one already loaded. */
+function keepLog(prev: Task | null, next: Task): Task {
+  return prev && next.body.log === ""
+    ? { ...next, body: { ...next.body, log: prev.body.log } }
+    : next;
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -146,7 +153,8 @@ export function Editor({
       }
     });
   }, [projectId, effectiveId]);
-  useLive(refreshTask);
+  // A running task streams into its log file: every `changed` hint refreshes this task.
+  useLive({ onChanged: () => refreshTask(), onReconnect: refreshTask });
 
   // Keep the log view pinned to the newest output while streaming.
   useEffect(() => {
@@ -207,7 +215,7 @@ export function Editor({
       for (const f of list) {
         latest = await api.uploadAttachment(projectId, id, f);
       }
-      if (latest) setTask(latest);
+      if (latest) setTask((prev) => keepLog(prev, latest!));
       onChange();
     } catch (e) {
       setAttachError(e instanceof Error ? e.message : String(e));
@@ -220,7 +228,7 @@ export function Editor({
     if (!effectiveId) return;
     try {
       const updated = await api.deleteAttachment(projectId, effectiveId, name);
-      setTask(updated);
+      setTask((prev) => keepLog(prev, updated));
       onChange();
     } catch (e) {
       setAttachError(e instanceof Error ? e.message : String(e));

@@ -31,8 +31,14 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 /** A task as returned by the project routes: the task plus the project that owns it. */
 export type TaskView = Task & { projectId: string };
 
-const P = (pid: string) => `/api/projects/${encodeURIComponent(pid)}`;
+/** The versioned REST API; the unversioned /api/* routes are deprecated. */
+const V1 = "/api/v1";
+const P = (pid: string) => `${V1}/projects/${encodeURIComponent(pid)}`;
 const T = (pid: string, id: string) => `${P(pid)}/tasks/${encodeURIComponent(id)}`;
+
+/** The v1 API leaves `body.log` out of most task responses; the UI types expect a string. */
+const withLog = (t: TaskView): TaskView => ({ ...t, body: { ...t.body, log: t.body.log ?? "" } });
+const httpTask = (path: string, init?: RequestInit) => http<TaskView>(path, init).then(withLog);
 
 export interface CreateProjectInput {
   workingDirectory: string;
@@ -43,8 +49,21 @@ export interface CreateProjectInput {
 }
 
 export const api = {
-  listTasks: (pid: string) => http<{ tasks: TaskView[] }>(`${P(pid)}/tasks`).then((r) => r.tasks),
-  getTask: (pid: string, id: string) => http<TaskView>(T(pid, id)),
+  /** All tasks of a project, without their logs: follows the cursor pages of the v1 list. */
+  listTasks: async (pid: string): Promise<TaskView[]> => {
+    const out: TaskView[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { items: TaskView[]; nextCursor: string | null } = await http(
+        `${P(pid)}/tasks?limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+      out.push(...page.items.map(withLog));
+      cursor = page.nextCursor;
+    } while (cursor);
+    return out;
+  },
+  /** One task with its log (`include=log`; the v1 default leaves the log out). */
+  getTask: (pid: string, id: string) => http<TaskView>(`${T(pid, id)}?include=log`).then(withLog),
   createTask: (
     pid: string,
     input: {
@@ -56,7 +75,7 @@ export const api = {
       status?: "draft" | "pending";
       runs?: number;
     },
-  ) => http<TaskView>(`${P(pid)}/tasks`, { method: "POST", body: JSON.stringify(input) }),
+  ) => httpTask(`${P(pid)}/tasks`, { method: "POST", body: JSON.stringify(input) }),
   updateTask: (
     pid: string,
     id: string,
@@ -70,18 +89,17 @@ export const api = {
       runs: number;
       status: Status;
     }>,
-  ) => http<TaskView>(T(pid, id), { method: "PUT", body: JSON.stringify(input) }),
+  ) => httpTask(T(pid, id), { method: "PUT", body: JSON.stringify(input) }),
   setSkip: (pid: string, id: string, skip: boolean) =>
-    http<TaskView>(`${T(pid, id)}/skip`, { method: "POST", body: JSON.stringify({ skip }) }),
+    httpTask(`${T(pid, id)}/skip`, { method: "POST", body: JSON.stringify({ skip }) }),
   reorder: (pid: string, order: string[]) =>
     http<{ tasks: TaskView[] }>(`${P(pid)}/tasks/reorder`, {
       method: "POST",
       body: JSON.stringify({ order }),
-    }),
-  retry: (pid: string, id: string) => http<TaskView>(`${T(pid, id)}/retry`, { method: "POST" }),
-  archive: (pid: string, id: string) => http<TaskView>(`${T(pid, id)}/archive`, { method: "POST" }),
-  unarchive: (pid: string, id: string) =>
-    http<TaskView>(`${T(pid, id)}/unarchive`, { method: "POST" }),
+    }).then((r) => ({ tasks: r.tasks.map(withLog) })),
+  retry: (pid: string, id: string) => httpTask(`${T(pid, id)}/retry`, { method: "POST" }),
+  archive: (pid: string, id: string) => httpTask(`${T(pid, id)}/archive`, { method: "POST" }),
+  unarchive: (pid: string, id: string) => httpTask(`${T(pid, id)}/unarchive`, { method: "POST" }),
   deleteTask: (pid: string, id: string) => http<{ ok: true }>(T(pid, id), { method: "DELETE" }),
   liveLog: (pid: string, id: string) =>
     http<{ log: string; running: boolean }>(`${T(pid, id)}/live-log`),
@@ -93,8 +111,8 @@ export const api = {
       body: JSON.stringify({ prompt }),
     }),
   submitAnswers: (pid: string, id: string, answers: string) =>
-    http<TaskView>(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
-  actions: () => http<{ actions: TaskView[] }>("/api/actions").then((r) => r.actions),
+    httpTask(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
+  actions: () => http<{ actions: TaskView[] }>(`${V1}/actions`).then((r) => r.actions.map(withLog)),
 
   uploadAttachment: async (pid: string, id: string, file: File): Promise<TaskView> => {
     const form = new FormData();
@@ -107,43 +125,43 @@ export const api = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return failure(res, data);
-    return data as TaskView;
+    return withLog(data as TaskView);
   },
   deleteAttachment: (pid: string, id: string, name: string) =>
-    http<TaskView>(`${T(pid, id)}/attachments/${encodeURIComponent(name)}`, { method: "DELETE" }),
+    httpTask(`${T(pid, id)}/attachments/${encodeURIComponent(name)}`, { method: "DELETE" }),
   attachmentUrl: (pid: string, id: string, name: string) =>
     `${T(pid, id)}/attachments/${encodeURIComponent(name)}`,
 
   listCommands: () =>
-    http<{ commands: CommandTemplate[] }>("/api/commands").then((r) => r.commands),
+    http<{ commands: CommandTemplate[] }>(`${V1}/commands`).then((r) => r.commands),
   upsertCommand: (name: string, body: string) =>
-    http<CommandTemplate>("/api/commands", {
+    http<CommandTemplate>(`${V1}/commands`, {
       method: "POST",
       body: JSON.stringify({ name, body }),
     }),
   renameCommand: (id: string, name: string, body: string) =>
-    http<CommandTemplate>(`/api/commands/${id}`, {
+    http<CommandTemplate>(`${V1}/commands/${id}`, {
       method: "PUT",
       body: JSON.stringify({ name, body }),
     }),
   deleteCommand: (id: string) =>
-    http<{ referencedBy: string[] }>(`/api/commands/${id}`, { method: "DELETE" }),
+    http<{ referencedBy: string[] }>(`${V1}/commands/${id}`, { method: "DELETE" }),
 
-  getSettings: () => http<Settings>("/api/settings"),
+  getSettings: () => http<Settings>(`${V1}/settings`),
   updateSettings: (patch: SettingsPatch) =>
-    http<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
-  health: () => http<{ tools: Record<string, HealthResult> }>("/api/health").then((r) => r.tools),
-  models: () => http<{ models: Record<string, string[]> }>("/api/models").then((r) => r.models),
-  usage: () => http<TokenUsage>("/api/usage"),
+    http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
+  health: () => http<{ tools: Record<string, HealthResult> }>(`${V1}/health`).then((r) => r.tools),
+  models: () => http<{ models: Record<string, string[]> }>(`${V1}/models`).then((r) => r.models),
+  usage: () => http<TokenUsage>(`${V1}/usage`),
   projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
 
   listProjects: (includeArchived = false) =>
     http<{ projects: Project[] }>(
-      `/api/projects${includeArchived ? "?includeArchived=1" : ""}`,
+      `${V1}/projects${includeArchived ? "?includeArchived=1" : ""}`,
     ).then((r) => r.projects),
   getProject: (pid: string) => http<Project>(P(pid)),
   createProject: (input: CreateProjectInput) =>
-    http<Project>("/api/projects", { method: "POST", body: JSON.stringify(input) }),
+    http<Project>(`${V1}/projects`, { method: "POST", body: JSON.stringify(input) }),
   updateProject: (pid: string, patch: ProjectPatch) =>
     http<Project>(P(pid), { method: "PUT", body: JSON.stringify(patch) }),
   archiveProject: (pid: string) => http<Project>(`${P(pid)}/archive`, { method: "POST" }),
@@ -160,7 +178,7 @@ export const api = {
     return URL.createObjectURL(await res.blob());
   },
 
-  listClients: () => http<{ clients: PublicClient[] }>("/api/auth/clients").then((r) => r.clients),
+  listClients: () => http<{ clients: PublicClient[] }>(`${V1}/auth/clients`).then((r) => r.clients),
   createClient: (input: {
     name: string;
     kind?: "harness" | "mcp" | "cli";
@@ -169,14 +187,14 @@ export const api = {
     trust?: "trusted" | "review";
     expiresIn?: string;
   }) =>
-    http<{ client: PublicClient; key: string }>("/api/auth/clients", {
+    http<{ client: PublicClient; key: string }>(`${V1}/auth/clients`, {
       method: "POST",
       body: JSON.stringify(input),
     }),
   revokeClient: (id: string) =>
-    http<{ client: PublicClient }>(`/api/auth/clients/${id}/revoke`, { method: "POST" }),
+    http<{ client: PublicClient }>(`${V1}/auth/clients/${id}/revoke`, { method: "POST" }),
   rotateClient: (id: string) =>
-    http<{ client: PublicClient; key: string }>(`/api/auth/clients/${id}/rotate`, {
+    http<{ client: PublicClient; key: string }>(`${V1}/auth/clients/${id}/rotate`, {
       method: "POST",
     }),
 };

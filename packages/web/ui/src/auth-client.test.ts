@@ -57,7 +57,7 @@ describe("api fetch wrapper", () => {
       "fetch",
       vi.fn(async (_url: string, init: RequestInit) => {
         seen.push(init.headers as Record<string, string>);
-        return new Response(JSON.stringify({ tasks: [] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 });
       }),
     );
     await api.listTasks("demo");
