@@ -135,6 +135,9 @@ export function execCommand(
       resolve({ code, stdout, stderr, timedOut, stopped, stalled });
     });
 
+    // A child that exits before reading its stdin makes the write fail with
+    // EPIPE. Without a listener that error is uncaught and kills the server.
+    child.stdin.on("error", () => {});
     if (opts.input !== undefined) {
       child.stdin.write(opts.input);
     }
