@@ -12,6 +12,10 @@
       "types": "./src/schema.ts",
       "default": "./src/schema.ts"
     },
+    "./injected": {
+      "types": "./src/injected.ts",
+      "default": "./src/injected.ts"
+    },
     "./task-types": {
       "types": "./src/task-types.ts",
       "default": "./src/task-types.ts"

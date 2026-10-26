@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readTaskIfExists, TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
+import { parseInjected } from "./injected.js";
 import { statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import type { TaskFrontmatter } from "./schema.js";
 
@@ -164,6 +165,37 @@ describe("TaskStore", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("TaskStore stopped and injected", () => {
+  it("creates the stopped directory and moves running, stopped, pending", async () => {
+    expect(await fileExists(statusDir(root, "stopped"))).toBe(true);
+    await store.create(newTask(fm({ status: "running" })));
+    await store.transition("t1", "stopped");
+    expect(await fileExists(taskFilePath(root, "stopped", "t1"))).toBe(true);
+    expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
+    await store.transition("t1", "pending");
+    expect(await fileExists(taskFilePath(root, "stopped", "t1"))).toBe(false);
+  });
+
+  it("keeps injected prompts through save, transition and leaving running", async () => {
+    await store.create(newTask(fm({ status: "running" }), "p"));
+    const stale = (await store.get("t1"))!;
+    await store.appendInjected("t1", "first", "alice");
+    await store.appendInjected("t1", "second");
+    // A save from a copy read before the injections must not drop them.
+    stale.body.log = "late log";
+    await store.save(stale);
+    const mid = (await store.get("t1"))!;
+    expect(mid.body.log).toBe("late log");
+    expect(parseInjected(mid.body.injected).map((e) => [e.by, e.text])).toEqual([
+      ["alice", "first"],
+      ["user", "second"],
+    ]);
+    await store.transition("t1", "stopped");
+    const after = (await store.get("t1"))!;
+    expect(after.body.injected).toBe(mid.body.injected);
   });
 });
 

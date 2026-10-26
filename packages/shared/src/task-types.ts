@@ -19,6 +19,10 @@ export interface TaskBody {
    * into the task file so it survives the working-area deletion on done/failed
    * and stays viewable in the UI (output-visibility). */
   log: string;
+  /** Prompts injected while the task ran (`## Injected`), as `### <iso> — <by>` entries: the
+   * durable copy of the control-dir file, which is deleted when the task leaves `running`.
+   * Append-only: TaskStore.appendInjected adds to it and TaskStore.save keeps what is on disk. */
+  injected: string;
 }
 
 export interface Task {

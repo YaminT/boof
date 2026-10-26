@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseTask, serializeTask, newTask } from "./task-file.js";
+import { formatInjectedEntry, parseInjected } from "./injected.js";
 import type { TaskFrontmatter } from "./schema.js";
 
 const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
@@ -134,5 +135,43 @@ updated: 2026-06-04T10:00:00.000Z
     const task = newTask(fm({ tools: { developer: { tool: "codex", model: "gpt-5.4" } } }));
     const reparsed = parseTask(serializeTask(task));
     expect(reparsed.frontmatter.tools?.developer?.tool).toBe("codex");
+  });
+});
+
+describe("task-file injected section", () => {
+  it("parses an old file without an Injected section", () => {
+    const raw = serializeTask(newTask(fm(), "hi"));
+    expect(raw).not.toContain("## Injected");
+    expect(parseTask(raw).body.injected).toBe("");
+  });
+
+  it("round-trips the Injected section next to the log", () => {
+    const task = newTask(fm(), "p");
+    task.body.log = "log line";
+    task.body.injected = formatInjectedEntry({
+      at: "2026-06-04T10:05:00.000Z",
+      by: "alice",
+      text: "use tabs\n## Log\nnot a section",
+    });
+    const raw = serializeTask(task);
+    const back = parseTask(raw);
+    expect(back.body.log).toBe("log line");
+    expect(back.body.injected).toBe(task.body.injected);
+    const entries = parseInjected(back.body.injected);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ at: "2026-06-04T10:05:00.000Z", by: "alice" });
+    expect(entries[0].text).toContain("use tabs");
+    expect(serializeTask(back)).toBe(raw);
+  });
+
+  it("parses several entries in order", () => {
+    const md = [
+      formatInjectedEntry({ at: "2026-06-04T10:05:00.000Z", by: "user", text: "one" }),
+      formatInjectedEntry({ at: "2026-06-04T10:06:00.000Z", by: "ci-bot", text: "two\nlines" }),
+    ].join("\n\n");
+    expect(parseInjected(md).map((e) => [e.by, e.text])).toEqual([
+      ["user", "one"],
+      ["ci-bot", "two\nlines"],
+    ]);
   });
 });

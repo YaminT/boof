@@ -2,6 +2,7 @@ import { readdir, mkdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
+import { formatInjectedEntry } from "./injected.js";
 import { assertTransition } from "./lifecycle.js";
 import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import { nowIso } from "./runtime.js";
@@ -157,8 +158,34 @@ export class TaskStore {
   async save(task: Task): Promise<Task> {
     task.frontmatter.updated = nowIso();
     const path = taskFilePath(this.root, task.frontmatter.status, task.frontmatter.id);
-    await lockedAtomicWrite(path, serializeTask(task));
+    // `## Injected` is append-only and written by appendInjected: a save from a copy read
+    // earlier (the runner's in-memory task, an editor) must not drop an entry added since.
+    await withFileLock(path, async () => {
+      const disk = await readText(path)
+        .then(parseTask)
+        .catch(() => null);
+      if (disk) task.body.injected = disk.body.injected;
+      await atomicWrite(path, serializeTask(task));
+    });
     return task;
+  }
+
+  /**
+   * Append an injected prompt to the task's durable `## Injected` section (the control-dir copy
+   * is deleted when the task leaves `running`). `by` is the principal name, default "user".
+   */
+  async appendInjected(id: string, text: string, by = "user"): Promise<Task> {
+    const located = await this.locate(id);
+    if (!located) throw new TaskNotFoundError(id);
+    return withFileLock(located.path, async () => {
+      const task = await this.readReconciled(located.path, located.status);
+      const entry = formatInjectedEntry({ at: nowIso(), by, text });
+      task.body.injected = task.body.injected.trim()
+        ? `${task.body.injected.trimEnd()}\n\n${entry}`
+        : entry;
+      await atomicWrite(located.path, serializeTask(task));
+      return task;
+    });
   }
 
   /** Create a brand-new task file and append a `task.created` event (`opts.by`: the actor). */

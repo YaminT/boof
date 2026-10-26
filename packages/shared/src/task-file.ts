@@ -11,9 +11,10 @@ const emptyBody = (): TaskBody => ({
   answers: "",
   reports: { planner: "", developer: "", observer: "", reviewer: "" },
   log: "",
+  injected: "",
 });
 
-const TOP_SECTIONS = ["prompt", "command", "questions", "answers", "reports", "log"];
+const TOP_SECTIONS = ["prompt", "command", "questions", "answers", "reports", "log", "injected"];
 const REPORT_SECTIONS = ["planner", "developer", "observer", "reviewer"];
 
 /**
@@ -60,6 +61,7 @@ export function parseTask(raw: string): Task {
   body.questions = sections.get("questions") ?? "";
   body.answers = sections.get("answers") ?? "";
   body.log = sections.get("log") ?? "";
+  body.injected = sections.get("injected") ?? "";
 
   const reportsRaw = sections.get("reports") ?? "";
   if (reportsRaw) {
@@ -103,6 +105,8 @@ export function serializeTask(task: Task): string {
     sectionBlock("Answers", task.body.answers),
     reports,
     sectionBlock("Log", task.body.log),
+    // Optional: older files parse to "", and an empty section is not written.
+    ...(task.body.injected.trim() ? [sectionBlock("Injected", task.body.injected)] : []),
   ].join("\n");
 
   // gray-matter stringify emits the YAML frontmatter fence + content.
