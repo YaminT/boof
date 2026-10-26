@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "build:server": "npm run build -w @boof-runner/web && npm run build -w @boof-runner/cli",
     "typecheck": "tsc -b && tsc -p packages/web/ui --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

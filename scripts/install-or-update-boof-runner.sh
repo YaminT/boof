@@ -12,6 +12,8 @@ INSTALL_DIR="${BOOF_RUNNER_DIR:-$DEFAULT_DIR}"
 BRANCH="${BOOF_RUNNER_BRANCH:-}"
 SKIP_UPDATE="${BOOF_RUNNER_SKIP_UPDATE:-0}"
 INSTALL_MODE="${BOOF_RUNNER_INSTALL_MODE:-link}"
+SKIP_DESKTOP="${BOOF_RUNNER_SKIP_DESKTOP:-auto}"
+FORCE_UPDATE="${BOOF_RUNNER_FORCE_UPDATE:-0}"
 
 log() {
   printf '[%s] %s\n' "$APP_NAME" "$*" >&2
@@ -35,6 +37,14 @@ Environment:
   BOOF_RUNNER_BRANCH        Branch/tag to checkout before building.
   BOOF_RUNNER_SKIP_UPDATE   Set to 1 to build/link without pulling.
   BOOF_RUNNER_INSTALL_MODE  link or copy. Default: link.
+  BOOF_RUNNER_SKIP_DESKTOP  1: do not download Electron or build the desktop app (web UI + CLI only).
+                            0: always build everything. Default: 1 on Linux without DISPLAY or
+                            WAYLAND_DISPLAY (a headless server), otherwise 0.
+  BOOF_RUNNER_FORCE_UPDATE  Set to 1 to update a checkout that has uncommitted changes. They are
+                            saved first to <install dir>/../backups/<timestamp>.patch (plus a .tar.gz
+                            of untracked files), then the checkout is reset to HEAD.
+
+An existing checkout with uncommitted changes is never touched unless BOOF_RUNNER_FORCE_UPDATE=1.
 
 Examples:
   ./scripts/install-or-update-boof-runner.sh
@@ -77,6 +87,33 @@ tracked_changes_exist() {
   [[ -n "$(git -C "$1" status --porcelain --untracked-files=no)" ]]
 }
 
+# True when the desktop app (Electron) must not be installed or built.
+skip_desktop() {
+  case "$SKIP_DESKTOP" in
+    1) return 0 ;;
+    0) return 1 ;;
+    auto | "")
+      [[ "$(uname -s)" == "Linux" && -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]
+      ;;
+    *) die "BOOF_RUNNER_SKIP_DESKTOP must be 0 or 1" ;;
+  esac
+}
+
+# Save uncommitted work (tracked diff and untracked files) before a forced reset.
+backup_local_changes() {
+  local dir="$1" backups stamp
+  backups="$(dirname "$dir")/backups"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$backups"
+  git -C "$dir" diff --binary HEAD >"$backups/$stamp.patch"
+  log "Saved local changes to $backups/$stamp.patch"
+  if [[ -n "$(git -C "$dir" ls-files --others --exclude-standard)" ]]; then
+    git -C "$dir" ls-files --others --exclude-standard -z |
+      (cd "$dir" && tar --null -T - -czf "$backups/$stamp-untracked.tar.gz")
+    log "Saved untracked files to $backups/$stamp-untracked.tar.gz"
+  fi
+}
+
 checkout_branch_if_requested() {
   local dir="$1"
   [[ -n "$BRANCH" ]] || return 0
@@ -91,8 +128,16 @@ update_checkout() {
     return 0
   }
 
-  tracked_changes_exist "$dir" &&
-    die "tracked local changes exist in $dir; commit/stash them or run with BOOF_RUNNER_SKIP_UPDATE=1"
+  if tracked_changes_exist "$dir"; then
+    if [[ "$FORCE_UPDATE" == "1" ]]; then
+      backup_local_changes "$dir"
+      git -C "$dir" reset --hard HEAD
+    else
+      die "uncommitted changes exist in $dir; nothing was changed.
+Commit or stash them (git -C $dir stash), or run with BOOF_RUNNER_SKIP_UPDATE=1 to build as is,
+or BOOF_RUNNER_FORCE_UPDATE=1 to save them to a backup patch and reset to the latest source."
+    fi
+  fi
 
   log "Fetching latest source"
   git -C "$dir" fetch --prune origin
@@ -133,9 +178,14 @@ source_dir() {
 
 install_dependencies() {
   local dir="$1"
+  if skip_desktop; then
+    log "Skipping the desktop app (no Electron download); set BOOF_RUNNER_SKIP_DESKTOP=0 to include it"
+    export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+  fi
   if command -v bun >/dev/null 2>&1; then
     log "Installing dependencies with bun"
-    (cd "$dir" && bun install)
+    # Frozen: never rewrite bun.lock, so the checkout stays clean for the next update.
+    (cd "$dir" && bun install --frozen-lockfile)
   else
     log "Installing dependencies with npm"
     (cd "$dir" && npm install)
@@ -144,8 +194,13 @@ install_dependencies() {
 
 build_app() {
   local dir="$1"
-  log "Building web UI and CLI"
-  (cd "$dir" && npm run build)
+  if skip_desktop; then
+    log "Building web UI and CLI"
+    (cd "$dir" && npm run build:server)
+  else
+    log "Building web UI, CLI and desktop app"
+    (cd "$dir" && npm run build)
+  fi
 }
 
 install_command() {
