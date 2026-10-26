@@ -24,3 +24,4 @@ export * from "./plan-xml.js";
 export * from "./plan-fixtures.js";
 export * from "./events.js";
 export * from "./version.js";
+export * from "./task-reviews.js";
