@@ -41,6 +41,34 @@ afterEach(async () => {
   await rm(repo, { recursive: true, force: true });
 });
 
+describe("GET /healthz", () => {
+  it("reports liveness, version, uptime and the runner state", async () => {
+    let running = false;
+    let now = 1_000_000;
+    app = createApp({
+      service,
+      peerAddress: () => "127.0.0.1",
+      version: "9.9.9",
+      runnerRunning: () => running,
+      now: () => now,
+    });
+    now += 5_500;
+    running = true;
+    await new SettingsStore(root).save({
+      ...defaultSettings(),
+      runner: { ...defaultSettings().runner, enabled: true },
+    });
+    const res = await req("/healthz");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      version: "9.9.9",
+      uptimeSeconds: 5,
+      runner: { enabled: true, running: true },
+    });
+  });
+});
+
 describe("task API", () => {
   it("creates, lists, and reads a task", async () => {
     const created = await (

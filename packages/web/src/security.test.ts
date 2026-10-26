@@ -176,6 +176,17 @@ describe("authenticate", () => {
     expect(res.status).toBe(421);
   });
 
+  it("/healthz is public (no key) but still behind the host guard, and leaks no data", async () => {
+    peer = REMOTE;
+    const app = build();
+    const ok = await call(app, "/healthz");
+    expect(ok.status).toBe(200);
+    const body = await ok.json();
+    expect(body).toMatchObject({ ok: true, runner: { enabled: false, running: false } });
+    expect(Object.keys(body).sort()).toEqual(["ok", "runner", "uptimeSeconds", "version"]);
+    expect((await call(app, "/healthz", { headers: { host: "evil.example" } })).status).toBe(421);
+  });
+
   it("security.allowedHosts extends the host guard", async () => {
     await setSecurity({ allowedHosts: ["boof.lan"] });
     const res = await call(build(), "/api/tasks", { headers: { host: "boof.lan:4319" } });

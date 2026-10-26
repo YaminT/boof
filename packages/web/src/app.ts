@@ -50,6 +50,10 @@ export interface AppDeps {
   peerAddress?: PeerAddressResolver;
   /** True when a URL points at this server itself (webhook targets must not). */
   isSelfUrl?: (url: URL) => boolean;
+  /** Version reported by /healthz. */
+  version?: string;
+  /** Whether the background runner loop runs in this process (reported by /healthz). */
+  runnerRunning?: () => boolean;
   /** Clock override for tests (rate limit, client cache, audit). */
   now?: () => number;
 }
@@ -89,6 +93,27 @@ export function createApp(deps: AppDeps): Hono {
     hostGuard(async () => [...(deps.allowedHosts ?? []), ...(await security()).allowedHosts]),
   );
   app.use("*", secureHeaders());
+  // Public liveness probe for systemd, load balancers and uptime monitors. Carries no
+  // project or task data; it sits behind the Host guard like the docs below.
+  const startedAt = (deps.now ?? Date.now)();
+  app.get("/healthz", async (c) => {
+    let enabled = false;
+    try {
+      enabled = (await service.loadSettings()).runner.enabled;
+    } catch {
+      /* unreadable settings: report disabled, the process is still alive */
+    }
+    return c.json(
+      {
+        ok: true,
+        version: deps.version ?? "unknown",
+        uptimeSeconds: Math.max(0, Math.floor(((deps.now ?? Date.now)() - startedAt) / 1000)),
+        runner: { enabled, running: deps.runnerRunning?.() ?? false },
+      },
+      200,
+      { "Cache-Control": "no-store" },
+    );
+  });
   // Public, unauthenticated docs for AI agents. They hold no secrets and sit behind the Host
   // guard only; the text is `docs/harness.md` embedded at build time (see generated/harness.ts).
   app.get("/harness.md", (c) => c.body(HARNESS_MD, 200, { "Content-Type": MARKDOWN }));
