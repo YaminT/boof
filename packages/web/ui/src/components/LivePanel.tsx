@@ -1,18 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import type { Task } from "@boof-runner/shared/task-types";
-
-/** Pull the most recent "### Step" header out of the log as the current phase. */
-function currentStep(log: string): string | null {
-  const matches = log.match(/^### (.+)$/gm);
-  if (!matches || matches.length === 0) return null;
-  return matches[matches.length - 1].replace(/^### /, "");
-}
-
-/** Number of `### Steered` blocks: one is logged each time an "apply now" prompt takes effect. */
-function steeredCount(log: string): number {
-  return (log.match(/^### Steered$/gm) ?? []).length;
-}
+import { currentStep, steeredCount } from "../lib/log-tail.js";
 
 /**
  * Live output of the running task, shown on the Tasks page. Polls the live-log
