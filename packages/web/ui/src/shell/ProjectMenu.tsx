@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import type { Project } from "@boof-runner/shared/schema";
 import {
@@ -8,21 +7,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/ui/dropdown-menu";
-import { AddProjectModal } from "../components/Projects.js";
 
 /** Current project name; opens a list of projects with their working directories. */
 export function ProjectMenu({
   projects,
   selected,
   onSelect,
-  onAdded,
+  onAddProject,
 }: {
   projects: Project[] | null;
   selected: Project | null;
   onSelect: (id: string) => void;
-  onAdded: (project: Project) => void;
+  onAddProject: () => void;
 }) {
-  const [adding, setAdding] = useState(false);
   return (
     <>
       <DropdownMenu>
@@ -53,21 +50,12 @@ export function ProjectMenu({
               </DropdownMenuItem>
             ))}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setAdding(true)}>
+          <DropdownMenuItem onClick={onAddProject}>
             <PlusIcon className="size-4" />
             Add project…
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      {adding && (
-        <AddProjectModal
-          onClose={() => setAdding(false)}
-          onAdded={(p) => {
-            setAdding(false);
-            onAdded(p);
-          }}
-        />
-      )}
     </>
   );
 }

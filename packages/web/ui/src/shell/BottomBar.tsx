@@ -15,7 +15,7 @@ export function BottomBar({
   counts: NavCounts;
   go: (key: NavKey) => void;
   /** Project menu, runner switch and theme menu. */
-  moreContent: ReactNode;
+  moreContent: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const tabs: { key: NavKey; label: string }[] = [
@@ -77,7 +77,7 @@ export function BottomBar({
             }}
           />
           <div className="my-1 h-px bg-line" />
-          {moreContent}
+          {moreContent(() => setOpen(false))}
         </SheetContent>
       </Sheet>
     </>

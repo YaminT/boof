@@ -7,12 +7,16 @@ import { act } from "../lib/act.js";
 export function RunnerSwitch({
   settings,
   onChange,
+  onToggled,
 }: {
   settings: Settings | null;
   onChange: () => Promise<void> | void;
+  /** Called right after the click, e.g. to close a sheet. */
+  onToggled?: () => void;
 }) {
   const enabled = settings?.runner.enabled ?? false;
   const toggle = async () => {
+    onToggled?.();
     await act(() => api.updateSettings({ runner: { enabled: !enabled } }), {
       failure: enabled ? "Could not pause the runner" : "Could not start the runner",
     });

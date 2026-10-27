@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Project } from "@boof-runner/shared/schema";
 import { TooltipProvider } from "@/ui/tooltip";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
+import { AddProjectModal } from "../components/Projects.js";
 import { BottomBar } from "./BottomBar.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { Rail } from "./Rail.js";
@@ -31,6 +32,7 @@ export function AppShell({
   onProjectAdded: (project: Project) => void;
   children: ReactNode;
 }) {
+  const [adding, setAdding] = useState(false);
   const pid = selected?.id ?? null;
   const counts: NavCounts = {
     tasks: data.tasks.filter((t) => OPEN_STATUSES.has(t.frontmatter.status)).length,
@@ -45,15 +47,24 @@ export function AppShell({
     navigate({ name: key, pid });
   };
 
-  const projectMenu = (
+  // `close` shuts the More sheet before an action in it runs; the rail passes nothing.
+  const projectMenu = (close?: () => void) => (
     <ProjectMenu
       projects={projects}
       selected={selected}
-      onSelect={onSelectProject}
-      onAdded={onProjectAdded}
+      onSelect={(id) => {
+        close?.();
+        onSelectProject(id);
+      }}
+      onAddProject={() => {
+        close?.();
+        setAdding(true);
+      }}
     />
   );
-  const runner = <RunnerSwitch settings={data.settings} onChange={() => data.refresh()} />;
+  const runner = (close?: () => void) => (
+    <RunnerSwitch settings={data.settings} onChange={() => data.refresh()} onToggled={close} />
+  );
 
   return (
     <TooltipProvider>
@@ -62,10 +73,10 @@ export function AppShell({
           active={navKey(route)}
           counts={counts}
           go={go}
-          projectMenu={projectMenu}
+          projectMenu={projectMenu()}
           footer={
             <>
-              {runner}
+              {runner()}
               <ThemeMenu />
             </>
           }
@@ -77,14 +88,23 @@ export function AppShell({
           active={navKey(route)}
           counts={counts}
           go={go}
-          moreContent={
+          moreContent={(close) => (
             <>
-              {projectMenu}
-              {runner}
-              <ThemeMenu />
+              {projectMenu(close)}
+              {runner(close)}
+              <ThemeMenu onPicked={close} />
             </>
-          }
+          )}
         />
+        {adding && (
+          <AddProjectModal
+            onClose={() => setAdding(false)}
+            onAdded={(p) => {
+              setAdding(false);
+              onProjectAdded(p);
+            }}
+          />
+        )}
       </div>
     </TooltipProvider>
   );

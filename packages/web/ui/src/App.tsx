@@ -69,9 +69,10 @@ export function App() {
     );
   }
 
-  const pid = selectedId;
+  // Screens follow the route's project; render them only once the data hook has caught up to it.
+  const pid = route && route.name !== "inbox" ? route.pid : null;
   const runningTask = tasks.find((t) => t.frontmatter.status === "running");
-  const routeReady = !!pid && !!route && !routeUnknownProject;
+  const routeReady = !!pid && pid === selectedId && !!route && !routeUnknownProject;
 
   return (
     <AppShell
@@ -113,7 +114,7 @@ export function App() {
       {routeReady && route.name === "task" && (
         <Editor
           projectId={pid}
-          key={route.taskId}
+          key={`${pid}/${route.taskId}`}
           taskId={route.taskId}
           initialView={route.view === "changes" ? "changes" : "edit"}
           onViewChange={(view) =>
@@ -125,7 +126,7 @@ export function App() {
       )}
       {routeReady && route.name === "plans" && (
         <PlansTab
-          key={pid}
+          key={`${pid}/plans`}
           projectId={pid}
           tasks={tasks}
           tick={planTick}

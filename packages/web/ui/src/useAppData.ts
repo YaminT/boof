@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@boof-runner/shared/schema";
 import { api, type PlanSummary, type TaskView } from "./api.js";
 import type { BudgetStatus } from "./api-types.js";
@@ -28,9 +28,25 @@ export function useAppData(
   reloadProjects: () => Promise<void>,
 ): AppData {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [tasks, setTasks] = useState<TaskView[]>([]);
+  // Lists are tagged with the project they belong to, so a render right after a project switch
+  // never shows the previous project's tasks or plans.
+  const [taskState, setTasks] = useState<{ pid: string | null; items: TaskView[] }>({
+    pid: null,
+    items: [],
+  });
   const [actions, setActions] = useState<TaskView[]>([]);
-  const [plans, setPlans] = useState<PlanSummary[]>([]);
+  const [planState, setPlans] = useState<{ pid: string | null; items: PlanSummary[] }>({
+    pid: null,
+    items: [],
+  });
+  const tasks = useMemo(
+    () => (taskState.pid === selectedId ? taskState.items : []),
+    [taskState, selectedId],
+  );
+  const plans = useMemo(
+    () => (planState.pid === selectedId ? planState.items : []),
+    [planState, selectedId],
+  );
   const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const [planTick, setPlanTick] = useState(0);
   const [needsToken, setNeedsToken] = useState(false);
@@ -39,16 +55,16 @@ export function useAppData(
   selectedRef.current = selectedId;
 
   const loadTasks = useCallback(async (pid: string | null) => {
-    if (!pid) return setTasks([]);
+    if (!pid) return setTasks({ pid: null, items: [] });
     const t = await api.listTasks(pid);
     // Ignore a response for a project the user has already switched away from.
-    if (selectedRef.current === pid) setTasks(t);
+    if (selectedRef.current === pid) setTasks({ pid, items: t });
   }, []);
 
   const loadPlans = useCallback(async (pid: string | null) => {
-    if (!pid) return setPlans([]);
+    if (!pid) return setPlans({ pid: null, items: [] });
     const p = await api.listPlans(pid);
-    if (selectedRef.current === pid) setPlans(p);
+    if (selectedRef.current === pid) setPlans({ pid, items: p });
   }, []);
 
   const refreshTasks = useCallback(
@@ -125,8 +141,8 @@ export function useAppData(
 
   // Switching project: drop the old lists, then load the new ones.
   useEffect(() => {
-    setTasks([]);
-    setPlans([]);
+    setTasks({ pid: selectedId, items: [] });
+    setPlans({ pid: selectedId, items: [] });
     void loadTasks(selectedId).catch(() => {});
     void loadPlans(selectedId).catch(() => {});
   }, [selectedId, loadTasks, loadPlans]);
