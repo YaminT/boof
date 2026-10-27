@@ -184,7 +184,12 @@ function operationObject(op: AnyOperation): Json {
 }
 
 /** The OpenAPI 3.1 document of the v1 REST API, generated from the operations registry. */
-export function buildOpenApi(ops: readonly AnyOperation[]): Json {
+export interface OpenApiOptions {
+  /** Where the v1 API is reachable from the client's point of view (default `/api/v1`). */
+  basePath?: string;
+}
+
+export function buildOpenApi(ops: readonly AnyOperation[], opts: OpenApiOptions = {}): Json {
   const paths: Record<string, Record<string, Json>> = {};
   for (const op of ops) {
     (paths[op.rest.path] ??= {})[op.rest.method.toLowerCase()] = operationObject(op);
@@ -230,7 +235,7 @@ export function buildOpenApi(ops: readonly AnyOperation[]): Json {
       description:
         "Queue prompts, plans and goals for the boof-runner agent pipeline. Authenticate with a bearer API key; see docs/api.md.",
     },
-    servers: [{ url: "/api/v1" }],
+    servers: [{ url: opts.basePath ?? "/api/v1" }],
     security: [{ bearerAuth: [] }],
     paths: replaceShared(sortKeys(paths), shared),
     components: {

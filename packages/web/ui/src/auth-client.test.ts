@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api.js";
 import { connectEventStream, readSse, SseParser, type SseMessage } from "./sse.js";
-import { clearToken, getToken, onUnauthorized, setToken } from "./token.js";
+import { clearToken, getToken, onTokenChange, onUnauthorized, setToken } from "./token.js";
 
 class MemoryStorage {
   private m = new Map<string, string>();
@@ -156,6 +156,43 @@ describe("connectEventStream", () => {
     expect(opens).toBe(2);
     // After the clean end of stream 1: attempt 0; failures at 2 and 3 grow the delay.
     expect(delays.slice(0, 3)).toEqual([100, 200, 300]);
+  });
+
+  it("pauses on 401 and resumes once a key is stored", async () => {
+    const onUnauthorized = vi.fn();
+    const messages: string[] = [];
+    let stop = () => {};
+    const fetchImpl = vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+      if (!init.headers.authorization) return new Response("{}", { status: 401 });
+      queueMicrotask(() => setTimeout(() => stop(), 10));
+      return new Response(streamOf(["event: changed\ndata: after-key\n\n"], { hang: true }), {
+        status: 200,
+      });
+    });
+    stop = connectEventStream({
+      url: "/api/events",
+      headers: (): Record<string, string> =>
+        getToken() ? { authorization: `Bearer ${getToken()}` } : {},
+      onMessage: (m) => messages.push(`${m.event}:${m.data}`),
+      onUnauthorized,
+      waitForCredentials: (signal) =>
+        new Promise((resolve) => {
+          const off = onTokenChange(() => {
+            off();
+            resolve();
+          });
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // paused, not retrying
+    setToken("boof_new_key");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(messages).toEqual(["changed:after-key"]);
   });
 
   it("stops and reports on 401 instead of reconnecting forever", async () => {
