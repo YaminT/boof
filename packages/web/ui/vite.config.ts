@@ -1,7 +1,8 @@
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 
@@ -9,7 +10,10 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 // which the Hono server serves in production.
 export default defineConfig({
   root: rootDir,
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { "@": join(rootDir, "src") },
+  },
   server: {
     port: 5319,
     proxy: {

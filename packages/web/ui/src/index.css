@@ -1,0 +1,105 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --page: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #17212b;
+  --ink-muted: #5f6b76;
+  --line: #dce3ea;
+  --accent-brand: #2f5a75;
+  --running: #1e6fd9;
+  --attention: #b5560c;
+  --done: #2e7d52;
+  --failed: #c0392b;
+
+  --background: var(--page);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--accent-brand);
+  --primary-foreground: #ffffff;
+  --secondary: var(--page);
+  --secondary-foreground: var(--ink);
+  --muted: var(--page);
+  --muted-foreground: var(--ink-muted);
+  --accent: color-mix(in srgb, var(--accent-brand) 6%, var(--surface));
+  --accent-foreground: var(--ink);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--accent-brand);
+  --destructive: var(--failed);
+  --radius: 0.5rem;
+}
+
+.dark {
+  --page: #0f1418;
+  --surface: #161c22;
+  --ink: #e6ebef;
+  --ink-muted: #97a3ae;
+  --line: #263039;
+  --accent-brand: #7fb0d1;
+  --running: #6ea8f5;
+  --attention: #e8923f;
+  --done: #5fbf8a;
+  --failed: #f07b6d;
+
+  --primary-foreground: #0f1418;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-accent-brand: var(--accent-brand);
+  --color-running: var(--running);
+  --color-attention: var(--attention);
+  --color-done: var(--done);
+  --color-failed: var(--failed);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --text-meta: 12px;
+  --text-row: 13px;
+  --text-body: 14px;
+  --text-section: 17px;
+  --text-page: 22px;
+}
+
+body {
+  font-size: 14px;
+  font-family: var(--font-sans);
+  background: var(--page);
+  color: var(--ink);
+}
