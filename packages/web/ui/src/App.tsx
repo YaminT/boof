@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BudgetBanner } from "./components/Budget.js";
 import { boofRunnerLogoUrl } from "./assets.js";
 import { useAppData } from "./useAppData.js";
-import { Toaster } from "@/ui/sonner";
 import { useProjects } from "./useProjects.js";
 import { TaskList } from "./components/TaskList.js";
 import { LivePanel } from "./components/LivePanel.js";
@@ -134,7 +133,6 @@ export function App() {
 
   return (
     <div className="app">
-      <Toaster />
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
