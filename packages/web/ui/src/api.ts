@@ -58,7 +58,8 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 export type TaskView = Task & { projectId: string };
 
 /** The versioned REST API; the unversioned /api/* routes are deprecated. */
-const V1 = "/api/v1";
+// Relative so the UI also works behind a reverse-proxy path prefix (https://host/boof/).
+const V1 = "api/v1";
 const P = (pid: string) => `${V1}/projects/${encodeURIComponent(pid)}`;
 const T = (pid: string, id: string) => `${P(pid)}/tasks/${encodeURIComponent(id)}`;
 

@@ -159,7 +159,7 @@ The script clones or fast-forwards the source checkout, installs dependencies, b
 
 ## Run on a server
 
-To run boof on a headless Linux server (systemd service, nginx with TLS, API key for an AI harness), follow the runbook in [deploy/README.md](deploy/README.md). In short: install with the script (it skips Electron on a machine without a display), then `boof-runner project add`, `boof-runner remote setup --hostname <host>` and `boof-runner service install`. `GET /healthz` is a public liveness check. An nginx example is in [deploy/nginx-boof.conf.example](deploy/nginx-boof.conf.example).
+To run boof on a headless Linux server (systemd service, nginx with TLS, API key for an AI harness), follow the runbook in [deploy/README.md](deploy/README.md). In short: install with the script (it skips Electron on a machine without a display), then `boof-runner project add`, `boof-runner remote setup --hostname <host>` and `boof-runner service install`. `GET /healthz` is a public liveness check. An nginx example is in [deploy/nginx-boof.conf.example](deploy/nginx-boof.conf.example); to serve boof under a path of an existing site (`https://example.com/boof/`) include [deploy/nginx-boof-prefix.conf.example](deploy/nginx-boof-prefix.conf.example) in that site's server block (the web UI uses relative URLs, so no build option is needed).
 
 ## Using the web UI
 
