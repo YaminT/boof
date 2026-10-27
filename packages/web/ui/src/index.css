@@ -51,6 +51,25 @@
   --primary-foreground: #0f1418;
 }
 
+/* Legacy styles.css variables mapped onto the dark tokens until the old screens are replaced.
+   `:root.dark` outranks the `:root` block in styles.css regardless of load order. */
+:root.dark {
+  /* Legacy styles.css variables, mapped onto the dark tokens until the old screens are replaced */
+  --bg: var(--page);
+  --panel: var(--surface);
+  --inset: color-mix(in srgb, var(--page) 60%, var(--surface));
+  --text: var(--ink);
+  --muted: var(--ink-muted);
+  --border-strong: color-mix(in srgb, var(--line) 70%, var(--ink-muted));
+  --legacy-border: var(--line);
+  --legacy-accent: #3d7098;
+  --accent-hover: #4a82ab;
+  --accent-weak: color-mix(in srgb, var(--accent-brand) 16%, transparent);
+  --green: var(--done);
+  --red: var(--failed);
+  --amber: var(--attention);
+}
+
 @theme inline {
   --color-page: var(--page);
   --color-surface: var(--surface);

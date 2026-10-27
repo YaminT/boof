@@ -3,17 +3,6 @@ import type { Project, Settings } from "@boof-runner/shared/schema";
 import { api } from "./api.js";
 
 const STORAGE_KEY = "boof-runner.project";
-const HASH_RE = /^#\/p\/([^/?#]+)/;
-
-function readHash(): string | null {
-  const m = HASH_RE.exec(window.location.hash);
-  if (!m) return null;
-  try {
-    return decodeURIComponent(m[1]);
-  } catch {
-    return null;
-  }
-}
 
 function readStored(): string | null {
   try {
@@ -27,48 +16,35 @@ function persist(id: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, id);
   } catch {
-    // Storage can be blocked; the URL hash still carries the selection.
+    // Storage can be blocked; the route still carries the selection.
   }
-  // Keep a tab suffix (`#/p/<pid>/plans`) of the same project.
-  const hash = `#/p/${encodeURIComponent(id)}`;
-  const cur = window.location.hash;
-  if (cur !== hash && !cur.startsWith(`${hash}/`)) window.history.replaceState(null, "", hash);
 }
 
 /**
- * Loads the active projects and tracks which one is selected. The selection lives in
- * the URL hash (`#/p/<pid>`) and localStorage; when neither names an active project
- * it falls back to `settings.defaultProject`, then the first project.
+ * Loads the active projects and tracks which one is selected. The route's project wins, then the
+ * last one used (localStorage), then `settings.defaultProject`, then the first project. It only
+ * persists the selection to localStorage; the URL hash belongs to the router.
  */
-export function useProjects(settings: Settings | null) {
+export function useProjects(settings: Settings | null, routePid: string | null) {
   const [projects, setProjects] = useState<Project[] | null>(null);
-  const [requested, setRequested] = useState<string | null>(() => readHash() ?? readStored());
+  const [stored, setStored] = useState<string | null>(readStored);
 
   const reload = useCallback(async () => {
     setProjects(await api.listProjects());
   }, []);
 
-  useEffect(() => {
-    const onHash = () => {
-      const id = readHash();
-      if (id) setRequested(id);
-    };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-
   const selected = useMemo(() => {
     if (!projects || projects.length === 0) return null;
     const byId = (id: string | null | undefined) => projects.find((p) => p.id === id);
-    return byId(requested) ?? byId(settings?.defaultProject) ?? projects[0];
-  }, [projects, requested, settings?.defaultProject]);
+    return byId(routePid) ?? byId(stored) ?? byId(settings?.defaultProject) ?? projects[0] ?? null;
+  }, [projects, routePid, stored, settings?.defaultProject]);
 
   const selectedId = selected?.id ?? null;
   useEffect(() => {
     if (selectedId) persist(selectedId);
   }, [selectedId]);
 
-  const select = useCallback((id: string) => setRequested(id), []);
+  const select = useCallback((id: string) => setStored(id), []);
 
   return { projects, selected, selectedId, select, reload };
 }

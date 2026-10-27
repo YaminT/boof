@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Project } from "@boof-runner/shared/schema";
 import { BudgetBanner } from "./components/Budget.js";
-import { boofRunnerLogoUrl } from "./assets.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TaskList } from "./components/TaskList.js";
@@ -11,43 +11,13 @@ import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
 import { PlansTab } from "./components/PlansTab.js";
-import { AddProjectGate, ProjectSwitcher } from "./components/Projects.js";
-
-type Tab = "tasks" | "plans" | "commands" | "actions" | "settings";
-
-const PLANS_HASH = /^#\/p\/[^/?#]+\/plans(?:\/([^/?#]+))?/;
-function readPlansHash(): { open: boolean; planId: string | null } {
-  const m = PLANS_HASH.exec(window.location.hash);
-  return { open: !!m, planId: m?.[1] ? decodeURIComponent(m[1]) : null };
-}
-
-/** `#/p/<pid>/tasks/<taskId>[/changes]`: an open task editor, optionally on its Changes tab. */
-const TASK_HASH = /^#\/p\/([^/?#]+)\/tasks\/([^/?#]+)(\/changes)?/;
-function readTaskHash(): { pid: string; taskId: string; view: "edit" | "changes" } | null {
-  const m = TASK_HASH.exec(window.location.hash);
-  if (!m) return null;
-  try {
-    return {
-      pid: decodeURIComponent(m[1]!),
-      taskId: decodeURIComponent(m[2]!),
-      view: m[3] ? "changes" : "edit",
-    };
-  } catch {
-    return null;
-  }
-}
+import { AddProjectGate } from "./components/Projects.js";
+import { AppShell } from "./shell/AppShell.js";
+import { routePid } from "./lib/route.js";
+import { useRoute } from "./lib/useRoute.js";
 
 export function App() {
-  const [tab, setTab] = useState<Tab>(() => (readPlansHash().open ? "plans" : "tasks"));
-  // An editor linked from the URL hash is restored once the projects have loaded.
-  const restoreTask = useRef(readTaskHash());
-  const [planId, setPlanId] = useState<string | null>(() => readPlansHash().planId);
-  const [editingId, setEditingId] = useState<string | null>(
-    () => restoreTask.current?.taskId ?? null,
-  );
-  const [editorView, setEditorView] = useState<"edit" | "changes">(
-    () => restoreTask.current?.view ?? "edit",
-  );
+  const { route, navigate } = useRoute();
   // useProjects needs `settings` (from useAppData) and useAppData needs the selected id and the
   // projects reload (from useProjects). Break the cycle with a mirrored id and a stable reload.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -55,58 +25,26 @@ export function App() {
   const reloadProjects = useCallback(() => reloadRef.current(), []);
   const data = useAppData(selectedId, reloadProjects);
   const { settings, tasks, actions, budget, planTick, refresh, needsToken, clearNeedsToken } = data;
-  const { projects, selected, select, reload } = useProjects(settings);
+  const { projects, selected, select, reload } = useProjects(settings, routePid(route));
   reloadRef.current = reload;
   const currentId = selected?.id ?? null;
   useEffect(() => setSelectedId(currentId), [currentId]);
 
-  // Switching project: drop any open editor (data hook reloads the lists). An editor linked from
-  // the URL hash survives the first selection when it belongs to that project.
+  // A missing route, or one naming a project that does not exist, goes to the Overview of the
+  // selected project once the projects have loaded.
+  const routeUnknownProject =
+    !!route && route.name !== "inbox" && !!projects && !projects.some((p) => p.id === route.pid);
   useEffect(() => {
-    const r = restoreTask.current;
-    if (r) {
-      if (!selectedId) return; // projects not loaded yet
-      restoreTask.current = null;
-      if (selectedId === r.pid) return;
-    }
-    setEditingId(null);
-  }, [selectedId]);
+    if (!currentId) return;
+    if (!route || routeUnknownProject)
+      navigate({ name: "overview", pid: currentId }, { replace: true });
+  }, [route, routeUnknownProject, currentId, navigate]);
 
-  const openEditor = (id: string, view: "edit" | "changes") => {
-    setEditorView(view);
-    setEditingId(id);
+  const openProject = (p: Project | string) => {
+    const id = typeof p === "string" ? p : p.id;
+    select(id);
+    navigate({ name: "overview", pid: id });
   };
-
-  // Keep the URL hash in step with the tab: `#/p/<pid>/plans[/<planId>]` is linkable.
-  useEffect(() => {
-    if (!selectedId) return;
-    const base = `#/p/${encodeURIComponent(selectedId)}`;
-    const want =
-      tab === "plans"
-        ? `${base}/plans${planId ? `/${encodeURIComponent(planId)}` : ""}`
-        : tab === "tasks" && editingId && editingId !== "__new__"
-          ? `${base}/tasks/${encodeURIComponent(editingId)}${editorView === "changes" ? "/changes" : ""}`
-          : base;
-    if (restoreTask.current) return; // keep the linked hash until it has been restored
-    if (window.location.hash !== want) window.history.replaceState(null, "", want);
-  }, [tab, planId, selectedId, editingId, editorView]);
-
-  const pendingActions = actions.length;
-
-  // Short activity summary shown in the runner banner.
-  const runningTask = tasks.find((t) => t.frontmatter.status === "running");
-  const queued = tasks.filter(
-    (t) => t.frontmatter.status === "pending" && !t.frontmatter.skip,
-  ).length;
-  const runnerReport = runningTask
-    ? `Working on “${runningTask.frontmatter.title}”`
-    : settings && !settings.runner.enabled
-      ? queued
-        ? `Paused · ${queued} queued`
-        : "Paused"
-      : queued
-        ? `${queued} task${queued === 1 ? "" : "s"} queued`
-        : "Idle · queue empty";
 
   if (needsToken) {
     return (
@@ -124,113 +62,88 @@ export function App() {
     return (
       <AddProjectGate
         onAdded={(p) => {
-          select(p.id);
+          openProject(p);
           void refresh().catch(() => {});
         }}
       />
     );
   }
 
-  return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          <img className="brand-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
-          <div className="brand-text">
-            <span className="brand-name">Boof Runner</span>
-            <span className="brand-sub">Agent Task Runner</span>
-          </div>
-        </div>
-        <nav>
-          <button className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>
-            Tasks
-          </button>
-          <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>
-            Plans
-          </button>
-          <button className={tab === "commands" ? "active" : ""} onClick={() => setTab("commands")}>
-            Commands
-          </button>
-          <button className={tab === "actions" ? "active" : ""} onClick={() => setTab("actions")}>
-            Actions {pendingActions > 0 ? <span className="badge">{pendingActions}</span> : null}
-          </button>
-          <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
-            Settings
-          </button>
-        </nav>
-      </aside>
+  const pid = selectedId;
+  const runningTask = tasks.find((t) => t.frontmatter.status === "running");
+  const routeReady = !!pid && !!route && !routeUnknownProject;
 
-      <main>
-        {budget && <BudgetBanner budget={budget} />}
-        {settings && projects && selected && (
-          <ProjectSwitcher
-            settings={settings}
-            projects={projects}
-            selected={selected}
-            runnerReport={runnerReport}
-            onSelect={select}
-            onAdded={(p) => {
-              select(p.id);
-              void refresh().catch(() => {});
-            }}
-            onChange={() => void refresh()}
-          />
-        )}
-        {selectedId && tab === "tasks" && !editingId && (
-          <>
-            {runningTask && (
-              <LivePanel
-                key={runningTask.frontmatter.id}
-                projectId={selectedId}
-                task={runningTask}
-                onChange={refresh}
-              />
-            )}
-            <TaskList
-              projectId={selectedId}
-              tasks={tasks}
-              onEdit={(id) => openEditor(id, "edit")}
-              onReview={(id) => openEditor(id, "changes")}
+  return (
+    <AppShell
+      data={data}
+      projects={projects}
+      selected={selected}
+      route={route}
+      navigate={navigate}
+      onSelectProject={openProject}
+      onProjectAdded={(p) => {
+        openProject(p);
+        void refresh().catch(() => {});
+      }}
+    >
+      {budget && <BudgetBanner budget={budget} />}
+      {routeReady && route.name === "overview" && (
+        <h1 className="text-[length:var(--text-page)] font-semibold">Overview</h1>
+      )}
+      {routeReady && route.name === "tasks" && (
+        <>
+          {runningTask && (
+            <LivePanel
+              key={runningTask.frontmatter.id}
+              projectId={pid}
+              task={runningTask}
               onChange={refresh}
-              onNew={() => openEditor("__new__", "edit")}
             />
-          </>
-        )}
-        {selectedId && tab === "plans" && (
-          <PlansTab
-            key={selectedId}
-            projectId={selectedId}
+          )}
+          <TaskList
+            projectId={pid}
             tasks={tasks}
-            tick={planTick}
-            planId={planId}
-            onSelectPlan={setPlanId}
-            onOpenTask={(id) => {
-              openEditor(id, "edit");
-              setTab("tasks");
-            }}
-            onReviewTask={(id) => {
-              openEditor(id, "changes");
-              setTab("tasks");
-            }}
+            onEdit={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
+            onReview={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
             onChange={refresh}
+            onNew={() => navigate({ name: "task", pid, taskId: "__new__", view: "edit" })}
           />
-        )}
-        {selectedId && tab === "tasks" && editingId && (
-          <Editor
-            projectId={selectedId}
-            key={editingId}
-            taskId={editingId}
-            initialView={editorView}
-            onViewChange={setEditorView}
-            onClose={() => setEditingId(null)}
-            onChange={refresh}
-          />
-        )}
-        {tab === "commands" && <CommandsTab onChange={refresh} />}
-        {tab === "actions" && (
-          <ActionsTab actions={actions} projects={projects ?? []} onChange={refresh} />
-        )}
-        {tab === "settings" && settings && selected && (
+        </>
+      )}
+      {routeReady && route.name === "task" && (
+        <Editor
+          projectId={pid}
+          key={route.taskId}
+          taskId={route.taskId}
+          initialView={route.view === "changes" ? "changes" : "edit"}
+          onViewChange={(view) =>
+            navigate({ name: "task", pid, taskId: route.taskId, view }, { replace: true })
+          }
+          onClose={() => navigate({ name: "tasks", pid })}
+          onChange={refresh}
+        />
+      )}
+      {routeReady && route.name === "plans" && (
+        <PlansTab
+          key={pid}
+          projectId={pid}
+          tasks={tasks}
+          tick={planTick}
+          planId={route.planId ?? null}
+          onSelectPlan={(id) => navigate({ name: "plans", pid, ...(id ? { planId: id } : {}) })}
+          onOpenTask={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
+          onReviewTask={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
+          onChange={refresh}
+        />
+      )}
+      {routeReady && route.name === "settings" && route.page === "automation" && (
+        <CommandsTab onChange={refresh} />
+      )}
+      {routeReady &&
+        route.name === "settings" &&
+        route.page !== "automation" &&
+        settings &&
+        selected && (
           <SettingsPage
             key={selected.id}
             settings={settings}
@@ -239,7 +152,9 @@ export function App() {
             onChange={refresh}
           />
         )}
-      </main>
-    </div>
+      {route?.name === "inbox" && (
+        <ActionsTab actions={actions} projects={projects ?? []} onChange={refresh} />
+      )}
+    </AppShell>
   );
 }

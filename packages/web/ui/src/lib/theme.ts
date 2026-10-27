@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 export type ThemePref = "light" | "dark" | "system";
 
@@ -43,31 +43,58 @@ function storePref(pref: ThemePref): void {
   }
 }
 
+// One store shared by every useTheme caller, so a change made anywhere is seen everywhere.
+let currentPref: ThemePref | null = null;
+let currentSystemDark: boolean | null = null;
+let mediaBound = false;
+const listeners = new Set<() => void>();
+
+function getPref(): ThemePref {
+  return (currentPref ??= readThemePref());
+}
+
+function getSystemDark(): boolean {
+  return (currentSystemDark ??= systemPrefersDark());
+}
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+function bindSystemListener(): void {
+  if (mediaBound || typeof window === "undefined") return;
+  mediaBound = true;
+  try {
+    const mq = window.matchMedia(DARK_QUERY);
+    mq.addEventListener("change", () => {
+      currentSystemDark = mq.matches;
+      if (getPref() === "system") applyTheme("system");
+      notify();
+    });
+  } catch {
+    // matchMedia unavailable: the system preference is treated as light
+  }
+}
+
+function subscribe(listener: () => void): () => void {
+  bindSystemListener();
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function setPref(p: ThemePref): void {
+  currentPref = p;
+  storePref(p);
+  applyTheme(p);
+  notify();
+}
+
 export function useTheme(): {
   pref: ThemePref;
   resolved: "light" | "dark";
   setPref(p: ThemePref): void;
 } {
-  const [pref, setPrefState] = useState<ThemePref>(readThemePref);
-  const [systemDark, setSystemDark] = useState<boolean>(systemPrefersDark);
-
-  useEffect(() => {
-    if (pref !== "system" || typeof window === "undefined") return;
-    const mq = window.matchMedia(DARK_QUERY);
-    const onChange = () => {
-      setSystemDark(mq.matches);
-      applyTheme("system");
-    };
-    onChange();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, [pref]);
-
-  const setPref = useCallback((p: ThemePref) => {
-    storePref(p);
-    applyTheme(p);
-    setPrefState(p);
-  }, []);
-
+  const pref = useSyncExternalStore(subscribe, getPref, () => "system" as ThemePref);
+  const systemDark = useSyncExternalStore(subscribe, getSystemDark, () => false);
   return { pref, resolved: resolveTheme(pref, systemDark), setPref };
 }
