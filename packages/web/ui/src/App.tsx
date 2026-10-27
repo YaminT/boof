@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type TaskView } from "./api.js";
-import type { BudgetStatus } from "./api-types.js";
 import { BudgetBanner } from "./components/Budget.js";
 import { boofRunnerLogoUrl } from "./assets.js";
-import { useLive } from "./useLive.js";
+import { useAppData } from "./useAppData.js";
+import { Toaster } from "@/ui/sonner";
 import { useProjects } from "./useProjects.js";
-import type { Settings } from "@boof-runner/shared/schema";
 import { TaskList } from "./components/TaskList.js";
 import { LivePanel } from "./components/LivePanel.js";
 import { Editor } from "./components/Editor.js";
@@ -13,7 +11,6 @@ import { CommandsTab } from "./components/CommandsTab.js";
 import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
-import { onUnauthorized } from "./token.js";
 import { PlansTab } from "./components/PlansTab.js";
 import { AddProjectGate, ProjectSwitcher } from "./components/Projects.js";
 
@@ -46,107 +43,35 @@ export function App() {
   // An editor linked from the URL hash is restored once the projects have loaded.
   const restoreTask = useRef(readTaskHash());
   const [planId, setPlanId] = useState<string | null>(() => readPlansHash().planId);
-  const [planTick, setPlanTick] = useState(0);
-  const [tasks, setTasks] = useState<TaskView[]>([]);
-  const [actions, setActions] = useState<TaskView[]>([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [editingId, setEditingId] = useState<string | null>(
     () => restoreTask.current?.taskId ?? null,
   );
   const [editorView, setEditorView] = useState<"edit" | "changes">(
     () => restoreTask.current?.view ?? "edit",
   );
-  const { projects, selected, selectedId, select, reload: reloadProjects } = useProjects(settings);
+  // useProjects needs `settings` (from useAppData) and useAppData needs the selected id and the
+  // projects reload (from useProjects). Break the cycle with a mirrored id and a stable reload.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const reloadRef = useRef<() => Promise<void>>(async () => {});
+  const reloadProjects = useCallback(() => reloadRef.current(), []);
+  const data = useAppData(selectedId, reloadProjects);
+  const { settings, tasks, actions, budget, planTick, refresh, needsToken, clearNeedsToken } = data;
+  const { projects, selected, select, reload } = useProjects(settings);
+  reloadRef.current = reload;
+  const currentId = selected?.id ?? null;
+  useEffect(() => setSelectedId(currentId), [currentId]);
 
-  const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selectedId;
-
-  const loadTasks = useCallback(async (pid: string | null) => {
-    if (!pid) return setTasks([]);
-    const t = await api.listTasks(pid);
-    // Ignore a response for a project the user has already switched away from.
-    if (selectedRef.current === pid) setTasks(t);
-  }, []);
-
-  const refreshTasks = useCallback(
-    async (project?: string) => {
-      const pid = selectedRef.current;
-      if (pid && (!project || project === pid)) await loadTasks(pid);
-    },
-    [loadTasks],
-  );
-  const refreshActions = useCallback(() => api.actions().then(setActions), []);
-  const refreshSettings = useCallback(() => api.getSettings().then(setSettings), []);
-  const [budget, setBudget] = useState<BudgetStatus | null>(null);
-  const refreshBudget = useCallback(
-    () =>
-      api
-        .budget()
-        .then(setBudget)
-        .catch(() => {}),
-    [],
-  );
-
-  /** Refresh everything; tasks only when the change concerns the selected project. */
-  const refresh = useCallback(
-    async (project?: string) => {
-      await Promise.all([
-        refreshSettings(),
-        refreshBudget(),
-        reloadProjects(),
-        refreshActions(),
-        refreshTasks(project),
-      ]);
-    },
-    [reloadProjects, refreshSettings, refreshBudget, refreshActions, refreshTasks],
-  );
-
-  const [needsToken, setNeedsToken] = useState(false);
-  useEffect(() => onUnauthorized(() => setNeedsToken(true)), []);
-
-  useEffect(() => {
-    void refresh().catch(() => {});
-  }, [refresh]);
-  // Typed events refresh only what they name; `changed` hints (file changes that are not events)
-  // refresh everything unless a typed event for the same project just did.
-  const lastTyped = useRef(new Map<string, number>());
-  useLive({
-    onEvent: (e) => {
-      const key = e.project ?? "";
-      lastTyped.current.set(key, Date.now());
-      if (e.type === "runner.enabled") void refreshSettings().catch(() => {});
-      else if (e.type === "runner.budget_exceeded") void refreshBudget();
-      else if (e.type.startsWith("task.")) {
-        void Promise.all([refreshTasks(e.project), refreshActions(), refreshBudget()]).catch(
-          () => {},
-        );
-      } else if (e.type.startsWith("plan.")) {
-        if (!e.project || e.project === selectedRef.current) setPlanTick((n) => n + 1);
-        void refreshTasks(e.project).catch(() => {});
-      }
-    },
-    onChanged: (project) => {
-      if (Date.now() - (lastTyped.current.get(project ?? "") ?? 0) < 500) return;
-      void refresh(project).catch(() => {});
-    },
-    onReconnect: () => void refresh().catch(() => {}),
-  });
-
-  // Switching project: drop the old list and any open editor, then load the new one.
+  // Switching project: drop any open editor (data hook reloads the lists). An editor linked from
+  // the URL hash survives the first selection when it belongs to that project.
   useEffect(() => {
     const r = restoreTask.current;
     if (r) {
       if (!selectedId) return; // projects not loaded yet
       restoreTask.current = null;
-      if (selectedId === r.pid) {
-        void loadTasks(selectedId).catch(() => {});
-        return;
-      }
+      if (selectedId === r.pid) return;
     }
-    setTasks([]);
     setEditingId(null);
-    void loadTasks(selectedId).catch(() => {});
-  }, [selectedId, loadTasks]);
+  }, [selectedId]);
 
   const openEditor = (id: string, view: "edit" | "changes") => {
     setEditorView(view);
@@ -188,7 +113,7 @@ export function App() {
     return (
       <TokenGate
         onSubmit={() => {
-          setNeedsToken(false);
+          clearNeedsToken();
           void refresh().catch(() => {});
         }}
       />
@@ -209,6 +134,7 @@ export function App() {
 
   return (
     <div className="app">
+      <Toaster />
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
