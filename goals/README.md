@@ -1,0 +1,90 @@
+# Goals
+
+The backlog of boof-runner, in boof's own format: one `goal.boof.xml` per unit under `goals/<id>/` and the order plus dependencies in [`plan.boof.xml`](../plan.boof.xml) at the repository root (the scanner reads the plan there). `<version>` entries record the status (`plan` → `develop` → `review` → `done`); the highest number is current.
+
+Run them with boof itself:
+
+```bash
+boof-runner scan ~/code/boof --dry-run      # list what would become a task
+boof-runner plan import --project boof      # or: import into the project's plan and sync from the UI
+```
+
+When a task finishes, boof appends the new status to the goal file (`planWriteBack`). Tick the box here when a goal is `done`.
+
+## Runner
+
+- [ ] [`real-tools-parse-questions`](real-tools-parse-questions/goal.boof.xml) — Real tool adapters must surface planner questions (park flow is mock-only)
+- [ ] [`running-task-edits-survive`](running-task-edits-survive/goal.boof.xml) — Edits to a running task survive the run (no stale overwrite)
+- [ ] [`task-store-atomicity`](task-store-atomicity/goal.boof.xml) — TaskStore transitions and create are atomic (no task in two status dirs)
+- [ ] [`shutdown-fill-race`](shutdown-fill-race/goal.boof.xml) — No task starts after shutdown() began
+- [ ] [`orphan-agent-processes`](orphan-agent-processes/goal.boof.xml) — Record agent process groups and reap orphans on recovery (after: desktop-graceful-quit)
+- [ ] [`prompt-via-stdin-for-codex-opencode`](prompt-via-stdin-for-codex-opencode/goal.boof.xml) — Pass large prompts to codex/opencode without hitting argv limits
+- [ ] [`usage-ledger-accuracy`](usage-ledger-accuracy/goal.boof.xml) — Usage ledger: codex cost is unknown, failed attempts are not recorded
+- [ ] [`git-worktree-add-timeout`](git-worktree-add-timeout/goal.boof.xml) — Do not SIGKILL slow `git worktree add`; clean up a failed add
+- [ ] [`reject-nested-projects-same-repo`](reject-nested-projects-same-repo/goal.boof.xml) — Reject two projects rooted in the same git repository
+- [ ] [`review-diff-includes-untracked`](review-diff-includes-untracked/goal.boof.xml) — Observer and reviewer see the content of new (untracked) files
+
+## Security
+
+- [ ] [`webhook-secrets-at-rest`](webhook-secrets-at-rest/goal.boof.xml) — Protect webhook secrets at rest (after: migration-lock)
+- [ ] [`client-create-inherits-restrictions`](client-create-inherits-restrictions/goal.boof.xml) — auth.clients.create cannot escalate projects or expiry
+- [ ] [`command-templates-respect-project-scope`](command-templates-respect-project-scope/goal.boof.xml) — Command templates respect project restrictions
+- [ ] [`sse-principal-revocation`](sse-principal-revocation/goal.boof.xml) — Event streams stop when the key is revoked
+- [ ] [`rate-limit-unauthenticated-and-healthz`](rate-limit-unauthenticated-and-healthz/goal.boof.xml) — Rate limit unauthenticated requests and cache /healthz
+- [ ] [`csrf-content-type-and-origin`](csrf-content-type-and-origin/goal.boof.xml) — CSRF defence for the local-trust principal
+- [ ] [`inject-and-stop-respect-trust`](inject-and-stop-respect-trust/goal.boof.xml) — tasks.inject and tasks.stop respect the trust level
+- [ ] [`webhook-ssrf-guard`](webhook-ssrf-guard/goal.boof.xml) — Webhook URLs reject loopback, link-local and private addresses
+
+## Correctness and robustness
+
+- [ ] [`idempotency-key-concurrency`](idempotency-key-concurrency/goal.boof.xml) — Serialize concurrent requests with the same Idempotency-Key
+- [ ] [`migration-lock`](migration-lock/goal.boof.xml) — Guard the v1 to v2 data migration against two processes
+- [ ] [`cancel-waits-on-disconnect`](cancel-waits-on-disconnect/goal.boof.xml) — Cancel long waits when the client disconnects
+- [ ] [`plan-approval-backfill`](plan-approval-backfill/goal.boof.xml) — Backfill approval for plans activated before approvedBy existed (after: migration-lock)
+- [ ] [`prune-worktrees-on-project-add`](prune-worktrees-on-project-add/goal.boof.xml) — Prune stale worktrees when a project is added or unarchived
+- [ ] [`mcp-listchanged-and-log-tail`](mcp-listchanged-and-log-tail/goal.boof.xml) — MCP: drop listChanged in stateless mode, add tail to the task log tool
+- [ ] [`desktop-graceful-quit`](desktop-graceful-quit/goal.boof.xml) — Desktop quit must shut the engine down gracefully
+- [ ] [`service-install-keeps-options`](service-install-keeps-options/goal.boof.xml) — service install keeps previously configured options
+- [ ] [`cli-version-and-unknown-command`](cli-version-and-unknown-command/goal.boof.xml) — Add --version and stop unknown commands from starting the server
+- [ ] [`desktop-healthz-facts`](desktop-healthz-facts/goal.boof.xml) — Desktop server reports version and runner state on /healthz
+- [ ] [`task-file-heading-escape`](task-file-heading-escape/goal.boof.xml) — Task markdown round-trip survives section headings in prompt, reports and log
+- [ ] [`store-update-under-lock`](store-update-under-lock/goal.boof.xml) — SettingsStore.update and ProjectStore.update read-modify-write under the lock
+- [ ] [`plan-goal-path-uniqueness`](plan-goal-path-uniqueness/goal.boof.xml) — Plan validation normalises and de-duplicates goal paths
+- [ ] [`atomic-write-lock-map-and-fsync`](atomic-write-lock-map-and-fsync/goal.boof.xml) — withFileLock frees its map entries; atomicWrite fsyncs
+
+## Server
+
+- [ ] [`attachment-upload-no-json-fingerprint`](attachment-upload-no-json-fingerprint/goal.boof.xml) — Do not JSON-fingerprint attachment uploads
+- [ ] [`audit-forwarded-ip`](audit-forwarded-ip/goal.boof.xml) — Audit log records the forwarded client address behind a proxy
+- [ ] [`security-headers-behind-proxy`](security-headers-behind-proxy/goal.boof.xml) — HSTS and CORP headers fit a TLS-terminating proxy and public docs
+- [ ] [`mcp-resources-degrade-by-scope`](mcp-resources-degrade-by-scope/goal.boof.xml) — MCP resources/list degrades to empty for keys without projects:read
+
+## Install and release
+
+- [ ] [`fix-npm-install-path`](fix-npm-install-path/goal.boof.xml) — Make npm-only installs work (workspace:* protocol, copy mode externals)
+- [ ] [`release-workflow-version`](release-workflow-version/goal.boof.xml) — Release workflow derives the app version and prerelease flag from the tag
+
+## Web UI
+
+- [ ] [`ui-drag-reorder-goals`](ui-drag-reorder-goals/goal.boof.xml) — Drag-and-drop reorder of plan goals
+- [ ] [`ui-linkable-tabs`](ui-linkable-tabs/goal.boof.xml) — Linkable Settings, Commands and Actions tabs
+- [ ] [`ui-archived-projects`](ui-archived-projects/goal.boof.xml) — List archived projects and allow unarchive or delete
+- [ ] [`ui-project-overrides`](ui-project-overrides/goal.boof.xml) — Project overrides for review, worktree, retries and budget in the UI
+- [ ] [`ui-return-to-plan`](ui-return-to-plan/goal.boof.xml) — Return to the plan after opening a task from it (after: ui-linkable-tabs)
+- [ ] [`ui-settings-form-keeps-edits`](ui-settings-form-keeps-edits/goal.boof.xml) — Settings page keeps unsaved edits across live refreshes
+- [ ] [`ui-optimistic-concurrency`](ui-optimistic-concurrency/goal.boof.xml) — UI honours optimistic concurrency for goals and tasks
+- [ ] [`ui-surface-action-errors`](ui-surface-action-errors/goal.boof.xml) — Task-row and command actions surface failures
+- [ ] [`ui-a11y-reorder-and-modals`](ui-a11y-reorder-and-modals/goal.boof.xml) — Keyboard task reorder and focus-managed modals (after: ui-drag-reorder-goals)
+- [ ] [`ui-clients-rotate-and-scopes`](ui-clients-rotate-and-scopes/goal.boof.xml) — Clients UI can rotate keys and grant every scope
+
+## Docs
+
+- [ ] [`docs-consistency-pass`](docs-consistency-pass/goal.boof.xml) — Docs consistency pass (budgets, MCP tool count, Node floor, clone URL, desktop first run)
+
+## Verification and release
+
+- [ ] [`verify-steering-codex`](verify-steering-codex/goal.boof.xml) — Verify live steering (inject mode now) with Codex
+- [ ] [`desktop-e2e`](desktop-e2e/goal.boof.xml) — Test the desktop app end to end
+- [ ] [`typescript-7`](typescript-7/goal.boof.xml) — Upgrade to TypeScript 7
+- [ ] [`publish-runbook`](publish-runbook/goal.boof.xml) — Publish the server runbook on nodets.com
+- [ ] [`release-0-3-0`](release-0-3-0/goal.boof.xml) — Release v0.3.0 with a changelog (after: desktop-e2e, verify-steering-codex, publish-runbook)

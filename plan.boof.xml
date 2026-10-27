@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plan>
+  <goals>
+    <goal id="real-tools-parse-questions" path="goals/real-tools-parse-questions" order="1" status="plan"></goal>
+    <goal id="running-task-edits-survive" path="goals/running-task-edits-survive" order="2" status="plan"></goal>
+    <goal id="task-store-atomicity" path="goals/task-store-atomicity" order="3" status="plan"></goal>
+    <goal id="shutdown-fill-race" path="goals/shutdown-fill-race" order="4" status="plan"></goal>
+    <goal id="desktop-graceful-quit" path="goals/desktop-graceful-quit" order="5" status="plan"></goal>
+    <goal id="orphan-agent-processes" path="goals/orphan-agent-processes" order="6" status="plan"><depends-on>desktop-graceful-quit</depends-on></goal>
+    <goal id="prompt-via-stdin-for-codex-opencode" path="goals/prompt-via-stdin-for-codex-opencode" order="7" status="plan"></goal>
+    <goal id="usage-ledger-accuracy" path="goals/usage-ledger-accuracy" order="8" status="plan"></goal>
+    <goal id="git-worktree-add-timeout" path="goals/git-worktree-add-timeout" order="9" status="plan"></goal>
+    <goal id="reject-nested-projects-same-repo" path="goals/reject-nested-projects-same-repo" order="10" status="plan"></goal>
+    <goal id="review-diff-includes-untracked" path="goals/review-diff-includes-untracked" order="11" status="plan"></goal>
+    <goal id="migration-lock" path="goals/migration-lock" order="12" status="plan"></goal>
+    <goal id="webhook-secrets-at-rest" path="goals/webhook-secrets-at-rest" order="13" status="plan"><depends-on>migration-lock</depends-on></goal>
+    <goal id="client-create-inherits-restrictions" path="goals/client-create-inherits-restrictions" order="14" status="plan"></goal>
+    <goal id="command-templates-respect-project-scope" path="goals/command-templates-respect-project-scope" order="15" status="plan"></goal>
+    <goal id="sse-principal-revocation" path="goals/sse-principal-revocation" order="16" status="plan"></goal>
+    <goal id="rate-limit-unauthenticated-and-healthz" path="goals/rate-limit-unauthenticated-and-healthz" order="17" status="plan"></goal>
+    <goal id="csrf-content-type-and-origin" path="goals/csrf-content-type-and-origin" order="18" status="plan"></goal>
+    <goal id="inject-and-stop-respect-trust" path="goals/inject-and-stop-respect-trust" order="19" status="plan"></goal>
+    <goal id="webhook-ssrf-guard" path="goals/webhook-ssrf-guard" order="20" status="plan"></goal>
+    <goal id="idempotency-key-concurrency" path="goals/idempotency-key-concurrency" order="21" status="plan"></goal>
+    <goal id="cancel-waits-on-disconnect" path="goals/cancel-waits-on-disconnect" order="22" status="plan"></goal>
+    <goal id="plan-approval-backfill" path="goals/plan-approval-backfill" order="23" status="plan"><depends-on>migration-lock</depends-on></goal>
+    <goal id="prune-worktrees-on-project-add" path="goals/prune-worktrees-on-project-add" order="24" status="plan"></goal>
+    <goal id="mcp-listchanged-and-log-tail" path="goals/mcp-listchanged-and-log-tail" order="25" status="plan"></goal>
+    <goal id="service-install-keeps-options" path="goals/service-install-keeps-options" order="26" status="plan"></goal>
+    <goal id="cli-version-and-unknown-command" path="goals/cli-version-and-unknown-command" order="27" status="plan"></goal>
+    <goal id="desktop-healthz-facts" path="goals/desktop-healthz-facts" order="28" status="plan"></goal>
+    <goal id="task-file-heading-escape" path="goals/task-file-heading-escape" order="29" status="plan"></goal>
+    <goal id="store-update-under-lock" path="goals/store-update-under-lock" order="30" status="plan"></goal>
+    <goal id="plan-goal-path-uniqueness" path="goals/plan-goal-path-uniqueness" order="31" status="plan"></goal>
+    <goal id="atomic-write-lock-map-and-fsync" path="goals/atomic-write-lock-map-and-fsync" order="32" status="plan"></goal>
+    <goal id="attachment-upload-no-json-fingerprint" path="goals/attachment-upload-no-json-fingerprint" order="33" status="plan"></goal>
+    <goal id="audit-forwarded-ip" path="goals/audit-forwarded-ip" order="34" status="plan"></goal>
+    <goal id="security-headers-behind-proxy" path="goals/security-headers-behind-proxy" order="35" status="plan"></goal>
+    <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="plan"></goal>
+    <goal id="fix-npm-install-path" path="goals/fix-npm-install-path" order="37" status="plan"></goal>
+    <goal id="release-workflow-version" path="goals/release-workflow-version" order="38" status="plan"></goal>
+    <goal id="ui-drag-reorder-goals" path="goals/ui-drag-reorder-goals" order="39" status="plan"></goal>
+    <goal id="ui-linkable-tabs" path="goals/ui-linkable-tabs" order="40" status="plan"></goal>
+    <goal id="ui-archived-projects" path="goals/ui-archived-projects" order="41" status="plan"></goal>
+    <goal id="ui-project-overrides" path="goals/ui-project-overrides" order="42" status="plan"></goal>
+    <goal id="ui-return-to-plan" path="goals/ui-return-to-plan" order="43" status="plan"><depends-on>ui-linkable-tabs</depends-on></goal>
+    <goal id="ui-settings-form-keeps-edits" path="goals/ui-settings-form-keeps-edits" order="44" status="plan"></goal>
+    <goal id="ui-optimistic-concurrency" path="goals/ui-optimistic-concurrency" order="45" status="plan"></goal>
+    <goal id="ui-surface-action-errors" path="goals/ui-surface-action-errors" order="46" status="plan"></goal>
+    <goal id="ui-a11y-reorder-and-modals" path="goals/ui-a11y-reorder-and-modals" order="47" status="plan"><depends-on>ui-drag-reorder-goals</depends-on></goal>
+    <goal id="ui-clients-rotate-and-scopes" path="goals/ui-clients-rotate-and-scopes" order="48" status="plan"></goal>
+    <goal id="docs-consistency-pass" path="goals/docs-consistency-pass" order="49" status="plan"></goal>
+    <goal id="verify-steering-codex" path="goals/verify-steering-codex" order="50" status="plan"></goal>
+    <goal id="desktop-e2e" path="goals/desktop-e2e" order="51" status="plan"></goal>
+    <goal id="typescript-7" path="goals/typescript-7" order="52" status="plan"></goal>
+    <goal id="publish-runbook" path="goals/publish-runbook" order="53" status="plan"></goal>
+    <goal id="release-0-3-0" path="goals/release-0-3-0" order="54" status="plan"><depends-on>desktop-e2e</depends-on><depends-on>verify-steering-codex</depends-on><depends-on>publish-runbook</depends-on></goal>
+  </goals>
+</plan>
