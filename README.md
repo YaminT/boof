@@ -1,5 +1,7 @@
 # boof-runner — Agent Task Runner
 
+[![docs](https://img.shields.io/badge/docs-nodets.com%2Fboof-c2410c)](https://nodets.com/boof/)
+
 > Installs the `boof-runner` command.
 
 Boof Runner queues coding tasks and runs them through a disciplined **planner → developer → observer → reviewer** pipeline, driven by coding agents such as Claude Code, Codex and OpenCode. It is **local-first**: every task is a markdown file on disk, each task runs in its own git worktree, and nothing is merged or pushed for you. You drive it from a web UI, a desktop app, the command line, a REST API or MCP, so a person or another AI agent can submit work, answer the planner's questions and review the result.
