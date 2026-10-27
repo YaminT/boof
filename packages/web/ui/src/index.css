@@ -103,3 +103,29 @@ body {
   background: var(--page);
   color: var(--ink);
 }
+
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 600;
+    margin-block: 0.5em;
+  }
+  h1 {
+    font-size: var(--text-page);
+  }
+  h2 {
+    font-size: var(--text-section);
+  }
+  h3 {
+    font-size: 15px;
+  }
+  h4 {
+    font-size: var(--text-body);
+  }
+  a {
+    color: var(--accent-brand);
+    text-decoration: underline;
+  }
+}
