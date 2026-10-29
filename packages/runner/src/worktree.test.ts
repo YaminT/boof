@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, stat, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -444,5 +444,84 @@ describe("worktree root exclusion", () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe("worktree add timeout and cleanup", () => {
+  let shimDir: string;
+  const savedPath = process.env.PATH;
+  /** A `git` that runs the real `worktree add`, deletes README.md from the new tree, then hangs or fails. */
+  const shim = async (mode: "hang" | "fail") => {
+    shimDir = await mkdtemp(join(tmpdir(), "boof-git-shim-"));
+    const real = (await execCommand("sh", ["-c", "command -v git"], { cwd: repo })).stdout.trim();
+    await writeFile(
+      join(shimDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = worktree ] && [ "$2" = add ]; then',
+        `  "${real}" "$@" 2>/dev/null || exit $?`,
+        '  for a in "$@"; do case "$a" in /*) rm -f "$a/README.md";; esac; done',
+        mode === "hang" ? "  sleep 60" : "  echo 'disk full' >&2; exit 128",
+        "fi",
+        `exec "${real}" "$@"`,
+        "",
+      ].join("\n"),
+    );
+    await chmod(join(shimDir, "git"), 0o755);
+    process.env.PATH = `${shimDir}:${savedPath}`;
+  };
+  afterEach(async () => {
+    process.env.PATH = savedPath;
+    if (shimDir)
+      await rm(shimDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  const clean = async (id: string) => {
+    expect(await exists(join(rootOf(), id))).toBe(false);
+    expect((await g(["worktree", "list", "--porcelain"])).stdout).not.toContain(join(rootOf(), id));
+    expect(
+      (await g(["rev-parse", "--verify", "--quiet", `refs/heads/boof-runner/${id}`])).code,
+    ).not.toBe(0);
+  };
+
+  it("a hung add is killed, its registration, tree and branch removed, and a retry starts clean", async () => {
+    await shim("hang");
+    await expect(create(repo, "slow", { root: rootOf(), checkoutTimeoutMs: 1000 })).rejects.toThrow(
+      /git worktree add timed out after 1s/,
+    );
+    process.env.PATH = savedPath;
+    await clean("slow");
+    const again = await create(repo, "slow", { root: rootOf() });
+    expect(again.reused).toBe(false);
+    expect(await exists(join(again.worktree.path, "README.md"))).toBe(true);
+  });
+
+  it("a failed add is cleaned up the same way", async () => {
+    await shim("fail");
+    await expect(create(repo, "broken", { root: rootOf() })).rejects.toThrow(
+      /git worktree add failed: disk full/,
+    );
+    process.env.PATH = savedPath;
+    await clean("broken");
+    expect((await create(repo, "broken", { root: rootOf() })).reused).toBe(false);
+  });
+
+  it("a failed add never removes a branch or worktree that existed before it", async () => {
+    // The task branch already exists, so the add reuses it and must not delete it.
+    await g(["branch", "boof-runner/old"]);
+    // Another worktree is registered under the root and must survive.
+    await g(["worktree", "add", "-b", "boof-runner/other", join(rootOf(), "other")]);
+    await shim("fail");
+    await expect(create(repo, "old", { root: rootOf() })).rejects.toThrow(
+      /git worktree add failed: disk full/,
+    );
+    process.env.PATH = savedPath;
+    expect(await exists(join(rootOf(), "old"))).toBe(false);
+    expect((await g(["rev-parse", "--verify", "--quiet", "refs/heads/boof-runner/old"])).code).toBe(
+      0,
+    );
+    expect(await exists(join(rootOf(), "other", "README.md"))).toBe(true);
+    expect((await g(["worktree", "list", "--porcelain"])).stdout).toContain(
+      join(rootOf(), "other"),
+    );
   });
 });

@@ -243,6 +243,8 @@ When a task has `runs > 1`, Boof Runner re-queues it after each completed run un
 
 When the project's `workingDirectory` is a git repository, Boof Runner creates a dedicated git worktree for a running task. Agent tools execute inside that worktree, not directly in the main checkout.
 
+`git worktree add`, the leftovers snapshot and `git worktree remove` may take up to 15 minutes on a large repository; other git calls are killed after 30 s. An add that fails or is killed removes its registration, directory and newly created branch before the task fails, so a retry starts from a clean checkout.
+
 This matters because the agents run in auto-approve mode. Worktree isolation gives Boof Runner:
 
 - a contained place for file mutations

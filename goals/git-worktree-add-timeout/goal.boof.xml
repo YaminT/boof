@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">git worktree add, git add -A and worktree remove get a 15-minute timeout (others keep 30 s); a failed or killed add removes its registration, directory and new branch before the task fails.</version>
       </versions>
     </status>
     <tests>

@@ -31,17 +31,23 @@ export interface Worktree {
   base: string;
 }
 
+/** Timeout for ordinary git calls. */
+export const GIT_TIMEOUT_MS = 30_000;
+/** Timeout for checkout-sized git calls (worktree add/remove, add -A): slow on a big repository. */
+export const CHECKOUT_TIMEOUT_MS = 15 * 60_000;
+
 async function git(
   cwd: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
-): Promise<{ code: number | null; out: string; err: string }> {
+  timeoutMs: number = GIT_TIMEOUT_MS,
+): Promise<{ code: number | null; out: string; err: string; timedOut: boolean }> {
   const res = await execCommand("git", args, {
     cwd,
-    timeoutMs: 30000,
+    timeoutMs,
     env: env ? { ...process.env, ...env } : undefined,
   });
-  return { code: res.code, out: res.stdout.trim(), err: res.stderr.trim() };
+  return { code: res.code, out: res.stdout.trim(), err: res.stderr.trim(), timedOut: res.timedOut };
 }
 
 /** True if `dir` is inside a git working tree (worktree-isolation spec). */
@@ -119,6 +125,8 @@ export interface WorktreeOptions {
   root: string;
   /** Branch or commit a NEW task branch starts from; default the working directory's HEAD. */
   base?: string;
+  /** Timeout for `git worktree add`; default CHECKOUT_TIMEOUT_MS. */
+  checkoutTimeoutMs?: number;
 }
 
 export interface WorktreeResult {
@@ -184,20 +192,44 @@ export async function createWorktree(
   await mkdir(root, { recursive: true });
 
   let base: string;
-  let add: { code: number | null; out: string; err: string };
+  const addTimeout = opts.checkoutTimeoutMs ?? CHECKOUT_TIMEOUT_MS;
+  let add: Awaited<ReturnType<typeof git>>;
   if (newBase === null) {
     base = meta?.base ?? (await mergeBase(workingDir, branch));
-    add = await git(workingDir, ["worktree", "add", path, branch]);
+    add = await git(workingDir, ["worktree", "add", path, branch], undefined, addTimeout);
   } else {
     base = newBase;
-    add = await git(workingDir, ["worktree", "add", "-b", branch, path, base]);
+    add = await git(
+      workingDir,
+      ["worktree", "add", "-b", branch, path, base],
+      undefined,
+      addTimeout,
+    );
   }
-  if (add.code !== 0) {
-    throw new Error(`git worktree add failed: ${add.err || add.out}`);
+  if (add.code !== 0 || add.timedOut) {
+    await undoFailedAdd(workingDir, path, branch, newBase !== null);
+    throw new Error(
+      add.timedOut
+        ? `git worktree add timed out after ${addTimeout / 1000}s (the half-made worktree was removed)`
+        : `git worktree add failed: ${add.err || add.out}`,
+    );
   }
   const wt = { path, branch, base };
   await writeMeta(root, taskId, wt);
   return { worktree: wt, reused: hasBranch, baseIgnored };
+}
+
+/** Remove what a failed or killed `worktree add` left; the branch only when this add created it. */
+async function undoFailedAdd(
+  workingDir: string,
+  path: string,
+  branch: string,
+  deleteBranch: boolean,
+): Promise<void> {
+  await git(workingDir, ["worktree", "remove", "--force", path], undefined, CHECKOUT_TIMEOUT_MS);
+  await git(workingDir, ["worktree", "prune"]);
+  await rm(path, { recursive: true, force: true });
+  if (deleteBranch) await git(workingDir, ["branch", "-D", branch]);
 }
 
 async function mergeBase(workingDir: string, branch: string): Promise<string> {
@@ -344,8 +376,8 @@ export async function commitLeftovers(
   const tmp = await mkdtemp(join(tmpdir(), "boof-leftovers-"));
   try {
     const env = { GIT_INDEX_FILE: join(tmp, "index") };
-    const run = async (args: string[]): Promise<string> => {
-      const res = await git(wt.path, args, env);
+    const run = async (args: string[], timeoutMs?: number): Promise<string> => {
+      const res = await git(wt.path, args, env, timeoutMs);
       if (res.code !== 0) throw new Error(`git ${args[0]} failed: ${res.err || res.out}`);
       return res.out;
     };
@@ -358,6 +390,7 @@ export async function commitLeftovers(
         wt.path,
         ["add", "-A", "--", ".", ...skipped.map((p) => `:(exclude)${p}`)],
         env,
+        CHECKOUT_TIMEOUT_MS,
       );
       if (add.code === 0) break;
       const fresh = [...add.err.matchAll(/'([^']+?)\/?' does not have a commit checked out/g)]
@@ -366,7 +399,7 @@ export async function commitLeftovers(
       if (fresh.length === 0) throw new Error(`git add failed: ${add.err || add.out}`);
       skipped.push(...fresh);
     }
-    const tree = await run(["write-tree"]);
+    const tree = await run(["write-tree"], CHECKOUT_TIMEOUT_MS);
     // Nested repositories with commits become gitlinks; their objects are not in this repo.
     const gitlinks = (await run(["diff-index", "--cached", "--raw", "HEAD"]))
       .split("\n")
@@ -409,7 +442,12 @@ export async function commitLeftovers(
 /** Remove the worktree directory (leftovers included) and delete the task branches. */
 async function deleteWork(workingDir: string, wt: Worktree, why: string): Promise<string[]> {
   const lines: string[] = [];
-  const remove = await git(workingDir, ["worktree", "remove", "--force", wt.path]);
+  const remove = await git(
+    workingDir,
+    ["worktree", "remove", "--force", wt.path],
+    undefined,
+    CHECKOUT_TIMEOUT_MS,
+  );
   if (remove.code !== 0 && (await pathExists(wt.path))) {
     return [`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`];
   }
@@ -466,7 +504,12 @@ export async function finalizeWorktree(
     return lines;
   }
   // --force: leftovers were just saved on the side branch (or the tree was clean).
-  const remove = await git(workingDir, ["worktree", "remove", "--force", wt.path]);
+  const remove = await git(
+    workingDir,
+    ["worktree", "remove", "--force", wt.path],
+    undefined,
+    CHECKOUT_TIMEOUT_MS,
+  );
   if (remove.code !== 0) {
     lines.push(`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`);
     return lines;
