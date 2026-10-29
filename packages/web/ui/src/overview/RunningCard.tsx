@@ -29,7 +29,7 @@ export function RunningCard({
   const [mode, setMode] = useState<Mode>("next-step");
   const [sending, setSending] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
-  const elapsed = useElapsed(id, true);
+  const elapsed = useElapsed(pid, id, true);
 
   useEffect(() => {
     let alive = true;

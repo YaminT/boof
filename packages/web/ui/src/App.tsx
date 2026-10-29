@@ -18,6 +18,7 @@ import { useRoute } from "./lib/useRoute.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
 import { OverviewPage } from "./overview/OverviewPage.js";
+import { SettingsNav } from "./shell/SettingsNav.js";
 import { NowStrip } from "./overview/NowStrip.js";
 
 export function App() {
@@ -34,10 +35,13 @@ export function App() {
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
   // Keep the first-seen clock in step with what runs (layout effect: before child effects read it).
   const runningKey = groups.running.map((t) => t.frontmatter.id).join("\n");
-  useLayoutEffect(() => {
-    markRunning(runningKey ? runningKey.split("\n") : [], Date.now());
-  }, [runningKey]);
   const currentId = selected?.id ?? null;
+  // Only a loaded list for the selected project counts: the empty list right after a switch must
+  // not look like "nothing runs". Other projects' clocks are left alone.
+  useLayoutEffect(() => {
+    if (!currentId || !data.tasksLoaded) return;
+    markRunning(currentId, runningKey ? runningKey.split("\n") : [], Date.now());
+  }, [currentId, data.tasksLoaded, runningKey]);
   useEffect(() => setSelectedId(currentId), [currentId]);
 
   // A missing route, or one naming a project that does not exist, goes to the Overview of the
@@ -151,6 +155,7 @@ export function App() {
           />
         </>
       )}
+      {routeReady && route.name === "settings" && <SettingsNav pid={pid} active={route.page} />}
       {routeReady && route.name === "settings" && route.page === "automation" && (
         <CommandsTab onChange={refresh} />
       )}

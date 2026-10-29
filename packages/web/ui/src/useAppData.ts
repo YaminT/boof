@@ -8,6 +8,8 @@ import { useLive } from "./useLive.js";
 export interface AppData {
   settings: Settings | null;
   tasks: TaskView[];
+  /** True once the selected project's task list has loaded (false right after a switch). */
+  tasksLoaded: boolean;
   actions: TaskView[];
   plans: PlanSummary[];
   budget: BudgetStatus | null;
@@ -30,10 +32,11 @@ export function useAppData(
   const [settings, setSettings] = useState<Settings | null>(null);
   // Lists are tagged with the project they belong to, so a render right after a project switch
   // never shows the previous project's tasks or plans.
-  const [taskState, setTasks] = useState<{ pid: string | null; items: TaskView[] }>({
-    pid: null,
-    items: [],
-  });
+  const [taskState, setTasks] = useState<{
+    pid: string | null;
+    items: TaskView[];
+    loaded: boolean;
+  }>({ pid: null, items: [], loaded: false });
   const [actions, setActions] = useState<TaskView[]>([]);
   const [planState, setPlans] = useState<{ pid: string | null; items: PlanSummary[] }>({
     pid: null,
@@ -43,6 +46,7 @@ export function useAppData(
     () => (taskState.pid === selectedId ? taskState.items : []),
     [taskState, selectedId],
   );
+  const tasksLoaded = taskState.pid === selectedId && taskState.loaded;
   const plans = useMemo(
     () => (planState.pid === selectedId ? planState.items : []),
     [planState, selectedId],
@@ -55,10 +59,10 @@ export function useAppData(
   selectedRef.current = selectedId;
 
   const loadTasks = useCallback(async (pid: string | null) => {
-    if (!pid) return setTasks({ pid: null, items: [] });
+    if (!pid) return setTasks({ pid: null, items: [], loaded: false });
     const t = await api.listTasks(pid);
     // Ignore a response for a project the user has already switched away from.
-    if (selectedRef.current === pid) setTasks({ pid, items: t });
+    if (selectedRef.current === pid) setTasks({ pid, items: t, loaded: true });
   }, []);
 
   const loadPlans = useCallback(async (pid: string | null) => {
@@ -92,17 +96,24 @@ export function useAppData(
     [],
   );
 
-  /** Refresh everything; tasks and plans only when the change concerns the selected project. */
+  /**
+   * Refresh everything; tasks and plans only when the change concerns the selected project.
+   * Never rejects: a failed load keeps the last data and the next live event retries.
+   */
   const refresh = useCallback(
     async (project?: string) => {
-      await Promise.all([
-        refreshSettings(),
-        refreshBudget(),
-        reloadProjects(),
-        refreshActions(),
-        refreshTasks(project),
-        refreshPlans(project),
-      ]);
+      try {
+        await Promise.all([
+          refreshSettings(),
+          refreshBudget(),
+          reloadProjects(),
+          refreshActions(),
+          refreshTasks(project),
+          refreshPlans(project),
+        ]);
+      } catch {
+        // Keep showing what we have.
+      }
     },
     [reloadProjects, refreshSettings, refreshBudget, refreshActions, refreshTasks, refreshPlans],
   );
@@ -141,7 +152,7 @@ export function useAppData(
 
   // Switching project: drop the old lists, then load the new ones.
   useEffect(() => {
-    setTasks({ pid: selectedId, items: [] });
+    setTasks({ pid: selectedId, items: [], loaded: false });
     setPlans({ pid: selectedId, items: [] });
     void loadTasks(selectedId).catch(() => {});
     void loadPlans(selectedId).catch(() => {});
@@ -150,6 +161,7 @@ export function useAppData(
   return {
     settings,
     tasks,
+    tasksLoaded,
     actions,
     plans,
     budget,
