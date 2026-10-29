@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execCommand } from "./exec.js";
+import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";
 const LEFTOVERS_SUFFIX = "--leftovers";
@@ -323,20 +324,25 @@ export async function diffAgainstBase(wt: Worktree, maxInlineBytes = 120000): Pr
   // Include both committed and uncommitted changes relative to base.
   const stat = await git(wt.path, ["diff", `${wt.base}`, "--stat"]);
   const full = await git(wt.path, ["--no-pager", "diff", wt.base]);
-  const untracked = await git(wt.path, ["ls-files", "--others", "--exclude-standard"]);
+  const names = await untrackedFiles(wt.path);
   const rev = await git(wt.path, ["rev-parse", wt.base]);
   const baseSha = rev.code === 0 && rev.out ? rev.out : wt.base;
-  const bytes = Buffer.byteLength(full.out);
-  const untrackedBlock = untracked.out ? "## Untracked files\n" + untracked.out : "";
+  const patches: string[] = [];
+  for (const p of names) patches.push((await untrackedPatch(wt.path, p)).trimEnd());
+  const untrackedText = patches.filter(Boolean).join("\n");
+  const bytes = Buffer.byteLength(full.out) + Buffer.byteLength(untrackedText);
+  const untrackedBlock = names.length ? "## Untracked files\n" + names.join("\n") : "";
   if (bytes <= maxInlineBytes) {
-    const text = ["## Summary\n" + stat.out, "## Diff\n" + full.out, untrackedBlock]
+    const diff = [full.out, untrackedText].filter(Boolean).join("\n");
+    const text = ["## Summary\n" + stat.out, "## Diff\n" + diff, untrackedBlock]
       .filter(Boolean)
       .join("\n\n");
     return { text, capped: false, bytes, baseSha };
   }
   const note =
     `## Note\nThe full diff (${bytes} bytes) exceeds the inline limit (${maxInlineBytes} bytes). ` +
-    `Read it yourself with \`git diff ${baseSha}\`; per file, \`git diff ${baseSha} -- <path>\`.`;
+    `Read it yourself with \`git diff ${baseSha}\`; per file, \`git diff ${baseSha} -- <path>\`; ` +
+    "untracked files: `git diff --no-index -- /dev/null <path>`.";
   const text = ["## Summary\n" + stat.out, untrackedBlock, note].filter(Boolean).join("\n\n");
   return { text, capped: true, bytes, baseSha };
 }

@@ -231,7 +231,7 @@ All keys are optional with defaults:
 
 - `review.gate`: enforce verdicts (default `true`).
 - `review.maxFixRounds`: developer fix rounds allowed per reviewing role (default `2`).
-- `review.maxInlineDiffBytes`: largest diff inlined in observer, reviewer and developer-fix prompts (default `120000`). Over the limit, the prompt carries the `--stat` summary, the untracked-file list and a note giving the base sha and telling the agent to run `git diff <base>` (per file `git diff <base> -- <path>`). The log records `Diff exceeds inline limit`.
+- `review.maxInlineDiffBytes`: largest diff inlined in observer, reviewer and developer-fix prompts (default `120000`): the diff of tracked files plus a `--no-index` patch for every untracked file (at most 200). Over the limit, the prompt carries the `--stat` summary, the untracked-file list and a note giving the base sha and telling the agent to run `git diff <base>` (per file `git diff <base> -- <path>`; untracked files `git diff --no-index -- /dev/null <path>`). The log records `Diff exceeds inline limit`.
 
 ### Mock Verdicts
 

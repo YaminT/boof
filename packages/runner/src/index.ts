@@ -9,6 +9,7 @@ export * from "./tools/opencode.js";
 export * from "./tools/registry.js";
 export * from "./worktree.js";
 export * from "./task-diff.js";
+export * from "./untracked-diff.js";
 export * from "./usage-store.js";
 export * from "./pipeline.js";
 export * from "./engine.js";

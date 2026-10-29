@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">diffAgainstBase inlines a --no-index patch per untracked file (shared untracked-diff.ts helper with task-diff), counted against maxInlineDiffBytes.</version>
       </versions>
     </status>
     <tests>

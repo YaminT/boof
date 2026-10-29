@@ -95,13 +95,28 @@ describe("worktree isolation", () => {
     expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t3"])).code).toBe(0);
   });
 
-  it("captures untracked files in the diff", async () => {
+  it("captures the content of untracked files in the diff", async () => {
     const wt = await createWorktree(repo, "t2");
     await mkdir(join(wt.path, "sub"), { recursive: true });
     await writeFile(join(wt.path, "sub", "u.txt"), "untracked\n");
-    const diff = (await diffAgainstBase(wt)).text;
-    expect(diff).toContain("u.txt");
+    const res = await diffAgainstBase(wt);
+    expect(res.text).toContain("## Untracked files\nsub/u.txt");
+    expect(res.text).toContain("+++ b/sub/u.txt");
+    expect(res.text).toContain("+untracked");
+    expect(res.bytes).toBeGreaterThan(0);
+    expect(res.capped).toBe(false);
     await finalizeWorktree(repo, wt, "t");
+  });
+
+  it("untracked content counts toward the inline cap", async () => {
+    const wt = await createWorktree(repo, "cap-untracked");
+    await writeFile(join(wt.path, "big.txt"), "x".repeat(2000) + "\n");
+    const res = await diffAgainstBase(wt, 100);
+    expect(res.capped).toBe(true);
+    expect(res.bytes).toBeGreaterThan(2000);
+    expect(res.text).toContain("## Untracked files\nbig.txt");
+    expect(res.text).not.toContain("xxxxxxxxxx");
+    expect(res.text).toContain("git diff --no-index -- /dev/null <path>");
   });
 
   it("inlines the full diff when under the byte limit", async () => {

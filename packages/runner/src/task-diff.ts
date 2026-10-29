@@ -1,11 +1,11 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
 import { execCommand } from "./exec.js";
+import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
 import { leftoversBranch, registeredWorktreeBranch } from "./worktree.js";
 
 const BRANCH_PREFIX = "boof-runner/";
 const MAX_COMMITS = 200;
-const MAX_UNTRACKED = 200;
 
 export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed" | "binary";
 
@@ -221,9 +221,9 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
   // Untracked files of the live worktree, diffed against nothing (no objects are written).
   const untrackedFiles: DiffFile[] = [];
   if (includesUncommitted) {
-    const un = await git(liveWt!, ["ls-files", "--others", "--exclude-standard", "-z"]);
+    const un = await listUntracked(liveWt!);
     const known = new Set(files.map((f) => f.path));
-    for (const p of un.out.split("\0").filter(Boolean).slice(0, MAX_UNTRACKED)) {
+    for (const p of un) {
       if (known.has(p)) continue;
       const ns = await git(liveWt!, [
         "diff",
@@ -262,17 +262,8 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
       text = (await git(cwd, args)).out;
     }
     for (const f of untr) {
-      const d = await git(liveWt!, [
-        "diff",
-        `-U${context}`,
-        "--no-index",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--",
-        "/dev/null",
-        f.path,
-      ]);
-      text += (text && !text.endsWith("\n") ? "\n" : "") + d.out;
+      const d = await untrackedPatch(liveWt!, f.path, context);
+      text += (text && !text.endsWith("\n") ? "\n" : "") + d;
     }
     return text;
   };
