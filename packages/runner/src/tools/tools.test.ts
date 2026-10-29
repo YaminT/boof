@@ -861,6 +861,13 @@ describe("question protocol position", () => {
     const r = parseQuestions("Notes.\n```questions\n1. Q?\n```\nVERDICT: CHANGES_REQUESTED");
     expect(r).toEqual({ report: "Notes.\n\nVERDICT: CHANGES_REQUESTED", questions: ["Q?"] });
   });
+  it("accepts the VERDICT forms parseVerdict accepts: bold, italic, backticked", () => {
+    for (const verdict of ["**VERDICT: APPROVE**", "`VERDICT: APPROVE`", "_VERDICT: APPROVE_"]) {
+      const r = parseQuestions(`Notes.\n\`\`\`questions\n1. Q?\n\`\`\`\n\n${verdict}`);
+      expect(r).toEqual({ report: `Notes.\n\n${verdict}`, questions: ["Q?"] });
+      expect(parseVerdict(r.report)).toBe("APPROVE");
+    }
+  });
   it("accepts a block at the very end", () => {
     expect(parseQuestions("Plan.\n\n```questions\n- Q?\n```\n\n")).toEqual({
       report: "Plan.",

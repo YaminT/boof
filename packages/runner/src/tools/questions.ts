@@ -26,7 +26,10 @@ export function parseQuestions(report: string): { report: string; questions: str
   // Only a block that ends the report (before an optional VERDICT line) counts; a block
   // quoted mid-report is documentation, not a question.
   const tail = report.slice(found.end);
-  if (!tail.split("\n").every((line) => line.trim() === "" || /^\s*VERDICT:/i.test(line))) {
+  // Emphasis around the line (`**VERDICT: APPROVE**`, backticks) is ignored, as parseVerdict does.
+  const isVerdictLine = (line: string) =>
+    /^VERDICT:/i.test(line.replace(/^[\s*_`]+|[\s*_`]+$/g, ""));
+  if (!tail.split("\n").every((line) => line.trim() === "" || isVerdictLine(line))) {
     return { report, questions: [] };
   }
   const questions = found.body
