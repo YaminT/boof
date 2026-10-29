@@ -41,9 +41,9 @@ function runMcp(args: string[], lines: unknown[]) {
     child.stderr.on("data", (d) => (stderr += d));
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout, stderr }));
-    // Give the server time to answer before the pipe closes.
+    // Close stdin straight after the requests: the server must still answer every one of them.
     for (const m of lines) child.stdin.write(line(m));
-    setTimeout(() => child.stdin.end(), 2500);
+    child.stdin.end();
   });
 }
 

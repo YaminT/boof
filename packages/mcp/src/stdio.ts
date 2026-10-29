@@ -1,4 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { TaskService } from "@boof-runner/api";
 import {
   AuthStore,
@@ -83,13 +84,34 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
     project: opts.project,
   });
   const transport = new StdioServerTransport();
+  // Requests are answered asynchronously. When the host closes stdin right after writing them,
+  // close only once every request received has been answered, or the replies are dropped.
+  const pending = new Set<unknown>();
+  let stdinEnded = false;
+  const closeWhenDrained = () => {
+    if (stdinEnded && pending.size === 0) void server.close();
+  };
+  const send = transport.send.bind(transport);
+  transport.send = async (message: JSONRPCMessage) => {
+    await send(message);
+    if ("id" in message && !("method" in message)) pending.delete(message.id);
+    closeWhenDrained();
+  };
   const closed = new Promise<void>((resolve) => {
     transport.onclose = resolve;
   });
   await server.connect(transport);
+  const onmessage = transport.onmessage;
+  transport.onmessage = (message: JSONRPCMessage) => {
+    if ("id" in message && "method" in message) pending.add(message.id);
+    onmessage?.(message);
+  };
   console.error(
     `boof-runner mcp: serving ${opts.root}${opts.client ? ` as ${opts.client}` : ""}${opts.project ? ` (project ${opts.project})` : ""}`,
   );
-  process.stdin.on("end", () => void server.close());
+  process.stdin.on("end", () => {
+    stdinEnded = true;
+    closeWhenDrained();
+  });
   await closed;
 }
