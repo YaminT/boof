@@ -15,6 +15,7 @@ import type {
   TaskDiff,
   ToolModelDetails,
 } from "./api-types.js";
+import type { TaskReview } from "@boof-runner/shared";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
 import { authHeaders, notifyUnauthorized } from "./token.js";
 
@@ -55,7 +56,14 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** A task as returned by the project routes: the task plus the project that owns it. */
-export type TaskView = Task & { projectId: string };
+export type TaskView = Task & {
+  projectId: string;
+  /** Observer and reviewer rounds parsed from the reports, oldest first. */
+  reviews?: TaskReview[];
+  /** The verdict of the last round of each role that reviewed. */
+  finalVerdict?: { observer?: TaskReview["verdict"]; reviewer?: TaskReview["verdict"] };
+  branch?: string;
+};
 
 /** The versioned REST API; the unversioned /api/* routes are deprecated. */
 // Relative so the UI also works behind a reverse-proxy path prefix (https://host/boof/).

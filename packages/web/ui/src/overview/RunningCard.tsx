@@ -6,7 +6,7 @@ import { api, type TaskView } from "../api.js";
 import { act } from "../lib/act.js";
 import { currentStep, tailLines } from "../lib/log-tail.js";
 import { formatRoute } from "../lib/route.js";
-import { formatElapsed } from "../lib/time.js";
+import { formatDuration } from "../lib/run-timing.js";
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import { useElapsed } from "./useElapsed.js";
 
@@ -29,7 +29,7 @@ export function RunningCard({
   const [mode, setMode] = useState<Mode>("next-step");
   const [sending, setSending] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
-  const elapsed = useElapsed(pid, id, true);
+  const elapsed = useElapsed(pid, task, true);
 
   useEffect(() => {
     let alive = true;
@@ -82,7 +82,7 @@ export function RunningCard({
           </h3>
           <p className="m-0 text-[length:var(--text-meta)] text-ink-muted">
             {step ? `${step}, ` : ""}
-            running {elapsed !== null ? formatElapsed(elapsed) : ""}
+            running {elapsed !== null ? formatDuration(elapsed) : ""}
           </p>
         </div>
         <a
