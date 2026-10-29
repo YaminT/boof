@@ -614,19 +614,24 @@ async function syncOnce(
     }
 
     // draft, pending, action (questions kept), failed and stopped (both stay put for a retry)
-    const manual = task.frontmatter.promptSource === "manual";
+    let manual = task.frontmatter.promptSource === "manual";
     const note = `## Plan change\nGoal ${g.id} is now at revision ${g.revision} (was ${ref.revision}).\n${summary}`;
     if (!dry) {
-      if (manual) {
-        task.body.prompt = `${task.body.prompt}\n\n## Plan change (revision ${g.revision})\nThe goal spec changed after this prompt was edited by hand; apply these changes too:\n${summary}`;
-        addLabel(task, "needs-review");
-      } else {
-        task.body.prompt = buildGoalPrompt(g, plan.id, repoRoot);
-        task.frontmatter.promptSource = "plan";
-      }
-      task.frontmatter.planRef = { ...ref, revision: g.revision };
-      task.body.log = [task.body.log, note].filter(Boolean).join("\n\n");
-      await store.save(task);
+      // Write only the fields plan sync owns, onto the task as it is on disk now: the copy read
+      // at the start of the sync may be seconds old and would revert a title, priority, label or
+      // skip edit made meanwhile.
+      await store.modify(id, (t) => {
+        manual = t.frontmatter.promptSource === "manual"; // a hand edit made meanwhile counts
+        if (manual) {
+          t.body.prompt = `${t.body.prompt}\n\n## Plan change (revision ${g.revision})\nThe goal spec changed after this prompt was edited by hand; apply these changes too:\n${summary}`;
+          addLabel(t, "needs-review");
+        } else {
+          t.body.prompt = buildGoalPrompt(g, plan.id, repoRoot);
+          t.frontmatter.promptSource = "plan";
+        }
+        t.frontmatter.planRef = { ...ref, revision: g.revision };
+        t.body.log = [t.body.log, note].filter(Boolean).join("\n\n");
+      });
     }
     g.synced = snapshotOf(g);
     result.updated.push({

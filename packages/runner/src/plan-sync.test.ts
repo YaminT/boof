@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyGoalInputs,
   AuthStore,
@@ -238,6 +238,38 @@ describe("syncPlan: goal changes (section 5)", () => {
     expect(t.body.log).toContain('goal: "Build a" → "Build a better a"');
     expect(await tasks.list()).toHaveLength(1);
     expect((await sync()).updated).toEqual([]);
+  });
+
+  it("keeps an edit made between the sync's read and its write", async () => {
+    await makePlan([testGoal("a", 1)]);
+    await sync();
+    await editGoal("a", "Build a better a");
+    const original = TaskStore.prototype.list;
+    const spy = vi.spyOn(TaskStore.prototype, "list").mockImplementation(async function (
+      this: TaskStore,
+    ) {
+      const snapshot = await original.call(this);
+      // a user edit lands after the sync read its copy of the tasks
+      const t = (await tasks.get("boof-a"))!;
+      t.frontmatter.title = "Renamed by the user";
+      t.frontmatter.priority = 99;
+      t.frontmatter.labels = ["mine"];
+      await tasks.save(t);
+      return snapshot;
+    });
+    try {
+      const res = await sync();
+      expect(res.updated[0]!.action).toBe("rewritten");
+    } finally {
+      spy.mockRestore();
+    }
+    const after = (await tasks.get("boof-a"))!;
+    expect(after.frontmatter.title).toBe("Renamed by the user");
+    expect(after.frontmatter.priority).toBe(99);
+    expect(after.frontmatter.labels).toEqual(["mine"]);
+    expect(after.body.prompt).toContain("Build a better a");
+    expect(after.frontmatter.planRef!.revision).toBe(2);
+    expect(after.body.log).toContain("## Plan change");
   });
 
   it("appends the diff instead of overwriting a hand-edited prompt, and labels needs-review", async () => {
