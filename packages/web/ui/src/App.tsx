@@ -4,7 +4,7 @@ import { BudgetBanner } from "./components/Budget.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
-import { Editor } from "./components/Editor.js";
+import { TaskDetailPage } from "./task/TaskDetailPage.js";
 import { CommandsTab } from "./components/CommandsTab.js";
 import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
@@ -12,7 +12,7 @@ import { TokenGate } from "./components/TokenGate.js";
 import { PlansTab } from "./components/PlansTab.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
-import { routePid } from "./lib/route.js";
+import { routePid, type Route } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
@@ -31,6 +31,18 @@ export function App() {
   const { settings, tasks, actions, budget, planTick, refresh, needsToken, clearNeedsToken } = data;
   const { projects, selected, select, reload } = useProjects(settings, routePid(route));
   reloadRef.current = reload;
+  // The route before this one, for "← Tasks"; switching tabs of one task keeps the origin.
+  const current = useRef<Route | null>(route);
+  const previous = useRef<Route | null>(null);
+  if (current.current !== route) {
+    const sameTask =
+      current.current?.name === "task" &&
+      route?.name === "task" &&
+      current.current.pid === route.pid &&
+      current.current.taskId === route.taskId;
+    if (!sameTask) previous.current = current.current;
+    current.current = route;
+  }
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
   // Keep the first-seen clock in step with what runs (layout effect: before child effects read it).
   const runningKey = groups.running.map((t) => t.frontmatter.id).join("\n");
@@ -110,16 +122,14 @@ export function App() {
         </>
       )}
       {routeReady && route.name === "task" && (
-        <Editor
-          projectId={pid}
+        <TaskDetailPage
           key={`${pid}/${route.taskId}`}
+          pid={pid}
           taskId={route.taskId}
-          initialView={route.view === "changes" ? "changes" : "edit"}
-          onViewChange={(view) =>
-            navigate({ name: "task", pid, taskId: route.taskId, view }, { replace: true })
-          }
-          onClose={() => navigate({ name: "tasks", pid })}
-          onChange={refresh}
+          view={route.view}
+          data={data}
+          navigate={navigate}
+          previous={previous.current}
         />
       )}
       {routeReady && route.name === "plans" && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, steeredCount, tailLines } from "./log-tail.js";
+import { currentStep, stepHeaders, steeredCount, tailLines } from "./log-tail.js";
 
 describe("log-tail", () => {
   it("finds the last step header", () => {
@@ -7,6 +7,15 @@ describe("log-tail", () => {
       "Developer (fix round 1, reviewer)",
     );
     expect(currentStep("no headers")).toBeNull();
+  });
+
+  it("lists the step headers in order", () => {
+    expect(stepHeaders("### Planner\nx\n### Developer\n#### no\n### Reviewer (round 1)")).toEqual([
+      "Planner",
+      "Developer",
+      "Reviewer (round 1)",
+    ]);
+    expect(stepHeaders("none")).toEqual([]);
   });
 
   it("counts steered blocks", () => {

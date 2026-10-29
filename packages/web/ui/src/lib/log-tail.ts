@@ -19,3 +19,8 @@ export function tailLines(log: string, n: number): string[] {
     .filter((l) => l.trim() !== "");
   return lines.slice(-n);
 }
+
+/** The `### ` step headers of a log, in order. */
+export function stepHeaders(log: string): string[] {
+  return [...log.matchAll(/^### (.+)$/gm)].map((m) => m[1]);
+}
