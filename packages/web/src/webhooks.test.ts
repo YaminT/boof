@@ -3,7 +3,14 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendEvent, AuthStore, defaultSettings, SettingsStore } from "@boof-runner/shared";
+import {
+  appendEvent,
+  AuthStore,
+  defaultSettings,
+  SecuritySettingsSchema,
+  SettingsStore,
+  type SecuritySettings,
+} from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
@@ -15,6 +22,21 @@ let service: TaskService;
 let app: ReturnType<typeof createApp>;
 let authStore: AuthStore;
 let peer = "127.0.0.1";
+
+const dns: Record<string, string[]> = {};
+const resolveHost = async (host: string): Promise<string[]> => {
+  const a = dns[host];
+  if (!a) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: "ENOTFOUND" });
+  return a;
+};
+async function setSecurity(patch: Partial<SecuritySettings>): Promise<void> {
+  const settings = new SettingsStore(root);
+  const current = await settings.load();
+  await settings.save({
+    ...current,
+    security: SecuritySettingsSchema.parse({ ...current.security, ...patch }),
+  });
+}
 
 beforeEach(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "boof-hooks-")));
@@ -28,6 +50,8 @@ beforeEach(async () => {
     await execCommand("git", ["init", "-q"], { cwd: repo });
     await service.projects.create({ workingDirectory: repo, id });
   }
+  for (const k of Object.keys(dns)) delete dns[k];
+  dns["hook.test"] = ["93.184.216.34"];
   authStore = new AuthStore(root);
   peer = "127.0.0.1";
   app = createApp({
@@ -35,6 +59,7 @@ beforeEach(async () => {
     authStore,
     peerAddress: () => peer,
     isSelfUrl: (u) => u.hostname === "self.test",
+    resolveHost,
   });
 });
 afterEach(() => rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
@@ -53,7 +78,7 @@ const create = async (body: object, key?: string) =>
 describe("webhook operations", () => {
   it("returns the secret once and never lists it", async () => {
     const res = await create({
-      url: "http://127.0.0.1:9/hook",
+      url: "http://hook.test/hook",
       events: ["task.*"],
       projects: ["a"],
     });
@@ -80,7 +105,7 @@ describe("webhook operations", () => {
   });
 
   it("keeps a concurrent runner toggle and every concurrent webhook create", async () => {
-    const urls = ["http://127.0.0.1:9/a", "http://127.0.0.1:9/b", "http://127.0.0.1:9/c"];
+    const urls = ["http://hook.test/a", "http://hook.test/b", "http://hook.test/c"];
     for (let round = 0; round < 5; round++) {
       const before = ((await service.loadSettings()).webhooks ?? []).length;
       const enabled = round % 2 === 0;
@@ -96,7 +121,7 @@ describe("webhook operations", () => {
   });
 
   it("keeps a concurrent runner toggle when a webhook is deleted", async () => {
-    const made = await (await create({ url: "http://127.0.0.1:9/hook" })).json();
+    const made = await (await create({ url: "http://hook.test/hook" })).json();
     const [res] = await Promise.all([
       call(`/api/v1/webhooks/${made.webhook.id}`, { method: "DELETE" }),
       service.settingsStore.update({ runner: { enabled: true } }),
@@ -113,7 +138,63 @@ describe("webhook operations", () => {
     const self = await create({ url: "http://self.test/api/v1/events" });
     expect(self.status).toBe(400);
     expect((await self.json()).error.message).toMatch(/boof server/);
-    expect((await create({ url: "http://example.com/x", events: ["nope.*"] })).status).toBe(400);
+    expect((await create({ url: "http://hook.test/x", events: ["nope.*"] })).status).toBe(400);
+  });
+
+  it("rejects loopback, link-local, private, CGNAT, multicast, mapped and NAT64 literals", async () => {
+    for (const url of [
+      "http://127.0.0.1:9/hook",
+      "http://127.1/x",
+      "http://0x7f000001/x",
+      "http://2130706433/x",
+      "http://localhost:8080/x",
+      "http://foo.localhost/x",
+      "http://[::1]/x",
+      "http://[::ffff:10.0.0.5]/x",
+      "http://[64:ff9b::7f00:1]/x",
+      "http://169.254.169.254/latest/meta-data/",
+      "http://10.0.0.5:9200/_bulk",
+      "http://172.16.0.1/x",
+      "http://192.168.1.1/x",
+      "http://100.64.0.1/x",
+      "http://0.0.0.0/x",
+      "http://224.0.0.1/x",
+      "http://[fe80::1]/x",
+      "http://[fd00::1]/x",
+    ]) {
+      const res = await create({ url });
+      expect(res.status, url).toBe(400);
+      expect((await res.json()).error.details[0].path, url).toBe("url");
+    }
+    expect((await create({ url: "http://93.184.216.34/x" })).status).toBe(201);
+    expect((await create({ url: "http://[2606:2800:220:1:248:1893:25c8:1946]/x" })).status).toBe(
+      201,
+    );
+  });
+
+  it("resolves the host at creation and refuses names that point inside", async () => {
+    dns["internal.test"] = ["10.0.0.5"];
+    dns["mixed.test"] = ["93.184.216.34", "127.0.0.1"];
+    const res = await create({ url: "https://internal.test/hook" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.details).toEqual([
+      { path: "url", message: "10.0.0.5 is private" },
+    ]);
+    expect((await create({ url: "https://mixed.test/hook" })).status).toBe(400);
+    const unknown = await create({ url: "https://unknown.test/hook" });
+    expect(unknown.status).toBe(400);
+    expect((await unknown.json()).error.details[0].message).toMatch(/does not resolve/);
+    expect((await create({ url: "https://hook.test/hook" })).status).toBe(201);
+  });
+
+  it("security.allowedPrivateWebhookHosts lets a named private endpoint through", async () => {
+    dns["internal.test"] = ["10.0.0.5"];
+    await setSecurity({ allowedPrivateWebhookHosts: ["127.0.0.1", "Internal.test"] });
+    expect((await create({ url: "http://127.0.0.1:9/hook" })).status).toBe(201);
+    expect((await create({ url: "http://internal.test/hook" })).status).toBe(201);
+    expect((await create({ url: "http://10.0.0.6/hook" })).status).toBe(400);
+    await setSecurity({ allowedPrivateWebhookHosts: ["*"] });
+    expect((await create({ url: "http://10.0.0.6/hook" })).status).toBe(201);
   });
 
   it("is admin only", async () => {
@@ -123,12 +204,12 @@ describe("webhook operations", () => {
       trust: "trusted",
     });
     peer = "10.0.0.9";
-    expect((await create({ url: "http://example.com/x" }, key)).status).toBe(403);
+    expect((await create({ url: "http://hook.test/x" }, key)).status).toBe(403);
     expect((await call("/api/v1/webhooks", {}, key)).status).toBe(403);
   });
 
   it("is not changed by PUT /settings", async () => {
-    await create({ url: "http://127.0.0.1:9/hook" });
+    await create({ url: "http://hook.test/hook" });
     await call("/api/v1/settings", {
       method: "PUT",
       body: JSON.stringify({ runner: { enabled: true } }),
@@ -157,7 +238,13 @@ function harness(answers: (n: number) => number | Error = () => 200) {
     if (a instanceof Error) throw a;
     return new Response("", { status: a });
   }) as unknown as typeof fetch;
-  const dispatcher = new WebhookDispatcher({ root, service, fetch: doFetch, now: () => clock });
+  const dispatcher = new WebhookDispatcher({
+    root,
+    service,
+    fetch: doFetch,
+    now: () => clock,
+    resolveHost,
+  });
   return { hits, dispatcher, advance: (ms: number) => (clock += ms) };
 }
 
@@ -195,6 +282,24 @@ describe("webhook delivery", () => {
     expect(body.id).toBe(hit.headers.get("x-boof-delivery"));
     await h.dispatcher.tick();
     expect(h.hits).toHaveLength(1); // the cursor moved on
+  });
+
+  it("re-resolves at delivery: a host rebound to a private address is never posted to", async () => {
+    const { id } = await subscribe({ url: "http://hook.test/in" });
+    const h = harness();
+    await h.dispatcher.tick();
+    dns["hook.test"] = ["127.0.0.1"];
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    await h.dispatcher.tick();
+    expect(h.hits).toHaveLength(0);
+    const state = JSON.parse(await readFile(join(root, "webhooks", "state.json"), "utf8"));
+    expect(state[id].pending).toHaveLength(1);
+    expect(state[id].pending[0].lastError).toBe("blocked: 127.0.0.1 is loopback");
+    dns["hook.test"] = ["93.184.216.34"];
+    h.advance(RETRY_DELAYS_MS[0]);
+    await h.dispatcher.tick();
+    expect(h.hits).toHaveLength(1); // delivered once the name is public again, same delivery id
+    expect(h.hits[0].headers.get("x-boof-delivery")).toBe(state[id].pending[0].deliveryId);
   });
 
   it("filters by project and event type", async () => {

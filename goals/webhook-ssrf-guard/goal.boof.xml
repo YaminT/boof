@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Webhook URLs are refused for loopback, link-local, private, CGNAT, multicast, reserved, mapped and NAT64 addresses by literal and by DNS answer at creation and before every delivery (blocked attempts are retried, never sent); security.allowedPrivateWebhookHosts is the escape hatch. Residual: no connection pinning (needs undici).</version>
       </versions>
     </status>
     <tests>

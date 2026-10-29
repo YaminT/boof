@@ -156,6 +156,7 @@ describe("legacy settings.json compatibility", () => {
     expect(securitySettings(s)).toEqual({
       allowedHosts: [],
       auth: { mode: "local-trust" },
+      allowedPrivateWebhookHosts: [],
       allowedProjectRoots: [],
       externalTasksRequireApproval: true,
       rateLimit: { perMinute: 600, attachmentsPerMinute: 30 },

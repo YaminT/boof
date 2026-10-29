@@ -161,7 +161,7 @@ curl -X POST http://127.0.0.1:4319/api/v1/webhooks -H "Authorization: Bearer $BO
 
 - `events`: types or `prefix.*` patterns (default `*`); `projects`: `"*"` or a list. Events
   without a project (`runner.enabled`, and `runner.budget_exceeded` for `global` and `tool:` scopes) reach webhooks with `projects: "*"` only.
-- The URL must be http or https and must not point at the boof server itself.
+- The URL must be http or https and must not point at the boof server itself, nor at a loopback, link-local, private (RFC 1918, ULA), carrier-grade NAT, multicast or reserved address, by literal or by name: the host is resolved when the webhook is created and again before every delivery; a delivery whose name resolves inside is a failed attempt (`blocked: …`), retried on the schedule and never sent. Redirects are not followed. The guard checks its own DNS answer; `fetch` resolves the name again, so a TTL-0 rebind between the two is not closed (pinning the connection needs undici, a follow-up goal). To reach an endpoint on a private network on purpose, list its hostname or IP literal in `security.allowedPrivateWebhookHosts` (`"*"` turns the check off).
 - A delivery is `POST <url>` with body `{ "id": "<delivery id>", "ts", "type", ...event }` and
   headers `X-Boof-Event`, `X-Boof-Delivery` (uuid, same for retries) and
   `X-Boof-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw body with the secret. Verify it

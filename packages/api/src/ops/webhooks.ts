@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import { EVENT_TYPES, type Webhook } from "@boof-runner/shared";
+import { EVENT_TYPES, securitySettings, type Webhook } from "@boof-runner/shared";
 import { defineOp } from "../define-op.js";
 import { OpError } from "../errors.js";
+import { assertWebhookTarget } from "../net-guard.js";
 import { PublicWebhookSchema, OkSchema } from "../schemas.js";
 import { CreateWebhookBody } from "../validation.js";
 import { DESTRUCTIVE, webhookIdParam, WRITE, READ } from "./common.js";
@@ -60,7 +61,7 @@ export const webhooksCreate = defineOp({
   name: "webhooks.create",
   title: "Create a webhook",
   description:
-    "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
+    "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
   scope: "admin",
   projectScoped: false,
   input: CreateWebhookBody,
@@ -68,7 +69,12 @@ export const webhooksCreate = defineOp({
   rest: { method: "POST", path: "/webhooks", status: 201 },
   mcp: { expose: false, annotations: WRITE },
   handler: async (ctx, input) => {
-    assertWebhookUrl(input.url, ctx.isSelfUrl);
+    await assertWebhookTarget(input.url, {
+      isSelf: ctx.isSelfUrl,
+      resolve: ctx.resolveHost,
+      allowedPrivateHosts: securitySettings(await ctx.services.loadSettings())
+        .allowedPrivateWebhookHosts,
+    });
     const events = input.events ?? ["*"];
     for (const pattern of events) {
       if (!EVENT_TYPES.some((t) => eventMatches(pattern, t))) {

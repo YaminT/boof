@@ -11,5 +11,6 @@ export { publicSettings } from "./ops/admin.js";
 export { DEFAULT_PAGE, MAX_PAGE } from "./ops/tasks.js";
 export * from "./idempotency.js";
 export * from "./openapi.js";
+export * from "./net-guard.js";
 export { assertWebhookUrl, eventMatches } from "./ops/webhooks.js";
 export { WhoamiSchema } from "./ops/whoami.js";

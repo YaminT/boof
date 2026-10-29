@@ -273,6 +273,8 @@ export const SecuritySettingsSchema = z.object({
   auth: z.object({ mode: z.enum(["local-trust", "required"]).default("local-trust") }).prefault({}),
   /** Roots under which non-local principals may register projects (e.g. ["~/codes"]). */
   allowedProjectRoots: z.array(z.string()).default([]),
+  /** Webhook hosts (names or IP literals as written in the URL) allowed to resolve to loopback, link-local or private addresses; `"*"` disables the check. */
+  allowedPrivateWebhookHosts: z.array(z.string()).default([]),
   /** review-trust clients land in draft and cannot queue work. */
   externalTasksRequireApproval: z.boolean().default(true),
   rateLimit: z

@@ -7,6 +7,7 @@ import {
   type Scope,
 } from "@boof-runner/shared";
 import { formatIssues, OpError, toOpError, type ErrorCode } from "./errors.js";
+import type { ResolveHost } from "./net-guard.js";
 import type { TaskService } from "./services/service.js";
 
 /** What an operation handler gets besides its validated input. */
@@ -25,6 +26,8 @@ export interface OpContext {
   legacy?: boolean;
   /** True when a URL points at this very server (webhooks must not call back into boof). */
   isSelfUrl?: (url: URL) => boolean;
+  /** DNS for the webhook target check; tests inject a fake. */
+  resolveHost?: ResolveHost;
   /** Receives the operation's audit extras once the input is valid (REST puts them in the audit line). */
   audit?: (extra: Record<string, unknown>) => void;
 }

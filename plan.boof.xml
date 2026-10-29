@@ -20,7 +20,7 @@
     <goal id="rate-limit-unauthenticated-and-healthz" path="goals/rate-limit-unauthenticated-and-healthz" order="17" status="plan"></goal>
     <goal id="csrf-content-type-and-origin" path="goals/csrf-content-type-and-origin" order="18" status="plan"></goal>
     <goal id="inject-and-stop-respect-trust" path="goals/inject-and-stop-respect-trust" order="19" status="done"></goal>
-    <goal id="webhook-ssrf-guard" path="goals/webhook-ssrf-guard" order="20" status="plan"></goal>
+    <goal id="webhook-ssrf-guard" path="goals/webhook-ssrf-guard" order="20" status="done"></goal>
     <goal id="idempotency-key-concurrency" path="goals/idempotency-key-concurrency" order="21" status="plan"></goal>
     <goal id="cancel-waits-on-disconnect" path="goals/cancel-waits-on-disconnect" order="22" status="plan"></goal>
     <goal id="plan-approval-backfill" path="goals/plan-approval-backfill" order="23" status="done"><depends-on>migration-lock</depends-on></goal>

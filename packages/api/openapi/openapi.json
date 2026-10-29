@@ -1512,6 +1512,13 @@
                 },
                 "type": "array"
               },
+              "allowedPrivateWebhookHosts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "allowedProjectRoots": {
                 "default": [],
                 "items": {
@@ -1587,6 +1594,7 @@
               "allowedHosts",
               "auth",
               "allowedProjectRoots",
+              "allowedPrivateWebhookHosts",
               "externalTasksRequireApproval",
               "rateLimit",
               "audit"
@@ -9639,7 +9647,7 @@
         "x-boof-scope": "admin"
       },
       "post": {
-        "description": "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
+        "description": "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
         "operationId": "webhooks.create",
         "parameters": [],
         "requestBody": {

@@ -9,7 +9,7 @@ import {
   type OpContext,
 } from "@boof-runner/api";
 import { AuthStore } from "@boof-runner/shared";
-import type { TaskService } from "@boof-runner/api";
+import type { ResolveHost, TaskService } from "@boof-runner/api";
 
 /** Unversioned routes are removed after this date (sent as the `Sunset` header). */
 export const LEGACY_SUNSET = "Wed, 30 Jun 2027 00:00:00 GMT";
@@ -29,6 +29,7 @@ export interface RestDeps {
   authStore: AuthStore;
   idempotency: IdempotencyStore;
   isSelfUrl?: (url: URL) => boolean;
+  resolveHost?: ResolveHost;
 }
 
 type FieldKind = "boolean" | "number" | "string";
@@ -195,6 +196,7 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
       now: () => new Date().toISOString(),
       legacy,
       isSelfUrl: deps.isSelfUrl,
+      resolveHost: deps.resolveHost,
       audit: (extra) => c.set("auditExtra", extra),
     };
 

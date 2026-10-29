@@ -1798,7 +1798,7 @@ Path parameters (all required):
 - Operation: `webhooks.create`
 - Scope: `admin`
 - MCP tool: none (REST only)
-- What it does: Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.
+- What it does: Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.
 - Success: HTTP 201 with `{ secret: string, webhook: { created: string, createdBy: string, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string } }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `400 invalid_input (bad URL, URL is this server, unknown event)`
 

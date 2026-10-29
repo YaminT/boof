@@ -1,8 +1,19 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWrite, dataRootPaths, type BoofEvent, type Webhook } from "@boof-runner/shared";
-import { eventMatches, type TaskService } from "@boof-runner/api";
+import {
+  atomicWrite,
+  dataRootPaths,
+  securitySettings,
+  type BoofEvent,
+  type Webhook,
+} from "@boof-runner/shared";
+import {
+  checkWebhookTarget,
+  eventMatches,
+  type ResolveHost,
+  type TaskService,
+} from "@boof-runner/api";
 import {
   decodeFeedCursor,
   encodeFeedCursor,
@@ -38,6 +49,8 @@ export interface DispatcherOptions {
   service: TaskService;
   fetch?: typeof fetch;
   now?: () => number;
+  /** DNS for the target check before each delivery; tests inject a fake. */
+  resolveHost?: ResolveHost;
   /** How often to look for new events and due retries. */
   intervalMs?: number;
 }
@@ -113,7 +126,9 @@ export class WebhookDispatcher {
     if (this.running) return;
     this.running = true;
     try {
-      const hooks = (await this.opts.service.loadSettings()).webhooks ?? [];
+      const settings = await this.opts.service.loadSettings();
+      const hooks = settings.webhooks ?? [];
+      const allowed = securitySettings(settings).allowedPrivateWebhookHosts;
       const state = await this.load();
       let dirty = false;
       for (const id of Object.keys(state)) {
@@ -123,7 +138,7 @@ export class WebhookDispatcher {
         }
       }
       const scopes = await this.scopesFor();
-      const results = await Promise.all(hooks.map((h) => this.pass(h, state, scopes)));
+      const results = await Promise.all(hooks.map((h) => this.pass(h, state, scopes, allowed)));
       if (dirty || results.some(Boolean)) await this.save(state);
     } finally {
       this.running = false;
@@ -136,7 +151,12 @@ export class WebhookDispatcher {
   }
 
   /** Returns true when the webhook's state changed. */
-  private async pass(hook: Webhook, state: State, scopes: string[]): Promise<boolean> {
+  private async pass(
+    hook: Webhook,
+    state: State,
+    scopes: string[],
+    allowed: readonly string[],
+  ): Promise<boolean> {
     let changed = false;
     let hs = state[hook.id];
     if (!hs) {
@@ -155,7 +175,7 @@ export class WebhookDispatcher {
         continue;
       }
       changed = true;
-      const retry = await this.attempt(hook, p);
+      const retry = await this.attempt(hook, p, allowed);
       if (retry) keep.push(retry);
     }
     hs.pending = keep;
@@ -167,13 +187,11 @@ export class WebhookDispatcher {
         if (batch.length === 0) break;
         for (const { event, cursor: next } of batch) {
           if (wants(hook, event)) {
-            const retry = await this.attempt(hook, {
-              deliveryId: randomUUID(),
-              event,
-              attempts: 0,
-              nextAt: 0,
-              lastError: "",
-            });
+            const retry = await this.attempt(
+              hook,
+              { deliveryId: randomUUID(), event, attempts: 0, nextAt: 0, lastError: "" },
+              allowed,
+            );
             if (retry) hs.pending.push(retry);
           }
           hs.cursor = next;
@@ -186,8 +204,12 @@ export class WebhookDispatcher {
   }
 
   /** Deliver once. Returns the entry to retry later, or null when delivered or dead-lettered. */
-  private async attempt(hook: Webhook, p: Pending): Promise<Pending | null> {
-    const error = await this.post(hook, p);
+  private async attempt(
+    hook: Webhook,
+    p: Pending,
+    allowed: readonly string[],
+  ): Promise<Pending | null> {
+    const error = await this.post(hook, p, allowed);
     if (error === null) return null;
     const attempts = p.attempts + 1;
     if (attempts > RETRY_DELAYS_MS.length) {
@@ -197,8 +219,27 @@ export class WebhookDispatcher {
     return { ...p, attempts, lastError: error, nextAt: this.now() + RETRY_DELAYS_MS[attempts - 1] };
   }
 
-  /** POST the event. Returns null on a 2xx answer, else a short error text. */
-  private async post(hook: Webhook, p: Pending): Promise<string | null> {
+  /**
+   * POST the event. Returns null on a 2xx answer, else a short error text. The target is checked
+   * again first: a name can resolve somewhere else than when the webhook was created. (`fetch`
+   * looks the name up once more itself, so a TTL-0 rebind in between is not closed here; pinning
+   * the connection needs undici, a follow-up goal.)
+   */
+  private async post(
+    hook: Webhook,
+    p: Pending,
+    allowed: readonly string[],
+  ): Promise<string | null> {
+    let target;
+    try {
+      target = await checkWebhookTarget(hook.url, {
+        resolve: this.opts.resolveHost,
+        allowedPrivateHosts: allowed,
+      });
+    } catch (err) {
+      return (err as Error).message || "invalid webhook URL";
+    }
+    if (!target.ok) return `blocked: ${target.reason}`;
     const body = JSON.stringify({ id: p.deliveryId, ...p.event });
     try {
       const res = await this.doFetch(hook.url, {

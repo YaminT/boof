@@ -10,6 +10,7 @@ import {
   registry,
   toOpError,
   type AnyOperation,
+  type ResolveHost,
   type TaskService,
 } from "@boof-runner/api";
 import { hostGuard, isHostAllowed } from "./middleware/host-guard.js";
@@ -50,6 +51,8 @@ export interface AppDeps {
   peerAddress?: PeerAddressResolver;
   /** True when a URL points at this server itself (webhook targets must not). */
   isSelfUrl?: (url: URL) => boolean;
+  /** DNS for the webhook target check; tests inject a fake. */
+  resolveHost?: ResolveHost;
   /** Version reported by /healthz. */
   version?: string;
   /** Whether the background runner loop runs in this process (reported by /healthz). */
@@ -196,7 +199,13 @@ export function createApp(deps: AppDeps): Hono {
   });
 
   const idempotency = new IdempotencyStore(service.root);
-  const restDeps = { service, authStore, idempotency, isSelfUrl: deps.isSelfUrl };
+  const restDeps = {
+    service,
+    authStore,
+    idempotency,
+    isSelfUrl: deps.isSelfUrl,
+    resolveHost: deps.resolveHost,
+  };
   // The contract, generated once from the registry. Any authenticated principal may read it.
   const openapiByPrefix = new Map<string, string>();
   api.get("/v1/openapi.json", (c) => {

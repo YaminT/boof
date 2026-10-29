@@ -128,6 +128,7 @@ describe("mcpCommand", () => {
     settings.security = {
       allowedHosts: [],
       auth: { mode: "required" },
+      allowedPrivateWebhookHosts: [],
       allowedProjectRoots: [],
       externalTasksRequireApproval: true,
       rateLimit: { perMinute: 600, attachmentsPerMinute: 30 },
