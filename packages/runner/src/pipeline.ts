@@ -213,6 +213,9 @@ const RESUME_PROMPT_PREFIX =
 /** First word of a stop-request file written by RunnerEngine.shutdown. */
 export const SHUTDOWN_STOP_MARKER = "shutdown";
 
+/** Labels of the closing `steps[]` entry a run ends with (a parked run has none). */
+export const CLOSING_STEP_LABELS = ["Finished", "Failed", "Stopped"] as const;
+
 export class Pipeline {
   private readonly usageStore: UsageStore;
   /** Cost of this run's steps so far, per task id (the per-task budget). */
@@ -225,6 +228,10 @@ export class Pipeline {
   private readonly lostUsages = new Map<string, TokenUsage[]>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
+  }
+
+  private closeSteps(id: string, label: (typeof CLOSING_STEP_LABELS)[number]): Promise<void> {
+    return this.deps.store.appendStep(id, label).catch(() => {});
   }
 
   private areaDir(id: string): string {
@@ -871,6 +878,7 @@ export class Pipeline {
           );
         }
       }
+      await this.closeSteps(id, "Finished");
       await this.mirrorLiveLog(task);
       await this.persistUsage(task, usages);
       return { kind: "done", task };
@@ -911,6 +919,7 @@ export class Pipeline {
           ).catch(() => {});
         }
       }
+      await this.closeSteps(id, stopped ? "Stopped" : "Failed");
       await this.mirrorLiveLog(task).catch(() => {});
       await this.persistUsage(task, usages).catch(() => {});
       if (stopReason) return { kind: "stopped", task, reason: stopReason, note: stopNote };

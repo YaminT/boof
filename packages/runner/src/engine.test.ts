@@ -158,6 +158,27 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(Date.parse(done.frontmatter.startedAt!)).toBeLessThanOrEqual(times[0]!);
   });
 
+  it("a run ends with exactly one closing step entry: Finished or Failed", async () => {
+    const labels = async (id: string) =>
+      (await store.get(id))!.frontmatter.steps!.map((s) => s.label);
+    await store.create(newTask(fm(), "Build it."));
+    await engine.tick();
+    expect(await labels("t1")).toEqual([
+      "Planner",
+      "Planner (refinement)",
+      "Developer",
+      "Reviewer (round 1)",
+      "Finished",
+    ]);
+    const steps = (await store.get("t1"))!.frontmatter.steps!;
+    expect(Date.parse(steps.at(-1)!.at)).toBeGreaterThanOrEqual(Date.parse(steps.at(-2)!.at));
+
+    mockState.failRole = "developer";
+    await store.create(newTask(fm({ id: "t2" }), "Build it."));
+    await engine.tick();
+    expect(await labels("t2")).toEqual(["Planner", "Planner (refinement)", "Developer", "Failed"]);
+  });
+
   it("respects skip and priority ordering", async () => {
     await store.create(newTask(fm({ id: "low", priority: 10 }), "low"));
     await store.create(newTask(fm({ id: "high", priority: 90 }), "high"));
@@ -187,6 +208,7 @@ describe("RunnerEngine integration (mock tool)", () => {
     const parked = await store.get("t1");
     expect(parked?.frontmatter.status).toBe("action");
     expect(parked?.frontmatter.questions).toBe("pending");
+    expect(parked?.frontmatter.steps?.map((s) => s.label)).toEqual(["Planner"]);
     expect(parked?.body.questions).toContain("Which database?");
 
     // User answers (simulate the Actions tab): write answers, set answered, move to pending.
@@ -1683,6 +1705,7 @@ describe("stopped status and durable injected prompts (mock tool)", () => {
 
     const t = await store.get("t1");
     expect(t?.frontmatter.status).toBe("stopped");
+    expect(t?.frontmatter.steps?.map((s) => s.label)).toEqual(["Planner", "Stopped"]);
     expect(await exists(taskFilePath(projectDir, "stopped", "t1"))).toBe(true);
     expect(await exists(workingAreaDir(projectDir, "t1"))).toBe(false);
     expect(t?.body.log).toContain("### Stopped\nstopped by user");

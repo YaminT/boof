@@ -17,6 +17,7 @@
       <versions>
         <version number="1" status="plan">Raised by the phase 3 final review on 2026-10-29; waiting on the owner.</version>
         <version number="2" status="plan">D8 (owner, 2026-10-29): approved — the pipeline appends a closing steps[] entry (Finished / Failed / Stopped with its time) when a run ends; the UI uses it for the last step&#x27;s duration. No longer waiting on the owner.</version>
+        <version number="3" status="done">The pipeline appends a closing steps[] entry (Finished, Failed or Stopped) when a run ends, once; stepStrip uses it as the last role&#x27;s end, and keeps null for tasks without one.</version>
       </versions>
     </status>
     <tests>

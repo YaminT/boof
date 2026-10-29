@@ -96,7 +96,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`ui-redesign-phase-4`](ui-redesign-phase-4/goal.boof.xml) — Plans screen and the Inbox / Needs-you group
 - [ ] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
 - [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
-- [ ] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
+- [x] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
 - [ ] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
 
 ## Verification and release

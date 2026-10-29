@@ -67,6 +67,12 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
     const role = roleOf(e.label);
     return role ? [{ label: e.label, role, ms: Number.isNaN(e.ms) ? null : e.ms }] : [];
   });
+  // The run's closing entry (Finished, Failed or Stopped) is not a role: it only ends the last one.
+  const lastRecorded = recorded.at(-1);
+  const closingMs =
+    lastRecorded && /^(finished|failed|stopped)$/.test(lastRecorded.label.trim().toLowerCase())
+      ? Date.parse(lastRecorded.at)
+      : NaN;
   const lastPlanner = entries.map((e) => e.label).lastIndexOf("Planner");
   if (lastPlanner > 0) entries = entries.slice(lastPlanner);
 
@@ -104,8 +110,9 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
         after.find((e) => ROLES.indexOf(e.role) > idx) ?? after.find((e) => e.role !== role);
       let end: number | null = null;
       if (state === "current") end = now;
-      // The last role of a task that is no longer running has no end time on record.
       else if (next?.ms != null) end = next.ms;
+      // The last role of a task that is no longer running ends at its closing entry, if any.
+      else if (!next && !Number.isNaN(closingMs)) end = closingMs;
       if (end !== null && end >= first) seconds = Math.round((end - first) / 1000);
     }
 

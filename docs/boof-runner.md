@@ -105,7 +105,7 @@ Each task is a markdown document with structured frontmatter and named body sect
 - `completedRuns`
 - `base` (optional): branch name or commit the task's worktree starts from
 - `startedAt` (optional): when the task last entered `running`; kept after the run ends
-- `steps` (optional): the current run's pipeline step headers, each `{ label, at }`, in order; reset when the task enters `running`
+- `steps` (optional): the current run's pipeline step headers, each `{ label, at }`, in order; reset when the task enters `running`. The run's last entry is `Finished`, `Failed` or `Stopped` with the time the run ended (the UI uses it as the last step's end); a parked run has none
 - per-task tool overrides
 - token usage
 - timestamps

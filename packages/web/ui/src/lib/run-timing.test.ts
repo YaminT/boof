@@ -94,18 +94,57 @@ describe("stepStrip", () => {
     for (const s of segs) if (s.seconds !== null) expect(s.seconds).toBeGreaterThanOrEqual(0);
   });
 
-  it("gives a finished task's last role no duration", () => {
-    const t = task(
+  it("ends the last role at the closing entry, and gives it no duration without one", () => {
+    const closed = task(
       {
-        steps: steps(["Planner", 0], ["Developer", 50], ["Reviewer (round 1)", 200]),
-        updated: at(260),
+        steps: steps(
+          ["Planner", 0],
+          ["Developer", 50],
+          ["Reviewer (round 1)", 200],
+          ["Finished", 260],
+        ),
       },
       {},
       "done",
     );
-    const r = byRole(stepStrip(t, T0 + 999_000));
-    expect(r.reviewer).toMatchObject({ state: "done", seconds: null });
+    const r = byRole(stepStrip(closed, T0 + 999_000));
+    expect(r.reviewer).toMatchObject({ state: "done", seconds: 60 });
     expect(r.planner.seconds).toBe(50);
+    const open = task(
+      { steps: steps(["Planner", 0], ["Developer", 50], ["Reviewer (round 1)", 200]) },
+      {},
+      "done",
+    );
+    expect(byRole(stepStrip(open, T0 + 999_000)).reviewer).toMatchObject({
+      state: "done",
+      seconds: null,
+    });
+  });
+
+  it("times a failed or stopped last role up to its closing entry", () => {
+    const failed = task(
+      { steps: steps(["Planner", 0], ["Developer", 10], ["Failed", 40]) },
+      {},
+      "failed",
+    );
+    expect(byRole(stepStrip(failed, T0 + 999_000)).developer).toMatchObject({
+      state: "failed",
+      seconds: 30,
+    });
+    const stopped = task({ steps: steps(["Planner", 0], ["Stopped", 25]) }, {}, "stopped");
+    expect(byRole(stepStrip(stopped, T0 + 999_000)).planner).toMatchObject({
+      state: "stopped",
+      seconds: 25,
+    });
+  });
+
+  it("a closing entry of the previous run does not end the current run", () => {
+    const t = task({
+      steps: steps(["Planner", 0], ["Finished", 50], ["Planner", 100], ["Developer", 110]),
+    });
+    const r = byRole(stepStrip(t, T0 + 130_000));
+    expect(r.planner).toMatchObject({ state: "done", seconds: 10 });
+    expect(r.developer).toMatchObject({ state: "current", seconds: 20 });
   });
 
   it("marks the last role reached as failed or stopped", () => {
