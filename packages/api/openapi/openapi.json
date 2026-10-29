@@ -7857,7 +7857,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/inject": {
       "post": {
-        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied.",
+        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
         "operationId": "tasks.inject",
         "parameters": [
           {
@@ -8251,7 +8251,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/stop": {
       "post": {
-        "description": "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there.",
+        "description": "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there. Review-trust clients may only stop tasks they created (403 forbidden_trust).",
         "operationId": "tasks.stop",
         "parameters": [
           {

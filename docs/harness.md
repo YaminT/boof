@@ -463,7 +463,7 @@ If `principal.trust` is `review` and `security.externalTasksRequireApproval` is 
 
 - A task you create is `draft` and gets the label `external:<your-client-id>`.
 - A plan you create is `draft`, even if you send `status: "active"`.
-- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), and changing the prompt of a task that is not a draft.
+- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), changing the prompt of a task that is not a draft, and stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`).
 - A human sets the plan to `active` in the Plans tab (button Approve). That records `approvedBy` on the plan: the human approved the content. From then on sync creates the plan's tasks as `pending`, for every dependency layer, with no per-task approval.
 - A review client may set its own active plan back to `draft` (`PUT .../plans/<plan-id>` with `{"status":"draft"}` and `If-Match`; no other field in the same call). That clears `approvedBy` and stops new task creation. It does not stop or change running tasks. The client may then edit the goals. It still cannot set the plan `active`: the user approves again.
 - If a trusted principal edits the approved plan later, the approval stays. If the plan goes back to `draft` (or `archived`), `approvedBy` is cleared and a human must approve again.
@@ -1489,7 +1489,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.stop`
 - Scope: `tasks:control`
 - MCP tool: `boof_stop_task`
-- What it does: Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there.
+- What it does: Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there. Review-trust clients may only stop tasks they created (403 forbidden_trust).
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
 
@@ -1503,7 +1503,7 @@ Path parameters (all required):
 - Operation: `tasks.inject`
 - Scope: `tasks:control`
 - MCP tool: `boof_inject_prompt`
-- What it does: Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied.
+- What it does: Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).
 - Success: HTTP 200 with `{ applied: "pending", mode: "next-step" | "now", ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
 

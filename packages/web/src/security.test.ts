@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   mkdtemp,
   readdir,
@@ -17,6 +18,8 @@ import {
   defaultSettings,
   SecuritySettingsSchema,
   SettingsStore,
+  taskStopRequestPath,
+  taskSteerRequestPath,
   type Scope,
   type SecuritySettings,
 } from "@boof-runner/shared";
@@ -427,6 +430,45 @@ describe("trust levels", () => {
     );
     expect(edit.status).toBe(200);
     expect((await service.forProject("default").get("do-it"))!.frontmatter.status).toBe("draft");
+  });
+
+  it("a review client may stop or steer only the tasks it created", async () => {
+    peer = REMOTE;
+    const bot = await mint("bot", ["tasks:read", "tasks:write", "tasks:control"]);
+    const other = await mint("other", ["tasks:read", "tasks:write", "tasks:control"]);
+    const trusted = await mint("boss", ["tasks:control"], { trust: "trusted" });
+    const app = build();
+    await call(app, "/api/tasks", post({ title: "Mine" }), bot); // origin.client = bot
+    await call(app, "/api/tasks", post({ title: "Theirs" }), other); // origin.client = other
+    peer = LOOPBACK;
+    await call(app, "/api/tasks", post({ title: "Human" })); // local principal: no origin
+    peer = REMOTE;
+    const tasks = service.forProject("default").tasks;
+    for (const id of ["mine", "theirs", "human"]) {
+      await tasks.transition(id, "pending", undefined, { by: "local" });
+      await tasks.transition(id, "running");
+    }
+    const inject = (id: string, key?: string) =>
+      call(app, `/api/tasks/${id}/inject`, post({ prompt: "Change course.", mode: "now" }), key);
+    const stop = (id: string, key?: string) =>
+      call(app, `/api/tasks/${id}/stop`, { method: "POST" }, key);
+    for (const res of [
+      await inject("theirs", bot),
+      await inject("human", bot),
+      await stop("theirs", bot),
+    ]) {
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe("forbidden_trust");
+    }
+    const dir = service.projects.dir("default");
+    expect(existsSync(taskSteerRequestPath(dir, "theirs"))).toBe(false);
+    expect(existsSync(taskStopRequestPath(dir, "theirs"))).toBe(false);
+    expect((await inject("mine", bot)).status).toBe(200);
+    expect((await stop("mine", bot)).status).toBe(200);
+    expect((await inject("theirs", trusted)).status).toBe(200); // trusted: any task
+    expect((await stop("human", trusted)).status).toBe(200);
+    peer = LOOPBACK;
+    expect((await stop("theirs")).status).toBe(200); // the local principal
   });
 
   it("a trusted client may create pending tasks and queue drafts", async () => {

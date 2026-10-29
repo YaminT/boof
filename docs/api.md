@@ -29,8 +29,8 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 - A client may be restricted to some projects. Touching another project is
   `403 forbidden_project`; project lists are filtered.
 - **Trust.** A client with `trust: review` (the default for new clients) creates `draft` tasks
-  and plans, cannot queue tasks or activate plans, and a human approves in the UI. A `trusted`
-  client may queue directly.
+  and plans, cannot queue tasks or activate plans, and may stop or inject into only the tasks it
+  created; a human approves in the UI. A `trusted` client may queue directly.
   A client created through `POST /auth/clients` never gets scopes, trust, projects or an expiry
   its creator lacks; a restricted creator's projects and expiry are inherited when omitted.
 - Registering a project as an API client needs the directory to be inside
@@ -91,7 +91,8 @@ internals; validation errors list `details: [{ path, message }]`.
   Without either, the change applies to the latest version.
 - **Tasks**: `GET` answers a weak `ETag: W/"<updated>"`. `PUT /projects/{p}/tasks/{id}` with
   `If-Match: W/"<updated>"` (or `expectedUpdated` in the body) is `409 task_modified` when the
-  task changed since.
+  task changed since. The check and the write happen under the task's lock: of two writes carrying
+  the same ETag exactly one succeeds.
 
 ## Idempotency
 

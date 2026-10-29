@@ -3,7 +3,7 @@
  * and keep those tasks in line with the goals when a goal changes. Sync is idempotent: a second
  * run without changes writes nothing.
  */
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { execCommand } from "./exec.js";
 import { createIntegrationBranch, isAncestor } from "./plan-base.js";
@@ -19,9 +19,9 @@ import {
   renderGoalContent,
   securitySettings,
   TaskStore,
-  taskControlDir,
+  TaskNotRunningError,
+  appendInjectedEntry,
   taskPromptInjectionsPath,
-  taskStopRequestPath,
   uniqueKebabId,
   unifiedDiff,
   withGoalStatus,
@@ -41,6 +41,11 @@ import {
 } from "@boof-runner/shared";
 
 /** Sync was asked for a plan that is not `active`. */
+/** The task finished between the status read and the control write: nothing left to do. */
+function ignoreNotRunning(err: unknown): void {
+  if (!(err instanceof TaskNotRunningError)) throw err;
+}
+
 export class PlanNotActiveError extends Error {
   constructor(
     public readonly planId: string,
@@ -343,13 +348,16 @@ export async function archiveRemovedGoalTasks(opts: {
       out.push({ goalId: ref.goalId, taskId: id, action: "archived", reason: "goal-removed" });
     } else if (status === "running" && opts.stopRunning) {
       if (!opts.dryRun) {
-        await mkdir(taskControlDir(opts.projectDir, id), { recursive: true });
-        await writeFile(taskStopRequestPath(opts.projectDir, id), nowIso() + "\n", "utf8");
-        await appendFile(
-          join(workingAreaDir(opts.projectDir, id), "log.txt"),
-          `\n\n### Stop requested\nGoal ${ref.goalId} was removed from plan ${ref.planId}.\n`,
-          "utf8",
-        ).catch(() => {});
+        await store
+          .whileRunning(id, async ({ controlDir }) => {
+            await writeFile(join(controlDir, "stop"), nowIso() + "\n", "utf8");
+            await appendFile(
+              join(workingAreaDir(opts.projectDir, id), "log.txt"),
+              `\n\n### Stop requested\nGoal ${ref.goalId} was removed from plan ${ref.planId}.\n`,
+              "utf8",
+            ).catch(() => {});
+          })
+          .catch(ignoreNotRunning);
         const fresh = await store.get(id);
         if (fresh && addLabel(fresh, "goal-removed")) await store.save(fresh);
       }
@@ -591,18 +599,24 @@ async function syncOnce(
       if (existing.includes(marker)) return;
       if (!dry) {
         const text = `The goal ${marker}\n${summary}\nAdjust the remaining work accordingly.`;
-        await mkdir(taskControlDir(opts.projectDir, id), { recursive: true });
-        await appendFile(
-          taskPromptInjectionsPath(opts.projectDir, id),
-          `\n\n## ${now}\n${text}\n`,
-          "utf8",
-        );
-        await store.appendInjected(id, text, "plan sync").catch(() => {});
-        await appendFile(
-          join(workingAreaDir(opts.projectDir, id), "log.txt"),
-          `\n\n### Injected prompt\n${text}\n`,
-          "utf8",
-        ).catch(() => {});
+        await store
+          .whileRunning(
+            id,
+            async () => {
+              await appendFile(
+                taskPromptInjectionsPath(opts.projectDir, id),
+                `\n\n## ${now}\n${text}\n`,
+                "utf8",
+              );
+              await appendFile(
+                join(workingAreaDir(opts.projectDir, id), "log.txt"),
+                `\n\n### Injected prompt\n${text}\n`,
+                "utf8",
+              ).catch(() => {});
+            },
+            (t) => appendInjectedEntry(t, { text, by: "plan sync" }),
+          )
+          .catch(ignoreNotRunning);
         // Best effort: the pipeline also saves this file, so the label can be overwritten.
         const fresh = await store.get(id);
         if (fresh && fresh.frontmatter.status === "running" && addLabel(fresh, "stale-revision")) {

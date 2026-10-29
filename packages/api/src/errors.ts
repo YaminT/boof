@@ -4,6 +4,7 @@ import {
   InvalidTransitionError,
   TaskExistsError,
   TaskNotFoundError,
+  TaskNotRunningError,
 } from "@boof-runner/shared";
 
 /**
@@ -100,6 +101,7 @@ export function toOpError(err: unknown): OpError {
   if (err instanceof InvalidTransitionError) {
     return new OpError(409, err.message, "invalid_transition");
   }
+  if (err instanceof TaskNotRunningError) return new OpError(400, "Task is not running");
   if (err instanceof TaskExistsError) return new OpError(409, err.message, "conflict");
   if (err instanceof InvalidIdError) return new OpError(400, err.message, "invalid_input");
   if (err instanceof ZodError) {

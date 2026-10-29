@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -18,12 +18,11 @@ import {
   ProjectStore,
   SettingsStore,
   securitySettings,
-  taskControlDir,
   taskPromptInjectionsPath,
   taskSteerRequestPath,
-  taskStopRequestPath,
   taskAssetsDir,
   TaskStore,
+  appendInjectedEntry,
   workingAreaDir,
   type Attachment,
   type InjectMode,
@@ -157,6 +156,17 @@ export class ProjectService {
     }
   }
 
+  /** A review-trust client may stop or steer only the tasks it created. */
+  private async assertMayControl(task: Task, actor?: Principal): Promise<void> {
+    if (!(await this.needsApproval(actor))) return;
+    if (actor && task.frontmatter.origin?.client === actor.id) return;
+    throw new OpError(
+      403,
+      "This client has review trust and can only stop or steer tasks it created",
+      "forbidden_trust",
+    );
+  }
+
   async create(input: CreateTaskInput, actor?: Principal): Promise<Task> {
     return (await this.createWithWarnings(input, actor)).task;
   }
@@ -214,57 +224,61 @@ export class ProjectService {
   /** Update task fields in place; transition if `status` changes. */
   async update(id: string, input: UpdateTaskInput, actor?: Principal): Promise<Task> {
     if (input.status === "pending") await this.assertMayQueue(actor);
-    const task = await this.tasks.get(id);
-    if (!task) throw new OpError(404, `Task not found: ${id}`);
-    if (input.expectedUpdated !== undefined && input.expectedUpdated !== task.frontmatter.updated) {
-      throw new OpError(409, "The task was changed by someone else", "task_modified", {
-        currentUpdated: task.frontmatter.updated,
-        expectedUpdated: input.expectedUpdated,
-      });
-    }
+    const review = await this.needsApproval(actor);
+    const tpl = input.command ? await this.parent.commands.get(input.command) : null;
 
-    // A review client may shape its own drafts, but not rewrite work a human already released.
-    if (
-      task.frontmatter.status !== "draft" &&
-      (input.prompt !== undefined || input.command !== undefined || input.runs !== undefined) &&
-      (await this.needsApproval(actor))
-    ) {
-      throw new OpError(
-        403,
-        "This client has review trust and cannot change the prompt of a task that is not a draft",
-        "forbidden_trust",
-      );
-    }
-
-    if (input.title !== undefined) task.frontmatter.title = input.title;
-    if (input.prompt !== undefined) {
-      // A hand edit of a plan task: plan sync must append changes instead of overwriting it.
-      if (task.frontmatter.planRef && input.prompt !== task.body.prompt) {
-        task.frontmatter.promptSource = "manual";
+    let from: Task["frontmatter"]["status"] | undefined;
+    const task = await this.tasks.modify(id, (task) => {
+      if (
+        input.expectedUpdated !== undefined &&
+        input.expectedUpdated !== task.frontmatter.updated
+      ) {
+        throw new OpError(409, "The task was changed by someone else", "task_modified", {
+          currentUpdated: task.frontmatter.updated,
+          expectedUpdated: input.expectedUpdated,
+        });
       }
-      task.body.prompt = input.prompt;
-    }
-    if (input.priority !== undefined) task.frontmatter.priority = input.priority;
-    if (input.labels !== undefined) task.frontmatter.labels = input.labels;
-    if (input.skip !== undefined) task.frontmatter.skip = input.skip;
-    if (input.runs !== undefined) task.frontmatter.runs = Math.max(1, Math.floor(input.runs));
-    if (input.command !== undefined) await this.applyCommand(task, input.command);
 
-    const targetStatus = input.status;
-    if (targetStatus && targetStatus !== task.frontmatter.status) {
-      const from = task.frontmatter.status;
-      if (!isUserTransition(from, targetStatus)) {
+      // A review client may shape its own drafts, but not rewrite work a human already released.
+      if (
+        task.frontmatter.status !== "draft" &&
+        (input.prompt !== undefined || input.command !== undefined || input.runs !== undefined) &&
+        review
+      ) {
+        throw new OpError(
+          403,
+          "This client has review trust and cannot change the prompt of a task that is not a draft",
+          "forbidden_trust",
+        );
+      }
+
+      if (input.title !== undefined) task.frontmatter.title = input.title;
+      if (input.prompt !== undefined) {
+        // A hand edit of a plan task: plan sync must append changes instead of overwriting it.
+        if (task.frontmatter.planRef && input.prompt !== task.body.prompt) {
+          task.frontmatter.promptSource = "manual";
+        }
+        task.body.prompt = input.prompt;
+      }
+      if (input.priority !== undefined) task.frontmatter.priority = input.priority;
+      if (input.labels !== undefined) task.frontmatter.labels = input.labels;
+      if (input.skip !== undefined) task.frontmatter.skip = input.skip;
+      if (input.runs !== undefined) task.frontmatter.runs = Math.max(1, Math.floor(input.runs));
+      if (input.command !== undefined) injectCommand(task, input.command ? (tpl ?? null) : null);
+
+      from = task.frontmatter.status;
+      if (input.status && input.status !== from && !isUserTransition(from, input.status)) {
         throw new OpError(
           409,
-          `Invalid status transition: ${from} → ${targetStatus}`,
+          `Invalid status transition: ${from} → ${input.status}`,
           "invalid_transition",
         );
       }
-      // Persist field edits first, then transition (which re-reads + moves).
-      await this.tasks.save(task);
-      return this.tasks.transition(id, targetStatus, undefined, { by: actor?.id ?? "local" });
+    });
+    if (input.status && input.status !== from) {
+      return this.tasks.transition(id, input.status, undefined, { by: actor?.id ?? "local" });
     }
-    return this.tasks.save(task);
+    return task;
   }
 
   setSkip(id: string, skip: boolean): Promise<Task> {
@@ -372,19 +386,19 @@ export class ProjectService {
     }
   }
 
-  async stopTask(id: string): Promise<{ ok: true }> {
+  async stopTask(id: string, actor?: Principal): Promise<{ ok: true }> {
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
-    if (task.frontmatter.status !== "running") {
-      throw new OpError(400, "Task is not running");
-    }
-    await mkdir(taskControlDir(this.root, id), { recursive: true });
-    await writeFile(taskStopRequestPath(this.root, id), new Date().toISOString() + "\n", "utf8");
-    await appendFile(
-      join(workingAreaDir(this.root, id), "log.txt"),
-      `\n\n### Stop requested\n${new Date().toISOString()}\n`,
-      "utf8",
-    ).catch(() => {});
+    await this.assertMayControl(task, actor);
+    await this.tasks.whileRunning(id, async ({ controlDir }) => {
+      const now = new Date().toISOString();
+      await writeFile(join(controlDir, "stop"), now + "\n", "utf8");
+      await appendFile(
+        join(workingAreaDir(this.root, id), "log.txt"),
+        `\n\n### Stop requested\n${now}\n`,
+        "utf8",
+      ).catch(() => {});
+    });
     return { ok: true };
   }
 
@@ -398,33 +412,39 @@ export class ProjectService {
     if (!text) throw new OpError(400, "Prompt is required");
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
-    if (task.frontmatter.status !== "running") {
-      throw new OpError(400, "Task is not running");
-    }
+    await this.assertMayControl(task, actor);
 
     const now = new Date().toISOString();
-    await mkdir(taskControlDir(this.root, id), { recursive: true });
-    await appendFile(taskPromptInjectionsPath(this.root, id), `\n\n## ${now}\n${text}\n`, "utf8");
-    // Durable copy: the control directory is deleted when the task leaves `running`.
-    await this.tasks.appendInjected(
+    await this.tasks.whileRunning(
       id,
-      text,
-      actor && actor.kind === "client" ? actor.name : "user",
-      mode,
+      async () => {
+        await appendFile(
+          taskPromptInjectionsPath(this.root, id),
+          `\n\n## ${now}\n${text}\n`,
+          "utf8",
+        );
+        if (mode === "now") {
+          // The pipeline interrupts the running step on this file and consumes (removes) it.
+          await appendFile(
+            taskSteerRequestPath(this.root, id),
+            JSON.stringify({ at: now, text }) + "\n",
+            "utf8",
+          );
+        }
+        await appendFile(
+          join(workingAreaDir(this.root, id), "log.txt"),
+          `\n\n### Injected prompt${mode === "now" ? " (apply now)" : ""}\n${text}\n`,
+          "utf8",
+        ).catch(() => {});
+      },
+      // Durable copy: the control directory is deleted when the task leaves `running`.
+      (t) =>
+        appendInjectedEntry(t, {
+          text,
+          by: actor && actor.kind === "client" ? actor.name : "user",
+          mode,
+        }),
     );
-    if (mode === "now") {
-      // The pipeline interrupts the running step on this file and consumes (removes) it.
-      await appendFile(
-        taskSteerRequestPath(this.root, id),
-        JSON.stringify({ at: now, text }) + "\n",
-        "utf8",
-      );
-    }
-    await appendFile(
-      join(workingAreaDir(this.root, id), "log.txt"),
-      `\n\n### Injected prompt${mode === "now" ? " (apply now)" : ""}\n${text}\n`,
-      "utf8",
-    ).catch(() => {});
     return { ok: true, mode, applied: "pending" };
   }
 

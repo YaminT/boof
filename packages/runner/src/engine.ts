@@ -17,8 +17,7 @@ import {
   workingAreaDir,
   type Project,
   type Status,
-  taskControlDir,
-  taskStopRequestPath,
+  TaskNotRunningError,
   type Task,
 } from "@boof-runner/shared";
 import { announceBudgetExceeded } from "./budget.js";
@@ -611,19 +610,21 @@ export class RunnerEngine {
   private async requestStop(projectId: string, id: string): Promise<boolean> {
     const dir = this.projects.dir(projectId);
     try {
-      await mkdir(taskControlDir(dir, id), { recursive: true });
-      await writeFile(
-        taskStopRequestPath(dir, id),
-        `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
-        "utf8",
-      );
-      await appendFile(
-        join(workingAreaDir(dir, id), "log.txt"),
-        `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
-        "utf8",
-      ).catch(() => {});
+      await this.storeFor(projectId).whileRunning(id, async ({ controlDir }) => {
+        await writeFile(
+          join(controlDir, "stop"),
+          `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
+          "utf8",
+        );
+        await appendFile(
+          join(workingAreaDir(dir, id), "log.txt"),
+          `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
+          "utf8",
+        ).catch(() => {});
+      });
       return true;
     } catch (err) {
+      if (err instanceof TaskNotRunningError) return false; // finished while we drained
       console.error(`could not request stop for ${projectId}/${id}:`, err);
       return false;
     }

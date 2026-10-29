@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -288,6 +289,42 @@ describe("answers loop API", () => {
 });
 
 describe("running task controls", () => {
+  it("two updates with the same ETag: exactly one wins", async () => {
+    const made = await (await req("/api/tasks", json({ title: "Race" }))).json();
+    const put = (title: string) =>
+      req("/api/v1/projects/default/tasks/race", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "if-match": `W/"${made.frontmatter.updated}"`,
+        },
+        body: JSON.stringify({ title }),
+      });
+    const [a, b] = await Promise.all([put("A"), put("B")]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const lost = a.status === 409 ? a : b;
+    expect((await lost.json()).error.code).toBe("task_modified");
+    const won = a.status === 200 ? "A" : "B";
+    expect((await service.forProject("default").get("race"))!.frontmatter.title).toBe(won);
+  });
+
+  it("stop and inject never recreate the working area of a task that left running", async () => {
+    await (await req("/api/tasks", json({ title: "Gone", status: "pending" }))).json();
+    const store = service.forProject("default").tasks;
+    await store.transition("gone", "running");
+    await store.transition("gone", "stopped");
+    expect((await req("/api/tasks/gone/stop", { method: "POST" })).status).toBe(400);
+    expect((await req("/api/tasks/gone/inject", json({ prompt: "x", mode: "now" }))).status).toBe(
+      400,
+    );
+    const dir = service.projects.dir("default");
+    expect(existsSync(workingAreaDir(dir, "gone"))).toBe(false);
+    expect(await service.projects.hasRunningTask("default")).toBe(false);
+    await store.transition("gone", "pending");
+    await store.transition("gone", "running");
+    expect(existsSync(taskStopRequestPath(dir, "gone"))).toBe(false);
+  });
+
   it("requests stop and records injected prompts for a running task", async () => {
     await (await req("/api/tasks", json({ title: "Runtime", status: "pending" }))).json();
     await service.forProject("default").tasks.transition("runtime", "running");

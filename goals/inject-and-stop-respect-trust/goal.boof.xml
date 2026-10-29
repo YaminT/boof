@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Review-trust clients may stop or inject into only the tasks they created (403 forbidden_trust); stop/inject/shutdown/plan-sync control writes run under the task lock via TaskStore.whileRunning and only while running; a run starts with an empty control dir; the task update ETag check runs inside modify.</version>
       </versions>
     </status>
     <tests>

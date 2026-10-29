@@ -5,7 +5,7 @@ import { appendEvent } from "./events.js";
 import { formatInjectedEntry, parseInjected, type InjectMode } from "./injected.js";
 import { uniqueKebabId } from "./ids.js";
 import { assertTransition } from "./lifecycle.js";
-import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
+import { ALL_STATUSES, statusDir, taskControlDir, taskFilePath, workingAreaDir } from "./paths.js";
 import { nowIso } from "./runtime.js";
 import type { Status } from "./schema.js";
 import { parseTask, serializeTask, type Task } from "./task-file.js";
@@ -16,6 +16,33 @@ export class TaskNotFoundError extends Error {
     super(`Task not found: ${id}`);
     this.name = "TaskNotFoundError";
   }
+}
+
+/** Thrown by {@link TaskStore.whileRunning} when the task is not in the `running` status. */
+export class TaskNotRunningError extends Error {
+  constructor(
+    public readonly id: string,
+    public readonly status: Status,
+  ) {
+    super(`Task is not running: ${id} (${status})`);
+    this.name = "TaskNotRunningError";
+  }
+}
+
+/** Append an injected-prompt entry to the task's `## Injected` section (in memory, no write). */
+export function appendInjectedEntry(
+  task: Task,
+  entry: { text: string; by?: string; mode?: InjectMode },
+): void {
+  const formatted = formatInjectedEntry({
+    at: nowIso(),
+    by: entry.by ?? "user",
+    text: entry.text,
+    ...(entry.mode ? { mode: entry.mode } : {}),
+  });
+  task.body.injected = task.body.injected.trim()
+    ? `${task.body.injected.trimEnd()}\n\n${formatted}`
+    : formatted;
 }
 
 /** Thrown when creating a task whose id already exists in some status directory. */
@@ -227,15 +254,33 @@ export class TaskStore {
    * is deleted when the task leaves `running`). `by` is the principal name, default "user".
    */
   async appendInjected(id: string, text: string, by = "user", mode?: InjectMode): Promise<Task> {
+    return this.modify(id, (t) => appendInjectedEntry(t, { text, by, mode }));
+  }
+
+  /**
+   * Run `fn` under the task lock while the task is `running`, with its control directory created.
+   * A transition out of `running` queues behind it, so control files are never written into a
+   * working area that is being removed. `mutate` (sync) edits the task in the same critical
+   * section; the task is then written back. Throws {@link TaskNotRunningError} otherwise.
+   */
+  async whileRunning(
+    id: string,
+    fn: (ctx: { task: Task; controlDir: string }) => Promise<void>,
+    mutate?: (t: Task) => void,
+  ): Promise<Task> {
     return this.lockTask(id, async () => {
       const located = await this.locate(id);
       if (!located) throw new TaskNotFoundError(id);
+      if (located.status !== "running") throw new TaskNotRunningError(id, located.status);
       const task = await this.readReconciled(located.path, located.status);
-      const entry = formatInjectedEntry({ at: nowIso(), by, text, ...(mode ? { mode } : {}) });
-      task.body.injected = task.body.injected.trim()
-        ? `${task.body.injected.trimEnd()}\n\n${entry}`
-        : entry;
-      await atomicWrite(located.path, serializeTask(task));
+      const controlDir = taskControlDir(this.root, id);
+      await mkdir(controlDir, { recursive: true });
+      await fn({ task, controlDir });
+      if (mutate) {
+        assertSyncMutate(mutate(task), "whileRunning");
+        task.frontmatter.updated = nowIso();
+        await atomicWrite(located.path, serializeTask(task));
+      }
       return task;
     });
   }
@@ -342,6 +387,10 @@ export class TaskStore {
 
       const destPath = taskFilePath(this.root, to, id);
       await mkdir(dirname(destPath), { recursive: true });
+      if (to === "running") {
+        // A run starts with no control files (a stale stop/steer must not hit the new run).
+        await rm(taskControlDir(this.root, id), { recursive: true, force: true });
+      }
       await atomicWrite(destPath, serializeTask(task));
       if (located.path !== destPath) {
         if (located.status === "running") {

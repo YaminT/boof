@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvalidTransitionError } from "./lifecycle.js";
-import { readTaskIfExists, TaskExistsError, TaskNotFoundError, TaskStore } from "./store.js";
+import {
+  appendInjectedEntry,
+  readTaskIfExists,
+  TaskExistsError,
+  TaskNotFoundError,
+  TaskNotRunningError,
+  TaskStore,
+} from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
 import { parseInjected } from "./injected.js";
 import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
@@ -249,6 +256,61 @@ describe("TaskStore modify", () => {
     await store.modify("t1", (t) => {
       t.frontmatter.labels = ["ok"];
     });
+  });
+});
+
+describe("TaskStore whileRunning (control files)", () => {
+  it("refuses a task that is not running and creates no working area", async () => {
+    await store.create(newTask(fm({ status: "done" })));
+    await expect(store.whileRunning("t1", async () => {})).rejects.toBeInstanceOf(
+      TaskNotRunningError,
+    );
+    expect(await fileExists(workingAreaDir(root, "t1"))).toBe(false);
+    await expect(store.whileRunning("nope", async () => {})).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+  });
+
+  it("holds the task lock: a transition out of running waits for the control write", async () => {
+    await store.create(newTask(fm({ status: "running" })));
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const control = store.whileRunning("t1", async ({ controlDir }) => {
+      await gate;
+      await writeFile(join(controlDir, "stop"), "now\n");
+      order.push("control");
+    });
+    const leave = store.transition("t1", "done").then(() => order.push("transition"));
+    release();
+    await Promise.all([control, leave]);
+    expect(order).toEqual(["control", "transition"]);
+    expect(await fileExists(workingAreaDir(root, "t1"))).toBe(false);
+    await expect(store.whileRunning("t1", async () => {})).rejects.toBeInstanceOf(
+      TaskNotRunningError,
+    );
+  });
+
+  it("applies mutate in the same critical section", async () => {
+    await store.create(newTask(fm({ status: "running" }), "p"));
+    const t = await store.whileRunning(
+      "t1",
+      async () => {},
+      (task) => appendInjectedEntry(task, { text: "go", by: "alice", mode: "now" }),
+    );
+    expect(parseInjected(t.body.injected).map((e) => [e.by, e.text, e.mode])).toEqual([
+      ["alice", "go", "now"],
+    ]);
+    expect(parseInjected((await store.get("t1"))!.body.injected)).toHaveLength(1);
+  });
+
+  it("clears stale control files when a task enters running", async () => {
+    await store.create(newTask(fm({ status: "pending" })));
+    await mkdir(join(workingAreaDir(root, "t1"), "control"), { recursive: true });
+    await writeFile(join(workingAreaDir(root, "t1"), "control", "stop"), "stale\n");
+    await store.transition("t1", "running");
+    expect(await fileExists(join(workingAreaDir(root, "t1"), "control"))).toBe(false);
+    expect((await store.get("t1"))?.frontmatter.status).toBe("running");
   });
 });
 

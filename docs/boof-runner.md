@@ -368,6 +368,8 @@ If the runner process dies hard (`SIGKILL`, out of memory, power loss, reboot), 
 
 The UI can inject an additional prompt while a task is running. Boof Runner writes that prompt to the running task's control directory and appends a note to the live log.
 
+Stop and inject requests are written under the task's lock and only while the task is `running`: a request that loses the race with the end of the run answers 400 and leaves nothing behind, and a run starts with an empty control directory.
+
 The prompt has a mode:
 
 - `next-step` (the default): the prompt is picked up before the next pipeline step and included in later prompts under a dedicated injected-prompts section. The step that is running is not touched.
@@ -447,7 +449,7 @@ Authentication is middleware in `packages/web/src/middleware/`. The operations d
 - Principals: `local` (loopback peer, no `Authorization` header, no `X-Forwarded-For`, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`.
 - Scopes: `projects:read|write`, `plans:read|write`, `tasks:read|write|control` (stop, inject), `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Pause and resume accept `runner:control` or `projects:write`; toggling the runner accepts `runner:control` or `settings:write`; usage accepts `projects:read` or `tasks:read`. `auth.whoami` needs no scope.
 - Project restriction: a client may be limited to a list of projects; other projects answer `403 forbidden_project` (so existence is not probed) and list routes filter. A non-local principal registering a project (or moving its working directory) must pass `security.allowedProjectRoots`, the git and data-root checks and the `/`/home exclusion, else `403 project_root_not_allowed`.
-- Trust: `review` clients (the default) create tasks and plans as `draft` (tasks get the label `external:<id>` and an `origin`), and cannot queue, retry, unarchive, answer, activate a plan or edit an active plan: `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this. `trusted` clients behave like local.
+- Trust: `review` clients (the default) create tasks and plans as `draft` (tasks get the label `external:<id>` and an `origin`), and cannot queue, retry, unarchive, answer, activate a plan, edit an active plan, or stop or inject into a task it did not create: `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this. `trusted` clients behave like local.
 - Admin API (`auth:admin`): list, create, revoke and rotate clients. Responses never contain `keyHash`; a caller cannot grant scopes, trust, projects or a later expiry than it holds (a restricted caller's projects and expiry are inherited when omitted).
 - Settings (`settings.security`, edited in `settings.json`, not through `PUT /settings`): `allowedHosts`, `auth.mode`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`. `settings.mcp.enabled` switches MCP off.
 - Binding: `--host`/`BOOF_RUNNER_HOST`; a non-loopback bind needs `auth.mode = "required"` and an active client; the bind host is added to the Host allow-list. `--tls-cert`/`--tls-key` serve HTTPS.

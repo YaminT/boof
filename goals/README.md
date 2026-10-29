@@ -33,7 +33,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`sse-principal-revocation`](sse-principal-revocation/goal.boof.xml) — Event streams stop when the key is revoked
 - [ ] [`rate-limit-unauthenticated-and-healthz`](rate-limit-unauthenticated-and-healthz/goal.boof.xml) — Rate limit unauthenticated requests and cache /healthz
 - [ ] [`csrf-content-type-and-origin`](csrf-content-type-and-origin/goal.boof.xml) — CSRF defence for the local-trust principal
-- [ ] [`inject-and-stop-respect-trust`](inject-and-stop-respect-trust/goal.boof.xml) — tasks.inject and tasks.stop respect the trust level
+- [x] [`inject-and-stop-respect-trust`](inject-and-stop-respect-trust/goal.boof.xml) — tasks.inject and tasks.stop respect the trust level
 - [ ] [`webhook-ssrf-guard`](webhook-ssrf-guard/goal.boof.xml) — Webhook URLs reject loopback, link-local and private addresses
 
 ## Correctness and robustness

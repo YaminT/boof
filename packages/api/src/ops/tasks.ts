@@ -397,7 +397,7 @@ export const tasksStop = defineOp({
   name: "tasks.stop",
   title: "Stop a running task",
   description:
-    "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there.",
+    "Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there. Review-trust clients may only stop tasks they created (403 forbidden_trust).",
   scope: "tasks:control",
   projectScoped: true,
   input: byTask,
@@ -406,14 +406,14 @@ export const tasksStop = defineOp({
   mcp: { expose: true, name: "boof_stop_task", annotations: DESTRUCTIVE },
   summary: () => "Stop requested",
   handler: async (ctx, input) =>
-    (await requireProject(ctx, input.projectId)).stopTask(input.taskId),
+    (await requireProject(ctx, input.projectId)).stopTask(input.taskId, ctx.principal),
 });
 
 export const tasksInject = defineOp({
   name: "tasks.inject",
   title: "Inject a prompt into a running task",
   description:
-    "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied.",
+    "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
   scope: "tasks:control",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...InjectBody.shape }),
