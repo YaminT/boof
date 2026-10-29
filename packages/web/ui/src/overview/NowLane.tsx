@@ -19,12 +19,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 /** What is running now (left) and what waits on the user or comes next (right). */
 export function NowLane({
   pid,
+  projectPaused,
   groups,
   settings,
   navigate,
   onChange,
 }: {
   pid: string;
+  projectPaused: boolean;
   groups: TaskGroups;
   settings: Settings | null;
   navigate: (to: Route) => void;
@@ -47,7 +49,11 @@ export function NowLane({
         ) : (
           <section className="rounded-lg border border-line bg-surface p-4">
             <p className="m-0 text-[length:var(--text-body)] font-medium">Nothing running.</p>
-            {queueEmpty ? (
+            {projectPaused ? (
+              <p className="mt-1 mb-0 text-[length:var(--text-row)] text-ink-muted">
+                This project is paused. Its queued tasks wait until you resume it.
+              </p>
+            ) : queueEmpty ? (
               <>
                 <p className="mt-1 mb-3 text-[length:var(--text-row)] text-ink-muted">
                   Queue is empty. Add a task or let a harness submit a plan.

@@ -3,6 +3,7 @@ import type { Project } from "@boof-runner/shared/schema";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { groupTasks } from "../lib/task-groups.js";
+import { TonePill } from "../shell/StatusPill.js";
 import { NowLane } from "./NowLane.js";
 import { RecentList } from "./RecentList.js";
 import { SpendBar } from "./SpendBar.js";
@@ -23,7 +24,10 @@ export function OverviewPage({
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="m-0 text-[length:var(--text-page)] font-semibold">{project?.name ?? pid}</h1>
+        <h1 className="m-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[length:var(--text-page)] font-semibold">
+          {project?.name ?? pid}
+          {project?.paused && <TonePill tone="neutral">Paused</TonePill>}
+        </h1>
         {project?.workingDirectory && (
           <p className="mt-1 mb-0 font-mono text-[length:var(--text-meta)] text-ink-muted">
             {project.workingDirectory}
@@ -34,6 +38,7 @@ export function OverviewPage({
         <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Now</h2>
         <NowLane
           pid={pid}
+          projectPaused={!!project?.paused}
           groups={groups}
           settings={data.settings}
           navigate={navigate}
