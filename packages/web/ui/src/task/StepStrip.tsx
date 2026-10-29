@@ -2,6 +2,7 @@ import { CheckIcon } from "lucide-react";
 import type { TaskView } from "../api.js";
 import { cn } from "@/lib/utils";
 import { formatDuration, runLabel, stepStrip, type StepSegment } from "../lib/run-timing.js";
+import { verdictLabel, verdictTone } from "../lib/report-rounds.js";
 import { TonePill } from "../shell/StatusPill.js";
 
 const ROLE_NAME: Record<StepSegment["role"], string> = {
@@ -16,8 +17,16 @@ function Segment({ seg }: { seg: StepSegment }) {
     <li
       className={cn(
         "flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 rounded-md border px-3 py-2 text-[length:var(--text-row)]",
-        seg.state === "current" ? "border-running/50 bg-surface" : "border-line bg-surface",
-        seg.state === "upcoming" && "text-ink-muted",
+        "bg-surface",
+        seg.state === "current" && "border-running/50",
+        seg.state === "failed" && "border-failed/50",
+        seg.state === "waiting" && "border-attention/50",
+        (seg.state === "done" ||
+          seg.state === "upcoming" ||
+          seg.state === "stopped" ||
+          seg.state === "skipped") &&
+          "border-line",
+        (seg.state === "upcoming" || seg.state === "skipped") && "text-ink-muted",
       )}
       aria-current={seg.state === "current" ? "step" : undefined}
     >
@@ -32,10 +41,12 @@ function Segment({ seg }: { seg: StepSegment }) {
         />
       )}
       <span className="font-medium">{ROLE_NAME[seg.role]}</span>
+      {seg.state === "failed" && <TonePill tone="failed">failed</TonePill>}
+      {seg.state === "stopped" && <TonePill tone="neutral">stopped</TonePill>}
+      {seg.state === "waiting" && <TonePill tone="attention">needs you</TonePill>}
+      {seg.state === "skipped" && <span className="text-ink-muted">skipped</span>}
       {seg.verdict && (
-        <TonePill tone={seg.verdict === "approve" ? "done" : "failed"}>
-          {seg.verdict === "approve" ? "approved" : "changes requested"}
-        </TonePill>
+        <TonePill tone={verdictTone(seg.verdict)}>{verdictLabel(seg.verdict)}</TonePill>
       )}
       {seg.round > 1 && <span className="text-ink-muted">round {seg.round}</span>}
       {seg.seconds !== null && (

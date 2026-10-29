@@ -16,6 +16,13 @@ function task(
   } as unknown as TaskView;
 }
 const steps = (...s: [string, number][]) => s.map(([label, sec]) => ({ label, at: at(sec) }));
+const rev = (role: string, round: number, verdict: string, iteration = 1) => ({
+  role,
+  round,
+  iteration,
+  verdict,
+  summary: "",
+});
 const byRole = (segs: ReturnType<typeof stepStrip>) =>
   Object.fromEntries(segs.map((s) => [s.role, s]));
 
@@ -76,18 +83,18 @@ describe("stepStrip", () => {
           ["Developer (fix round 1, reviewer)", 40],
         ),
       },
-      { finalVerdict: { observer: "APPROVE", reviewer: "REJECT" } },
+      { reviews: [rev("observer", 1, "APPROVE"), rev("reviewer", 1, "REJECT")] },
     );
     const segs = stepStrip(t, T0 + 50_000);
     const r = byRole(segs);
     expect(r.planner.state).toBe("done");
     expect(r.developer.state).toBe("current");
     expect(r.observer.state).toBe("done");
-    expect(r.reviewer).toMatchObject({ state: "done", verdict: "reject" });
+    expect(r.reviewer).toMatchObject({ state: "done", verdict: "REJECT" });
     for (const s of segs) if (s.seconds !== null) expect(s.seconds).toBeGreaterThanOrEqual(0);
   });
 
-  it("ends a finished task's last role at its updated time", () => {
+  it("gives a finished task's last role no duration", () => {
     const t = task(
       {
         steps: steps(["Planner", 0], ["Developer", 50], ["Reviewer (round 1)", 200]),
@@ -97,21 +104,108 @@ describe("stepStrip", () => {
       "done",
     );
     const r = byRole(stepStrip(t, T0 + 999_000));
-    expect(r.reviewer).toMatchObject({ state: "done", seconds: 60 });
+    expect(r.reviewer).toMatchObject({ state: "done", seconds: null });
     expect(r.planner.seconds).toBe(50);
   });
 
-  it("maps verdicts", () => {
-    const v = (reviewer?: string, observer?: string) =>
-      byRole(stepStrip(task({}, { finalVerdict: { reviewer, observer } }), T0));
-    expect(v("APPROVE").reviewer.verdict).toBe("approve");
-    expect(v("CHANGES_REQUESTED").reviewer.verdict).toBe("reject");
-    expect(v("REJECT").reviewer.verdict).toBe("reject");
-    expect(v("INVALID").reviewer.verdict).toBeNull();
-    expect(v().reviewer.verdict).toBeNull();
-    expect(v(undefined, "APPROVE").observer.verdict).toBe("approve");
-    expect(v(undefined, "REJECT").observer.verdict).toBe("reject");
-    expect(v(undefined, "INVALID").observer.verdict).toBeNull();
+  it("marks the last role reached as failed or stopped", () => {
+    for (const status of ["failed", "stopped"] as const) {
+      const t = task({ steps: steps(["Planner", 0], ["Developer", 10]) }, {}, status);
+      const r = byRole(stepStrip(t, T0 + 99_000));
+      expect(r.planner.state).toBe("done");
+      expect(r.developer).toMatchObject({ state: status, seconds: null });
+      expect(r.observer.state).toBe("upcoming");
+      expect(r.reviewer.state).toBe("upcoming");
+    }
+  });
+
+  it("marks the role that asked as waiting when the task needs you", () => {
+    const t = task({ steps: steps(["Planner", 0], ["Developer", 10]) }, {}, "action");
+    const r = byRole(stepStrip(t, T0 + 99_000));
+    expect(r.planner.state).toBe("done");
+    expect(r.developer.state).toBe("waiting");
+    expect(r.reviewer.state).toBe("upcoming");
+  });
+
+  it("never marks a role that did not run as done", () => {
+    const t = task(
+      { steps: steps(["Planner", 0], ["Developer", 10], ["Reviewer (round 1)", 40]) },
+      {},
+      "done",
+    );
+    const r = byRole(stepStrip(t, T0 + 99_000));
+    expect(r.observer).toMatchObject({ state: "skipped", seconds: null, verdict: null });
+    expect(r.reviewer.state).toBe("done");
+  });
+
+  it("shows verdicts only on done observer and reviewer segments", () => {
+    const t = task(
+      {
+        steps: steps(["Planner", 0], ["Developer", 10], ["Observer (round 1)", 20]),
+      },
+      { reviews: [rev("observer", 1, "APPROVE"), rev("reviewer", 1, "APPROVE")] },
+      "done",
+    );
+    const r = byRole(stepStrip(t, T0 + 99_000));
+    expect(r.observer).toMatchObject({ state: "done", verdict: "APPROVE" });
+    expect(r.reviewer).toMatchObject({ state: "upcoming", verdict: null });
+    expect(r.developer.verdict).toBeNull();
+  });
+
+  it("does not show the previous run's verdict after a retry or in a later run", () => {
+    const old = { reviews: [rev("observer", 1, "APPROVE"), rev("reviewer", 1, "REJECT")] };
+    // Retried: queued again, nothing of the old run counts.
+    const retried = task({ steps: steps(["Planner", 0], ["Developer", 10]) }, old, "pending");
+    for (const s of stepStrip(retried, T0)) expect(s).toMatchObject({ state: "upcoming" });
+    // Second iteration of a multi-run task: iteration 1 reviews are stale.
+    const second = task(
+      {
+        runs: 2,
+        completedRuns: 1,
+        steps: steps(["Planner", 100], ["Developer", 110], ["Observer (round 1)", 120]),
+      },
+      old,
+    );
+    const r = byRole(stepStrip(second, T0 + 130_000));
+    expect(r.observer).toMatchObject({ state: "current", verdict: null });
+    expect(r.reviewer.verdict).toBeNull();
+    const later = byRole(
+      stepStrip(
+        task(
+          {
+            runs: 2,
+            completedRuns: 1,
+            steps: steps(
+              ["Planner", 100],
+              ["Developer", 110],
+              ["Observer (round 1)", 120],
+              ["Reviewer (round 1)", 130],
+            ),
+          },
+          { reviews: [...old.reviews, rev("observer", 1, "APPROVE", 2)] },
+        ),
+        T0 + 140_000,
+      ),
+    );
+    expect(later.observer).toMatchObject({ state: "done", verdict: "APPROVE" });
+  });
+
+  it("keeps the raw verdict", () => {
+    const t = task(
+      {
+        steps: steps(
+          ["Planner", 0],
+          ["Developer", 5],
+          ["Observer (round 1)", 10],
+          ["Reviewer (round 1)", 20],
+        ),
+      },
+      { reviews: [rev("observer", 1, "CHANGES_REQUESTED"), rev("reviewer", 1, "INVALID")] },
+      "done",
+    );
+    const r = byRole(stepStrip(t, T0 + 99_000));
+    expect(r.observer.verdict).toBe("CHANGES_REQUESTED");
+    expect(r.reviewer.verdict).toBe("INVALID");
   });
 
   it("falls back to the highest review round of the current iteration without steps", () => {

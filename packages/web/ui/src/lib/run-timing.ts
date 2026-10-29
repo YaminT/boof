@@ -1,13 +1,19 @@
 import type { TaskView } from "../api.js";
+import type { Verdict } from "./report-rounds.js";
 
 export type StepRole = "planner" | "developer" | "observer" | "reviewer";
 
 export interface StepSegment {
   role: StepRole;
-  state: "done" | "current" | "upcoming";
+  /**
+   * `failed`, `stopped` and `waiting` mark the last role reached by a task in that status;
+   * `skipped` a role that never ran although a later one did.
+   */
+  state: "done" | "current" | "upcoming" | "failed" | "stopped" | "waiting" | "skipped";
   /** Review round, or fix-round count plus one for the developer; 1 when there is only one. */
   round: number;
-  verdict: "approve" | "reject" | null;
+  /** The latest verdict of this run's reviews; only on a done observer or reviewer. */
+  verdict: Verdict | null;
   seconds: number | null;
 }
 
@@ -40,9 +46,6 @@ const roleOf = (label: string): StepRole | null => {
   return ROLES.find((r) => r === word) ?? null;
 };
 
-const verdictOf = (v: string | undefined): "approve" | "reject" | null =>
-  v === "APPROVE" ? "approve" : v === "CHANGES_REQUESTED" || v === "REJECT" ? "reject" : null;
-
 interface Entry {
   label: string;
   role: StepRole;
@@ -67,34 +70,42 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
   const lastPlanner = entries.map((e) => e.label).lastIndexOf("Planner");
   if (lastPlanner > 0) entries = entries.slice(lastPlanner);
 
-  const running = task.frontmatter.status === "running";
+  const status = task.frontmatter.status;
+  const running = status === "running";
+  // A queued or draft task has not started this run; any steps are the previous run's.
+  if (status === "pending" || status === "draft") entries = [];
   // A planner answering a question does not move the pipeline back.
   const moving = entries.filter((e) => !/^Planner \(answering/.test(e.label));
   const lastRole = moving.at(-1)?.role ?? (running ? "planner" : null);
   const lastIdx = lastRole ? ROLES.indexOf(lastRole) : -1;
   const maxIdx = Math.max(-1, ...entries.map((e) => ROLES.indexOf(e.role)));
-  const updatedMs = Date.parse(task.frontmatter.updated ?? "");
+  // Verdicts count only when the newest reviews belong to the current run.
+  const reviews = task.reviews ?? [];
+  const newest = Math.max(-Infinity, ...reviews.map((r) => r.iteration));
+  const { runs, completedRuns } = task.frontmatter;
+  const reviewsCurrent = newest === Math.min(completedRuns + 1, Math.max(runs, 1));
 
   return ROLES.map((role, idx): StepSegment => {
     const mine = entries.filter((e) => e.role === role);
     // A role that already ran stays done during fix rounds, when the pipeline is back at the developer.
-    const state =
-      running && idx === lastIdx
-        ? "current"
-        : mine.length > 0 || idx < maxIdx
-          ? "done"
-          : "upcoming";
+    const atLast = idx === lastIdx;
+    let state: StepSegment["state"];
+    if (running && atLast) state = "current";
+    else if (atLast && (status === "failed" || status === "stopped" || status === "action"))
+      state = status === "action" ? "waiting" : status;
+    else if (mine.length > 0) state = "done";
+    else state = idx < maxIdx ? "skipped" : "upcoming";
     const first = mine[0]?.ms ?? null;
 
     let seconds: number | null = null;
-    if (state !== "upcoming" && first !== null) {
+    if (state !== "upcoming" && state !== "skipped" && first !== null) {
       const after = entries.slice(entries.indexOf(mine[0]) + 1);
       const next =
         after.find((e) => ROLES.indexOf(e.role) > idx) ?? after.find((e) => e.role !== role);
       let end: number | null = null;
       if (state === "current") end = now;
+      // The last role of a task that is no longer running has no end time on record.
       else if (next?.ms != null) end = next.ms;
-      else if (!running && !Number.isNaN(updatedMs)) end = updatedMs;
       if (end !== null && end >= first) seconds = Math.round((end - first) / 1000);
     }
 
@@ -112,12 +123,14 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
       }
     }
 
-    const verdict =
-      role === "observer"
-        ? verdictOf(task.finalVerdict?.observer)
-        : role === "reviewer"
-          ? verdictOf(task.finalVerdict?.reviewer)
-          : null;
+    let verdict: Verdict | null = null;
+    if (state === "done" && reviewsCurrent && (role === "observer" || role === "reviewer")) {
+      const last = reviews
+        .filter((r) => r.role === role && r.iteration === newest)
+        .sort((a, b) => a.round - b.round)
+        .at(-1);
+      verdict = last?.verdict ?? null;
+    }
     return { role, state, round, verdict, seconds };
   });
 }
