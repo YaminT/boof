@@ -80,6 +80,8 @@ export function TaskForm({
   const [base, setBase] = useState(server);
   const [form, setForm] = useState(server);
   const [elsewhere, setElsewhere] = useState(false);
+  // The prompt the user had typed when a run started, kept so it can be copied.
+  const [lostPrompt, setLostPrompt] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const [commands, setCommands] = useState<CommandTemplate[]>([]);
@@ -108,6 +110,7 @@ export function TaskForm({
   // A run started: the form is locked, so show the server copy, never unsaved values.
   useEffect(() => {
     if (!locked) return;
+    if (dirty && form.prompt !== server.prompt) setLostPrompt(form.prompt);
     setBase(server);
     setForm(server);
     setElsewhere(false);
@@ -203,6 +206,30 @@ export function TaskForm({
           Editing is locked while the task runs. Stop it or wait for it to finish.
         </p>
       )}
+      {lostPrompt !== null && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention"
+        >
+          <span>The task started running, so your unsaved edits were not saved.</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() =>
+              void act(() => navigator.clipboard.writeText(lostPrompt), {
+                success: "Copied",
+                failure: "Could not copy",
+              })
+            }
+          >
+            Copy unsaved prompt
+          </Button>
+          <Button type="button" variant="ghost" size="xs" onClick={() => setLostPrompt(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
       {elsewhere && (
         <div
           role="status"
@@ -228,7 +255,7 @@ export function TaskForm({
             className="mt-0 font-normal"
             value={form.labels}
             onChange={(e) => set("labels", e.target.value)}
-            placeholder="backend, auth"
+            placeholder="e.g. backend, auth"
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
