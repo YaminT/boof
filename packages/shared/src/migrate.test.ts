@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { migrateDataRoot, MIGRATION_LOCK_FILE, MigrationError } from "./migrate.js";
+import {
+  migrateDataRoot,
+  MIGRATION_LOCK_FILE,
+  MigrationError,
+  withMigrationLock,
+} from "./migrate.js";
 import { ProjectSchema } from "./schema.js";
 import { SettingsStore } from "./settings.js";
 import { TaskStore } from "./store.js";
@@ -339,5 +344,72 @@ describe("migration lock", () => {
       MigrationError,
     );
     expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+  });
+
+  it("stale takeover admits one holder at a time", async () => {
+    await mkdir(root, { recursive: true });
+    for (let round = 0; round < 300; round++) {
+      await writeFile(join(root, MIGRATION_LOCK_FILE), "999999\n");
+      let inside = 0;
+      let max = 0;
+      // distinct pids simulate six processes (same-pid callers would queue in memory)
+      await Promise.all(
+        [1, 2, 3, 4, 5, 6].map((n) =>
+          withMigrationLock(
+            root,
+            { pid: 5000 + n, isProcessAlive: (p) => p !== 999999, lockPollMs: 1 },
+            async () => {
+              inside++;
+              max = Math.max(max, inside);
+              await new Promise((r) => setTimeout(r, 1));
+              inside--;
+            },
+          ),
+        ),
+      );
+      expect(max).toBe(1);
+      expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+      expect(await exists(join(root, `${MIGRATION_LOCK_FILE}.takeover`))).toBe(false);
+    }
+  });
+
+  it("takes over a stale lock that names our own pid", async () => {
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, MIGRATION_LOCK_FILE), `${process.pid}\n`);
+    expect(await withMigrationLock(root, { lockTimeoutMs: 500 }, async () => "ran")).toBe("ran");
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+  });
+
+  it("never takes the lock for a v2 root", async () => {
+    await writeV1Root(repo);
+    await migrateDataRoot(root);
+    expect((await migrateDataRoot(root)).kind).toBe("current");
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+    // would throw if the lock were needed
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "4242\n");
+    expect(
+      (await migrateDataRoot(root, { isProcessAlive: () => true, lockTimeoutMs: 50 })).kind,
+    ).toBe("current");
+  });
+
+  it("waits on an empty holder value and takes over a dead complete pid", async () => {
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "12");
+    await expect(
+      withMigrationLock(
+        root,
+        { isProcessAlive: () => false, lockTimeoutMs: 100, lockPollMs: 10 },
+        async () => 1,
+      ),
+    ).resolves.toBe(1); // "12" is a complete pid and dead
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "");
+    await expect(
+      withMigrationLock(
+        root,
+        { isProcessAlive: () => false, lockTimeoutMs: 100, lockPollMs: 10 },
+        async () => 1,
+      ),
+    ).rejects.toThrow(MigrationError);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(true);
   });
 });

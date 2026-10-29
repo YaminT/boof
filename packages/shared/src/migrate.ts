@@ -34,6 +34,8 @@ export interface MigrateOptions {
   lockTimeoutMs?: number;
   /** Poll interval while waiting for the lock; default 50 ms. */
   lockPollMs?: number;
+  /** Our pid in the lock file; default `process.pid`. Tests use it to simulate other processes. */
+  pid?: number;
 }
 
 /** `<root>/.migration.lock`: holds the pid of the process migrating the root. */
@@ -108,59 +110,125 @@ export async function migrateDataRoot(
   root: string,
   opts: MigrateOptions = {},
 ): Promise<MigrationResult> {
+  // Fast path: settings.json is written last and atomically, so a v2 file means nothing to do.
+  try {
+    const raw = JSON.parse(await readFile(dataRootPaths(root).settings, "utf8")) as {
+      schemaVersion?: unknown;
+    };
+    if (raw?.schemaVersion === SETTINGS_SCHEMA_VERSION) return { kind: "current", log: [] };
+  } catch {
+    // missing or unreadable: the locked path decides (and reports) it
+  }
   return withMigrationLock(root, opts, () => migrateUnlocked(root, opts));
 }
+
+/** Same-process callers queue here so a lock file naming our own pid can only be stale. */
+const localQueues = new Map<string, Promise<void>>();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A takeover guard is held for microseconds; one older than this was left by a crash. */
+const TAKEOVER_GUARD_STALE_MS = 5000;
 
 /**
  * Run `fn` while holding the cross-process migration lock on `root`. Later start-up work that
  * must not race another process (backfills) belongs inside the same lock.
- * A lock whose pid is dead (and is not ours) is taken over; a live holder is waited for.
- * The pid check is local: a lock left by a process on another machine sharing the root, or a
- * reused pid, reads as live until `lockTimeoutMs`, so it is never deleted wrongly.
+ * Callers in this process queue in memory. A lock file whose pid is dead, or is our own pid
+ * while we are not holding it (pid reuse after a reboot), is stale and is taken over under an
+ * exclusive `.migration.lock.takeover` guard, so only one process removes it. A live holder is
+ * waited for until `lockTimeoutMs`; a holder value that is not a positive integer is treated as
+ * still being written and is never taken over.
+ * Liveness is checked locally, so a lock left by a process on another host sharing the root
+ * whose pid is unused here reads as dead and is taken over: data roots shared across hosts are
+ * not supported.
  */
 export async function withMigrationLock<T>(
   root: string,
   opts: MigrateOptions,
   fn: () => Promise<T>,
 ): Promise<T> {
+  const pid = opts.pid ?? process.pid;
+  const lock = join(root, MIGRATION_LOCK_FILE);
+  const key = `${lock}\0${pid}`;
+  const previous = localQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => (release = resolve));
+  const tail = previous.then(() => mine);
+  localQueues.set(key, tail);
+  await previous;
+  try {
+    await acquireFileLock(root, lock, pid, opts);
+    try {
+      return await fn();
+    } finally {
+      await rm(lock, { force: true });
+    }
+  } finally {
+    release();
+    if (localQueues.get(key) === tail) localQueues.delete(key);
+  }
+}
+
+async function acquireFileLock(
+  root: string,
+  lock: string,
+  pid: number,
+  opts: MigrateOptions,
+): Promise<void> {
   const alive = opts.isProcessAlive ?? defaultAlive;
   const timeoutMs = opts.lockTimeoutMs ?? 30_000;
   const pollMs = opts.lockPollMs ?? 50;
-  const lock = join(root, MIGRATION_LOCK_FILE);
+  const guard = `${lock}.takeover`;
   await mkdir(root, { recursive: true });
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      await atomicWrite(lock, `${process.pid}\n`, { exclusive: true });
-      break;
+      await atomicWrite(lock, `${pid}\n`, { exclusive: true });
+      return;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
-    let holder: number;
+    let text: string;
     try {
-      holder = Number((await readFile(lock, "utf8")).trim());
+      text = (await readFile(lock, "utf8")).trim();
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") continue; // just released
       throw err;
     }
-    if (holder !== process.pid && !alive(holder)) {
-      // Re-read right before removing so we do not delete a lock a faster process just took.
-      const again = await readFile(lock, "utf8").catch(() => null);
-      if (again !== null && Number(again.trim()) === holder) await rm(lock, { force: true });
-      continue;
+    const holder = Number(text);
+    const valid = /^\d+$/.test(text) && holder > 0;
+    if (valid && (holder === pid || !alive(holder))) {
+      if (await takeOver(lock, guard, text)) continue;
     }
     if (Date.now() >= deadline) {
       throw new MigrationError(
-        `another boof-runner process is migrating ${root} (pid ${holder}); try again in a moment`,
+        `another boof-runner process is migrating ${root} (pid ${text}); try again in a moment`,
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    await sleep(pollMs);
+  }
+}
+
+/** Remove the stale lock naming `text` while holding the takeover guard; false = guard busy. */
+async function takeOver(lock: string, guard: string, text: string): Promise<boolean> {
+  try {
+    await atomicWrite(guard, `${process.pid}\n`, { exclusive: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    const age = await stat(guard).then(
+      (st) => Date.now() - st.mtimeMs,
+      () => 0,
+    );
+    if (age > TAKEOVER_GUARD_STALE_MS) await rm(guard, { force: true });
+    return false;
   }
   try {
-    return await fn();
+    const again = await readFile(lock, "utf8").catch(() => null);
+    if (again !== null && again.trim() === text) await rm(lock, { force: true });
   } finally {
-    await rm(lock, { force: true });
+    await rm(guard, { force: true });
   }
+  return true;
 }
 
 async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<MigrationResult> {
