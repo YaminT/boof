@@ -74,7 +74,7 @@ beforeEach(async () => {
   );
 });
 afterEach(async () => {
-  await rm(repo, { recursive: true, force: true });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function importPlan(): Plan {

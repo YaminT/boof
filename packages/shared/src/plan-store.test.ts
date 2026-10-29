@@ -19,7 +19,7 @@ beforeEach(async () => {
   store = new PlanStore(dir);
 });
 afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 const input = { id: "p", title: "P", source: { kind: "api" as const } };

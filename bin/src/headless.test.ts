@@ -69,9 +69,10 @@ beforeEach(async () => {
   resetMock();
 });
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
-  await rm(repo, { recursive: true, force: true });
-  for (const d of extraRepos.splice(0)) await rm(d, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const d of extraRepos.splice(0))
+    await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 

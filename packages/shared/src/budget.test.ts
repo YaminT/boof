@@ -19,7 +19,7 @@ let root: string;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-budget-"));
 });
-afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 const project = (id: string, budget?: Project["budget"]) => ({ id, budget });
 

@@ -80,7 +80,7 @@ beforeEach(async () => {
   healthUrls = [];
 });
 afterEach(async () => {
-  await rm(home, { recursive: true, force: true });
+  await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("unit file text", () => {

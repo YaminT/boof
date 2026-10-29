@@ -30,7 +30,7 @@ beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "boof-scan-"));
 });
 afterEach(async () => {
-  await rm(repo, { recursive: true, force: true });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("scanRepo", () => {

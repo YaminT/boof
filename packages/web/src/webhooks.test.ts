@@ -37,7 +37,7 @@ beforeEach(async () => {
     isSelfUrl: (u) => u.hostname === "self.test",
   });
 });
-afterEach(() => rm(base, { recursive: true, force: true }));
+afterEach(() => rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 const call = (path: string, init: RequestInit = {}, key?: string) =>
   app.request("http://localhost" + path, {

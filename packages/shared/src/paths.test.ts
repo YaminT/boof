@@ -76,7 +76,7 @@ describe("TaskStore id handling", () => {
     root = await mkdtemp(join(tmpdir(), "boof-runner-paths-"));
   });
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it("locate and get throw before touching disk", async () => {

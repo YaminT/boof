@@ -99,8 +99,8 @@ beforeEach(async () => {
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-migrate-repo-")));
 });
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
-  await rm(repo, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("migrateDataRoot", () => {

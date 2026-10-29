@@ -10,7 +10,7 @@ let root: string;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-contract-"));
 });
-afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 describe("REST routes match the registry", () => {
   it("serves every operation at its method and path under /api/v1 and the unversioned prefix", async () => {

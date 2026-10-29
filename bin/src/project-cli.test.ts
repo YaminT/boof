@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   process.exitCode = undefined;
-  await rm(base, { recursive: true, force: true });
+  await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("boof-runner project", () => {

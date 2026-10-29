@@ -90,7 +90,7 @@ beforeEach(async () => {
   app = createApp({ service, authStore, peerAddress: () => peer });
 });
 afterEach(async () => {
-  await rm(base, { recursive: true, force: true });
+  await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("approval of a plan approves its tasks", () => {

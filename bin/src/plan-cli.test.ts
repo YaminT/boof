@@ -69,8 +69,8 @@ beforeEach(async () => {
   await g(["commit", "-m", "init"]);
 });
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
-  await rm(repo, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("scan on top of plans (golden)", () => {

@@ -92,7 +92,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await Promise.all(open.splice(0).map((c) => c.close()));
-  await rm(base, { recursive: true, force: true });
+  await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 

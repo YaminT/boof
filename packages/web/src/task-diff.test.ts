@@ -44,8 +44,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
-  await rm(repo, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 /** A task whose branch has one commit: modify a, add c (with a binary), delete b, rename old. */

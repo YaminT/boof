@@ -307,7 +307,7 @@ describe("CodexTool report", () => {
   afterEach(async () => {
     if (prevBin === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
     else process.env.BOOF_RUNNER_CODEX_BIN = prevBin;
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it("uses the --output-last-message file, not noisy stdout", async () => {
@@ -488,7 +488,7 @@ describe("OpencodeTool", () => {
   afterEach(async () => {
     if (prevBin === undefined) delete process.env.BOOF_RUNNER_OPENCODE_BIN;
     else process.env.BOOF_RUNNER_OPENCODE_BIN = prevBin;
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it("builds args anchored to the worktree, with --auto only in auto mode", async () => {
@@ -644,7 +644,8 @@ describe("session resume", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
+    for (const d of dirs.splice(0))
+      await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
   /** A stand-in CLI that prints a fixture and records its argv next to itself. */
   const fake = async (envKey: string, name: string, fixtureName: string) => {

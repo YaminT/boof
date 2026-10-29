@@ -65,7 +65,7 @@ describe("public docs routes", () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   const get = (path: string, headers: Record<string, string> = {}) =>

@@ -29,7 +29,7 @@ beforeEach(async () => {
     now: () => "2026-01-01T00:00:00.000Z",
   };
 });
-afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 const echo = (over: Partial<Parameters<typeof defineOp>[0]> = {}) =>
   defineOp({

@@ -116,7 +116,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-  await rm(workDir, { recursive: true, force: true });
+  await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 
@@ -1201,7 +1201,8 @@ async function addProject(id: string): Promise<Extra> {
 }
 
 afterEach(async () => {
-  for (const r of extraRepos.splice(0)) await rm(r, { recursive: true, force: true });
+  for (const r of extraRepos.splice(0))
+    await rm(r, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 /** A task that takes its roles from settings instead of a per-task override. */

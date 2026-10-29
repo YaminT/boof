@@ -83,8 +83,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
-  for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const d of dirs.splice(0))
+    await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 

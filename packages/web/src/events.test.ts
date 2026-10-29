@@ -30,7 +30,7 @@ beforeEach(async () => {
   app = createApp({ service, authStore, peerAddress: () => peer });
 });
 
-afterEach(() => rm(base, { recursive: true, force: true }));
+afterEach(() => rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 const dir = (id: string) => join(root, "projects", id);
 const taskStatus = (project: string, task: string) => ({

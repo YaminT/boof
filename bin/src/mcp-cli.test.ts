@@ -16,7 +16,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-mcp-stdio-"));
 });
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 const line = (m: unknown) => JSON.stringify(m) + "\n";

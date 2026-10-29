@@ -58,7 +58,7 @@ beforeEach(async () => {
     now: () => "2026-01-01T00:00:00.000Z",
   };
 });
-afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 /** Settings: fake tool planner on its live model, reviewer on a default; a user-added model. */
 async function configure() {
