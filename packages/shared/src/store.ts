@@ -78,6 +78,17 @@ export async function readTaskIfExists(path: string, dirStatus: Status): Promise
 }
 
 /**
+ * `mutate` callbacks run under the task lock and must be synchronous: an async one would write
+ * before its awaited part ran (losing the change), or deadlock if it awaited the same task id.
+ */
+function assertSyncMutate(result: unknown, op: string): void {
+  if (result && typeof (result as { then?: unknown }).then === "function") {
+    (result as PromiseLike<unknown>).then(undefined, () => {}); // no unhandled rejection
+    throw new TypeError(`TaskStore.${op}: mutate must be synchronous (it returned a promise)`);
+  }
+}
+
+/**
  * File-backed task repository. The directory a task lives in is authoritative
  * for its status; on read we reconcile the frontmatter `status` to match the
  * location (task-lifecycle spec). All writes are atomic + locked.
@@ -85,7 +96,10 @@ export async function readTaskIfExists(path: string, dirStatus: Status): Promise
 export class TaskStore {
   constructor(private readonly root: string) {}
 
-  /** Serialize every operation on one task id: locate, check and write happen under it. */
+  /**
+   * Serialize every operation on one task id in this process: locate, check and write happen under
+   * it. Other processes are not excluded (see atomic.ts).
+   */
   private lockTask<T>(id: string, fn: () => Promise<T>): Promise<T> {
     return withFileLock(`${this.root}#task:${id}`, fn);
   }
@@ -201,7 +215,7 @@ export class TaskStore {
       const located = await this.locate(id);
       if (!located) throw new TaskNotFoundError(id);
       const task = await this.readReconciled(located.path, located.status);
-      mutate(task);
+      assertSyncMutate(mutate(task), "modify");
       task.frontmatter.updated = nowIso();
       await atomicWrite(located.path, serializeTask(task));
       return task;
@@ -324,7 +338,7 @@ export class TaskStore {
         task.frontmatter.startedAt = nowIso();
         task.frontmatter.steps = [];
       }
-      mutate?.(task);
+      if (mutate) assertSyncMutate(mutate(task), "transition");
 
       const destPath = taskFilePath(this.root, to, id);
       await mkdir(dirname(destPath), { recursive: true });

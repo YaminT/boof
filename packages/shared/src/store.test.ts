@@ -233,6 +233,23 @@ describe("TaskStore modify", () => {
     expect(disk.frontmatter.labels).toEqual(["edited"]);
     await expect(store.modify("ghost", () => {})).rejects.toBeInstanceOf(TaskNotFoundError);
   });
+
+  it("rejects an async mutate in modify and transition, and writes nothing", async () => {
+    await store.create(newTask(fm()));
+    const asyncMutate = (async (t: { frontmatter: { labels: string[] } }) => {
+      t.frontmatter.labels = ["lost"];
+    }) as unknown as (t: never) => void;
+    await expect(store.modify("t1", asyncMutate)).rejects.toThrow(TypeError);
+    await expect(store.modify("t1", asyncMutate)).rejects.toThrow(/synchronous/);
+    await expect(store.transition("t1", "running", asyncMutate)).rejects.toThrow(TypeError);
+    const disk = (await store.get("t1"))!;
+    expect(disk.frontmatter.labels).toEqual([]);
+    expect(disk.frontmatter.status).toBe("pending");
+    // the lock was released
+    await store.modify("t1", (t) => {
+      t.frontmatter.labels = ["ok"];
+    });
+  });
 });
 
 describe("TaskStore timings", () => {
