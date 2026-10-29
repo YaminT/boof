@@ -686,7 +686,9 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `questions`: `"none" | "pending" | "answered"`, required; default `"none"`
 - `runs`: `integer >= 1`, required; default `1`
 - `skip`: `boolean`, required
+- `startedAt`: `ISO-8601 string`, optional
 - `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, required
+- `steps`: `{ at: ISO-8601 string, label: string }[]`, optional
 - `title`: `string`, required
 - `tokens`: `TokenUsage`, optional
 - `tools`: `{ developer?: { model: string, tool: string }, observer?: { model: string, tool: string }, planner?: { model: string, tool: string }, reviewer?: { model: string, tool: string } }`, optional

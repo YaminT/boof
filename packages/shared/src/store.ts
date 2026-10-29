@@ -164,7 +164,11 @@ export class TaskStore {
       const disk = await readText(path)
         .then(parseTask)
         .catch(() => null);
-      if (disk) task.body.injected = disk.body.injected;
+      if (disk) {
+        task.body.injected = disk.body.injected;
+        if (disk.frontmatter.startedAt) task.frontmatter.startedAt = disk.frontmatter.startedAt;
+        if (disk.frontmatter.steps) task.frontmatter.steps = disk.frontmatter.steps;
+      }
       await atomicWrite(path, serializeTask(task));
     });
     return task;
@@ -206,6 +210,17 @@ export class TaskStore {
     });
   }
 
+  /** Record that a pipeline step began (label + time) in the task's `steps`. No-op if the task is gone. */
+  async appendStep(id: string, label: string, at = nowIso()): Promise<void> {
+    const located = await this.locate(id);
+    if (!located) return;
+    await withFileLock(located.path, async () => {
+      const task = await this.readReconciled(located.path, located.status);
+      task.frontmatter.steps = [...(task.frontmatter.steps ?? []), { label, at }];
+      await atomicWrite(located.path, serializeTask(task));
+    });
+  }
+
   /** Create a brand-new task file and append a `task.created` event (`opts.by`: the actor). */
   async create(task: Task, opts: { by?: string } = {}): Promise<Task> {
     const now = nowIso();
@@ -243,6 +258,10 @@ export class TaskStore {
     const task = await this.readReconciled(located.path, located.status);
     task.frontmatter.status = to;
     task.frontmatter.updated = nowIso();
+    if (to === "running") {
+      task.frontmatter.startedAt = nowIso();
+      task.frontmatter.steps = [];
+    }
     mutate?.(task);
 
     const destPath = taskFilePath(this.root, to, id);

@@ -118,6 +118,10 @@ export const TaskFrontmatterSchema = z.object({
   completedRuns: z.number().int().min(0).default(0),
   tools: TaskToolsSchema.optional(),
   tokens: TokenUsageSchema.optional(),
+  // When the task last entered `running`; kept after it leaves so finished tasks show it.
+  startedAt: isoDatetime.optional(),
+  // The current run's step headers in order; reset to [] on entering `running`.
+  steps: z.array(z.object({ label: z.string().min(1), at: isoDatetime })).optional(),
   // Branch name or commit the task's worktree is created from (default: HEAD).
   base: z.string().min(1).optional(),
   // Set on scan-created tasks: on successful completion the runner appends a

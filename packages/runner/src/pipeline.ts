@@ -270,6 +270,7 @@ export class Pipeline {
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
+    await this.deps.store.appendStep(id, label).catch(() => {});
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
     // Prompts the user steered in, accumulated for a rerun that cannot resume the tool session.
     const steerTexts: string[] = [];

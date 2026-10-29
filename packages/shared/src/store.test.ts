@@ -213,3 +213,50 @@ describe("TaskStore stopped and injected", () => {
 });
 
 void readFile;
+
+describe("TaskStore timings", () => {
+  it("sets startedAt and empties steps when a task enters running", async () => {
+    await store.create(newTask(fm({ steps: [{ label: "Old", at: "2026-06-01T00:00:00.000Z" }] })));
+    const before = Date.now();
+    const t = await store.transition("t1", "running");
+    expect(t.frontmatter.startedAt).toBeDefined();
+    expect(Date.parse(t.frontmatter.startedAt!)).toBeGreaterThanOrEqual(before);
+    expect(t.frontmatter.steps).toEqual([]);
+    const disk = (await store.get("t1"))!;
+    expect(disk.frontmatter.startedAt).toBe(t.frontmatter.startedAt);
+    expect(disk.frontmatter.steps).toEqual([]);
+  });
+
+  it("keeps startedAt when the task leaves running", async () => {
+    await store.create(newTask(fm()));
+    const run = await store.transition("t1", "running");
+    await store.transition("t1", "done");
+    expect((await store.get("t1"))!.frontmatter.startedAt).toBe(run.frontmatter.startedAt);
+  });
+
+  it("appendStep adds labels in order", async () => {
+    await store.create(newTask(fm()));
+    await store.transition("t1", "running");
+    await store.appendStep("t1", "Planner", "2026-06-04T10:00:01.000Z");
+    await store.appendStep("t1", "Developer", "2026-06-04T10:00:02.000Z");
+    expect((await store.get("t1"))!.frontmatter.steps).toEqual([
+      { label: "Planner", at: "2026-06-04T10:00:01.000Z" },
+      { label: "Developer", at: "2026-06-04T10:00:02.000Z" },
+    ]);
+  });
+
+  it("save does not drop steps appended since the copy was read", async () => {
+    await store.create(newTask(fm()));
+    await store.transition("t1", "running");
+    const stale = (await store.get("t1"))!;
+    await store.appendStep("t1", "Planner", "2026-06-04T10:00:01.000Z");
+    await store.save(stale);
+    const disk = (await store.get("t1"))!;
+    expect(disk.frontmatter.steps).toEqual([{ label: "Planner", at: "2026-06-04T10:00:01.000Z" }]);
+    expect(disk.frontmatter.startedAt).toBeDefined();
+  });
+
+  it("appendStep on a missing task is a no-op", async () => {
+    await expect(store.appendStep("nope", "Planner")).resolves.toBeUndefined();
+  });
+});

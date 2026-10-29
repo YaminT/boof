@@ -141,6 +141,20 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(done?.frontmatter.tokens?.known).toBe(true);
   });
 
+  it("records each pipeline step with a time", async () => {
+    await store.create(newTask(fm(), "Build a thing."));
+    await engine.tick();
+    const done = (await store.get("t1"))!;
+    const steps = done.frontmatter.steps!;
+    const labels = steps.map((s) => s.label);
+    expect(labels.slice(0, 3)).toEqual(["Planner", "Planner (refinement)", "Developer"]);
+    expect(labels.some((l) => l.startsWith("Reviewer (round 1"))).toBe(true);
+    const times = steps.map((s) => Date.parse(s.at));
+    expect(times.every((t) => !Number.isNaN(t))).toBe(true);
+    expect([...times].sort((a, b) => a - b)).toEqual(times);
+    expect(Date.parse(done.frontmatter.startedAt!)).toBeLessThanOrEqual(times[0]!);
+  });
+
   it("respects skip and priority ordering", async () => {
     await store.create(newTask(fm({ id: "low", priority: 10 }), "low"));
     await store.create(newTask(fm({ id: "high", priority: 90 }), "high"));
