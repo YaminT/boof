@@ -45,6 +45,11 @@ export interface AtomicWriteOptions {
   fallbackWrite?: (fh: FileHandle, contents: string) => Promise<void>;
 }
 
+async function writeAndSync(fh: FileHandle, contents: string): Promise<void> {
+  await fh.writeFile(contents, "utf8");
+  await fh.sync();
+}
+
 /** link(2) failures that mean "this filesystem has no hard links". */
 const NO_HARD_LINK_CODES = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
 
@@ -64,10 +69,7 @@ export async function atomicWrite(
     mode,
     exclusive,
     linkFn = link,
-    fallbackWrite = async (fh, text) => {
-      await fh.writeFile(text, "utf8");
-      await fh.sync();
-    },
+    fallbackWrite = writeAndSync,
   } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
