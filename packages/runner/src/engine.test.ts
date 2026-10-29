@@ -179,6 +179,19 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(await labels("t2")).toEqual(["Planner", "Planner (refinement)", "Developer", "Failed"]);
   });
 
+  it("a run whose closing bookkeeping throws ends with Failed only, never Finished then Failed", async () => {
+    mockState.onRun = async (opts) => {
+      // The usage aggregate cannot be written: persistUsage throws after the work is done.
+      if (opts.role === "reviewer")
+        await mkdir(join(projectDir, "usage.json"), { recursive: true });
+    };
+    await store.create(newTask(fm(), "Build it."));
+    const r = await engine.tick();
+    expect(r.kind === "ran" ? r.outcome.kind : r.kind).toBe("failed");
+    const steps = (await store.get("t1"))!.frontmatter.steps!.map((s) => s.label);
+    expect(steps.filter((l) => ["Finished", "Failed", "Stopped"].includes(l))).toEqual(["Failed"]);
+  });
+
   it("respects skip and priority ordering", async () => {
     await store.create(newTask(fm({ id: "low", priority: 10 }), "low"));
     await store.create(newTask(fm({ id: "high", priority: 90 }), "high"));

@@ -231,7 +231,9 @@ export class Pipeline {
   }
 
   private closeSteps(id: string, label: (typeof CLOSING_STEP_LABELS)[number]): Promise<void> {
-    return this.deps.store.appendStep(id, label).catch(() => {});
+    return this.deps.store.appendStep(id, label).catch((err) => {
+      console.error(`could not write the closing "${label}" entry for task ${id}:`, err);
+    });
   }
 
   private areaDir(id: string): string {
@@ -886,9 +888,10 @@ export class Pipeline {
           );
         }
       }
-      await this.closeSteps(id, "Finished");
       await this.mirrorLiveLog(task);
       await this.persistUsage(task, usages);
+      // Last: both calls above can still throw, and the catch then closes the run as Failed.
+      await this.closeSteps(id, "Finished");
       return { kind: "done", task };
     } catch (err) {
       const overBudget = err instanceof BudgetExceededError;
