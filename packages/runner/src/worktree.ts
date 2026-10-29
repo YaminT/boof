@@ -62,9 +62,11 @@ export async function isGitRepo(dir: string): Promise<boolean> {
  * repository's main checkout, its subdirectories and its linked worktrees; null when git fails.
  */
 export async function repoCommonDir(dir: string): Promise<string | null> {
-  const res = await git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  // No `--path-format=absolute` (git < 2.31 echoes it): the printed path may be relative to `dir`.
+  const res = await git(dir, ["rev-parse", "--git-common-dir"]);
   if (res.code !== 0 || !res.out) return null;
-  return realpath(res.out).catch(() => res.out);
+  const abs = resolve(dir, res.out);
+  return realpath(abs).catch(() => abs);
 }
 
 /** Branch checked out in `dir` (git symbolic-ref); null when detached, not a repo or git fails. */
@@ -548,9 +550,16 @@ export async function branchHead(workingDir: string, branch: string): Promise<st
 /**
  * Prune stale per-task worktrees on startup so crashed runs don't accumulate
  * (worktree-isolation spec). Only git bookkeeping for missing directories is
- * pruned; worktree directories and task branches are never removed.
+ * pruned; worktree directories and task branches are never removed. Rejects when git exits
+ * non-zero or times out, so callers can log it.
  */
 export async function pruneStaleWorktrees(workingDir: string): Promise<void> {
   if (!(await isGitRepo(workingDir))) return;
-  await git(workingDir, ["worktree", "prune"]);
+  const res = await git(workingDir, ["worktree", "prune"]);
+  if (res.timedOut) throw new Error(`git worktree prune timed out in ${workingDir}`);
+  if (res.code !== 0) {
+    throw new Error(
+      `git worktree prune failed in ${workingDir} (exit ${res.code}): ${res.err || res.out}`,
+    );
+  }
 }

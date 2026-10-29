@@ -13,6 +13,7 @@ import {
   isGitRepo,
   NotAGitRepoError,
   pruneStaleWorktrees,
+  repoCommonDir,
   UnknownBaseRefError,
   type WorktreeOptions,
 } from "./worktree.js";
@@ -69,6 +70,39 @@ describe("worktree isolation", () => {
     expect(list).not.toContain(gone.path);
     expect(await exists(live.path)).toBe(true);
     await expect(pruneStaleWorktrees(nonRepo)).resolves.toBeUndefined();
+  });
+
+  it("pruneStaleWorktrees rejects when git exits non-zero", async () => {
+    // A git shim on PATH that fails `worktree prune` and forwards everything else.
+    const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
+    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+    await writeFile(
+      join(shim, "git"),
+      `#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = prune ]; then echo boom >&2; exit 3; fi\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${shim}:${oldPath}`;
+    try {
+      await expect(pruneStaleWorktrees(repo)).rejects.toThrow(/prune failed.*exit 3.*boom/);
+    } finally {
+      process.env.PATH = oldPath;
+      await rm(shim, { recursive: true, force: true });
+    }
+  });
+
+  it("repoCommonDir is shared by a checkout, its subdirectory and linked worktrees only", async () => {
+    const other = await mkdtemp(join(tmpdir(), "boof-other-"));
+    try {
+      await execCommand("git", ["init", "-q"], { cwd: other });
+      const main = await repoCommonDir(repo);
+      expect(main).toBeTruthy();
+      expect(await repoCommonDir(other)).not.toBe(main);
+      const wt = await createWorktree(repo, "common");
+      expect(await repoCommonDir(wt.path)).toBe(main);
+    } finally {
+      await rm(other, { recursive: true, force: true });
+    }
   });
 
   it("refuses to create a worktree on a non-git dir", async () => {

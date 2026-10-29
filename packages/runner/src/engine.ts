@@ -538,7 +538,9 @@ export class RunnerEngine {
     await this.recoverInterrupted().catch((err) => console.error("task recovery failed:", err));
     for (const project of await this.projects.list().catch(() => [])) {
       if (project.workingDirectory) {
-        await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+        await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+          console.error(`could not prune worktrees of project ${project.id}:`, err),
+        );
       }
     }
     try {
