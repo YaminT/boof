@@ -356,7 +356,7 @@ The task is then recorded with the status `stopped` (directory `tasks/stopped/`)
 
 A stopped run may have partial changes in its worktree. The worktree and branch are always kept (`worktree.onFailure: "delete"` never applies to a stop). A retry continues in that worktree: the pipeline tells the agent that the previous run was stopped and to inspect `git status` and `git diff` before it continues, like the "Previous attempt interrupted" note for transient retries.
 
-A graceful shutdown (`SIGTERM`, for example under systemd) is intentional too: the engine asks each running task to stop and the task ends as `stopped` with the note `stopped by server shutdown`. Only a crash (below) ends as `failed`. A plan sync with `--stop-running` for a removed goal also ends the task as `stopped`. Older data roots have no `tasks/stopped/`; the runner creates it at start, and tasks that were stopped before stay `failed`.
+A graceful shutdown (`SIGTERM`, for example under systemd) is intentional too: the engine asks each running task to stop and the task ends as `stopped` with the note `stopped by server shutdown`. A shutdown that begins while the engine is selecting work starts nothing more, and a task that still appears while the engine drains is asked to stop too. Only a crash (below) ends as `failed`. A plan sync with `--stop-running` for a removed goal also ends the task as `stopped`. Older data roots have no `tasks/stopped/`; the runner creates it at start, and tasks that were stopped before stay `failed`.
 
 ### Recovery after a crash or restart
 

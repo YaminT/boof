@@ -427,7 +427,8 @@ export class RunnerEngine {
     while (this.inflight.size < concurrency && !this.stopRequested) {
       const { selection: next, blocked } = await this.selectWithBudget();
       this.budgetBlocked = blocked;
-      if (!next) break;
+      // A shutdown may have begun while the selection was pending: start nothing more.
+      if (this.stopRequested || !next) break;
       const p = this.start(next);
       p.catch((err) => console.error("task failed to run:", err)); // runUntilIdle rethrows via race
       started.push(p);
@@ -575,33 +576,48 @@ export class RunnerEngine {
   async shutdown(graceMs = 30_000): Promise<{ stopped: string[]; timedOut: boolean }> {
     this.stop();
     const stopped: string[] = [];
-    for (const [projectId, id] of [...this.runningTasks]) {
-      const dir = this.projects.dir(projectId);
-      try {
-        await mkdir(taskControlDir(dir, id), { recursive: true });
-        await writeFile(
-          taskStopRequestPath(dir, id),
-          `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
-          "utf8",
-        );
-        await appendFile(
-          join(workingAreaDir(dir, id), "log.txt"),
-          `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
-          "utf8",
-        ).catch(() => {});
+    const deadline = Date.now() + graceMs;
+    for (;;) {
+      // A task can start while we drain (tick() does not check stopRequested): ask it too.
+      for (const [projectId, id] of [...this.runningTasks]) {
+        if (stopped.includes(id)) continue;
+        await this.requestStop(projectId, id);
         stopped.push(id);
-      } catch (err) {
-        console.error(`could not request stop for ${id}:`, err);
       }
+      if (this.inflight.size === 0) return { stopped, timedOut: false };
+      const left = deadline - Date.now();
+      if (left <= 0) return { stopped, timedOut: true };
+      const settled = Promise.race([...this.inflight.values()].map((p) => p.catch(() => {}))).then(
+        () => "settled" as const,
+      );
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<"timeout">((res) => {
+        timer = setTimeout(() => res("timeout"), left);
+      });
+      const result = await Promise.race([settled, timeout]);
+      if (timer) clearTimeout(timer);
+      if (result === "timeout") return { stopped, timedOut: true };
     }
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<"timeout">((res) => {
-      timer = setTimeout(() => res("timeout"), graceMs);
-    });
-    const drained = Promise.allSettled([...this.inflight.values()]).then(() => "drained" as const);
-    const result = await Promise.race([drained, timeout]);
-    if (timer) clearTimeout(timer);
-    return { stopped, timedOut: result === "timeout" };
+  }
+
+  /** Write the shutdown stop request for a running task and note it in its log. */
+  private async requestStop(projectId: string, id: string): Promise<void> {
+    const dir = this.projects.dir(projectId);
+    try {
+      await mkdir(taskControlDir(dir, id), { recursive: true });
+      await writeFile(
+        taskStopRequestPath(dir, id),
+        `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
+        "utf8",
+      );
+      await appendFile(
+        join(workingAreaDir(dir, id), "log.txt"),
+        `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
+        "utf8",
+      ).catch(() => {});
+    } catch (err) {
+      console.error(`could not request stop for ${id}:`, err);
+    }
   }
 
   private sleep(ms: number): Promise<void> {

@@ -10,8 +10,8 @@ import {
   readFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { basename, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentStatus,
   defaultSettings,
@@ -1787,6 +1787,68 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
   it("returns at once when nothing is running", async () => {
     expect(await engine.shutdown(1000)).toEqual({ stopped: [], timedOut: false });
   });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a shutdown that lands during selection starts nothing", async () => {
+    await store.create(newTask(fm(), "Build it."));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let selecting!: () => void;
+    const inSelect = new Promise<void>((r) => (selecting = r));
+    const target = engine as unknown as { selectWithBudget: () => Promise<unknown> };
+    const original = target.selectWithBudget.bind(engine);
+    vi.spyOn(target, "selectWithBudget").mockImplementationOnce(async () => {
+      selecting();
+      await gate;
+      return original();
+    });
+    const looping = engine.loop();
+    await inSelect;
+    const down = engine.shutdown(5000);
+    release();
+    expect(await down).toEqual({ stopped: [], timedOut: false });
+    await looping;
+    expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+    expect(mockState.calls).toEqual([]);
+    expect(await exists(taskStopRequestPath(projectDir, "t1"))).toBe(false);
+  });
+
+  it("asks a task that starts while it drains to stop as well", async () => {
+    const b = await addProject("b");
+    await store.create(newTask(fm({ id: "a1" }), "a"));
+    await b.store.create(newTask(fm({ id: "b1" }), "b"));
+    const gate = () => {
+      let open!: () => void;
+      const wait = new Promise<void>((r) => (open = r));
+      return { wait, open };
+    };
+    const started = { a1: gate(), b1: gate() };
+    const go = { a1: gate(), b1: gate() };
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "planner") return;
+      const id = basename(opts.cwd) as "a1" | "b1";
+      started[id].open();
+      await go[id].wait;
+    };
+    const runA = engine.tick(); // a1 runs, its planner held open
+    await started.a1.wait;
+    const down = engine.shutdown(10_000); // asks a1 to stop, then waits for the drain
+    const runB = engine.tick(); // tick() has no stop check: b1 starts after the shutdown began
+    await started.b1.wait;
+    go.a1.open();
+    expect((await runA).kind).toBe("ran");
+    await vi.waitFor(() => expect(existsSync(taskStopRequestPath(b.dir, "b1"))).toBe(true), {
+      timeout: 5000,
+    });
+    go.b1.open();
+    expect((await runB).kind).toBe("ran");
+    expect(await down).toEqual({ stopped: ["a1", "b1"], timedOut: false });
+    expect((await store.get("a1"))?.frontmatter.status).toBe("stopped");
+    expect((await b.store.get("b1"))?.frontmatter.status).toBe("stopped");
+    expect((await b.store.get("b1"))?.body.log).toContain("stopped by server shutdown");
+  });
+
   describe("recovery of interrupted tasks", () => {
     /** A task a dead runner left in running: worktree, live log, no pipeline driving it. */
     const crash = async (id = "t1", withLog = true) => {

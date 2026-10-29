@@ -16,7 +16,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`real-tools-parse-questions`](real-tools-parse-questions/goal.boof.xml) — Real tool adapters must surface planner questions (park flow is mock-only)
 - [x] [`running-task-edits-survive`](running-task-edits-survive/goal.boof.xml) — Edits to a running task survive the run (no stale overwrite)
 - [x] [`task-store-atomicity`](task-store-atomicity/goal.boof.xml) — TaskStore transitions and create are atomic (no task in two status dirs)
-- [ ] [`shutdown-fill-race`](shutdown-fill-race/goal.boof.xml) — No task starts after shutdown() began
+- [x] [`shutdown-fill-race`](shutdown-fill-race/goal.boof.xml) — No task starts after shutdown() began
 - [ ] [`orphan-agent-processes`](orphan-agent-processes/goal.boof.xml) — Record agent process groups and reap orphans on recovery (after: desktop-graceful-quit)
 - [ ] [`prompt-via-stdin-for-codex-opencode`](prompt-via-stdin-for-codex-opencode/goal.boof.xml) — Pass large prompts to codex/opencode without hitting argv limits
 - [ ] [`usage-ledger-accuracy`](usage-ledger-accuracy/goal.boof.xml) — Usage ledger: codex cost is unknown, failed attempts are not recorded
