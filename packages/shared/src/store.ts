@@ -275,7 +275,7 @@ export class TaskStore {
       await atomicWrite(destPath, serializeTask(task));
       if (fromPath !== destPath) {
         if (fromStatus === "running") {
-          await rm(workingAreaDir(this.root, id), { recursive: true, force: true });
+          await rmWorkingArea(workingAreaDir(this.root, id));
         } else {
           await rm(fromPath, { force: true });
         }
@@ -308,7 +308,7 @@ export class TaskStore {
     const located = await this.locate(id);
     if (!located) return;
     if (located.status === "running") {
-      await rm(workingAreaDir(this.root, id), { recursive: true, force: true });
+      await rmWorkingArea(workingAreaDir(this.root, id));
     } else {
       await rm(located.path, { force: true });
     }
@@ -321,4 +321,13 @@ export class TaskStore {
     task.frontmatter.skip = skip;
     return this.save(task);
   }
+}
+
+/**
+ * Remove a task's working area. The control directory is written by other processes (the inject
+ * and stop APIs) up to the moment the task leaves `running`, so a recursive remove can meet a
+ * file created mid-walk and fail with ENOTEMPTY; retry instead of failing the transition.
+ */
+function rmWorkingArea(dir: string): Promise<void> {
+  return rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 25 });
 }

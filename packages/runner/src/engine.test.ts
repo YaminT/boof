@@ -1213,18 +1213,33 @@ describe("steering a running step (mock tool)", () => {
     );
   };
 
+  /**
+   * Run `fn` every 40 ms, like a user acting on the task. The returned stop clears the timer and
+   * waits for the ticks still in flight: a tick is a few awaited file writes, and one that outlives
+   * the test would write into the task directory while the afterEach cleanup removes it (ENOTEMPTY).
+   */
+  const poll = (fn: () => Promise<void>) => {
+    const inflight = new Set<Promise<void>>();
+    const timer = setInterval(() => {
+      const tick = fn().catch(() => {});
+      inflight.add(tick);
+      void tick.finally(() => inflight.delete(tick));
+    }, 40);
+    return async () => {
+      clearInterval(timer);
+      await Promise.all([...inflight]);
+    };
+  };
+
   /** Steer `times` times, each once a fresh Developer attempt has started and the last steer is gone. */
   const steerDeveloper = (times: number) => {
     let sent = 0;
-    const timer = setInterval(() => {
-      void (async () => {
-        if (sent >= times || existsSync(taskSteerRequestPath(projectDir, "t1"))) return;
-        if (devHeaders(await liveLog()) !== sent + 1) return;
-        sent++;
-        await requestSteer(sent === 1 ? STEER_TEXT : `${STEER_TEXT} ${sent}`);
-      })().catch(() => {});
-    }, 40);
-    return () => clearInterval(timer);
+    return poll(async () => {
+      if (sent >= times || existsSync(taskSteerRequestPath(projectDir, "t1"))) return;
+      if (devHeaders(await liveLog()) !== sent + 1) return;
+      sent++;
+      await requestSteer(sent === 1 ? STEER_TEXT : `${STEER_TEXT} ${sent}`);
+    });
   };
 
   const runTask = async (prompt: string) => {
@@ -1240,7 +1255,7 @@ describe("steering a running step (mock tool)", () => {
     try {
       outcome = await runTask("Build it. [[mock-stall developer=1]]");
     } finally {
-      stop();
+      await stop();
     }
     expect(outcome.kind).toBe("done");
     expect(devCalls()).toBe(2);
@@ -1271,7 +1286,7 @@ describe("steering a running step (mock tool)", () => {
       const outcome = await runTask("Build it. [[mock-stall developer=1]]");
       expect(outcome.kind).toBe("done");
     } finally {
-      stop();
+      await stop();
     }
     expect(mockState.resumes).toHaveLength(0);
     const devPrompts = mockState.prompts.filter((_, i) => mockState.calls[i] === "developer");
@@ -1292,7 +1307,7 @@ describe("steering a running step (mock tool)", () => {
       const outcome = await runTask("Build it. [[mock-stall developer=2]]");
       expect(outcome.kind).toBe("done");
     } finally {
-      stop();
+      await stop();
     }
     expect(devCalls()).toBe(3);
   });
@@ -1308,7 +1323,7 @@ describe("steering a running step (mock tool)", () => {
     try {
       outcome = await runTask("Build it. [[mock-stall developer=6]]");
     } finally {
-      stop();
+      await stop();
     }
     expect(outcome.kind === "failed" ? outcome.error : outcome.kind).toBe("done");
     const done = (await store.get("t1"))!;
@@ -1342,19 +1357,19 @@ describe("steering a running step (mock tool)", () => {
   });
 
   it("a stop request wins over a steer", async () => {
-    const timer = setInterval(() => {
-      void (async () => {
-        if (devHeaders(await liveLog()) !== 1) return;
-        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
-        await writeFile(taskStopRequestPath(projectDir, "t1"), "stop\n");
-        await requestSteer(STEER_TEXT);
-      })().catch(() => {});
-    }, 40);
+    let sent = false;
+    const stop = poll(async () => {
+      if (sent || devHeaders(await liveLog()) !== 1) return;
+      sent = true;
+      await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+      await writeFile(taskStopRequestPath(projectDir, "t1"), "stop\n");
+      await requestSteer(STEER_TEXT);
+    });
     try {
       const outcome = await runTask("Build it. [[mock-stall developer=1]]");
       expect(outcome.kind).toBe("stopped");
     } finally {
-      clearInterval(timer);
+      await stop();
     }
     expect(devCalls()).toBe(1);
   });
