@@ -39,7 +39,7 @@ In this repository, Boof Runner includes:
 
 Boof Runner has a simple coordination model: the filesystem is the source of truth.
 
-There is no database. The web server and runner both read and write the same data root. Atomic writes, file locks, and status-directory reconciliation keep that safe enough for the local single-user model.
+There is no database. The web server and runner both read and write the same data root. Atomic writes, in-process locks, and status-directory reconciliation keep that safe enough for the local single-user model (see Persistence And Safety for what holds within one process and across processes).
 
 The default data root (layout v2, `settings.json` has `schemaVersion: 2`) contains:
 
@@ -454,11 +454,12 @@ Authentication is middleware in `packages/web/src/middleware/`. The operations d
 
 The most important safety mechanisms are:
 
-- Atomic writes: files are written through temp files and renamed.
-- Per-file locks: concurrent writes to the same file are serialized.
+- Atomic writes: files are written through a temp file that is fsynced, then renamed, and the directory is fsynced after it, so a crash leaves the old or the new file, never a partial one. Creating a task is exclusive: it fails with a conflict if the id exists.
+- Locks (within one process): `TaskStore` serializes every operation on one task id (create, save, modify, transition, delete), so a claim and an edit cannot interleave. Settings, project and auth read-modify-write cycles (`SettingsStore.mutate`, the project and auth stores) each run under one lock, and a plan sync runs under a per-plan lock. A writer that owns only some fields uses `TaskStore.modify` and keeps the edits made since it loaded its copy.
 - Status state machine: illegal task transitions are rejected.
 - Directory reconciliation: status directories repair mismatched task frontmatter.
 - Single-runner guard: the CLI prevents duplicate runner loops for the same data root.
+- Across processes (the CLI next to the server) these locks do not apply. Only whole-file atomic writes, exclusive task create and `<root>/.migration.lock` hold, so two processes that edit the same task, settings or plan at once can lose one update. Data roots shared across hosts are not supported: the migration lock names a pid, which means nothing on another machine.
 - Worktree isolation: code mutation happens away from the main checkout where possible.
 - Durable logs and reports: live output is mirrored back into the task file before final status transitions.
 - Mock tool tests: most behavior is tested without network access or token spend.
