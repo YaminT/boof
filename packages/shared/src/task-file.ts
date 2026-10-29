@@ -36,7 +36,8 @@ function splitSections(md: string, level: 2 | 3, allowed: string[]): Map<string,
   for (const line of lines) {
     if (line.startsWith(prefix)) {
       const title = line.slice(prefix.length).trim().toLowerCase();
-      if (allow.has(title)) {
+      // Only the first occurrence of a heading opens a section; a repeat is content.
+      if (allow.has(title) && !out.has(title) && title !== current) {
         flush();
         current = title;
         buf = [];
@@ -75,13 +76,30 @@ export function parseTask(raw: string): Task {
   return { frontmatter, body };
 }
 
+/**
+ * Indent by one space every line that would open a reserved section (as `injected.ts` does), so
+ * prompt, agent output and logs cannot split the file or forge another section.
+ */
+function guardHeadings(text: string, level: 2 | 3): string {
+  const prefix = level === 2 ? "## " : "### ";
+  const reserved = level === 2 ? TOP_SECTIONS : REPORT_SECTIONS;
+  return text
+    .split("\n")
+    .map((l) =>
+      l.startsWith(prefix) && reserved.includes(l.slice(prefix.length).trim().toLowerCase())
+        ? ` ${l}`
+        : l,
+    )
+    .join("\n");
+}
+
 function sectionBlock(title: string, content: string): string {
-  const trimmed = content.trim();
+  const trimmed = guardHeadings(content.trim(), 2);
   return trimmed ? `## ${title}\n\n${trimmed}\n` : `## ${title}\n`;
 }
 
 function reportBlock(title: string, content: string): string {
-  const trimmed = content.trim();
+  const trimmed = guardHeadings(guardHeadings(content.trim(), 2), 3);
   return trimmed ? `### ${title}\n\n${trimmed}\n` : `### ${title}\n`;
 }
 

@@ -119,6 +119,8 @@ The body stores human-readable content:
 - planner/developer/observer/reviewer reports (observer and reviewer sections hold one entry per round, with its verdict)
 - raw execution log
 
+A line inside a section that would start another section (`## Log`, `### Reviewer`, ...) is stored indented by one space; only the first occurrence of each heading opens a section.
+
 This format keeps task data editable, inspectable, and portable outside the app.
 
 ## Plans

@@ -47,7 +47,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`service-install-keeps-options`](service-install-keeps-options/goal.boof.xml) — service install keeps previously configured options
 - [ ] [`cli-version-and-unknown-command`](cli-version-and-unknown-command/goal.boof.xml) — Add --version and stop unknown commands from starting the server
 - [ ] [`desktop-healthz-facts`](desktop-healthz-facts/goal.boof.xml) — Desktop server reports version and runner state on /healthz
-- [ ] [`task-file-heading-escape`](task-file-heading-escape/goal.boof.xml) — Task markdown round-trip survives section headings in prompt, reports and log
+- [x] [`task-file-heading-escape`](task-file-heading-escape/goal.boof.xml) — Task markdown round-trip survives section headings in prompt, reports and log
 - [x] [`store-update-under-lock`](store-update-under-lock/goal.boof.xml) — SettingsStore.update and ProjectStore.update read-modify-write under the lock
 - [ ] [`plan-goal-path-uniqueness`](plan-goal-path-uniqueness/goal.boof.xml) — Plan validation normalises and de-duplicates goal paths
 - [x] [`atomic-write-lock-map-and-fsync`](atomic-write-lock-map-and-fsync/goal.boof.xml) — withFileLock frees its map entries; atomicWrite fsyncs

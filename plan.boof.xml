@@ -29,7 +29,7 @@
     <goal id="service-install-keeps-options" path="goals/service-install-keeps-options" order="26" status="plan"></goal>
     <goal id="cli-version-and-unknown-command" path="goals/cli-version-and-unknown-command" order="27" status="plan"></goal>
     <goal id="desktop-healthz-facts" path="goals/desktop-healthz-facts" order="28" status="plan"></goal>
-    <goal id="task-file-heading-escape" path="goals/task-file-heading-escape" order="29" status="plan"></goal>
+    <goal id="task-file-heading-escape" path="goals/task-file-heading-escape" order="29" status="done"></goal>
     <goal id="store-update-under-lock" path="goals/store-update-under-lock" order="30" status="done"></goal>
     <goal id="plan-goal-path-uniqueness" path="goals/plan-goal-path-uniqueness" order="31" status="plan"></goal>
     <goal id="atomic-write-lock-map-and-fsync" path="goals/atomic-write-lock-map-and-fsync" order="32" status="done"></goal>
