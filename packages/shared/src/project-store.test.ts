@@ -97,6 +97,36 @@ describe("ProjectStore", () => {
     await expect(store.create({ workingDirectory: inside })).rejects.toBeInstanceOf(ProjectError);
   });
 
+  /** Stand-in toplevel: the nearest ancestor (or self) holding `.git/HEAD`. */
+  const fakeTop = async (dir: string): Promise<string | null> => {
+    for (let d = dir; ; d = join(d, "..")) {
+      if (await fakeGit(d)) return realpath(d);
+      if (join(d, "..") === d || d === "/") return null;
+    }
+  };
+  const deepGit = async (dir: string) => (await fakeTop(dir)) !== null;
+
+  it("rejects a directory inside another project's repository, on create and update", async () => {
+    const s = new ProjectStore(root, { isGitRepo: deepGit, repoToplevel: fakeTop });
+    const mono = await makeRepo("mono");
+    await mkdir(join(mono, "packages", "web"), { recursive: true });
+    await s.create({ workingDirectory: mono, id: "mono" });
+    await expect(
+      s.create({ workingDirectory: join(mono, "packages", "web") }),
+    ).rejects.toMatchObject({
+      code: "same_repo",
+      message: expect.stringContaining("repository of project 'mono'"),
+    });
+    const other = await s.create({ workingDirectory: await makeRepo("other") });
+    await expect(
+      s.update(other.id, { workingDirectory: join(mono, "packages") }),
+    ).rejects.toMatchObject({
+      code: "same_repo",
+    });
+    await expect(s.update("mono", { name: "Mono" })).resolves.toMatchObject({ name: "Mono" });
+    expect((await s.list()).map((p) => p.id)).toEqual(["mono", "other"]);
+  });
+
   it("rejects a duplicate working directory, also through a symlink", async () => {
     const dir = await makeRepo("app");
     await store.create({ workingDirectory: dir });

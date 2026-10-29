@@ -21,7 +21,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`prompt-via-stdin-for-codex-opencode`](prompt-via-stdin-for-codex-opencode/goal.boof.xml) — Pass large prompts to codex/opencode without hitting argv limits
 - [x] [`usage-ledger-accuracy`](usage-ledger-accuracy/goal.boof.xml) — Usage ledger: codex cost is unknown, failed attempts are not recorded
 - [x] [`git-worktree-add-timeout`](git-worktree-add-timeout/goal.boof.xml) — Do not SIGKILL slow `git worktree add`; clean up a failed add
-- [ ] [`reject-nested-projects-same-repo`](reject-nested-projects-same-repo/goal.boof.xml) — Reject two projects rooted in the same git repository
+- [x] [`reject-nested-projects-same-repo`](reject-nested-projects-same-repo/goal.boof.xml) — Reject two projects rooted in the same git repository
 - [x] [`review-diff-includes-untracked`](review-diff-includes-untracked/goal.boof.xml) — Observer and reviewer see the content of new (untracked) files
 
 ## Security

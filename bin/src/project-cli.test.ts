@@ -39,6 +39,14 @@ afterEach(async () => {
 });
 
 describe("boof-runner project", () => {
+  it("add refuses a subdirectory of a registered repository", async () => {
+    const dir = await repo("My App");
+    await mkdir(join(dir, "sub"), { recursive: true });
+    expect(await run("add", dir, "-d", root)).toBe(0);
+    expect(await run("add", join(dir, "sub"), "-d", root)).toBe(1);
+    expect(errs.join("\n")).toContain("repository of project 'my-app'");
+  });
+
   it("add registers a git repository and prints its id; list shows it; --json is parseable", async () => {
     const dir = await repo("My App");
     expect(await run("add", dir, "-d", root)).toBe(0);

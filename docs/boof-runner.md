@@ -75,7 +75,7 @@ A project is one git repository with its own queue. `project.json` (`ProjectSche
 
 Every task path helper takes a `root`. For a project that root is `projects/<id>/`, so `TaskStore`, `AttachmentStore` and `UsageStore` are used unchanged, one instance per project. Tasks do not store their project: the directory is authoritative, as it is for status. Ids are per project (two projects can both have a task `fix-login`); API responses add `projectId`.
 
-Creating a project (`ProjectStore.create`) resolves the realpath, requires a git work tree (the check is injected by the caller, so `shared` does not depend on `runner`), refuses a directory inside the data root or one that is already a project, and derives the id from the directory name. A project with an empty `workingDirectory` can only come from migrating a v1 data root that never had one; the runner skips it until a directory is set.
+Creating a project (`ProjectStore.create`) resolves the realpath, requires a git work tree (the check is injected by the caller, so `shared` does not depend on `runner`), refuses a directory inside the data root or one that is already a project, and derives the id from the directory name. It also refuses a directory whose git toplevel (`git rev-parse --show-toplevel`) is already another project's, archived or not: two projects in one repository would share the `boof-runner/<id>` branch namespace and the worktree bookkeeping. The API answers `409 project_exists`. Linked worktrees of one repository have different toplevels and stay allowed. A project with an empty `workingDirectory` can only come from migrating a v1 data root that never had one; the runner skips it until a directory is set.
 
 ### Migration from v1
 

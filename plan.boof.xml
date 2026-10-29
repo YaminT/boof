@@ -10,7 +10,7 @@
     <goal id="prompt-via-stdin-for-codex-opencode" path="goals/prompt-via-stdin-for-codex-opencode" order="7" status="done"></goal>
     <goal id="usage-ledger-accuracy" path="goals/usage-ledger-accuracy" order="8" status="done"></goal>
     <goal id="git-worktree-add-timeout" path="goals/git-worktree-add-timeout" order="9" status="done"></goal>
-    <goal id="reject-nested-projects-same-repo" path="goals/reject-nested-projects-same-repo" order="10" status="plan"></goal>
+    <goal id="reject-nested-projects-same-repo" path="goals/reject-nested-projects-same-repo" order="10" status="done"></goal>
     <goal id="review-diff-includes-untracked" path="goals/review-diff-includes-untracked" order="11" status="done"></goal>
     <goal id="migration-lock" path="goals/migration-lock" order="12" status="done"></goal>
     <goal id="webhook-secrets-at-rest" path="goals/webhook-secrets-at-rest" order="13" status="plan"><depends-on>migration-lock</depends-on></goal>

@@ -7,7 +7,7 @@ import {
   SettingsStore,
   type Project,
 } from "@boof-runner/shared";
-import { isGitRepo } from "@boof-runner/runner";
+import { isGitRepo, repoToplevel } from "@boof-runner/runner";
 import { scaffoldDataRoot } from "./scaffold.js";
 
 export const PROJECT_HELP = `boof-runner project — manage the projects (git repositories) one data root serves
@@ -76,7 +76,7 @@ export async function projectCommand(
       : resolve(process.cwd(), values.data)
     : defaultRoot();
   await scaffoldDataRoot(root);
-  const projects = new ProjectStore(root, { isGitRepo });
+  const projects = new ProjectStore(root, { isGitRepo, repoToplevel });
   const settings = new SettingsStore(root);
 
   try {

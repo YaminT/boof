@@ -48,6 +48,7 @@ import { statusDowngraded, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
   isGitRepo,
+  repoToplevel,
   taskDiff,
   BranchNotFoundError,
   InvalidDiffPathError,
@@ -511,7 +512,7 @@ export class TaskService {
     readonly root: string,
     registry: ToolRegistry = new ToolRegistry(),
   ) {
-    this.projects = new ProjectStore(root, { isGitRepo });
+    this.projects = new ProjectStore(root, { isGitRepo, repoToplevel });
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.registry = registry;
@@ -620,6 +621,8 @@ export class TaskService {
           err.message,
           err.code === "duplicate" ? "project_exists" : "conflict",
         );
+      case "same_repo":
+        return new OpError(409, err.message, "project_exists");
       case "has_running_task":
         return new OpError(409, err.message, "project_busy");
       case "not_git_repo":

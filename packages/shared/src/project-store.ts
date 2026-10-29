@@ -13,6 +13,7 @@ export type ProjectErrorCode =
   | "not_git_repo"
   | "inside_data_root"
   | "duplicate"
+  | "same_repo"
   | "id_taken"
   | "has_running_task";
 
@@ -30,9 +31,14 @@ export class ProjectError extends Error {
 /** Decides whether a directory is a git work tree; injected so shared does not depend on runner. */
 export type RepoValidator = (dir: string) => Promise<boolean>;
 
+/** Resolves the git toplevel (realpath) of a directory; null when it is not in a repository. */
+export type RepoToplevel = (dir: string) => Promise<string | null>;
+
 export interface ProjectStoreOptions {
   /** Called by create/update(workingDirectory); without it no git check is made. */
   isGitRepo?: RepoValidator;
+  /** Called by create/update(workingDirectory) to refuse two projects in one repository. */
+  repoToplevel?: RepoToplevel;
 }
 
 export interface CreateProjectInput {
@@ -67,12 +73,14 @@ function isInside(parent: string, child: string): boolean {
 /** File-backed registry of projects under <root>/projects/<id>/project.json. */
 export class ProjectStore {
   private readonly isGitRepo?: RepoValidator;
+  private readonly repoToplevel?: RepoToplevel;
 
   constructor(
     private readonly root: string,
     opts: ProjectStoreOptions = {},
   ) {
     this.isGitRepo = opts.isGitRepo;
+    this.repoToplevel = opts.repoToplevel;
   }
 
   /** Directory to hand to TaskStore / AttachmentStore / UsageStore for project `id`. */
@@ -138,11 +146,24 @@ export class ProjectStore {
     if (this.isGitRepo && !(await this.isGitRepo(real))) {
       throw new ProjectError("not_git_repo", `Not a git repository: ${real}`);
     }
-    const clash = (await this.list({ includeArchived: true })).find(
-      (p) => p.id !== exceptId && p.workingDirectory === real,
-    );
+    const others = (await this.list({ includeArchived: true })).filter((p) => p.id !== exceptId);
+    const clash = others.find((p) => p.workingDirectory === real);
     if (clash) {
       throw new ProjectError("duplicate", `Directory is already project '${clash.id}': ${real}`);
+    }
+    if (this.repoToplevel) {
+      const top = await this.repoToplevel(real);
+      if (top !== null) {
+        for (const other of others) {
+          if (!other.workingDirectory) continue;
+          if ((await this.repoToplevel(other.workingDirectory)) === top) {
+            throw new ProjectError(
+              "same_repo",
+              `Directory is in the repository of project '${other.id}' (${top}); two projects cannot share one repository`,
+            );
+          }
+        }
+      }
     }
     return real;
   }

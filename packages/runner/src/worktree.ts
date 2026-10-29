@@ -57,6 +57,13 @@ export async function isGitRepo(dir: string): Promise<boolean> {
   return res.code === 0 && res.out === "true";
 }
 
+/** Realpath of the git toplevel of `dir` (`rev-parse --show-toplevel`); null when git fails. */
+export async function repoToplevel(dir: string): Promise<string | null> {
+  const res = await git(dir, ["rev-parse", "--show-toplevel"]);
+  if (res.code !== 0 || !res.out) return null;
+  return realpath(res.out).catch(() => res.out);
+}
+
 /** Branch checked out in `dir` (git symbolic-ref); null when detached, not a repo or git fails. */
 export async function currentBranch(dir: string): Promise<string | null> {
   try {

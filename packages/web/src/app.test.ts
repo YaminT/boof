@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -68,6 +68,34 @@ describe("GET /healthz", () => {
       uptimeSeconds: 5,
       runner: { enabled: true, running: true },
     });
+  });
+});
+
+describe("POST /api/v1/projects", () => {
+  it("answers 409 project_exists for a subdirectory of a registered repository", async () => {
+    await mkdir(join(repo, "packages", "web"), { recursive: true });
+    const res = await req(
+      "/api/v1/projects",
+      json({ workingDirectory: join(repo, "packages", "web") }),
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatchObject({
+      code: "project_exists",
+      message: expect.stringContaining("repository of project 'default'"),
+    });
+  });
+
+  it("allows a linked worktree of a registered repository (different toplevel)", async () => {
+    await execCommand(
+      "git",
+      ["-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i"],
+      { cwd: repo },
+    );
+    const linked = `${repo}-linked`;
+    await execCommand("git", ["worktree", "add", "-q", "-b", "wt", linked], { cwd: repo });
+    const res = await req("/api/v1/projects", json({ workingDirectory: linked }));
+    expect(res.status).toBe(201);
+    await rm(linked, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 });
 

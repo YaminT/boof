@@ -23,6 +23,7 @@ import {
 } from "@boof-runner/shared";
 import {
   isGitRepo,
+  repoToplevel,
   RunnerEngine,
   ToolRegistry,
   importFromRepo,
@@ -136,7 +137,7 @@ export async function resolveProject(
   ref: ProjectRef,
   out: Out = stdoutWrite,
 ): Promise<Project> {
-  const projects = new ProjectStore(root, { isGitRepo });
+  const projects = new ProjectStore(root, { isGitRepo, repoToplevel });
   let project: Project | null = null;
   if (ref.project) {
     project = await projects.get(ref.project);
