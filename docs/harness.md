@@ -497,7 +497,7 @@ When a task is in `action`:
 1. List parked tasks: `GET /api/v1/actions` (MCP `boof_list_actions`).
 2. Read `body.questions` of the task. It is numbered text.
 3. Ask the user the questions. Do not invent answers.
-4. Send the answers as one text (section 8, recipe 5). The task goes to `pending` and continues. A `review` client cannot do this step (`403 forbidden_trust`): ask the user to answer in the web UI (Actions tab).
+4. Send the answers as one text (section 8, recipe 5). The task goes to `pending` and continues. A `review` client cannot do this step (`403 forbidden_trust`): ask the user to answer in the web UI (Inbox in the left rail, or in More on a phone).
 
 ### Budget limits
 
@@ -1983,7 +1983,7 @@ curl -sS -X POST "$BOOF_URL/api/v1/projects/shop/tasks/<task-id>/answers" \
 
 MCP: `boof_list_actions`, then `boof_answer_task` with `{"projectId":"shop","taskId":"<task-id>","answers":"..."}`.
 
-The questions are in `body.questions`. Send one text that answers each number. The task moves to `pending` (the runner must be on). A `review` client gets `403 forbidden_trust`: give the questions to the user and ask them to answer in the web UI (Actions tab).
+The questions are in `body.questions`. Send one text that answers each number. The task moves to `pending` (the runner must be on). A `review` client gets `403 forbidden_trust`: give the questions to the user and ask them to answer in the web UI (Inbox in the left rail, or in More on a phone).
 
 ### Recipe 6. Change requirements
 

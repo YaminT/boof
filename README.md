@@ -43,7 +43,7 @@ Open the URL it prints (default <http://127.0.0.1:4319>). A fresh data root (`./
 boof-runner project add /path/to/repo --default
 ```
 
-**First task.** In the UI open the Tasks tab, add a task with a prompt and queue it, then switch the runner on with the toggle next to the project picker. Or run one prompt headless and watch it finish:
+**First task.** In the UI open Tasks, add a task with a prompt and queue it, then switch the runner on with the runner switch at the bottom of the left rail (under More on a phone). Or run one prompt headless and watch it finish:
 
 ```bash
 boof-runner run "Add a rate limiter to the API" --repo /path/to/repo
