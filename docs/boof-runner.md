@@ -368,7 +368,7 @@ If the runner process dies hard (`SIGKILL`, out of memory, power loss, reboot), 
 
 The UI can inject an additional prompt while a task is running. Boof Runner writes that prompt to the running task's control directory and appends a note to the live log.
 
-Stop and inject requests are written under the task's lock and only while the task is `running`: a request that loses the race with the end of the run answers 400 and leaves nothing behind, and a run starts with an empty control directory.
+Stop and inject requests are written under the task's lock and only while the task is `running`: a request that loses the race with the end of the run answers 400 and, within one process, leaves nothing behind, and a run starts with an empty control directory.
 
 The prompt has a mode:
 

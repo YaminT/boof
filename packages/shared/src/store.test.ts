@@ -276,12 +276,20 @@ describe("TaskStore whileRunning (control files)", () => {
     const order: string[] = [];
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => (entered = r));
     const control = store.whileRunning("t1", async ({ controlDir }) => {
+      entered();
       await gate;
       await writeFile(join(controlDir, "stop"), "now\n");
       order.push("control");
     });
+    await inside;
     const leave = store.transition("t1", "done").then(() => order.push("transition"));
+    // Give the transition every chance to overtake: it must still be queued behind the gate.
+    for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+    expect(order).toEqual([]);
+    expect((await store.get("t1"))?.frontmatter.status).toBe("running");
     release();
     await Promise.all([control, leave]);
     expect(order).toEqual(["control", "transition"]);

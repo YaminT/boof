@@ -471,6 +471,98 @@ describe("trust levels", () => {
     expect((await stop("theirs")).status).toBe(200); // the local principal
   });
 
+  it("inject next-step is refused for a foreign task too, and approval off lifts the rule", async () => {
+    peer = REMOTE;
+    const bot = await mint("bot", ["tasks:read", "tasks:write", "tasks:control"]);
+    const other = await mint("other", ["tasks:read", "tasks:write", "tasks:control"]);
+    const app = build();
+    await call(app, "/api/tasks", post({ title: "Theirs" }), other);
+    const tasks = service.forProject("default").tasks;
+    await tasks.transition("theirs", "pending", undefined, { by: "local" });
+    await tasks.transition("theirs", "running");
+    const inject = () =>
+      call(app, "/api/tasks/theirs/inject", post({ prompt: "Hi.", mode: "next-step" }), bot);
+    const refused = await inject();
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error.code).toBe("forbidden_trust");
+    await setSecurity({ externalTasksRequireApproval: false });
+    expect((await inject()).status).toBe(200);
+    const stop = await call(app, "/api/tasks/theirs/stop", { method: "POST" }, bot);
+    expect(stop.status).toBe(200);
+  });
+
+  describe("plan routes do not stop another client's tasks", () => {
+    const spec = {
+      goal: "Do it",
+      stack: "TS",
+      rules: { do: ["Test first."] },
+      tests: { strategy: "TDD", technology: "vitest", run: "npm test" },
+    };
+    const goal = (id: string) => ({ id, title: id, dependsOn: [], spec });
+    const V1 = "/api/v1/projects/default";
+
+    /** Sync the plan as the local human, then run every task of it. */
+    async function runTasks(planId: string): Promise<string[]> {
+      const plans = service.forProject("default").plans;
+      await plans.syncTasks(planId);
+      const tasks = service.forProject("default").tasks;
+      const ids: string[] = [];
+      for (const t of await tasks.list()) {
+        if (t.frontmatter.planRef?.planId !== planId) continue;
+        const id = t.frontmatter.id;
+        if (t.frontmatter.status === "draft") await tasks.transition(id, "pending");
+        await tasks.transition(id, "running");
+        ids.push(id);
+      }
+      return ids;
+    }
+
+    it("removeGoal and sync stop a human plan's task only for a human, own plan's task for the client", async () => {
+      peer = REMOTE;
+      const bot = await mint("bot", ["plans:read", "plans:write", "tasks:control"]);
+      const app = build();
+      const plans = service.forProject("default").plans;
+      const put = (path: string, method: string, body?: unknown) =>
+        call(app, V1 + path, { ...post(body ?? {}), method }, bot);
+
+      // The human's active plan with a running task; the bot pulls it back to draft.
+      await plans.createPlan({
+        id: "human",
+        title: "Human",
+        status: "active",
+        goals: [goal("h1"), goal("h2")],
+      });
+      const [humanTask] = await runTasks("human");
+      expect((await put("/plans/human", "PUT", { status: "draft" })).status).toBe(200);
+      const del = await put("/plans/human/goals/h1?stopRunning=true", "DELETE");
+      expect(del.status).toBe(200);
+      const dir = service.projects.dir("default");
+      expect(existsSync(taskStopRequestPath(dir, humanTask!))).toBe(false);
+      expect((await service.forProject("default").get(humanTask!))!.frontmatter.status).toBe(
+        "running",
+      );
+
+      // sync: the human re-activates and drops a goal; the bot's sync cannot stop its task.
+      await plans.updatePlan("human", { status: "active" }, undefined);
+      await plans.removeGoal("human", "h2", undefined);
+      expect((await put("/plans/human/sync", "POST", { stopRunning: true })).status).toBe(200);
+      expect(existsSync(taskStopRequestPath(dir, humanTask!))).toBe(false);
+
+      // The bot's own plan (human approved): its running task can be stopped by the bot.
+      const mine = await put("/plans", "POST", {
+        id: "mine",
+        title: "Mine",
+        goals: [goal("m1"), goal("m2")],
+      });
+      expect(mine.status).toBe(201);
+      await plans.updatePlan("mine", { status: "active" }, undefined);
+      const [mineTask] = await runTasks("mine");
+      expect((await put("/plans/mine", "PUT", { status: "draft" })).status).toBe(200);
+      expect((await put("/plans/mine/goals/m1?stopRunning=true", "DELETE")).status).toBe(200);
+      expect(existsSync(taskStopRequestPath(dir, mineTask!))).toBe(true);
+    });
+  });
+
   it("a trusted client may create pending tasks and queue drafts", async () => {
     peer = REMOTE;
     const key = await mint("Good Bot", ["tasks:read", "tasks:write"], { trust: "trusted" });

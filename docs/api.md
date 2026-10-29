@@ -30,7 +30,8 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   `403 forbidden_project`; project lists are filtered.
 - **Trust.** A client with `trust: review` (the default for new clients) creates `draft` tasks
   and plans, cannot queue tasks or activate plans, and may stop or inject into only the tasks it
-  created; a human approves in the UI. A `trusted` client may queue directly.
+  created (`stopRunning` on plan routes likewise stops only its own tasks and leaves the rest
+  running); a human approves in the UI. A `trusted` client may queue directly.
   A client created through `POST /auth/clients` never gets scopes, trust, projects or an expiry
   its creator lacks; a restricted creator's projects and expiry are inherited when omitted.
 - Registering a project as an API client needs the directory to be inside

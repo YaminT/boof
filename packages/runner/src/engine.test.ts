@@ -1961,6 +1961,29 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
     expect(await exists(taskStopRequestPath(projectDir, "t1"))).toBe(false);
   });
 
+  it("a shutdown that lands while the task is still starting stops it", async () => {
+    await store.create(newTask(fm(), "Build it."));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let starting!: () => void;
+    const inStart = new Promise<void>((r) => (starting = r));
+    const target = engine as unknown as { startTask: (...a: unknown[]) => Promise<unknown> };
+    const original = target.startTask.bind(engine);
+    vi.spyOn(target, "startTask").mockImplementationOnce(async (...a) => {
+      starting();
+      await gate;
+      return original(...a);
+    });
+    const run = engine.tick(); // selected and registered as running, still pending on disk
+    await inStart;
+    const down = engine.shutdown(10_000);
+    release();
+    expect((await down).timedOut).toBe(false);
+    await run;
+    expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
+    expect((await store.get("t1"))?.body.log).toContain("stopped by server shutdown");
+  });
+
   it("asks a task that starts while it drains to stop as well", async () => {
     const b = await addProject("b");
     await store.create(newTask(fm({ id: "a1" }), "a"));
@@ -1981,16 +2004,12 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
     const runA = engine.tick(); // a1 runs, its planner held open
     await started.a1.wait;
     const down = engine.shutdown(10_000); // asks a1 to stop, then waits for the drain
-    const runB = engine.tick(); // tick() has no stop check: b1 starts after the shutdown began
-    await started.b1.wait;
+    // tick() has no stop check: b1 starts after the shutdown began and is stopped as it starts.
+    const runB = engine.tick();
     go.a1.open();
     expect((await runA).kind).toBe("ran");
-    await vi.waitFor(() => expect(existsSync(taskStopRequestPath(b.dir, "b1"))).toBe(true), {
-      timeout: 5000,
-    });
-    go.b1.open();
     expect((await runB).kind).toBe("ran");
-    expect(await down).toEqual({ stopped: ["a1", "b1"], timedOut: false });
+    expect((await down).timedOut).toBe(false);
     expect((await store.get("a1"))?.frontmatter.status).toBe("stopped");
     expect((await b.store.get("b1"))?.frontmatter.status).toBe("stopped");
     expect((await b.store.get("b1"))?.body.log).toContain("stopped by server shutdown");

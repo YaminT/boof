@@ -11,6 +11,7 @@ import {
   PlanValidationError,
   PlanVersionConflict,
   securitySettings,
+  type Task,
   TaskStore,
   uniqueKebabId,
   withApproval,
@@ -150,6 +151,15 @@ export class PlanService {
   private async restricted(actor?: Principal): Promise<boolean> {
     if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
     return securitySettings(await this.parent.loadSettings()).externalTasksRequireApproval;
+  }
+
+  /**
+   * Which running tasks a plan route may stop: all for a human or trusted client, only the ones
+   * the client created for a restricted one (the others are left running, the call still succeeds).
+   */
+  private async stopFilter(actor?: Principal): Promise<((task: Task) => boolean) | undefined> {
+    if (!actor || !(await this.restricted(actor))) return undefined;
+    return (task) => task.frontmatter.origin?.client === actor.id;
   }
 
   /** A restricted client may not change a plan a human activated: its edits would reach the queue unreviewed. */
@@ -408,6 +418,7 @@ export class PlanService {
         },
       );
     }
+    const mayStop = opts.stopRunning ? await this.stopFilter(actor) : undefined;
     return this.run(async () => {
       const plan = await this.store.modify(
         planId,
@@ -443,6 +454,7 @@ export class PlanService {
         projectDir: this.projectDir,
         plan,
         stopRunning: opts.stopRunning,
+        mayStop,
       });
       return plan;
     });
@@ -619,6 +631,7 @@ export class PlanService {
       );
     }
     const restricted = await this.restricted(actor);
+    const mayStop = opts.stopRunning ? await this.stopFilter(actor) : undefined;
     return this.run(async () => {
       const plan = await this.store.require(planId);
       if (plan.status !== "active") throw new PlanNotActiveError(plan.id, plan.status);
@@ -635,6 +648,7 @@ export class PlanService {
         planId,
         dryRun: opts.dryRun,
         stopRunning: opts.stopRunning,
+        mayStop,
         createStatus,
         by: actor?.id ?? "local",
       });

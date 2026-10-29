@@ -378,6 +378,8 @@ export class RunnerEngine {
       const id = sel.task.frontmatter.id;
       this.runningTasks.set(project.id, id);
       await this.startTask(project, store, dir, id);
+      // A shutdown that ran while the task was still starting found it pending: ask it now.
+      if (this.stopRequested) await this.requestStop(project.id, id);
       const running = await store.get(id);
       const settings = await this.settingsStore.load();
       const pipeline = new Pipeline({

@@ -41,11 +41,6 @@ import {
 } from "@boof-runner/shared";
 
 /** Sync was asked for a plan that is not `active`. */
-/** The task finished between the status read and the control write: nothing left to do. */
-function ignoreNotRunning(err: unknown): void {
-  if (!(err instanceof TaskNotRunningError)) throw err;
-}
-
 export class PlanNotActiveError extends Error {
   constructor(
     public readonly planId: string,
@@ -65,6 +60,8 @@ export interface SyncOptions {
   dryRun?: boolean;
   /** A removed goal's running task is asked to stop (default: it is left running). */
   stopRunning?: boolean;
+  /** Narrows `stopRunning` to the tasks this accepts (restricted clients: their own). */
+  mayStop?: (task: Task) => boolean;
   /** Per-task tool override for the tasks created. */
   tools?: TaskTools;
   /** Status of the tasks created (default `pending`; `draft` for plans of review-trust clients). */
@@ -313,6 +310,11 @@ export async function taskStatusForPlan(
 
 // --- Removed goals ---
 
+/** The task finished between the status read and the control write: nothing left to do. */
+function ignoreNotRunning(err: unknown): void {
+  if (!(err instanceof TaskNotRunningError)) throw err;
+}
+
 /**
  * Tasks of goals that are no longer in the plan: pending/draft tasks are archived with the
  * label `goal-removed`; a running task gets a stop request only with `stopRunning`; done
@@ -323,6 +325,8 @@ export async function archiveRemovedGoalTasks(opts: {
   plan: Plan;
   tasks?: Task[];
   stopRunning?: boolean;
+  /** Narrows `stopRunning`: a running task this returns false for is left running. */
+  mayStop?: (task: Task) => boolean;
   dryRun?: boolean;
 }): Promise<SyncArchived[]> {
   const store = new TaskStore(opts.projectDir);
@@ -346,7 +350,7 @@ export async function archiveRemovedGoalTasks(opts: {
         });
       }
       out.push({ goalId: ref.goalId, taskId: id, action: "archived", reason: "goal-removed" });
-    } else if (status === "running" && opts.stopRunning) {
+    } else if (status === "running" && opts.stopRunning && (!opts.mayStop || opts.mayStop(task))) {
       if (!opts.dryRun) {
         await store
           .whileRunning(id, async ({ controlDir }) => {
@@ -763,6 +767,7 @@ async function syncOnce(
     plan,
     tasks: mine,
     stopRunning: opts.stopRunning,
+    mayStop: opts.mayStop,
     dryRun: dry,
   });
 
