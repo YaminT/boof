@@ -152,7 +152,9 @@ export async function resolveProject(
       } catch (err) {
         throw new ProjectResolutionError(err instanceof Error ? err.message : String(err));
       }
-      await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+      await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+        console.error(`could not prune worktrees of project ${project.id}:`, err),
+      );
       out(`Registered project '${project.id}' for ${project.workingDirectory}\n`);
     }
   } else {

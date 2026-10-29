@@ -17,7 +17,10 @@ async function git(cwd: string, args: string[]) {
 /** Untracked, not-ignored files of the worktree at `cwd` (at most MAX_UNTRACKED). */
 export async function untrackedFiles(cwd: string): Promise<string[]> {
   const res = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  if (res.code !== 0) return [];
+  if (res.code !== 0) {
+    console.error(`could not list untracked files in ${cwd}: ${res.stderr.trim() || res.code}`);
+    return [];
+  }
   return res.stdout.split("\0").filter(Boolean).slice(0, MAX_UNTRACKED);
 }
 

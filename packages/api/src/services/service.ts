@@ -562,7 +562,9 @@ export class TaskService {
           input.origin ??
           (actor?.kind === "client" ? { kind: "api", client: actor.id } : { kind: "ui" }),
       });
-      await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+      await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+        console.error(`could not prune worktrees of project ${project.id}:`, err),
+      );
       return project;
     } catch (err) {
       throw this.mapProjectError(err, actor);
@@ -586,7 +588,9 @@ export class TaskService {
 
   async unarchiveProject(id: string): Promise<Project> {
     const project = await this.updateProject(id, { archived: false });
-    await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+    await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+      console.error(`could not prune worktrees of project ${project.id}:`, err),
+    );
     return project;
   }
 

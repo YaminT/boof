@@ -93,7 +93,9 @@ export async function projectCommand(
           ...(values.name ? { name: values.name } : {}),
           origin: { kind: "cli" },
         });
-        await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+        await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+          console.error(`could not prune worktrees of project ${project.id}:`, err),
+        );
         if (values.default) await settings.update({ defaultProject: project.id });
         out(`Added project '${project.id}' (${project.workingDirectory})`);
         if (values.default) out(`'${project.id}' is now the default project`);
