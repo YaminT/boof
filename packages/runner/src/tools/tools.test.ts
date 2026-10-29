@@ -75,6 +75,16 @@ describe("usage parsing", () => {
     expect(u).toEqual({ inputTokens: 100, outputTokens: 42, costUsd: 0.01, known: true });
   });
 
+  it("knows the cost only when a price was printed", () => {
+    expect(parseUsage("input_tokens: 7 output_tokens: 3")).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      costUsd: 0,
+      known: false,
+    });
+    expect(parseUsage("tokens used\n11,536")).toMatchObject({ inputTokens: 11536, known: false });
+  });
+
   it("returns unknown when no usage present", () => {
     expect(parseUsage("nothing here")).toEqual(UNKNOWN_USAGE);
   });
@@ -134,6 +144,7 @@ describe("claude usage (stream-json)", () => {
     const u = feed([msg("m1", 3, 100, 0, 1), msg("m1", 3, 100, 0, 20), msg("m2", 2, 0, 100, 30)]);
     expect(u?.inputTokens).toBe(3 + 100 + 2 + 100);
     expect(u?.outputTokens).toBe(50);
+    expect(u?.known).toBe(false);
   });
 
   it("prefers the result event over earlier per-message usage", () => {
@@ -357,7 +368,7 @@ describe("CodexTool report", () => {
     });
     expect(res.output).toContain("--json");
     expect(res.report).toBe("hi");
-    expect(res.usage).toEqual({ inputTokens: 11531, outputTokens: 5, costUsd: 0, known: true });
+    expect(res.usage).toEqual({ inputTokens: 11531, outputTokens: 5, costUsd: 0, known: false });
     const live = chunks.join("");
     expect(live).toContain("hi");
     expect(live).toContain("[warning]");
@@ -367,7 +378,7 @@ describe("CodexTool report", () => {
   it("parses the plain-mode `tokens used` total from stderr", async () => {
     const tool = await setup(`cat "${fixture("codex-plain-stderr.txt")}" >&2`);
     const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
-    expect(res.usage).toEqual({ inputTokens: 11536, outputTokens: 0, costUsd: 0, known: true });
+    expect(res.usage).toEqual({ inputTokens: 11536, outputTokens: 0, costUsd: 0, known: false });
   });
 
   it("renders command and file events compactly", async () => {

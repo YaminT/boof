@@ -220,6 +220,8 @@ export class Pipeline {
   private readonly previousFindings = new Map<string, string>();
   /** Per task id: what the agent is told about the earlier run (stopped, injected prompts). */
   private readonly resumeNotes = new Map<string, string>();
+  /** Per task id: usage of failed attempts that returned no result, folded in by persistUsage. */
+  private readonly lostUsages = new Map<string, TokenUsage[]>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
   }
@@ -320,11 +322,12 @@ export class Pipeline {
         await this.recordStepCost(id, tool.id, result.usage);
         return finish(result);
       } catch (err) {
+        if (err instanceof ToolRunError && err.usage) {
+          await this.recordStepCost(id, tool.id, err.usage);
+          if (err.steered) interrupted.push(err.usage);
+          else this.lostUsages.set(id, [...(this.lostUsages.get(id) ?? []), err.usage]);
+        }
         if (err instanceof ToolRunError && err.steered) {
-          if (err.usage) {
-            interrupted.push(err.usage);
-            await this.recordStepCost(id, tool.id, err.usage);
-          }
           // A stop request that arrived together with the steer wins.
           await this.assertNotStopped(id);
           const texts = await this.takeSteer(id);
@@ -352,6 +355,8 @@ export class Pipeline {
         const reason = transientReason(err);
         if (reason === null || failures >= transient) throw err;
         const attempt = failures++;
+        // A retry never starts on a spent budget.
+        await this.assertBudget(id, tool.id);
         const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
         await this.log(
           id,
@@ -1010,7 +1015,9 @@ export class Pipeline {
 
   /** Persist per-task token usage onto the task file and the global aggregate. */
   private async persistUsage(task: Task, usages: TokenUsage[]): Promise<void> {
-    const total = sumUsage(usages);
+    const id = task.frontmatter.id;
+    const total = sumUsage([...usages, ...(this.lostUsages.get(id) ?? [])]);
+    this.lostUsages.delete(id);
     // Write only what the pipeline owns; edits made during the run stay on disk.
     const saved = await this.deps.store.modify(task.frontmatter.id, (t) => {
       t.frontmatter.tokens = total;

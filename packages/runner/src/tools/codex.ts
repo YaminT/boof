@@ -244,7 +244,7 @@ export function summarizeCodexStream(stdout: string): {
   }
   return {
     lastMessage: lastMessage.trim(),
-    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: 0, known: true } : null,
+    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: 0, known: false } : null,
     rendered: r.text.trimEnd(),
     sessionId,
   };

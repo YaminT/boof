@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Codex and token-only usage are known: false (cost unknown); every ToolRunError's usage is recorded in the ledgers and the task, and a transient retry is checked against the budgets before it starts.</version>
       </versions>
     </status>
     <tests>

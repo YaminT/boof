@@ -202,6 +202,7 @@ export function summarizeOpencodeStream(stdout: string): {
   let output = 0;
   let cost = 0;
   let seen = false;
+  let priced = false;
   for (const line of stdout.split("\n")) {
     const ev = parseJsonLine(line);
     if (!ev) continue;
@@ -216,6 +217,7 @@ export function summarizeOpencodeStream(stdout: string): {
       input += num(t.input) + num(cache.read) + num(cache.write);
       output += num(t.output) + num(t.reasoning);
       cost += num(part.cost);
+      priced ||= typeof part.cost === "number";
       seen = true;
     }
   }
@@ -227,7 +229,7 @@ export function summarizeOpencodeStream(stdout: string): {
     .trim();
   return {
     report,
-    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: cost, known: true } : null,
+    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: cost, known: priced } : null,
     rendered: r.text.trimEnd(),
     sessionId,
   };

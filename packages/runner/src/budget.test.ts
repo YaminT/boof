@@ -239,3 +239,50 @@ describe("day limits", () => {
     expect((await tasksOf(main).get("t2"))?.frontmatter.status).toBe("pending");
   });
 });
+
+describe("failed attempts", () => {
+  const retryFast = () => settings.update({ retries: { transient: 2, backoffMs: [0] } });
+  const today = async () => {
+    const tz = budgetTimeZone({});
+    return readDailyLedger(dataRoot, dayKey(new Date(), tz), tz);
+  };
+
+  it("records the cost of transient attempts in the ledger and on the task", async () => {
+    await retryFast();
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-transient developer=2]]"),
+    );
+    await engine.runUntilIdle();
+    // planner, refinement, two failed developer attempts, developer, reviewer
+    expect((await today()).costUsd).toBeCloseTo(3);
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("done");
+    expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(3);
+  });
+
+  it("records a step that finally fails, and the task fails", async () => {
+    await retryFast();
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-transient developer=3]]"),
+    );
+    await engine.runUntilIdle();
+    expect((await today()).costUsd).toBeCloseTo(2.5); // planner, refinement, 3 developer attempts
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("failed");
+    expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(2.5);
+  });
+
+  it("does not retry once the per-task budget is spent", async () => {
+    await retryFast();
+    await useBudget({ perTaskUsd: 1.2 });
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-transient developer=2]]"),
+    );
+    await engine.runUntilIdle();
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("failed");
+    expect(t.body.log).toContain("ERROR: budget exceeded: task:t1");
+    expect((await today()).costUsd).toBeCloseTo(1.5); // planner, refinement, one failed attempt
+    expect(mockState.calls.filter((r) => r === "developer")).toHaveLength(1);
+  });
+});

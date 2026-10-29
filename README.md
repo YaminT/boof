@@ -129,14 +129,14 @@ Nothing is deleted under the defaults. A done task's uncommitted leftovers never
 
 Usage (tokens and `costUsd`) is recorded per step. Optional limits in `settings.budget` (and a per-project override in `project.json`) turn it into enforcement. Every key is optional; no `budget` means no limit and nothing changes.
 
-| Key                       | Meaning                                                                                           |
-| ------------------------- | ------------------------------------------------------------------------------------------------- |
-| `budget.perTaskUsd`       | Cost of one pipeline run of one task (a retry or the next iteration of `runs` starts at 0).       |
-| `budget.perDayUsd`        | Cost of all work in one day.                                                                      |
-| `budget.perProjectDayUsd` | Cost of one project's work in one day.                                                            |
-| `budget.perToolDayUsd`    | `{ "codex": 5, "claude-code": 10 }`: cost per tool id in one day, over all projects.              |
-| `budget.onExceed`         | `"pause"` (default) or `"fail"`, see below.                                                       |
-| `budget.timezone`         | IANA zone that defines a day, for example `Europe/Berlin`. Default: the server's local time zone. |
+| Key                       | Meaning                                                                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `budget.perTaskUsd`       | Cost of one pipeline run of one task (a retry or the next iteration of `runs` starts at 0).                                                                              |
+| `budget.perDayUsd`        | Cost of all work in one day.                                                                                                                                             |
+| `budget.perProjectDayUsd` | Cost of one project's work in one day.                                                                                                                                   |
+| `budget.perToolDayUsd`    | `{ "codex": 5, "claude-code": 10 }`: cost per tool id in one day, over all projects (a tool that reports no price, such as codex, counts as unknown and is not limited). |
+| `budget.onExceed`         | `"pause"` (default) or `"fail"`, see below.                                                                                                                              |
+| `budget.timezone`         | IANA zone that defines a day, for example `Europe/Berlin`. Default: the server's local time zone.                                                                        |
 
 A project overrides `perTaskUsd`, `perProjectDayUsd`, `onExceed` and its own `perToolDayUsd` (a cap on that project's spend per tool; the global per-tool limits still apply). `perDayUsd` and `timezone` are global only.
 

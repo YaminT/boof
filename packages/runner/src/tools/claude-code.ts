@@ -236,7 +236,7 @@ export class StreamRenderer {
       typeof message?.id === "string" ? message.id : `#${this.messageUsage.size}`,
       u,
     );
-    this.usage = sumClaudeUsages([...this.messageUsage.values()], 0);
+    this.usage = sumClaudeUsages([...this.messageUsage.values()], 0, false);
   }
 
   private streamEvent(ev?: Record<string, unknown>): void {
@@ -307,7 +307,11 @@ function num(v: unknown): number {
 }
 
 /** Claude splits input into fresh, cache-creation and cache-read tokens; all count as input. */
-function sumClaudeUsages(usages: Record<string, unknown>[], costUsd: number): TokenUsage {
+function sumClaudeUsages(
+  usages: Record<string, unknown>[],
+  costUsd: number,
+  known: boolean,
+): TokenUsage {
   let fresh = 0;
   let created = 0;
   let read = 0;
@@ -322,12 +326,12 @@ function sumClaudeUsages(usages: Record<string, unknown>[], costUsd: number): To
     inputTokens: fresh + created + read,
     outputTokens,
     costUsd,
-    known: true,
+    known,
   };
 }
 
 function usageFromResult(obj: Record<string, unknown>): TokenUsage | undefined {
   const u = obj.usage as Record<string, unknown> | undefined;
   if (!u) return undefined;
-  return sumClaudeUsages([u], num(obj.total_cost_usd));
+  return sumClaudeUsages([u], num(obj.total_cost_usd), typeof obj.total_cost_usd === "number");
 }

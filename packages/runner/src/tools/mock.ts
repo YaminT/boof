@@ -192,7 +192,19 @@ export class MockTool implements Tool {
     const failed = mockState.transientCounts.get(opts.role) ?? 0;
     if (failed < failFirst) {
       mockState.transientCounts.set(opts.role, failed + 1);
-      throw new ToolRunError("mock", 1, false, false, "API Error: 503 Service Unavailable");
+      throw new ToolRunError(
+        "mock",
+        1,
+        false,
+        false,
+        "API Error: 503 Service Unavailable",
+        "",
+        false,
+        0,
+        {
+          usage: parseUsage(usageLineFor(opts.prompt)),
+        },
+      );
     }
     const stallFirst = markerCount(opts.prompt, STALL_MARKER, opts.role);
     const stalls = mockState.stallCounts.get(opts.role) ?? 0;
