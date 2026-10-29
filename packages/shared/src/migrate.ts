@@ -12,7 +12,7 @@ import {
   type Project,
 } from "./schema.js";
 import { defaultSettings } from "./settings.js";
-import { WebhookSecretStore } from "./webhook-secrets.js";
+import { isUsableSecret, WebhookSecretStore } from "./webhook-secrets.js";
 
 /** The data root cannot be migrated right now (live runner) or is from a newer release. */
 export class MigrationError extends Error {
@@ -149,13 +149,18 @@ export async function moveWebhookSecrets(root: string): Promise<string[]> {
   } catch {
     return [];
   }
+  const store = new WebhookSecretStore(root);
+  await store.tighten();
   if (!settingsHoldSecrets(raw)) return [];
   const hooks = raw.webhooks as Array<Record<string, unknown>>;
-  const store = new WebhookSecretStore(root);
   const log: string[] = [];
   for (const hook of hooks) {
     if (typeof hook?.secret !== "string") continue;
     const id = String(hook.id);
+    if (!isUsableSecret(hook.secret)) {
+      log.push(`dropped the unusable secret of webhook ${id}; delete and re-create the webhook`);
+      continue;
+    }
     if ((await store.get(id)) === null) await store.set(id, hook.secret);
     log.push(`moved the secret of webhook ${id} to webhooks/secrets.json`);
   }

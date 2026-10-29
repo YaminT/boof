@@ -566,8 +566,46 @@ describe("webhook secrets", () => {
 
   it("takes no lock on a clean v2 root", async () => {
     await writeFile(join(root, "settings.json"), JSON.stringify(defaultSettings()));
-    await migrateDataRoot(root);
-    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
-    expect(await exists(join(root, "migration-v2.log"))).toBe(false);
+    // a live foreign lock would block a locked path past lockTimeoutMs
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "424242\n");
+    const r = await migrateDataRoot(root, {
+      isProcessAlive: () => true,
+      lockTimeoutMs: 50,
+      lockPollMs: 5,
+    });
+    expect(r).toEqual({ kind: "current", log: [] });
+  });
+
+  it("tightens a loose secrets file and directory, and skips unusable secrets", async () => {
+    const store = new WebhookSecretStore(root);
+    await store.set("wh-1", "whsec_" + "f".repeat(48));
+    await chmod(store.filePath, 0o644);
+    await chmod(join(root, "webhooks"), 0o755);
+    await writeFile(
+      join(root, "settings.json"),
+      JSON.stringify({
+        ...defaultSettings(),
+        webhooks: [{ ...hook("wh-2"), secret: "short" }],
+      }),
+    );
+    const r = await migrateDataRoot(root);
+    expect(r.log).toEqual([
+      "dropped the unusable secret of webhook wh-2; delete and re-create the webhook",
+    ]);
+    expect(await readFile(join(root, "settings.json"), "utf8")).not.toContain("short");
+    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(root, "webhooks"))).mode & 0o777).toBe(0o700);
+  });
+
+  it("does not echo file content in the error for a corrupt secrets file", async () => {
+    const store = new WebhookSecretStore(root);
+    await mkdir(join(root, "webhooks"), { recursive: true });
+    await writeFile(store.filePath, '{"wh-1": "whsec_leakme');
+    const err = await store.all().then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.message).toBe("webhooks/secrets.json is not valid JSON");
+    expect(err?.message).not.toContain("leakme");
   });
 });

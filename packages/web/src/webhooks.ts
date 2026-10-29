@@ -5,6 +5,7 @@ import {
   atomicWrite,
   dataRootPaths,
   securitySettings,
+  isUsableSecret,
   WebhookSecretStore,
   type BoofEvent,
   type Webhook,
@@ -93,6 +94,7 @@ export class WebhookDispatcher {
 
   start(): void {
     if (this.timer) return;
+    void this.secrets.tighten().catch((e) => console.error("webhooks", e));
     this.timer = setInterval(
       () => void this.tick().catch((e) => console.error("webhooks", e)),
       this.opts.intervalMs ?? 1000,
@@ -143,7 +145,15 @@ export class WebhookDispatcher {
       const scopes = await this.scopesFor();
       const secrets = await this.secrets.all();
       const results = await Promise.all(
-        hooks.map((h) => this.pass(h, state, scopes, allowed, secrets[h.id])),
+        hooks.map((h) =>
+          this.pass(
+            h,
+            state,
+            scopes,
+            allowed,
+            Object.hasOwn(secrets, h.id) ? secrets[h.id] : undefined,
+          ),
+        ),
       );
       if (dirty || results.some(Boolean)) await this.save(state);
     } finally {
@@ -165,7 +175,7 @@ export class WebhookDispatcher {
     secret: string | undefined,
   ): Promise<boolean> {
     let changed = false;
-    let hs = state[hook.id];
+    let hs = Object.hasOwn(state, hook.id) ? state[hook.id] : undefined;
     if (!hs) {
       // A new webhook hears only what happens from now on.
       hs = state[hook.id] = {
@@ -240,7 +250,7 @@ export class WebhookDispatcher {
     allowed: readonly string[],
     secret: string | undefined,
   ): Promise<string | null> {
-    if (secret === undefined) return `no signing secret for ${hook.id} in webhooks/secrets.json`;
+    if (!isUsableSecret(secret)) return `no signing secret for ${hook.id} in webhooks/secrets.json`;
     let target;
     try {
       target = await checkWebhookTarget(hook.url, {

@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -280,12 +280,41 @@ const status = (project: string, task: string) => ({
   by: "runner",
 });
 
+async function writeSecrets(map: Record<string, unknown>) {
+  await writeFile(new WebhookSecretStore(root).filePath, JSON.stringify(map));
+}
+
 async function subscribe(body: object) {
   const made = await (await create(body)).json();
   return { id: made.webhook.id as string, secret: made.secret as string };
 }
 
 describe("webhook delivery", () => {
+  it.each([
+    ["an empty secret", async (id: string) => writeSecrets({ [id]: "" })],
+    ["a non-string secret", async (id: string) => writeSecrets({ [id]: 12345 })],
+    ["a prototype-named id without an entry", async () => writeSecrets({}), "constructor"],
+  ])("refuses to sign with %s", async (_n, setup, hookId) => {
+    const { id } = await subscribe({ url: "http://hook.test/in" });
+    const h = harness();
+    await h.dispatcher.tick();
+    const target = hookId ?? id;
+    if (hookId) {
+      const s = JSON.parse(await readFile(join(root, "settings.json"), "utf8"));
+      s.webhooks[0].id = hookId;
+      await writeFile(join(root, "settings.json"), JSON.stringify(s));
+      await h.dispatcher.tick(); // the renamed hook takes its cursor
+    }
+    await setup(id);
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    await h.dispatcher.tick();
+    expect(h.hits).toHaveLength(0);
+    const state = JSON.parse(await readFile(join(root, "webhooks", "state.json"), "utf8"));
+    expect(state[target].pending[0].lastError).toBe(
+      `no signing secret for ${target} in webhooks/secrets.json`,
+    );
+  });
+
   it("does not deliver a webhook whose secret is missing from the file", async () => {
     const { id } = await subscribe({ url: "http://hook.test/in" });
     const h = harness();
