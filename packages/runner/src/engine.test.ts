@@ -115,7 +115,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   await rm(workDir, { recursive: true, force: true });
   resetMock();
 });

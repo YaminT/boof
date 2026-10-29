@@ -50,7 +50,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`task-file-heading-escape`](task-file-heading-escape/goal.boof.xml) — Task markdown round-trip survives section headings in prompt, reports and log
 - [ ] [`store-update-under-lock`](store-update-under-lock/goal.boof.xml) — SettingsStore.update and ProjectStore.update read-modify-write under the lock
 - [ ] [`plan-goal-path-uniqueness`](plan-goal-path-uniqueness/goal.boof.xml) — Plan validation normalises and de-duplicates goal paths
-- [ ] [`atomic-write-lock-map-and-fsync`](atomic-write-lock-map-and-fsync/goal.boof.xml) — withFileLock frees its map entries; atomicWrite fsyncs
+- [x] [`atomic-write-lock-map-and-fsync`](atomic-write-lock-map-and-fsync/goal.boof.xml) — withFileLock frees its map entries; atomicWrite fsyncs
 
 ## Server
 

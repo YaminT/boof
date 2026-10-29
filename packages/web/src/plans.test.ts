@@ -87,7 +87,7 @@ beforeEach(async () => {
   app = createApp({ service, authStore, peerAddress: () => peer });
 });
 afterEach(async () => {
-  await rm(base, { recursive: true, force: true });
+  await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 describe("plan CRUD", () => {

@@ -94,7 +94,7 @@ beforeEach(async () => {
   peer = LOOPBACK;
 });
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   await rm(repo, { recursive: true, force: true });
 });
 
@@ -225,9 +225,12 @@ describe("authenticate", () => {
     peer = REMOTE;
     const key = await mint("harness", ["tasks:read"]);
     const app = build();
+    const versionBefore = store.version;
     expect((await call(app, "/api/tasks", {}, key)).status).toBe(200);
-    // Let the lastUsedAt write land, then warm the cache again so it is current.
+    // Let the lastUsedAt write land (file written and store.version bumped), then warm the
+    // cache again so it is current.
     await waitUntil(async () => Boolean((await store.get("harness"))!.lastUsedAt));
+    await waitUntil(async () => store.version !== versionBefore);
     expect((await call(app, "/api/tasks", {}, key)).status).toBe(200);
     // Another process (a different AuthStore instance) revokes it.
     const other = new AuthStore(root, () => clock);

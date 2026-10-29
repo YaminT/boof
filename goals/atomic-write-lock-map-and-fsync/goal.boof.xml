@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">withFileLock deletes its map entry when the last holder releases; atomicWrite fsyncs the temp file before and the directory after the rename.</version>
       </versions>
     </status>
     <tests>
