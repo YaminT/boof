@@ -27,7 +27,7 @@ function isProposed(t: TaskView): boolean {
 }
 
 /** Runner order: priority descending, then updated ascending, then id ascending. */
-function runOrder(a: TaskView, b: TaskView): number {
+export function runOrder(a: TaskView, b: TaskView): number {
   const fa = a.frontmatter;
   const fb = b.frontmatter;
   return fb.priority - fa.priority || cmp(fa.updated, fb.updated) || cmp(fa.id, fb.id);

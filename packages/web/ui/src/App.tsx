@@ -3,8 +3,7 @@ import type { Project } from "@boof-runner/shared/schema";
 import { BudgetBanner } from "./components/Budget.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
-import { TaskList } from "./components/TaskList.js";
-import { LivePanel } from "./components/LivePanel.js";
+import { TasksPage } from "./tasks/TasksPage.js";
 import { Editor } from "./components/Editor.js";
 import { CommandsTab } from "./components/CommandsTab.js";
 import { ActionsTab } from "./components/ActionsTab.js";
@@ -85,7 +84,6 @@ export function App() {
 
   // Screens follow the route's project; render them only once the data hook has caught up to it.
   const pid = route && route.name !== "inbox" ? route.pid : null;
-  const runningTask = tasks.find((t) => t.frontmatter.status === "running");
   const routeReady = !!pid && pid === selectedId && !!route && !routeUnknownProject;
 
   return (
@@ -108,22 +106,7 @@ export function App() {
       {routeReady && route.name === "tasks" && (
         <>
           <NowStrip pid={pid} groups={groups} />
-          {runningTask && (
-            <LivePanel
-              key={runningTask.frontmatter.id}
-              projectId={pid}
-              task={runningTask}
-              onChange={refresh}
-            />
-          )}
-          <TaskList
-            projectId={pid}
-            tasks={tasks}
-            onEdit={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
-            onReview={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
-            onChange={refresh}
-            onNew={() => navigate({ name: "task", pid, taskId: "__new__", view: "edit" })}
-          />
+          <TasksPage pid={pid} data={data} navigate={navigate} />
         </>
       )}
       {routeReady && route.name === "task" && (
