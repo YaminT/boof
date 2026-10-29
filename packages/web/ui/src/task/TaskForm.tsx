@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
+import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
 import { api, type TaskView } from "../api.js";
 import type { CommandTemplate } from "../api-types.js";
@@ -37,9 +38,6 @@ const parseLabels = (s: string) =>
 /** Equal ignoring how the labels are spaced. */
 const key = (v: Values) => JSON.stringify({ ...v, labels: parseLabels(v.labels) });
 
-const SELECT =
-  "mt-0 h-8 w-full rounded-lg border border-input bg-surface px-2.5 py-0 text-sm font-normal text-ink outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
-
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="mb-0 flex flex-col gap-1 text-[length:var(--text-row)] font-normal text-ink">
@@ -48,6 +46,12 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {hint && <span className="font-normal text-ink-muted">{hint}</span>}
     </label>
   );
+}
+
+/** What the page reads from the form: unsaved edits, and a way to save them (with a status). */
+export interface FormHandle {
+  dirty: boolean;
+  save(status?: "pending"): Promise<boolean>;
 }
 
 /**
@@ -61,6 +65,7 @@ export function TaskForm({
   locked,
   reload,
   onCreated,
+  handle,
 }: {
   pid: string;
   task: TaskView | null;
@@ -68,6 +73,7 @@ export function TaskForm({
   reload: () => Promise<void>;
   /** A new task was saved (or got its first attachment) under this id. */
   onCreated: (id: string) => void;
+  handle?: RefObject<FormHandle | null>;
 }) {
   const isNew = task === null;
   const server = useMemo(() => (task ? toValues(task) : EMPTY), [task]);
@@ -77,6 +83,8 @@ export function TaskForm({
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const [commands, setCommands] = useState<CommandTemplate[]>([]);
+  const busy = useRef(false);
+  const [isBusy, setBusy] = useState(false);
   const createdId = useRef<string | null>(null);
   const dirty = key(form) !== key(base);
 
@@ -97,6 +105,14 @@ export function TaskForm({
     }
   }, [server]);
 
+  // A run started: the form is locked, so show the server copy, never unsaved values.
+  useEffect(() => {
+    if (!locked) return;
+    setBase(server);
+    setForm(server);
+    setElsewhere(false);
+  }, [locked]);
+
   // Keep "Saved 2m ago" current.
   useEffect(() => {
     if (!savedAt) return;
@@ -114,19 +130,33 @@ export function TaskForm({
     command: form.command,
   });
 
-  const save = async () => {
-    if (!task) return;
-    const ok = await act(() => api.updateTask(pid, task.frontmatter.id, payload()), {
-      failure: "Could not save",
-    });
-    if (!ok) return;
-    setBase(form);
-    setElsewhere(false);
-    setSavedAt(new Date().toISOString());
-    await reload();
+  const save = async (status?: "pending"): Promise<boolean> => {
+    if (!task || busy.current) return false;
+    busy.current = true;
+    setBusy(true);
+    try {
+      const ok = await act(
+        () =>
+          api.updateTask(pid, task.frontmatter.id, { ...payload(), ...(status ? { status } : {}) }),
+        { failure: "Could not save" },
+      );
+      if (!ok) return false;
+      setBase(form);
+      setElsewhere(false);
+      setSavedAt(new Date().toISOString());
+      await reload();
+      return true;
+    } finally {
+      busy.current = false;
+      setBusy(false);
+    }
   };
+  if (handle) handle.current = { dirty, save };
 
   const create = async (status: "draft" | "pending") => {
+    if (busy.current) return;
+    busy.current = true;
+    setBusy(true);
     const made = await act(
       () =>
         createdId.current
@@ -135,6 +165,10 @@ export function TaskForm({
       { success: status === "pending" ? "Queued" : "Saved as draft", failure: "Could not save" },
     );
     if (made) onCreated(made.frontmatter.id);
+    else {
+      busy.current = false;
+      setBusy(false);
+    }
   };
 
   // A new task gets a draft the first time a file is attached, so there is a task to attach to.
@@ -221,8 +255,8 @@ export function TaskForm({
           one before it.
         </p>
         <Field label="Command template">
-          <select
-            className={SELECT}
+          <NativeSelect
+            className="w-full"
             value={form.command ?? ""}
             onChange={(e) => set("command", e.target.value || null)}
           >
@@ -232,7 +266,7 @@ export function TaskForm({
                 {c.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </Field>
         <Field label="Prompt">
           <Textarea
@@ -256,7 +290,7 @@ export function TaskForm({
           <>
             <Button
               type="button"
-              disabled={!form.title.trim()}
+              disabled={isBusy || !form.title.trim()}
               onClick={() => void create("pending")}
             >
               Queue
@@ -264,7 +298,7 @@ export function TaskForm({
             <Button
               type="button"
               variant="outline"
-              disabled={!form.title.trim()}
+              disabled={isBusy || !form.title.trim()}
               onClick={() => void create("draft")}
             >
               Save as draft
@@ -272,7 +306,7 @@ export function TaskForm({
           </>
         ) : (
           <>
-            <Button type="submit" disabled={locked || !dirty || !form.title.trim()}>
+            <Button type="submit" disabled={isBusy || locked || !dirty || !form.title.trim()}>
               Save changes
             </Button>
             {savedAt && !dirty && (

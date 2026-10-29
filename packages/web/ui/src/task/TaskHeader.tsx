@@ -21,12 +21,16 @@ export function TaskHeader({
   backHref,
   elapsed,
   actions,
+  onQueue,
+  onRetry,
   onDelete,
 }: {
   task: TaskView;
   backHref: string;
   elapsed: number | null;
   actions: TaskActions;
+  onQueue: () => void;
+  onRetry: () => void;
   onDelete: () => void;
 }) {
   const f = task.frontmatter;
@@ -57,9 +61,9 @@ export function TaskHeader({
             Stop
           </Button>
         )}
-        {f.status === "draft" && <Button onClick={() => actions.queue(f.id)}>Queue</Button>}
+        {f.status === "draft" && <Button onClick={onQueue}>Queue</Button>}
         {(f.status === "failed" || f.status === "stopped") && (
-          <Button onClick={() => actions.retry(f.id)}>Retry</Button>
+          <Button onClick={onRetry}>Retry</Button>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger

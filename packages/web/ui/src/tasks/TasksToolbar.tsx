@@ -1,3 +1,4 @@
+import { NativeSelect } from "@/ui/native-select";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Kbd } from "@/ui/kbd";
@@ -12,9 +13,6 @@ const STATES: { value: TaskFilter["state"]; label: string }[] = [
   { value: "drafts", label: "Drafts" },
   { value: "finished", label: "Finished" },
 ];
-
-const SELECT =
-  "mt-0 block h-8 w-auto rounded-lg border border-input bg-transparent px-2 py-0 text-[length:var(--text-row)] text-ink outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 export function TasksToolbar({
   filter,
@@ -38,9 +36,9 @@ export function TasksToolbar({
         onChange={(e) => onFilter({ ...filter, query: e.target.value })}
         className="mt-0 w-full min-[720px]:w-64"
       />
-      <select
+      <NativeSelect
         aria-label="State"
-        className={SELECT}
+        className="w-auto"
         value={filter.state}
         onChange={(e) => onFilter({ ...filter, state: e.target.value as TaskFilter["state"] })}
       >
@@ -49,11 +47,11 @@ export function TasksToolbar({
             {s.label}
           </option>
         ))}
-      </select>
+      </NativeSelect>
       {labels.length > 0 && (
-        <select
+        <NativeSelect
           aria-label="Label"
-          className={SELECT}
+          className="w-auto"
           value={filter.label ?? ""}
           onChange={(e) => onFilter({ ...filter, label: e.target.value || null })}
         >
@@ -63,7 +61,7 @@ export function TasksToolbar({
               {l}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       )}
       <Kbd className="ml-auto hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
     </div>

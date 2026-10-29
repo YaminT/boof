@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { api } from "../api.js";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
@@ -10,7 +11,7 @@ import { ChangesTab } from "./ChangesTab.js";
 import { QuestionsTab } from "./QuestionsTab.js";
 import { RunTab } from "./RunTab.js";
 import { StepStrip } from "./StepStrip.js";
-import { TaskForm } from "./TaskForm.js";
+import { TaskForm, type FormHandle } from "./TaskForm.js";
 import { TaskHeader } from "./TaskHeader.js";
 import { useTask } from "./useTask.js";
 
@@ -154,6 +155,18 @@ function Loaded({
   const elapsed = useElapsed(pid, task, running);
   const actions = useTaskActions(pid, data, navigate);
 
+  // Queue and Retry must carry unsaved edits, or they would run what the form no longer shows.
+  const form = useRef<FormHandle | null>(null);
+  const queue = async () => {
+    if (form.current?.dirty) {
+      if (await form.current.save("pending")) await data.refresh();
+    } else actions.queue(id);
+  };
+  const retry = async () => {
+    if (form.current?.dirty && !(await form.current.save())) return;
+    actions.retry(id);
+  };
+
   const remove = async () => {
     const ok = await act(() => api.deleteTask(pid, id), {
       success: "Deleted",
@@ -171,11 +184,20 @@ function Loaded({
         backHref={backHref}
         elapsed={elapsed}
         actions={actions}
+        onQueue={() => void queue()}
+        onRetry={() => void retry()}
         onDelete={() => void remove()}
       />
       <StepStrip task={task} now={Date.now()} logHeaders={stepHeaders(task.body.log)} />
       <div className="grid items-start gap-6 min-[1024px]:grid-cols-[2fr_3fr]">
-        <TaskForm pid={pid} task={task} locked={running} reload={reload} onCreated={() => {}} />
+        <TaskForm
+          pid={pid}
+          task={task}
+          locked={running}
+          reload={reload}
+          onCreated={() => {}}
+          handle={form}
+        />
         <section className="min-w-0">
           <nav aria-label="Task view" className="mb-3 flex gap-1 border-b border-line">
             {TABS.map((t) => (
