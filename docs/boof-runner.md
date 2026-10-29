@@ -173,7 +173,7 @@ The runner polls `tasks/pending/` of every active, non-paused project that has a
 For each task, the pipeline runs these steps:
 
 1. Planner
-   Creates an implementation plan. If it cannot proceed without user input, the task is parked in `actions/`.
+   Creates an implementation plan. If it cannot proceed without user input, the task is parked in `actions/`. It asks by ending its report with a fenced ` ```questions ` block, one question per line; every adapter parses that block (`parseQuestions`), so a real planner parks the task exactly like the mock.
 
 2. Planner refinement
    Reads the first plan and produces a refined final plan.
@@ -187,7 +187,7 @@ For each task, the pipeline runs these steps:
 5. Reviewer
    Gives the final review of the diff and ends its report with a verdict.
 
-Developer, observer or reviewer questions are routed back to the planner internally. Only planner questions that block the original task are surfaced to the user.
+Developer, observer or reviewer questions are routed back to the planner internally. They ask with the same block. Only planner questions that block the original task are surfaced to the user.
 
 ### Observer Role
 

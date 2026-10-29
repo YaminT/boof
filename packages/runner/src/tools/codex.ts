@@ -6,6 +6,7 @@ import { ToolRunError } from "./errors.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { parseUsage } from "./usage.js";
+import { withQuestions } from "./questions.js";
 import type { TokenUsage } from "@boof-runner/shared";
 
 /**
@@ -147,7 +148,7 @@ export class CodexTool implements Tool {
       // Structured usage from turn.completed; fall back to scanning plain text
       // ("tokens used" on stderr) when no JSON events were emitted.
       const usage = summary.usage ?? parseUsage(res.stdout + res.stderr);
-      return { output, report, usage, sessionId: summary.sessionId };
+      return withQuestions({ output, report, usage, sessionId: summary.sessionId });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

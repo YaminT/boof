@@ -1,6 +1,7 @@
 export * from "./exec.js";
 export * from "./tools/types.js";
 export * from "./tools/usage.js";
+export * from "./tools/questions.js";
 export * from "./tools/errors.js";
 export * from "./tools/mock.js";
 export * from "./tools/claude-code.js";

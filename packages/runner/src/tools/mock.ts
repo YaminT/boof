@@ -3,6 +3,7 @@ import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { execCommand } from "../exec.js";
 import { ToolRunError } from "./errors.js";
 import { parseUsage } from "./usage.js";
+import { formatQuestions, withQuestions } from "./questions.js";
 
 /**
  * In-process control surface for the mock tool, used by tests to drive the
@@ -244,13 +245,13 @@ export class MockTool implements Tool {
     if (opts.role === "planner" && mockState.plannerQuestions.length > 0 && !mockState.hasAsked) {
       mockState.hasAsked = true;
       const output = `MOCK planner questions\n${usageLineFor(opts.prompt)}`;
-      return {
+      const qs = [...mockState.plannerQuestions];
+      return withQuestions({
         output,
         sessionId,
-        report: "Planner needs clarification before producing a plan.",
-        questions: [...mockState.plannerQuestions],
+        report: `Planner needs clarification before producing a plan.\n\n${formatQuestions(qs)}`,
         usage: parseUsage(output),
-      };
+      });
     }
 
     // A non-planner role raises its configured questions once.
@@ -258,13 +259,12 @@ export class MockTool implements Tool {
     if (opts.role !== "planner" && asked && asked.length > 0) {
       delete mockState.roleQuestions[opts.role];
       const output = `MOCK ${opts.role} questions\n${usageLineFor(opts.prompt)}`;
-      return {
+      return withQuestions({
         output,
         sessionId,
-        report: reportFor(opts.role),
-        questions: [...asked],
+        report: `${reportFor(opts.role)}\n\n${formatQuestions([...asked])}`,
         usage: parseUsage(output),
-      };
+      });
     }
 
     let report = reportFor(opts.role);

@@ -12,6 +12,7 @@ import { ClaudeCodeTool, StreamRenderer } from "./claude-code.js";
 import { isTransientToolError, ToolRunError } from "./errors.js";
 import { CodexTool } from "./codex.js";
 import { OpencodeTool } from "./opencode.js";
+import { formatQuestions, parseQuestions } from "./questions.js";
 import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
@@ -321,6 +322,20 @@ describe("CodexTool report", () => {
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
+  it("parses a questions block out of the last message", async () => {
+    const tool = await setup(
+      [
+        "while [ $# -gt 0 ]; do",
+        '  if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. Which region?\\n\\`\\`\\`\\n" > "$2"; fi',
+        "  shift",
+        "done",
+      ].join("\n"),
+    );
+    const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
+    expect(res.questions).toEqual(["Which DB?", "Which region?"]);
+    expect(res.report).toBe("Need input.");
+  });
+
   it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
     const tool = await setup(
       `cat > "$(dirname "$0")/stdin"\nprintf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'`,
@@ -515,6 +530,16 @@ describe("OpencodeTool", () => {
     if (prevBin === undefined) delete process.env.BOOF_RUNNER_OPENCODE_BIN;
     else process.env.BOOF_RUNNER_OPENCODE_BIN = prevBin;
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it("parses a questions block out of the text events", async () => {
+    const text = "Need input.\n\n```questions\n- Which DB?\n```";
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "text", part: { text, messageID: "m1" } })}'`,
+    );
+    const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
+    expect(res.questions).toEqual(["Which DB?"]);
+    expect(res.report).toBe("Need input.");
   });
 
   it("builds args anchored to the worktree, with --auto only in auto mode", async () => {
@@ -802,5 +827,55 @@ describe("session resume", () => {
     expect(mockState.resumes.map((r) => r.sessionId)).toEqual([first.sessionId]);
     mockState.resumeSupported = false;
     expect(tool.supportsResume).toBe(false);
+  });
+});
+
+describe("question protocol", () => {
+  it("takes the last questions block, strips markers and removes it from the report", () => {
+    const report = "Plan so far.\n\n```questions\n1. Which DB?\n- Which region?\n\n```\n";
+    expect(parseQuestions(report)).toEqual({
+      report: "Plan so far.",
+      questions: ["Which DB?", "Which region?"],
+    });
+    expect(parseQuestions(formatQuestions(["a", "b"])).questions).toEqual(["a", "b"]);
+  });
+  it("parks on nothing but a block, and keeps a verdict line last", () => {
+    const prose = "I have questions about style but can proceed.\nVERDICT: APPROVE";
+    expect(parseQuestions(prose)).toEqual({ report: prose, questions: [] });
+    const withBlock =
+      "Findings.\n\n```Questions\nIs the API frozen?\n```\n\nVERDICT: CHANGES_REQUESTED";
+    expect(parseQuestions(withBlock)).toEqual({
+      report: "Findings.\n\nVERDICT: CHANGES_REQUESTED",
+      questions: ["Is the API frozen?"],
+    });
+    expect(parseQuestions("```questions\n\n```").questions).toEqual([]);
+  });
+});
+
+describe("ClaudeCodeTool questions", () => {
+  let dir: string;
+  let prevBin: string | undefined;
+
+  const setup = async (script: string) => {
+    prevBin = process.env.BOOF_RUNNER_CLAUDE_BIN;
+    dir = await mkdtemp(join(tmpdir(), "boof-claude-test-"));
+    const bin = join(dir, "claude");
+    await writeFile(bin, `#!/bin/sh\n${script}\n`);
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_CLAUDE_BIN = bin;
+    return new ClaudeCodeTool();
+  };
+  afterEach(async () => {
+    if (prevBin === undefined) delete process.env.BOOF_RUNNER_CLAUDE_BIN;
+    else process.env.BOOF_RUNNER_CLAUDE_BIN = prevBin;
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it("parses a questions block out of the result event", async () => {
+    const result = "Need input.\n\n```questions\n1. Which DB?\n```";
+    const tool = await setup(`printf '%s\\n' '${JSON.stringify({ type: "result", result })}'`);
+    const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
+    expect(res.questions).toEqual(["Which DB?"]);
+    expect(res.report).toBe("Need input.");
   });
 });

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plan>
   <goals>
-    <goal id="real-tools-parse-questions" path="goals/real-tools-parse-questions" order="1" status="plan"></goal>
+    <goal id="real-tools-parse-questions" path="goals/real-tools-parse-questions" order="1" status="done"></goal>
     <goal id="running-task-edits-survive" path="goals/running-task-edits-survive" order="2" status="done"></goal>
     <goal id="task-store-atomicity" path="goals/task-store-atomicity" order="3" status="done"></goal>
     <goal id="shutdown-fill-race" path="goals/shutdown-fill-race" order="4" status="done"></goal>

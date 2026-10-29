@@ -3,6 +3,7 @@ import { ToolRunError } from "./errors.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str, stripAnsi } from "./jsonl.js";
 import { parseUsage } from "./usage.js";
+import { withQuestions } from "./questions.js";
 import type { TokenUsage } from "@boof-runner/shared";
 
 /**
@@ -118,12 +119,12 @@ export class OpencodeTool implements Tool {
     }
     // No JSON events (older CLI, plain output): fall back to ANSI-stripped text.
     const plain = stripAnsi(res.stdout).trim();
-    return {
+    return withQuestions({
       output,
       report: summary.report || plain,
       usage: summary.usage ?? parseUsage(plain + "\n" + stripAnsi(res.stderr)),
       sessionId: summary.sessionId,
-    };
+    });
   }
 }
 

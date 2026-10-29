@@ -28,6 +28,7 @@ import {
 } from "@boof-runner/shared";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { sumUsage } from "./tools/usage.js";
+import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { announceBudgetExceeded } from "./budget.js";
@@ -111,12 +112,12 @@ const BASE_SYSTEM_PROMPTS = {
 } as const;
 
 export const SYSTEM_PROMPTS = {
-  planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${NON_INTERACTIVE}`,
+  planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
   refine: `${BASE_SYSTEM_PROMPTS.refine}\n\n${NON_INTERACTIVE}`,
-  developer: `${BASE_SYSTEM_PROMPTS.developer}\n\n${NON_INTERACTIVE}`,
-  developerFix: `${BASE_SYSTEM_PROMPTS.developerFix}\n\n${NON_INTERACTIVE}`,
-  observer: `${BASE_SYSTEM_PROMPTS.observer}\n\n${NON_INTERACTIVE}`,
-  reviewer: `${BASE_SYSTEM_PROMPTS.reviewer}\n\n${NON_INTERACTIVE}`,
+  developer: `${BASE_SYSTEM_PROMPTS.developer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  developerFix: `${BASE_SYSTEM_PROMPTS.developerFix}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  observer: `${BASE_SYSTEM_PROMPTS.observer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  reviewer: `${BASE_SYSTEM_PROMPTS.reviewer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
 } as const;
 
 /** Current iteration number for a task (1-based). */

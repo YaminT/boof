@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import {
   appendFile,
+  chmod,
   mkdir,
   mkdtemp,
   realpath,
@@ -37,7 +38,9 @@ import { execCommand } from "./exec.js";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
-import { mockState, resetMock } from "./tools/mock.js";
+import { MockTool, mockState, resetMock } from "./tools/mock.js";
+import { CodexTool } from "./tools/codex.js";
+import { ToolRegistry } from "./tools/registry.js";
 import type { RunOptions } from "./tools/types.js";
 
 let dataRoot: string;
@@ -199,6 +202,41 @@ describe("RunnerEngine integration (mock tool)", () => {
     const done = await store.get("t1");
     expect(done?.frontmatter.status).toBe("done");
     expect(done?.frontmatter.questions).toBe("answered");
+  });
+
+  it("a codex-shaped planner report with a questions block parks the task", async () => {
+    const prev = process.env.BOOF_RUNNER_CODEX_BIN;
+    const bin = join(dataRoot, "codex");
+    await writeFile(
+      bin,
+      '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. ## Reports\\n\\`\\`\\`\\n" > "$2"; fi; shift; done\n',
+    );
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_CODEX_BIN = bin;
+    try {
+      engine = new RunnerEngine({
+        root: dataRoot,
+        pollIntervalMs: 10,
+        registry: new ToolRegistry([new MockTool(), new CodexTool()]),
+      });
+      await store.create(
+        newTask(
+          fm({ tools: { ...fm().tools, planner: { tool: "codex", model: "m" } } }),
+          "Build it.",
+        ),
+      );
+      const r = await engine.tick();
+      expect(r.kind === "ran" && r.outcome.kind).toBe("parked");
+      const t = await store.get("t1");
+      expect(t?.frontmatter.status).toBe("action");
+      expect(t?.body.questions).toBe("1. Which DB?\n2. ## Reports");
+      expect(t?.body.reports.planner).toBe("");
+      expect(SYSTEM_PROMPTS.planner).toContain("```questions");
+      expect(SYSTEM_PROMPTS.refine).not.toContain("```questions");
+    } finally {
+      if (prev === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
+      else process.env.BOOF_RUNNER_CODEX_BIN = prev;
+    }
   });
 
   it("edits to title, labels and runs made during a run survive it and set the run count", async () => {

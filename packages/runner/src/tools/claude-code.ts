@@ -3,6 +3,7 @@ import { commandExists, execCommand } from "../exec.js";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { ToolRunError } from "./errors.js";
 import { parseUsage } from "./usage.js";
+import { withQuestions } from "./questions.js";
 
 export { ToolRunError };
 
@@ -117,12 +118,12 @@ export class ClaudeCodeTool implements Tool {
         { steered: res.steered, sessionId: render.sessionId, usage: render.usage },
       );
     }
-    return {
+    return withQuestions({
       output,
       report: render.report || render.transcript.trim(),
       usage: render.usage ?? parseUsage(res.stdout),
       sessionId: render.sessionId,
-    };
+    });
   }
 }
 
