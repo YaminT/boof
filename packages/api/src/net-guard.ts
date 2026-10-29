@@ -37,13 +37,19 @@ block("carrier-grade-nat", "ipv4", "100.64.0.0/10");
 block("multicast", "ipv4", "224.0.0.0/4");
 block("multicast", "ipv6", "ff00::/8");
 block("reserved", "ipv4", "240.0.0.0/4", "192.0.0.0/24", "198.18.0.0/15");
+// IPv4-compatible (::/96), IPv4-translated SIIT (::ffff:0:a.b.c.d), deprecated site-local,
+// discard-only, and local-use NAT64 (RFC 8215, blocked outright rather than decoded).
+block("reserved", "ipv6", "::/96", "::ffff:0:0:0/96", "fec0::/10", "100::/64", "64:ff9b:1::/48");
 block("documentation", "ipv4", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24");
 block("documentation", "ipv6", "2001:db8::/32");
 
 const nat64 = new net.BlockList();
 nat64.addSubnet("64:ff9b::", 96, "ipv6");
 
-/** The 16 groups of an IPv6 address as numbers (handles `::` and a dotted-quad tail). */
+const sixToFour = new net.BlockList();
+sixToFour.addSubnet("2002::", 16, "ipv6");
+
+/** The 8 groups of an IPv6 address as numbers (handles `::` and a dotted-quad tail). */
 function ipv6Groups(address: string): number[] {
   let text = address.toLowerCase();
   const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
@@ -67,6 +73,11 @@ export function blockedAddressReason(address: string): BlockedRange | null {
   if (type === "ipv6" && nat64.check(address, "ipv6")) {
     const g = ipv6Groups(address);
     return blockedAddressReason(`${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`);
+  }
+  if (type === "ipv6" && sixToFour.check(address, "ipv6")) {
+    // 6to4 (2002::/16) embeds the IPv4 address in bits 16-47: classify that address.
+    const g = ipv6Groups(address);
+    return blockedAddressReason(`${g[1] >> 8}.${g[1] & 255}.${g[2] >> 8}.${g[2] & 255}`);
   }
   // BlockList checks an IPv4-mapped IPv6 address (::ffff:a.b.c.d) against the IPv4 ranges itself.
   for (const [range, list] of ranges) if (list.check(address, type)) return range;
@@ -94,6 +105,27 @@ export interface WebhookTargetPolicy {
   resolve?: ResolveHost;
   /** Hosts (as written in the URL) exempt from the address check; `"*"` exempts all. */
   allowedPrivateHosts?: readonly string[];
+  /** Give up on the DNS lookup after this long and refuse the target (default 10 s). */
+  lookupTimeoutMs?: number;
+}
+
+async function lookupWithTimeout(
+  resolve: ResolveHost,
+  host: string,
+  timeoutMs: number,
+): Promise<string[]> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(Object.assign(new Error("timeout"), { code: "timeout" })),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([resolve(host), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -119,7 +151,11 @@ export async function checkWebhookTarget(
   if (net.isIP(host)) return { ok: true, url, addresses: [host] };
   let addresses: string[];
   try {
-    addresses = await (policy.resolve ?? resolveHost)(host);
+    addresses = await lookupWithTimeout(
+      policy.resolve ?? resolveHost,
+      host,
+      policy.lookupTimeoutMs ?? 10_000,
+    );
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     return { ok: false, reason: `${host} does not resolve (${e.code ?? e.message})` };

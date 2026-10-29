@@ -161,11 +161,19 @@ describe("webhook operations", () => {
       "http://224.0.0.1/x",
       "http://[fe80::1]/x",
       "http://[fd00::1]/x",
+      "http://[::7f00:1]/x", // IPv4-compatible
+      "http://[::ffff:0:a00:5]/x", // SIIT
+      "http://[fec0::1]/x",
+      "http://[100::1]/x",
+      "http://[64:ff9b:1::1]/x", // local-use NAT64
+      "http://[2002:7f00:1::]/x", // 6to4 of 127.0.0.1
+      "http://[2002:a00:5::1]/x", // 6to4 of 10.0.0.5
     ]) {
       const res = await create({ url });
       expect(res.status, url).toBe(400);
       expect((await res.json()).error.details[0].path, url).toBe("url");
     }
+    expect((await create({ url: "http://[2002:5db8:d822::1]/x" })).status).toBe(201); // 6to4 of a public address
     expect((await create({ url: "http://93.184.216.34/x" })).status).toBe(201);
     expect((await create({ url: "http://[2606:2800:220:1:248:1893:25c8:1946]/x" })).status).toBe(
       201,
@@ -174,6 +182,10 @@ describe("webhook operations", () => {
 
   it("resolves the host at creation and refuses names that point inside", async () => {
     dns["internal.test"] = ["10.0.0.5"];
+    dns["sixtofour.test"] = ["2002:a00:5::1"];
+    dns["sitelocal.test"] = ["fec0::1"];
+    expect((await create({ url: "https://sixtofour.test/x" })).status).toBe(400);
+    expect((await create({ url: "https://sitelocal.test/x" })).status).toBe(400);
     dns["mixed.test"] = ["93.184.216.34", "127.0.0.1"];
     const res = await create({ url: "https://internal.test/hook" });
     expect(res.status).toBe(400);
@@ -227,13 +239,19 @@ interface Hit {
   url: string;
   headers: Headers;
   body: string;
+  redirect: RequestRedirect | undefined;
 }
 
 function harness(answers: (n: number) => number | Error = () => 200) {
   const hits: Hit[] = [];
   let clock = 1_000_000;
   const doFetch = (async (url: string, init: RequestInit) => {
-    hits.push({ url, headers: new Headers(init.headers), body: String(init.body) });
+    hits.push({
+      url,
+      headers: new Headers(init.headers),
+      body: String(init.body),
+      redirect: init.redirect,
+    });
     const a = answers(hits.length);
     if (a instanceof Error) throw a;
     return new Response("", { status: a });
@@ -300,6 +318,18 @@ describe("webhook delivery", () => {
     await h.dispatcher.tick();
     expect(h.hits).toHaveLength(1); // delivered once the name is public again, same delivery id
     expect(h.hits[0].headers.get("x-boof-delivery")).toBe(state[id].pending[0].deliveryId);
+  });
+
+  it("treats a 3xx answer as a failed attempt and does not follow it", async () => {
+    const { id } = await subscribe({ url: "http://hook.test/in" });
+    const h = harness(() => 302);
+    await h.dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    await h.dispatcher.tick();
+    expect(h.hits).toHaveLength(1);
+    expect(h.hits[0].redirect).toBe("manual");
+    const state = JSON.parse(await readFile(join(root, "webhooks", "state.json"), "utf8"));
+    expect(state[id].pending[0].lastError).toBe("HTTP 302");
   });
 
   it("filters by project and event type", async () => {

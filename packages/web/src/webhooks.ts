@@ -234,6 +234,7 @@ export class WebhookDispatcher {
     try {
       target = await checkWebhookTarget(hook.url, {
         resolve: this.opts.resolveHost,
+        lookupTimeoutMs: TIMEOUT_MS,
         allowedPrivateHosts: allowed,
       });
     } catch (err) {
