@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { api } from "../api.js";
+import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
 import { stepHeaders } from "../lib/log-tail.js";
@@ -117,9 +118,21 @@ function ExistingTask({
   tasksHref: string;
 }) {
   const row = data.tasks.find((t) => t.frontmatter.id === taskId);
-  const { task, missing, reload } = useTask(pid, taskId, row?.frontmatter.updated ?? null);
+  const listKey = row
+    ? `${row.frontmatter.updated}|${row.frontmatter.steps?.length ?? 0}|${row.frontmatter.status}`
+    : null;
+  const { task, missing, failed, reload } = useTask(pid, taskId, listKey);
   if (missing) return <MissingTask href={tasksHref} />;
-  if (!task) return null;
+  if (!task) {
+    return failed ? (
+      <div className="py-8">
+        <p className="mt-0 mb-3 text-ink-muted">Could not load this task.</p>
+        <Button variant="outline" onClick={() => void reload()}>
+          Try again
+        </Button>
+      </div>
+    ) : null;
+  }
   return (
     <Loaded
       pid={pid}
