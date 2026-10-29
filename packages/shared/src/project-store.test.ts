@@ -138,6 +138,17 @@ describe("ProjectStore", () => {
     expect(await store.findByDirectory(join(base, "nope"))).toBeNull();
   });
 
+  it("update serializes concurrent patches so neither is lost", async () => {
+    await store.create({ workingDirectory: await makeRepo("a"), id: "a" });
+    await Promise.all([
+      store.update("a", { name: "Renamed" }),
+      store.update("a", { labels: ["x"] }),
+    ]);
+    const p = (await store.get("a"))!;
+    expect(p.name).toBe("Renamed");
+    expect(p.labels).toEqual(["x"]);
+  });
+
   it("updates fields, clears optional ones with null and bumps `updated`", async () => {
     const p = await store.create({ workingDirectory: await makeRepo("app") });
     const u = await store.update("app", {

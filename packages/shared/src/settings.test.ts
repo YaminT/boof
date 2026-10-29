@@ -189,6 +189,16 @@ describe("v2 settings store", () => {
     expect(s.runner).toEqual({ enabled: true, concurrency: 3 });
   });
 
+  it("update serializes concurrent patches so neither is lost", async () => {
+    const store = new SettingsStore(root);
+    await store.load();
+    await Promise.all([
+      store.update({ runner: { enabled: true } }),
+      store.update({ runner: { concurrency: 3 } }),
+    ]);
+    expect((await store.load()).runner).toEqual({ enabled: true, concurrency: 3 });
+  });
+
   it("SettingsPatchSchema rejects workingDirectory and accepts defaultProject", () => {
     expect(SettingsPatchSchema.safeParse({ workingDirectory: "/x" }).success).toBe(false);
     expect(SettingsPatchSchema.safeParse({ defaultProject: "app" }).success).toBe(true);

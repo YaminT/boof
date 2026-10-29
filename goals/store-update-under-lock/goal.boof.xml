@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">SettingsStore.update and ProjectStore.update run load, merge and save under one per-file mutate lock, like AuthStore.mutate.</version>
       </versions>
     </status>
     <tests>

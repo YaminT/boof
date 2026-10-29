@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { lockedAtomicWrite, readText } from "./atomic.js";
+import { lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
 import {
   McpSettingsSchema,
@@ -82,14 +82,20 @@ export class SettingsStore {
   }
 
   /** Partial update merged over the current settings; `runner` merges per key. */
-  async update(patch: SettingsUpdate): Promise<Settings> {
-    const current = await this.load();
-    const { runner, ...rest } = patch;
-    return this.save({
-      ...current,
-      ...rest,
-      ...(runner ? { runner: { ...current.runner, ...stripUndefined(runner) } } : {}),
-    } as Settings);
+  update(patch: SettingsUpdate): Promise<Settings> {
+    return this.mutate((current) => {
+      const { runner, ...rest } = patch;
+      return this.save({
+        ...current,
+        ...rest,
+        ...(runner ? { runner: { ...current.runner, ...stripUndefined(runner) } } : {}),
+      } as Settings);
+    });
+  }
+
+  /** Load, change and save under one per-file lock so concurrent updates cannot lose each other. */
+  private mutate<T>(fn: (current: Settings) => Promise<T>): Promise<T> {
+    return withFileLock(`${this.path}#mutate`, async () => fn(await this.load()));
   }
 }
 

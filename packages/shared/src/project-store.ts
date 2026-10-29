@@ -198,23 +198,25 @@ export class ProjectStore {
   /** Apply a patch (null clears an optional field), re-vetting a changed working directory. */
   async update(id: string, patch: ProjectPatch): Promise<Project> {
     const path = projectPaths(this.root, id).json;
-    const current = await this.require(id);
-    const next: Record<string, unknown> = { ...current };
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) continue;
-      if (value === null) delete next[key];
-      else next[key] = value;
-    }
-    if (
-      patch.workingDirectory !== undefined &&
-      patch.workingDirectory !== current.workingDirectory
-    ) {
-      next.workingDirectory = await this.vetDirectory(patch.workingDirectory, id);
-    }
-    next.updated = nowIso();
-    const project = ProjectSchema.parse(next);
-    await withFileLock(path, () => atomicWrite(path, JSON.stringify(project, null, 2) + "\n"));
-    return project;
+    return withFileLock(`${path}#mutate`, async () => {
+      const current = await this.require(id);
+      const next: Record<string, unknown> = { ...current };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) continue;
+        if (value === null) delete next[key];
+        else next[key] = value;
+      }
+      if (
+        patch.workingDirectory !== undefined &&
+        patch.workingDirectory !== current.workingDirectory
+      ) {
+        next.workingDirectory = await this.vetDirectory(patch.workingDirectory, id);
+      }
+      next.updated = nowIso();
+      const project = ProjectSchema.parse(next);
+      await withFileLock(path, () => atomicWrite(path, JSON.stringify(project, null, 2) + "\n"));
+      return project;
+    });
   }
 
   archive(id: string): Promise<Project> {
