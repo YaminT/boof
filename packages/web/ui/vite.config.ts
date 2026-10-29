@@ -16,6 +16,9 @@ export default defineConfig({
       "/api": "http://127.0.0.1:4319",
     },
   },
+  // Relative asset URLs: the built UI works at / and behind a reverse-proxy path prefix
+  // (for example https://example.com/boof/ with nginx stripping /boof).
+  base: "./",
   build: {
     outDir: "dist",
     emptyOutDir: true,

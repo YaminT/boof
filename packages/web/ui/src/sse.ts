@@ -72,6 +72,11 @@ export interface EventStreamOptions {
   onOpen?: () => void;
   /** Called on a 401 so the UI can ask for a key; reconnects stop until the next start(). */
   onUnauthorized?: () => void;
+  /**
+   * Resolves when new credentials are available (or `signal` aborts). When set, a 401 pauses the
+   * stream instead of ending it, so live updates resume after the user enters a key.
+   */
+  waitForCredentials?: (signal: AbortSignal) => Promise<void>;
   fetchImpl?: typeof fetch;
   /** Reconnect delay for the nth consecutive failure (default: 1s doubling to 30s). */
   backoffMs?: (attempt: number) => number;
@@ -113,7 +118,12 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
         });
         if (res.status === 401) {
           opts.onUnauthorized?.();
-          return;
+          // Without a way to wait for a new key, stop; otherwise pause until one is stored.
+          if (!opts.waitForCredentials) return;
+          await opts.waitForCredentials(ctrl.signal);
+          if (ctrl.signal.aborted) return;
+          attempt = 0;
+          continue;
         }
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         attempt = 0;

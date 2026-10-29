@@ -83,6 +83,16 @@ sudo nginx -t && sudo systemctl reload nginx
 
 Certificates: `sudo certbot --nginx -d boof.example.com` creates them and edits the server block; or run `sudo certbot certonly --webroot -w /var/www/html -d boof.example.com` first and keep the paths in the example. The `Host` header must reach boof unchanged (`proxy_set_header Host $host;`), and buffering must stay off for the live event stream.
 
+**Path prefix.** To serve boof from a path of a site that already exists (for example `https://example.com/boof/`), include [deploy/nginx-boof-prefix.conf.example](nginx-boof-prefix.conf.example) inside that site's `server` block instead of adding a site of its own:
+
+```bash
+sudo cp ~/.local/share/boof-runner/source/deploy/nginx-boof-prefix.conf.example /etc/nginx/snippets/boof.conf
+sudoedit /etc/nginx/sites-available/<site>      # add "include snippets/boof.conf;" inside the HTTPS server block
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+The trailing slash on `proxy_pass` strips `/boof`, so boof itself is unchanged; the web UI uses relative URLs and works under the prefix, and `X-Forwarded-Prefix` tells boof where it lives for the few URLs it emits itself (the OpenAPI `servers` entry, deprecation `Link` headers). The snippet hides boof's `Strict-Transport-Security` header, which carries `includeSubDomains`; set HSTS in the site's server block if you want it. Run `remote setup --hostname example.com` with the site's host name, and send a harness `BOOF_URL=https://example.com/boof` (the API is then at `/boof/api/v1`, MCP at `/boof/mcp`).
+
 Behind Cloudflare: use a proxied (orange cloud) DNS record, SSL mode Full (strict) with a valid certificate on the origin, and keep nginx's `proxy_buffering off;`. Cloudflare passes server-sent events as long as the origin does not buffer them, and drops idle connections after about 100 s, so clients reconnect with `Last-Event-ID` (boof replays missed events).
 
 ## 7. Give an AI harness access

@@ -92,8 +92,8 @@ describe("public docs routes", () => {
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     const body = await res.text();
     expect(body.startsWith("# boof-runner")).toBe(true);
-    expect(body).toContain("(/harness.txt)");
-    expect(body).toContain("(/api/v1/openapi.json)");
+    expect(body).toContain("(harness.txt)"); // relative: works behind a path prefix
+    expect(body).toContain("(api/v1/openapi.json)");
   });
 
   it("still applies the Host guard and the security headers", async () => {

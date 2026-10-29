@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { connectEventStream } from "./sse.js";
-import { authHeaders, notifyUnauthorized } from "./token.js";
+import { authHeaders, notifyUnauthorized, onTokenChange } from "./token.js";
 
-const EVENTS_URL = "/api/v1/events";
+const EVENTS_URL = "api/v1/events"; // relative: works at / and behind a path prefix
 
 /** A typed event from the server (`task.created`, `task.status`, `plan.updated`, ...). */
 export interface LiveEvent {
@@ -57,6 +57,16 @@ export function useLive(handlers: LiveHandlers): void {
         opened = true;
       },
       onUnauthorized: notifyUnauthorized,
+      waitForCredentials: (signal) =>
+        new Promise((resolve) => {
+          const done = () => {
+            off();
+            signal.removeEventListener("abort", done);
+            resolve();
+          };
+          const off = onTokenChange(done);
+          signal.addEventListener("abort", done, { once: true });
+        }),
     });
   }, []);
 }

@@ -68,9 +68,19 @@ const LLMS_TXT = `# boof-runner
 
 ## Docs
 
-- [Harness guide](/harness.txt): the complete guide for an AI agent: connection, concepts, every REST operation, workflows
-- [OpenAPI](/api/v1/openapi.json): the machine-readable REST contract (needs an API key)
+- [Harness guide](harness.txt): the complete guide for an AI agent: connection, concepts, every REST operation, workflows
+- [OpenAPI](api/v1/openapi.json): the machine-readable REST contract (needs an API key)
 `;
+
+/**
+ * The path prefix a reverse proxy mounted boof under (`X-Forwarded-Prefix: /boof`), or "" at the
+ * root. Only a clean absolute path is accepted; it is used for server-emitted URLs.
+ */
+function publicPrefix(c: Context): string {
+  const raw = c.req.header("x-forwarded-prefix") ?? "";
+  if (!/^\/[A-Za-z0-9._~\-\/]*$/.test(raw) || raw.includes("..")) return "";
+  return raw.replace(/\/+$/, "");
+}
 
 const JSON_BODY_LIMIT = 1_000_000;
 const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
@@ -178,7 +188,7 @@ export function createApp(deps: AppDeps): Hono {
       if (!c.req.path.startsWith("/api/events")) {
         c.header(
           "Link",
-          `<${c.req.path.replace(/^\/api\//, "/api/v1/")}>; rel="successor-version"`,
+          `<${publicPrefix(c)}${c.req.path.replace(/^\/api\//, "/api/v1/")}>; rel="successor-version"`,
         );
       }
     }
@@ -188,9 +198,14 @@ export function createApp(deps: AppDeps): Hono {
   const idempotency = new IdempotencyStore(service.root);
   const restDeps = { service, authStore, idempotency, isSelfUrl: deps.isSelfUrl };
   // The contract, generated once from the registry. Any authenticated principal may read it.
-  let openapi: string | undefined;
+  const openapiByPrefix = new Map<string, string>();
   api.get("/v1/openapi.json", (c) => {
-    openapi ??= JSON.stringify(buildOpenApi(registry));
+    const prefix = publicPrefix(c);
+    let openapi = openapiByPrefix.get(prefix);
+    if (!openapi) {
+      openapi = JSON.stringify(buildOpenApi(registry, { basePath: `${prefix}/api/v1` }));
+      openapiByPrefix.set(prefix, openapi);
+    }
     return c.body(openapi, 200, { "Content-Type": "application/json" });
   });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
@@ -229,6 +244,7 @@ export function createApp(deps: AppDeps): Hono {
         ]);
       cursor = decoded;
     }
+    c.header("X-Accel-Buffering", "no"); // nginx: never buffer the event stream
     return streamSSE(c, async (stream) => {
       await stream.writeSSE({
         event: "ready",
@@ -324,7 +340,7 @@ export function createApp(deps: AppDeps): Hono {
     app.use("/*", serveStatic({ root: deps.uiDir }));
     app.get("/*", serveStatic({ path: "index.html", root: deps.uiDir }));
   } else {
-    app.get("/", (c) => c.text("Boof Runner Agent Task Runner — UI not built. API at /api/*"));
+    app.get("/", (c) => c.text("Boof Runner Agent Task Runner — UI not built. API at api/v1/*"));
   }
 
   return app;

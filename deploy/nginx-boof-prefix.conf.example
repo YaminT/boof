@@ -1,0 +1,44 @@
+# Boof Runner under a path prefix of an existing nginx site, e.g. https://example.com/boof/.
+# Include this file INSIDE the server block that already serves the site:
+#
+#     include snippets/boof.conf;
+#
+# (copy it to /etc/nginx/snippets/boof.conf; see deploy/README.md "Path prefix"). For a host name of
+# its own use deploy/nginx-boof.conf.example instead.
+#
+# The trailing slash on proxy_pass strips /boof, so boof itself still lives at /. The web UI uses
+# relative URLs and hash routes, so it works unchanged behind the prefix; the API is at
+# /boof/api/v1, MCP at /boof/mcp, the harness guide at /boof/harness.txt.
+#
+# Boof listens on 127.0.0.1:4319 only; nginx terminates TLS and forwards the original Host header,
+# which boof checks against security.allowedHosts (set by `boof-runner remote setup --hostname`).
+
+location = /boof { return 301 /boof/; }
+
+location /boof/ {
+    proxy_pass http://127.0.0.1:4319/;
+
+    # Boof's DNS-rebinding guard compares this with security.allowedHosts.
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Tells boof where it is mounted, for the URLs it emits itself (OpenAPI "servers", Link headers).
+    proxy_set_header X-Forwarded-Prefix /boof;
+
+    # TLS is nginx's business: boof's default HSTS header carries includeSubDomains, which would
+    # pin every subdomain of the site to HTTPS for 180 days. Set HSTS in the server block instead.
+    proxy_hide_header Strict-Transport-Security;
+
+    # Server-sent events (/boof/api/v1/events, the live log) and long requests:
+    # no buffering, HTTP/1.1 to the upstream, a long read timeout.
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 1h;
+    proxy_send_timeout 1h;
+
+    # Attachments are capped at 25 MB by boof; keep nginx above that.
+    client_max_body_size 30m;
+}

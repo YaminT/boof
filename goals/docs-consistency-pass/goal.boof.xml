@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Fix stale and contradictory statements: docs/boof-runner.md still says budgets are tracking-only (:471, :487) although enforcement shipped; it says 32 MCP tools where the README and code say 34; the install script accepts Node &gt;= 20 while package.json engines and the runbook say &gt;= 22.22 (read the floor from package.json); the default clone URL is SSH (git@github.com) which fails on a fresh server without a key, default to https; README's desktop first-run paragraph mentions a header folder icon that no longer exists (it is the Browse… button and the project Settings page).</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Review the diff against the code; run the install script on Node 20 and expect a clear refusal.</strategy>
+      <technology>manual</technology>
+      <run>npm run lint</run>
+    </tests>
+  </progress>
+</boof>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>codex.ts summarizeCodexStream and the parseUsage fallback emit costUsd 0 with known: true, so codex spend never counts against perToolDayUsd/perDayUsd/perTaskUsd and unknownSteps never increments (the README's codex budget example can never trip). Separately, runStep records err.usage only for steers; transiently failed and finally failed attempts drop their cost, so with retries.transient: 2 a step can cost three times its budget before the check sees anything. Mark codex cost as known: false unless the stream reports a price, and record usage from ToolRunError on every failure path. Tests for both.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests with vitest for the changed module; an integration test through the Hono app or CLI where the behaviour is observable there.</strategy>
+      <technology>vitest</technology>
+      <run>npm run typecheck &amp;&amp; npm test</run>
+    </tests>
+  </progress>
+</boof>

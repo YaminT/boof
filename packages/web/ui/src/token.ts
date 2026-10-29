@@ -31,6 +31,15 @@ export function setToken(token: string): void {
   } catch {
     /* sessionStorage unavailable: the key lasts until reload via callers' state */
   }
+  for (const fn of [...tokenListeners]) fn();
+}
+
+const tokenListeners = new Set<() => void>();
+
+/** Subscribe to a new key being stored (the event stream resumes). Returns an unsubscribe function. */
+export function onTokenChange(fn: () => void): () => void {
+  tokenListeners.add(fn);
+  return () => tokenListeners.delete(fn);
 }
 
 export function clearToken(): void {

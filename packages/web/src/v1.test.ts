@@ -182,6 +182,23 @@ describe("v1 conventions", () => {
     expect((await remote.request("http://localhost/api/v1/openapi.json")).status).toBe(401);
   });
 
+  it("prefixes server-emitted URLs with X-Forwarded-Prefix (boof behind /boof)", async () => {
+    const plain = await (await call(`${V1}/openapi.json`)).json();
+    expect(plain.servers).toEqual([{ url: "/api/v1" }]);
+    const behind = await (
+      await call(`${V1}/openapi.json`, { headers: { "x-forwarded-prefix": "/boof/" } })
+    ).json();
+    expect(behind.servers).toEqual([{ url: "/boof/api/v1" }]);
+    // The legacy route's successor link honours the prefix too.
+    const legacy = await call("/api/projects", { headers: { "x-forwarded-prefix": "/boof" } });
+    expect(legacy.headers.get("link")).toBe('</boof/api/v1/projects>; rel="successor-version"');
+    // Garbage is ignored, never reflected.
+    const bad = await (
+      await call(`${V1}/openapi.json`, { headers: { "x-forwarded-prefix": "http://x/../y" } })
+    ).json();
+    expect(bad.servers).toEqual([{ url: "/api/v1" }]);
+  });
+
   it("answers unknown API routes with a JSON 404", async () => {
     const res = await call(`${V1}/nope`);
     expect(res.status).toBe(404);

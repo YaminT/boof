@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>The nodets.com/boof site has no page for deploy/README.md (Run on a server) and the README changed since the last deploy. Map it in ~/code/nodets/site.config.mjs and run npm run deploy there; link it from the README.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Open the published page and check the links.</strategy>
+      <technology>manual</technology>
+      <run>curl -sI https://nodets.com/boof/server</run>
+    </tests>
+  </progress>
+</boof>
