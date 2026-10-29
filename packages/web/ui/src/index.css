@@ -146,8 +146,15 @@ body {
   h4 {
     font-size: var(--text-body);
   }
+  /* Navigation and action links are plain accent text; they underline on hover and focus.
+     Links inside prose (paragraphs) and the old plan export list stay underlined. */
   a {
     color: var(--accent-brand);
+    text-decoration: none;
+  }
+  a:hover,
+  a:focus-visible,
+  :where(p, .spec-list) a {
     text-decoration: underline;
   }
   a:focus-visible,

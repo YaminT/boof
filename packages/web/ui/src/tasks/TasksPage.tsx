@@ -160,7 +160,8 @@ export function TasksPage({
     if (
       (action === "move-up" || action === "move-down") &&
       selected.kind === "queued" &&
-      canReorder
+      canReorder &&
+      !e.repeat // one move per press, not one per key repeat
     ) {
       const next = moveQueued(queuedOrder, id, action === "move-up" ? -1 : 1);
       if (next) reorder(next);
@@ -240,7 +241,7 @@ export function TasksPage({
         </TaskSection>
       )}
       {rows.finished.length > 0 && (
-        <TaskSection title="Finished">
+        <TaskSection title="Finished" count={rows.finished.length}>
           <div className="mb-1 flex items-center gap-3 text-[length:var(--text-row)] text-ink-muted">
             <span>
               done {counts.done}, failed {counts.failed}, stopped {counts.stopped}, archived{" "}

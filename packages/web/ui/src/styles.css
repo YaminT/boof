@@ -1138,9 +1138,7 @@ textarea:focus-visible {
 }
 .changes-h {
   margin: 18px 0 8px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 14px;
   color: var(--legacy-muted);
 }
 .changes code,

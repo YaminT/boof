@@ -21,7 +21,9 @@ function Segment({ seg }: { seg: StepSegment }) {
       )}
       aria-current={seg.state === "current" ? "step" : undefined}
     >
-      {seg.state === "done" && <CheckIcon className="size-3.5 text-done" aria-label="done" />}
+      {seg.state === "done" && (
+        <CheckIcon className="size-3.5 text-done" role="img" aria-label="done" />
+      )}
       {seg.state === "current" && (
         <span
           role="img"

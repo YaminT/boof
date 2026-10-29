@@ -229,8 +229,7 @@ export function ChangesPanel({
           <span className="diff-add-count">+{diff.stats.additions}</span>{" "}
           <span className="diff-del-count">−{diff.stats.deletions}</span>
           <span className="muted">
-            {" "}
-            · {diff.commits.length} commit{diff.commits.length === 1 ? "" : "s"} · base{" "}
+            , {diff.commits.length} commit{diff.commits.length === 1 ? "" : "s"}, base{" "}
             <code title={diff.base.sha}>
               {diff.base.ref} @ {diff.base.sha.slice(0, 7)}
             </code>{" "}
@@ -270,7 +269,7 @@ export function ChangesPanel({
               <code className="commit-sha">{c.sha.slice(0, 7)}</code>
               <span className="commit-subject">{c.subject}</span>
               <span className="muted commit-meta">
-                {c.author} · {new Date(c.date).toLocaleString()}
+                {c.author}, {new Date(c.date).toLocaleString()}
               </span>
             </li>
           ))}
