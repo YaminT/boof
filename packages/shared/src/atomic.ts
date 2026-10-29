@@ -39,7 +39,12 @@ export interface AtomicWriteOptions {
   mode?: number;
   /** Fail with EEXIST instead of replacing an existing `path`. */
   exclusive?: boolean;
+  /** Test hook: replaces link(2) for the exclusive publish. */
+  linkFn?: typeof link;
 }
+
+/** link(2) failures that mean "this filesystem has no hard links". */
+const NO_HARD_LINK_CODES = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
 
 /**
  * Atomically write `contents` to `path` (temp file + rename), creating dirs.
@@ -53,7 +58,11 @@ export async function atomicWrite(
   contents: string,
   opts?: number | AtomicWriteOptions,
 ): Promise<void> {
-  const { mode, exclusive } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
+  const {
+    mode,
+    exclusive,
+    linkFn = link,
+  } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
   const tmp = join(dir, `.${randomBytes(8).toString("hex")}.tmp`);
@@ -66,8 +75,23 @@ export async function atomicWrite(
       await fh.close();
     }
     if (exclusive) {
-      await link(tmp, path);
-      await unlink(tmp);
+      try {
+        await linkFn(tmp, path);
+      } catch (err) {
+        if (!NO_HARD_LINK_CODES.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
+        // No hard links here: create the destination itself with "wx" (fails with EEXIST,
+        // exclusive across processes) and write it in place. Unlike link, a reader can briefly
+        // see a partial file; that beats refusing every create on such filesystems.
+        const fh = await open(path, "wx", mode ?? 0o666);
+        try {
+          await fh.writeFile(contents, "utf8");
+          await fh.sync();
+        } finally {
+          await fh.close();
+        }
+      }
+      // The file is published; a stray temp file must not turn that into a failure.
+      await unlink(tmp).catch(() => {});
     } else {
       await rename(tmp, path);
     }

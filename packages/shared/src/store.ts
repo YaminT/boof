@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { atomicWrite, readText, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
 import { formatInjectedEntry, parseInjected, type InjectMode } from "./injected.js";
+import { uniqueKebabId } from "./ids.js";
 import { assertTransition } from "./lifecycle.js";
 import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import { nowIso } from "./runtime.js";
@@ -263,6 +264,23 @@ export class TaskStore {
       by: opts.by ?? "runner",
     });
     return task;
+  }
+
+  /**
+   * Create `task` under a fresh kebab id derived from its title. Concurrent creates with one
+   * title pick the same id; the loser retries with a new one (up to 5 attempts, then
+   * {@link TaskExistsError}).
+   */
+  async createUnique(task: Task, opts: { by?: string } = {}): Promise<Task> {
+    for (let attempt = 0; ; attempt += 1) {
+      const ids = (await this.list()).map((t) => t.frontmatter.id);
+      task.frontmatter.id = uniqueKebabId(task.frontmatter.title, ids);
+      try {
+        return await this.create(task, opts);
+      } catch (err) {
+        if (!(err instanceof TaskExistsError) || attempt >= 4) throw err;
+      }
+    }
   }
 
   /**

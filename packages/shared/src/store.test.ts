@@ -288,7 +288,9 @@ describe("TaskStore races", () => {
       store.transition("t1", "archived"),
       store.transition("t1", "running"),
     ]);
-    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+    const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(InvalidTransitionError);
     expect(await copies("t1")).toBe(1);
     expect(await fileExists(taskFilePath(root, "pending", "t1"))).toBe(false);
   });
@@ -333,6 +335,14 @@ describe("TaskStore races", () => {
     await store.delete("t1");
     await expect(store.save(copy)).rejects.toBeInstanceOf(TaskNotFoundError);
     expect(await copies("t1")).toBe(0);
+  });
+
+  it("createUnique gives concurrent creates of one title different ids", async () => {
+    const mk = () => newTask(fm({ id: "x", title: "Same title" }));
+    const made = await Promise.all([store.createUnique(mk()), store.createUnique(mk())]);
+    const ids = made.map((t) => t.frontmatter.id);
+    expect(new Set(ids).size).toBe(2);
+    expect((await store.list()).length).toBe(2);
   });
 
   it("create refuses an id that exists in any status directory", async () => {

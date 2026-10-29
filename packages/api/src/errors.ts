@@ -1,5 +1,10 @@
 import { ZodError } from "zod";
-import { InvalidIdError, InvalidTransitionError, TaskNotFoundError } from "@boof-runner/shared";
+import {
+  InvalidIdError,
+  InvalidTransitionError,
+  TaskExistsError,
+  TaskNotFoundError,
+} from "@boof-runner/shared";
 
 /**
  * Every error code an operation can return, with the HTTP status REST uses for it. MCP reports
@@ -95,6 +100,7 @@ export function toOpError(err: unknown): OpError {
   if (err instanceof InvalidTransitionError) {
     return new OpError(409, err.message, "invalid_transition");
   }
+  if (err instanceof TaskExistsError) return new OpError(409, err.message, "conflict");
   if (err instanceof InvalidIdError) return new OpError(400, err.message, "invalid_input");
   if (err instanceof ZodError) {
     return new OpError(400, "Invalid input", "invalid_input", formatIssues(err));

@@ -13,7 +13,6 @@ import {
   ProjectStore,
   SettingsStore,
   TaskStore,
-  uniqueKebabId,
   workingAreaDir,
   type BoofGoalRef,
   type Project,
@@ -220,14 +219,12 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   await ensureRunnerEnabled(opts.root, out);
 
   const registry = opts.registry ?? new ToolRegistry();
-  const existing = (await store.list()).map((t) => t.frontmatter.id);
   const title = opts.title ?? firstLine(opts.prompt);
-  const id = uniqueKebabId(title, existing);
   const tools = toolOverride(registry, settings, opts.tool, opts.model);
-  await store.create(
+  const { frontmatter } = await store.createUnique(
     newTask(
       {
-        id,
+        id: "pending-id",
         title,
         status: "pending",
         priority: 1000, // ahead of any pre-existing queue so it runs first
@@ -246,6 +243,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
       opts.prompt,
     ),
   );
+  const id = frontmatter.id;
 
   const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
   // Drive until our task leaves the active states. One tick fully runs the

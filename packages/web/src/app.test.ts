@@ -72,6 +72,15 @@ describe("GET /healthz", () => {
 });
 
 describe("task API", () => {
+  it("two concurrent creates with one title both succeed with different ids", async () => {
+    const svc = service.forProject("default");
+    const made = await Promise.all([
+      svc.create({ title: "Same title", prompt: "a" }),
+      svc.create({ title: "Same title", prompt: "b" }),
+    ]);
+    expect(new Set(made.map((t) => t.frontmatter.id)).size).toBe(2);
+  });
+
   it("creates, lists, and reads a task", async () => {
     const created = await (
       await req("/api/tasks", json({ title: "Add Auth", prompt: "do it" }))

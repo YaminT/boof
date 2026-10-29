@@ -52,6 +52,20 @@ describe("withFileLock", () => {
 });
 
 describe("atomicWrite", () => {
+  it("exclusive write falls back to a wx create when hard links are unsupported", async () => {
+    const dest = join(dir, "t.md");
+    const noLink = (async () => {
+      throw Object.assign(new Error("no links"), { code: "EPERM" });
+    }) as unknown as typeof import("node:fs/promises").link;
+    await atomicWrite(dest, "first\n", { exclusive: true, linkFn: noLink });
+    expect(await readFile(dest, "utf8")).toBe("first\n");
+    await expect(
+      atomicWrite(dest, "second\n", { exclusive: true, linkFn: noLink }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(dest, "utf8")).toBe("first\n");
+    expect((await readdir(dir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("exclusive write refuses an existing path and leaves it unchanged", async () => {
     const dest = join(dir, "t.md");
     await atomicWrite(dest, "first\n", { exclusive: true });

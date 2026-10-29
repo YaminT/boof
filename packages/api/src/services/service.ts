@@ -24,7 +24,6 @@ import {
   taskStopRequestPath,
   taskAssetsDir,
   TaskStore,
-  uniqueKebabId,
   workingAreaDir,
   type Attachment,
   type InjectMode,
@@ -164,8 +163,7 @@ export class ProjectService {
     input: CreateTaskInput,
     actor?: Principal,
   ): Promise<{ task: Task; warnings: Warning[] }> {
-    const existing = (await this.tasks.list()).map((t) => t.frontmatter.id);
-    const id = uniqueKebabId(input.title, existing);
+    const id = "pending-id";
     const review = await this.needsApproval(actor);
     const status = review ? "draft" : (input.status ?? "draft");
     const labels = [...(input.labels ?? [])];
@@ -198,7 +196,7 @@ export class ProjectService {
       review && input.status && input.status !== status
         ? [statusDowngraded("task", input.status, status)]
         : [];
-    return { task: await this.tasks.create(task, { by: actor?.id ?? "local" }), warnings };
+    return { task: await this.tasks.createUnique(task, { by: actor?.id ?? "local" }), warnings };
   }
 
   private async applyCommand(task: Task, commandId: string | null): Promise<void> {
