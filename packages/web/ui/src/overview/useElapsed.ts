@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { startedAt } from "../lib/first-seen.js";
 
-/** When this browser first saw each task running; the server has no start time yet. */
-const firstSeen = new Map<string, number>();
-
-/** Seconds since this browser first saw the task running, ticking each second; null if not running. */
+/**
+ * Seconds since this browser first saw the task running, ticking each second; null if not
+ * running. The start time comes from `lib/first-seen`, which App keeps in step with the running
+ * tasks, so a task that runs again starts from zero.
+ */
 export function useElapsed(taskId: string, running: boolean): number | null {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -11,16 +13,8 @@ export function useElapsed(taskId: string, running: boolean): number | null {
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [running, taskId]);
 
-  if (!running) {
-    firstSeen.delete(taskId);
-    return null;
-  }
-  let start = firstSeen.get(taskId);
-  if (start === undefined) {
-    start = Date.now();
-    firstSeen.set(taskId, start);
-  }
-  return Math.max(0, Math.floor((now - start) / 1000));
+  if (!running) return null;
+  return Math.max(0, Math.floor((now - (startedAt(taskId) ?? now)) / 1000));
 }

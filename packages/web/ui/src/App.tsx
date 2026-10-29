@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "@boof-runner/shared/schema";
 import { BudgetBanner } from "./components/Budget.js";
 import { useAppData } from "./useAppData.js";
@@ -16,6 +16,7 @@ import { AppShell } from "./shell/AppShell.js";
 import { routePid } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
 import { groupTasks } from "./lib/task-groups.js";
+import { markRunning } from "./lib/first-seen.js";
 import { OverviewPage } from "./overview/OverviewPage.js";
 import { NowStrip } from "./overview/NowStrip.js";
 
@@ -31,6 +32,11 @@ export function App() {
   const { projects, selected, select, reload } = useProjects(settings, routePid(route));
   reloadRef.current = reload;
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
+  // Keep the first-seen clock in step with what runs (layout effect: before child effects read it).
+  const runningKey = groups.running.map((t) => t.frontmatter.id).join("\n");
+  useLayoutEffect(() => {
+    markRunning(runningKey ? runningKey.split("\n") : [], Date.now());
+  }, [runningKey]);
   const currentId = selected?.id ?? null;
   useEffect(() => setSelectedId(currentId), [currentId]);
 
