@@ -315,66 +315,74 @@ export class Pipeline {
         : { ...result, usage: sumUsage([...interrupted, ...(result.usage ? [result.usage] : [])]) };
     let steers = 0;
     let failures = 0;
-    for (;;) {
-      const canSteer = steers < MAX_STEERS_PER_STEP;
-      try {
-        const result = await tool.run({
-          ...opts,
-          prompt,
-          resumeSessionId,
-          idleTimeoutMs,
-          stopSignalPath: taskStopRequestPath(this.deps.root, id),
-          steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
-          onChunk: (c) => void this.streamChunk(id, c),
-        });
-        await this.recordStepCost(id, tool.id, result.usage);
-        return finish(result);
-      } catch (err) {
-        if (err instanceof ToolRunError && err.usage) {
-          await this.recordStepCost(id, tool.id, err.usage);
-          if (err.steered) interrupted.push(err.usage);
-          else this.lostUsages.set(id, [...(this.lostUsages.get(id) ?? []), err.usage]);
-        }
-        if (err instanceof ToolRunError && err.steered) {
-          // A stop request that arrived together with the steer wins.
-          await this.assertNotStopped(id);
-          const texts = await this.takeSteer(id);
-          steers++;
-          steerTexts.push(...texts);
-          this.deps.store.markInjectedApplied(id).catch(() => {});
-          await this.log(id, `\n### Steered\n${texts.join("\n\n")}`);
-          if (err.sessionId && tool.supportsResume) {
-            resumeSessionId = err.sessionId;
-            prompt = RESUME_PROMPT_PREFIX + texts.join("\n\n");
-          } else {
-            resumeSessionId = undefined;
-            prompt = compose("new instructions from the user");
+    try {
+      for (;;) {
+        const canSteer = steers < MAX_STEERS_PER_STEP;
+        try {
+          const result = await tool.run({
+            ...opts,
+            prompt,
+            resumeSessionId,
+            idleTimeoutMs,
+            stopSignalPath: taskStopRequestPath(this.deps.root, id),
+            steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
+            onChunk: (c) => void this.streamChunk(id, c),
+          });
+          await this.recordStepCost(id, tool.id, result.usage);
+          return finish(result);
+        } catch (err) {
+          if (err instanceof ToolRunError && err.usage) {
+            await this.recordStepCost(id, tool.id, err.usage);
+            if (err.steered) interrupted.push(err.usage);
+            else this.lostUsages.set(id, [...(this.lostUsages.get(id) ?? []), err.usage]);
           }
-          if (steers >= MAX_STEERS_PER_STEP) {
-            await this.log(
-              id,
-              `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
-            );
+          if (err instanceof ToolRunError && err.steered) {
+            // A stop request that arrived together with the steer wins.
+            await this.assertNotStopped(id);
+            const texts = await this.takeSteer(id);
+            steers++;
+            steerTexts.push(...texts);
+            this.deps.store.markInjectedApplied(id).catch(() => {});
+            await this.log(id, `\n### Steered\n${texts.join("\n\n")}`);
+            if (err.sessionId && tool.supportsResume) {
+              resumeSessionId = err.sessionId;
+              prompt = RESUME_PROMPT_PREFIX + texts.join("\n\n");
+            } else {
+              resumeSessionId = undefined;
+              prompt = compose("new instructions from the user");
+            }
+            if (steers >= MAX_STEERS_PER_STEP) {
+              await this.log(
+                id,
+                `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
+              );
+            }
+            await this.log(id, `\n### ${label} (steer ${steers})`);
+            continue;
           }
-          await this.log(id, `\n### ${label} (steer ${steers})`);
-          continue;
+          resumeSessionId = undefined;
+          const reason = transientReason(err);
+          if (reason === null || failures >= transient) throw err;
+          const attempt = failures++;
+          // A retry never starts on a spent budget.
+          await this.assertBudget(id, tool.id);
+          const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
+          await this.log(
+            id,
+            `\nTransient failure in ${label} (attempt ${attempt + 1}/${transient}): ${reason}; ` +
+              `retrying in ${+(delay / 1000).toFixed(1)}s in the same worktree`,
+          );
+          await this.backoff(id, delay);
+          await this.log(id, `\n### ${label} (retry ${attempt + 1})`);
+          prompt = compose("a transient error (API or network failure, or a stalled stream)");
         }
-        resumeSessionId = undefined;
-        const reason = transientReason(err);
-        if (reason === null || failures >= transient) throw err;
-        const attempt = failures++;
-        // A retry never starts on a spent budget.
-        await this.assertBudget(id, tool.id);
-        const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
-        await this.log(
-          id,
-          `\nTransient failure in ${label} (attempt ${attempt + 1}/${transient}): ${reason}; ` +
-            `retrying in ${+(delay / 1000).toFixed(1)}s in the same worktree`,
-        );
-        await this.backoff(id, delay);
-        await this.log(id, `\n### ${label} (retry ${attempt + 1})`);
-        prompt = compose("a transient error (API or network failure, or a stalled stream)");
       }
+    } catch (err) {
+      // Steered attempts were paid for: a later failure, stop or budget stop must not lose them.
+      if (interrupted.length > 0) {
+        this.lostUsages.set(id, [...(this.lostUsages.get(id) ?? []), ...interrupted]);
+      }
+      throw err;
     }
   }
 

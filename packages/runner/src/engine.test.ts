@@ -1363,6 +1363,22 @@ describe("steering a running step (mock tool)", () => {
     expect(entry?.appliedAt).toBeTruthy();
   });
 
+  it("keeps the steered attempt's usage on the task when the step then fails", async () => {
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer" && opts.resumeSessionId) throw new Error("developer crashed");
+    };
+    const stop = steerDeveloper(1);
+    let outcome;
+    try {
+      outcome = await runTask("Build it. [[mock-stall developer=1]]");
+    } finally {
+      await stop();
+    }
+    expect(outcome.kind).toBe("failed");
+    // Planner, refinement and the steered developer attempt; the crashed one reported nothing.
+    expect((await store.get("t1"))!.frontmatter.tokens?.costUsd).toBeCloseTo(0.03);
+  });
+
   it("a tool that cannot resume restarts the step with its prompt, the new text and the interruption note", async () => {
     mockState.resumeSupported = false;
     const stop = steerDeveloper(1);
