@@ -1,7 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { toOpError } from "@boof-runner/api";
-import { goalFilePath, PLAN_FILE } from "@boof-runner/shared";
+import { authorize, goalFilePath, PLAN_FILE, type Scope } from "@boof-runner/shared";
 import type { McpRuntime } from "./server.js";
 
 const JSON_MIME = "application/json";
@@ -29,6 +29,24 @@ async function guard<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Like `guard` for list callbacks: a client that lacks the scope or the project gets an empty
+ * list (hosts show a failing resources/list as a broken server); other errors stay errors.
+ */
+async function listGuard<T extends { resources: unknown[] }>(
+  fn: () => Promise<T>,
+): Promise<T | { resources: [] }> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!(err instanceof McpError)) {
+      const e = toOpError(err);
+      if (e.code === "forbidden_scope" || e.code === "forbidden_project") return { resources: [] };
+    }
+    return guard(() => Promise.reject(err));
+  }
+}
+
+/**
  * Read-only views of projects, plans and tasks for clients that prefer resources. Each read
  * runs the same operation (and so the same scope and project checks) as the matching tool.
  */
@@ -36,13 +54,17 @@ export function registerResources(server: McpServer, rt: McpRuntime): void {
   const call = (name: string, input: Record<string, unknown>) => rt.run(rt.op(name), input);
 
   /** With a fixed project the other projects do not exist for this server. */
-  const visibleProjects = async (): Promise<{ id: string; name: string }[]> => {
+  const can = async (scope: Scope) => authorize(await rt.principal(), scope);
+  /** The projects this server serves; the operation itself refuses a key without projects:read. */
+  const servedProjects = async (): Promise<{ id: string; name: string }[]> => {
     const { projects } = (await call("projects.list", {})) as {
       projects: { id: string; name: string }[];
     };
     const only = rt.options.project;
     return only ? projects.filter((p) => p.id === only) : projects;
   };
+  /** For the list callbacks: nothing is visible without projects:read. */
+  const visibleProjects = async () => ((await can("projects:read")) ? servedProjects() : []);
   const checkProject = (pid: string): void => {
     const only = rt.options.project;
     if (only !== undefined && pid !== only) {
@@ -54,14 +76,14 @@ export function registerResources(server: McpServer, rt: McpRuntime): void {
     "projects",
     "boof://projects",
     { title: "Projects", description: "All projects.", mimeType: JSON_MIME },
-    (uri) => guard(async () => asJson(uri, { projects: await visibleProjects() })),
+    (uri) => guard(async () => asJson(uri, { projects: await servedProjects() })),
   );
 
   server.registerResource(
     "project",
     new ResourceTemplate("boof://projects/{pid}", {
       list: () =>
-        guard(async () => ({
+        listGuard(async () => ({
           resources: (await visibleProjects()).map((p) => ({
             uri: `boof://projects/${p.id}`,
             name: `project-${p.id}`,
@@ -83,8 +105,9 @@ export function registerResources(server: McpServer, rt: McpRuntime): void {
     "plan",
     new ResourceTemplate("boof://projects/{pid}/plans/{planId}", {
       list: () =>
-        guard(async () => {
-          const resources = [];
+        listGuard(async () => {
+          const resources: { uri: string; name: string; title: string; mimeType: string }[] = [];
+          if (!(await can("plans:read"))) return { resources };
           for (const p of await visibleProjects()) {
             const { plans } = (await call("plans.list", { projectId: p.id })) as {
               plans: { id: string; title: string }[];
@@ -160,8 +183,9 @@ export function registerResources(server: McpServer, rt: McpRuntime): void {
     "task",
     new ResourceTemplate("boof://projects/{pid}/tasks/{taskId}", {
       list: () =>
-        guard(async () => {
-          const resources = [];
+        listGuard(async () => {
+          const resources: { uri: string; name: string; title: string; mimeType: string }[] = [];
+          if (!(await can("tasks:read"))) return { resources };
           for (const p of await visibleProjects()) {
             const { items } = (await call("tasks.list", { projectId: p.id, limit: 50 })) as {
               items: { frontmatter: { id: string; title: string } }[];

@@ -7968,7 +7968,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/live-log": {
       "get": {
-        "description": "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional format=text (REST: text/plain instead of JSON). No side effects.",
+        "description": "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional tail (last N lines) and format=text (REST: text/plain instead of JSON). No side effects.",
         "operationId": "tasks.liveLog",
         "parameters": [
           {
@@ -7991,6 +7991,17 @@
               "maxLength": 200,
               "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "description": "Return only the last N lines.",
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
             }
           },
           {

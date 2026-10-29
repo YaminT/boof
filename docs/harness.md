@@ -91,7 +91,7 @@ Read `version` from the plan (`GET .../plans/<plan-id>`, field `version`) right 
   python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["version"])' /tmp/boof.json
   ```
 
-- `GET .../tasks/<task-id>/live-log` answers JSON `{ "log": "...", "running": true }`. Add `?format=text` to get the log as `text/plain`.
+- `GET .../tasks/<task-id>/live-log` answers JSON `{ "log": "...", "running": true }`. Add `?format=text` to get the log as `text/plain`. `?tail=200` returns only the last 200 lines.
 - Build JSON bodies with `jq -n` or a file (`-d @body.json`) instead of nested shell quotes.
 
 ### If the user has no key
@@ -1522,7 +1522,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.liveLog`
 - Scope: `tasks:read`
 - MCP tool: `boof_get_task_log`
-- What it does: Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional format=text (REST: text/plain instead of JSON). No side effects.
+- What it does: Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional tail (last N lines) and format=text (REST: text/plain instead of JSON). No side effects.
 - Success: HTTP 200 with `{ log: string, running: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
 
@@ -1533,6 +1533,7 @@ Path parameters (all required):
 
 Query parameters:
 
+- `tail`: `integer 1..100000`, optional; Return only the last N lines
 - `format`: `"json" | "text"`, optional; text: the REST route answers text/plain with the log only
 
 #### `GET /api/v1/projects/{projectId}/tasks/{taskId}/wait` (Wait for a task status change)

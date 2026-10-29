@@ -25,7 +25,7 @@
     <goal id="cancel-waits-on-disconnect" path="goals/cancel-waits-on-disconnect" order="22" status="plan"></goal>
     <goal id="plan-approval-backfill" path="goals/plan-approval-backfill" order="23" status="done"><depends-on>migration-lock</depends-on></goal>
     <goal id="prune-worktrees-on-project-add" path="goals/prune-worktrees-on-project-add" order="24" status="done"></goal>
-    <goal id="mcp-listchanged-and-log-tail" path="goals/mcp-listchanged-and-log-tail" order="25" status="plan"></goal>
+    <goal id="mcp-listchanged-and-log-tail" path="goals/mcp-listchanged-and-log-tail" order="25" status="done"></goal>
     <goal id="service-install-keeps-options" path="goals/service-install-keeps-options" order="26" status="plan"></goal>
     <goal id="cli-version-and-unknown-command" path="goals/cli-version-and-unknown-command" order="27" status="plan"></goal>
     <goal id="desktop-healthz-facts" path="goals/desktop-healthz-facts" order="28" status="plan"></goal>
@@ -36,7 +36,7 @@
     <goal id="attachment-upload-no-json-fingerprint" path="goals/attachment-upload-no-json-fingerprint" order="33" status="plan"></goal>
     <goal id="audit-forwarded-ip" path="goals/audit-forwarded-ip" order="34" status="plan"></goal>
     <goal id="security-headers-behind-proxy" path="goals/security-headers-behind-proxy" order="35" status="plan"></goal>
-    <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="plan"></goal>
+    <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="done"></goal>
     <goal id="fix-npm-install-path" path="goals/fix-npm-install-path" order="37" status="plan"></goal>
     <goal id="release-workflow-version" path="goals/release-workflow-version" order="38" status="plan"></goal>
     <goal id="ui-drag-reorder-goals" path="goals/ui-drag-reorder-goals" order="39" status="done"></goal>

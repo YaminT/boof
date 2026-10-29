@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">resources/list filters by projects:read, plans:read, tasks:read and the project restriction and returns [] instead of a protocol error; reads keep the tool's scope checks.</version>
       </versions>
     </status>
     <tests>

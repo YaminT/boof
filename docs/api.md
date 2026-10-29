@@ -112,7 +112,7 @@ server starts.
   `{ "items": [...], "nextCursor": "..." | null }`, newest update first; `limit` defaults to 100,
   max 500. Pass `nextCursor` as `cursor` for the next page. Other lists are small and not paged.
 - Task responses leave out `body.log` (can be megabytes). `GET /projects/{p}/tasks/{id}?include=log`
-  adds it; `GET .../tasks/{id}/live-log` streams the current log of a running task.
+  adds it; `GET .../tasks/{id}/live-log` streams the current log of a running task; `?tail=N` returns only the last N lines (JSON and `format=text`; also the `tail` argument of `boof_get_task_log`).
 
 ## Events
 
@@ -257,7 +257,7 @@ rules, input validation and error codes are identical, and every call is audited
   `--client` the command refuses to start.
 - **Stateless.** One request, one answer (`application/json`). No sessions, so GET and DELETE on
   `/mcp` answer `405` and there are no server-initiated notifications. Use `boof_wait_task`
-  (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress.
+  (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress. The server advertises `listChanged: false` for tools, resources and prompts.
 - **Results.** Success: `content[0]` is a one-line summary, `content[1]` the JSON result,
   `structuredContent` the result. Failure: `isError: true` and text `<code>: <message> <details>`
   with the codes of the Errors section (`plan_version_conflict`, `forbidden_scope`, ...).
@@ -273,43 +273,43 @@ Tools (the names are stable). Plan tools take `expectedVersion`, task updates `e
 and webhooks are REST only; archive/pause/usage and similar low-value operations are REST only
 to keep the tool list short.
 
-| Tool                   | Scope                                | Kind        | Does                                  |
-| ---------------------- | ------------------------------------ | ----------- | ------------------------------------- |
-| `boof_whoami`          | none (any authenticated client)      | read-only   | Who am I and server facts             |
-| `boof_list_projects`   | `projects:read`                      | read-only   | List projects                         |
-| `boof_create_project`  | `projects:write`                     | write       | Create a project                      |
-| `boof_get_project`     | `projects:read`                      | read-only   | Get a project                         |
-| `boof_update_project`  | `projects:write`                     | idempotent  | Update a project                      |
-| `boof_list_plans`      | `plans:read`                         | read-only   | List plans                            |
-| `boof_create_plan`     | `plans:write`                        | write       | Create a plan                         |
-| `boof_get_plan`        | `plans:read`                         | read-only   | Get a plan                            |
-| `boof_update_plan`     | `plans:write`                        | idempotent  | Update a plan                         |
-| `boof_replace_goals`   | `plans:write`                        | idempotent  | Replace all goals of a plan           |
-| `boof_upsert_goal`     | `plans:write`                        | idempotent  | Add or change a goal                  |
-| `boof_remove_goal`     | `plans:write`                        | destructive | Remove a goal                         |
-| `boof_reorder_goals`   | `plans:write`                        | idempotent  | Reorder goals                         |
-| `boof_set_goal_status` | `plans:write`                        | idempotent  | Set a goal's status                   |
-| `boof_import_plan`     | `plans:write`                        | write       | Import plan files from the repository |
-| `boof_export_plan`     | `plans:read`                         | read-only   | Export a plan as boof-planner files   |
-| `boof_sync_plan`       | `plans:write`                        | write       | Sync a plan to tasks                  |
-| `boof_list_tasks`      | `tasks:read`                         | read-only   | List tasks                            |
-| `boof_get_task`        | `tasks:read`                         | read-only   | Get a task                            |
-| `boof_get_task_diff`   | `tasks:read`                         | read-only   | Get what a task changed               |
-| `boof_create_task`     | `tasks:write`                        | write       | Create a task                         |
-| `boof_update_task`     | `tasks:write`                        | idempotent  | Update a task                         |
-| `boof_queue_task`      | `tasks:write`                        | idempotent  | Queue a task                          |
-| `boof_retry_task`      | `tasks:write`                        | write       | Retry a task                          |
-| `boof_archive_task`    | `tasks:write`                        | idempotent  | Archive a task                        |
-| `boof_answer_task`     | `tasks:write`                        | write       | Answer a task's questions             |
-| `boof_stop_task`       | `tasks:control`                      | destructive | Stop a running task                   |
-| `boof_inject_prompt`   | `tasks:control`                      | write       | Inject a prompt (next-step or now)    |
-| `boof_get_task_log`    | `tasks:read`                         | read-only   | Read a task's live log                |
-| `boof_wait_task`       | `tasks:read`                         | read-only   | Wait for a task status change         |
-| `boof_runner_status`   | `settings:read`                      | read-only   | Runner and queue status               |
-| `boof_set_runner`      | `runner:control` or `settings:write` | idempotent  | Start or pause the runner             |
-| `boof_list_actions`    | `tasks:read`                         | read-only   | List tasks needing an answer          |
+| Tool                   | Scope                                | Kind        | Does                                     |
+| ---------------------- | ------------------------------------ | ----------- | ---------------------------------------- |
+| `boof_whoami`          | none (any authenticated client)      | read-only   | Who am I and server facts                |
+| `boof_list_projects`   | `projects:read`                      | read-only   | List projects                            |
+| `boof_create_project`  | `projects:write`                     | write       | Create a project                         |
+| `boof_get_project`     | `projects:read`                      | read-only   | Get a project                            |
+| `boof_update_project`  | `projects:write`                     | idempotent  | Update a project                         |
+| `boof_list_plans`      | `plans:read`                         | read-only   | List plans                               |
+| `boof_create_plan`     | `plans:write`                        | write       | Create a plan                            |
+| `boof_get_plan`        | `plans:read`                         | read-only   | Get a plan                               |
+| `boof_update_plan`     | `plans:write`                        | idempotent  | Update a plan                            |
+| `boof_replace_goals`   | `plans:write`                        | idempotent  | Replace all goals of a plan              |
+| `boof_upsert_goal`     | `plans:write`                        | idempotent  | Add or change a goal                     |
+| `boof_remove_goal`     | `plans:write`                        | destructive | Remove a goal                            |
+| `boof_reorder_goals`   | `plans:write`                        | idempotent  | Reorder goals                            |
+| `boof_set_goal_status` | `plans:write`                        | idempotent  | Set a goal's status                      |
+| `boof_import_plan`     | `plans:write`                        | write       | Import plan files from the repository    |
+| `boof_export_plan`     | `plans:read`                         | read-only   | Export a plan as boof-planner files      |
+| `boof_sync_plan`       | `plans:write`                        | write       | Sync a plan to tasks                     |
+| `boof_list_tasks`      | `tasks:read`                         | read-only   | List tasks                               |
+| `boof_get_task`        | `tasks:read`                         | read-only   | Get a task                               |
+| `boof_get_task_diff`   | `tasks:read`                         | read-only   | Get what a task changed                  |
+| `boof_create_task`     | `tasks:write`                        | write       | Create a task                            |
+| `boof_update_task`     | `tasks:write`                        | idempotent  | Update a task                            |
+| `boof_queue_task`      | `tasks:write`                        | idempotent  | Queue a task                             |
+| `boof_retry_task`      | `tasks:write`                        | write       | Retry a task                             |
+| `boof_archive_task`    | `tasks:write`                        | idempotent  | Archive a task                           |
+| `boof_answer_task`     | `tasks:write`                        | write       | Answer a task's questions                |
+| `boof_stop_task`       | `tasks:control`                      | destructive | Stop a running task                      |
+| `boof_inject_prompt`   | `tasks:control`                      | write       | Inject a prompt (next-step or now)       |
+| `boof_get_task_log`    | `tasks:read`                         | read-only   | Read a task's live log (optional `tail`) |
+| `boof_wait_task`       | `tasks:read`                         | read-only   | Wait for a task status change            |
+| `boof_runner_status`   | `settings:read`                      | read-only   | Runner and queue status                  |
+| `boof_set_runner`      | `runner:control` or `settings:write` | idempotent  | Start or pause the runner                |
+| `boof_list_actions`    | `tasks:read`                         | read-only   | List tasks needing an answer             |
 
-Resources (read-only, same scopes as the matching tools; the lists support browsing):
+Resources (read-only, same scopes as the matching tools): `resources/list` leaves out what the client's scopes or project restriction do not allow instead of failing (the static `boof://projects` entry is always listed); a read without the scope is an error.
 
 | URI                                                 | MIME               | Content                              |
 | --------------------------------------------------- | ------------------ | ------------------------------------ |

@@ -222,6 +222,12 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
 
   registerResources(server, runtime);
   registerPrompts(server, runtime);
+  // The SDK advertises listChanged: true for resources and prompts; the HTTP server is stateless
+  // and never notifies (stdio does not either). Capabilities merge per key, so this wins.
+  server.server.registerCapabilities({
+    resources: { listChanged: false },
+    prompts: { listChanged: false },
+  });
   return server;
 }
 

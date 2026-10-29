@@ -112,7 +112,11 @@ describe("POST /mcp", () => {
     expect(init.headers.get("content-type")).toContain("application/json");
     const initBody = await init.json();
     expect(initBody.result.serverInfo.name).toBe("boof-runner");
-    expect(initBody.result.capabilities.tools).toBeDefined();
+    expect(initBody.result.capabilities).toMatchObject({
+      tools: { listChanged: false },
+      resources: { listChanged: false },
+      prompts: { listChanged: false },
+    });
 
     const list = await (await post(rpc("tools/list", {}, 2))).json();
     const names = list.result.tools.map((t: { name: string }) => t.name);

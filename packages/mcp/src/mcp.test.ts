@@ -318,6 +318,15 @@ describe("tools generated from the registry", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/^forbidden_project: /);
   });
+
+  it("advertises no listChanged notifications (the HTTP server is stateless)", async () => {
+    const client = await connect(LOCAL_PRINCIPAL);
+    expect(client.getServerCapabilities()).toMatchObject({
+      tools: { listChanged: false },
+      resources: { listChanged: false },
+      prompts: { listChanged: false },
+    });
+  });
 });
 
 describe("resources", () => {
@@ -369,6 +378,25 @@ describe("resources", () => {
     await expect(client.readResource({ uri: "boof://projects/shop" })).rejects.toThrow(
       /forbidden_scope/,
     );
+  });
+
+  it("resources/list degrades to an empty list for a key without the listing scopes", async () => {
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const uris = async (client: Client) =>
+      (await client.listResources()).resources.map((r) => r.uri).sort();
+    const tasksOnly = await connect(await clientPrincipal(["tasks:read"], "review"));
+    expect(await uris(tasksOnly)).toEqual(["boof://projects"]); // the static entry; its read is still refused
+    await expect(tasksOnly.readResource({ uri: "boof://projects" })).rejects.toThrow(
+      /forbidden_scope/,
+    );
+    const templates = (await tasksOnly.listResourceTemplates()).resourceTemplates;
+    expect(templates.map((t) => t.uriTemplate)).toContain("boof://projects/{pid}/tasks/{taskId}");
+    const projectsOnly = await connect(await clientPrincipal(["projects:read"], "review"));
+    expect(await uris(projectsOnly)).toEqual(["boof://projects", "boof://projects/shop"]);
+    const elsewhere = await connect(
+      await clientPrincipal(["projects:read", "plans:read", "tasks:read"], "review", ["other"]),
+    );
+    expect(await uris(elsewhere)).toEqual(["boof://projects"]);
   });
 
   it("serves one project only when the project is fixed", async () => {

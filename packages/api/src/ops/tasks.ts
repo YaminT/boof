@@ -434,11 +434,18 @@ export const tasksLiveLog = defineOp({
   name: "tasks.liveLog",
   title: "Read a task's live log",
   description:
-    "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional format=text (REST: text/plain instead of JSON). No side effects.",
+    "Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional tail (last N lines) and format=text (REST: text/plain instead of JSON). No side effects.",
   scope: "tasks:read",
   projectScoped: true,
   input: z.strictObject({
     ...byTask.shape,
+    tail: z
+      .number()
+      .int()
+      .min(1)
+      .max(100_000)
+      .optional()
+      .meta({ description: "Return only the last N lines." }),
     format: z
       .enum(["json", "text"])
       .optional()
@@ -452,7 +459,8 @@ export const tasksLiveLog = defineOp({
   },
   mcp: { expose: true, name: "boof_get_task_log", annotations: READ },
   summary: (r) => (r.running ? "Task is running; log attached" : "Task finished; log attached"),
-  handler: async (ctx, input) => (await requireProject(ctx, input.projectId)).liveLog(input.taskId),
+  handler: async (ctx, input) =>
+    (await requireProject(ctx, input.projectId)).liveLog(input.taskId, { tail: input.tail }),
 });
 
 export const WAIT_MAX_SECONDS = 60;

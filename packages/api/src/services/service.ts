@@ -338,14 +338,18 @@ export class ProjectService {
    * task leaves `running`, falls back to the durable body log (the working area
    * is removed on completion). `running` lets the UI keep polling while true.
    */
-  async liveLog(id: string): Promise<{ log: string; running: boolean }> {
+  async liveLog(
+    id: string,
+    opts: { tail?: number } = {},
+  ): Promise<{ log: string; running: boolean }> {
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
     const running = task.frontmatter.status === "running";
-    if (!running) return { log: task.body.log, running };
+    const cut = (text: string) => (opts.tail ? tailLines(text, opts.tail) : text);
+    if (!running) return { log: cut(task.body.log), running };
     const path = join(workingAreaDir(this.root, id), "log.txt");
     const log = await readFile(path, "utf8").catch(() => task.body.log);
-    return { log, running };
+    return { log: cut(log), running };
   }
 
   /**
@@ -820,3 +824,11 @@ function projectNotFound(id: string): OpError {
 }
 
 const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
+
+/** The last `n` lines of `text`; a trailing newline is kept and does not count as a line. */
+export function tailLines(text: string, n: number): string {
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  const lines = body.split("\n");
+  if (lines.length <= n) return text;
+  return lines.slice(-n).join("\n") + (body === text ? "" : "\n");
+}

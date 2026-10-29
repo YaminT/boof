@@ -15,7 +15,7 @@ import {
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
-import { TaskService } from "@boof-runner/api";
+import { TaskService, tailLines } from "@boof-runner/api";
 
 let root: string;
 let repo: string;
@@ -323,6 +323,29 @@ describe("running task controls", () => {
     await store.transition("gone", "pending");
     await store.transition("gone", "running");
     expect(existsSync(taskStopRequestPath(dir, "gone"))).toBe(false);
+  });
+
+  it("live-log tail returns the last N lines, running or stored", async () => {
+    expect(tailLines("one\ntwo\nthree\nfour\n", 2)).toBe("three\nfour\n");
+    expect(tailLines("a\nb\nc", 5)).toBe("a\nb\nc");
+    expect(tailLines("", 1)).toBe("");
+    await (await req("/api/tasks", json({ title: "Tail", status: "pending" }))).json();
+    const store = service.forProject("default").tasks;
+    await store.transition("tail", "running");
+    const dir = service.projects.dir("default");
+    await writeFile(join(workingAreaDir(dir, "tail"), "log.txt"), "one\ntwo\nthree\nfour\n");
+    const base = "/api/v1/projects/default/tasks/tail/live-log";
+    expect(await (await req(`${base}?tail=2`)).json()).toEqual({
+      log: "three\nfour\n",
+      running: true,
+    });
+    expect(await (await req(`${base}?tail=1&format=text`)).text()).toBe("four\n");
+    expect((await req(`${base}?tail=0`)).status).toBe(400);
+    await store.transition("tail", "stopped");
+    await store.modify("tail", (t) => {
+      t.body.log = "a\nb\nc";
+    });
+    expect(await (await req(`${base}?tail=2`)).json()).toEqual({ log: "b\nc", running: false });
   });
 
   it("requests stop and records injected prompts for a running task", async () => {

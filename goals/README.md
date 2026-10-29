@@ -43,7 +43,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`cancel-waits-on-disconnect`](cancel-waits-on-disconnect/goal.boof.xml) — Cancel long waits when the client disconnects
 - [x] [`plan-approval-backfill`](plan-approval-backfill/goal.boof.xml) — Backfill approval for plans activated before approvedBy existed (after: migration-lock)
 - [x] [`prune-worktrees-on-project-add`](prune-worktrees-on-project-add/goal.boof.xml) — Prune stale worktrees when a project is added or unarchived
-- [ ] [`mcp-listchanged-and-log-tail`](mcp-listchanged-and-log-tail/goal.boof.xml) — MCP: drop listChanged in stateless mode, add tail to the task log tool
+- [x] [`mcp-listchanged-and-log-tail`](mcp-listchanged-and-log-tail/goal.boof.xml) — MCP: drop listChanged in stateless mode, add tail to the task log tool
 - [ ] [`desktop-graceful-quit`](desktop-graceful-quit/goal.boof.xml) — Desktop quit must shut the engine down gracefully
 - [ ] [`service-install-keeps-options`](service-install-keeps-options/goal.boof.xml) — service install keeps previously configured options
 - [ ] [`cli-version-and-unknown-command`](cli-version-and-unknown-command/goal.boof.xml) — Add --version and stop unknown commands from starting the server
@@ -58,7 +58,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`attachment-upload-no-json-fingerprint`](attachment-upload-no-json-fingerprint/goal.boof.xml) — Do not JSON-fingerprint attachment uploads
 - [ ] [`audit-forwarded-ip`](audit-forwarded-ip/goal.boof.xml) — Audit log records the forwarded client address behind a proxy
 - [ ] [`security-headers-behind-proxy`](security-headers-behind-proxy/goal.boof.xml) — HSTS and CORP headers fit a TLS-terminating proxy and public docs
-- [ ] [`mcp-resources-degrade-by-scope`](mcp-resources-degrade-by-scope/goal.boof.xml) — MCP resources/list degrades to empty for keys without projects:read
+- [x] [`mcp-resources-degrade-by-scope`](mcp-resources-degrade-by-scope/goal.boof.xml) — MCP resources/list degrades to empty for keys without projects:read
 
 ## Install and release
 
