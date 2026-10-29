@@ -5,11 +5,6 @@ export function currentStep(log: string): string | null {
   return matches[matches.length - 1].replace(/^### /, "");
 }
 
-/** Number of `### Steered` blocks: one is logged each time an "apply now" prompt takes effect. */
-export function steeredCount(log: string): number {
-  return (log.match(/^### Steered$/gm) ?? []).length;
-}
-
 /** The last `n` non-empty lines, trimmed on the right. */
 export function tailLines(log: string, n: number): string[] {
   if (n <= 0) return [];

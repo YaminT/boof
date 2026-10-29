@@ -1,5 +1,6 @@
 import type { TaskView } from "../api.js";
 import { SteerBox } from "../overview/SteerBox.js";
+import { InjectedList } from "./InjectedList.js";
 import { LiveLog } from "./LiveLog.js";
 import { ReportList } from "./ReportList.js";
 
@@ -20,6 +21,7 @@ export function RunTab({
       <LiveLog pid={pid} taskId={id} text={task.body.log} running={running} />
       <ReportList task={task} />
       {running && <SteerBox pid={pid} taskId={id} onSent={() => void reload()} />}
+      <InjectedList task={task} />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, stepHeaders, steeredCount, tailLines } from "./log-tail.js";
+import { currentStep, stepHeaders, tailLines } from "./log-tail.js";
 
 describe("log-tail", () => {
   it("finds the last step header", () => {
@@ -16,11 +16,6 @@ describe("log-tail", () => {
       "Reviewer (round 1)",
     ]);
     expect(stepHeaders("none")).toEqual([]);
-  });
-
-  it("counts steered blocks", () => {
-    expect(steeredCount("### Steered\na\n### Developer\n### Steered\n")).toBe(2);
-    expect(steeredCount("### Steered later")).toBe(0);
   });
 
   it("returns the last non-empty lines, right-trimmed", () => {
