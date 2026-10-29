@@ -3,7 +3,7 @@
  * and keep those tasks in line with the goals when a goal changes. Sync is idempotent: a second
  * run without changes writes nothing.
  */
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { execCommand } from "./exec.js";
 import { createIntegrationBranch, isAncestor } from "./plan-base.js";
@@ -38,6 +38,7 @@ import {
   type Task,
   type TaskOrigin,
   type TaskTools,
+  atomicWrite,
 } from "@boof-runner/shared";
 
 /** Sync was asked for a plan that is not `active`. */
@@ -354,7 +355,7 @@ export async function archiveRemovedGoalTasks(opts: {
       if (!opts.dryRun) {
         await store
           .whileRunning(id, async ({ controlDir }) => {
-            await writeFile(join(controlDir, "stop"), nowIso() + "\n", "utf8");
+            await atomicWrite(join(controlDir, "stop"), nowIso() + "\n");
             await appendFile(
               join(workingAreaDir(opts.projectDir, id), "log.txt"),
               `\n\n### Stop requested\nGoal ${ref.goalId} was removed from plan ${ref.planId}.\n`,

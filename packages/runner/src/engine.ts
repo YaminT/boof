@@ -19,6 +19,7 @@ import {
   type Status,
   TaskNotRunningError,
   type Task,
+  atomicWrite,
 } from "@boof-runner/shared";
 import { announceBudgetExceeded } from "./budget.js";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
@@ -73,6 +74,9 @@ export class RunnerEngine {
   private budgetBlocked: BudgetScope[] = [];
   private looping = false;
   private stopRequested = false;
+  /** `project/id` keys already asked to stop (or being asked) in the current shutdown. */
+  private shutdownAsked = new Set<string>();
+  private shutdownStopped: string[] = [];
 
   constructor(opts: EngineOptions) {
     this.root = opts.root;
@@ -379,7 +383,7 @@ export class RunnerEngine {
       this.runningTasks.set(project.id, id);
       await this.startTask(project, store, dir, id);
       // A shutdown that ran while the task was still starting found it pending: ask it now.
-      if (this.stopRequested) await this.requestStop(project.id, id);
+      if (this.stopRequested) await this.askToStop(project.id, id);
       const running = await store.get(id);
       const settings = await this.settingsStore.load();
       const pipeline = new Pipeline({
@@ -578,19 +582,13 @@ export class RunnerEngine {
    */
   async shutdown(graceMs = 30_000): Promise<{ stopped: string[]; timedOut: boolean }> {
     this.stop();
-    const stopped: string[] = [];
-    const asked = new Set<string>();
+    this.shutdownAsked = new Set();
+    const stopped = (this.shutdownStopped = []);
     const deadline = Date.now() + graceMs;
     for (;;) {
       // A task can start while we drain (tick() does not check stopRequested): ask it too.
       for (const [projectId, id] of [...this.runningTasks]) {
-        // Ids are per project: dedupe on both. A failed write is retried on the next pass.
-        const key = `${projectId}/${id}`;
-        if (asked.has(key)) continue;
-        if (await this.requestStop(projectId, id)) {
-          asked.add(key);
-          stopped.push(id);
-        }
+        await this.askToStop(projectId, id);
       }
       if (this.inflight.size === 0) return { stopped, timedOut: false };
       const left = deadline - Date.now();
@@ -608,15 +606,26 @@ export class RunnerEngine {
     }
   }
 
+  /**
+   * Ask a running task to stop once per shutdown. Ids are per project, so dedupe on both. A
+   * failed write is retried on a later pass.
+   */
+  private async askToStop(projectId: string, id: string): Promise<void> {
+    const key = `${projectId}/${id}`;
+    if (this.shutdownAsked.has(key)) return;
+    this.shutdownAsked.add(key);
+    if (await this.requestStop(projectId, id)) this.shutdownStopped.push(id);
+    else this.shutdownAsked.delete(key);
+  }
+
   /** Write the shutdown stop request for a running task and note it in its log. */
   private async requestStop(projectId: string, id: string): Promise<boolean> {
     const dir = this.projects.dir(projectId);
     try {
       await this.storeFor(projectId).whileRunning(id, async ({ controlDir }) => {
-        await writeFile(
+        await atomicWrite(
           join(controlDir, "stop"),
           `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
-          "utf8",
         );
         await appendFile(
           join(workingAreaDir(dir, id), "log.txt"),

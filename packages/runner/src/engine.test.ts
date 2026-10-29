@@ -2004,12 +2004,17 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
     const runA = engine.tick(); // a1 runs, its planner held open
     await started.a1.wait;
     const down = engine.shutdown(10_000); // asks a1 to stop, then waits for the drain
-    // tick() has no stop check: b1 starts after the shutdown began and is stopped as it starts.
+    // The shutdown's first pass asks a1 (once) before anything else happens.
+    await vi.waitFor(() => expect(existsSync(taskStopRequestPath(projectDir, "a1"))).toBe(true), {
+      timeout: 5000,
+    });
+    // tick() has no stop check: b1 starts after the shutdown began and is stopped as it starts,
+    // before its planner runs.
     const runB = engine.tick();
     go.a1.open();
     expect((await runA).kind).toBe("ran");
     expect((await runB).kind).toBe("ran");
-    expect((await down).timedOut).toBe(false);
+    expect(await down).toEqual({ stopped: ["a1", "b1"], timedOut: false });
     expect((await store.get("a1"))?.frontmatter.status).toBe("stopped");
     expect((await b.store.get("b1"))?.frontmatter.status).toBe("stopped");
     expect((await b.store.get("b1"))?.body.log).toContain("stopped by server shutdown");

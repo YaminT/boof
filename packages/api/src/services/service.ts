@@ -1,4 +1,4 @@
-import { appendFile, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -43,6 +43,7 @@ import {
   type TaskReviewInfo,
   appendAnswerRound,
   WebhookSecretStore,
+  atomicWrite,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import { statusDowngraded, type Warning } from "../warnings.js";
@@ -397,7 +398,7 @@ export class ProjectService {
     await this.assertMayControl(task, actor);
     await this.tasks.whileRunning(id, async ({ controlDir }) => {
       const now = new Date().toISOString();
-      await writeFile(join(controlDir, "stop"), now + "\n", "utf8");
+      await atomicWrite(join(controlDir, "stop"), now + "\n");
       await appendFile(
         join(workingAreaDir(this.root, id), "log.txt"),
         `\n\n### Stop requested\n${now}\n`,
