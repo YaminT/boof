@@ -201,8 +201,9 @@ export class RunnerEngine {
     if (outcome.kind === "done") {
       // Count this completed run. If more runs were requested, re-queue the
       // task to pending for its next iteration; otherwise finish (runs feature).
-      const completed = outcome.task.frontmatter.completedRuns + 1;
-      const runs = outcome.task.frontmatter.runs;
+      const current = (await store.get(id)) ?? outcome.task;
+      const completed = current.frontmatter.completedRuns + 1;
+      const runs = current.frontmatter.runs;
       const next = completed < runs ? "pending" : "done";
       await store.transition(id, next, (t) => {
         t.frontmatter.completedRuns = completed;

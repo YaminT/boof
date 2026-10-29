@@ -1011,8 +1011,13 @@ export class Pipeline {
   /** Persist per-task token usage onto the task file and the global aggregate. */
   private async persistUsage(task: Task, usages: TokenUsage[]): Promise<void> {
     const total = sumUsage(usages);
-    task.frontmatter.tokens = total;
-    await this.deps.store.save(task);
+    // Write only what the pipeline owns; edits made during the run stay on disk.
+    const saved = await this.deps.store.modify(task.frontmatter.id, (t) => {
+      t.frontmatter.tokens = total;
+      t.body.log = task.body.log;
+      t.body.reports = task.body.reports;
+    });
+    task.frontmatter = saved.frontmatter;
     await this.usageStore.add(total);
   }
 

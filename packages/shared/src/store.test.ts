@@ -215,6 +215,26 @@ describe("TaskStore stopped and injected", () => {
 
 void readFile;
 
+describe("TaskStore modify", () => {
+  it("modify re-reads the file so it keeps fields changed since the caller's copy", async () => {
+    await store.create(newTask(fm()));
+    const edited = (await store.get("t1"))!;
+    edited.frontmatter.labels = ["edited"];
+    edited.frontmatter.runs = 3;
+    await store.save(edited);
+    const usage = { inputTokens: 10, outputTokens: 5, costUsd: 0.5, known: true };
+    const out = await store.modify("t1", (t) => {
+      t.frontmatter.tokens = usage;
+    });
+    expect(out.frontmatter.labels).toEqual(["edited"]);
+    expect(out.frontmatter.runs).toBe(3);
+    const disk = (await store.get("t1"))!;
+    expect(disk.frontmatter.tokens).toEqual(usage);
+    expect(disk.frontmatter.labels).toEqual(["edited"]);
+    await expect(store.modify("ghost", () => {})).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+});
+
 describe("TaskStore timings", () => {
   it("sets startedAt and empties steps when a task enters running", async () => {
     await store.create(newTask(fm({ steps: [{ label: "Old", at: "2026-06-01T00:00:00.000Z" }] })));

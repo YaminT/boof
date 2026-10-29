@@ -201,6 +201,29 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(done?.frontmatter.questions).toBe("answered");
   });
 
+  it("edits to title, labels and runs made during a run survive it and set the run count", async () => {
+    await store.create(newTask(fm(), "Build a thing."));
+    let edited = false;
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer" || edited) return;
+      edited = true;
+      const t = (await store.get("t1"))!;
+      t.frontmatter.title = "Renamed";
+      t.frontmatter.labels = ["edited"];
+      t.frontmatter.runs = 3;
+      await store.save(t);
+    };
+    await engine.tick();
+    const after = (await store.get("t1"))!;
+    expect(after.frontmatter.status).toBe("pending"); // run 1 of 3 done, re-queued
+    expect(after.frontmatter.completedRuns).toBe(1);
+    expect(after.frontmatter.runs).toBe(3);
+    expect(after.frontmatter.title).toBe("Renamed");
+    expect(after.frontmatter.labels).toEqual(["edited"]);
+    expect(after.body.reports.developer).not.toBe("");
+    expect(after.frontmatter.tokens).toBeDefined();
+  });
+
   it("runs a task N times and injects the critical-review framing after the first", async () => {
     await store.create(newTask(fm({ runs: 3 }), "Build it well."));
 

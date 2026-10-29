@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">The pipeline persists tokens, log and reports through TaskStore.modify (re-read under the task lock) and the engine reads runs/completedRuns from disk, so title, prompt, priority, labels, skip and runs edits made during a run survive it.</version>
       </versions>
     </status>
     <tests>

@@ -193,6 +193,22 @@ export class TaskStore {
   }
 
   /**
+   * Read-modify-write under the task lock: re-reads the file, applies `mutate` and writes it back,
+   * so a writer changes only the fields it owns and keeps edits made since it loaded its copy.
+   */
+  async modify(id: string, mutate: (t: Task) => void): Promise<Task> {
+    return this.lockTask(id, async () => {
+      const located = await this.locate(id);
+      if (!located) throw new TaskNotFoundError(id);
+      const task = await this.readReconciled(located.path, located.status);
+      mutate(task);
+      task.frontmatter.updated = nowIso();
+      await atomicWrite(located.path, serializeTask(task));
+      return task;
+    });
+  }
+
+  /**
    * Append an injected prompt to the task's durable `## Injected` section (the control-dir copy
    * is deleted when the task leaves `running`). `by` is the principal name, default "user".
    */

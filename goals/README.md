@@ -14,7 +14,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 ## Runner
 
 - [ ] [`real-tools-parse-questions`](real-tools-parse-questions/goal.boof.xml) — Real tool adapters must surface planner questions (park flow is mock-only)
-- [ ] [`running-task-edits-survive`](running-task-edits-survive/goal.boof.xml) — Edits to a running task survive the run (no stale overwrite)
+- [x] [`running-task-edits-survive`](running-task-edits-survive/goal.boof.xml) — Edits to a running task survive the run (no stale overwrite)
 - [x] [`task-store-atomicity`](task-store-atomicity/goal.boof.xml) — TaskStore transitions and create are atomic (no task in two status dirs)
 - [ ] [`shutdown-fill-race`](shutdown-fill-race/goal.boof.xml) — No task starts after shutdown() began
 - [ ] [`orphan-agent-processes`](orphan-agent-processes/goal.boof.xml) — Record agent process groups and reap orphans on recovery (after: desktop-graceful-quit)
