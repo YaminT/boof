@@ -3,6 +3,7 @@ import type { Project } from "@boof-runner/shared/schema";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { groupTasks } from "../lib/task-groups.js";
+import { useTaskActions } from "../tasks/useTaskActions.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { NowLane } from "./NowLane.js";
 import { RecentList } from "./RecentList.js";
@@ -20,6 +21,7 @@ export function OverviewPage({
   data: AppData;
   navigate: (to: Route) => void;
 }) {
+  const actions = useTaskActions(pid, data, navigate);
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
   return (
     <div className="flex flex-col gap-6">
@@ -47,7 +49,7 @@ export function OverviewPage({
       </section>
       <section className="flex flex-col gap-2">
         <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Recent</h2>
-        <RecentList pid={pid} recent={groups.finished.recent} />
+        <RecentList pid={pid} recent={groups.finished.recent} onRetry={actions.retry} />
       </section>
       <SpendBar budget={data.budget} pid={pid} />
     </div>

@@ -218,7 +218,7 @@ function Loaded({
           </nav>
           {view === "edit" && <RunTab pid={pid} task={task} reload={reload} />}
           {view === "changes" && <ChangesTab pid={pid} task={task} />}
-          {view === "questions" && <QuestionsTab pid={pid} task={task} />}
+          {view === "questions" && <QuestionsTab pid={pid} task={task} reload={reload} />}
         </section>
       </div>
     </div>

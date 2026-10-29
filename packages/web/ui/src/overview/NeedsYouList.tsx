@@ -51,7 +51,17 @@ export function NeedsYouList({
               <div className="text-[length:var(--text-meta)] text-attention">{what}</div>
             </div>
             {item.kind === "question" && (
-              <Button size="sm" onClick={() => navigate({ name: "inbox" })}>
+              <Button
+                size="sm"
+                onClick={() =>
+                  navigate({
+                    name: "task",
+                    pid,
+                    taskId: item.task.frontmatter.id,
+                    view: "questions",
+                  })
+                }
+              >
                 Answer
               </Button>
             )}

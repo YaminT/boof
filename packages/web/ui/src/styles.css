@@ -509,7 +509,6 @@ input[type="number"] {
 }
 
 /* ---------- Panels / cards ---------- */
-.editor,
 .settings-page,
 .commands-tab,
 .actions-tab {
@@ -518,27 +517,6 @@ input[type="number"] {
   border-radius: var(--legacy-radius);
   padding: 24px;
   box-shadow: var(--shadow-md);
-}
-.editor-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-.editor-head h2 {
-  font-size: 18px;
-  margin: 0;
-}
-.editor-head button {
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-}
-.editor-head button:hover {
-  background: var(--inset);
 }
 .editor-actions {
   display: flex;
@@ -584,112 +562,6 @@ input[type="number"] {
   border-radius: 8px;
   overflow-x: auto;
   white-space: pre-wrap;
-}
-
-/* ---------- Agent output panel ---------- */
-.output {
-  margin-top: 24px;
-  border-top: 1px solid var(--legacy-border);
-  padding-top: 16px;
-}
-.output-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.output-head h3 {
-  margin: 0;
-  font-size: 14px;
-}
-.status-pill {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--legacy-border);
-  color: var(--legacy-muted);
-}
-.status-pill.status-running {
-  color: var(--legacy-accent);
-  border-color: var(--legacy-accent);
-}
-.status-pill.status-failed {
-  color: var(--red);
-  border-color: var(--red);
-}
-.status-pill.status-stopped {
-  color: var(--amber);
-  border-color: var(--amber);
-}
-.status-pill.status-done {
-  color: var(--green);
-  border-color: var(--green);
-}
-.output-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 0;
-}
-.output-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--legacy-border);
-  border-bottom: none;
-  background: var(--inset);
-  color: var(--legacy-muted);
-  padding: 7px 14px;
-  border-radius: 8px 8px 0 0;
-  cursor: pointer;
-  font-size: 13px;
-}
-.output-tabs button:hover {
-  color: var(--text);
-}
-.output-tabs button.active {
-  background: var(--bg);
-  color: var(--text);
-  font-weight: 600;
-}
-.output-tabs button .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--legacy-accent);
-}
-.output-tabs button .live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #e5484d;
-  box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.6);
-  animation: live-pulse 1.4s ease-out infinite;
-}
-@keyframes live-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.6);
-  }
-  70% {
-    box-shadow: 0 0 0 5px rgba(229, 72, 77, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0);
-  }
-}
-.output-body {
-  background: var(--inset);
-  border: 1px solid var(--legacy-border);
-  border-radius: 0 8px 8px 8px;
-  padding: 14px;
-  margin: 0;
-  max-height: 460px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12.5px;
-  line-height: 1.5;
 }
 
 /* ---------- Commands ---------- */
@@ -949,115 +821,6 @@ input[type="number"] {
 .gate-form button {
   flex: 0 0 auto;
   white-space: nowrap;
-}
-
-/* ---------- Prompt drop zone + attachments ---------- */
-.prompt-drop {
-  position: relative;
-}
-.prompt-drop.dragging textarea {
-  border-color: var(--legacy-accent);
-  box-shadow: 0 0 0 3px var(--accent-weak);
-}
-.prompt-drop-hint {
-  position: absolute;
-  inset: 5px 0 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: var(--accent-weak);
-  color: var(--legacy-accent);
-  font-weight: 600;
-  pointer-events: none;
-}
-.attachments {
-  margin-bottom: 14px;
-}
-.attachments-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.attach-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--panel);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-weight: 500;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-.attach-btn:hover {
-  background: var(--inset);
-}
-.attach-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.attachments-bar small {
-  margin: 0;
-}
-.attachment-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 12px;
-}
-.attachment-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--inset);
-  border: 1px solid var(--legacy-border);
-  border-radius: 10px;
-  padding: 6px 10px 6px 6px;
-  max-width: 240px;
-}
-.attachment-thumb {
-  width: 38px;
-  height: 38px;
-  border-radius: 6px;
-  object-fit: cover;
-  background: var(--panel);
-  border: 1px solid var(--legacy-border);
-  flex: 0 0 auto;
-}
-.attachment-thumb-file {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--legacy-accent);
-}
-.attachment-name {
-  font-size: 12px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.attachment-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: transparent;
-  color: var(--legacy-muted);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.attachment-remove:hover {
-  background: rgba(194, 59, 52, 0.12);
-  color: var(--red);
 }
 
 /* --- API key gate and client list --- */
@@ -1345,16 +1108,6 @@ textarea:focus-visible {
 }
 
 /* ---------- Task changes (branch review) ---------- */
-.editor-views {
-  margin: 0 0 16px;
-  border-bottom: 1px solid var(--legacy-border);
-}
-.editor-views button {
-  margin-bottom: -1px;
-}
-.editor-form[hidden] {
-  display: none;
-}
 .changes {
   min-width: 0;
 }

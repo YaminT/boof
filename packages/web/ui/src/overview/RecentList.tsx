@@ -1,10 +1,19 @@
+import { Button } from "@/ui/button";
 import type { TaskView } from "../api.js";
 import { formatRoute } from "../lib/route.js";
 import { relativeTime } from "../lib/time.js";
 import { StatusPill } from "../shell/StatusPill.js";
 
 /** The latest finished tasks, newest first. */
-export function RecentList({ pid, recent }: { pid: string; recent: TaskView[] }) {
+export function RecentList({
+  pid,
+  recent,
+  onRetry,
+}: {
+  pid: string;
+  recent: TaskView[];
+  onRetry: (id: string) => void;
+}) {
   return (
     <div>
       {recent.length === 0 ? (
@@ -35,6 +44,11 @@ export function RecentList({ pid, recent }: { pid: string; recent: TaskView[] })
                     <a href={formatRoute({ name: "task", pid, taskId: f.id, view: "changes" })}>
                       Open changes
                     </a>
+                  )}
+                  {(f.status === "failed" || f.status === "stopped") && (
+                    <Button size="sm" variant="outline" onClick={() => onRetry(f.id)}>
+                      Retry
+                    </Button>
                   )}
                 </span>
               </li>
