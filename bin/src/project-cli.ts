@@ -7,7 +7,7 @@ import {
   SettingsStore,
   type Project,
 } from "@boof-runner/shared";
-import { isGitRepo, repoToplevel } from "@boof-runner/runner";
+import { isGitRepo, pruneStaleWorktrees, repoToplevel } from "@boof-runner/runner";
 import { scaffoldDataRoot } from "./scaffold.js";
 
 export const PROJECT_HELP = `boof-runner project — manage the projects (git repositories) one data root serves
@@ -93,6 +93,7 @@ export async function projectCommand(
           ...(values.name ? { name: values.name } : {}),
           origin: { kind: "cli" },
         });
+        await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
         if (values.default) await settings.update({ defaultProject: project.id });
         out(`Added project '${project.id}' (${project.workingDirectory})`);
         if (values.default) out(`'${project.id}' is now the default project`);

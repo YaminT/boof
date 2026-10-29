@@ -48,6 +48,7 @@ import { statusDowngraded, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
   isGitRepo,
+  pruneStaleWorktrees,
   repoToplevel,
   taskDiff,
   BranchNotFoundError,
@@ -555,12 +556,14 @@ export class TaskService {
     if (actor && actor.kind !== "local")
       await this.assertRegistrationAllowed(actor, input.workingDirectory);
     try {
-      return await this.projects.create({
+      const project = await this.projects.create({
         ...input,
         origin:
           input.origin ??
           (actor?.kind === "client" ? { kind: "api", client: actor.id } : { kind: "ui" }),
       });
+      await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+      return project;
     } catch (err) {
       throw this.mapProjectError(err, actor);
     }
@@ -581,8 +584,10 @@ export class TaskService {
     return this.updateProject(id, { archived: true });
   }
 
-  unarchiveProject(id: string): Promise<Project> {
-    return this.updateProject(id, { archived: false });
+  async unarchiveProject(id: string): Promise<Project> {
+    const project = await this.updateProject(id, { archived: false });
+    await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+    return project;
   }
 
   pauseProject(id: string): Promise<Project> {

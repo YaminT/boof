@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">TaskService.createProject/unarchiveProject, `project add` and the headless auto-registration run pruneStaleWorktrees on the repository, best effort.</version>
       </versions>
     </status>
     <tests>

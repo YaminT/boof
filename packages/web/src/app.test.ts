@@ -382,3 +382,33 @@ describe("attachments API", () => {
 
 void writeFile;
 void taskFilePath;
+
+describe("project registration prunes stale worktrees", () => {
+  const stale = async (dir: string, name: string) => {
+    const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+    await g(["config", "user.email", "t@e.com"]);
+    await g(["config", "user.name", "T"]);
+    await g(["commit", "--allow-empty", "-q", "-m", "init"]);
+    const wt = join(dir, ".boof-runner-worktrees", name);
+    await g(["worktree", "add", "-q", wt, "-b", `boof-runner/${name}`]);
+    await rm(wt, { recursive: true, force: true });
+    const list = async () => (await g(["worktree", "list", "--porcelain"])).stdout;
+    expect(await list()).toContain(wt);
+    return list;
+  };
+
+  it("on create and on unarchive, without a runner restart", async () => {
+    const other = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-other-")));
+    await execCommand("git", ["init", "-q"], { cwd: other });
+    const list = await stale(other, "gone");
+    const created = await req("/api/v1/projects", json({ workingDirectory: other, id: "other" }));
+    expect(created.status).toBe(201);
+    expect(await list()).not.toContain("gone");
+
+    await service.archiveProject("other");
+    const again = await stale(other, "gone2");
+    expect((await req("/api/v1/projects/other/unarchive", { method: "POST" })).status).toBe(200);
+    expect(await again()).not.toContain("gone2");
+    await rm(other, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+});

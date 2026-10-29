@@ -12,6 +12,7 @@ import {
   finalizeWorktree,
   isGitRepo,
   NotAGitRepoError,
+  pruneStaleWorktrees,
   UnknownBaseRefError,
   type WorktreeOptions,
 } from "./worktree.js";
@@ -56,6 +57,18 @@ describe("worktree isolation", () => {
   it("detects git vs non-git directories", async () => {
     expect(await isGitRepo(repo)).toBe(true);
     expect(await isGitRepo(nonRepo)).toBe(false);
+  });
+
+  it("pruneStaleWorktrees drops a missing worktree registration and keeps a live one", async () => {
+    const live = await createWorktree(repo, "live");
+    const gone = await createWorktree(repo, "gone");
+    await rm(gone.path, { recursive: true, force: true });
+    await pruneStaleWorktrees(repo);
+    const list = (await g(["worktree", "list", "--porcelain"])).stdout;
+    expect(list).toContain(live.path);
+    expect(list).not.toContain(gone.path);
+    expect(await exists(live.path)).toBe(true);
+    await expect(pruneStaleWorktrees(nonRepo)).resolves.toBeUndefined();
   });
 
   it("refuses to create a worktree on a non-git dir", async () => {

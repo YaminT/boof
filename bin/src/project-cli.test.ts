@@ -39,6 +39,20 @@ afterEach(async () => {
 });
 
 describe("boof-runner project", () => {
+  it("add prunes a stale worktree registration of the repository", async () => {
+    const dir = await repo("Pruned");
+    const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+    await g(["config", "user.email", "t@e.com"]);
+    await g(["config", "user.name", "T"]);
+    await g(["commit", "--allow-empty", "-q", "-m", "init"]);
+    const wt = join(dir, ".boof-runner-worktrees", "gone");
+    await g(["worktree", "add", "-q", wt, "-b", "boof-runner/gone"]);
+    await rm(wt, { recursive: true, force: true });
+    expect((await g(["worktree", "list", "--porcelain"])).stdout).toContain(wt);
+    expect(await run("add", dir, "-d", root)).toBe(0);
+    expect((await g(["worktree", "list", "--porcelain"])).stdout).not.toContain(wt);
+  });
+
   it("add refuses a subdirectory of a registered repository", async () => {
     const dir = await repo("My App");
     await mkdir(join(dir, "sub"), { recursive: true });
