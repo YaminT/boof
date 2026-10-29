@@ -41,6 +41,8 @@ export interface AtomicWriteOptions {
   exclusive?: boolean;
   /** Test hook: replaces link(2) for the exclusive publish. */
   linkFn?: typeof link;
+  /** Test hook: replaces the in-place write of the "wx" fallback (used without hard links). */
+  fallbackWrite?: (fh: FileHandle, contents: string) => Promise<void>;
 }
 
 /** link(2) failures that mean "this filesystem has no hard links". */
@@ -62,6 +64,10 @@ export async function atomicWrite(
     mode,
     exclusive,
     linkFn = link,
+    fallbackWrite = async (fh, text) => {
+      await fh.writeFile(text, "utf8");
+      await fh.sync();
+    },
   } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
@@ -84,10 +90,15 @@ export async function atomicWrite(
         // see a partial file; that beats refusing every create on such filesystems.
         const fh = await open(path, "wx", mode ?? 0o666);
         try {
-          await fh.writeFile(contents, "utf8");
-          await fh.sync();
+          await fallbackWrite(fh, contents);
+        } catch (writeErr) {
+          // We created the destination, so a failed write must not leave a partial file behind
+          // (a partial task file would make list() throw; a partial lock file wedges migration).
+          await fh.close().catch(() => {});
+          await rm(path, { force: true });
+          throw writeErr;
         } finally {
-          await fh.close();
+          await fh.close().catch(() => {});
         }
       }
       // The file is published; a stray temp file must not turn that into a failure.

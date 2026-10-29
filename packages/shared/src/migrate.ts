@@ -193,7 +193,12 @@ export async function backfillPlanApprovals(
       log.push(
         `backfilled approval of plan ${f.project}/${f.id} (activated before approvals were recorded)`,
       );
-    }).catch(() => undefined);
+    }).catch((err: unknown) => {
+      // The next start retries; the line keeps a plan that never gets backfilled visible.
+      log.push(
+        `could not backfill approval of plan ${f.project}/${f.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
   return log;
 }

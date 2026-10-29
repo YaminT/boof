@@ -66,6 +66,30 @@ describe("atomicWrite", () => {
     expect((await readdir(dir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("removes the partial destination when the wx fallback write fails", async () => {
+    const dest = join(dir, "t.md");
+    const noLink = (async () => {
+      throw Object.assign(new Error("no links"), { code: "EPERM" });
+    }) as unknown as typeof import("node:fs/promises").link;
+    await expect(
+      atomicWrite(dest, "data\n", {
+        exclusive: true,
+        linkFn: noLink,
+        fallbackWrite: async (fh) => {
+          await fh.writeFile("par");
+          throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "ENOSPC" });
+    expect(await readdir(dir)).toEqual([]);
+    // an EEXIST from the wx open must not remove the file that is already there
+    await atomicWrite(dest, "first\n");
+    await expect(
+      atomicWrite(dest, "second\n", { exclusive: true, linkFn: noLink }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(dest, "utf8")).toBe("first\n");
+  });
+
   it("exclusive write refuses an existing path and leaves it unchanged", async () => {
     const dest = join(dir, "t.md");
     await atomicWrite(dest, "first\n", { exclusive: true });

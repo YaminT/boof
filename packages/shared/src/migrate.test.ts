@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -453,6 +453,23 @@ describe("plan approval backfill", () => {
     expect((await migrateDataRoot(root)).log).toEqual([]);
     expect(await readFile(join(root, "migration-v2.log"), "utf8")).toBe(log);
     expect(await backfillPlanApprovals(root)).toEqual([]);
+  });
+
+  it("logs a plan whose backfill write failed instead of swallowing it", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    const plans = new PlanStore(join(root, "projects", "p"));
+    await plans.create({ ...base, id: "stuck", status: "active" });
+    const plansDir = join(root, "projects", "p", "plans");
+    await chmod(plansDir, 0o555); // temp files cannot be created: the write fails
+    try {
+      if (process.getuid?.() === 0) return; // root ignores directory modes
+      const log = await backfillPlanApprovals(root);
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatch(/^could not backfill approval of plan p\/stuck: /);
+    } finally {
+      await chmod(plansDir, 0o755);
+    }
+    expect((await plans.require("stuck")).approvedBy).toBeUndefined();
   });
 
   it("leaves an archived plan alone", async () => {
