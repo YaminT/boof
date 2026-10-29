@@ -8,6 +8,8 @@ describe("net guard", () => {
     expect(blockedAddressReason("fec0::1")).toBe("reserved");
     expect(blockedAddressReason("100::1")).toBe("reserved");
     expect(blockedAddressReason("64:ff9b:1::1")).toBe("reserved");
+    expect(blockedAddressReason("192.88.99.1")).toBe("reserved");
+    expect(blockedAddressReason("2001::1")).toBe("reserved");
     expect(blockedAddressReason("64:ff9b::7f00:1")).toBe("loopback");
     expect(blockedAddressReason("2002:7f00:1::")).toBe("loopback");
     expect(blockedAddressReason("2002:5db8:d822::1")).toBeNull();

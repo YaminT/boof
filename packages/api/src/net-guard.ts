@@ -36,10 +36,19 @@ block("link-local", "ipv6", "fe80::/10");
 block("carrier-grade-nat", "ipv4", "100.64.0.0/10");
 block("multicast", "ipv4", "224.0.0.0/4");
 block("multicast", "ipv6", "ff00::/8");
-block("reserved", "ipv4", "240.0.0.0/4", "192.0.0.0/24", "198.18.0.0/15");
+block("reserved", "ipv4", "240.0.0.0/4", "192.0.0.0/24", "192.88.99.0/24", "198.18.0.0/15");
 // IPv4-compatible (::/96), IPv4-translated SIIT (::ffff:0:a.b.c.d), deprecated site-local,
 // discard-only, and local-use NAT64 (RFC 8215, blocked outright rather than decoded).
-block("reserved", "ipv6", "::/96", "::ffff:0:0:0/96", "fec0::/10", "100::/64", "64:ff9b:1::/48");
+block(
+  "reserved",
+  "ipv6",
+  "::/96",
+  "::ffff:0:0:0/96",
+  "fec0::/10",
+  "100::/64",
+  "64:ff9b:1::/48",
+  "2001::/32",
+);
 block("documentation", "ipv4", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24");
 block("documentation", "ipv6", "2001:db8::/32");
 
