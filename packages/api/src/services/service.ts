@@ -42,6 +42,7 @@ import {
   type Task,
   taskReviewInfo,
   type TaskReviewInfo,
+  appendAnswerRound,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import { statusDowngraded, type Warning } from "../warnings.js";
@@ -434,7 +435,7 @@ export class ProjectService {
       id,
       "pending",
       (t) => {
-        t.body.answers = answers;
+        t.body.answers = appendAnswerRound(t.body.answers, t.body.questions, answers);
         t.frontmatter.questions = "answered";
       },
       { by: actor?.id ?? "local" },

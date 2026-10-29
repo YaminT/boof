@@ -115,7 +115,7 @@ The body stores human-readable content:
 - original prompt
 - injected command text
 - planner questions
-- user answers
+- user answers: every round is kept, appended as `Round N:` then `Questions:` and the numbered questions, then `Answers:` and the reply (no `###` headings, which are reserved for reports); `questions` always holds only the latest round and the planner prompt receives all rounds
 - planner/developer/observer/reviewer reports (observer and reviewer sections hold one entry per round, with its verdict)
 - raw execution log
 

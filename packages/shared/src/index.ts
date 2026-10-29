@@ -3,6 +3,7 @@ export * from "./ids.js";
 export * from "./schema.js";
 export * from "./task-file.js";
 export * from "./injected.js";
+export * from "./answers.js";
 export * from "./atomic.js";
 export * from "./paths.js";
 export * from "./lifecycle.js";

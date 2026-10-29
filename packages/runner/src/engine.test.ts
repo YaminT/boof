@@ -32,6 +32,7 @@ import {
   workingAreaDir,
   type Project,
   type TaskFrontmatter,
+  appendAnswerRound,
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
@@ -255,6 +256,33 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(parked.frontmatter.status).toBe("action");
     expect(parked.frontmatter.questions).toBe("pending");
     expect(parked.body.questions).toContain("Which version?");
+  });
+
+  it("keeps every round of answers across repeated parking", async () => {
+    mockState.plannerQuestions = ["Which database?"];
+    await store.create(newTask(fm(), "Build with a DB."));
+    await engine.tick();
+    const answer = (text: string) =>
+      store.transition("t1", "pending", (t) => {
+        t.body.answers = appendAnswerRound(t.body.answers, t.body.questions, text);
+        t.frontmatter.questions = "answered";
+      });
+    await answer("Use Postgres");
+    mockState.plannerQuestions = ["Managed hosting?"];
+    mockState.hasAsked = false;
+    await engine.tick();
+    const parked = (await store.get("t1"))!;
+    expect(parked.body.questions).toContain("Managed hosting?");
+    expect(parked.body.questions).not.toContain("Which database?");
+    expect(parked.body.answers).toContain("Use Postgres");
+    await answer("Yes");
+    const from = mockState.prompts.length;
+    await engine.tick();
+    const prompt = mockState.prompts.slice(from).join("\n");
+    expect(prompt).toContain("Use Postgres");
+    expect(prompt).toContain("Which database?");
+    expect(prompt).toContain("Yes");
+    expect(prompt).toContain("Managed hosting?");
   });
 
   it("parks on questions raised in the refinement pass", async () => {

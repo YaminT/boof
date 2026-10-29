@@ -262,7 +262,28 @@ describe("answers loop API", () => {
     ).json();
     expect(res.frontmatter.status).toBe("pending");
     expect(res.frontmatter.questions).toBe("answered");
-    expect(res.body.answers).toBe("Postgres");
+    expect(res.body.answers).toBe("Round 1:\nQuestions:\n1. Which DB?\nAnswers:\nPostgres");
+  });
+
+  it("keeps both rounds when a task is answered twice", async () => {
+    await (await req("/api/tasks", json({ title: "Twice", status: "pending" }))).json();
+    const tasks = service.forProject("default").tasks;
+    await tasks.transition("twice", "running");
+    const park = async (q: string) => {
+      await tasks.transition("twice", "action", (t) => {
+        t.frontmatter.questions = "pending";
+        t.body.questions = q;
+      });
+    };
+    await park("1. Which DB?");
+    await req("/api/tasks/twice/answers", json({ answers: "Postgres" }));
+    await tasks.transition("twice", "running");
+    await park("1. Managed?");
+    const res = await (await req("/api/tasks/twice/answers", json({ answers: "Yes" }))).json();
+    expect(res.body.answers).toBe(
+      "Round 1:\nQuestions:\n1. Which DB?\nAnswers:\nPostgres\n\n" +
+        "Round 2:\nQuestions:\n1. Managed?\nAnswers:\nYes",
+    );
   });
 });
 
