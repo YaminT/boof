@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Separate boof into sub-apps with boof itself as the orchestration between them (owner, 2026-10-29): Boof Runner = the execution engine and the agent adapters; Facedisk = task store, projects, plans and goals, the web UI, the desktop app and the CLI; Boof Heart (core) = budget and usage, settings, auth and access, the REST API, the MCP server and the web server; Boof Owlish = the better-ccflare-like part that connects the models and accounts, runs observers and pauses agents to spend wisely (see goals/owlish-accounts). Boof must be able to do every job through MCP, REST and the CLI as well as the web and desktop apps. Where the ops part (service install, remote access, deploy files) belongs is still open. Needs a design document approved by the owner before any code: what &#x27;separate completely&#x27; means (packages with enforced boundaries, separate processes, or separate repos), the interfaces between the sub-apps, and the migration order.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Run a design conversation with the owner and write docs/superpowers/specs/&lt;date&gt;-boof-split-design.md before planning.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not move code before the design is approved.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-29; design conversation started, not finished.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Design review with the owner; then the plan defines boundary checks (for example an import-boundary lint) and parity tests across MCP, REST and CLI.</strategy>
+      <technology>design + vitest</technology>
+      <run>npx vitest run</run>
+    </tests>
+  </progress>
+</boof>

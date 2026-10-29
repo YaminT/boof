@@ -61,5 +61,11 @@
     <goal id="project-create-with-path" path="goals/project-create-with-path" order="58" status="plan"><depends-on>chat-console</depends-on></goal>
     <goal id="chat-console" path="goals/chat-console" order="59" status="plan"><depends-on>owlish-accounts</depends-on></goal>
     <goal id="n8n-pipelines" path="goals/n8n-pipelines" order="60" status="plan"></goal>
+    <goal id="ui-phase-3-residuals" path="goals/ui-phase-3-residuals" order="61" status="plan"></goal>
+    <goal id="ui-redesign-phase-4" path="goals/ui-redesign-phase-4" order="62" status="plan"></goal>
+    <goal id="ui-redesign-phase-5" path="goals/ui-redesign-phase-5" order="63" status="plan"><depends-on>ui-redesign-phase-4</depends-on></goal>
+    <goal id="ui-redesign-phase-6" path="goals/ui-redesign-phase-6" order="64" status="plan"><depends-on>ui-redesign-phase-5</depends-on></goal>
+    <goal id="step-closing-entry" path="goals/step-closing-entry" order="65" status="plan"></goal>
+    <goal id="boof-split" path="goals/boof-split" order="66" status="plan"></goal>
   </goals>
 </plan>

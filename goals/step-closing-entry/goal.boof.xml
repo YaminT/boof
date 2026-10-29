@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Owner decision needed first. A finished task&#x27;s last pipeline step has no end time, so the step strip shows no duration for it (phase 3 ruling). Option: the pipeline appends a closing entry to the task&#x27;s steps[] (for example label &#x27;Finished&#x27;, &#x27;Failed&#x27; or &#x27;Stopped&#x27; with its time) when a run ends, and the UI uses it as the last step&#x27;s end. This is a server change beyond the owner&#x27;s answer B in the redesign spec, so ask before building.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Ask the owner to approve the server change before writing code.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Raised by the phase 3 final review on 2026-10-29; waiting on the owner.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Store and engine tests that the closing entry is written once per run end; the step strip test for the last role&#x27;s duration.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run</run>
+    </tests>
+  </progress>
+</boof>

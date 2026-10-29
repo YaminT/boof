@@ -90,6 +90,15 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`chat-console`](chat-console/goal.boof.xml) — A terminal-like chat box at the bottom of every page that talks to the page (after: owlish-accounts)
 - [ ] [`n8n-pipelines`](n8n-pipelines/goal.boof.xml) — Low priority: n8n can run boof's process; boof works with or without it; each workflow edit adds a check task
 
+## UI redesign, remaining (2026-10-29)
+
+- [ ] [`ui-phase-3-residuals`](ui-phase-3-residuals/goal.boof.xml) — Three small regressions left by the phase 3 fix wave
+- [ ] [`ui-redesign-phase-4`](ui-redesign-phase-4/goal.boof.xml) — Plans screen and the Inbox / Needs-you group
+- [ ] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
+- [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
+- [ ] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
+- [ ] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
+
 ## Verification and release
 
 - [ ] [`verify-steering-codex`](verify-steering-codex/goal.boof.xml) — Verify live steering (inject mode now) with Codex

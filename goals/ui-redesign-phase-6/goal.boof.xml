@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>UI redesign phase 6 (spec section 7): polish — a dark mode pass, empty and error states everywhere, an a11y audit (focus, contrast, reduced motion), remove what is left of styles.css (legacy element rules for input, textarea, label, main, a still leak into new components), bring the bundle back down (it went from 107 KB to about 220 KB gzipped; the spec&#x27;s anti-goal is doubling), README screenshots. Also triage and fix the deferred minors listed in goals/ui-redesign-phase-6/deferred-minors.md.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Write a phase 6 plan before building; measure the bundle before and after.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Carried over from the UI redesign (phase 3 final review, 2026-10-29); not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Screenshots light, dark, 420 px and desktop of every changed screen, checked against the spec&#x27;s Global Constraints; unit tests for any src/lib logic.</strategy>
+      <technology>manual + vitest</technology>
+      <run>npx vitest run &amp;&amp; npm run build -w @boof-runner/web</run>
+    </tests>
+  </progress>
+</boof>
