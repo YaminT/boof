@@ -105,7 +105,8 @@ export function TasksPage({
     };
   }, [groups, plans, filter, filtered, shownPending, queuedOrder]);
 
-  const finishedOpen = showFinished || filter.state === "finished";
+  const filtering = filter.query.trim() !== "" || filter.state !== "all" || filter.label !== null;
+  const finishedOpen = showFinished || filtering;
   const visible: RowEntry[] = [
     ...rows.needs,
     ...rows.proposed,
@@ -142,9 +143,10 @@ export function TasksPage({
       const next = visible[Math.max(0, Math.min(visible.length - 1, j))];
       if (!next) return;
       setSelectedKey(next.key);
-      document
-        .querySelector(`[data-row-key="${CSS.escape(next.key)}"]`)
-        ?.scrollIntoView({ block: "nearest" });
+      // Focus follows the selection, so screen readers announce the row and Enter opens it.
+      const el = document.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(next.key)}"]`);
+      el?.focus({ preventScroll: true });
+      el?.scrollIntoView({ block: "nearest" });
     };
     e.preventDefault();
     if (action === "down") return select(i + 1);
@@ -164,7 +166,14 @@ export function TasksPage({
       !e.repeat // one move per press, not one per key repeat
     ) {
       const next = moveQueued(queuedOrder, id, action === "move-up" ? -1 : 1);
-      if (next) reorder(next);
+      if (next) {
+        reorder(next);
+        // Moving the row in the DOM can drop focus from the handle; give it back.
+        const el = target;
+        requestAnimationFrame(() => {
+          if (el?.isConnected && document.activeElement !== el) el.focus();
+        });
+      }
     }
   };
   useEffect(() => {
@@ -177,6 +186,7 @@ export function TasksPage({
     pid,
     actions,
     selectedKey: selected?.key ?? null,
+    tabbableKey: (selected ?? visible[0])?.key ?? null,
     onSelect: setSelectedKey,
     onStop: setStopId,
   };
@@ -247,7 +257,7 @@ export function TasksPage({
               done {counts.done}, failed {counts.failed}, stopped {counts.stopped}, archived{" "}
               {counts.archived}
             </span>
-            {filter.state !== "finished" && (
+            {!filtering && (
               <Button
                 size="sm"
                 variant="ghost"

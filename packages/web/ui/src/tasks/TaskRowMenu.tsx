@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { EllipsisIcon } from "lucide-react";
 import type { TaskView } from "../api.js";
 import {
@@ -19,15 +20,22 @@ export function TaskRowMenu({
   actions: TaskActions;
 }) {
   const f = task.frontmatter;
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        ref={trigger}
         aria-label={`More actions for ${f.title}`}
         className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <EllipsisIcon className="size-4" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-40">
+      <DropdownMenuContent
+        align="end"
+        className="w-40"
+        // Closing the menu puts focus on the row, so j/k and Enter carry on from there.
+        finalFocus={() => trigger.current?.closest<HTMLElement>("li") ?? true}
+      >
         {f.status === "archived" ? (
           <DropdownMenuItem onClick={() => actions.unarchive(f.id)}>Unarchive</DropdownMenuItem>
         ) : (

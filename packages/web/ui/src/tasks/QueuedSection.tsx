@@ -79,7 +79,16 @@ export function QueuedSection({
       count={entries.length}
       hint={canReorder && entries.length > 1 ? "Drag or press Alt+↑ ↓ to reorder" : undefined}
     >
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={onDragEnd}
+        accessibility={{
+          screenReaderInstructions: {
+            draggable: "Select the row and press Alt+Up or Alt+Down to move it.",
+          },
+        }}
+      >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           <ul className="m-0 list-none p-0">
             {entries.map((e) => (

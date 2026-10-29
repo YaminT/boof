@@ -22,6 +22,8 @@ export interface RowContext {
   pid: string;
   actions: TaskActions;
   selectedKey: string | null;
+  /** The one row in the tab order: the selected row, else the first. */
+  tabbableKey: string | null;
   onSelect: (key: string) => void;
   onStop: (id: string) => void;
 }
@@ -114,9 +116,12 @@ export function TaskRow({
       style={style}
       data-row-key={entry.key}
       aria-current={selected || undefined}
+      tabIndex={ctx.tabbableKey === entry.key ? 0 : -1}
+      onFocus={() => onSelect(entry.key)}
       onClick={() => onSelect(entry.key)}
       className={cn(
         "flex h-10 items-center gap-2 border-b border-line px-1 text-[length:var(--text-row)] last:border-b-0",
+        "outline-none",
         selected && "bg-accent outline-2 -outline-offset-2 outline-accent-brand",
       )}
     >
