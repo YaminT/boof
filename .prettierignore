@@ -15,3 +15,6 @@ packages/api/openapi/
 
 # Generated from docs/harness.md by scripts/gen-harness-reference.ts
 packages/web/src/generated/
+
+# Planning and review scratch
+.superpowers/
