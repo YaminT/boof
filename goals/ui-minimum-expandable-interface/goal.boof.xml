@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>The goal of boof&#x27;s interface is a minimum expandable interface: users first see a simple panel, and can expand it to reach the more complex one when they need it. Complexity is handled in the backend, not pushed onto the user. Apply this to every screen (overview, tasks, task detail, plans, settings): define the simple default view and the expanded view for each, and keep the choice remembered per user.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Agree the simple and expanded views per screen with the owner (mockups) before building.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not hide information the user needs to act (running work, things waiting on them, errors) behind the expansion.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Screenshots of each screen simple and expanded, light and dark, 420 px and desktop; UI checks that the expansion state is remembered.</strategy>
+      <technology>manual + vitest</technology>
+      <run>npm run build -w @boof-runner/web</run>
+    </tests>
+  </progress>
+</boof>

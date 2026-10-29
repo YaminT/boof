@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Low priority. Let n8n run boof&#x27;s process: an n8n workflow can drive the pipeline (planner, developer, observer, reviewer and any extra steps) through boof&#x27;s API, react to boof events (webhooks) and create work. Boof must run fully with or without n8n; the built-in pipeline stays the default. Users can review and manage the n8n workflows from boof. After each edit a user makes to a workflow, boof adds a simple task that runs it and checks the final result. Start by checking where n8n fits (pipeline steps need a &#x27;run one step&#x27; operation in the API; webhooks and task creation already exist).</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Every new capability is reachable through REST, MCP and the CLI as well as the web UI and the desktop app.</do>
+      <do>Write a short design document first, including how boof detects that n8n is absent and falls back.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not make n8n a required dependency or start it from boof by default.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests for the step operation and the edit-to-check-task rule; an end-to-end run with a local n8n and with n8n absent.</strategy>
+      <technology>vitest + manual</technology>
+      <run>npx vitest run</run>
+    </tests>
+  </progress>
+</boof>

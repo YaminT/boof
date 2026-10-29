@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Users can define a new project from every interface. When creating it they choose a new path or an existing path; if no path is chosen, boof assigns an automatic path (and creates it). A new project always starts with an input where the user defines and explains the project (its brief), which boof stores with the project and uses as context for planning.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Every new capability is reachable through REST, MCP and the CLI as well as the web UI and the desktop app.</do>
+      <do>Define where automatic paths live (a configurable projects root) and how a new path is initialised (directory plus git init).</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not overwrite or initialise an existing non-empty directory without the user confirming it.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>API and CLI tests for new, existing and automatic paths; UI check of the create flow including the brief input.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run</run>
+    </tests>
+  </progress>
+</boof>

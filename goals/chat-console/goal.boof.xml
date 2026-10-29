@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Always show a chat box at the bottom of every page, like a terminal in boof. Users can communicate with the page through that input: ask questions, give commands (create a task, queue, stop, open a screen) and get answers in context of the page they are on. A new project always opens with this input asking the user to define and explain the project.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Every command the chat box can run is reachable through REST, MCP and the CLI as well as the web UI and the desktop app.</do>
+      <do>Decide in a design document what answers the chat (which model or harness, see owlish-accounts) and how it maps text to boof operations.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not let the chat run destructive operations (delete, stop) without the same confirmation the UI asks for.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests for command parsing and routing; UI checks on each screen at desktop and 420 px.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run</run>
+    </tests>
+  </progress>
+</boof>
