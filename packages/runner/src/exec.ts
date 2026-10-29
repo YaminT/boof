@@ -40,6 +40,9 @@ export interface ExecOptions {
   stopPollMs?: number;
 }
 
+/** Linux's limit for one argv entry, NUL included. */
+export const MAX_ARG_STRLEN = 131_072;
+
 /**
  * Spawn a child process scoped to `cwd`, capture stdout/stderr, optionally feed
  * stdin, and enforce a timeout. Portable across Bun + Node (node:child_process
@@ -55,6 +58,19 @@ export function execCommand(
     // output (a plan, a diff) gets fed into the next step's prompt and can carry
     // a stray NUL — strip them so a poisoned prompt doesn't crash the run.
     const safeArgs = args.map((a) => a.replace(/\0/g, ""));
+    const tooBig = safeArgs.findIndex((a) => Buffer.byteLength(a) + 1 > MAX_ARG_STRLEN);
+    if (tooBig >= 0) {
+      resolve({
+        code: null,
+        stdout: "",
+        stderr: `argument ${tooBig + 1} is ${Buffer.byteLength(safeArgs[tooBig]!)} bytes, over the ${MAX_ARG_STRLEN}-byte limit of one argument (E2BIG)`,
+        timedOut: false,
+        stopped: false,
+        steered: false,
+        stalled: false,
+      });
+      return;
+    }
     const child = spawn(command, safeArgs, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,

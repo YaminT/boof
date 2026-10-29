@@ -205,7 +205,7 @@ The observer and reviewer system prompts require the report to end with exactly 
 
 `parseVerdict(report)` (in `@boof-runner/shared`) is strict and case-sensitive; it ignores trailing whitespace and markdown emphasis characters (`*`, `_`, backticks) around a line. The last non-empty line must match `^VERDICT:\s*(APPROVE|CHANGES_REQUESTED|REJECT)\s*$`. Any other exact verdict line anywhere in the report with a different verdict makes the result INVALID, even across blank lines; identical repeated verdict lines are fine. It fails closed: a missing verdict, a malformed one, text after the verdict line, or conflicting verdict lines all mean not approved.
 
-The codex report is the file written by `codex exec --output-last-message`; stdout is the fallback when that file is missing or empty.
+The codex report is the file written by `codex exec --output-last-message`; stdout is the fallback when that file is missing or empty. The prompt is passed on stdin (`codex exec … -`), so its size is not limited by the argv limit.
 
 ### Review Gate And Fix Loop
 
@@ -329,7 +329,7 @@ Built-in tools:
 
 - `claude-code`: runs the `claude` CLI in non-interactive mode.
 - `codex`: runs the `codex` CLI in non-interactive mode.
-- `opencode`: runs `opencode run --dir <worktree> -m <model>` (adding `--auto` in auto mode). Models come from `opencode models`; default `opencode-go/kimi-k3`. Override the binary with `BOOF_RUNNER_OPENCODE_BIN`.
+- `opencode`: runs `opencode run --dir <worktree> -m <model>` (adding `--auto` in auto mode) with the prompt on stdin. Models come from `opencode models`; default `opencode-go/kimi-k3`. Override the binary with `BOOF_RUNNER_OPENCODE_BIN`.
 - `mock`: deterministic offline tool used by tests.
 
 Each tool can:

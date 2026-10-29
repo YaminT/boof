@@ -18,7 +18,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`task-store-atomicity`](task-store-atomicity/goal.boof.xml) — TaskStore transitions and create are atomic (no task in two status dirs)
 - [x] [`shutdown-fill-race`](shutdown-fill-race/goal.boof.xml) — No task starts after shutdown() began
 - [ ] [`orphan-agent-processes`](orphan-agent-processes/goal.boof.xml) — Record agent process groups and reap orphans on recovery (after: desktop-graceful-quit)
-- [ ] [`prompt-via-stdin-for-codex-opencode`](prompt-via-stdin-for-codex-opencode/goal.boof.xml) — Pass large prompts to codex/opencode without hitting argv limits
+- [x] [`prompt-via-stdin-for-codex-opencode`](prompt-via-stdin-for-codex-opencode/goal.boof.xml) — Pass large prompts to codex/opencode without hitting argv limits
 - [x] [`usage-ledger-accuracy`](usage-ledger-accuracy/goal.boof.xml) — Usage ledger: codex cost is unknown, failed attempts are not recorded
 - [ ] [`git-worktree-add-timeout`](git-worktree-add-timeout/goal.boof.xml) — Do not SIGKILL slow `git worktree add`; clean up a failed add
 - [ ] [`reject-nested-projects-same-repo`](reject-nested-projects-same-repo/goal.boof.xml) — Reject two projects rooted in the same git repository

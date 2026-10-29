@@ -78,7 +78,7 @@ export class CodexTool implements Tool {
   readonly supportsResume = true;
 
   /**
-   * Argument vector for `codex exec`, last entry the prompt. With `resumeSessionId` it is
+   * Argument vector for `codex exec`, last entry `-`: the prompt is read from stdin. With `resumeSessionId` it is
    * `codex exec resume <thread id> ...`, which takes the same flags and a message only (the
    * resumed thread already holds the system prompt).
    */
@@ -96,8 +96,13 @@ export class CodexTool implements Tool {
     // Ask codex to write its final message to a file outside cwd: stdout also
     // carries progress and usage noise that would break verdict parsing.
     args.push("-o", lastMessageFile);
-    args.push(opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`);
+    args.push("-");
     return args;
+  }
+
+  /** The text fed on stdin: the new message alone on resume, else system prompt + prompt. */
+  promptText(opts: RunOptions): string {
+    return opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
@@ -110,6 +115,7 @@ export class CodexTool implements Tool {
       const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
+        input: this.promptText(opts),
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
         steerSignalPath: opts.steerSignalPath,

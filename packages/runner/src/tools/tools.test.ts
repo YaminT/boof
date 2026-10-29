@@ -321,6 +321,21 @@ describe("CodexTool report", () => {
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
+  it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
+    const tool = await setup(
+      `cat > "$(dirname "$0")/stdin"\nprintf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'`,
+    );
+    const prompt = "x".repeat(300_000);
+    expect(tool.buildArgs({ ...baseOpts, prompt }, "/tmp/last").at(-1)).toBe("-");
+    expect(
+      tool.buildArgs({ ...baseOpts, prompt }, "/tmp/last").some((a) => a.includes("xxxx")),
+    ).toBe(false);
+    const res = await tool.run({ ...baseOpts, role: "developer", cwd: dir, prompt });
+    expect(res.report).toBe("ok");
+    expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
+    expect(tool.promptText({ ...baseOpts, prompt: "NEW", resumeSessionId: "t" })).toBe("NEW");
+  });
+
   it("uses the --output-last-message file, not noisy stdout", async () => {
     const record = '$(dirname "$0")/out-path';
     const tool = await setup(
@@ -513,17 +528,8 @@ describe("OpencodeTool", () => {
       prompt: "DO",
       autoApprove: true,
     });
-    expect(auto).toEqual([
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/tmp/wt",
-      "-m",
-      "p/m",
-      "--auto",
-      "SYS\n\nDO",
-    ]);
+    expect(auto).toEqual(["run", "--format", "json", "--dir", "/tmp/wt", "-m", "p/m", "--auto"]);
+    expect(tool.promptText({ ...baseOpts, systemPrompt: "SYS", prompt: "DO" })).toBe("SYS\n\nDO");
     const manual = tool.buildArgs({
       ...baseOpts,
       role: "developer",
@@ -541,6 +547,17 @@ describe("OpencodeTool", () => {
       "-m",
       "p/m",
     ]);
+  });
+
+  it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
+    const tool = await setup(
+      `cat > "$(dirname "$0")/stdin"\nprintf '%s\\n' '{"type":"text","part":{"text":"ok","messageID":"m1"}}'`,
+    );
+    const prompt = "x".repeat(300_000);
+    expect(tool.buildArgs({ ...baseOpts, prompt }).some((a) => a.includes("xxxx"))).toBe(false);
+    const res = await tool.run({ ...baseOpts, role: "developer", cwd: dir, prompt });
+    expect(res.report).toBe("ok");
+    expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
   });
 
   it("passes the worktree via --dir, streams chunks and returns the report", async () => {
@@ -716,7 +733,7 @@ describe("session resume", () => {
       "--dangerously-bypass-approvals-and-sandbox",
       "-o",
       "/tmp/l",
-      "NEW",
+      "-",
     ]);
     const res = await tool.run({ ...opts, cwd: dir });
     expect(res.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
@@ -744,7 +761,6 @@ describe("session resume", () => {
       "--session",
       "ses_1",
       "--auto",
-      "NEW",
     ]);
     const res = await tool.run({ ...opts, cwd: dir });
     expect(res.sessionId).toBe("ses_e883d9495ffeYJX7kHzp41UH09");

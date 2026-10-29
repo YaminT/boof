@@ -2,9 +2,23 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { execCommand } from "./exec.js";
+import { execCommand, MAX_ARG_STRLEN } from "./exec.js";
 
 describe("execCommand", () => {
+  it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {
+    const res = await execCommand("true", ["ok", "x".repeat(MAX_ARG_STRLEN)], {
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+    });
+    expect(res.code).toBeNull();
+    expect(res.stderr).toBe(
+      `argument 2 is ${MAX_ARG_STRLEN} bytes, over the ${MAX_ARG_STRLEN}-byte limit of one argument (E2BIG)`,
+    );
+    expect(
+      (await execCommand("true", ["x".repeat(MAX_ARG_STRLEN - 1)], { cwd: process.cwd() })).code,
+    ).toBe(0);
+  });
+
   it("survives a child that exits before reading its stdin (no uncaught EPIPE)", async () => {
     const uncaught: unknown[] = [];
     const onUncaught = (err: unknown) => uncaught.push(err);

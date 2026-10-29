@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">codex (exec … -) and opencode take the prompt on stdin; execCommand refuses an argv entry over MAX_ARG_STRLEN with a clear E2BIG message instead of spawning.</version>
       </versions>
     </status>
     <tests>

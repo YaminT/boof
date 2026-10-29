@@ -7,7 +7,7 @@
     <goal id="shutdown-fill-race" path="goals/shutdown-fill-race" order="4" status="done"></goal>
     <goal id="desktop-graceful-quit" path="goals/desktop-graceful-quit" order="5" status="plan"></goal>
     <goal id="orphan-agent-processes" path="goals/orphan-agent-processes" order="6" status="plan"><depends-on>desktop-graceful-quit</depends-on></goal>
-    <goal id="prompt-via-stdin-for-codex-opencode" path="goals/prompt-via-stdin-for-codex-opencode" order="7" status="plan"></goal>
+    <goal id="prompt-via-stdin-for-codex-opencode" path="goals/prompt-via-stdin-for-codex-opencode" order="7" status="done"></goal>
     <goal id="usage-ledger-accuracy" path="goals/usage-ledger-accuracy" order="8" status="done"></goal>
     <goal id="git-worktree-add-timeout" path="goals/git-worktree-add-timeout" order="9" status="plan"></goal>
     <goal id="reject-nested-projects-same-repo" path="goals/reject-nested-projects-same-repo" order="10" status="plan"></goal>

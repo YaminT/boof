@@ -76,8 +76,12 @@ export class OpencodeTool implements Tool {
       // runner's equivalent of codex's bypass flag.
       args.push("--auto");
     }
-    args.push(opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`);
     return args;
+  }
+
+  /** The text fed on stdin: the new message alone on resume, else system prompt + prompt. */
+  promptText(opts: RunOptions): string {
+    return opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
@@ -85,6 +89,7 @@ export class OpencodeTool implements Tool {
     const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
+      input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
       steerSignalPath: opts.steerSignalPath,
@@ -93,7 +98,7 @@ export class OpencodeTool implements Tool {
     });
     live.flush();
     const summary = summarizeOpencodeStream(res.stdout);
-    const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${stripAnsi(res.stderr)}`;
+    const output = `$ ${this.bin} ${args.join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${stripAnsi(res.stderr)}`;
     if (res.code !== 0 || res.timedOut || res.stopped || res.steered || res.stalled) {
       throw new ToolRunError(
         this.id,
