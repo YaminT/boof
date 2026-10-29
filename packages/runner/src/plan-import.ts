@@ -4,6 +4,7 @@
  */
 import {
   historyFromBoofGoal,
+  normalizeGoalPath,
   nowIso,
   sameGoalContent,
   specFromBoofGoal,
@@ -89,7 +90,7 @@ export function mergeImportedGoals(
   const match = new Map<string, Goal>();
   for (const imp of imported) {
     const old =
-      existing.find((g) => imp.path !== undefined && g.path === imp.path) ??
+      existing.find((g) => imp.path !== undefined && g.path === normalizeGoalPath(imp.path)) ??
       existing.find((g) => g.id === imp.id);
     if (old && ![...match.values()].includes(old)) {
       match.set(imp.id, old);

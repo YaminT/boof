@@ -16,7 +16,7 @@ export class PlanValidationError extends Error {
   }
 }
 
-type GoalLike = Pick<Goal, "id" | "order" | "dependsOn">;
+type GoalLike = Pick<Goal, "id" | "order" | "dependsOn"> & { path?: string };
 
 /**
  * Deterministic topological order that follows the existing `order` wherever the dependencies
@@ -61,10 +61,16 @@ export function normalizeOrder<T extends GoalLike>(goals: T[]): T[] {
 export function planIssues(goals: GoalLike[], opts: { checkOrder?: boolean } = {}): PlanIssue[] {
   const issues: PlanIssue[] = [];
   const ids = new Set<string>();
+  const paths = new Set<string>();
   goals.forEach((g, i) => {
     if (ids.has(g.id))
       issues.push({ path: `goals.${i}.id`, message: `duplicate goal id "${g.id}"` });
     ids.add(g.id);
+    if (g.path !== undefined) {
+      if (paths.has(g.path))
+        issues.push({ path: `goals.${i}.path`, message: `duplicate goal path "${g.path}"` });
+      paths.add(g.path);
+    }
   });
   goals.forEach((g, i) => {
     const seen = new Set<string>();

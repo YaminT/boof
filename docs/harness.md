@@ -361,7 +361,7 @@ Boof sets these goal fields. You never send them:
 - `tasks`: every task boof made for the goal, oldest first: `[{ "taskId", "revision", "status", "branch" }]`. `branch` is `boof-runner/<taskId>`. The last entry is the newest task. Boof keeps `status` current as the task moves. Use `tasks` to find finished tasks and their branches. You need no labels for that.
 - `history`: status entries `{ revision, status, description, at, taskId? }`. The entry that records a finished task has its `taskId`.
 
-Rules for the goal graph: ids are unique, every `dependsOn` id exists, there are no cycles. Boof renumbers `order` along the dependencies. A violation answers `400 invalid_plan`.
+Rules for the goal graph: ids are unique, goal paths are unique once normalised (posix separators, no `./` segments, no trailing slash), every `dependsOn` id exists, there are no cycles. Boof renumbers `order` along the dependencies. A violation answers `400 invalid_plan`.
 
 ### Goal revisions and follow-up tasks
 

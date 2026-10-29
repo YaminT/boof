@@ -5,6 +5,15 @@ import {
   StatusSchema,
 } from "./schema.js";
 
+/** Canonical goal path: posix separators, no empty or `.` segments; the repository root is ".". */
+export function normalizeGoalPath(path: string): string {
+  const parts = path
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((s) => s !== "" && s !== ".");
+  return parts.length === 0 ? "." : parts.join("/");
+}
+
 /** A directory path relative to the repo root that cannot climb out of it. */
 const relPath = z
   .string()
@@ -18,7 +27,8 @@ const relPath = z
       !p.includes("\0") &&
       !p.split(/[\\/]/).includes(".."),
     "path must be relative and stay inside the repository",
-  );
+  )
+  .overwrite(normalizeGoalPath);
 
 /** Goal status; the same four values as goal.boof.xml (BOOF_STATUSES). */
 export const GoalStatusSchema = z.enum(["plan", "develop", "review", "done"]);

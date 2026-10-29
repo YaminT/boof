@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { testGoal as goal } from "./plan-fixtures.js";
-import { PlanSchema, type Goal, type Plan } from "./plan-schema.js";
+import {
+  GoalInputSchema,
+  GoalSchema,
+  normalizeGoalPath,
+  PlanSchema,
+  type Goal,
+  type Plan,
+} from "./plan-schema.js";
 import {
   isValidTopologicalOrder,
   normalizeOrder,
@@ -81,5 +88,30 @@ describe("goal path", () => {
       expect(() => plan([{ ...base, path }])).toThrow();
     }
     expect(plan([{ ...base, path: "packages/a" }]).goals[0]!.path).toBe("packages/a");
+  });
+});
+
+describe("goal paths", () => {
+  it("normalises goal paths: posix separators, no ./ segments, no trailing slash", () => {
+    expect(normalizeGoalPath("./units\\a/")).toBe("units/a");
+    expect(normalizeGoalPath("units//a/./b")).toBe("units/a/b");
+    expect(normalizeGoalPath("./")).toBe(".");
+    expect(GoalSchema.parse({ ...goal("a", 1), path: "./units/a/" }).path).toBe("units/a");
+    expect(GoalInputSchema.parse({ ...goal("a", 1), path: "units\\a" }).path).toBe("units/a");
+    expect(() => GoalSchema.parse({ ...goal("a", 1), path: "units/../a" })).toThrow();
+  });
+
+  it("rejects two goals whose paths name one directory", () => {
+    const issues = planIssues([
+      { ...goal("a", 1), path: "units/a" },
+      { ...goal("b", 2), path: "units/a" },
+    ]);
+    expect(issues).toEqual([{ path: "goals.1.path", message: 'duplicate goal path "units/a"' }]);
+    expect(() =>
+      validatePlan(
+        plan([goal("a", 1, [], { path: "units/a" }), goal("b", 2, [], { path: "./units/a/" })]),
+      ),
+    ).toThrow(PlanValidationError);
+    expect(planIssues([{ ...goal("a", 1), path: "units/a" }, goal("b", 2)])).toEqual([]);
   });
 });

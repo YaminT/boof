@@ -49,7 +49,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`desktop-healthz-facts`](desktop-healthz-facts/goal.boof.xml) — Desktop server reports version and runner state on /healthz
 - [x] [`task-file-heading-escape`](task-file-heading-escape/goal.boof.xml) — Task markdown round-trip survives section headings in prompt, reports and log
 - [x] [`store-update-under-lock`](store-update-under-lock/goal.boof.xml) — SettingsStore.update and ProjectStore.update read-modify-write under the lock
-- [ ] [`plan-goal-path-uniqueness`](plan-goal-path-uniqueness/goal.boof.xml) — Plan validation normalises and de-duplicates goal paths
+- [x] [`plan-goal-path-uniqueness`](plan-goal-path-uniqueness/goal.boof.xml) — Plan validation normalises and de-duplicates goal paths
 - [x] [`atomic-write-lock-map-and-fsync`](atomic-write-lock-map-and-fsync/goal.boof.xml) — withFileLock frees its map entries; atomicWrite fsyncs
 
 ## Server

@@ -31,7 +31,7 @@
     <goal id="desktop-healthz-facts" path="goals/desktop-healthz-facts" order="28" status="plan"></goal>
     <goal id="task-file-heading-escape" path="goals/task-file-heading-escape" order="29" status="done"></goal>
     <goal id="store-update-under-lock" path="goals/store-update-under-lock" order="30" status="done"></goal>
-    <goal id="plan-goal-path-uniqueness" path="goals/plan-goal-path-uniqueness" order="31" status="plan"></goal>
+    <goal id="plan-goal-path-uniqueness" path="goals/plan-goal-path-uniqueness" order="31" status="done"></goal>
     <goal id="atomic-write-lock-map-and-fsync" path="goals/atomic-write-lock-map-and-fsync" order="32" status="done"></goal>
     <goal id="attachment-upload-no-json-fingerprint" path="goals/attachment-upload-no-json-fingerprint" order="33" status="plan"></goal>
     <goal id="audit-forwarded-ip" path="goals/audit-forwarded-ip" order="34" status="plan"></goal>
