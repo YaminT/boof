@@ -774,7 +774,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - Operation: `auth.clients.list`
 - Scope: `auth:admin`
 - MCP tool: none (REST only)
-- What it does: Lists the API clients without their keys. No input.
+- What it does: Lists the API clients without their keys. No input. Shows only the clients the caller may manage (and itself).
 - Success: HTTP 200 with `{ clients: Client[] }`.
 - Errors: `403 forbidden_scope`
 
@@ -801,7 +801,7 @@ JSON body (unknown keys are rejected):
 - Operation: `auth.clients.revoke`
 - Scope: `auth:admin`
 - MCP tool: none (REST only)
-- What it does: Revokes a client's key for good. Input: clientId. Marks the client revoked.
+- What it does: Revokes a client's key for good. Input: clientId. Marks the client revoked. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.
 - Success: HTTP 200 with `{ client: Client }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
 
@@ -814,7 +814,7 @@ Path parameters (all required):
 - Operation: `auth.clients.rotate`
 - Scope: `auth:admin`
 - MCP tool: none (REST only)
-- What it does: Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once.
+- What it does: Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.
 - Success: HTTP 200 with `{ client: Client, key: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
 
@@ -1742,7 +1742,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.create`
 - Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write: templates are global, and a rename repoints tasks in every project.
+- What it does: Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.
 - Success: HTTP 200 with `{ body: string, id: string, name: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
@@ -1756,7 +1756,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.update`
 - Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write: templates are global, and a rename repoints tasks in every project.
+- What it does: Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.
 - Success: HTTP 200 with `{ body: string, id: string, name: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
@@ -1774,7 +1774,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.delete`
 - Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write: templates are global, and a delete reports references from every project.
+- What it does: Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a delete reports references from every project.
 - Success: HTTP 200 with `{ referencedBy: string[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 

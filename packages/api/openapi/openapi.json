@@ -2562,7 +2562,7 @@
         "x-boof-scope": "tasks:read"
       },
       "post": {
-        "description": "Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write: templates are global, and a rename repoints tasks in every project.",
+        "description": "Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
         "operationId": "commands.create",
         "parameters": [],
         "requestBody": {
@@ -2638,7 +2638,7 @@
     },
     "/commands/{commandId}": {
       "delete": {
-        "description": "Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write: templates are global, and a delete reports references from every project.",
+        "description": "Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a delete reports references from every project.",
         "operationId": "commands.delete",
         "parameters": [
           {
@@ -2694,7 +2694,7 @@
         "x-boof-scope": "settings:write"
       },
       "put": {
-        "description": "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write: templates are global, and a rename repoints tasks in every project.",
+        "description": "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
         "operationId": "commands.update",
         "parameters": [
           {

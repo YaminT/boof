@@ -272,7 +272,7 @@ describe("authorize (scopes)", () => {
   it("command templates are global: creating, renaming and deleting needs settings:write", async () => {
     peer = REMOTE;
     const writer = await mint("writer", ["tasks:read", "tasks:write"], { projects: ["default"] });
-    const ops = await mint("ops", ["settings:write", "tasks:read"]);
+    const ops = await mint("ops", ["settings:write", "tasks:read"], { trust: "trusted" });
     const app = build();
     const body = post({ name: "Review", body: "Review carefully." });
     const denied = await call(app, "/api/v1/commands", body, writer);
@@ -295,6 +295,28 @@ describe("authorize (scopes)", () => {
     expect((await call(app, "/api/v1/commands/review", { method: "DELETE" }, ops)).status).toBe(
       200,
     );
+  });
+
+  it("command template writes are refused to review-trust and project-restricted clients", async () => {
+    peer = REMOTE;
+    const review = await mint("rev", ["settings:write"]);
+    const limited = await mint("lim", ["settings:write"], {
+      trust: "trusted",
+      projects: ["default"],
+    });
+    const app = build();
+    const body = post({ name: "Review", body: "Review carefully." });
+    for (const key of [review, limited]) {
+      for (const [path, init] of [
+        ["/api/v1/commands", body],
+        ["/api/v1/commands/review", { ...body, method: "PUT" }],
+        ["/api/v1/commands/review", { method: "DELETE" }],
+      ] as const) {
+        const res = await call(app, path, init, key);
+        expect(res.status).toBe(403);
+        expect((await res.json()).error.code).toBe("forbidden_trust");
+      }
+    }
   });
 
   it("maps health/models to settings:read and usage/events to tasks:read", async () => {

@@ -27,15 +27,22 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Each operation lists
   its scope in the OpenAPI document (`x-boof-scope`).
 - Command templates are global: `POST/PUT/DELETE /commands` need `settings:write` (listing needs
-  `tasks:read`).
+  `tasks:read`). `settings:write` is a trusted-only scope: renaming or deleting a template
+  rewrites tasks in every project, so a `review`-trust or project-restricted client gets
+  `403 forbidden_trust` on template writes even when it holds the scope.
 - A client may be restricted to some projects. Touching another project is
   `403 forbidden_project`; project lists are filtered.
 - **Trust.** A client with `trust: review` (the default for new clients) creates `draft` tasks
   and plans, cannot queue tasks or activate plans, and may stop or inject into only the tasks it
   created (`stopRunning` on plan routes likewise stops only its own tasks and leaves the rest
-  running); a human approves in the UI. A `trusted` client may queue directly.
+  running; likewise it may set back to `draft` only a plan it created, and removing a goal archives only its own tasks); a human approves in the UI. A `trusted` client may queue directly.
   A client created through `POST /auth/clients` never gets scopes, trust, projects or an expiry
   its creator lacks; a restricted creator's projects and expiry are inherited when omitted.
+  Rotating or revoking a client is capped the same way: a client with scopes, trust, projects
+  or an expiry beyond the caller's is refused (`403 forbidden_scope`, `forbidden_trust` or
+  `forbidden_project`), and `GET /auth/clients` lists only clients the caller may manage plus
+  itself. A client may always rotate or revoke itself. The local principal and `admin`
+  trusted keys manage everyone.
 - Registering a project as an API client needs the directory to be inside
   `security.allowedProjectRoots` (settings.json).
 - `GET /api/v1/openapi.json` needs any valid principal.
@@ -311,7 +318,7 @@ to keep the tool list short.
 | `boof_set_runner`      | `runner:control` or `settings:write` | idempotent  | Start or pause the runner                |
 | `boof_list_actions`    | `tasks:read`                         | read-only   | List tasks needing an answer             |
 
-Resources (read-only, same scopes as the matching tools): `resources/list` leaves out what the client's scopes or project restriction do not allow instead of failing (the static `boof://projects` entry is always listed); a read without the scope is an error.
+Resources (read-only, same scopes as the matching tools): `resources/list` leaves out what the client's scopes or project restriction do not allow instead of failing; listing project, task and plan resources needs `projects:read` plus the resource's read scope (the static `boof://projects` entry is always listed); a read without the scope is an error.
 
 | URI                                                 | MIME               | Content                              |
 | --------------------------------------------------- | ------------------ | ------------------------------------ |
