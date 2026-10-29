@@ -85,17 +85,21 @@ export class SettingsStore {
   update(patch: SettingsUpdate): Promise<Settings> {
     return this.mutate((current) => {
       const { runner, ...rest } = patch;
-      return this.save({
+      return {
         ...current,
         ...rest,
         ...(runner ? { runner: { ...current.runner, ...stripUndefined(runner) } } : {}),
-      } as Settings);
+      } as Settings;
     });
   }
 
-  /** Load, change and save under one per-file lock so concurrent updates cannot lose each other. */
-  private mutate<T>(fn: (current: Settings) => Promise<T>): Promise<T> {
-    return withFileLock(`${this.path}#mutate`, async () => fn(await this.load()));
+  /**
+   * Load, change and save under one lock so concurrent updates in this process cannot lose each
+   * other. `fn` returns the settings to store. Every load-then-save of settings must use this
+   * instead of `load` followed by `save`.
+   */
+  mutate(fn: (current: Settings) => Settings | Promise<Settings>): Promise<Settings> {
+    return withFileLock(`${this.path}#mutate`, async () => this.save(await fn(await this.load())));
   }
 }
 

@@ -79,6 +79,34 @@ describe("webhook operations", () => {
     );
   });
 
+  it("keeps a concurrent runner toggle and every concurrent webhook create", async () => {
+    const urls = ["http://127.0.0.1:9/a", "http://127.0.0.1:9/b", "http://127.0.0.1:9/c"];
+    for (let round = 0; round < 5; round++) {
+      const before = ((await service.loadSettings()).webhooks ?? []).length;
+      const enabled = round % 2 === 0;
+      const results = await Promise.all([
+        ...urls.map((url) => create({ url })),
+        service.settingsStore.update({ runner: { enabled } }),
+      ]);
+      expect(results.slice(0, 3).map((r) => (r as Response).status)).toEqual([201, 201, 201]);
+      const after = await service.loadSettings();
+      expect(after.runner.enabled).toBe(enabled);
+      expect((after.webhooks ?? []).length).toBe(before + 3);
+    }
+  });
+
+  it("keeps a concurrent runner toggle when a webhook is deleted", async () => {
+    const made = await (await create({ url: "http://127.0.0.1:9/hook" })).json();
+    const [res] = await Promise.all([
+      call(`/api/v1/webhooks/${made.webhook.id}`, { method: "DELETE" }),
+      service.settingsStore.update({ runner: { enabled: true } }),
+    ]);
+    expect(res.status).toBe(200);
+    const after = await service.loadSettings();
+    expect(after.runner.enabled).toBe(true);
+    expect(after.webhooks ?? []).toHaveLength(0);
+  });
+
   it("rejects non-http(s) URLs, this server itself and unknown event types", async () => {
     expect((await create({ url: "ftp://example.com/x" })).status).toBe(400);
     expect((await create({ url: "not a url" })).status).toBe(400);

@@ -87,11 +87,10 @@ export const webhooksCreate = defineOp({
       createdBy: ctx.principal.id,
       created: ctx.now(),
     };
-    const settings = await ctx.services.loadSettings();
-    await ctx.services.settingsStore.save({
+    await ctx.services.settingsStore.mutate((settings) => ({
       ...settings,
       webhooks: [...(settings.webhooks ?? []), webhook],
-    });
+    }));
     return { webhook: publicWebhook(webhook), secret: webhook.secret };
   },
 });
@@ -108,12 +107,10 @@ export const webhooksDelete = defineOp({
   rest: { method: "DELETE", path: "/webhooks/{webhookId}" },
   mcp: { expose: false, annotations: DESTRUCTIVE },
   handler: async (ctx, input) => {
-    const settings = await ctx.services.loadSettings();
-    const hooks = settings.webhooks ?? [];
-    if (!hooks.some((h) => h.id === input.webhookId)) throw new OpError(404, "Webhook not found");
-    await ctx.services.settingsStore.save({
-      ...settings,
-      webhooks: hooks.filter((h) => h.id !== input.webhookId),
+    await ctx.services.settingsStore.mutate((settings) => {
+      const hooks = settings.webhooks ?? [];
+      if (!hooks.some((h) => h.id === input.webhookId)) throw new OpError(404, "Webhook not found");
+      return { ...settings, webhooks: hooks.filter((h) => h.id !== input.webhookId) };
     });
     return { ok: true as const };
   },
