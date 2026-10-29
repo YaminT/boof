@@ -9,16 +9,8 @@ import {
   CommandItem,
   CommandList,
 } from "@/ui/command";
-import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
 import { Kbd } from "@/ui/kbd";
+import { StopTaskDialog } from "./StopTaskDialog.js";
 import type { TaskView } from "../api.js";
 import type { AppData } from "../useAppData.js";
 import type { Route, SettingsPageId } from "../lib/route.js";
@@ -257,35 +249,19 @@ export function CommandPalette({
           </CommandList>
         </Command>
       </CommandDialog>
-      <Dialog open={stopping !== null} onOpenChange={(o) => !o && setStopping(null)}>
-        <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>Stop task</DialogTitle>
-            <DialogDescription>
-              Stop this task? The agent stops and the task moves to stopped. Its worktree is kept.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setStopping(null)}>
-              Keep running
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                const t = stopping;
-                setStopping(null);
-                if (!t || !pid) return;
-                void act(() => api.stopTask(pid, t.frontmatter.id), {
-                  success: "Stop requested",
-                  failure: "Could not stop",
-                }).then(() => data.refresh());
-              }}
-            >
-              Stop task
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <StopTaskDialog
+        open={stopping !== null}
+        onOpenChange={(o) => !o && setStopping(null)}
+        onConfirm={() => {
+          const t = stopping;
+          setStopping(null);
+          if (!t || !pid) return;
+          void act(() => api.stopTask(pid, t.frontmatter.id), {
+            success: "Stop requested",
+            failure: "Could not stop",
+          }).then(() => data.refresh());
+        }}
+      />
     </>
   );
 }

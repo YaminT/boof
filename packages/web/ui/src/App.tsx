@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "@boof-runner/shared/schema";
 import { BudgetBanner } from "./components/Budget.js";
 import { useAppData } from "./useAppData.js";
@@ -15,6 +15,9 @@ import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import { routePid } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
+import { groupTasks } from "./lib/task-groups.js";
+import { OverviewPage } from "./overview/OverviewPage.js";
+import { NowStrip } from "./overview/NowStrip.js";
 
 export function App() {
   const { route, navigate } = useRoute();
@@ -27,6 +30,7 @@ export function App() {
   const { settings, tasks, actions, budget, planTick, refresh, needsToken, clearNeedsToken } = data;
   const { projects, selected, select, reload } = useProjects(settings, routePid(route));
   reloadRef.current = reload;
+  const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
   const currentId = selected?.id ?? null;
   useEffect(() => setSelectedId(currentId), [currentId]);
 
@@ -89,10 +93,11 @@ export function App() {
     >
       {budget && <BudgetBanner budget={budget} />}
       {routeReady && route.name === "overview" && (
-        <h1 className="text-[length:var(--text-page)] font-semibold">Overview</h1>
+        <OverviewPage pid={pid} project={selected} data={data} navigate={navigate} />
       )}
       {routeReady && route.name === "tasks" && (
         <>
+          <NowStrip pid={pid} groups={groups} />
           {runningTask && (
             <LivePanel
               key={runningTask.frontmatter.id}
@@ -125,17 +130,20 @@ export function App() {
         />
       )}
       {routeReady && route.name === "plans" && (
-        <PlansTab
-          key={`${pid}/plans`}
-          projectId={pid}
-          tasks={tasks}
-          tick={planTick}
-          planId={route.planId ?? null}
-          onSelectPlan={(id) => navigate({ name: "plans", pid, ...(id ? { planId: id } : {}) })}
-          onOpenTask={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
-          onReviewTask={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
-          onChange={refresh}
-        />
+        <>
+          <NowStrip pid={pid} groups={groups} />
+          <PlansTab
+            key={`${pid}/plans`}
+            projectId={pid}
+            tasks={tasks}
+            tick={planTick}
+            planId={route.planId ?? null}
+            onSelectPlan={(id) => navigate({ name: "plans", pid, ...(id ? { planId: id } : {}) })}
+            onOpenTask={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
+            onReviewTask={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
+            onChange={refresh}
+          />
+        </>
       )}
       {routeReady && route.name === "settings" && route.page === "automation" && (
         <CommandsTab onChange={refresh} />
