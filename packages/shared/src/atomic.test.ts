@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { atomicWrite, fileLockCount, withFileLock } from "./atomic.js";
+import { atomicWrite, fileLockCount, syncDir, withFileLock } from "./atomic.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -66,5 +66,19 @@ describe("atomicWrite", () => {
     expect(destExistedAtSync).toEqual([false, true]);
     expect(await readFile(dest, "utf8")).toBe("{}\n");
     expect((await stat(dest)).mode & 0o777).toBe(0o600);
+  });
+
+  it("skips the directory sync when the directory cannot be opened (Windows)", async () => {
+    const eisdir = (async () => {
+      throw Object.assign(new Error("EISDIR: illegal operation"), { code: "EISDIR" });
+    }) as unknown as typeof open;
+    await expect(syncDir(dir, eisdir)).resolves.toBeUndefined();
+    const eio = (async () => {
+      throw Object.assign(new Error("EIO"), { code: "EIO" });
+    }) as unknown as typeof open;
+    await expect(syncDir(dir, eio)).rejects.toThrow("EIO");
+    const dest = join(dir, "after.json");
+    await atomicWrite(dest, "new\n");
+    expect(await readFile(dest, "utf8")).toBe("new\n");
   });
 });

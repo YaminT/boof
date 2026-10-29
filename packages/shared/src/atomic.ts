@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { FileHandle } from "node:fs/promises";
 import { rename, open, rm, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -56,14 +57,23 @@ export async function atomicWrite(path: string, contents: string, mode?: number)
     await rm(tmp, { force: true });
     throw err;
   }
-  const dh = await open(dir, "r");
+  await syncDir(dir);
+}
+
+/**
+ * fsync a directory. Directories cannot be opened (or fsynced) on every platform, e.g.
+ * Windows: those failures skip the sync; anything else throws. `opener` is injectable for tests.
+ */
+export async function syncDir(dir: string, opener: typeof open = open): Promise<void> {
+  let dh: FileHandle | undefined;
   try {
+    dh = await opener(dir, "r");
     await dh.sync();
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (!code || !IGNORED_DIR_SYNC_CODES.has(code)) throw err;
   } finally {
-    await dh.close();
+    await dh?.close();
   }
 }
 
