@@ -2254,7 +2254,7 @@
         "x-boof-scope": "auth:admin"
       },
       "post": {
-        "description": "Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes or trust the caller lacks.",
+        "description": "Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes, trust, projects or an expiry the caller lacks; a restricted caller's projects and expiry are inherited when omitted.",
         "operationId": "auth.clients.create",
         "parameters": [],
         "requestBody": {

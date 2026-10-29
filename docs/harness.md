@@ -783,7 +783,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - Operation: `auth.clients.create`
 - Scope: `auth:admin`
 - MCP tool: none (REST only)
-- What it does: Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes or trust the caller lacks.
+- What it does: Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes, trust, projects or an expiry the caller lacks; a restricted caller's projects and expiry are inherited when omitted.
 - Success: HTTP 201 with `{ client: Client, key: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `403 forbidden_trust`
 

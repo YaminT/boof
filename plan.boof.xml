@@ -14,7 +14,7 @@
     <goal id="review-diff-includes-untracked" path="goals/review-diff-includes-untracked" order="11" status="done"></goal>
     <goal id="migration-lock" path="goals/migration-lock" order="12" status="done"></goal>
     <goal id="webhook-secrets-at-rest" path="goals/webhook-secrets-at-rest" order="13" status="plan"><depends-on>migration-lock</depends-on></goal>
-    <goal id="client-create-inherits-restrictions" path="goals/client-create-inherits-restrictions" order="14" status="plan"></goal>
+    <goal id="client-create-inherits-restrictions" path="goals/client-create-inherits-restrictions" order="14" status="done"></goal>
     <goal id="command-templates-respect-project-scope" path="goals/command-templates-respect-project-scope" order="15" status="plan"></goal>
     <goal id="sse-principal-revocation" path="goals/sse-principal-revocation" order="16" status="plan"></goal>
     <goal id="rate-limit-unauthenticated-and-healthz" path="goals/rate-limit-unauthenticated-and-healthz" order="17" status="plan"></goal>

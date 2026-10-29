@@ -529,6 +529,61 @@ describe("auth admin API", () => {
       (await call(app, "/api/auth/clients/nope!/revoke", { method: "POST" }, mgr)).status,
     ).toBe(400);
   });
+
+  it("a project-restricted or expiring key cannot mint a wider one", async () => {
+    peer = REMOTE;
+    const cap = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const mgr = (
+      await store.create({
+        name: "mgr",
+        scopes: ["auth:admin", "tasks:read"],
+        projects: ["default"],
+        expiresAt: cap,
+      })
+    ).key;
+    const app = build();
+    const body = (extra: object) => post({ name: "kid", scopes: ["tasks:read"], ...extra });
+    const wide = await call(
+      app,
+      "/api/auth/clients",
+      body({ projects: ["default", "other"] }),
+      mgr,
+    );
+    expect(wide.status).toBe(403);
+    expect((await wide.json()).error).toMatchObject({
+      code: "forbidden_project",
+      details: { projects: ["other"] },
+    });
+    expect((await call(app, "/api/auth/clients", body({ projects: "*" }), mgr)).status).toBe(403);
+    const later = await call(app, "/api/auth/clients", body({ expiresIn: "30d" }), mgr);
+    expect(later.status).toBe(400);
+    expect((await later.json()).error).toMatchObject({
+      code: "invalid_input",
+      details: [{ path: "expiresIn", message: expect.stringContaining("caller") }],
+    });
+    const inherited = await call(app, "/api/auth/clients", body({}), mgr);
+    expect(inherited.status).toBe(200);
+    expect((await inherited.json()).client).toMatchObject({
+      projects: ["default"],
+      expiresAt: cap,
+    });
+    const shorter = await call(
+      app,
+      "/api/auth/clients",
+      body({ name: "kid2", projects: ["default"], expiresIn: "1d" }),
+      mgr,
+    );
+    expect(shorter.status).toBe(200);
+    const { expiresAt } = (await shorter.json()).client;
+    expect(Date.parse(expiresAt)).toBeLessThan(Date.parse(cap));
+    expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(86_400_000 - 60_000);
+    // Unrestricted callers are not capped.
+    const admin = await mint("admin-client", ["admin"]);
+    const any = await call(app, "/api/auth/clients", body({ name: "wide", projects: "*" }), admin);
+    const anyClient = (await any.json()).client;
+    expect(anyClient).toMatchObject({ projects: "*" });
+    expect(anyClient.expiresAt).toBeUndefined();
+  });
 });
 
 describe("server binding", () => {

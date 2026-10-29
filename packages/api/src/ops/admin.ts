@@ -376,7 +376,7 @@ export const clientsCreate = defineOp({
   name: "auth.clients.create",
   title: "Create an API client",
   description:
-    "Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes or trust the caller lacks.",
+    "Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes, trust, projects or an expiry the caller lacks; a restricted caller's projects and expiry are inherited when omitted.",
   scope: "auth:admin",
   projectScoped: false,
   input: CreateClientBody,
@@ -400,6 +400,33 @@ export const clientsCreate = defineOp({
     if (body.trust === "trusted" && me.trust !== "trusted") {
       throw new OpError(403, "Cannot grant trusted trust", "forbidden_trust");
     }
+    // A project-restricted creator cannot grant projects it does not hold; omitted projects are inherited.
+    let projects = body.projects;
+    const mine = me.projects;
+    if (mine !== "*") {
+      if (projects === undefined) {
+        projects = [...mine];
+      } else if (projects === "*") {
+        throw new OpError(
+          403,
+          "Cannot grant every project: this client is restricted",
+          "forbidden_project",
+          {
+            projects: ["*"],
+          },
+        );
+      } else {
+        const outside = projects.filter((p) => !mine.has(p));
+        if (outside.length > 0) {
+          throw new OpError(
+            403,
+            `Cannot grant projects you may not access: ${outside.join(", ")}`,
+            "forbidden_project",
+            { projects: outside },
+          );
+        }
+      }
+    }
     let expiresAt: string | undefined;
     if (body.expiresIn) {
       try {
@@ -408,11 +435,25 @@ export const clientsCreate = defineOp({
         throw new OpError(400, (err as Error).message, "invalid_input");
       }
     }
+    // An expiring creator cannot mint a key that outlives its own; omitted expiry is inherited.
+    const cap = me.kind === "client" ? (await ctx.authStore.get(me.id))?.expiresAt : undefined;
+    if (cap) {
+      if (!expiresAt) {
+        expiresAt = cap;
+      } else if (Date.parse(expiresAt) > Date.parse(cap)) {
+        throw new OpError(400, "expiresIn outlives the caller's key", "invalid_input", [
+          {
+            path: "expiresIn",
+            message: `Must not outlive the caller's key (expires ${cap})`,
+          },
+        ]);
+      }
+    }
     return ctx.authStore.create({
       name: body.name,
       kind: body.kind,
       scopes: body.scopes,
-      projects: body.projects,
+      projects,
       trust: body.trust,
       expiresAt,
     });

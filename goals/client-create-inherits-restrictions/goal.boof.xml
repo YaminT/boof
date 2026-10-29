@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">auth.clients.create caps projects to the caller's set and expiry to the caller's expiresAt, inheriting both when omitted; security.test.ts pins it.</version>
       </versions>
     </status>
     <tests>
