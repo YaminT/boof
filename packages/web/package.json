@@ -20,6 +20,7 @@
     "@boof-runner/runner": "workspace:*",
     "@boof-runner/shared": "workspace:*",
     "@hono/node-server": "^2.0.0",
+    "@tanstack/react-virtual": "^3",
     "chokidar": "^6.0.0",
     "hono": "^4.13.13",
     "zod": "^4.6.7"
