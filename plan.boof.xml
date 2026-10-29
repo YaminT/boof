@@ -67,5 +67,6 @@
     <goal id="ui-redesign-phase-6" path="goals/ui-redesign-phase-6" order="64" status="plan"><depends-on>ui-redesign-phase-5</depends-on></goal>
     <goal id="step-closing-entry" path="goals/step-closing-entry" order="65" status="done"></goal>
     <goal id="boof-split" path="goals/boof-split" order="66" status="plan"></goal>
+    <goal id="questions-from-any-role" path="goals/questions-from-any-role" order="67" status="plan"></goal>
   </goals>
 </plan>

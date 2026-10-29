@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Developers, observers and reviewers can now end their report with a questions block (real-tools-parse-questions), but only the planner's own questions are answered: the planner's answer to another role's questions never reaches that role. Route the planner's answers (or the owner's, when the task parks) back to the role that asked, so its next run sees them, and record the exchange in the task's Questions section. Found by the group 2 review on 2026-10-29.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <do>Keep the mock adapter behaviour as the reference; the parser must be shared, not per tool.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Raised by the group 2 review on 2026-10-29; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Engine tests with the mock tool: a developer asks, the planner answers, the developer's next run receives the answer.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/runner</run>
+    </tests>
+  </progress>
+</boof>
