@@ -255,6 +255,10 @@ A data root from before multi-project support is migrated automatically the firs
 - Anyone who can reach the API can create a task, and every task runs coding agents with permission prompts disabled inside your repository. Treat API access as equivalent to running code as your user.
 - Ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
 - Agents work in a git worktree on a `boof-runner/<id>` branch. Nothing is merged or pushed for you.
+- Clients with `review` trust (the default) control only their own work: they stop or steer only tasks they created, set back to draft and edit only plans they created, and removing a plan's goals archives only their own tasks. A human approves everything else in the UI.
+- Client creation and rotation cannot escalate: a client may not create, rotate, revoke or list a client with scopes, trust, projects or an expiry beyond its own (rotating or revoking itself is always allowed).
+- Webhooks refuse loopback, link-local, private and other reserved addresses (by literal and by DNS answer, at creation and before every delivery) unless the host is listed in `security.allowedPrivateWebhookHosts`. Their signing secrets live in `webhooks/secrets.json` (0600), never in `settings.json`.
+- `settings:write` is a trusted-only scope: command templates are global, so a `review`-trust or project-restricted client cannot create, rename or delete them even when it holds the scope.
 - Do not expose the port to the public internet without keys and TLS.
 
 ### Remote access
