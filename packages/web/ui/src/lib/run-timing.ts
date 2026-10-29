@@ -72,19 +72,30 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
   const moving = entries.filter((e) => !/^Planner \(answering/.test(e.label));
   const lastRole = moving.at(-1)?.role ?? (running ? "planner" : null);
   const lastIdx = lastRole ? ROLES.indexOf(lastRole) : -1;
-  const lastAt = entries.at(-1)?.ms ?? null;
+  const maxIdx = Math.max(-1, ...entries.map((e) => ROLES.indexOf(e.role)));
+  const updatedMs = Date.parse(task.frontmatter.updated ?? "");
 
   return ROLES.map((role, idx): StepSegment => {
     const mine = entries.filter((e) => e.role === role);
-    const state = running && idx === lastIdx ? "current" : idx <= lastIdx ? "done" : "upcoming";
+    // A role that already ran stays done during fix rounds, when the pipeline is back at the developer.
+    const state =
+      running && idx === lastIdx
+        ? "current"
+        : mine.length > 0 || idx < maxIdx
+          ? "done"
+          : "upcoming";
     const first = mine[0]?.ms ?? null;
 
     let seconds: number | null = null;
     if (state !== "upcoming" && first !== null) {
-      const firstPos = entries.indexOf(mine[0]);
-      const next = entries.slice(firstPos).find((e) => ROLES.indexOf(e.role) > idx);
-      const end = state === "current" ? now : (next?.ms ?? lastAt);
-      if (end !== null) seconds = Math.max(0, Math.round((end - first) / 1000));
+      const after = entries.slice(entries.indexOf(mine[0]) + 1);
+      const next =
+        after.find((e) => ROLES.indexOf(e.role) > idx) ?? after.find((e) => e.role !== role);
+      let end: number | null = null;
+      if (state === "current") end = now;
+      else if (next?.ms != null) end = next.ms;
+      else if (!running && !Number.isNaN(updatedMs)) end = updatedMs;
+      if (end !== null && end >= first) seconds = Math.round((end - first) / 1000);
     }
 
     let round = 1;

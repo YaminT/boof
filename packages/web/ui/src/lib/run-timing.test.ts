@@ -65,6 +65,42 @@ describe("stepStrip", () => {
     expect(r.developer.state).toBe("done");
   });
 
+  it("keeps reviewed roles done during a fix round", () => {
+    const t = task(
+      {
+        steps: steps(
+          ["Planner", 0],
+          ["Developer", 10],
+          ["Observer (round 1)", 20],
+          ["Reviewer (round 1)", 30],
+          ["Developer (fix round 1, reviewer)", 40],
+        ),
+      },
+      { finalVerdict: { observer: "APPROVE", reviewer: "REJECT" } },
+    );
+    const segs = stepStrip(t, T0 + 50_000);
+    const r = byRole(segs);
+    expect(r.planner.state).toBe("done");
+    expect(r.developer.state).toBe("current");
+    expect(r.observer.state).toBe("done");
+    expect(r.reviewer).toMatchObject({ state: "done", verdict: "reject" });
+    for (const s of segs) if (s.seconds !== null) expect(s.seconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it("ends a finished task's last role at its updated time", () => {
+    const t = task(
+      {
+        steps: steps(["Planner", 0], ["Developer", 50], ["Reviewer (round 1)", 200]),
+        updated: at(260),
+      },
+      {},
+      "done",
+    );
+    const r = byRole(stepStrip(t, T0 + 999_000));
+    expect(r.reviewer).toMatchObject({ state: "done", seconds: 60 });
+    expect(r.planner.seconds).toBe(50);
+  });
+
   it("maps verdicts", () => {
     const v = (reviewer?: string, observer?: string) =>
       byRole(stepStrip(task({}, { finalVerdict: { reviewer, observer } }), T0));
