@@ -159,12 +159,13 @@ describe("legacy settings.json compatibility", () => {
       allowedPrivateWebhookHosts: [],
       allowedProjectRoots: [],
       externalTasksRequireApproval: true,
-      rateLimit: { perMinute: 600, attachmentsPerMinute: 30 },
+      rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 },
+      trustedProxies: ["loopback"],
       audit: { enabled: true, retentionDays: 90 },
     });
     expect(
       securitySettings({ ...s, security: { rateLimit: { perMinute: 5 } } as never }).rateLimit,
-    ).toEqual({ perMinute: 5, attachmentsPerMinute: 30 });
+    ).toEqual({ perMinute: 5, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 });
   });
 });
 

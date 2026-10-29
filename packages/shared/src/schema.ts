@@ -270,6 +270,8 @@ export type PublicClient = Omit<Client, "keyHash">;
 export const SecuritySettingsSchema = z.object({
   /** Extra Host header values accepted besides loopback. */
   allowedHosts: z.array(z.string()).default([]),
+  /** Peers (IP literals, or "loopback") whose X-Forwarded-For / Forwarded headers name the real client; nginx on the same host: ["loopback"]. */
+  trustedProxies: z.array(z.string()).default(["loopback"]),
   auth: z.object({ mode: z.enum(["local-trust", "required"]).default("local-trust") }).prefault({}),
   /** Roots under which non-local principals may register projects (e.g. ["~/codes"]). */
   allowedProjectRoots: z.array(z.string()).default([]),
@@ -281,6 +283,8 @@ export const SecuritySettingsSchema = z.object({
     .object({
       perMinute: z.number().int().min(1).default(600),
       attachmentsPerMinute: z.number().int().min(1).default(30),
+      /** Failed authentications per client address per minute, charged before any key is checked. */
+      unauthenticatedPerMinute: z.number().int().min(1).default(30),
     })
     .prefault({}),
   audit: z

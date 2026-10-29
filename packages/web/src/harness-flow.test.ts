@@ -81,7 +81,8 @@ beforeEach(async () => {
     auth: { mode: "required" },
     allowedProjectRoots: [join(base, "repos")],
     externalTasksRequireApproval: true,
-    rateLimit: { perMinute: 600, attachmentsPerMinute: 30 },
+    rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 },
+    trustedProxies: ["loopback"],
     audit: { enabled: true, retentionDays: 90 },
   };
   await new SettingsStore(root).save(settings);

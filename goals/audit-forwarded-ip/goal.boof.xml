@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">audit lines carry forwardedFor (the last X-Forwarded-For entry or the last Forwarded for=) when the peer is loopback or a trusted proxy; ip stays the socket peer; the value is documented as trustworthy only with security.trustedProxies. Deviation from the goal text: the last entry, not the first, because the first is client-controlled.</version>
       </versions>
     </status>
     <tests>

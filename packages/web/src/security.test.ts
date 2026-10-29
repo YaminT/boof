@@ -334,7 +334,9 @@ describe("authorize (scopes)", () => {
 
 describe("rate limit", () => {
   it("429 with Retry-After after the per-minute budget, per principal", async () => {
-    await setSecurity({ rateLimit: { perMinute: 3, attachmentsPerMinute: 30 } });
+    await setSecurity({
+      rateLimit: { perMinute: 3, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 },
+    });
     peer = REMOTE;
     const a = await mint("a", ["tasks:read"]);
     const b = await mint("b", ["tasks:read"]);
@@ -352,7 +354,9 @@ describe("rate limit", () => {
   });
 
   it("attachments use a separate bucket; the SSE route is excluded", async () => {
-    await setSecurity({ rateLimit: { perMinute: 2, attachmentsPerMinute: 1 } });
+    await setSecurity({
+      rateLimit: { perMinute: 2, attachmentsPerMinute: 1, unauthenticatedPerMinute: 30 },
+    });
     peer = REMOTE;
     const key = await mint("a", ["tasks:read", "tasks:write"]);
     const app = build();
@@ -370,6 +374,75 @@ describe("rate limit", () => {
     for (let i = 0; i < 5; i += 1) {
       expect((await call(app, "/api/events", {}, key)).status).toBe(200);
     }
+  });
+
+  it("limits failed authentication per client address before any key is checked", async () => {
+    await setSecurity({
+      rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 3 },
+    });
+    peer = REMOTE;
+    const key = await mint("ok", ["tasks:read"]);
+    const app = build();
+    const guess = () => call(app, "/api/v1/whoami", {}, "boof_ok_nope");
+    for (let i = 0; i < 3; i += 1) expect((await guess()).status).toBe(401);
+    const limited = await guess();
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    expect((await limited.json()).error.code).toBe("rate_limited");
+    // /mcp shares the bucket; a request with no key at all counts as well.
+    expect(
+      (
+        await call(app, "/mcp", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        })
+      ).status,
+    ).toBe(429);
+    // Another address has its own bucket.
+    peer = "10.9.9.9";
+    expect((await guess()).status).toBe(401);
+    peer = REMOTE;
+    // The bucket refills; valid requests never draw from it.
+    clock += 60_000;
+    for (let i = 0; i < 10; i += 1) {
+      expect((await call(app, "/api/v1/whoami", {}, key)).status).toBe(200);
+    }
+    for (let i = 0; i < 3; i += 1) expect((await guess()).status).toBe(401);
+    expect((await guess()).status).toBe(429);
+  });
+
+  it("X-Forwarded-For splits buckets only when the peer is a trusted proxy", async () => {
+    const limits = { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 2 };
+    await setSecurity({ rateLimit: limits, trustedProxies: [] });
+    peer = LOOPBACK; // nginx on the same host; no key and a proxy header: never local, 401
+    const via = (app: ReturnType<typeof build>, xff: string) =>
+      call(app, "/api/v1/whoami", { headers: { "x-forwarded-for": xff } });
+    const untrusted = build();
+    expect((await via(untrusted, "198.51.100.1")).status).toBe(401);
+    expect((await via(untrusted, "198.51.100.2")).status).toBe(401);
+    expect((await via(untrusted, "198.51.100.3")).status).toBe(429); // one bucket: the peer
+    await setSecurity({ rateLimit: limits, trustedProxies: ["loopback"] });
+    const trusted = build();
+    expect((await via(trusted, "198.51.100.1")).status).toBe(401);
+    expect((await via(trusted, "198.51.100.1")).status).toBe(401);
+    expect((await via(trusted, "198.51.100.1")).status).toBe(429);
+    // The last entry is the one nginx appended; whatever the client wrote before it changes nothing.
+    expect((await via(trusted, "203.0.113.9, 198.51.100.1")).status).toBe(429);
+    expect((await via(trusted, "198.51.100.2")).status).toBe(401);
+  });
+
+  it("/healthz reads settings at most every 5 seconds", async () => {
+    peer = REMOTE;
+    const app = build();
+    const enabled = async () => (await (await call(app, "/healthz")).json()).runner.enabled;
+    expect(await enabled()).toBe(false);
+    const settings = new SettingsStore(root);
+    const cur = await settings.load();
+    await settings.save({ ...cur, runner: { ...cur.runner, enabled: true } });
+    expect(await enabled()).toBe(false); // served from the cache
+    clock += 5_001;
+    expect(await enabled()).toBe(true);
   });
 });
 
@@ -560,6 +633,35 @@ describe("audit log", () => {
     expect(create.ts).toBe("2026-03-01T12:00:00.000Z");
     expect(get).toMatchObject({ action: "GET /api/tasks/:id", target: "audited", status: 200 });
     expect(denied).toMatchObject({ principal: "anonymous", status: 401 });
+  });
+
+  it("records the forwarded client address behind a proxy, labelled apart from the peer", async () => {
+    peer = LOOPBACK;
+    const key = await mint("harness", ["tasks:read"]);
+    const app = build();
+    await call(
+      app,
+      "/api/tasks",
+      { headers: { "x-forwarded-for": "203.0.113.7, 198.51.100.1" } },
+      key,
+    );
+    await call(
+      app,
+      "/api/tasks",
+      { headers: { forwarded: 'for="[2001:db8::1]";proto=https' } },
+      key,
+    );
+    await call(app, "/api/tasks", {}, key);
+    peer = REMOTE; // a remote client writing the header itself is not a proxy
+    await call(app, "/api/tasks", { headers: { "x-forwarded-for": "203.0.113.7" } }, key);
+    const { lines } = await readAudit();
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toMatchObject({ ip: LOOPBACK, forwardedFor: "198.51.100.1", status: 200 });
+    expect(lines[1]).toMatchObject({ ip: LOOPBACK, forwardedFor: "2001:db8::1" });
+    expect(lines[2]).toMatchObject({ ip: LOOPBACK });
+    expect(lines[2]).not.toHaveProperty("forwardedFor");
+    expect(lines[3]).toMatchObject({ ip: REMOTE });
+    expect(lines[3]).not.toHaveProperty("forwardedFor");
   });
 
   it("can be disabled", async () => {

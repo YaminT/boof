@@ -21,7 +21,7 @@ import {
   requireScope,
   type PeerAddressResolver,
 } from "./middleware/auth.js";
-import { rateLimit } from "./middleware/rate-limit.js";
+import { rateLimit, unauthenticatedRateLimit } from "./middleware/rate-limit.js";
 import { audit } from "./middleware/audit.js";
 import { securityConfigReader } from "./security-config.js";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -110,13 +110,20 @@ export function createApp(deps: AppDeps): Hono {
   // Public liveness probe for systemd, load balancers and uptime monitors. Carries no
   // project or task data; it sits behind the Host guard like the docs below.
   const startedAt = (deps.now ?? Date.now)();
+  const HEALTH_CACHE_MS = 5_000;
+  let health: { at: number; enabled: boolean } | undefined;
   app.get("/healthz", async (c) => {
-    let enabled = false;
-    try {
-      enabled = (await service.loadSettings()).runner.enabled;
-    } catch {
-      /* unreadable settings: report disabled, the process is still alive */
+    const now = deps.now ?? Date.now;
+    if (!health || now() - health.at >= HEALTH_CACHE_MS) {
+      let enabled = false;
+      try {
+        enabled = (await service.loadSettings()).runner.enabled;
+      } catch {
+        /* unreadable settings: report disabled, the process is still alive */
+      }
+      health = { at: now(), enabled };
     }
+    const { enabled } = health;
     return c.json(
       {
         ok: true,
@@ -157,7 +164,11 @@ export function createApp(deps: AppDeps): Hono {
   for (const path of guarded) app.use(path, origins);
   const authenticator = authenticate({ store: authStore, security, peerAddress, now: deps.now });
   const limiter = rateLimit({ security, now: deps.now });
+  // Before authenticate, so failed key guesses are throttled before any key is checked; after the
+  // Origin guard, so cross-site rejections do not spend a client's bucket.
+  const unauthenticated = unauthenticatedRateLimit({ security, peerAddress, now: deps.now });
   for (const path of guarded) {
+    app.use(path, unauthenticated);
     app.use(path, authenticator);
     app.use(path, limiter);
   }

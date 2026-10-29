@@ -611,7 +611,7 @@ A create can answer with `warnings` when the server changed a requested value be
 
 ### Rate limits
 
-The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long.
+The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications are limited separately per client address (default 30 per minute): after that every request from the address answers `429` until the bucket refills, so never retry a `401` in a loop.
 
 ### Host errors
 

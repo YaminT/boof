@@ -1,5 +1,6 @@
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
+import type { ClientAddress } from "./client-address.js";
 import {
   authorize,
   LOCAL_PRINCIPAL,
@@ -14,6 +15,7 @@ declare module "hono" {
   interface ContextVariableMap {
     principal: Principal;
     peerAddress: string | undefined;
+    clientAddress: ClientAddress;
     /** Extra fields the handler wants recorded in the audit line (never bodies or secrets). */
     auditExtra: Record<string, unknown>;
   }

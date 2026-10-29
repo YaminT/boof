@@ -70,7 +70,7 @@ systemctl --user restart boof-runner
 boof-runner service uninstall      # removes the unit, keeps your data
 ```
 
-`GET /healthz` is public and returns `{ ok, version, uptimeSeconds, runner: { enabled, running } }` with no project or task data; use it for uptime monitors. On `systemctl stop` or a restart the runner asks the running task to stop (up to 30 s, `BOOF_RUNNER_SHUTDOWN_GRACE_MS`), kills the agent process, and leaves the task `failed` with its worktree kept. Retry it from the UI or API after the restart.
+`GET /healthz` is public and returns `{ ok, version, uptimeSeconds, runner: { enabled, running } }` with no project or task data; use it for uptime monitors. `runner.enabled` in the payload is cached for 5 seconds. On `systemctl stop` or a restart the runner asks the running task to stop (up to 30 s, `BOOF_RUNNER_SHUTDOWN_GRACE_MS`), kills the agent process, and leaves the task `failed` with its worktree kept. Retry it from the UI or API after the restart.
 
 ## 6. nginx
 
@@ -91,7 +91,7 @@ sudoedit /etc/nginx/sites-available/<site>      # add "include snippets/boof.con
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-The trailing slash on `proxy_pass` strips `/boof`, so boof itself is unchanged; the web UI uses relative URLs and works under the prefix, and `X-Forwarded-Prefix` tells boof where it lives for the few URLs it emits itself (the OpenAPI `servers` entry, deprecation `Link` headers). The snippet hides boof's `Strict-Transport-Security` header, which carries `includeSubDomains`; set HSTS in the site's server block if you want it. Run `remote setup --hostname example.com` with the site's host name, and send a harness `BOOF_URL=https://example.com/boof` (the API is then at `/boof/api/v1`, MCP at `/boof/mcp`).
+The trailing slash on `proxy_pass` strips `/boof`, so boof itself is unchanged; the web UI uses relative URLs and works under the prefix, and `X-Forwarded-Prefix` tells boof where it lives for the few URLs it emits itself (the OpenAPI `servers` entry, deprecation `Link` headers). boof trusts a loopback proxy by default (`"security": { "trustedProxies": ["loopback"] }` in `settings.json`), so it keys its unauthenticated rate limit on the client address nginx forwards (the last `X-Forwarded-For` entry) and the audit log's `forwardedFor` is trustworthy; if nginx runs on another host, list its address there instead. The snippet hides boof's `Strict-Transport-Security` header, which carries `includeSubDomains`; set HSTS in the site's server block if you want it. Run `remote setup --hostname example.com` with the site's host name, and send a harness `BOOF_URL=https://example.com/boof` (the API is then at `/boof/api/v1`, MCP at `/boof/mcp`).
 
 Behind Cloudflare: use a proxied (orange cloud) DNS record, SSL mode Full (strict) with a valid certificate on the origin, and keep nginx's `proxy_buffering off;`. Cloudflare passes server-sent events as long as the origin does not buffer them, and drops idle connections after about 100 s, so clients reconnect with `Last-Event-ID` (boof replays missed events).
 

@@ -1583,17 +1583,34 @@
                     "maximum": 9007199254740991,
                     "minimum": 1,
                     "type": "integer"
+                  },
+                  "unauthenticatedPerMinute": {
+                    "default": 30,
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
                   }
                 },
                 "required": [
                   "perMinute",
-                  "attachmentsPerMinute"
+                  "attachmentsPerMinute",
+                  "unauthenticatedPerMinute"
                 ],
                 "type": "object"
+              },
+              "trustedProxies": {
+                "default": [
+                  "loopback"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
               "allowedHosts",
+              "trustedProxies",
               "auth",
               "allowedProjectRoots",
               "allowedPrivateWebhookHosts",

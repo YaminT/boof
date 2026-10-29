@@ -51,7 +51,8 @@ async function setup(mode: "required" | "local-trust", mcp?: { enabled: boolean 
     auth: { mode },
     allowedProjectRoots: [],
     externalTasksRequireApproval: true,
-    rateLimit: { perMinute: 600, attachmentsPerMinute: 30 },
+    rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 },
+    trustedProxies: ["loopback"],
     audit: { enabled: true, retentionDays: 90 },
   };
   if (mcp) settings.mcp = mcp;

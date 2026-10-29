@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">unauthenticatedRateLimit runs before authenticate and charges one bucket per client address only for 401 answers (security.rateLimit.unauthenticatedPerMinute, default 30); the client address is the last X-Forwarded-For / Forwarded entry only when the peer is in security.trustedProxies (default ["loopback"], not [] as first planned: behind nginx every request arrives from loopback and one shared bucket would let anyone lock the owner out); /healthz caches runner.enabled for 5 s.</version>
       </versions>
     </status>
     <tests>

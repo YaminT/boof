@@ -17,7 +17,7 @@
     <goal id="client-create-inherits-restrictions" path="goals/client-create-inherits-restrictions" order="14" status="done"></goal>
     <goal id="command-templates-respect-project-scope" path="goals/command-templates-respect-project-scope" order="15" status="done"></goal>
     <goal id="sse-principal-revocation" path="goals/sse-principal-revocation" order="16" status="plan"></goal>
-    <goal id="rate-limit-unauthenticated-and-healthz" path="goals/rate-limit-unauthenticated-and-healthz" order="17" status="plan"></goal>
+    <goal id="rate-limit-unauthenticated-and-healthz" path="goals/rate-limit-unauthenticated-and-healthz" order="17" status="done"></goal>
     <goal id="csrf-content-type-and-origin" path="goals/csrf-content-type-and-origin" order="18" status="done"></goal>
     <goal id="inject-and-stop-respect-trust" path="goals/inject-and-stop-respect-trust" order="19" status="done"></goal>
     <goal id="webhook-ssrf-guard" path="goals/webhook-ssrf-guard" order="20" status="done"></goal>
@@ -34,7 +34,7 @@
     <goal id="plan-goal-path-uniqueness" path="goals/plan-goal-path-uniqueness" order="31" status="done"></goal>
     <goal id="atomic-write-lock-map-and-fsync" path="goals/atomic-write-lock-map-and-fsync" order="32" status="done"></goal>
     <goal id="attachment-upload-no-json-fingerprint" path="goals/attachment-upload-no-json-fingerprint" order="33" status="done"></goal>
-    <goal id="audit-forwarded-ip" path="goals/audit-forwarded-ip" order="34" status="plan"></goal>
+    <goal id="audit-forwarded-ip" path="goals/audit-forwarded-ip" order="34" status="done"></goal>
     <goal id="security-headers-behind-proxy" path="goals/security-headers-behind-proxy" order="35" status="plan"></goal>
     <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="done"></goal>
     <goal id="fix-npm-install-path" path="goals/fix-npm-install-path" order="37" status="plan"></goal>
