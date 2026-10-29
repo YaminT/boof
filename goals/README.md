@@ -66,16 +66,16 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 ## Web UI
 
-- [ ] [`ui-drag-reorder-goals`](ui-drag-reorder-goals/goal.boof.xml) — Drag-and-drop reorder of plan goals
-- [ ] [`ui-linkable-tabs`](ui-linkable-tabs/goal.boof.xml) — Linkable Settings, Commands and Actions tabs
+- [x] [`ui-drag-reorder-goals`](ui-drag-reorder-goals/goal.boof.xml) — Drag-and-drop reorder of plan goals (merged into ui-redesign-phase-4)
+- [x] [`ui-linkable-tabs`](ui-linkable-tabs/goal.boof.xml) — Linkable Settings, Commands and Actions tabs (merged into ui-redesign-phase-5)
 - [ ] [`ui-archived-projects`](ui-archived-projects/goal.boof.xml) — List archived projects and allow unarchive or delete
-- [ ] [`ui-project-overrides`](ui-project-overrides/goal.boof.xml) — Project overrides for review, worktree, retries and budget in the UI
+- [x] [`ui-project-overrides`](ui-project-overrides/goal.boof.xml) — Project overrides for review, worktree, retries and budget in the UI (merged into ui-redesign-phase-5)
 - [ ] [`ui-return-to-plan`](ui-return-to-plan/goal.boof.xml) — Return to the plan after opening a task from it (after: ui-linkable-tabs)
-- [ ] [`ui-settings-form-keeps-edits`](ui-settings-form-keeps-edits/goal.boof.xml) — Settings page keeps unsaved edits across live refreshes
+- [x] [`ui-settings-form-keeps-edits`](ui-settings-form-keeps-edits/goal.boof.xml) — Settings page keeps unsaved edits across live refreshes (merged into ui-redesign-phase-5)
 - [ ] [`ui-optimistic-concurrency`](ui-optimistic-concurrency/goal.boof.xml) — UI honours optimistic concurrency for goals and tasks
 - [ ] [`ui-surface-action-errors`](ui-surface-action-errors/goal.boof.xml) — Task-row and command actions surface failures
 - [ ] [`ui-a11y-reorder-and-modals`](ui-a11y-reorder-and-modals/goal.boof.xml) — Keyboard task reorder and focus-managed modals (after: ui-drag-reorder-goals)
-- [ ] [`ui-clients-rotate-and-scopes`](ui-clients-rotate-and-scopes/goal.boof.xml) — Clients UI can rotate keys and grant every scope
+- [x] [`ui-clients-rotate-and-scopes`](ui-clients-rotate-and-scopes/goal.boof.xml) — Clients UI can rotate keys and grant every scope (merged into ui-redesign-phase-5)
 
 ## Docs
 

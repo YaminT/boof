@@ -39,16 +39,16 @@
     <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="plan"></goal>
     <goal id="fix-npm-install-path" path="goals/fix-npm-install-path" order="37" status="plan"></goal>
     <goal id="release-workflow-version" path="goals/release-workflow-version" order="38" status="plan"></goal>
-    <goal id="ui-drag-reorder-goals" path="goals/ui-drag-reorder-goals" order="39" status="plan"></goal>
-    <goal id="ui-linkable-tabs" path="goals/ui-linkable-tabs" order="40" status="plan"></goal>
+    <goal id="ui-drag-reorder-goals" path="goals/ui-drag-reorder-goals" order="39" status="done"></goal>
+    <goal id="ui-linkable-tabs" path="goals/ui-linkable-tabs" order="40" status="done"></goal>
     <goal id="ui-archived-projects" path="goals/ui-archived-projects" order="41" status="plan"></goal>
-    <goal id="ui-project-overrides" path="goals/ui-project-overrides" order="42" status="plan"></goal>
+    <goal id="ui-project-overrides" path="goals/ui-project-overrides" order="42" status="done"></goal>
     <goal id="ui-return-to-plan" path="goals/ui-return-to-plan" order="43" status="plan"><depends-on>ui-linkable-tabs</depends-on></goal>
-    <goal id="ui-settings-form-keeps-edits" path="goals/ui-settings-form-keeps-edits" order="44" status="plan"></goal>
+    <goal id="ui-settings-form-keeps-edits" path="goals/ui-settings-form-keeps-edits" order="44" status="done"></goal>
     <goal id="ui-optimistic-concurrency" path="goals/ui-optimistic-concurrency" order="45" status="plan"></goal>
     <goal id="ui-surface-action-errors" path="goals/ui-surface-action-errors" order="46" status="plan"></goal>
     <goal id="ui-a11y-reorder-and-modals" path="goals/ui-a11y-reorder-and-modals" order="47" status="plan"><depends-on>ui-drag-reorder-goals</depends-on></goal>
-    <goal id="ui-clients-rotate-and-scopes" path="goals/ui-clients-rotate-and-scopes" order="48" status="plan"></goal>
+    <goal id="ui-clients-rotate-and-scopes" path="goals/ui-clients-rotate-and-scopes" order="48" status="done"></goal>
     <goal id="docs-consistency-pass" path="goals/docs-consistency-pass" order="49" status="plan"></goal>
     <goal id="verify-steering-codex" path="goals/verify-steering-codex" order="50" status="plan"></goal>
     <goal id="desktop-e2e" path="goals/desktop-e2e" order="51" status="plan"></goal>

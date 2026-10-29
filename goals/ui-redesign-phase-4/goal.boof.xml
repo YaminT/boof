@@ -8,6 +8,7 @@
       <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
       <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
       <do>Write a phase 4 plan in the same shape as docs/superpowers/plans/2026-10-29-ui-redesign-phase-3.md before building.</do>
+      <do>Meet the text of the merged goal goals/ui-drag-reorder-goals/goal.boof.xml.</do>
       <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
       <dont>Do not commit secrets, data roots or build output.</dont>
     </rules>

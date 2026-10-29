@@ -8,6 +8,10 @@
       <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
       <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
       <do>Write a phase 5 plan before building.</do>
+      <do>Meet the text of the merged goal goals/ui-linkable-tabs/goal.boof.xml.</do>
+      <do>Meet the text of the merged goal goals/ui-project-overrides/goal.boof.xml.</do>
+      <do>Meet the text of the merged goal goals/ui-settings-form-keeps-edits/goal.boof.xml.</do>
+      <do>Meet the text of the merged goal goals/ui-clients-rotate-and-scopes/goal.boof.xml.</do>
       <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
       <dont>Do not commit secrets, data roots or build output.</dont>
     </rules>
