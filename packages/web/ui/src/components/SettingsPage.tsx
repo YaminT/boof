@@ -52,7 +52,8 @@ const toolLimitsText = (m: Record<string, number> | undefined) =>
 
 function usageLine(usage: TokenUsage | null) {
   if (!usage) return "Loading…";
-  return `Input: ${usage.inputTokens.toLocaleString()} · Output: ${usage.outputTokens.toLocaleString()} · Cost: $${usage.costUsd.toFixed(4)}${usage.known ? "" : " (no data yet)"}`;
+  const cost = usage.known ? `$${usage.costUsd.toFixed(4)}` : "unknown";
+  return `Input: ${usage.inputTokens.toLocaleString()} · Output: ${usage.outputTokens.toLocaleString()} · Cost: ${cost}`;
 }
 
 function errorText(err: unknown): string {
