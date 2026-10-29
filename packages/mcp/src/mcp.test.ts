@@ -15,7 +15,13 @@ import {
 } from "@boof-runner/shared";
 import { execCommand, resetMock, RunnerEngine } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
-import { createBoofMcpServer, exposedOps, principalFromClient, stdioPrincipal } from "./index.js";
+import {
+  closeWhenDrained,
+  createBoofMcpServer,
+  exposedOps,
+  principalFromClient,
+  stdioPrincipal,
+} from "./index.js";
 
 let base: string;
 let root: string;
@@ -494,5 +500,50 @@ describe("warnings and structured reviews over MCP", () => {
       iteration: 1,
       verdict: "APPROVE",
     });
+  });
+});
+
+describe("closeWhenDrained", () => {
+  const request = (id: number) => ({ jsonrpc: "2.0" as const, id, method: "tools/list" });
+  const reply = (id: number) => ({ jsonrpc: "2.0" as const, id, result: {} });
+  const cancel = (requestId: number) => ({
+    jsonrpc: "2.0" as const,
+    method: "notifications/cancelled",
+    params: { requestId },
+  });
+  const setup = () => {
+    const closes: number[] = [];
+    const transport = {
+      send: async () => {},
+      onmessage: undefined as ((m: unknown) => void) | undefined,
+    };
+    const drain = closeWhenDrained(transport as never, () => closes.push(1));
+    return { transport, drain, closes };
+  };
+
+  it("waits for the reply of a request received before stdin ended", async () => {
+    const { transport, drain, closes } = setup();
+    transport.onmessage?.(request(1));
+    drain.stdinEnded();
+    expect(closes).toEqual([]);
+    await transport.send(reply(1) as never);
+    expect(closes).toEqual([1]);
+  });
+
+  it("stops waiting for a request that was cancelled (the SDK sends no reply)", () => {
+    const { transport, drain, closes } = setup();
+    transport.onmessage?.(request(1));
+    transport.onmessage?.(request(2));
+    drain.stdinEnded();
+    transport.onmessage?.(cancel(1));
+    expect(closes).toEqual([]);
+    transport.onmessage?.(cancel(2));
+    expect(closes).toEqual([1]);
+  });
+
+  it("closes at once when stdin ends with nothing pending", () => {
+    const { drain, closes } = setup();
+    drain.stdinEnded();
+    expect(closes).toEqual([1]);
   });
 });

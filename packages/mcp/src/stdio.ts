@@ -68,6 +68,51 @@ export async function stdioPrincipal(
   return async () => LOCAL_PRINCIPAL;
 }
 
+/** What {@link closeWhenDrained} needs of a transport; the SDK's stdio transport satisfies it. */
+export interface DrainTransport {
+  send(message: JSONRPCMessage): Promise<void>;
+  onmessage?: (message: JSONRPCMessage) => void;
+}
+
+/**
+ * Requests are answered asynchronously. When the host closes stdin right after writing them,
+ * close only once every request received has been answered (or cancelled: the SDK sends no reply
+ * for a cancelled request), or the replies are dropped. Call after the server connected to
+ * `transport`; `stdinEnded` starts the drain.
+ */
+export function closeWhenDrained(
+  transport: DrainTransport,
+  close: () => void,
+): { stdinEnded: () => void } {
+  const pending = new Set<unknown>();
+  let ended = false;
+  const check = () => {
+    if (ended && pending.size === 0) close();
+  };
+  const send = transport.send.bind(transport);
+  transport.send = async (message: JSONRPCMessage) => {
+    await send(message);
+    if ("id" in message && !("method" in message)) pending.delete(message.id);
+    check();
+  };
+  const onmessage = transport.onmessage;
+  transport.onmessage = (message: JSONRPCMessage) => {
+    if ("id" in message && "method" in message) pending.add(message.id);
+    if (!("id" in message) && "method" in message && message.method === "notifications/cancelled") {
+      const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
+      if (requestId !== undefined) pending.delete(requestId);
+    }
+    onmessage?.(message);
+    check();
+  };
+  return {
+    stdinEnded: () => {
+      ended = true;
+      check();
+    },
+  };
+}
+
 /** Run the MCP server on stdin/stdout until the host closes the pipe. Logs go to stderr only. */
 export async function runStdio(opts: StdioOptions): Promise<void> {
   // stdout carries the protocol: nothing else may write to it.
@@ -84,34 +129,14 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
     project: opts.project,
   });
   const transport = new StdioServerTransport();
-  // Requests are answered asynchronously. When the host closes stdin right after writing them,
-  // close only once every request received has been answered, or the replies are dropped.
-  const pending = new Set<unknown>();
-  let stdinEnded = false;
-  const closeWhenDrained = () => {
-    if (stdinEnded && pending.size === 0) void server.close();
-  };
-  const send = transport.send.bind(transport);
-  transport.send = async (message: JSONRPCMessage) => {
-    await send(message);
-    if ("id" in message && !("method" in message)) pending.delete(message.id);
-    closeWhenDrained();
-  };
   const closed = new Promise<void>((resolve) => {
     transport.onclose = resolve;
   });
   await server.connect(transport);
-  const onmessage = transport.onmessage;
-  transport.onmessage = (message: JSONRPCMessage) => {
-    if ("id" in message && "method" in message) pending.add(message.id);
-    onmessage?.(message);
-  };
+  const drain = closeWhenDrained(transport, () => void server.close());
   console.error(
     `boof-runner mcp: serving ${opts.root}${opts.client ? ` as ${opts.client}` : ""}${opts.project ? ` (project ${opts.project})` : ""}`,
   );
-  process.stdin.on("end", () => {
-    stdinEnded = true;
-    closeWhenDrained();
-  });
+  process.stdin.on("end", drain.stdinEnded);
   await closed;
 }
