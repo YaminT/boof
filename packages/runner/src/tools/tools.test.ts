@@ -852,6 +852,28 @@ describe("question protocol", () => {
   });
 });
 
+describe("question protocol position", () => {
+  it("ignores a block followed by more prose", () => {
+    const report = "Example:\n```questions\n1. Q?\n```\nThat is how it works.";
+    expect(parseQuestions(report)).toEqual({ report, questions: [] });
+  });
+  it("accepts a block followed only by a VERDICT line, and keeps it", () => {
+    const r = parseQuestions("Notes.\n```questions\n1. Q?\n```\nVERDICT: CHANGES_REQUESTED");
+    expect(r).toEqual({ report: "Notes.\n\nVERDICT: CHANGES_REQUESTED", questions: ["Q?"] });
+  });
+  it("accepts a block at the very end", () => {
+    expect(parseQuestions("Plan.\n\n```questions\n- Q?\n```\n\n")).toEqual({
+      report: "Plan.",
+      questions: ["Q?"],
+    });
+  });
+  it("with two blocks, only the one ending the report counts", () => {
+    const r = parseQuestions("```questions\n1. Old?\n```\nMore.\n\n```questions\n1. Real?\n```");
+    expect(r.questions).toEqual(["Real?"]);
+    expect(r.report).toContain("Old?");
+  });
+});
+
 describe("ClaudeCodeTool questions", () => {
   let dir: string;
   let prevBin: string | undefined;

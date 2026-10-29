@@ -14,7 +14,7 @@ export function formatQuestions(questions: string[]): string {
 const FENCE = /^```[ \t]*([^\s`]*)[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm;
 const MARKER = /^(?:\d+[.)]|[-*•])\s*/;
 
-/** Takes the last fenced `questions` block out of a report. */
+/** Takes the fenced `questions` block that ends a report out of it. */
 export function parseQuestions(report: string): { report: string; questions: string[] } {
   let found: { start: number; end: number; body: string } | undefined;
   for (const m of report.matchAll(FENCE)) {
@@ -23,6 +23,12 @@ export function parseQuestions(report: string): { report: string; questions: str
     }
   }
   if (!found) return { report, questions: [] };
+  // Only a block that ends the report (before an optional VERDICT line) counts; a block
+  // quoted mid-report is documentation, not a question.
+  const tail = report.slice(found.end);
+  if (!tail.split("\n").every((line) => line.trim() === "" || /^\s*VERDICT:/i.test(line))) {
+    return { report, questions: [] };
+  }
   const questions = found.body
     .split("\n")
     .map((line) => line.trim().replace(MARKER, "").trim())
