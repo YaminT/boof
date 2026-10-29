@@ -12,6 +12,7 @@ import {
   type Project,
 } from "./schema.js";
 import { defaultSettings } from "./settings.js";
+import { WebhookSecretStore } from "./webhook-secrets.js";
 
 /** The data root cannot be migrated right now (live runner) or is from a newer release. */
 export class MigrationError extends Error {
@@ -115,15 +116,54 @@ export async function migrateDataRoot(
   try {
     const raw = JSON.parse(await readFile(dataRootPaths(root).settings, "utf8")) as {
       schemaVersion?: unknown;
+      webhooks?: unknown;
     };
     if (raw?.schemaVersion === SETTINGS_SCHEMA_VERSION) {
       // Unlocked, read-only look; the locked path re-checks, so two processes backfill once.
-      if (!(await hasUnapprovedActivePlan(root))) return { kind: "current", log: [] };
+      if (!settingsHoldSecrets(raw) && !(await hasUnapprovedActivePlan(root)))
+        return { kind: "current", log: [] };
     }
   } catch {
     // missing or unreadable: the locked path decides (and reports) it
   }
   return withMigrationLock(root, opts, () => migrateUnlocked(root, opts));
+}
+
+function settingsHoldSecrets(raw: { webhooks?: unknown }): boolean {
+  return (
+    Array.isArray(raw.webhooks) &&
+    raw.webhooks.some((h) => typeof (h as { secret?: unknown } | null)?.secret === "string")
+  );
+}
+
+/**
+ * Move webhook secrets from settings.json into webhooks/secrets.json (0600). settings.json is
+ * rewritten last, so a crash leaves both copies and the next run finishes; a secret already in
+ * the file wins. Returns one log line per moved secret.
+ */
+export async function moveWebhookSecrets(root: string): Promise<string[]> {
+  const paths = dataRootPaths(root);
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(await readFile(paths.settings, "utf8")) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  if (!settingsHoldSecrets(raw)) return [];
+  const hooks = raw.webhooks as Array<Record<string, unknown>>;
+  const store = new WebhookSecretStore(root);
+  const log: string[] = [];
+  for (const hook of hooks) {
+    if (typeof hook?.secret !== "string") continue;
+    const id = String(hook.id);
+    if ((await store.get(id)) === null) await store.set(id, hook.secret);
+    log.push(`moved the secret of webhook ${id} to webhooks/secrets.json`);
+  }
+  await lockedAtomicWrite(
+    paths.settings,
+    JSON.stringify({ ...raw, webhooks: hooks.map(({ secret: _s, ...h }) => h) }, null, 2) + "\n",
+  );
+  return log;
 }
 
 /** Plan files `<root>/projects/<project>/plans/<plan>.json`; unreadable or invalid ones are skipped. */
@@ -332,7 +372,7 @@ async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<Migr
         `${paths.settings} has schemaVersion ${String(raw.schemaVersion)}, newer than this boof-runner supports (${SETTINGS_SCHEMA_VERSION}); upgrade boof-runner`,
       );
     }
-    const log = await backfillPlanApprovals(root);
+    const log = [...(await moveWebhookSecrets(root)), ...(await backfillPlanApprovals(root))];
     if (log.length > 0)
       await appendFile(join(root, "migration-v2.log"), log.join("\n") + "\n", "utf8");
     return { kind: "current", log };

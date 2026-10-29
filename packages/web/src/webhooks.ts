@@ -5,6 +5,7 @@ import {
   atomicWrite,
   dataRootPaths,
   securitySettings,
+  WebhookSecretStore,
   type BoofEvent,
   type Webhook,
 } from "@boof-runner/shared";
@@ -78,6 +79,7 @@ export class WebhookDispatcher {
   private readonly dir: string;
   private readonly doFetch: typeof fetch;
   private readonly now: () => number;
+  private readonly secrets: WebhookSecretStore;
   private state: State | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -86,6 +88,7 @@ export class WebhookDispatcher {
     this.dir = dataRootPaths(opts.root).webhooks;
     this.doFetch = opts.fetch ?? fetch;
     this.now = opts.now ?? Date.now;
+    this.secrets = new WebhookSecretStore(opts.root);
   }
 
   start(): void {
@@ -138,7 +141,10 @@ export class WebhookDispatcher {
         }
       }
       const scopes = await this.scopesFor();
-      const results = await Promise.all(hooks.map((h) => this.pass(h, state, scopes, allowed)));
+      const secrets = await this.secrets.all();
+      const results = await Promise.all(
+        hooks.map((h) => this.pass(h, state, scopes, allowed, secrets[h.id])),
+      );
       if (dirty || results.some(Boolean)) await this.save(state);
     } finally {
       this.running = false;
@@ -156,6 +162,7 @@ export class WebhookDispatcher {
     state: State,
     scopes: string[],
     allowed: readonly string[],
+    secret: string | undefined,
   ): Promise<boolean> {
     let changed = false;
     let hs = state[hook.id];
@@ -175,7 +182,7 @@ export class WebhookDispatcher {
         continue;
       }
       changed = true;
-      const retry = await this.attempt(hook, p, allowed);
+      const retry = await this.attempt(hook, p, allowed, secret);
       if (retry) keep.push(retry);
     }
     hs.pending = keep;
@@ -191,6 +198,7 @@ export class WebhookDispatcher {
               hook,
               { deliveryId: randomUUID(), event, attempts: 0, nextAt: 0, lastError: "" },
               allowed,
+              secret,
             );
             if (retry) hs.pending.push(retry);
           }
@@ -208,8 +216,9 @@ export class WebhookDispatcher {
     hook: Webhook,
     p: Pending,
     allowed: readonly string[],
+    secret: string | undefined,
   ): Promise<Pending | null> {
-    const error = await this.post(hook, p, allowed);
+    const error = await this.post(hook, p, allowed, secret);
     if (error === null) return null;
     const attempts = p.attempts + 1;
     if (attempts > RETRY_DELAYS_MS.length) {
@@ -229,7 +238,9 @@ export class WebhookDispatcher {
     hook: Webhook,
     p: Pending,
     allowed: readonly string[],
+    secret: string | undefined,
   ): Promise<string | null> {
+    if (secret === undefined) return `no signing secret for ${hook.id} in webhooks/secrets.json`;
     let target;
     try {
       target = await checkWebhookTarget(hook.url, {
@@ -252,7 +263,7 @@ export class WebhookDispatcher {
           "User-Agent": "boof-runner-webhook",
           "X-Boof-Event": p.event.type,
           "X-Boof-Delivery": p.deliveryId,
-          "X-Boof-Signature": sign(hook.secret, body),
+          "X-Boof-Signature": sign(secret, body),
         },
         body,
       });

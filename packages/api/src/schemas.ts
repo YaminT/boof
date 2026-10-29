@@ -159,7 +159,7 @@ export const PublicSettingsSchema = SettingsSchema.omit({ webhooks: true });
 
 export const PublicClientSchema = ClientSchema.omit({ keyHash: true });
 
-export const PublicWebhookSchema = WebhookSchema.omit({ secret: true });
+export const PublicWebhookSchema = WebhookSchema;
 
 export const HealthResultSchema = z.object({
   status: z.enum(["available", "unavailable"]),

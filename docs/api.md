@@ -148,7 +148,9 @@ curl -N -H "Authorization: Bearer $BOOF" "http://127.0.0.1:4319/api/v1/events?si
 
 ### Webhooks
 
-Admin only (`admin` scope). Webhooks live in `settings.webhooks`, are managed through
+Admin only (`admin` scope). Webhooks live in `settings.webhooks`; their signing secrets live in
+`<data>/webhooks/secrets.json` (mode 0600, never in `settings.json`; an older data root is migrated
+at start). They are managed through
 `POST/GET /webhooks` and `DELETE /webhooks/{id}`, and are **delivered by the server process only**
 (`boof-runner` serve / the desktop app), not by headless `run`/`scan`.
 

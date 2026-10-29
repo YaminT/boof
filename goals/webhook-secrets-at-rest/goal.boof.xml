@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Webhook secrets live in &lt;data&gt;/webhooks/secrets.json (0600, WebhookSecretStore); settings.json holds none; migrateDataRoot moves existing secrets under the migration lock; create/delete/delivery use the store; GET /settings and /webhooks stay clean.</version>
       </versions>
     </status>
     <tests>

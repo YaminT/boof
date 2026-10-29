@@ -8,8 +8,6 @@ import { PublicWebhookSchema, OkSchema } from "../schemas.js";
 import { CreateWebhookBody } from "../validation.js";
 import { DESTRUCTIVE, webhookIdParam, WRITE, READ } from "./common.js";
 
-const publicWebhook = ({ secret: _s, ...rest }: Webhook) => rest;
-
 /** True when `pattern` (`*`, `plan.*` or an exact type) selects event type `type`. */
 export function eventMatches(pattern: string, type: string): boolean {
   return (
@@ -53,7 +51,7 @@ export const webhooksList = defineOp({
   rest: { method: "GET", path: "/webhooks" },
   mcp: { expose: false, annotations: READ },
   handler: async (ctx) => ({
-    webhooks: ((await ctx.services.loadSettings()).webhooks ?? []).map(publicWebhook),
+    webhooks: (await ctx.services.loadSettings()).webhooks ?? [],
   }),
 });
 
@@ -61,7 +59,7 @@ export const webhooksCreate = defineOp({
   name: "webhooks.create",
   title: "Create a webhook",
   description:
-    "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
+    "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; the secret is kept in <data>/webhooks/secrets.json (mode 0600), never in settings.json.",
   scope: "admin",
   projectScoped: false,
   input: CreateWebhookBody,
@@ -86,18 +84,19 @@ export const webhooksCreate = defineOp({
     const webhook: Webhook = {
       id: `wh-${randomBytes(4).toString("hex")}`,
       url: input.url,
-      secret: `whsec_${randomBytes(24).toString("hex")}`,
       events,
       projects: input.projects ?? "*",
       enabled: input.enabled ?? true,
       createdBy: ctx.principal.id,
       created: ctx.now(),
     };
+    const secret = `whsec_${randomBytes(24).toString("hex")}`;
+    await ctx.services.webhookSecrets.set(webhook.id, secret);
     await ctx.services.settingsStore.mutate((settings) => ({
       ...settings,
       webhooks: [...(settings.webhooks ?? []), webhook],
     }));
-    return { webhook: publicWebhook(webhook), secret: webhook.secret };
+    return { webhook, secret };
   },
 });
 
@@ -118,6 +117,7 @@ export const webhooksDelete = defineOp({
       if (!hooks.some((h) => h.id === input.webhookId)) throw new OpError(404, "Webhook not found");
       return { ...settings, webhooks: hooks.filter((h) => h.id !== input.webhookId) };
     });
+    await ctx.services.webhookSecrets.delete(input.webhookId);
     return { ok: true as const };
   },
 });

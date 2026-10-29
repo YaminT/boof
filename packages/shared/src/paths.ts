@@ -56,6 +56,8 @@ export interface DataRootPaths {
   events: string;
   idempotency: string;
   webhooks: string;
+  /** Webhook signing secrets, mode 0600. */
+  webhookSecrets: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -71,6 +73,7 @@ export function dataRootPaths(root: string): DataRootPaths {
     events: join(root, "events.jsonl"),
     idempotency: join(root, "idempotency"),
     webhooks: join(root, "webhooks"),
+    webhookSecrets: join(root, "webhooks", "secrets.json"),
   };
 }
 

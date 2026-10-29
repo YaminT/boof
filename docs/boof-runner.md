@@ -50,7 +50,7 @@ commands/
 auth/
 audit/
 idempotency/
-webhooks/
+webhooks/                  # state, dead letters, secrets.json (signing secrets, mode 0600)
 projects/
   <projectId>/
     project.json
@@ -412,7 +412,7 @@ For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, s
 
 ### Events and webhooks
 
-Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles and `runner.budget_exceeded` to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature, retries and a dead-letter directory. See [api.md](api.md).
+Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles and `runner.budget_exceeded` to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature (secret from `webhooks/secrets.json`, 0600), retries and a dead-letter directory. See [api.md](api.md).
 
 ### MCP
 

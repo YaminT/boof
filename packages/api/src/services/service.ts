@@ -42,6 +42,7 @@ import {
   taskReviewInfo,
   type TaskReviewInfo,
   appendAnswerRound,
+  WebhookSecretStore,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import { statusDowngraded, type Warning } from "../warnings.js";
@@ -531,6 +532,7 @@ export class TaskService {
   readonly projects: ProjectStore;
   readonly commands: CommandStore;
   readonly settingsStore: SettingsStore;
+  readonly webhookSecrets: WebhookSecretStore;
   readonly registry: ToolRegistry;
   private readonly cache = new Map<string, ProjectService>();
 
@@ -541,6 +543,7 @@ export class TaskService {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir });
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
+    this.webhookSecrets = new WebhookSecretStore(root);
     this.registry = registry;
   }
 

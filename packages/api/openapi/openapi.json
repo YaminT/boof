@@ -9647,7 +9647,7 @@
         "x-boof-scope": "admin"
       },
       "post": {
-        "description": "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; stores the secret in settings.json.",
+        "description": "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; the secret is kept in <data>/webhooks/secrets.json (mode 0600), never in settings.json.",
         "operationId": "webhooks.create",
         "parameters": [],
         "requestBody": {

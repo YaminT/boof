@@ -300,12 +300,11 @@ export type McpSettings = z.infer<typeof McpSettingsSchema>;
 
 /**
  * A webhook subscription (settings.webhooks). `events` holds event types or `prefix.*` patterns
- * (`task.status`, `plan.*`, `*`). The secret signs every delivery and is shown only at creation.
+ * (`task.status`, `plan.*`, `*`). The signing secret is not part of it: see WebhookSecretStore.
  */
 export const WebhookSchema = z.object({
   id: kebab,
   url: z.string().min(1),
-  secret: z.string().min(16),
   events: z.array(z.string().min(1)).min(1),
   projects: z.union([z.literal("*"), z.array(kebab)]).default("*"),
   enabled: z.boolean().default(true),
@@ -313,8 +312,8 @@ export const WebhookSchema = z.object({
   created: z.string(),
 });
 export type Webhook = z.infer<typeof WebhookSchema>;
-/** A webhook as listed over the API: never includes the secret. */
-export type PublicWebhook = Omit<Webhook, "secret">;
+/** A webhook as listed over the API (it carries no secret). */
+export type PublicWebhook = Webhook;
 
 const RolesSchema = z.object({
   planner: RoleAssignmentSchema,

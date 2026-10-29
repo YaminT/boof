@@ -9,6 +9,7 @@ import {
   defaultSettings,
   SecuritySettingsSchema,
   SettingsStore,
+  WebhookSecretStore,
   type SecuritySettings,
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
@@ -92,6 +93,9 @@ describe("webhook operations", () => {
       createdBy: "local",
     });
     expect("secret" in made.webhook).toBe(false);
+    expect(await readFile(join(root, "settings.json"), "utf8")).not.toContain("whsec_");
+    expect(JSON.stringify(await service.loadSettings())).not.toContain("whsec_");
+    expect(await new WebhookSecretStore(root).get(made.webhook.id)).toBe(made.secret);
     const list = await (await call("/api/v1/webhooks")).json();
     expect(JSON.stringify(list)).not.toContain("whsec_");
     expect(list.webhooks).toHaveLength(1);
@@ -99,6 +103,7 @@ describe("webhook operations", () => {
     expect((await call(`/api/v1/webhooks/${made.webhook.id}`, { method: "DELETE" })).status).toBe(
       200,
     );
+    expect(await new WebhookSecretStore(root).get(made.webhook.id)).toBeNull();
     expect((await call(`/api/v1/webhooks/${made.webhook.id}`, { method: "DELETE" })).status).toBe(
       404,
     );
@@ -281,6 +286,20 @@ async function subscribe(body: object) {
 }
 
 describe("webhook delivery", () => {
+  it("does not deliver a webhook whose secret is missing from the file", async () => {
+    const { id } = await subscribe({ url: "http://hook.test/in" });
+    const h = harness();
+    await h.dispatcher.tick();
+    await new WebhookSecretStore(root).delete(id);
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    await h.dispatcher.tick();
+    expect(h.hits).toHaveLength(0);
+    const state = JSON.parse(await readFile(join(root, "webhooks", "state.json"), "utf8"));
+    expect(state[id].pending[0].lastError).toBe(
+      `no signing secret for ${id} in webhooks/secrets.json`,
+    );
+  });
+
   it("signs the body, sets the headers and delivers only events after the subscription", async () => {
     await appendEvent(join(root, "projects", "a"), status("a", "old"));
     const { secret } = await subscribe({ url: "http://hook.test/in" });

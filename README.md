@@ -217,7 +217,7 @@ Settings live in `<data>/settings.json` (created on first run, schema version 2)
 | `budget`             | none (unlimited)                                                                           | Spending limits in USD, see [Budget limits](#budget-limits).                                                                                                                       |
 | `security`           | see [Security model](#security-model)                                                      | `auth.mode`, `allowedHosts`, `allowedPrivateWebhookHosts`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.                                            |
 | `mcp.enabled`        | `true`                                                                                     | `false` switches MCP off (`/mcp` answers 404, `boof-runner mcp` refuses to start).                                                                                                 |
-| `webhooks`           | none                                                                                       | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations.                                                                                                     |
+| `webhooks`           | none                                                                                       | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations. Secrets are kept in `webhooks/secrets.json` (0600).                                                 |
 
 A project can override `roles`, `review`, `worktree`, `retries` and `budget` per key in its `project.json`.
 
@@ -229,6 +229,7 @@ A project can override `roles`, `review`, `worktree`, `retries` and `budget` per
   commands/              # command templates, shared by all projects
   auth/  audit/          # API clients and the request audit log
   idempotency/           # stored responses of Idempotency-Key requests (24 h)
+  webhooks/secrets.json  # signing secrets, mode 0600
   events.jsonl           # global events (runner toggles, budget events)
   usage/daily/           # <YYYY-MM-DD>.json: cost per day, project and tool (budget ledger)
   projects/

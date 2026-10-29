@@ -17,6 +17,7 @@ export * from "./scopes.js";
 export * from "./auth-store.js";
 export * from "./project-store.js";
 export * from "./migrate.js";
+export * from "./webhook-secrets.js";
 export * from "./plan-schema.js";
 export * from "./plan-validate.js";
 export * from "./plan-store.js";

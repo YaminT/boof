@@ -19,6 +19,7 @@ import {
   MigrationError,
   withMigrationLock,
 } from "./migrate.js";
+import { WebhookSecretStore } from "./webhook-secrets.js";
 import { PlanStore } from "./plan-store.js";
 import { testGoal } from "./plan-fixtures.js";
 import { ProjectSchema } from "./schema.js";
@@ -504,5 +505,69 @@ describe("plan approval backfill", () => {
     expect(r).toEqual({ kind: "current", log: [] });
     await rm(join(root, MIGRATION_LOCK_FILE));
     expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+  });
+});
+
+describe("webhook secrets", () => {
+  const hook = (id: string) => ({
+    id,
+    url: "https://hook.test/in",
+    events: ["*"],
+    projects: "*",
+    enabled: true,
+    createdBy: "local",
+    created: "2026-06-04T10:00:00.000Z",
+  });
+
+  it("moves secrets out of settings.json into webhooks/secrets.json (0600), once", async () => {
+    await writeFile(
+      join(root, "settings.json"),
+      JSON.stringify({
+        ...defaultSettings(),
+        webhooks: [
+          { ...hook("wh-1"), secret: "whsec_" + "a".repeat(48) },
+          { ...hook("wh-2"), secret: "whsec_" + "b".repeat(48) },
+        ],
+      }),
+    );
+    const r = await migrateDataRoot(root);
+    expect(r.kind).toBe("current");
+    expect(r.log).toEqual([
+      "moved the secret of webhook wh-1 to webhooks/secrets.json",
+      "moved the secret of webhook wh-2 to webhooks/secrets.json",
+    ]);
+    const text = await readFile(join(root, "settings.json"), "utf8");
+    expect(text).not.toContain("whsec_");
+    expect(JSON.parse(text).webhooks.map((h: { id: string }) => h.id)).toEqual(["wh-1", "wh-2"]);
+    const secrets = new WebhookSecretStore(root);
+    expect(await secrets.all()).toEqual({
+      "wh-1": "whsec_" + "a".repeat(48),
+      "wh-2": "whsec_" + "b".repeat(48),
+    });
+    expect((await stat(secrets.filePath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(join(root, "migration-v2.log"), "utf8")).toContain("wh-2");
+    expect((await migrateDataRoot(root)).log).toEqual([]);
+    expect((await new SettingsStore(root).load()).webhooks).toEqual([hook("wh-1"), hook("wh-2")]);
+  });
+
+  it("keeps the file's copy when settings.json still carries a secret after a crash", async () => {
+    await new WebhookSecretStore(root).set("wh-1", "whsec_" + "f".repeat(48));
+    await writeFile(
+      join(root, "settings.json"),
+      JSON.stringify({
+        ...defaultSettings(),
+        webhooks: [{ ...hook("wh-1"), secret: "whsec_" + "a".repeat(48) }],
+      }),
+    );
+    await migrateDataRoot(root);
+    expect(await new WebhookSecretStore(root).get("wh-1")).toBe("whsec_" + "f".repeat(48));
+    expect(await readFile(join(root, "settings.json"), "utf8")).not.toContain("whsec_");
+  });
+
+  it("takes no lock on a clean v2 root", async () => {
+    await writeFile(join(root, "settings.json"), JSON.stringify(defaultSettings()));
+    await migrateDataRoot(root);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+    expect(await exists(join(root, "migration-v2.log"))).toBe(false);
   });
 });

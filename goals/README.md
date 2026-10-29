@@ -27,7 +27,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 ## Security
 
-- [ ] [`webhook-secrets-at-rest`](webhook-secrets-at-rest/goal.boof.xml) — Protect webhook secrets at rest (after: migration-lock)
+- [x] [`webhook-secrets-at-rest`](webhook-secrets-at-rest/goal.boof.xml) — Protect webhook secrets at rest (after: migration-lock)
 - [x] [`client-create-inherits-restrictions`](client-create-inherits-restrictions/goal.boof.xml) — auth.clients.create cannot escalate projects or expiry
 - [x] [`command-templates-respect-project-scope`](command-templates-respect-project-scope/goal.boof.xml) — Command templates respect project restrictions
 - [ ] [`sse-principal-revocation`](sse-principal-revocation/goal.boof.xml) — Event streams stop when the key is revoked
