@@ -341,6 +341,8 @@ export class Pipeline {
           if (err instanceof ToolRunError && err.steered) {
             // A stop request that arrived together with the steer wins.
             await this.assertNotStopped(id);
+            // A steered rerun is paid like a retry: never start it on a spent budget.
+            await this.assertBudget(id, tool.id);
             const texts = await this.takeSteer(id);
             steers++;
             steerTexts.push(...texts);

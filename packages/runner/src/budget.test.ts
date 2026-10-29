@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +12,8 @@ import {
   readEvents,
   SettingsStore,
   TaskStore,
+  taskControlDir,
+  taskSteerRequestPath,
   budgetTimeZone,
   type BudgetSettings,
   type Project,
@@ -270,6 +272,29 @@ describe("failed attempts", () => {
     const t = (await tasksOf(main).get("t1"))!;
     expect(t.frontmatter.status).toBe("failed");
     expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(2.5);
+  });
+
+  it("does not rerun a steered step once the per-task budget is spent", async () => {
+    await useBudget({ perTaskUsd: 1.2 });
+    const dir = projects.dir("main");
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer" || opts.resumeSessionId) return;
+      await mkdir(taskControlDir(dir, "t1"), { recursive: true });
+      await writeFile(
+        taskSteerRequestPath(dir, "t1"),
+        JSON.stringify({ at: new Date().toISOString(), text: "use tabs" }) + "\n",
+      );
+    };
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-stall developer=1]]"),
+    );
+    await engine.runUntilIdle();
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("failed");
+    expect(t.body.log).toContain("ERROR: budget exceeded: task:t1");
+    // planner, refinement, the steered developer attempt: no rerun started.
+    expect(mockState.calls.filter((r) => r === "developer")).toHaveLength(1);
+    expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(1.5);
   });
 
   it("does not retry once the per-task budget is spent", async () => {
