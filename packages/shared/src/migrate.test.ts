@@ -3,13 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  backfillPlanApprovals,
   migrateDataRoot,
   MIGRATION_LOCK_FILE,
   MigrationError,
   withMigrationLock,
 } from "./migrate.js";
+import { PlanStore } from "./plan-store.js";
+import { testGoal } from "./plan-fixtures.js";
 import { ProjectSchema } from "./schema.js";
-import { SettingsStore } from "./settings.js";
+import { defaultSettings, SettingsStore } from "./settings.js";
 import { TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
 import type { Status } from "./schema.js";
@@ -411,5 +414,68 @@ describe("migration lock", () => {
       ),
     ).rejects.toThrow(MigrationError);
     expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(true);
+  });
+});
+
+describe("plan approval backfill", () => {
+  const base = {
+    title: "P",
+    source: { kind: "api" as const, client: "bot" },
+    goals: [testGoal("a", 1)],
+  };
+
+  it("backfills approvedBy on active plans that have none, and only once", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    const plans = new PlanStore(join(root, "projects", "p"));
+    await plans.create({ ...base, id: "legacy", status: "active" });
+    await plans.create({ ...base, id: "draft", status: "draft" });
+    const alice = { principalId: "alice", at: "2026-06-04T10:00:00.000Z", version: 1 };
+    await plans.create({ ...base, id: "approved", status: "active", approvedBy: alice });
+    const legacyBefore = await plans.require("legacy");
+
+    const r = await migrateDataRoot(root);
+    expect(r.kind).toBe("current");
+    expect(r.log).toEqual([
+      "backfilled approval of plan p/legacy (activated before approvals were recorded)",
+    ]);
+    const legacy = await plans.require("legacy");
+    expect(legacy.approvedBy).toMatchObject({
+      principalId: "migration",
+      version: legacyBefore.version,
+    });
+    expect(legacy.version).toBe(legacyBefore.version);
+    expect(legacy.updated).toBe(legacyBefore.updated);
+    expect((await plans.require("draft")).approvedBy).toBeUndefined();
+    expect((await plans.require("approved")).approvedBy).toEqual(alice);
+    const log = await readFile(join(root, "migration-v2.log"), "utf8");
+    expect(log).toContain("backfilled approval of plan p/legacy");
+
+    expect((await migrateDataRoot(root)).log).toEqual([]);
+    expect(await readFile(join(root, "migration-v2.log"), "utf8")).toBe(log);
+    expect(await backfillPlanApprovals(root)).toEqual([]);
+  });
+
+  it("leaves an archived plan alone", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    const plans = new PlanStore(join(root, "projects", "p"));
+    await plans.create({ ...base, id: "old", status: "archived" });
+    expect((await migrateDataRoot(root)).log).toEqual([]);
+    expect((await plans.require("old")).approvedBy).toBeUndefined();
+  });
+
+  it("does not take the lock on a v2 root with nothing to backfill", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    const plans = new PlanStore(join(root, "projects", "p"));
+    await plans.create({ ...base, id: "draft", status: "draft" });
+    // a lock held by a live foreign process would block a locked path
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "424242\n");
+    const r = await migrateDataRoot(root, {
+      isProcessAlive: () => true,
+      lockTimeoutMs: 50,
+      lockPollMs: 5,
+    });
+    expect(r).toEqual({ kind: "current", log: [] });
+    await rm(join(root, MIGRATION_LOCK_FILE));
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
   });
 });

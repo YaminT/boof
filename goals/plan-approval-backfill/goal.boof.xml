@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">migrateDataRoot stamps approvedBy (principal "migration", the plan's current version) on active plans that have none, once under the migration lock, so a review client's sync creates pending tasks for plans approved before approvals were recorded.</version>
       </versions>
     </status>
     <tests>

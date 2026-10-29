@@ -1,7 +1,8 @@
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { atomicWrite, lockedAtomicWrite } from "./atomic.js";
+import { atomicWrite, lockedAtomicWrite, withFileLock } from "./atomic.js";
 import { dataRootPaths, projectPaths } from "./paths.js";
+import { PlanSchema } from "./plan-schema.js";
 import { nowIso } from "./runtime.js";
 import {
   LegacySettingsSchema,
@@ -115,11 +116,86 @@ export async function migrateDataRoot(
     const raw = JSON.parse(await readFile(dataRootPaths(root).settings, "utf8")) as {
       schemaVersion?: unknown;
     };
-    if (raw?.schemaVersion === SETTINGS_SCHEMA_VERSION) return { kind: "current", log: [] };
+    if (raw?.schemaVersion === SETTINGS_SCHEMA_VERSION) {
+      // Unlocked, read-only look; the locked path re-checks, so two processes backfill once.
+      if (!(await hasUnapprovedActivePlan(root))) return { kind: "current", log: [] };
+    }
   } catch {
     // missing or unreadable: the locked path decides (and reports) it
   }
   return withMigrationLock(root, opts, () => migrateUnlocked(root, opts));
+}
+
+/** Plan files `<root>/projects/<project>/plans/<plan>.json`; unreadable or invalid ones are skipped. */
+async function* planFiles(root: string) {
+  let projects: string[];
+  try {
+    projects = (await readdir(dataRootPaths(root).projects)).sort();
+  } catch {
+    return;
+  }
+  for (const project of projects) {
+    const dir = join(dataRootPaths(root).projects, project, "plans");
+    let names: string[];
+    try {
+      names = (await readdir(dir)).filter((n) => n.endsWith(".json")).sort();
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const path = join(dir, name);
+      try {
+        const raw = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+        yield {
+          project,
+          id: name.slice(0, -".json".length),
+          path,
+          raw,
+          plan: PlanSchema.parse(raw),
+        };
+      } catch {
+        // skip
+      }
+    }
+  }
+}
+
+async function hasUnapprovedActivePlan(root: string): Promise<boolean> {
+  for await (const f of planFiles(root)) {
+    if (f.plan.status === "active" && !f.plan.approvedBy) return true;
+  }
+  return false;
+}
+
+/**
+ * Stamp `approvedBy` (principal "migration", the plan's current version) on every `active` plan
+ * that has none: those predate approvals, and a human made them active. Drafts, archived plans
+ * and existing approvals are untouched, and so are `version` and `updated`: a repair, not an
+ * edit, so no event. Call under the migration lock. Returns one log line per plan.
+ */
+export async function backfillPlanApprovals(
+  root: string,
+  at: string = nowIso(),
+): Promise<string[]> {
+  const log: string[] = [];
+  for await (const f of planFiles(root)) {
+    if (f.plan.status !== "active" || f.plan.approvedBy) continue;
+    await withFileLock(f.path, async () => {
+      // re-read under the plan lock: it may have been approved since the scan
+      const fresh = JSON.parse(await readFile(f.path, "utf8")) as Record<string, unknown>;
+      const plan = PlanSchema.parse(fresh);
+      if (plan.status !== "active" || plan.approvedBy) return;
+      const next = {
+        ...fresh,
+        approvedBy: { principalId: "migration", at, version: plan.version },
+      };
+      await atomicWrite(f.path, JSON.stringify(next, null, 2) + "\n");
+      log.push(
+        `backfilled approval of plan ${f.project}/${f.id} (activated before approvals were recorded)`,
+      );
+    }).catch(() => undefined);
+  }
+  return log;
 }
 
 /** Same-process callers queue here so a lock file naming our own pid can only be stale. */
@@ -251,7 +327,10 @@ async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<Migr
         `${paths.settings} has schemaVersion ${String(raw.schemaVersion)}, newer than this boof-runner supports (${SETTINGS_SCHEMA_VERSION}); upgrade boof-runner`,
       );
     }
-    return { kind: "current", log: [] };
+    const log = await backfillPlanApprovals(root);
+    if (log.length > 0)
+      await appendFile(join(root, "migration-v2.log"), log.join("\n") + "\n", "utf8");
+    return { kind: "current", log };
   }
 
   if (!raw && !(await exists(legacyTasks))) {
