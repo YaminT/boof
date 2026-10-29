@@ -269,6 +269,34 @@ describe("authorize (scopes)", () => {
     expect((await call(app, "/api/settings", {}, admin)).status).toBe(200);
   });
 
+  it("command templates are global: creating, renaming and deleting needs settings:write", async () => {
+    peer = REMOTE;
+    const writer = await mint("writer", ["tasks:read", "tasks:write"], { projects: ["default"] });
+    const ops = await mint("ops", ["settings:write", "tasks:read"]);
+    const app = build();
+    const body = post({ name: "Review", body: "Review carefully." });
+    const denied = await call(app, "/api/v1/commands", body, writer);
+    expect(denied.status).toBe(403);
+    expect((await denied.json()).error).toMatchObject({
+      code: "forbidden_scope",
+      details: { scope: "settings:write" },
+    });
+    expect((await call(app, "/api/v1/commands", body, ops)).status).toBe(200);
+    expect(
+      (await call(app, "/api/v1/commands/review", { ...body, method: "PUT" }, writer)).status,
+    ).toBe(403);
+    expect((await call(app, "/api/v1/commands/review", { method: "DELETE" }, writer)).status).toBe(
+      403,
+    );
+    expect((await call(app, "/api/v1/commands", {}, writer)).status).toBe(200); // reading stays tasks:read
+    expect(
+      (await call(app, "/api/v1/commands/review", { ...body, method: "PUT" }, ops)).status,
+    ).toBe(200);
+    expect((await call(app, "/api/v1/commands/review", { method: "DELETE" }, ops)).status).toBe(
+      200,
+    );
+  });
+
   it("maps health/models to settings:read and usage/events to tasks:read", async () => {
     peer = REMOTE;
     const reader = await mint("reader", ["tasks:read"]);

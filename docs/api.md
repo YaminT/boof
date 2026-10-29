@@ -26,6 +26,8 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 - Scopes: `projects:read|write`, `plans:read|write`, `tasks:read|write|control`,
   `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Each operation lists
   its scope in the OpenAPI document (`x-boof-scope`).
+- Command templates are global: `POST/PUT/DELETE /commands` need `settings:write` (listing needs
+  `tasks:read`).
 - A client may be restricted to some projects. Touching another project is
   `403 forbidden_project`; project lists are filtered.
 - **Trust.** A client with `trust: review` (the default for new clients) creates `draft` tasks

@@ -425,7 +425,7 @@ The REST surface is the registry (see above); the full list with inputs, outputs
 - projects: list, create, get, update, archive, unarchive, pause, resume, delete (`?purge=true` removes the data and is refused with `409 project_busy` while a task runs), usage
 - per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll), stop and prompt injection (modes `next-step` and `now`)
 - per-project plans under `/api/v1/projects/{p}/plans…`: list, create, get, update, replace goals, upsert and remove a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`
-- `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates, settings, tool health, models, token usage, API clients (`auth:admin`) and webhooks (`admin`)
+- `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates (writes: `settings:write`), settings, tool health, models, token usage, API clients (`auth:admin`) and webhooks (`admin`)
 
 The unversioned routes (`/api/projects/…`, and `/api/tasks…` as aliases of `settings.defaultProject`) still work but answer `Deprecation: true` and `Sunset`. They keep their old shapes. New code uses `/api/v1`.
 

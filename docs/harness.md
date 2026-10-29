@@ -108,12 +108,12 @@ Options of `auth add`: `--name <text>` (required), `--scopes <a,b,c>` (required)
 
 Recommended scope sets:
 
-| Role              | Scopes                                                                                                                  | Can do                                                                  |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Read-only monitor | `projects:read,plans:read,tasks:read,settings:read`                                                                     | Read projects, plans, tasks, reports, events. Change nothing.           |
-| Plan editor       | `projects:read,plans:read,plans:write,tasks:read`                                                                       | Create and edit plans and sync them into tasks. No stop, no answers.    |
-| Full harness      | `projects:read,projects:write,plans:read,plans:write,tasks:read,tasks:write,tasks:control,settings:read,runner:control` | Everything in this guide except settings writes, clients and webhooks.  |
-| Administrator     | `admin`                                                                                                                 | Everything, including webhooks and API clients. Avoid unless necessary. |
+| Role              | Scopes                                                                                                                  | Can do                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Read-only monitor | `projects:read,plans:read,tasks:read,settings:read`                                                                     | Read projects, plans, tasks, reports, events. Change nothing.                             |
+| Plan editor       | `projects:read,plans:read,plans:write,tasks:read`                                                                       | Create and edit plans and sync them into tasks. No stop, no answers.                      |
+| Full harness      | `projects:read,projects:write,plans:read,plans:write,tasks:read,tasks:write,tasks:control,settings:read,runner:control` | Everything in this guide except settings writes, command templates, clients and webhooks. |
+| Administrator     | `admin`                                                                                                                 | Everything, including webhooks and API clients. Avoid unless necessary.                   |
 
 Trust levels:
 
@@ -1739,9 +1739,9 @@ JSON body (unknown keys are rejected):
 #### `POST /api/v1/commands` (Create a command template)
 
 - Operation: `commands.create`
-- Scope: `tasks:write`
+- Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file.
+- What it does: Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write: templates are global, and a rename repoints tasks in every project.
 - Success: HTTP 200 with `{ body: string, id: string, name: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
@@ -1753,9 +1753,9 @@ JSON body (unknown keys are rejected):
 #### `PUT /api/v1/commands/{commandId}` (Update a command template)
 
 - Operation: `commands.update`
-- Scope: `tasks:write`
+- Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body.
+- What it does: Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write: templates are global, and a rename repoints tasks in every project.
 - Success: HTTP 200 with `{ body: string, id: string, name: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
@@ -1771,9 +1771,9 @@ JSON body (unknown keys are rejected):
 #### `DELETE /api/v1/commands/{commandId}` (Delete a command template)
 
 - Operation: `commands.delete`
-- Scope: `tasks:write`
+- Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file.
+- What it does: Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write: templates are global, and a delete reports references from every project.
 - Success: HTTP 200 with `{ referencedBy: string[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 

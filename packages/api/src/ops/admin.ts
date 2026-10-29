@@ -316,8 +316,8 @@ export const commandsUpsert = defineOp({
   name: "commands.create",
   title: "Create a command template",
   description:
-    "Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file.",
-  scope: "tasks:write",
+    "Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write: templates are global, and a rename repoints tasks in every project.",
+  scope: "settings:write",
   projectScoped: false,
   input: z.strictObject(CommandBody.shape),
   output: CommandTemplateSchema,
@@ -330,8 +330,8 @@ export const commandsUpdate = defineOp({
   name: "commands.update",
   title: "Update a command template",
   description:
-    "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body.",
-  scope: "tasks:write",
+    "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write: templates are global, and a rename repoints tasks in every project.",
+  scope: "settings:write",
   projectScoped: false,
   input: z.strictObject({ commandId: commandIdParam, ...CommandBody.shape }),
   output: CommandTemplateSchema,
@@ -345,8 +345,8 @@ export const commandsDelete = defineOp({
   name: "commands.delete",
   title: "Delete a command template",
   description:
-    "Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file.",
-  scope: "tasks:write",
+    "Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write: templates are global, and a delete reports references from every project.",
+  scope: "settings:write",
   projectScoped: false,
   input: z.strictObject({ commandId: commandIdParam }),
   output: z.object({ referencedBy: z.array(z.string()) }),
