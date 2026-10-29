@@ -18,6 +18,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+        <version number="2" status="plan">D7 (owner, 2026-10-29): approved — n8n runs external pipeline steps called by webhook with a callback, rather than a &#x27;run one internal step&#x27; API; built last.</version>
       </versions>
     </status>
     <tests>

@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="plan">D8 (owner, 2026-10-29): ship 0.3.0 without the desktop end-to-end check; an agent prepares the version bump and changelog; the owner pushes the tag.</version>
       </versions>
     </status>
     <tests>

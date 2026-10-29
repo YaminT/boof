@@ -17,6 +17,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+        <version number="2" status="plan">D3 (owner, 2026-10-29): approved — subtasks carry parentId; epics are a small record per project; priority stays on each task (epic priority a tiebreak at most); progress is derived; the scheduler is unchanged. &#x27;Add these only to todos&#x27; meant: put it on the backlog.</version>
       </versions>
     </status>
     <tests>

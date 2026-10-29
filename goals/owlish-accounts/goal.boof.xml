@@ -18,6 +18,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+        <version number="2" status="plan">D2 (owner, 2026-10-29): integrate better-ccflare rather than rebuild it — boof controls it and applies the spend rules. Check the legal side first (better-ccflare&#x27;s licence and what it allows when bundling, integrating or calling it) and credit it by name (better-ccflare) in the docs and the UI where it is used. Harness: choose the best solution (roadmap recommends adding a Claude Agent SDK adapter as the controllable default and keeping the CLI adapters); record the reasoning in the design.</version>
       </versions>
     </status>
     <tests>

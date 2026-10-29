@@ -17,6 +17,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+        <version number="2" status="plan">D5 (owner, 2026-10-29): go — simple Overview = Now lane + needs-you + the console; simple task detail = step strip + live log + steering, with the form collapsed; one remembered simple/expanded toggle per screen; never hide actionable items. Built in UI phase 6.</version>
       </versions>
     </status>
     <tests>

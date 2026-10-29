@@ -18,6 +18,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
+        <version number="2" status="plan">D4 (owner, 2026-10-29): &#x27;one line always on bottom like a terminal. always interactive. receives the info and add or modify the plans.&#x27; A single always-visible, always-interactive line at the bottom of every page; it takes what the user types (information, instructions) and adds to or modifies the plans (and tasks), as well as running page commands. Deterministic commands come first and share the command palette&#x27;s registry; free text that must be interpreted goes through the assistant (boof&#x27;s own MCP server under a scoped client). It does not wait for owlish-accounts.</version>
       </versions>
     </status>
     <tests>

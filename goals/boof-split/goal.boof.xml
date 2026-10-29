@@ -17,6 +17,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; design conversation started, not finished.</version>
+        <version number="2" status="plan">D1 (owner, 2026-10-29): same repo, different boundaries — enforced package boundaries (import lint, four packages: Runner, Heart, Facedisk, Owlish), not processes or repos. Heart holds the stores, settings and auth; Facedisk is the UI, desktop app and CLI; ops goes to Heart. Files move once, late (roadmap step 15), after the backlog fixes.</version>
       </versions>
     </status>
     <tests>
