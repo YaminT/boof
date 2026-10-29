@@ -107,7 +107,7 @@ describe("ProjectStore", () => {
   const deepGit = async (dir: string) => (await fakeTop(dir)) !== null;
 
   it("rejects a directory inside another project's repository, on create and update", async () => {
-    const s = new ProjectStore(root, { isGitRepo: deepGit, repoToplevel: fakeTop });
+    const s = new ProjectStore(root, { isGitRepo: deepGit, repoCommonDir: fakeTop });
     const mono = await makeRepo("mono");
     await mkdir(join(mono, "packages", "web"), { recursive: true });
     await s.create({ workingDirectory: mono, id: "mono" });

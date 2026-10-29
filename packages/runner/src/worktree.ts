@@ -57,9 +57,12 @@ export async function isGitRepo(dir: string): Promise<boolean> {
   return res.code === 0 && res.out === "true";
 }
 
-/** Realpath of the git toplevel of `dir` (`rev-parse --show-toplevel`); null when git fails. */
-export async function repoToplevel(dir: string): Promise<string | null> {
-  const res = await git(dir, ["rev-parse", "--show-toplevel"]);
+/**
+ * Realpath of the git common dir of `dir` (`rev-parse --git-common-dir`): the same for a
+ * repository's main checkout, its subdirectories and its linked worktrees; null when git fails.
+ */
+export async function repoCommonDir(dir: string): Promise<string | null> {
+  const res = await git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (res.code !== 0 || !res.out) return null;
   return realpath(res.out).catch(() => res.out);
 }

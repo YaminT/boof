@@ -49,7 +49,7 @@ import { PlanService } from "./plan-service.js";
 import {
   isGitRepo,
   pruneStaleWorktrees,
-  repoToplevel,
+  repoCommonDir,
   taskDiff,
   BranchNotFoundError,
   InvalidDiffPathError,
@@ -513,7 +513,7 @@ export class TaskService {
     readonly root: string,
     registry: ToolRegistry = new ToolRegistry(),
   ) {
-    this.projects = new ProjectStore(root, { isGitRepo, repoToplevel });
+    this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir });
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.registry = registry;

@@ -31,14 +31,14 @@ export class ProjectError extends Error {
 /** Decides whether a directory is a git work tree; injected so shared does not depend on runner. */
 export type RepoValidator = (dir: string) => Promise<boolean>;
 
-/** Resolves the git toplevel (realpath) of a directory; null when it is not in a repository. */
-export type RepoToplevel = (dir: string) => Promise<string | null>;
+/** Resolves the git common dir (realpath) of a directory, shared by a repository's linked worktrees; null when it is not in a repository. */
+export type RepoCommonDir = (dir: string) => Promise<string | null>;
 
 export interface ProjectStoreOptions {
   /** Called by create/update(workingDirectory); without it no git check is made. */
   isGitRepo?: RepoValidator;
   /** Called by create/update(workingDirectory) to refuse two projects in one repository. */
-  repoToplevel?: RepoToplevel;
+  repoCommonDir?: RepoCommonDir;
 }
 
 export interface CreateProjectInput {
@@ -73,14 +73,14 @@ function isInside(parent: string, child: string): boolean {
 /** File-backed registry of projects under <root>/projects/<id>/project.json. */
 export class ProjectStore {
   private readonly isGitRepo?: RepoValidator;
-  private readonly repoToplevel?: RepoToplevel;
+  private readonly repoCommonDir?: RepoCommonDir;
 
   constructor(
     private readonly root: string,
     opts: ProjectStoreOptions = {},
   ) {
     this.isGitRepo = opts.isGitRepo;
-    this.repoToplevel = opts.repoToplevel;
+    this.repoCommonDir = opts.repoCommonDir;
   }
 
   /** Directory to hand to TaskStore / AttachmentStore / UsageStore for project `id`. */
@@ -151,15 +151,15 @@ export class ProjectStore {
     if (clash) {
       throw new ProjectError("duplicate", `Directory is already project '${clash.id}': ${real}`);
     }
-    if (this.repoToplevel) {
-      const top = await this.repoToplevel(real);
-      if (top !== null) {
+    if (this.repoCommonDir) {
+      const common = await this.repoCommonDir(real);
+      if (common !== null) {
         for (const other of others) {
           if (!other.workingDirectory) continue;
-          if ((await this.repoToplevel(other.workingDirectory)) === top) {
+          if ((await this.repoCommonDir(other.workingDirectory)) === common) {
             throw new ProjectError(
               "same_repo",
-              `Directory is in the repository of project '${other.id}' (${top}); two projects cannot share one repository`,
+              `Directory is in the repository of project '${other.id}' (${common}); two projects cannot share one repository`,
             );
           }
         }

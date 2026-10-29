@@ -24,7 +24,7 @@ import {
 import {
   isGitRepo,
   pruneStaleWorktrees,
-  repoToplevel,
+  repoCommonDir,
   RunnerEngine,
   ToolRegistry,
   importFromRepo,
@@ -138,7 +138,7 @@ export async function resolveProject(
   ref: ProjectRef,
   out: Out = stdoutWrite,
 ): Promise<Project> {
-  const projects = new ProjectStore(root, { isGitRepo, repoToplevel });
+  const projects = new ProjectStore(root, { isGitRepo, repoCommonDir });
   let project: Project | null = null;
   if (ref.project) {
     project = await projects.get(ref.project);

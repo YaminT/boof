@@ -85,7 +85,7 @@ describe("POST /api/v1/projects", () => {
     });
   });
 
-  it("allows a linked worktree of a registered repository (different toplevel)", async () => {
+  it("refuses a linked worktree of a registered repository (same git common dir)", async () => {
     await execCommand(
       "git",
       ["-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i"],
@@ -94,7 +94,11 @@ describe("POST /api/v1/projects", () => {
     const linked = `${repo}-linked`;
     await execCommand("git", ["worktree", "add", "-q", "-b", "wt", linked], { cwd: repo });
     const res = await req("/api/v1/projects", json({ workingDirectory: linked }));
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatchObject({
+      code: "project_exists",
+      message: expect.stringContaining("repository of project 'default'"),
+    });
     await rm(linked, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 });
