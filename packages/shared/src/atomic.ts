@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { rename, open, rm, mkdir, readFile } from "node:fs/promises";
+import { rename, open, rm, mkdir, readFile, link, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /**
@@ -35,12 +35,25 @@ export function fileLockCount(): number {
 /** Directory fsync is refused on some platforms; those errors are not failures. */
 const IGNORED_DIR_SYNC_CODES = new Set(["EINVAL", "EPERM", "ENOTSUP", "EISDIR"]);
 
+export interface AtomicWriteOptions {
+  mode?: number;
+  /** Fail with EEXIST instead of replacing an existing `path`. */
+  exclusive?: boolean;
+}
+
 /**
  * Atomically write `contents` to `path` (temp file + rename), creating dirs.
+ * With `exclusive` the temp file is published by link(2) instead, which fails with EEXIST
+ * when `path` exists. A bare number is the file mode.
  * The temp file is fsynced before the rename and the directory after it, so a
  * power loss cannot leave a zero-length file behind.
  */
-export async function atomicWrite(path: string, contents: string, mode?: number): Promise<void> {
+export async function atomicWrite(
+  path: string,
+  contents: string,
+  opts?: number | AtomicWriteOptions,
+): Promise<void> {
+  const { mode, exclusive } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
   const tmp = join(dir, `.${randomBytes(8).toString("hex")}.tmp`);
@@ -52,7 +65,12 @@ export async function atomicWrite(path: string, contents: string, mode?: number)
     } finally {
       await fh.close();
     }
-    await rename(tmp, path);
+    if (exclusive) {
+      await link(tmp, path);
+      await unlink(tmp);
+    } else {
+      await rename(tmp, path);
+    }
   } catch (err) {
     await rm(tmp, { force: true });
     throw err;
@@ -81,9 +99,9 @@ export async function syncDir(dir: string, opener: typeof open = open): Promise<
 export async function lockedAtomicWrite(
   path: string,
   contents: string,
-  mode?: number,
+  opts?: number | AtomicWriteOptions,
 ): Promise<void> {
-  await withFileLock(path, () => atomicWrite(path, contents, mode));
+  await withFileLock(path, () => atomicWrite(path, contents, opts));
 }
 
 export async function readText(path: string): Promise<string> {

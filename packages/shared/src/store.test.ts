@@ -2,10 +2,11 @@ import { mkdtemp, rm, readFile, mkdir, writeFile, stat } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readTaskIfExists, TaskStore } from "./store.js";
+import { InvalidTransitionError } from "./lifecycle.js";
+import { readTaskIfExists, TaskExistsError, TaskNotFoundError, TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
 import { parseInjected } from "./injected.js";
-import { statusDir, taskFilePath, workingAreaDir } from "./paths.js";
+import { ALL_STATUSES, statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import type { TaskFrontmatter } from "./schema.js";
 
 let root: string;
@@ -258,5 +259,93 @@ describe("TaskStore timings", () => {
 
   it("appendStep on a missing task is a no-op", async () => {
     await expect(store.appendStep("nope", "Planner")).resolves.toBeUndefined();
+  });
+});
+
+describe("TaskStore races", () => {
+  const copies = async (id: string) => {
+    let n = 0;
+    for (const s of ALL_STATUSES) if (await fileExists(taskFilePath(root, s, id))) n += 1;
+    return n;
+  };
+
+  it("two claims of one pending task: one wins, one gets InvalidTransitionError, one file remains", async () => {
+    await store.create(newTask(fm()));
+    const results = await Promise.allSettled([
+      store.transition("t1", "running"),
+      store.transition("t1", "running"),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(InvalidTransitionError);
+    expect(await copies("t1")).toBe(1);
+    expect((await store.locate("t1"))!.status).toBe("running");
+  });
+
+  it("archive racing a claim leaves the task in exactly one directory", async () => {
+    await store.create(newTask(fm()));
+    const results = await Promise.allSettled([
+      store.transition("t1", "archived"),
+      store.transition("t1", "running"),
+    ]);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+    expect(await copies("t1")).toBe(1);
+    expect(await fileExists(taskFilePath(root, "pending", "t1"))).toBe(false);
+  });
+
+  it("a save racing pending→running does not recreate the pending file", async () => {
+    await store.create(newTask(fm()));
+    const stale = (await store.get("t1"))!;
+    stale.frontmatter.priority = 1;
+    await Promise.all([store.transition("t1", "running"), store.save(stale)]);
+    expect(await fileExists(taskFilePath(root, "pending", "t1"))).toBe(false);
+    const disk = (await store.get("t1"))!;
+    expect(disk.frontmatter.status).toBe("running");
+    expect(await copies("t1")).toBe(1);
+  });
+
+  it("a save issued while the claim is mid-flight does not recreate the pending file", async () => {
+    await store.create(newTask(fm()));
+    const stale = (await store.get("t1"))!;
+    const claim = store.transition("t1", "running");
+    // Wait for the real condition: the destination is on disk, the source not yet removed.
+    while (!(await fileExists(taskFilePath(root, "running", "t1")))) await Promise.resolve();
+    const saved = store.save(stale);
+    await Promise.all([claim, saved]);
+    expect(await fileExists(taskFilePath(root, "pending", "t1"))).toBe(false);
+    expect(await copies("t1")).toBe(1);
+  });
+
+  it("save writes at the task's current location when the in-memory status is stale", async () => {
+    await store.create(newTask(fm()));
+    const stale = (await store.get("t1"))!;
+    await store.transition("t1", "running");
+    stale.frontmatter.title = "Renamed";
+    const saved = await store.save(stale);
+    expect(saved.frontmatter.status).toBe("running");
+    expect((await store.get("t1"))!.frontmatter.title).toBe("Renamed");
+    expect(await fileExists(taskFilePath(root, "pending", "t1"))).toBe(false);
+  });
+
+  it("save throws TaskNotFoundError for a task that is gone", async () => {
+    await store.create(newTask(fm()));
+    const copy = (await store.get("t1"))!;
+    await store.delete("t1");
+    await expect(store.save(copy)).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(await copies("t1")).toBe(0);
+  });
+
+  it("create refuses an id that exists in any status directory", async () => {
+    await store.create(newTask(fm()));
+    await expect(store.create(newTask(fm({ status: "draft" })))).rejects.toBeInstanceOf(
+      TaskExistsError,
+    );
+    expect(await copies("t1")).toBe(1);
+    const results = await Promise.allSettled([
+      store.create(newTask(fm({ id: "t2" }))),
+      store.create(newTask(fm({ id: "t2" }))),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(await copies("t2")).toBe(1);
   });
 });

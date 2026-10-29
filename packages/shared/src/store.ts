@@ -1,6 +1,6 @@
 import { readdir, mkdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { atomicWrite, lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
+import { atomicWrite, readText, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
 import { formatInjectedEntry, parseInjected, type InjectMode } from "./injected.js";
 import { assertTransition } from "./lifecycle.js";
@@ -14,6 +14,14 @@ export class TaskNotFoundError extends Error {
   constructor(public readonly id: string) {
     super(`Task not found: ${id}`);
     this.name = "TaskNotFoundError";
+  }
+}
+
+/** Thrown when creating a task whose id already exists in some status directory. */
+export class TaskExistsError extends Error {
+  constructor(public readonly id: string) {
+    super(`Task already exists: ${id}`);
+    this.name = "TaskExistsError";
   }
 }
 
@@ -75,6 +83,11 @@ export async function readTaskIfExists(path: string, dirStatus: Status): Promise
  */
 export class TaskStore {
   constructor(private readonly root: string) {}
+
+  /** Serialize every operation on one task id: locate, check and write happen under it. */
+  private lockTask<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    return withFileLock(`${this.root}#task:${id}`, fn);
+  }
 
   /** Ensure all status directories exist (under the handed root: a project directory in v2). */
   async ensureDirs(): Promise<void> {
@@ -156,12 +169,16 @@ export class TaskStore {
    * `created`. Written at the location matching its current status.
    */
   async save(task: Task): Promise<Task> {
-    task.frontmatter.updated = nowIso();
-    const path = taskFilePath(this.root, task.frontmatter.status, task.frontmatter.id);
-    // `## Injected` is append-only and written by appendInjected: a save from a copy read
-    // earlier (the runner's in-memory task, an editor) must not drop an entry added since.
-    await withFileLock(path, async () => {
-      const disk = await readText(path)
+    const id = task.frontmatter.id;
+    return this.lockTask(id, async () => {
+      // The directory is authoritative: write where the task is now, not where the copy says.
+      const located = await this.locate(id);
+      if (!located) throw new TaskNotFoundError(id);
+      task.frontmatter.updated = nowIso();
+      task.frontmatter.status = located.status;
+      // `## Injected` is append-only and written by appendInjected: a save from a copy read
+      // earlier (the runner's in-memory task, an editor) must not drop an entry added since.
+      const disk = await readText(located.path)
         .then(parseTask)
         .catch(() => null);
       if (disk) {
@@ -169,9 +186,9 @@ export class TaskStore {
         if (disk.frontmatter.startedAt) task.frontmatter.startedAt = disk.frontmatter.startedAt;
         if (disk.frontmatter.steps) task.frontmatter.steps = disk.frontmatter.steps;
       }
-      await atomicWrite(path, serializeTask(task));
+      await atomicWrite(located.path, serializeTask(task));
+      return task;
     });
-    return task;
   }
 
   /**
@@ -179,9 +196,9 @@ export class TaskStore {
    * is deleted when the task leaves `running`). `by` is the principal name, default "user".
    */
   async appendInjected(id: string, text: string, by = "user", mode?: InjectMode): Promise<Task> {
-    const located = await this.locate(id);
-    if (!located) throw new TaskNotFoundError(id);
-    return withFileLock(located.path, async () => {
+    return this.lockTask(id, async () => {
+      const located = await this.locate(id);
+      if (!located) throw new TaskNotFoundError(id);
       const task = await this.readReconciled(located.path, located.status);
       const entry = formatInjectedEntry({ at: nowIso(), by, text, ...(mode ? { mode } : {}) });
       task.body.injected = task.body.injected.trim()
@@ -197,9 +214,9 @@ export class TaskStore {
    * agent. Writes nothing when there is nothing to stamp.
    */
   async markInjectedApplied(id: string, at = nowIso()): Promise<void> {
-    const located = await this.locate(id);
-    if (!located) return;
-    await withFileLock(located.path, async () => {
+    await this.lockTask(id, async () => {
+      const located = await this.locate(id);
+      if (!located) return;
       const task = await this.readReconciled(located.path, located.status);
       const entries = parseInjected(task.body.injected);
       if (entries.every((e) => e.appliedAt)) return;
@@ -212,9 +229,9 @@ export class TaskStore {
 
   /** Record that a pipeline step began (label + time) in the task's `steps`. No-op if the task is gone. */
   async appendStep(id: string, label: string, at = nowIso()): Promise<void> {
-    const located = await this.locate(id);
-    if (!located) return;
-    await withFileLock(located.path, async () => {
+    await this.lockTask(id, async () => {
+      const located = await this.locate(id);
+      if (!located) return;
       const task = await this.readReconciled(located.path, located.status);
       task.frontmatter.steps = [...(task.frontmatter.steps ?? []), { label, at }];
       await atomicWrite(located.path, serializeTask(task));
@@ -227,7 +244,17 @@ export class TaskStore {
     task.frontmatter.created = task.frontmatter.created || now;
     task.frontmatter.updated = now;
     const path = taskFilePath(this.root, task.frontmatter.status, task.frontmatter.id);
-    await lockedAtomicWrite(path, serializeTask(task));
+    await this.lockTask(task.frontmatter.id, async () => {
+      if (await this.locate(task.frontmatter.id)) throw new TaskExistsError(task.frontmatter.id);
+      try {
+        await atomicWrite(path, serializeTask(task), { exclusive: true });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new TaskExistsError(task.frontmatter.id);
+        }
+        throw err;
+      }
+    });
     await appendEvent(this.root, {
       type: "task.created",
       project: basename(this.root),
@@ -251,35 +278,31 @@ export class TaskStore {
     mutate?: (t: Task) => void,
     opts: { by?: string; reason?: string } = {},
   ): Promise<Task> {
-    const located = await this.locate(id);
-    if (!located) throw new TaskNotFoundError(id);
-    assertTransition(located.status, to);
+    const { task, fromStatus } = await this.lockTask(id, async () => {
+      const located = await this.locate(id);
+      if (!located) throw new TaskNotFoundError(id);
+      assertTransition(located.status, to);
 
-    const task = await this.readReconciled(located.path, located.status);
-    task.frontmatter.status = to;
-    task.frontmatter.updated = nowIso();
-    if (to === "running") {
-      task.frontmatter.startedAt = nowIso();
-      task.frontmatter.steps = [];
-    }
-    mutate?.(task);
+      const task = await this.readReconciled(located.path, located.status);
+      task.frontmatter.status = to;
+      task.frontmatter.updated = nowIso();
+      if (to === "running") {
+        task.frontmatter.startedAt = nowIso();
+        task.frontmatter.steps = [];
+      }
+      mutate?.(task);
 
-    const destPath = taskFilePath(this.root, to, id);
-    const fromStatus = located.status;
-    const fromPath = located.path;
-
-    // Lock on the destination path; use unguarded atomicWrite inside to avoid
-    // re-entering the same-path lock (which would deadlock).
-    await withFileLock(destPath, async () => {
+      const destPath = taskFilePath(this.root, to, id);
       await mkdir(dirname(destPath), { recursive: true });
       await atomicWrite(destPath, serializeTask(task));
-      if (fromPath !== destPath) {
-        if (fromStatus === "running") {
+      if (located.path !== destPath) {
+        if (located.status === "running") {
           await rmWorkingArea(workingAreaDir(this.root, id));
         } else {
-          await rm(fromPath, { force: true });
+          await rm(located.path, { force: true });
         }
       }
+      return { task, fromStatus: located.status };
     });
     const by = opts.by ?? "runner";
     const project = basename(this.root);
@@ -305,13 +328,15 @@ export class TaskStore {
    * No-op if the task is already gone.
    */
   async delete(id: string): Promise<void> {
-    const located = await this.locate(id);
-    if (!located) return;
-    if (located.status === "running") {
-      await rmWorkingArea(workingAreaDir(this.root, id));
-    } else {
-      await rm(located.path, { force: true });
-    }
+    await this.lockTask(id, async () => {
+      const located = await this.locate(id);
+      if (!located) return;
+      if (located.status === "running") {
+        await rmWorkingArea(workingAreaDir(this.root, id));
+      } else {
+        await rm(located.path, { force: true });
+      }
+    });
   }
 
   /** Toggle the orthogonal skip flag without changing status/location. */

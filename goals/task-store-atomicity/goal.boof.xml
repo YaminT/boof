@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Every TaskStore writer runs locate, check and write under one per-task-id lock; save re-locates; create refuses an existing id with TaskExistsError (exclusive atomic write); syncPlan holds a per-plan lock.</version>
       </versions>
     </status>
     <tests>

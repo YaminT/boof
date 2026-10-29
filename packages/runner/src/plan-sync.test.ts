@@ -103,6 +103,15 @@ const byGoal = async (goalId: string) =>
   (await tasks.list()).filter((t) => t.frontmatter.planRef?.goalId === goalId);
 
 describe("syncPlan: materialising goals", () => {
+  it("two overlapping syncs of one plan create each goal's task once", async () => {
+    await makePlan([testGoal("a", 1)]);
+    const [x, y] = await Promise.all([sync(), sync()]);
+    expect(x.created.length + y.created.length).toBe(1);
+    const all = await tasks.list();
+    expect(all).toHaveLength(1);
+    expect((await plans.require("p")).goals[0]!.taskId).toBe(all[0]!.frontmatter.id);
+  });
+
   it("creates a task for each unblocked goal only, with the goal prompt and refs", async () => {
     await makePlan([testGoal("a", 1), testGoal("b", 2, ["a"])]);
     const res = await sync();

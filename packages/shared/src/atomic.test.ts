@@ -1,4 +1,4 @@
-import { mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, open, readFile, readdir, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +52,16 @@ describe("withFileLock", () => {
 });
 
 describe("atomicWrite", () => {
+  it("exclusive write refuses an existing path and leaves it unchanged", async () => {
+    const dest = join(dir, "t.md");
+    await atomicWrite(dest, "first\n", { exclusive: true });
+    await expect(atomicWrite(dest, "second\n", { exclusive: true })).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(await readFile(dest, "utf8")).toBe("first\n");
+    expect((await readdir(dir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("fsyncs the temp file before the rename and the directory after it", async () => {
     const probe = await open(join(dir, "probe"), "w");
     const proto = Object.getPrototypeOf(probe) as { sync: () => Promise<void> };

@@ -25,6 +25,7 @@ import {
   uniqueKebabId,
   unifiedDiff,
   withGoalStatus,
+  withFileLock,
   workingAreaDir,
   PlanVersionConflict,
   type Goal,
@@ -772,7 +773,12 @@ export async function syncPlan(opts: SyncOptions): Promise<SyncResult> {
   return result;
 }
 
-async function syncPlanInner(opts: SyncOptions): Promise<SyncResult> {
+/** One sync at a time per plan, so a manual sync and the engine's autoSync cannot overlap. */
+function syncPlanInner(opts: SyncOptions): Promise<SyncResult> {
+  return withFileLock(`${opts.projectDir}#plan-sync:${opts.planId}`, () => syncPlanUnlocked(opts));
+}
+
+async function syncPlanUnlocked(opts: SyncOptions): Promise<SyncResult> {
   const plans = new PlanStore(opts.projectDir);
   for (let attempt = 0; ; attempt += 1) {
     const plan = await plans.require(opts.planId);
