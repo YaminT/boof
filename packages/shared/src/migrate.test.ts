@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { migrateDataRoot, MigrationError } from "./migrate.js";
+import { migrateDataRoot, MIGRATION_LOCK_FILE, MigrationError } from "./migrate.js";
 import { ProjectSchema } from "./schema.js";
 import { SettingsStore } from "./settings.js";
 import { TaskStore } from "./store.js";
@@ -299,5 +299,45 @@ describe("migrateDataRoot", () => {
     await writeFile(join(root, "tasks", "pending", "t.md"), taskFile("t", "pending"));
     expect((await migrateDataRoot(root)).kind).toBe("migrated");
     expect(await new TaskStore(join(root, "projects", "default")).list()).toHaveLength(1);
+  });
+});
+
+describe("migration lock", () => {
+  it("two concurrent migrations of one v1 root run it once", async () => {
+    await writeV1Root(repo);
+    const [a, b] = await Promise.all([migrateDataRoot(root), migrateDataRoot(root)]);
+    expect([a.kind, b.kind].sort()).toEqual(["current", "migrated"]);
+    const log = await readFile(join(root, "migration-v2.log"), "utf8");
+    expect(log.match(/migrating .* from v1 to v2/g)).toHaveLength(1);
+    expect(await new TaskStore(join(root, "projects", "default")).list()).toHaveLength(7);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+  });
+
+  it("takes over a lock left by a dead process", async () => {
+    await writeV1Root(repo);
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "999999\n");
+    const r = await migrateDataRoot(root, { isProcessAlive: () => false });
+    expect(r.kind).toBe("migrated");
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+  });
+
+  it("waits for a lock held by a live process and gives up after lockTimeoutMs", async () => {
+    await writeV1Root(repo);
+    const before = await readFile(join(root, "settings.json"), "utf8");
+    await writeFile(join(root, MIGRATION_LOCK_FILE), "4242\n");
+    await expect(
+      migrateDataRoot(root, { isProcessAlive: () => true, lockTimeoutMs: 200, lockPollMs: 20 }),
+    ).rejects.toThrow(/pid 4242/);
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(before);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(true); // not ours to remove
+  });
+
+  it("removes the lock when the migration throws", async () => {
+    await writeV1Root(repo);
+    await writeFile(join(root, ".runner.pid"), "4242");
+    await expect(migrateDataRoot(root, { isProcessAlive: () => true })).rejects.toThrow(
+      MigrationError,
+    );
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
   });
 });

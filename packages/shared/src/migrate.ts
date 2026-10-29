@@ -30,7 +30,14 @@ export interface MigrationResult {
 export interface MigrateOptions {
   /** Liveness probe for the pid in .runner.pid; default `process.kill(pid, 0)`. */
   isProcessAlive?: (pid: number) => boolean;
+  /** How long to wait for another process's migration lock; default 30 000 ms. */
+  lockTimeoutMs?: number;
+  /** Poll interval while waiting for the lock; default 50 ms. */
+  lockPollMs?: number;
 }
+
+/** `<root>/.migration.lock`: holds the pid of the process migrating the root. */
+export const MIGRATION_LOCK_FILE = ".migration.lock";
 
 export const DEFAULT_PROJECT_ID = "default";
 
@@ -101,6 +108,62 @@ export async function migrateDataRoot(
   root: string,
   opts: MigrateOptions = {},
 ): Promise<MigrationResult> {
+  return withMigrationLock(root, opts, () => migrateUnlocked(root, opts));
+}
+
+/**
+ * Run `fn` while holding the cross-process migration lock on `root`. Later start-up work that
+ * must not race another process (backfills) belongs inside the same lock.
+ * A lock whose pid is dead (and is not ours) is taken over; a live holder is waited for.
+ * The pid check is local: a lock left by a process on another machine sharing the root, or a
+ * reused pid, reads as live until `lockTimeoutMs`, so it is never deleted wrongly.
+ */
+export async function withMigrationLock<T>(
+  root: string,
+  opts: MigrateOptions,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const alive = opts.isProcessAlive ?? defaultAlive;
+  const timeoutMs = opts.lockTimeoutMs ?? 30_000;
+  const pollMs = opts.lockPollMs ?? 50;
+  const lock = join(root, MIGRATION_LOCK_FILE);
+  await mkdir(root, { recursive: true });
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await atomicWrite(lock, `${process.pid}\n`, { exclusive: true });
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    let holder: number;
+    try {
+      holder = Number((await readFile(lock, "utf8")).trim());
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue; // just released
+      throw err;
+    }
+    if (holder !== process.pid && !alive(holder)) {
+      // Re-read right before removing so we do not delete a lock a faster process just took.
+      const again = await readFile(lock, "utf8").catch(() => null);
+      if (again !== null && Number(again.trim()) === holder) await rm(lock, { force: true });
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new MigrationError(
+        `another boof-runner process is migrating ${root} (pid ${holder}); try again in a moment`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  try {
+    return await fn();
+  } finally {
+    await rm(lock, { force: true });
+  }
+}
+
+async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<MigrationResult> {
   const paths = dataRootPaths(root);
   const legacyTasks = join(root, "tasks");
   const legacyUsage = join(root, "usage.json");

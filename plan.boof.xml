@@ -12,7 +12,7 @@
     <goal id="git-worktree-add-timeout" path="goals/git-worktree-add-timeout" order="9" status="plan"></goal>
     <goal id="reject-nested-projects-same-repo" path="goals/reject-nested-projects-same-repo" order="10" status="plan"></goal>
     <goal id="review-diff-includes-untracked" path="goals/review-diff-includes-untracked" order="11" status="plan"></goal>
-    <goal id="migration-lock" path="goals/migration-lock" order="12" status="plan"></goal>
+    <goal id="migration-lock" path="goals/migration-lock" order="12" status="done"></goal>
     <goal id="webhook-secrets-at-rest" path="goals/webhook-secrets-at-rest" order="13" status="plan"><depends-on>migration-lock</depends-on></goal>
     <goal id="client-create-inherits-restrictions" path="goals/client-create-inherits-restrictions" order="14" status="plan"></goal>
     <goal id="command-templates-respect-project-scope" path="goals/command-templates-respect-project-scope" order="15" status="plan"></goal>
