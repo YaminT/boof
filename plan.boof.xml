@@ -69,5 +69,6 @@
     <goal id="boof-split" path="goals/boof-split" order="66" status="plan"></goal>
     <goal id="questions-from-any-role" path="goals/questions-from-any-role" order="67" status="plan"></goal>
     <goal id="webhook-dns-pinning" path="goals/webhook-dns-pinning" order="68" status="plan"></goal>
+    <goal id="restricted-admin-scope-gaps" path="goals/restricted-admin-scope-gaps" order="69" status="plan"></goal>
   </goals>
 </plan>

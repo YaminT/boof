@@ -27,9 +27,11 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Each operation lists
   its scope in the OpenAPI document (`x-boof-scope`).
 - Command templates are global: `POST/PUT/DELETE /commands` need `settings:write` (listing needs
-  `tasks:read`). `settings:write` is a trusted-only scope: renaming or deleting a template
-  rewrites tasks in every project, so a `review`-trust or project-restricted client gets
-  `403 forbidden_trust` on template writes even when it holds the scope.
+  `tasks:read`). Command templates can be written only by trusted clients with access to every
+  project; grant `settings:write` to trusted clients only, because `PUT /settings` does not check
+  trust yet. Renaming or deleting a template rewrites tasks in every project, so a `review`-trust
+  or project-restricted client gets `403 forbidden_trust` on template writes even when it holds
+  the scope.
 - A client may be restricted to some projects. Touching another project is
   `403 forbidden_project`; project lists are filtered.
 - **Trust.** A client with `trust: review` (the default for new clients) creates `draft` tasks
@@ -41,8 +43,9 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   Rotating or revoking a client is capped the same way: a client with scopes, trust, projects
   or an expiry beyond the caller's is refused (`403 forbidden_scope`, `forbidden_trust` or
   `forbidden_project`), and `GET /auth/clients` lists only clients the caller may manage plus
-  itself. A client may always rotate or revoke itself. The local principal and `admin`
-  trusted keys manage everyone.
+  itself. A client may always rotate or revoke itself. An `auth:admin` key manages only clients
+  within its own reach (scopes, trust, projects and expiry); the local principal and an
+  unrestricted, non-expiring trusted admin key manage every client.
 - Registering a project as an API client needs the directory to be inside
   `security.allowedProjectRoots` (settings.json).
 - `GET /api/v1/openapi.json` needs any valid principal.

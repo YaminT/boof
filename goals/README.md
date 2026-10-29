@@ -36,6 +36,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`inject-and-stop-respect-trust`](inject-and-stop-respect-trust/goal.boof.xml) — tasks.inject and tasks.stop respect the trust level
 - [x] [`webhook-ssrf-guard`](webhook-ssrf-guard/goal.boof.xml) — Webhook URLs reject loopback, link-local and private addresses
 - [ ] [`webhook-dns-pinning`](webhook-dns-pinning/goal.boof.xml) — Pin webhook connections to the address the SSRF guard checked (needs undici)
+- [ ] [`restricted-admin-scope-gaps`](restricted-admin-scope-gaps/goal.boof.xml) — Webhooks, settings and archived plans respect restricted keys; hidden clients look unknown
 
 ## Correctness and robustness
 
