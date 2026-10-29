@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultSettings,
   SettingsStore,
@@ -15,7 +15,7 @@ import {
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
-import { TaskService, tailLines } from "@boof-runner/api";
+import { IdempotencyStore, TaskService, tailLines } from "@boof-runner/api";
 
 let root: string;
 let repo: string;
@@ -462,6 +462,25 @@ describe("attachments API", () => {
     );
     const res = await req("/api/tasks/bad-file/attachments", { method: "POST", body: form });
     expect(res.status).toBe(400);
+  });
+
+  it("an upload without an Idempotency-Key never serializes the body", async () => {
+    await (await req("/api/tasks", json({ title: "Big" }))).json();
+    const spy = vi.spyOn(IdempotencyStore, "fingerprint");
+    try {
+      const res = await uploadPng("big");
+      expect(res.status).toBe(200);
+      expect(spy).not.toHaveBeenCalled();
+      // A keyed JSON create still fingerprints (the replay check needs it).
+      const keyed = await req("/api/v1/projects/default/tasks", {
+        ...json({ title: "Keyed" }),
+        headers: { "content-type": "application/json", "Idempotency-Key": "k1" },
+      });
+      expect(keyed.status).toBe(201);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

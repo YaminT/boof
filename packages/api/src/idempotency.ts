@@ -33,6 +33,14 @@ export class IdempotencyStore {
     return sha(JSON.stringify(input));
   }
 
+  /** Hashes an upload's bytes directly: no JSON copy of a (possibly large) binary body. */
+  static fingerprintUpload(file: { name: string; type: string; bytes: Uint8Array }): string {
+    return createHash("sha256")
+      .update(`${file.name}\0${file.type}\0`)
+      .update(file.bytes)
+      .digest("hex");
+  }
+
   private path(principal: string, op: string, key: string): string {
     return join(this.dir, `${sha(`${principal}\0${op}\0${key}`)}.json`);
   }

@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">rest.ts fingerprints a request only when it carries an Idempotency-Key; multipart input is hashed over its bytes (fingerprintUpload), never JSON-serialised; app.test.ts pins that an upload without a key never calls fingerprint.</version>
       </versions>
     </status>
     <tests>

@@ -9,7 +9,7 @@ import {
   type OpContext,
 } from "@boof-runner/api";
 import { AuthStore } from "@boof-runner/shared";
-import type { ResolveHost, TaskService } from "@boof-runner/api";
+import type { ResolveHost, TaskService, UploadedFile } from "@boof-runner/api";
 
 /** Unversioned routes are removed after this date (sent as the `Sunset` header). */
 export const LEGACY_SUNSET = "Wed, 30 Jun 2027 00:00:00 GMT";
@@ -205,8 +205,18 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
     if (key !== undefined && !/^[\x21-\x7e]{1,255}$/.test(key)) {
       throw new OpError(400, "Idempotency-Key must be 1-255 printable characters", "invalid_input");
     }
-    const fingerprint = IdempotencyStore.fingerprint(input);
+    let fingerprint: string | undefined;
     if (key !== undefined) {
+      fingerprint =
+        op.rest.kind === "multipart"
+          ? IdempotencyStore.fingerprintUpload(
+              (input["file"] as UploadedFile | undefined) ?? {
+                name: "",
+                type: "",
+                bytes: new Uint8Array(),
+              },
+            )
+          : IdempotencyStore.fingerprint(input);
       const stored = await deps.idempotency.get(principal.id, op.name, key);
       if (stored) {
         if (stored.fingerprint !== fingerprint) {
@@ -247,7 +257,12 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
     if (etag) c.header("ETag", etag);
     setWarningHeader(c, out);
     if (key !== undefined) {
-      await deps.idempotency.put(principal.id, op.name, key, { fingerprint, status, body, etag });
+      await deps.idempotency.put(principal.id, op.name, key, {
+        fingerprint: fingerprint!,
+        status,
+        body,
+        etag,
+      });
     }
     return c.json(body as object, status as 200);
   });

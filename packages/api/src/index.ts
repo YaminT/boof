@@ -10,6 +10,7 @@ export * from "./services/plan-service.js";
 export { publicSettings } from "./ops/admin.js";
 export { DEFAULT_PAGE, MAX_PAGE } from "./ops/tasks.js";
 export * from "./idempotency.js";
+export type { UploadedFile } from "./ops/tasks.js";
 export * from "./openapi.js";
 export * from "./net-guard.js";
 export { assertWebhookUrl, eventMatches } from "./ops/webhooks.js";
