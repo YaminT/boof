@@ -545,6 +545,38 @@ describe("trust levels", () => {
       return ids;
     }
 
+    it("a review client cannot set a human's active plan back to draft nor archive its pending tasks", async () => {
+      peer = REMOTE;
+      const bot = await mint("bot", ["plans:read", "plans:write", "tasks:read", "tasks:control"]);
+      const app = build();
+      const plans = service.forProject("default").plans;
+      const call2 = (path: string, method: string, body?: unknown) =>
+        call(app, V1 + path, { ...post(body ?? {}), method }, bot);
+      await plans.createPlan({
+        id: "site",
+        title: "Site",
+        status: "active",
+        goals: [goal("posts"), goal("about")],
+      });
+      await plans.syncTasks("site");
+      const ids = (await service.forProject("default").tasks.list())
+        .filter((t) => t.frontmatter.planRef?.planId === "site")
+        .map((t) => t.frontmatter.id);
+      expect(ids).toHaveLength(2);
+      const draft = await call2("/plans/site", "PUT", { status: "draft" });
+      expect(draft.status).toBe(403);
+      expect((await draft.json()).error.code).toBe("forbidden_trust");
+      expect((await plans.get("site")).status).toBe("active");
+      // A removal while the plan is active is refused too (active plan, restricted client).
+      expect((await call2("/plans/site/goals/posts", "DELETE")).status).toBe(403);
+      // Even if a human drafts it, the client's removal leaves the human's pending tasks alone.
+      await plans.updatePlan("site", { status: "draft" }, undefined);
+      expect((await call2("/plans/site/goals/posts", "DELETE")).status).toBe(200);
+      for (const id of ids) {
+        expect((await service.forProject("default").get(id))!.frontmatter.status).toBe("pending");
+      }
+    });
+
     it("removeGoal and sync stop a human plan's task only for a human, own plan's task for the client", async () => {
       peer = REMOTE;
       const bot = await mint("bot", ["plans:read", "plans:write", "tasks:control"]);
@@ -561,7 +593,7 @@ describe("trust levels", () => {
         goals: [goal("h1"), goal("h2")],
       });
       const [humanTask] = await runTasks("human");
-      expect((await put("/plans/human", "PUT", { status: "draft" })).status).toBe(200);
+      await plans.updatePlan("human", { status: "draft" }, undefined);
       const del = await put("/plans/human/goals/h1?stopRunning=true", "DELETE");
       expect(del.status).toBe(200);
       const dir = service.projects.dir("default");

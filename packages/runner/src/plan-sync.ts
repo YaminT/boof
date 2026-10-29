@@ -63,6 +63,8 @@ export interface SyncOptions {
   stopRunning?: boolean;
   /** Narrows `stopRunning` to the tasks this accepts (restricted clients: their own). */
   mayStop?: (task: Task) => boolean;
+  /** Narrows the archiving of removed goals' pending/draft tasks (restricted clients: their own). */
+  mayArchive?: (task: Task) => boolean;
   /** Per-task tool override for the tasks created. */
   tools?: TaskTools;
   /** Status of the tasks created (default `pending`; `draft` for plans of review-trust clients). */
@@ -328,6 +330,8 @@ export async function archiveRemovedGoalTasks(opts: {
   stopRunning?: boolean;
   /** Narrows `stopRunning`: a running task this returns false for is left running. */
   mayStop?: (task: Task) => boolean;
+  /** Narrows the archiving: a pending/draft task this returns false for is left as it is. */
+  mayArchive?: (task: Task) => boolean;
   dryRun?: boolean;
 }): Promise<SyncArchived[]> {
   const store = new TaskStore(opts.projectDir);
@@ -339,6 +343,7 @@ export async function archiveRemovedGoalTasks(opts: {
     const id = task.frontmatter.id;
     const status = task.frontmatter.status;
     if (status === "pending" || status === "draft") {
+      if (opts.mayArchive && !opts.mayArchive(task)) continue;
       if (!opts.dryRun) {
         await store.transition(id, "archived", (t) => {
           addLabel(t, "goal-removed");
@@ -769,6 +774,7 @@ async function syncOnce(
     tasks: mine,
     stopRunning: opts.stopRunning,
     mayStop: opts.mayStop,
+    mayArchive: opts.mayArchive,
     dryRun: dry,
   });
 

@@ -167,7 +167,7 @@ export class PlanService {
     if (plan.status === "active" && (await this.restricted(actor))) {
       throw new OpError(
         403,
-        "This client has review trust and cannot change an active plan; set it back to draft (PUT status draft) or ask a human",
+        "This client has review trust and cannot change an active plan; ask a human",
         "forbidden_trust",
       );
     }
@@ -341,6 +341,13 @@ export class PlanService {
       this.store.modify(
         planId,
         async (plan) => {
+          if (selfDraft && plan.status === "active" && plan.source.client !== actor?.id) {
+            throw new OpError(
+              403,
+              "This client has review trust and may set back to draft only a plan it created",
+              "forbidden_trust",
+            );
+          }
           if (!selfDraft) await this.assertMayEdit(plan, actor);
           const next: Plan = {
             ...plan,
@@ -418,7 +425,8 @@ export class PlanService {
         },
       );
     }
-    const mayStop = opts.stopRunning ? await this.stopFilter(actor) : undefined;
+    const owned = await this.stopFilter(actor);
+    const mayStop = opts.stopRunning ? owned : undefined;
     return this.run(async () => {
       const plan = await this.store.modify(
         planId,
@@ -455,6 +463,7 @@ export class PlanService {
         plan,
         stopRunning: opts.stopRunning,
         mayStop,
+        mayArchive: owned,
       });
       return plan;
     });
@@ -631,7 +640,8 @@ export class PlanService {
       );
     }
     const restricted = await this.restricted(actor);
-    const mayStop = opts.stopRunning ? await this.stopFilter(actor) : undefined;
+    const owned = await this.stopFilter(actor);
+    const mayStop = opts.stopRunning ? owned : undefined;
     return this.run(async () => {
       const plan = await this.store.require(planId);
       if (plan.status !== "active") throw new PlanNotActiveError(plan.id, plan.status);
@@ -649,6 +659,7 @@ export class PlanService {
         dryRun: opts.dryRun,
         stopRunning: opts.stopRunning,
         mayStop,
+        mayArchive: owned,
         createStatus,
         by: actor?.id ?? "local",
       });
