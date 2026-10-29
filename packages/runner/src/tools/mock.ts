@@ -27,6 +27,8 @@ export interface MockState {
   calls: Role[];
   /** Every system prompt the mock has received, with its role. */
   systemPrompts: { role: Role; systemPrompt: string }[];
+  /** Questions the planner raises once in its refinement pass (the prompt has an existing plan). */
+  refinementQuestions: string[];
   /** Questions a non-planner role raises on its FIRST run (routed to the planner). */
   roleQuestions: Partial<Record<Role, string[]>>;
   /** Internal: simulated transient failures already thrown, per role. */
@@ -51,6 +53,7 @@ export const mockState: MockState = {
   calls: [],
   systemPrompts: [],
   roleQuestions: {},
+  refinementQuestions: [],
   transientCounts: new Map(),
   stallCounts: new Map(),
   resumeSupported: true,
@@ -68,6 +71,7 @@ export function resetMock(): void {
   mockState.calls = [];
   mockState.systemPrompts = [];
   mockState.roleQuestions = {};
+  mockState.refinementQuestions = [];
   mockState.transientCounts = new Map();
   mockState.stallCounts = new Map();
   mockState.resumeSupported = true;
@@ -239,6 +243,23 @@ export class MockTool implements Tool {
     if (opts.role === "planner") {
       mockState.roundCounts.delete(`${opts.cwd}|observer`);
       mockState.roundCounts.delete(`${opts.cwd}|reviewer`);
+    }
+
+    // The refinement pass asks its configured questions once.
+    if (
+      opts.role === "planner" &&
+      mockState.refinementQuestions.length > 0 &&
+      opts.prompt.includes("## Existing plan")
+    ) {
+      const qs = [...mockState.refinementQuestions];
+      mockState.refinementQuestions = [];
+      const output = `MOCK planner refinement questions\n${usageLineFor(opts.prompt)}`;
+      return withQuestions({
+        output,
+        sessionId,
+        report: `Refinement needs clarification.\n\n${formatQuestions(qs)}`,
+        usage: parseUsage(output),
+      });
     }
 
     // Planner asks its configured questions exactly once (ask-once-then-resume).

@@ -701,17 +701,10 @@ export class Pipeline {
       record(planResult);
       recordBody(`### Planner\n${planResult.output}`);
 
-      // Park if the planner raised questions (and they aren't already answered).
-      if (
-        planResult.questions &&
-        planResult.questions.length > 0 &&
-        task.frontmatter.questions !== "answered"
-      ) {
-        // Keep the worktree: the task will resume here, and any prior-iteration
-        // work must survive until the task finally completes.
-        await this.mirrorLiveLog(task).catch(() => {});
-        await this.persistUsage(task, usages);
-        return { kind: "parked", task, questions: planResult.questions };
+      // Park if the planner raised questions.
+      // A planner that asks again on a resumed run parks the task again.
+      if (planResult.questions && planResult.questions.length > 0) {
+        return this.park(task, usages, planResult.questions);
       }
 
       await writeFile(join(this.areaDir(id), "plan.md"), planResult.report + "\n", "utf8");
@@ -728,6 +721,9 @@ export class Pipeline {
       });
       record(refineResult);
       recordBody(`### Planner (refinement)\n${refineResult.output}`);
+      if (refineResult.questions && refineResult.questions.length > 0) {
+        return this.park(task, usages, refineResult.questions);
+      }
       await writeFile(join(this.areaDir(id), "plan.md"), refineResult.report + "\n", "utf8");
       await this.writeReport(
         task,
@@ -943,6 +939,20 @@ export class Pipeline {
         ...(overBudget ? { budget: true as const } : {}),
       };
     }
+  }
+
+  /**
+   * Park the task on planner questions. Keeps the worktree: the task will resume here, and any
+   * prior-iteration work must survive until the task finally completes.
+   */
+  private async park(
+    task: Task,
+    usages: TokenUsage[],
+    questions: string[],
+  ): Promise<PipelineOutcome> {
+    await this.mirrorLiveLog(task).catch(() => {});
+    await this.persistUsage(task, usages);
+    return { kind: "parked", task, questions };
   }
 
   /**

@@ -239,6 +239,35 @@ describe("RunnerEngine integration (mock tool)", () => {
     expect(done?.frontmatter.questions).toBe("answered");
   });
 
+  it("parks again when the planner asks again on a resumed run", async () => {
+    mockState.plannerQuestions = ["Which database?"];
+    await store.create(newTask(fm(), "Build with a DB."));
+    await engine.tick();
+    await store.transition("t1", "pending", (t) => {
+      t.body.answers = "Use Postgres.";
+      t.frontmatter.questions = "answered";
+    });
+    mockState.plannerQuestions = ["Which version?"];
+    mockState.hasAsked = false;
+    const second = await engine.tick();
+    expect(second.kind === "ran" ? second.outcome.kind : second.kind).toBe("parked");
+    const parked = (await store.get("t1"))!;
+    expect(parked.frontmatter.status).toBe("action");
+    expect(parked.frontmatter.questions).toBe("pending");
+    expect(parked.body.questions).toContain("Which version?");
+  });
+
+  it("parks on questions raised in the refinement pass", async () => {
+    mockState.refinementQuestions = ["Which region?"];
+    await store.create(newTask(fm(), "Build it."));
+    const r = await engine.tick();
+    expect(r.kind === "ran" ? r.outcome.kind : r.kind).toBe("parked");
+    const parked = (await store.get("t1"))!;
+    expect(parked.frontmatter.status).toBe("action");
+    expect(parked.body.questions).toContain("Which region?");
+    expect(mockState.calls).toEqual(["planner", "planner"]);
+  });
+
   it("a codex-shaped planner report with a questions block parks the task", async () => {
     const prev = process.env.BOOF_RUNNER_CODEX_BIN;
     const bin = join(dataRoot, "codex");
