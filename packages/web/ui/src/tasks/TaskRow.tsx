@@ -120,19 +120,19 @@ export function TaskRow({
         selected && "bg-accent outline-2 -outline-offset-2 outline-accent-brand",
       )}
     >
-      <span className="flex w-5 shrink-0 justify-center">{handle}</span>
-      <span className="w-20 shrink-0 truncate">
+      <span className="flex w-4 shrink-0 min-[720px]:w-5 justify-center">{handle}</span>
+      <span className="w-14 shrink-0 truncate min-[720px]:w-20">
         <Marker entry={entry} pid={pid} />
       </span>
       <button
         type="button"
         onClick={open}
-        className="min-w-0 flex-1 truncate bg-transparent p-0 text-left text-[length:inherit] font-medium text-ink hover:underline"
+        className="min-w-[8rem] flex-1 truncate bg-transparent p-0 text-left text-[length:inherit] font-medium text-ink hover:underline"
       >
         {title}
       </button>
       {f && (
-        <span className="hidden w-52 shrink-0 items-center gap-1.5 truncate text-[length:var(--text-meta)] text-ink-muted min-[720px]:flex">
+        <span className="hidden w-auto max-w-52 shrink items-center gap-1.5 truncate text-[length:var(--text-meta)] text-ink-muted min-[1100px]:flex">
           <span>p{f.priority}</span>
           {f.labels.map((l) => (
             <span key={l} className="rounded border border-line px-1">
@@ -141,7 +141,7 @@ export function TaskRow({
           ))}
         </span>
       )}
-      <span className="flex w-24 shrink-0 justify-end">
+      <span className="flex shrink-0 justify-end min-[720px]:w-24">
         {action && (
           <Button size="sm" variant="outline" onClick={action.run}>
             {action.label}
