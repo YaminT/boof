@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/ui/tooltip";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { AddProjectModal } from "../components/Projects.js";
+import { CommandPalette, SearchButton } from "./CommandPalette.js";
 import { BottomBar } from "./BottomBar.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { Rail } from "./Rail.js";
@@ -33,6 +34,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [adding, setAdding] = useState(false);
+  const [searching, setSearching] = useState(false);
   const pid = selected?.id ?? null;
   const counts: NavCounts = {
     tasks: data.tasks.filter((t) => OPEN_STATUSES.has(t.frontmatter.status)).length,
@@ -76,6 +78,7 @@ export function AppShell({
           projectMenu={projectMenu()}
           footer={
             <>
+              <SearchButton onClick={() => setSearching(true)} withShortcut />
               {runner()}
               <ThemeMenu />
             </>
@@ -90,11 +93,25 @@ export function AppShell({
           go={go}
           moreContent={(close) => (
             <>
+              <SearchButton
+                onClick={() => {
+                  close();
+                  setSearching(true);
+                }}
+              />
               {projectMenu(close)}
               {runner(close)}
               <ThemeMenu onPicked={close} />
             </>
           )}
+        />
+        <CommandPalette
+          data={data}
+          projects={projects}
+          currentPid={pid}
+          navigate={navigate}
+          open={searching}
+          onOpenChange={setSearching}
         />
         {adding && (
           <AddProjectModal
