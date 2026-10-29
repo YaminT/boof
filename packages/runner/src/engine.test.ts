@@ -1910,6 +1910,37 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
     expect((await b.store.get("b1"))?.body.log).toContain("stopped by server shutdown");
   });
 
+  it("asks both projects to stop when they run a task with the same id", async () => {
+    const b = await addProject("b");
+    await store.create(newTask(fm({ id: "same" }), "a"));
+    await b.store.create(newTask(fm({ id: "same" }), "b"));
+    let up = 0;
+    const ups = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "planner") return;
+      ups[up++]!.resolve();
+      await hold;
+    };
+    const runA = engine.tick();
+    await ups[0]!.promise;
+    const runB = engine.tick();
+    await ups[1]!.promise;
+    const down = engine.shutdown(10_000);
+    await vi.waitFor(
+      () => {
+        expect(existsSync(taskStopRequestPath(projectDir, "same"))).toBe(true);
+        expect(existsSync(taskStopRequestPath(b.dir, "same"))).toBe(true);
+      },
+      { timeout: 5000 },
+    );
+    release();
+    await runA;
+    await runB;
+    expect(await down).toEqual({ stopped: ["same", "same"], timedOut: false });
+  });
+
   describe("recovery of interrupted tasks", () => {
     /** A task a dead runner left in running: worktree, live log, no pipeline driving it. */
     const crash = async (id = "t1", withLog = true) => {

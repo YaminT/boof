@@ -576,13 +576,18 @@ export class RunnerEngine {
   async shutdown(graceMs = 30_000): Promise<{ stopped: string[]; timedOut: boolean }> {
     this.stop();
     const stopped: string[] = [];
+    const asked = new Set<string>();
     const deadline = Date.now() + graceMs;
     for (;;) {
       // A task can start while we drain (tick() does not check stopRequested): ask it too.
       for (const [projectId, id] of [...this.runningTasks]) {
-        if (stopped.includes(id)) continue;
-        await this.requestStop(projectId, id);
-        stopped.push(id);
+        // Ids are per project: dedupe on both. A failed write is retried on the next pass.
+        const key = `${projectId}/${id}`;
+        if (asked.has(key)) continue;
+        if (await this.requestStop(projectId, id)) {
+          asked.add(key);
+          stopped.push(id);
+        }
       }
       if (this.inflight.size === 0) return { stopped, timedOut: false };
       const left = deadline - Date.now();
@@ -601,7 +606,7 @@ export class RunnerEngine {
   }
 
   /** Write the shutdown stop request for a running task and note it in its log. */
-  private async requestStop(projectId: string, id: string): Promise<void> {
+  private async requestStop(projectId: string, id: string): Promise<boolean> {
     const dir = this.projects.dir(projectId);
     try {
       await mkdir(taskControlDir(dir, id), { recursive: true });
@@ -615,8 +620,10 @@ export class RunnerEngine {
         `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
         "utf8",
       ).catch(() => {});
+      return true;
     } catch (err) {
-      console.error(`could not request stop for ${id}:`, err);
+      console.error(`could not request stop for ${projectId}/${id}:`, err);
+      return false;
     }
   }
 
