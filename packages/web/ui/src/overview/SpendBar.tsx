@@ -8,6 +8,7 @@ export function SpendBar({ budget, pid }: { budget: BudgetStatus | null; pid: st
   const spend = spendFor(budget, pid);
   if (!spend) return null;
   const f = spend.fraction;
+  const pct = f === null ? 0 : Math.min(100, Math.max(0, Math.round(f * 100)));
   const tone = spend.exceeded
     ? "bg-failed"
     : f !== null && f >= 0.8
@@ -26,10 +27,10 @@ export function SpendBar({ budget, pid }: { budget: BudgetStatus | null; pid: st
           aria-label="Spend today"
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-valuenow={Math.round(f * 100)}
+          aria-valuenow={pct}
           className="h-1 w-48 overflow-hidden rounded-full bg-line"
         >
-          <div className={`h-full ${tone}`} style={{ width: `${f * 100}%` }} />
+          <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
         </div>
       )}
     </div>

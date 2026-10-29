@@ -22,7 +22,7 @@ export function UpNext({ pid, queued }: { pid: string; queued: TaskView[] }) {
               {t.frontmatter.title}
             </a>
             <span className="text-right text-ink-muted tabular-nums">
-              P{t.frontmatter.priority}
+              p{t.frontmatter.priority}
             </span>
           </li>
         ))}

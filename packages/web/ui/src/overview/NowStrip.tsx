@@ -39,7 +39,7 @@ export function NowStrip({ pid, groups }: { pid: string; groups: TaskGroups }) {
       {running.length > 0 && (
         <a href={href} className="text-ink no-underline hover:underline">
           {single
-            ? `Running: ${single.frontmatter.title}${step ? ` · ${step}` : ""}`
+            ? `Running: ${single.frontmatter.title}${step ? ` (${step})` : ""}`
             : `Running: ${running.length} tasks`}
         </a>
       )}
