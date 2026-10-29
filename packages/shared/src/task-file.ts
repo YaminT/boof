@@ -22,8 +22,20 @@ const REPORT_SECTIONS = ["planner", "developer", "observer", "reviewer"];
  * header as a section boundary ONLY when its title is one of `allowed`. The
  * task body has a fixed, known set of sections, so report/plan content may
  * freely contain its own `##`/`#` headers without breaking the parse.
+ *
+ * `repeat` says which occurrence of a reserved heading owns the section. New files escape such
+ * headings on write, so this only matters for files written before that. Top sections use
+ * "first": the sections after a forging one (Log, injected text) are agent output, and the real
+ * heading comes first. Report subheadings use "last": a forgery can only come from an earlier
+ * report (planner, developer, observer) and the real heading follows it, which matters most for
+ * the reviewer verdict, the last report.
  */
-function splitSections(md: string, level: 2 | 3, allowed: string[]): Map<string, string> {
+function splitSections(
+  md: string,
+  level: 2 | 3,
+  allowed: string[],
+  repeat: "first" | "last",
+): Map<string, string> {
   const prefix = level === 2 ? "## " : "### ";
   const allow = new Set(allowed);
   const out = new Map<string, string>();
@@ -36,8 +48,7 @@ function splitSections(md: string, level: 2 | 3, allowed: string[]): Map<string,
   for (const line of lines) {
     if (line.startsWith(prefix)) {
       const title = line.slice(prefix.length).trim().toLowerCase();
-      // Only the first occurrence of a heading opens a section; a repeat is content.
-      if (allow.has(title) && !out.has(title) && title !== current) {
+      if (allow.has(title) && (repeat === "last" || !out.has(title)) && title !== current) {
         flush();
         current = title;
         buf = [];
@@ -56,7 +67,7 @@ export function parseTask(raw: string): Task {
   const frontmatter = TaskFrontmatterSchema.parse(parsed.data);
   const body = emptyBody();
 
-  const sections = splitSections(parsed.content, 2, TOP_SECTIONS);
+  const sections = splitSections(parsed.content, 2, TOP_SECTIONS, "first");
   body.prompt = sections.get("prompt") ?? "";
   body.command = sections.get("command") ?? "";
   body.questions = sections.get("questions") ?? "";
@@ -66,7 +77,7 @@ export function parseTask(raw: string): Task {
 
   const reportsRaw = sections.get("reports") ?? "";
   if (reportsRaw) {
-    const sub = splitSections(reportsRaw, 3, REPORT_SECTIONS);
+    const sub = splitSections(reportsRaw, 3, REPORT_SECTIONS, "last");
     body.reports.planner = sub.get("planner") ?? "";
     body.reports.developer = sub.get("developer") ?? "";
     body.reports.observer = sub.get("observer") ?? "";
