@@ -6,9 +6,10 @@ import {
   SettingsPatchSchema,
   TokenUsageSchema,
 } from "@boof-runner/shared";
-import { defineOp } from "../define-op.js";
+import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { buildModelDetails } from "../services/model-details.js";
+import type { Client } from "@boof-runner/shared";
 import { CommandBody, CreateClientBody } from "../validation.js";
 import {
   CommandTemplateSchema,
@@ -357,10 +358,63 @@ export const commandsDelete = defineOp({
 
 // --- API clients (never exposes key hashes) ---
 
+/** True when `expiresAt` (none = never) is later than the caller's cap (none = no cap). */
+function outlivesCap(expiresAt: string | undefined, cap: string | undefined): boolean {
+  if (!cap) return false;
+  return !expiresAt || Date.parse(expiresAt) > Date.parse(cap);
+}
+
+/** Why `me` may not manage `target` (rotate, revoke, list), or null when it may. */
+async function manageRefusal(ctx: OpContext, target: Client): Promise<OpError | null> {
+  const me = ctx.principal;
+  if (me.kind === "client" && target.id === me.id) return null;
+  const missing = target.scopes.filter((sc) => !hasScope(me, sc));
+  if (missing.length > 0) {
+    return new OpError(
+      403,
+      `Client holds scopes you do not hold: ${missing.join(", ")}`,
+      "forbidden_scope",
+      { scopes: missing },
+    );
+  }
+  if (target.trust === "trusted" && me.trust !== "trusted") {
+    return new OpError(403, "Client has trusted trust; you do not", "forbidden_trust");
+  }
+  const mine = me.projects;
+  if (mine !== "*") {
+    const outside = target.projects === "*" ? ["*"] : target.projects.filter((p) => !mine.has(p));
+    if (outside.length > 0) {
+      return new OpError(403, "Client reaches projects you may not access", "forbidden_project", {
+        projects: outside,
+      });
+    }
+  }
+  const cap = me.kind === "client" ? (await ctx.authStore.get(me.id))?.expiresAt : undefined;
+  if (outlivesCap(target.expiresAt, cap)) {
+    return new OpError(403, "Client outlives your key", "forbidden_scope");
+  }
+  return null;
+}
+
+/** Refuses (403) managing a client with more reach than the caller; a principal may manage itself. */
+async function assertMayManage(ctx: OpContext, target: Client): Promise<void> {
+  const err = await manageRefusal(ctx, target);
+  if (err) throw err;
+}
+
+async function visibleClients(ctx: OpContext) {
+  const out = [];
+  for (const { keyHash: _k, ...c } of await ctx.authStore.list()) {
+    if ((await manageRefusal(ctx, { ...c, keyHash: _k })) === null) out.push(c);
+  }
+  return out;
+}
+
 export const clientsList = defineOp({
   name: "auth.clients.list",
   title: "List API clients",
-  description: "Lists the API clients without their keys. No input.",
+  description:
+    "Lists the API clients without their keys. No input. Shows only the clients the caller may manage (and itself).",
   scope: "auth:admin",
   projectScoped: false,
   input: z.strictObject({}),
@@ -368,7 +422,7 @@ export const clientsList = defineOp({
   rest: { method: "GET", path: "/auth/clients" },
   mcp: { expose: false },
   handler: async (ctx) => ({
-    clients: (await ctx.authStore.list()).map(({ keyHash: _k, ...c }) => c),
+    clients: await visibleClients(ctx),
   }),
 });
 
@@ -440,7 +494,7 @@ export const clientsCreate = defineOp({
     if (cap) {
       if (!expiresAt) {
         expiresAt = cap;
-      } else if (Date.parse(expiresAt) > Date.parse(cap)) {
+      } else if (outlivesCap(expiresAt, cap)) {
         throw new OpError(400, "expiresIn outlives the caller's key", "invalid_input", [
           {
             path: "expiresIn",
@@ -463,7 +517,8 @@ export const clientsCreate = defineOp({
 export const clientsRevoke = defineOp({
   name: "auth.clients.revoke",
   title: "Revoke an API client",
-  description: "Revokes a client's key for good. Input: clientId. Marks the client revoked.",
+  description:
+    "Revokes a client's key for good. Input: clientId. Marks the client revoked. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.",
   scope: "auth:admin",
   projectScoped: false,
   input: z.strictObject({ clientId: clientIdParam }),
@@ -471,6 +526,9 @@ export const clientsRevoke = defineOp({
   rest: { method: "POST", path: "/auth/clients/{clientId}/revoke" },
   mcp: { expose: false, annotations: DESTRUCTIVE },
   handler: async (ctx, input) => {
+    const target = await ctx.authStore.get(input.clientId);
+    if (!target) throw new OpError(404, "Client not found");
+    await assertMayManage(ctx, target);
     const client = await ctx.authStore.revoke(input.clientId);
     if (!client) throw new OpError(404, "Client not found");
     return { client };
@@ -481,7 +539,7 @@ export const clientsRotate = defineOp({
   name: "auth.clients.rotate",
   title: "Rotate an API client's key",
   description:
-    "Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once.",
+    "Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.",
   scope: "auth:admin",
   projectScoped: false,
   input: z.strictObject({ clientId: clientIdParam }),
@@ -489,6 +547,9 @@ export const clientsRotate = defineOp({
   rest: { method: "POST", path: "/auth/clients/{clientId}/rotate" },
   mcp: { expose: false, annotations: WRITE },
   handler: async (ctx, input) => {
+    const target = await ctx.authStore.get(input.clientId);
+    if (!target) throw new OpError(404, "Client not found or revoked");
+    await assertMayManage(ctx, target);
     const out = await ctx.authStore.rotate(input.clientId);
     if (!out) throw new OpError(404, "Client not found or revoked");
     return out;

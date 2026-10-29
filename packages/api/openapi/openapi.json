@@ -2218,7 +2218,7 @@
     },
     "/auth/clients": {
       "get": {
-        "description": "Lists the API clients without their keys. No input.",
+        "description": "Lists the API clients without their keys. No input. Shows only the clients the caller may manage (and itself).",
         "operationId": "auth.clients.list",
         "parameters": [],
         "responses": {
@@ -2387,7 +2387,7 @@
     },
     "/auth/clients/{clientId}/revoke": {
       "post": {
-        "description": "Revokes a client's key for good. Input: clientId. Marks the client revoked.",
+        "description": "Revokes a client's key for good. Input: clientId. Marks the client revoked. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.",
         "operationId": "auth.clients.revoke",
         "parameters": [
           {
@@ -2442,7 +2442,7 @@
     },
     "/auth/clients/{clientId}/rotate": {
       "post": {
-        "description": "Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once.",
+        "description": "Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.",
         "operationId": "auth.clients.rotate",
         "parameters": [
           {

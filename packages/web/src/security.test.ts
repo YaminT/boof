@@ -748,6 +748,63 @@ describe("auth admin API", () => {
   });
 });
 
+describe("client management is capped by the caller", () => {
+  it("a restricted auth:admin key cannot rotate, revoke or list a wider client", async () => {
+    peer = REMOTE;
+    const boss = await store.create({ name: "boss", scopes: ["admin"], trust: "trusted" });
+    const expiry = new Date(Date.now() + 86_400_000).toISOString();
+    const lim = await store.create({
+      name: "lim",
+      scopes: ["auth:admin", "tasks:read"],
+      projects: ["demo"],
+      expiresAt: expiry,
+    });
+    const peerKid = await store.create({
+      name: "peer",
+      scopes: ["tasks:read"],
+      projects: ["demo"],
+      expiresAt: expiry,
+    });
+    const app = build();
+    const rot = await call(app, `/api/auth/clients/${boss.client.id}/rotate`, post({}), lim.key);
+    expect(rot.status).toBe(403);
+    const rev = await call(app, `/api/auth/clients/${boss.client.id}/revoke`, post({}), lim.key);
+    expect(rev.status).toBe(403);
+    expect((await call(app, "/api/webhooks", {}, boss.key)).status).toBe(200);
+    const list = await (await call(app, "/api/auth/clients", {}, lim.key)).json();
+    const ids = list.clients.map((c: { id: string }) => c.id).sort();
+    expect(ids).toEqual([lim.client.id, peerKid.client.id].sort());
+    const self = await call(app, `/api/auth/clients/${lim.client.id}/rotate`, post({}), lim.key);
+    expect(self.status).toBe(200);
+    const newKey = (await self.json()).key;
+    expect(
+      (await call(app, `/api/auth/clients/${peerKid.client.id}/rotate`, post({}), newKey)).status,
+    ).toBe(200);
+  });
+
+  it("refuses per failing dimension", async () => {
+    peer = REMOTE;
+    const lim = await store.create({
+      name: "lim",
+      scopes: ["auth:admin"],
+      projects: ["demo"],
+      trust: "review",
+    });
+    const mk = (name: string, extra: object) =>
+      store.create({ name, scopes: [], ...extra } as never);
+    const scopeWide = await mk("scope-wide", { scopes: ["tasks:write"], projects: ["demo"] });
+    const trustWide = await mk("trust-wide", { trust: "trusted", projects: ["demo"] });
+    const projWide = await mk("proj-wide", { projects: ["demo", "other"] });
+    const app = build();
+    const code = async (id: string) =>
+      (await (await call(app, `/api/auth/clients/${id}/revoke`, post({}), lim.key)).json()).error
+        .code;
+    expect(await code(scopeWide.client.id)).toBe("forbidden_scope");
+    expect(await code(trustWide.client.id)).toBe("forbidden_trust");
+    expect(await code(projWide.client.id)).toBe("forbidden_project");
+  });
+});
+
 describe("server binding", () => {
   it("assertBindAllowed: loopback always ok; others need required mode and an active client", async () => {
     const settings = await service.loadSettings();
