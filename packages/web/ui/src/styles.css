@@ -3,11 +3,11 @@
   --bg: #e9edf2;
   --panel: #ffffff;
   --inset: #f3f6f9;
-  --border: #dbe2ea;
+  --legacy-border: #dbe2ea;
   --border-strong: #c7d0db;
   --text: #1d2733;
-  --muted: #69747f;
-  --accent: #3b5a73;
+  --legacy-muted: #69747f;
+  --legacy-accent: #3b5a73;
   --accent-hover: #2f4a60;
   --accent-weak: rgba(59, 90, 115, 0.1);
   --green: #2f8055;
@@ -15,7 +15,7 @@
   --amber: #a9791f;
   --shadow-sm: 0 1px 2px rgba(28, 39, 51, 0.05);
   --shadow-md: 0 1px 2px rgba(28, 39, 51, 0.04), 0 4px 14px rgba(28, 39, 51, 0.06);
-  --radius: 10px;
+  --legacy-radius: 10px;
 }
 
 * {
@@ -24,15 +24,9 @@
 
 body {
   margin: 0;
-  font-family:
-    "Inter",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  font-family: var(--font-sans);
+  background: var(--page);
+  color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
@@ -73,7 +67,7 @@ h4 {
   gap: 14px;
   padding: 0 6px 22px;
   margin-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
 }
 .brand-logo {
   width: 64px;
@@ -81,7 +75,7 @@ h4 {
   border-radius: 50%;
   object-fit: cover;
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   box-shadow: var(--shadow-sm);
 }
 .brand-text {
@@ -96,7 +90,7 @@ h4 {
 }
 .brand-sub {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--legacy-muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -112,7 +106,7 @@ h4 {
   gap: 8px;
   background: transparent;
   border: none;
-  color: var(--muted);
+  color: var(--legacy-muted);
   text-align: left;
   padding: 10px 14px;
   border-radius: 8px;
@@ -144,7 +138,7 @@ main {
 }
 
 .badge {
-  background: var(--accent);
+  background: var(--legacy-accent);
   color: #fff;
   border-radius: 10px;
   padding: 0 7px;
@@ -158,7 +152,7 @@ button {
   font-family: inherit;
 }
 button.primary {
-  background: var(--accent);
+  background: var(--legacy-accent);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -232,7 +226,7 @@ button.danger {
   animation: runner-pulse 1.8s ease-out infinite;
 }
 .runner-toggle.off {
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 @keyframes runner-pulse {
   0% {
@@ -273,8 +267,8 @@ button.danger {
 }
 .modal {
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--legacy-border);
+  border-radius: var(--legacy-radius);
   padding: 22px;
   width: 380px;
   max-width: calc(100vw - 32px);
@@ -293,7 +287,7 @@ button.danger {
 .modal-close {
   background: transparent;
   border: none;
-  color: var(--muted);
+  color: var(--legacy-muted);
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
@@ -323,8 +317,8 @@ ul {
   gap: 12px;
   padding: 12px 14px;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--legacy-border);
+  border-radius: var(--legacy-radius);
   margin-bottom: 8px;
   box-shadow: var(--shadow-sm);
   transition:
@@ -337,7 +331,7 @@ ul {
 }
 .drag {
   cursor: grab;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .task-title {
   flex: 1;
@@ -350,15 +344,15 @@ ul {
   cursor: pointer;
 }
 .task-title:hover {
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .priority {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .runs {
-  color: var(--accent);
+  color: var(--legacy-accent);
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -374,8 +368,8 @@ ul {
   cursor: pointer;
 }
 .retry-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--legacy-accent);
+  color: var(--legacy-accent);
 }
 .btn-secondary,
 .btn-icon {
@@ -390,8 +384,8 @@ ul {
 }
 .btn-secondary:hover,
 .btn-icon:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--legacy-accent);
+  color: var(--legacy-accent);
 }
 .btn-secondary:disabled,
 .btn-icon:disabled {
@@ -400,7 +394,7 @@ ul {
 }
 .btn-secondary:focus-visible,
 .btn-icon:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--legacy-accent);
   outline-offset: 2px;
 }
 .btn-icon {
@@ -424,15 +418,15 @@ label small {
 }
 .label {
   background: var(--inset);
-  border: 1px solid var(--border);
-  color: var(--muted);
+  border: 1px solid var(--legacy-border);
+  color: var(--legacy-muted);
   border-radius: 20px;
   padding: 1px 9px;
   font-size: 12px;
 }
 .skip {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--legacy-muted);
   display: flex;
   gap: 4px;
   align-items: center;
@@ -446,13 +440,13 @@ label small {
   border-radius: 5px;
   font-weight: 600;
   background: var(--inset);
-  border: 1px solid var(--border);
-  color: var(--muted);
+  border: 1px solid var(--legacy-border);
+  color: var(--legacy-muted);
 }
 .status-badge.running {
   background: var(--accent-weak);
   border-color: transparent;
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .status-badge.done {
   background: rgba(47, 128, 85, 0.12);
@@ -479,8 +473,8 @@ label small {
 }
 .archive-btn {
   background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted);
+  border: 1px solid var(--legacy-border);
+  color: var(--legacy-muted);
   border-radius: 6px;
   padding: 3px 8px;
   font-size: 12px;
@@ -492,8 +486,8 @@ label small {
 }
 .delete-btn {
   background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted);
+  border: 1px solid var(--legacy-border);
+  color: var(--legacy-muted);
   border-radius: 6px;
   padding: 3px 8px;
   font-size: 12px;
@@ -505,7 +499,7 @@ label small {
 }
 
 .group h3 {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 12px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -513,7 +507,7 @@ label small {
 }
 
 .empty {
-  color: var(--muted);
+  color: var(--legacy-muted);
   text-align: center;
   padding: 48px;
 }
@@ -522,7 +516,7 @@ label small {
 label {
   display: block;
   margin-bottom: 14px;
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 13px;
   font-weight: 500;
 }
@@ -547,7 +541,7 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--legacy-accent);
   box-shadow: 0 0 0 3px var(--accent-weak);
 }
 textarea {
@@ -572,8 +566,8 @@ input[type="number"] {
 .commands-tab,
 .actions-tab {
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--legacy-border);
+  border-radius: var(--legacy-radius);
   padding: 24px;
   box-shadow: var(--shadow-md);
 }
@@ -619,7 +613,7 @@ input[type="number"] {
 }
 .editor-actions button.primary {
   border: none;
-  background: var(--accent);
+  background: var(--legacy-accent);
   color: #fff;
   font-weight: 600;
 }
@@ -637,7 +631,7 @@ input[type="number"] {
 .reports pre,
 .questions pre {
   background: var(--inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   padding: 12px;
   border-radius: 8px;
   overflow-x: auto;
@@ -647,7 +641,7 @@ input[type="number"] {
 /* ---------- Agent output panel ---------- */
 .output {
   margin-top: 24px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--legacy-border);
   padding-top: 16px;
 }
 .output-head {
@@ -666,12 +660,12 @@ input[type="number"] {
   letter-spacing: 0.04em;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
+  border: 1px solid var(--legacy-border);
+  color: var(--legacy-muted);
 }
 .status-pill.status-running {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--legacy-accent);
+  border-color: var(--legacy-accent);
 }
 .status-pill.status-failed {
   color: var(--red);
@@ -694,10 +688,10 @@ input[type="number"] {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-bottom: none;
   background: var(--inset);
-  color: var(--muted);
+  color: var(--legacy-muted);
   padding: 7px 14px;
   border-radius: 8px 8px 0 0;
   cursor: pointer;
@@ -715,12 +709,12 @@ input[type="number"] {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--legacy-accent);
 }
 .live-panel {
   background: var(--panel);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: var(--legacy-radius);
   margin-bottom: 14px;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
@@ -730,16 +724,16 @@ input[type="number"] {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
   font-size: 14px;
 }
 .live-head .live-step {
   margin-left: auto;
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--legacy-accent);
   background: var(--inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 999px;
   padding: 2px 10px;
 }
@@ -780,7 +774,7 @@ input[type="number"] {
   gap: 10px;
   align-items: end;
   padding: 12px 14px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--legacy-border);
   background: var(--panel);
 }
 .live-inject textarea {
@@ -816,7 +810,7 @@ input[type="number"] {
   margin: 0;
   padding: 0 14px 12px;
   font-size: 13px;
-  color: var(--muted, inherit);
+  color: var(--legacy-muted, inherit);
 }
 .live-error {
   margin: 0;
@@ -844,7 +838,7 @@ input[type="number"] {
 }
 .output-body {
   background: var(--inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 0 8px 8px 8px;
   padding: 14px;
   margin: 0;
@@ -881,12 +875,12 @@ input[type="number"] {
 }
 .commands-list code {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 
 /* ---------- Actions ---------- */
 .action-card {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
   padding-bottom: 20px;
   margin-bottom: 20px;
 }
@@ -895,7 +889,7 @@ input[type="number"] {
 .settings-page section {
   margin-bottom: 28px;
   padding-bottom: 22px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
 }
 .settings-page section:last-of-type {
   border-bottom: none;
@@ -919,7 +913,7 @@ input[type="number"] {
   color: var(--red);
 }
 .muted {
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .model-list {
   display: grid;
@@ -950,12 +944,12 @@ input[type="number"] {
   gap: 6px;
   max-width: 100%;
   overflow-wrap: anywhere;
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 8px;
   padding: 5px 8px;
   background: var(--panel);
   font-size: 12px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .model-chip .badge {
   margin-left: 0;
@@ -998,8 +992,8 @@ input[type="number"] {
   padding: 8px 14px;
   margin-bottom: 20px;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--legacy-border);
+  border-radius: var(--legacy-radius);
   box-shadow: var(--shadow-sm);
   transition:
     background 0.16s ease,
@@ -1028,7 +1022,7 @@ input[type="number"] {
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .topbar-dir-path {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -1050,7 +1044,7 @@ input[type="number"] {
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  color: var(--accent);
+  color: var(--legacy-accent);
   cursor: pointer;
   transition:
     background 0.12s ease,
@@ -1059,7 +1053,7 @@ input[type="number"] {
 }
 .icon-btn:hover {
   background: var(--accent-weak);
-  border-color: var(--accent);
+  border-color: var(--legacy-accent);
 }
 
 /* ---------- First-run gate ---------- */
@@ -1072,7 +1066,7 @@ input[type="number"] {
 }
 .gate-card {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 16px;
   box-shadow: var(--shadow-md);
   padding: 40px;
@@ -1084,7 +1078,7 @@ input[type="number"] {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   box-shadow: var(--shadow-sm);
   margin-bottom: 16px;
 }
@@ -1120,7 +1114,7 @@ input[type="number"] {
   position: relative;
 }
 .prompt-drop.dragging textarea {
-  border-color: var(--accent);
+  border-color: var(--legacy-accent);
   box-shadow: 0 0 0 3px var(--accent-weak);
 }
 .prompt-drop-hint {
@@ -1131,7 +1125,7 @@ input[type="number"] {
   justify-content: center;
   border-radius: 8px;
   background: var(--accent-weak);
-  color: var(--accent);
+  color: var(--legacy-accent);
   font-weight: 600;
   pointer-events: none;
 }
@@ -1179,7 +1173,7 @@ input[type="number"] {
   align-items: center;
   gap: 8px;
   background: var(--inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 10px;
   padding: 6px 10px 6px 6px;
   max-width: 240px;
@@ -1190,14 +1184,14 @@ input[type="number"] {
   border-radius: 6px;
   object-fit: cover;
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   flex: 0 0 auto;
 }
 .attachment-thumb-file {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .attachment-name {
   font-size: 12px;
@@ -1215,7 +1209,7 @@ input[type="number"] {
   height: 22px;
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: var(--legacy-muted);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -1229,8 +1223,8 @@ input[type="number"] {
   max-width: 440px;
   margin: 12vh auto;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--legacy-border);
+  border-radius: var(--legacy-radius);
   padding: 24px;
   box-shadow: var(--shadow-md);
 }
@@ -1248,7 +1242,7 @@ input[type="number"] {
   align-items: center;
   gap: 8px;
   padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
 }
 .client-state {
   font-size: 12px;
@@ -1288,7 +1282,7 @@ input[type="number"] {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--legacy-muted);
   border: 1px solid var(--border-strong);
 }
 .project-tag {
@@ -1297,7 +1291,7 @@ input[type="number"] {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--accent);
+  color: var(--legacy-accent);
   background: var(--accent-weak);
 }
 .path-row {
@@ -1342,7 +1336,7 @@ button:focus-visible,
 select:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--legacy-accent);
   outline-offset: 2px;
 }
 @media (max-width: 1100px) {
@@ -1356,14 +1350,14 @@ textarea:focus-visible {
   width: 100%;
   border-collapse: collapse;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--legacy-border);
+  border-radius: var(--legacy-radius);
 }
 .plan-table th,
 .plan-table td {
   text-align: left;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
   vertical-align: middle;
   font-size: 14px;
 }
@@ -1371,7 +1365,7 @@ textarea:focus-visible {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .plan-table select {
   width: auto;
@@ -1380,7 +1374,7 @@ textarea:focus-visible {
 }
 .plan-id,
 .plan-date {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 12px;
 }
 .plan-header {
@@ -1393,7 +1387,7 @@ textarea:focus-visible {
   margin: 0;
 }
 .plan-desc {
-  color: var(--muted);
+  color: var(--legacy-muted);
   margin: 0 0 12px;
 }
 .plan-actions {
@@ -1401,7 +1395,7 @@ textarea:focus-visible {
 }
 .plan-notice {
   background: var(--accent-weak);
-  color: var(--accent);
+  color: var(--legacy-accent);
   padding: 8px 12px;
   border-radius: 8px;
 }
@@ -1430,7 +1424,7 @@ textarea:focus-visible {
   font-size: 13px;
 }
 .plan-task-link:hover {
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .spec-row td {
   background: var(--inset);
@@ -1461,7 +1455,7 @@ textarea:focus-visible {
 .label.plan-chip {
   background: var(--accent-weak);
   border-color: transparent;
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .label.plan-label {
   border-color: var(--border-strong);
@@ -1505,7 +1499,7 @@ textarea:focus-visible {
   margin-top: 4px;
   border-radius: 3px;
   background: var(--inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   overflow: hidden;
 }
 .spend-fill {
@@ -1522,7 +1516,7 @@ textarea:focus-visible {
 /* ---------- Task changes (branch review) ---------- */
 .editor-views {
   margin: 0 0 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
 }
 .editor-views button {
   margin-bottom: -1px;
@@ -1563,7 +1557,7 @@ textarea:focus-visible {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .changes code,
 .diff-table,
@@ -1587,7 +1581,7 @@ textarea:focus-visible {
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 8px;
   max-height: 220px;
   overflow: auto;
@@ -1597,14 +1591,14 @@ textarea:focus-visible {
   align-items: baseline;
   gap: 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
   font-size: 13px;
 }
 .commit-list li:last-child {
   border-bottom: none;
 }
 .commit-sha {
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .commit-subject {
   flex: 1;
@@ -1627,7 +1621,7 @@ textarea:focus-visible {
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 8px;
   max-height: 560px;
   overflow: auto;
@@ -1639,7 +1633,7 @@ textarea:focus-visible {
   width: 100%;
   padding: 6px 10px;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--legacy-border);
   background: transparent;
   color: var(--text);
   font-size: 12.5px;
@@ -1653,7 +1647,7 @@ textarea:focus-visible {
   background: var(--accent-weak);
 }
 .file-item:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--legacy-accent);
   outline-offset: -2px;
 }
 .file-path {
@@ -1677,7 +1671,7 @@ textarea:focus-visible {
   font-size: 11px;
   font-weight: 700;
   background: var(--inset);
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .file-added {
   color: var(--green);
@@ -1695,7 +1689,7 @@ textarea:focus-visible {
 .changes-file-head {
   padding: 6px 12px;
   background: var(--inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
   overflow-wrap: anywhere;
@@ -1703,12 +1697,12 @@ textarea:focus-visible {
 .diff-box {
   overflow: auto;
   max-height: 640px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--legacy-border);
   border-radius: 0 0 8px 8px;
   background: var(--panel);
 }
 .diff-box:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--legacy-accent);
   outline-offset: 1px;
 }
 .diff-table {
@@ -1725,7 +1719,7 @@ textarea:focus-visible {
   width: 1%;
   min-width: 44px;
   text-align: right;
-  color: var(--muted);
+  color: var(--legacy-muted);
   user-select: none;
   background: var(--inset);
   font-variant-numeric: tabular-nums;
@@ -1755,10 +1749,10 @@ textarea:focus-visible {
 }
 .diff-hunk {
   background: var(--accent-weak);
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 .diff-note {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-style: italic;
 }
 .diff-empty {
