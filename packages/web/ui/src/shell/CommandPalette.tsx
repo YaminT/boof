@@ -129,11 +129,8 @@ export function CommandPalette({
         title="Search"
         description="Go to a page, switch project, open a task or run an action."
       >
-        <Command className="**:data-[selected=true]:bg-accent! **:data-[selected=false]:bg-transparent!">
-          <CommandInput
-            className="m-0! rounded-none! border-0! bg-transparent! py-0! pr-0! pl-2! shadow-none! outline-none!"
-            placeholder="Search pages, tasks and actions"
-          />
+        <Command>
+          <CommandInput placeholder="Search pages, tasks and actions" />
           <CommandList>
             <CommandEmpty>Nothing matches.</CommandEmpty>
             <CommandGroup heading="Go to">
@@ -268,7 +265,7 @@ export function CommandPalette({
               Stop this task? The agent stops and the task moves to stopped. Its worktree is kept.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="bg-transparent!">
+          <DialogFooter>
             <Button variant="outline" onClick={() => setStopping(null)}>
               Keep running
             </Button>
@@ -308,9 +305,7 @@ export function SearchButton({
       className="flex h-9 w-full items-center justify-between gap-2 rounded-lg px-2 text-left text-[length:var(--text-body)] text-ink-muted transition-colors hover:bg-accent hover:text-ink"
     >
       Search
-      {withShortcut && (
-        <Kbd className="border border-line bg-page text-ink-muted">{paletteShortcutLabel()}</Kbd>
-      )}
+      {withShortcut && <Kbd>{paletteShortcutLabel()}</Kbd>}
     </button>
   );
 }

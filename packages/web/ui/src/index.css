@@ -1,5 +1,8 @@
+@layer theme, base, legacy, components, utilities;
+
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./styles.css" layer(legacy);
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -59,7 +62,7 @@
   --panel: var(--surface);
   --inset: color-mix(in srgb, var(--page) 60%, var(--surface));
   --text: var(--ink);
-  --muted: var(--ink-muted);
+  --legacy-muted: var(--ink-muted);
   --border-strong: color-mix(in srgb, var(--line) 70%, var(--ink-muted));
   --legacy-border: var(--line);
   --legacy-accent: #3d7098;

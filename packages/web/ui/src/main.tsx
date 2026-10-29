@@ -8,7 +8,6 @@ import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./index.css";
-import "./styles.css";
 import { applyTheme, readThemePref } from "./lib/theme.js";
 
 applyTheme(readThemePref());
