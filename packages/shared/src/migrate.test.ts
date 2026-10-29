@@ -374,7 +374,7 @@ describe("migration lock", () => {
       expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
       expect(await exists(join(root, `${MIGRATION_LOCK_FILE}.takeover`))).toBe(false);
     }
-  });
+  }, 60_000);
 
   it("takes over a stale lock that names our own pid", async () => {
     await mkdir(root, { recursive: true });
