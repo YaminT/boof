@@ -138,6 +138,8 @@ export async function planCommand(
           id: planId,
           title: `Imported from ${project.name}`,
           status: "active",
+          // The CLI runs as the local owner, so the plan it activates is approved at once.
+          approvedBy: { principalId: "local", at: new Date().toISOString(), version: 1 },
           source: { kind: "repo-import", importedFrom: project.workingDirectory },
           goals: imported.goals,
         });

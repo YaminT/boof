@@ -143,6 +143,15 @@ describe("plan subcommands", () => {
     return { code, lines, errs };
   };
 
+  it("import creates an active plan that is already approved", async () => {
+    const projects = new ProjectStore(dataRoot);
+    await projects.create({ workingDirectory: repo, id: "demo" });
+    expect((await run(["import", "--project", "demo"])).code).toBe(0);
+    const plan = await new PlanStore(projects.dir("demo")).require("repo");
+    expect(plan.status).toBe("active");
+    expect(plan.approvedBy).toMatchObject({ principalId: "local" });
+  });
+
   it("import, sync --dry-run, sync, export", async () => {
     const projects = new ProjectStore(dataRoot);
     const project = await projects.create({ workingDirectory: repo, id: "demo" });

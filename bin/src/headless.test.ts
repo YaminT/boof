@@ -6,6 +6,7 @@ import {
   currentStatus,
   defaultSettings,
   parseGoal,
+  PlanStore,
   ProjectStore,
   SettingsStore,
   TaskStore,
@@ -407,6 +408,31 @@ describe("multi-project run and scan", () => {
       out: (c) => (output += c),
     });
     expect(output).not.toContain("runner.enabled");
+  });
+
+  it("scan leaves an approved active plan, and a re-scan approves one that lost its approval", async () => {
+    await mkdir(join(repo, "core"), { recursive: true });
+    await writeFile(join(repo, "core", "goal.boof.xml"), goalXml("Core", "plan"), "utf8");
+    const first = await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+    const plans = new PlanStore(projectsOf().dir(first.projectId!));
+    const plan = await plans.require("repo");
+    expect(plan.status).toBe("active");
+    expect(plan.approvedBy).toMatchObject({ principalId: "local" });
+    const approval = plan.approvedBy;
+
+    // a re-scan of an approved plan keeps the original approval
+    await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+    expect((await plans.require("repo")).approvedBy).toEqual(approval);
+
+    // an archived plan that a re-scan forces active is approved again
+    await plans.modify("repo", (p) => {
+      const { approvedBy: _drop, ...rest } = p;
+      return { ...rest, status: "archived" as const };
+    });
+    await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+    const again = await plans.require("repo");
+    expect(again.status).toBe("active");
+    expect(again.approvedBy).toMatchObject({ principalId: "local" });
   });
 
   it("scan registers the repository if needed and reuses it; --project must match the repo", async () => {

@@ -19,6 +19,7 @@ import {
   type Settings,
   type Status,
   type TaskTools,
+  withApproval,
 } from "@boof-runner/shared";
 import {
   isGitRepo,
@@ -377,18 +378,27 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
       id: SCAN_PLAN_ID,
       title: `boof scan of ${project.name}`,
       status: "active",
+      // The CLI runs as the local owner, so the plan it activates is approved at once.
+      approvedBy: { principalId: "local", at: new Date().toISOString(), version: 1 },
       autoSync: true,
       bumpTo,
       source: { kind: "repo-import", importedFrom: project.workingDirectory },
       goals: imported.goals,
     });
   } else {
-    await plans.modify(SCAN_PLAN_ID, (p) => ({
-      ...p,
-      status: "active",
-      bumpTo: opts.bumpTo ?? p.bumpTo,
-      goals: mergeImportedGoals(p.goals, imported.goals).goals,
-    }));
+    await plans.modify(SCAN_PLAN_ID, (p) =>
+      // activating (or keeping active) as the local owner approves the plan, as the API does
+      withApproval(
+        p,
+        {
+          ...p,
+          status: "active",
+          bumpTo: opts.bumpTo ?? p.bumpTo,
+          goals: mergeImportedGoals(p.goals, imported.goals).goals,
+        },
+        "local",
+      ),
+    );
   }
   const synced = await syncPlan({
     projectDir,
