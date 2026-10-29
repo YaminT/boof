@@ -408,7 +408,7 @@ Everything a client can do is one **operation**, defined once with `defineOp()` 
 
 ### Request chain
 
-For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, so rejected calls are logged), body limit (`413`), an `Origin` check (`403 origin_not_allowed`, browsers only send one cross-site or on a POST), `authenticate`, rate limit (`429`), then the route. The public routes `GET /harness.md`, `/harness.txt` and `/llms.txt` are registered after the host guard and secure headers and before authentication: they hold no secrets and serve `docs/harness.md` as embedded text.
+For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, so rejected calls are logged), body limit (`413`), an `Origin` check (`403 origin_not_allowed`: an Origin must equal the request `Host` including the port, or an `allowedHosts` entry with a port; browsers send an Origin on every cross-origin request except no-cors GETs such as `<img>` and on every POST, so the check is safe only because no GET changes state: a future state-changing GET would not be covered), `authenticate`, rate limit (`429`), then the route. The public routes `GET /harness.md`, `/harness.txt` and `/llms.txt` are registered after the host guard and secure headers and before authentication: they hold no secrets and serve `docs/harness.md` as embedded text.
 
 ### Events and webhooks
 

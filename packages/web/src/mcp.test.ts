@@ -83,10 +83,13 @@ describe("POST /mcp", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe("origin_not_allowed");
     expect((await post(INIT, { origin: "null" })).status).toBe(403);
+    // A loopback origin on another port is another site.
+    const port = { origin: "http://localhost:3000", host: "localhost:4319" };
+    expect((await post(INIT, port)).status).toBe(403);
   });
 
   it("accepts a loopback Origin and an allowed-host Origin", async () => {
-    expect((await post(INIT, { origin: "http://localhost:4319" })).status).toBe(200);
+    expect((await post(INIT, { origin: "http://localhost", host: "localhost" })).status).toBe(200);
     const withHost = createApp({
       service: new TaskService(root),
       authStore,
@@ -101,6 +104,7 @@ describe("POST /mcp", () => {
         accept: ACCEPT,
         authorization: `Bearer ${key}`,
         origin: "https://boof.example.com",
+        host: "boof.example.com",
       },
     });
     expect(res.status).toBe(200);

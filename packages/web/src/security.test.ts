@@ -412,7 +412,11 @@ describe("CSRF (Origin and Content-Type)", () => {
     const app = build();
     const mine = await call(app, TASKS, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "http://localhost:4319" },
+      headers: {
+        "content-type": "application/json",
+        host: "localhost:4319",
+        origin: "http://localhost:4319",
+      },
       body: JSON.stringify({ title: "Mine" }),
     });
     expect(mine.status).toBe(201);
@@ -434,11 +438,40 @@ describe("CSRF (Origin and Content-Type)", () => {
     expect(proxied.status).toBe(201);
     const desktop = await call(app, TASKS, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "http://127.0.0.1:4319" },
+      headers: {
+        "content-type": "application/json",
+        host: "127.0.0.1:4319",
+        origin: "http://127.0.0.1:4319",
+      },
       body: JSON.stringify({ title: "Desktop" }),
     });
     expect(desktop.status).toBe(201);
     expect(await count()).toBe(3);
+  });
+
+  it("an Origin must match the request host and port", async () => {
+    await setSecurity({ allowedHosts: ["example.com"] });
+    const app = build();
+    const t = (await service.forProject("default").create({ title: "T", status: "draft" }))
+      .frontmatter;
+    const queue = `${TASKS}/${t.id}/queue`;
+    const other = { host: "127.0.0.1:4319", origin: "http://localhost:3000" };
+    expect((await call(app, queue, { method: "POST", headers: other })).status).toBe(403);
+    const form = new FormData();
+    form.append("file", new File(["x"], "a.png", { type: "image/png" }));
+    const up = await call(app, `${TASKS}/${t.id}/attachments`, {
+      method: "POST",
+      headers: other,
+      body: form,
+    });
+    expect(up.status).toBe(403);
+    expect((await service.forProject("default").get(t.id))?.frontmatter.status).toBe("draft");
+    const wrongPort = { host: "example.com", origin: "http://example.com:8080" };
+    expect((await call(app, queue, { method: "POST", headers: wrongPort })).status).toBe(403);
+    const scheme = { host: "example.com", origin: "https://example.com" };
+    expect((await call(app, queue, { method: "POST", headers: scheme })).status).not.toBe(403);
+    const own = { host: "127.0.0.1:4319", origin: "http://127.0.0.1:4319" };
+    expect((await call(app, queue, { method: "POST", headers: own })).status).toBe(200);
   });
 
   it("a JSON operation needs Content-Type: application/json; bodyless POSTs do not", async () => {
@@ -466,6 +499,12 @@ describe("CSRF (Origin and Content-Type)", () => {
       body: JSON.stringify({ title: "T", status: "draft" }),
     });
     expect(charset.status).toBe(201);
+    const vnd = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "application/vnd.api+json" },
+      body: JSON.stringify({ title: "V", status: "draft" }),
+    });
+    expect(vnd.status).toBe(201);
     // No body, no header: the bodyless controls keep working.
     expect((await call(app, `${TASKS}/t/queue`, { method: "POST" })).status).toBe(200);
     // Uploads are multipart and never go through the JSON rule.

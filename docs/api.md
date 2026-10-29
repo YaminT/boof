@@ -14,7 +14,7 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 
 - Loopback peers are trusted as the local user when `security.auth.mode` is `local-trust` (the
   default). Anything else needs `Authorization: Bearer boof_...`.
-- **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` is not a loopback name or a host in `security.allowedHosts` (`403 origin_not_allowed`; `Origin: null` too), and a JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
+- **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` (host and port) is not the request's own `Host` or a `security.allowedHosts` entry with an explicit port (`403 origin_not_allowed`; `Origin: null` too), and a JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
 - Create a key (printed once) with the CLI or `POST /auth/clients`:
 
   ```bash

@@ -235,7 +235,7 @@ url = "https://boof.example.com/mcp"
 bearer_token_env_var = "BOOF_KEY"
 ```
 
-A browser-origin request with an `Origin` header that is not an allowed host answers `403 origin_not_allowed`. Agents do not send `Origin`.
+A browser-origin request whose `Origin` (host and port) is not the server's own `Host` answers `403 origin_not_allowed`. Agents do not send `Origin`.
 
 Call the endpoint with plain HTTP (useful to test). The server is stateless: there is no session id, and each request stands alone. A client still sends the standard three steps. Send `Accept: application/json, text/event-stream` on every request, or the server answers `406`.
 
@@ -584,7 +584,7 @@ Every error has this shape:
 | `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                   |
 | `internal`                 | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                 |
 
-`origin_not_allowed` (403) appears only on `/mcp` for requests with a bad `Origin` header.
+`origin_not_allowed` (403) appears on `/api/*` and `/mcp` for requests with a cross-site `Origin` header.
 
 ### Optimistic locking
 
