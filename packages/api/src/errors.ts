@@ -29,6 +29,10 @@ export const ERROR_CODES = {
   forbidden_project: [403, "The client may not access this project."],
   forbidden_trust: [403, "The client has review trust: a human must approve this change."],
   project_root_not_allowed: [403, "The directory is outside security.allowedProjectRoots."],
+  origin_not_allowed: [
+    403,
+    "The Origin header names a site that is not this server: a cross-site browser request.",
+  ],
   not_found: [404, "The task, command, client or webhook does not exist."],
   project_not_found: [404, "The project does not exist."],
   branch_not_found: [
@@ -49,6 +53,7 @@ export const ERROR_CODES = {
   idempotency_conflict: [409, "The Idempotency-Key was already used with a different request."],
   host_not_allowed: [421, "The Host header is not a loopback name or an allowed host."],
   payload_too_large: [413, "The request body exceeds the size limit."],
+  unsupported_media_type: [415, "A JSON operation needs Content-Type: application/json."],
   rate_limited: [429, "Too many requests; retry after the Retry-After header."],
   internal: [500, "Unexpected server error; details are in the server log."],
 } as const;

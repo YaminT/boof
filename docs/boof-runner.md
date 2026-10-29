@@ -408,7 +408,7 @@ Everything a client can do is one **operation**, defined once with `defineOp()` 
 
 ### Request chain
 
-For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, so rejected calls are logged), body limit (`413`), for `/mcp` an `Origin` check, `authenticate`, rate limit (`429`), then the route. The public routes `GET /harness.md`, `/harness.txt` and `/llms.txt` are registered after the host guard and secure headers and before authentication: they hold no secrets and serve `docs/harness.md` as embedded text.
+For `/api/*` and `/mcp`: host guard (`421`), secure headers, audit (outermost, so rejected calls are logged), body limit (`413`), an `Origin` check (`403 origin_not_allowed`, browsers only send one cross-site or on a POST), `authenticate`, rate limit (`429`), then the route. The public routes `GET /harness.md`, `/harness.txt` and `/llms.txt` are registered after the host guard and secure headers and before authentication: they hold no secrets and serve `docs/harness.md` as embedded text.
 
 ### Events and webhooks
 
@@ -446,7 +446,7 @@ Important UI areas:
 
 Authentication is middleware in `packages/web/src/middleware/`. The operations declare their scope in the registry, `execute` enforces it, and `authorizeProject()` runs before any project access.
 
-- Principals: `local` (loopback peer, no `Authorization` header, no `X-Forwarded-For`, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`.
+- Principals: `local` (loopback peer, no `Authorization` header, no `X-Forwarded-For`, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`. A JSON body without `Content-Type: application/json` is `415 unsupported_media_type`; with the `Origin` check this is the CSRF defence for the local principal (the Host guard only blocks DNS rebinding).
 - Scopes: `projects:read|write`, `plans:read|write`, `tasks:read|write|control` (stop, inject), `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Pause and resume accept `runner:control` or `projects:write`; toggling the runner accepts `runner:control` or `settings:write`; usage accepts `projects:read` or `tasks:read`. `auth.whoami` needs no scope.
 - Project restriction: a client may be limited to a list of projects; other projects answer `403 forbidden_project` (so existence is not probed) and list routes filter. A non-local principal registering a project (or moving its working directory) must pass `security.allowedProjectRoots`, the git and data-root checks and the `/`/home exclusion, else `403 project_root_not_allowed`.
 - Trust: `review` clients (the default) create tasks and plans as `draft` (tasks get the label `external:<id>` and an `origin`), and cannot queue, retry, unarchive, answer, activate a plan, edit an active plan, or stop or inject into a task it did not create: `403 forbidden_trust`. `security.externalTasksRequireApproval = false` lifts this. `trusted` clients behave like local.

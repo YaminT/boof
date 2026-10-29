@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">/api/* and /mcp share an Origin guard (403 origin_not_allowed); a JSON body needs Content-Type: application/json (415 unsupported_media_type, owner default; bodyless POSTs and multipart unaffected); docs say the Host guard is a DNS-rebinding defence only; security.test.ts pins the cross-site case, the UI at the root, behind /boof/ and in the desktop app.</version>
       </versions>
     </status>
     <tests>

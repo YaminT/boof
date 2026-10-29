@@ -251,7 +251,7 @@ A data root from before multi-project support is migrated automatically the firs
 
 ## Security model
 
-- The server binds `127.0.0.1` by default and rejects requests whose Host header is not a loopback name or listed in `security.allowedHosts`. This blocks DNS-rebinding attacks.
+- The server binds `127.0.0.1` by default and rejects requests whose Host header is not a loopback name or listed in `security.allowedHosts`. This blocks DNS-rebinding attacks. It is not a CSRF defence: that is the `Origin` check on `/api/*` and `/mcp` and the `Content-Type: application/json` requirement for JSON bodies.
 - Anyone who can reach the API can create a task, and every task runs coding agents with permission prompts disabled inside your repository. Treat API access as equivalent to running code as your user.
 - Ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
 - Agents work in a git worktree on a `boof-runner/<id>` branch. Nothing is merged or pushed for you.

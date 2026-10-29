@@ -106,6 +106,7 @@
                   "forbidden_project",
                   "forbidden_trust",
                   "project_root_not_allowed",
+                  "origin_not_allowed",
                   "not_found",
                   "project_not_found",
                   "branch_not_found",
@@ -123,6 +124,7 @@
                   "idempotency_conflict",
                   "host_not_allowed",
                   "payload_too_large",
+                  "unsupported_media_type",
                   "rate_limited",
                   "internal"
                 ],
@@ -10065,6 +10067,10 @@
       "description": "The repository has no goal.boof.xml files to import.",
       "status": 400
     },
+    "origin_not_allowed": {
+      "description": "The Origin header names a site that is not this server: a cross-site browser request.",
+      "status": 403
+    },
     "payload_too_large": {
       "description": "The request body exceeds the size limit.",
       "status": 413
@@ -10112,6 +10118,10 @@
     "unauthenticated": {
       "description": "No credentials, or an invalid, expired or revoked API key.",
       "status": 401
+    },
+    "unsupported_media_type": {
+      "description": "A JSON operation needs Content-Type: application/json.",
+      "status": 415
     }
   }
 }

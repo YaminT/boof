@@ -85,9 +85,19 @@ function parseIfMatch(header: string, field: "expectedVersion" | "expectedUpdate
   return m[1];
 }
 
+const JSON_TYPE = /^application\/([\w.-]+\+)?json\s*(;.*)?$/i;
+
 async function readBody(c: Context): Promise<Record<string, unknown>> {
   const text = await c.req.text();
   if (text.trim() === "") return {};
+  const type = (c.req.header("content-type") ?? "").trim();
+  if (!JSON_TYPE.test(type)) {
+    throw new OpError(
+      415,
+      "A JSON body needs Content-Type: application/json",
+      "unsupported_media_type",
+    );
+  }
   let raw: unknown;
   try {
     raw = JSON.parse(text);

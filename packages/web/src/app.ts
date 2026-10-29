@@ -13,7 +13,8 @@ import {
   type ResolveHost,
   type TaskService,
 } from "@boof-runner/api";
-import { hostGuard, isHostAllowed } from "./middleware/host-guard.js";
+import { hostGuard } from "./middleware/host-guard.js";
+import { originGuard } from "./middleware/origin-guard.js";
 import {
   authenticate,
   defaultPeerAddress,
@@ -149,26 +150,11 @@ export function createApp(deps: AppDeps): Hono {
       ? attachmentLimit(c, next)
       : jsonLimit(c, next),
   );
-  // A browser page must not drive the MCP endpoint: an Origin, when sent, has to name an allowed host.
-  app.use("/mcp", async (c, next) => {
-    const origin = c.req.header("origin");
-    if (origin !== undefined) {
-      let ok = false;
-      try {
-        const extra = [...(deps.allowedHosts ?? []), ...(await security()).allowedHosts];
-        ok = isHostAllowed(new URL(origin).host, extra);
-      } catch {
-        ok = false;
-      }
-      if (!ok) {
-        return c.json(
-          { error: { code: "origin_not_allowed", message: "Origin not allowed" } },
-          403,
-        );
-      }
-    }
-    await next();
-  });
+  const origins = originGuard(async () => [
+    ...(deps.allowedHosts ?? []),
+    ...(await security()).allowedHosts,
+  ]);
+  for (const path of guarded) app.use(path, origins);
   const authenticator = authenticate({ store: authStore, security, peerAddress, now: deps.now });
   const limiter = rateLimit({ security, now: deps.now });
   for (const path of guarded) {

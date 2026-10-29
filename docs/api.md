@@ -14,6 +14,7 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 
 - Loopback peers are trusted as the local user when `security.auth.mode` is `local-trust` (the
   default). Anything else needs `Authorization: Bearer boof_...`.
+- **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` is not a loopback name or a host in `security.allowedHosts` (`403 origin_not_allowed`; `Origin: null` too), and a JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
 - Create a key (printed once) with the CLI or `POST /auth/clients`:
 
   ```bash
@@ -76,6 +77,7 @@ internals; validation errors list `details: [{ path, message }]`.
 | `forbidden_project`        | 403    | The client may not access this project.                                                                 |
 | `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.                                          |
 | `project_root_not_allowed` | 403    | The directory is outside security.allowedProjectRoots.                                                  |
+| `origin_not_allowed`       | 403    | The Origin header names a site that is not this server (a cross-site browser request).                  |
 | `not_found`                | 404    | The task, command, client or webhook does not exist.                                                    |
 | `project_not_found`        | 404    | The project does not exist.                                                                             |
 | `branch_not_found`         | 404    | The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete). |
@@ -93,6 +95,7 @@ internals; validation errors list `details: [{ path, message }]`.
 | `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.                                          |
 | `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                              |
 | `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                |
+| `unsupported_media_type`   | 415    | A JSON operation needs Content-Type: application/json.                                                  |
 | `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                                                  |
 | `internal`                 | 500    | Unexpected server error; details are in the server log.                                                 |
 

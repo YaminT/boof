@@ -533,7 +533,7 @@ What you do when a budget stops work:
 ### Base and format
 
 - Base path: `$BOOF_URL/api/v1`. Do not use the old unversioned routes under `/api/...`. They are deprecated and answer `Deprecation: true`.
-- Requests with a body use `Content-Type: application/json`. Bodies are strict: an unknown key answers `400 invalid_input`.
+- Requests with a body use `Content-Type: application/json`. Bodies are strict: an unknown key answers `400 invalid_input`. A body with another `Content-Type`, or none, answers `415 unsupported_media_type`.
 - `GET` and `DELETE` take their inputs from the path and the query string. Booleans in a query are `true`, `false`, `1` or `0`.
 - Times are ISO-8601 UTC strings.
 - A request body is at most 1,000,000 bytes (`413 payload_too_large`). An attachment upload is at most 25 MB. A task prompt is at most 500,000 characters.
@@ -562,6 +562,7 @@ Every error has this shape:
 | `forbidden_project`        | 403    | Your key may not use this project. Tell the user.                                                                                                               |
 | `forbidden_trust`          | 403    | Your key has `review` trust. Tell the user to approve the item in the web UI. Do not retry.                                                                     |
 | `project_root_not_allowed` | 403    | The directory is outside `security.allowedProjectRoots`. Tell the user to add the root in `settings.json`.                                                      |
+| `origin_not_allowed`       | 403    | You sent an `Origin` header a browser sends. Call the API from a non-browser client, or ask the user to add your site to `security.allowedHosts`.               |
 | `not_found`                | 404    | The task, command, client or webhook id is wrong. List the items and check the id.                                                                              |
 | `project_not_found`        | 404    | Check the project id with `projects.list`.                                                                                                                      |
 | `branch_not_found`         | 404    | The task branch `boof-runner/<task-id>` does not exist (deleted by `onDone: "delete"`, or the task never ran in a worktree). Read the task and its log instead. |
@@ -579,6 +580,7 @@ Every error has this shape:
 | `idempotency_conflict`     | 409    | You reused an `Idempotency-Key` with a different request. Use a new key for a new request.                                                                      |
 | `host_not_allowed`         | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                  |
 | `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                               |
+| `unsupported_media_type`   | 415    | Send the body with `Content-Type: application/json`.                                                                                                            |
 | `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                   |
 | `internal`                 | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                 |
 

@@ -373,6 +373,110 @@ describe("rate limit", () => {
   });
 });
 
+describe("CSRF (Origin and Content-Type)", () => {
+  const TASKS = "/api/v1/projects/default/tasks";
+  const count = async () => (await service.forProject("default").list()).length;
+
+  it("a cross-site simple POST from a page cannot act as the local principal", async () => {
+    const app = build(); // loopback peer, no key: would be the local (admin) principal
+    const page = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "text/plain", origin: "https://evil.example" },
+      body: JSON.stringify({ title: "Pwned", prompt: "rm -rf /" }),
+    });
+    expect(page.status).toBe(403);
+    expect((await page.json()).error.code).toBe("origin_not_allowed");
+    const opaque = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "null" },
+      body: JSON.stringify({ title: "Pwned" }),
+    });
+    expect(opaque.status).toBe(403);
+    // A bodyless cross-site POST (an HTML form) is refused the same way.
+    expect(
+      (
+        await call(app, `${TASKS}/x/stop`, {
+          method: "POST",
+          headers: { origin: "https://evil.example" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(await count()).toBe(0);
+    // No Origin at all (curl, a same-origin GET): unchanged.
+    expect((await call(app, TASKS)).status).toBe(200);
+  });
+
+  it("the UI's own origin passes, at the root and behind an allowed-host prefix", async () => {
+    await setSecurity({ allowedHosts: ["example.com"] });
+    const ui = await mint("ui", ["tasks:read", "tasks:write"], { trust: "trusted" });
+    const app = build();
+    const mine = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost:4319" },
+      body: JSON.stringify({ title: "Mine" }),
+    });
+    expect(mine.status).toBe(201);
+    // https://example.com/boof/ behind nginx: Host and Origin are the site, the peer is nginx,
+    // X-Forwarded-For is present (so the UI sends its key) and the prefix header is set.
+    const proxied = await call(app, TASKS, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        host: "example.com",
+        origin: "https://example.com",
+        "x-forwarded-for": "203.0.113.9",
+        "x-forwarded-proto": "https",
+        "x-forwarded-prefix": "/boof",
+        authorization: `Bearer ${ui}`,
+      },
+      body: JSON.stringify({ title: "Proxied" }),
+    });
+    expect(proxied.status).toBe(201);
+    const desktop = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://127.0.0.1:4319" },
+      body: JSON.stringify({ title: "Desktop" }),
+    });
+    expect(desktop.status).toBe(201);
+    expect(await count()).toBe(3);
+  });
+
+  it("a JSON operation needs Content-Type: application/json; bodyless POSTs do not", async () => {
+    const app = build();
+    // A string body with no type is sent as text/plain;charset=UTF-8 (what a browser does too).
+    const plain = await call(app, TASKS, { method: "POST", body: JSON.stringify({ title: "T" }) });
+    expect(plain.status).toBe(415);
+    expect((await plain.json()).error.code).toBe("unsupported_media_type");
+    // Genuinely no Content-Type (a byte body sets none).
+    const none = await call(app, TASKS, {
+      method: "POST",
+      body: new TextEncoder().encode(JSON.stringify({ title: "T" })),
+    });
+    expect(none.status).toBe(415);
+    const form = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "title=T",
+    });
+    expect(form.status).toBe(415);
+    expect(await count()).toBe(0);
+    const charset = await call(app, TASKS, {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ title: "T", status: "draft" }),
+    });
+    expect(charset.status).toBe(201);
+    // No body, no header: the bodyless controls keep working.
+    expect((await call(app, `${TASKS}/t/queue`, { method: "POST" })).status).toBe(200);
+    // Uploads are multipart and never go through the JSON rule.
+    const formData = new FormData();
+    formData.append("file", new File(["x"], "a.png", { type: "image/png" }));
+    expect(
+      (await call(app, `${TASKS}/t/attachments`, { method: "POST", body: formData })).status,
+    ).toBe(200);
+  });
+});
+
 describe("audit log", () => {
   const readAudit = async () => {
     const dir = join(root, "audit");
