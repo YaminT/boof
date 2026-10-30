@@ -59,7 +59,7 @@ npm run desktop      # build the UI + Electron bundle, then launch the window
 
 The desktop app boots the same Hono server and runner in its main process and opens the UI in a native window. Its data root lives in the per-user app-data directory, so settings persist across launches.
 
-On first launch it asks for the first project's **working directory** (a full-screen picker that opens a native folder dialog). The project is saved in the data root and never asked again; change the directory any time via the folder icon in the top-right header.
+On first launch it asks for the first project's **working directory** (a full-screen picker that opens a native folder dialog). The project is saved in the data root and never asked again; change the directory any time from the project's Settings page (its Browse… button opens the same folder dialog).
 
 A release is built from a `v<version>` tag: the installers carry that version (`BOOF_RUNNER_APP_VERSION`), the GitHub release is a prerelease only when the tag has a `-` part, and the tag's base version must match `package.json` (`scripts/release-version.sh`).
 
@@ -158,7 +158,7 @@ Exactly what happens:
 bash scripts/install-or-update-boof-runner.sh
 ```
 
-The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. Without bun it uses `npm install` (`package-lock.json` is git-ignored; `bun.lock` is the lockfile). A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `git@github.com:YaminT/boof.git`.
+The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. Without bun it uses `npm install` (`package-lock.json` is git-ignored; `bun.lock` is the lockfile). A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `https://github.com/YaminT/boof.git`; set `BOOF_RUNNER_REPO=git@github.com:YaminT/boof.git` to clone over SSH.
 
 ## Run on a server
 

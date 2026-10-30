@@ -84,7 +84,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 ## Docs
 
-- [ ] [`docs-consistency-pass`](docs-consistency-pass/goal.boof.xml) — Docs consistency pass (budgets, MCP tool count, Node floor, clone URL, desktop first run)
+- [x] [`docs-consistency-pass`](docs-consistency-pass/goal.boof.xml) — Docs consistency pass (budgets, MCP tool count, Node floor, clone URL, desktop first run)
 
 ## Product direction (owner, 2026-10-29)
 

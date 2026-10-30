@@ -4,7 +4,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 APP_NAME="boof-runner"
-DEFAULT_REPO="git@github.com:YaminT/boof.git"
+DEFAULT_REPO="https://github.com/YaminT/boof.git"
 DEFAULT_DIR="${XDG_DATA_HOME:-"$HOME/.local/share"}/boof-runner/source"
 
 REPO_URL="${BOOF_RUNNER_REPO:-$DEFAULT_REPO}"
@@ -51,7 +51,7 @@ An existing checkout with uncommitted changes is never touched unless BOOF_RUNNE
 Examples:
   ./scripts/install-or-update-boof-runner.sh
   BOOF_RUNNER_BRANCH=main bash scripts/install-or-update-boof-runner.sh
-  BOOF_RUNNER_REPO=https://github.com/YaminT/boof.git bash scripts/install-or-update-boof-runner.sh
+  BOOF_RUNNER_REPO=git@github.com:YaminT/boof.git bash scripts/install-or-update-boof-runner.sh   # SSH, to push with your key
 EOF
 }
 
@@ -59,11 +59,38 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+# The engines.node range of the checkout's package.json, e.g. ">=22.22".
+node_floor() {
+  node -p 'require(process.argv[1]).engines.node' "$1/package.json"
+}
+
+# node_version_ok <version> <range>: exit 0 when <version> (with or without a leading v) satisfies
+# a ">=X.Y[.Z]" range, comparing major, minor and patch numerically (missing parts are 0).
+node_version_ok() {
+  node -e '
+    const [version, range] = process.argv.slice(1);
+    const m = /^>=\s*(\d+(?:\.\d+){0,2})$/.exec(range);
+    if (!m) process.exit(2);
+    const parse = (s) => {
+      const p = s.replace(/^v/, "").split(".").map(Number);
+      return [p[0] || 0, p[1] || 0, p[2] || 0];
+    };
+    const have = parse(version);
+    const want = parse(m[1]);
+    for (let i = 0; i < 3; i++) {
+      if (have[i] !== want[i]) process.exit(have[i] > want[i] ? 0 : 1);
+    }
+    process.exit(0);
+  ' "$1" "$2"
+}
+
+# Needs the checkout (its package.json), so it runs after source_dir.
 check_node() {
+  local checkout="$1" floor
   need_cmd node
-  local major
-  major="$(node -p "Number(process.versions.node.split('.')[0])")"
-  [[ "$major" -ge 20 ]] || die "Node.js >= 20 is required; found $(node --version)"
+  floor="$(node_floor "$checkout")"
+  node_version_ok "$(node --version)" "$floor" ||
+    die "Node.js $floor is required (package.json engines); found $(node --version)"
 }
 
 script_checkout_root() {
@@ -240,11 +267,13 @@ main() {
 
   need_cmd git
   need_cmd npm
-  check_node
+  # Before source_dir too: is_boof_runner_checkout runs node.
+  need_cmd node
 
   local dir
   dir="$(source_dir)"
   is_boof_runner_checkout "$dir" || die "$dir is not a boof-runner checkout"
+  check_node "$dir"
 
   update_checkout "$dir"
   install_dependencies "$dir"
@@ -253,4 +282,6 @@ main() {
   verify_install
 }
 
-main "$@"
+# Run main only when executed, not when sourced (the tests source the functions). A script piped
+# to bash has no BASH_SOURCE[0], so it still runs.
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

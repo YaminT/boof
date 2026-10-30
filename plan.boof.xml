@@ -49,7 +49,7 @@
     <goal id="ui-surface-action-errors" path="goals/ui-surface-action-errors" order="46" status="plan"></goal>
     <goal id="ui-a11y-reorder-and-modals" path="goals/ui-a11y-reorder-and-modals" order="47" status="plan"><depends-on>ui-drag-reorder-goals</depends-on></goal>
     <goal id="ui-clients-rotate-and-scopes" path="goals/ui-clients-rotate-and-scopes" order="48" status="done"></goal>
-    <goal id="docs-consistency-pass" path="goals/docs-consistency-pass" order="49" status="plan"></goal>
+    <goal id="docs-consistency-pass" path="goals/docs-consistency-pass" order="49" status="done"></goal>
     <goal id="verify-steering-codex" path="goals/verify-steering-codex" order="50" status="plan"></goal>
     <goal id="desktop-e2e" path="goals/desktop-e2e" order="51" status="plan"></goal>
     <goal id="typescript-7" path="goals/typescript-7" order="52" status="plan"></goal>

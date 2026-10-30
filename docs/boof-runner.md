@@ -401,7 +401,7 @@ This gives the user a practical way to steer a long-running task between steps w
 Everything a client can do is one **operation**, defined once with `defineOp()` in `packages/api/src/ops/` (projects, plans, tasks, admin, webhooks, whoami). An operation holds its name (`plans.sync`), scope(s), Zod input and output schemas, a REST mapping (method, path, status, `If-Match` field, ETag, idempotency), an optional MCP mapping (tool name and annotations) and a handler. The list is the **registry** (`registry.ts`). Three things are generated from it, so they cannot drift apart:
 
 - **REST routes.** `packages/web/src/rest.ts` mounts one Hono route per operation under `/api/v1` (and the deprecated unversioned `/api` copies). It maps path and query parameters, JSON bodies, `If-Match` and `Idempotency-Key` onto the input.
-- **MCP tools.** `packages/mcp` serves every operation with `mcp.expose` as a tool (32 today, `boof_<verb>_<noun>`), plus resources and two prompts.
+- **MCP tools.** `packages/mcp` serves every operation with `mcp.expose` as a tool (34 today, `boof_<verb>_<noun>`), plus resources and two prompts.
 - **OpenAPI and the harness guide.** `buildOpenApi(registry)` produces the OpenAPI 3.1 document (`GET /api/v1/openapi.json`, committed as `packages/api/openapi/openapi.json`). `scripts/gen-harness-reference.ts` turns it into the REST reference of `docs/harness.md` and writes `packages/web/src/generated/harness.ts`, the copy the server embeds.
 
 `Operation.execute` is the only way in. It checks the scope (an empty scope list, as in `auth.whoami`, means any authenticated caller), validates the input (`400 invalid_input` or `invalid_plan`), authorizes the project (`403 forbidden_project`), runs the handler, validates the output and maps every failure to an `OpError` with a stable code from `ERROR_CODES`. REST and MCP therefore share scopes, project restrictions, trust rules, validation and error codes.
@@ -477,7 +477,7 @@ Boof Runner deliberately keeps the first version local, single-user, and file-ba
 - The runner runs at most one task per project at a time (`runner.concurrency` allows tasks of different projects to overlap).
 - Stop is best-effort and process-level, not a semantic rollback.
 - A prompt injected with mode `next-step` is applied between tool runs. Mode `now` interrupts the running step and resumes the tool session (or restarts the step); it is not a live message into the running process.
-- Token/cost handling is tracking-only; it does not enforce budgets yet.
+- Budgets are enforced between steps, never mid-step: a step is not killed for cost, so the last step of a run can overshoot its limit (see Budget limits above).
 
 These tradeoffs are acceptable for a local code-execution runner, but they should be revisited if Boof Runner becomes a multi-user or remote system.
 
@@ -493,9 +493,7 @@ The highest-value next improvements are:
 
    Inject mode `now` interrupts the step and resumes the tool session. True mid-run injection without the interruption would require interactive sessions or a tool-specific control protocol. If Claude Code or Codex expose stable session APIs, Boof Runner should add adapters that can send input into an active session.
 
-3. Add budget controls
-
-   Usage tracking exists, but there are no hard limits. Add optional per-run, per-day, or per-tool caps with clear behavior when a limit is reached.
+3. Mid-step budget enforcement — A step is never interrupted for cost. If the agent CLIs expose a cost boundary during a run, the budget check could move inside a step.
 
 4. Improve stop cleanup policy
 

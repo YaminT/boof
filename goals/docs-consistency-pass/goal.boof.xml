@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">docs/boof-runner.md says 34 MCP tools and describes budget enforcement as it ships (between steps, overshoot on the last step; future work is mid-step enforcement); the install script reads the Node floor from package.json engines after the checkout exists (node_floor / node_version_ok, unit-tested by sourcing the script), defaults to the https clone URL (SSH via BOOF_RUNNER_REPO) and README's desktop first-run paragraph names the project Settings page and Browse… button. README's tool count was already right.</version>
       </versions>
     </status>
     <tests>
