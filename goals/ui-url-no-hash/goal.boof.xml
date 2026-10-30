@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>No &#x27;#&#x27; in the web UI&#x27;s URLs (owner, 2026-10-30): replace the hash router (packages/web/ui/src/lib/route.ts, useRoute.ts: #/p/&lt;pid&gt;/tasks/...) with path-based routing (/p/&lt;pid&gt;/tasks/...) using the History API. The server must answer the UI&#x27;s index.html for every UI path (SPA fallback) while /api/*, /mcp, /healthz and the docs files keep their own routes. It must keep working under a reverse-proxy path prefix (/boof/ behind nginx, X-Forwarded-Prefix) and in the desktop app, and old #/ links (bookmarks, the README, notifications) must redirect to the new paths.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Keep every UI URL relative to the base the server is mounted under; derive the base from the page&#x27;s location or X-Forwarded-Prefix, never assume &#x27;/&#x27;.</do>
+      <do>Redirect old hash links (#/p/&lt;pid&gt;/...) to the matching path on load.</do>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not break the token gate, the first-run gate or live updates.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-30; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests for parse/format of path routes and the hash-to-path redirect; server tests for the SPA fallback next to /api, /mcp and docs routes; a browser check under the /boof/ prefix and at the root.</strategy>
+      <technology>vitest + manual</technology>
+      <run>npx vitest run packages/web</run>
+    </tests>
+  </progress>
+</boof>

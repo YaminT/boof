@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>After a state change the URL must update so it never shows an invalid route (owner, 2026-10-30). Today switching the project shows an error on the screen: the page keeps a URL that belongs to the previous project (for example a task id or plan id that does not exist in the new project). When the project changes, navigate to that project&#x27;s equivalent screen (its Overview, Tasks list or Plans list — drop ids that belong to the old project); when a task or plan is deleted, archived away or not found, replace the URL with its list; generally every state change that makes the current URL invalid replaces it (history replace, not push) with the nearest valid one.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI (shadcn/ui on Tailwind v4), vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/superpowers/specs/2026-10-27-ui-redesign-design.md before changing code.</do>
+      <do>Write a failing test first where the change is logic (src/lib, server); keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <do>Reproduce the project-switch error first and pin it with a test before fixing it.</do>
+      <do>Use history replace for corrections so the Back button does not return to the invalid URL.</do>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+      <dont>Do not show an error screen for a URL the app itself made invalid.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Requested by the owner on 2026-10-30; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>A test per transition (project switch from a task, a plan and settings; task deleted while open; unknown id in a pasted URL); a browser check of the project switch.</strategy>
+      <technology>vitest + manual</technology>
+      <run>npx vitest run packages/web/ui</run>
+    </tests>
+  </progress>
+</boof>

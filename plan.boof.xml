@@ -72,5 +72,7 @@
     <goal id="restricted-admin-scope-gaps" path="goals/restricted-admin-scope-gaps" order="69" status="plan"></goal>
     <goal id="get-endpoints-no-side-effects" path="goals/get-endpoints-no-side-effects" order="70" status="plan"></goal>
     <goal id="auth-store-cross-process" path="goals/auth-store-cross-process" order="71" status="plan"></goal>
+    <goal id="ui-url-no-hash" path="goals/ui-url-no-hash" order="72" status="plan"></goal>
+    <goal id="ui-url-follows-state" path="goals/ui-url-follows-state" order="73" status="plan"></goal>
   </goals>
 </plan>
