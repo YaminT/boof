@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boof Runner: a task runner for Claude Code and Codex</title>
+<meta name="description" content="Queue prompts as markdown files and run each through a planner, developer and reviewer pipeline in its own git worktree. Local-first; you merge the branch.">
+<meta name="author" content="Yamin Tashakkori">
+<link rel="canonical" href="https://yamint.github.io/boof/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Boof Runner: a task runner for Claude Code and Codex">
+<meta property="og:description" content="Queue prompts as markdown files and run each through a planner, developer and reviewer pipeline in its own git worktree. Local-first; you merge the branch.">
+<meta property="og:url" content="https://yamint.github.io/boof/">
+<meta property="og:site_name" content="Boof Runner">
+<meta name="theme-color" content="#c2410c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>:root{--ink:#1c2128;--paper:#ffffff;--mist:#f1f3f5;--line:#d9dde2;--muted:#5b6470;--accent:#c2410c}*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 'IBM Plex Sans',system-ui,sans-serif}a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:2px}a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}code,pre,kbd{font-family:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace}.wrap{max-width:1040px;margin:0 auto;padding:0 16px}header.site{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:18px 0;border-bottom:1px solid var(--line);font-size:15px}header.site a{color:var(--ink);text-decoration:none}header.site a:hover{text-decoration:underline}header.site .by{color:var(--muted)}.hero{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:40px;align-items:start;padding:48px 0 40px}.hero>*{min-width:0}pre{max-width:100%}h1{margin:0 0 6px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:clamp(2rem,5vw,2.9rem);font-weight:500;line-height:1.1;letter-spacing:-0.02em}.tagline{margin:0 0 18px;font-size:1.25rem;font-weight:500;color:var(--accent)}.pitch{margin:0 0 22px;max-width:60ch}.notice{margin:0 0 22px;padding:10px 14px;border-left:3px solid var(--accent);background:var(--mist);font-size:15px;max-width:60ch}.install{margin:0 0 22px}.install pre{margin:0;padding:12px 14px;background:var(--ink);color:#f5f7fa;border-radius:4px;font-size:14px;overflow-x:auto;white-space:pre}.links{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:10px 18px;font-size:15px}.links a{font-weight:500}.frame{border:1px solid var(--line);border-left:6px solid var(--accent);border-radius:4px;background:var(--mist);min-width:0}.frame .tab{display:flex;justify-content:space-between;padding:8px 14px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line)}.frame pre{margin:0;padding:16px 14px;font-size:13px;line-height:1.5;overflow-x:auto;white-space:pre}h2{font-size:1.35rem;font-weight:600;letter-spacing:-0.01em;margin:40px 0 14px}.facts{margin:0;padding:0;list-style:none;max-width:72ch}.facts li{margin:0 0 12px;padding-left:18px;border-left:2px solid var(--line)}.facts b{font-weight:600}.docs{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px 28px;max-width:72ch}.docs li{font-size:15px}.docs small{display:block;color:var(--muted)}footer.site{margin-top:56px;padding:20px 0 32px;border-top:1px solid var(--line);font-size:14px;color:var(--muted)}footer.site a{color:var(--ink)}@media (max-width:900px){.hero{grid-template-columns:1fr;gap:28px;padding-top:32px}}@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}</style>
+</head>
+<body>
+<div class="wrap">
+<header class="site">
+<a href="https://yamint.github.io/boof/">Boof Runner</a>
+<span class="by">by <a href="https://nodets.com/">Yamin Tashakkori</a></span>
+</header>
+<main>
+<section class="hero">
+<div>
+<h1>Boof Runner</h1>
+<p class="tagline">Queue the work, review the branch</p>
+<p class="pitch">Every task is a markdown file on disk. The runner hands it to a planner, a developer and a reviewer, driven by coding agents such as Claude Code and Codex, inside a git worktree of its own. When the reviewer approves, you get a branch to review and merge yourself. Drive it from a web UI, a desktop app, the command line, a REST API or MCP.</p>
+
+<div class="install"><pre><code>boof-runner run &quot;Add a rate limiter to the API&quot; --repo /path/to/repo</code></pre></div>
+<ul class="links"><li><a href="https://nodets.com/boof/">Documentation on nodets.com</a></li><li><a href="https://github.com/YaminT/boof">Source on GitHub</a></li><li><a href="https://nodets.com/boof/harness.txt">Guide for AI harnesses</a></li></ul>
+</div>
+<div class="frame"><div class="tab"><span>terminal</span><span>Shell</span></div><pre><code>boof-runner project add /path/to/repo --default
+boof-runner run &quot;Add a rate limiter to the API&quot; \
+  --repo /path/to/repo
+# planner, developer and reviewer run in a worktree;
+# a VERDICT line gates each step. When it is done,
+# review the branch boof-runner/&lt;task-id&gt; and merge it.
+
+# unfinished goals in the repo become tasks
+boof-runner scan /path/to/repo --dry-run
+# drive every project's pending queue
+boof-runner run --all</code></pre></div>
+</section>
+<h2>What it does</h2>
+<ul class="facts"><li><b>A review gate, not a hope.</b> Observer and reviewer end with a VERDICT line; findings go back to the developer, and only a reviewer approval finishes a task.</li>
+<li><b>One worktree per task.</b> Each task runs on its own branch boof-runner/&lt;task-id&gt;. Branches are kept; failed or stopped work is never discarded.</li>
+<li><b>Plans with dependencies.</b> A plan is a versioned graph of goals. Sync turns ready goals into tasks and keeps them in line when a goal changes.</li>
+<li><b>An API for people and agents.</b> Versioned REST with OpenAPI, ETags and idempotency keys; the same operations as 34 MCP tools; replayable events and signed webhooks.</li>
+<li><b>Loopback by default.</b> API keys with scopes and trust levels, a Host guard, a rate limit and an audit log. Treat access to it like access to your shell.</li></ul>
+<h2>The full documentation is on nodets.com</h2>
+<ul class="docs"><li><a href="https://nodets.com/boof/getting-started/">Getting started</a><small>Install Boof Runner, build the web UI and CLI, run the desktop app and update from source.</small></li>
+<li><a href="https://nodets.com/boof/cli/">Headless CLI</a><small>Drive Boof Runner from the command line: run, scan and serve commands, flags and environment variables.</small></li>
+<li><a href="https://nodets.com/boof/web-ui/">Web UI</a><small>Use the Boof Runner web UI: projects, tasks, plans, actions, commands and settings.</small></li>
+<li><a href="https://nodets.com/boof/configuration/">Configuration</a><small>Configure Boof Runner in settings.json: roles, review gate, worktrees, retries, security, MCP, webhooks, concurrency and the data-root layout.</small></li>
+<li><a href="https://nodets.com/boof/security/">Security</a><small>How Boof Runner protects its API: host checks, API keys, scopes, trust levels, audit log and safe remote access.</small></li>
+<li><a href="https://nodets.com/boof/ai-agents/">AI agents</a><small>Let an AI agent or harness drive Boof Runner over REST or MCP; the full machine-readable guide is at https://nodets.com/boof/harness.txt.</small></li>
+<li><a href="https://nodets.com/boof/api/">REST API</a><small>Boof Runner REST API v1: authentication, versioning, errors, concurrency, idempotency, pagination, events, webhooks and MCP.</small></li>
+<li><a href="https://nodets.com/boof/how-it-works/">How it works</a><small>Task lifecycle, the planner → developer → reviewer pipeline, observer, verdict protocol and the review fix loop.</small></li>
+<li><a href="https://nodets.com/boof/architecture/">Architecture</a><small>Deep dive into Boof Runner: task files, runner pipeline, code isolation, tool adapters, web API, persistence and trade-offs.</small></li>
+<li><a href="https://nodets.com/boof/development/">Development</a><small>Boof Runner project layout, packages and development commands: dev, test, typecheck, lint and build.</small></li></ul>
+</main>
+<footer class="site">
+<p>By <a href="https://nodets.com/about/">Yamin Tashakkori</a>. Source on <a href="https://github.com/YaminT/boof">GitHub</a>. This page is the short version; the docs live at <a href="https://nodets.com/boof/">nodets.com/boof/</a>.</p>
+</footer>
+</div>
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareSourceCode","name":"Boof Runner","description":"Queue prompts as markdown files and run each through a planner, developer and reviewer pipeline in its own git worktree. Local-first; you merge the branch.","url":"https://yamint.github.io/boof/","codeRepository":"https://github.com/YaminT/boof","programmingLanguage":"TypeScript","license":"https://spdx.org/licenses/Apache-2.0.html","author":{"@id":"https://nodets.com/#person"},"sameAs":["https://nodets.com/boof/","https://github.com/YaminT/boof","https://nodets.com/boof/harness.txt"]},{"@type":"Person","@id":"https://nodets.com/#person","name":"Yamin Tashakkori","url":"https://nodets.com/","sameAs":["https://github.com/YaminT","https://stackoverflow.com/users/3123267/yamin","https://www.linkedin.com/in/yamin-tashakkori","https://pub.dev/publishers/nodets.com/packages"]}]}</script>
+</body>
+</html>
