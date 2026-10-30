@@ -2150,6 +2150,38 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       },
     );
 
+    it("off Linux, warns in the Interrupted block that a live agent process may still be running", async () => {
+      await crash();
+      const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+      try {
+        await writePidFile(taskPidPath(projectDir, "t1"), {
+          pgid: orphan.pid!,
+          command: "node",
+          ownerPid: null,
+        });
+        Object.defineProperty(process, "platform", { ...original, value: "darwin" });
+        expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+        const t = await store.get("t1");
+        expect(t?.frontmatter.status).toBe("failed");
+        expect(t?.body.log).toContain(
+          `agent process (pid ${orphan.pid}, node) may still be running`,
+        );
+        expect(t?.body.log).toContain("Stop it before you Retry");
+        expect(isAlive(orphan.pid!)).toBe(true);
+      } finally {
+        Object.defineProperty(process, "platform", original);
+        try {
+          process.kill(-orphan.pid!, "SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+    });
+
     it("a pid file whose process already ended changes nothing", async () => {
       await crash();
       const done = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });

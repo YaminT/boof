@@ -84,6 +84,39 @@ describe("pid file", () => {
     for (const pid of [0, 1, -1, process.pid]) expect(await killGroup(pid)).toBe("survived");
   });
 
+  describe("reapOrphan off Linux", () => {
+    const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const setPlatform = (value: string) =>
+      Object.defineProperty(process, "platform", { ...original, value });
+    afterEach(() => Object.defineProperty(process, "platform", original));
+
+    it("keeps the record of a live process, kills nothing, and reports it", async () => {
+      const log: string[] = [];
+      const path = join(dir, "pid");
+      const live = sleeper();
+      await writePidFile(path, { pgid: live.pid!, command: "node", ownerPid: null });
+      setPlatform("darwin");
+      const r = await reapOrphan(path, (l) => log.push(l));
+      expect(r).toMatchObject({ outcome: "skipped", maybeRunning: true });
+      expect(r.record?.pgid).toBe(live.pid);
+      expect(existsSync(path)).toBe(true);
+      expect(isAlive(live.pid!)).toBe(true);
+      expect(log.join("\n")).toContain("may still be running");
+    });
+
+    it("removes the record of a process that has ended", async () => {
+      const path = join(dir, "pid");
+      const gone = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+      await exited(gone);
+      await writePidFile(path, { pgid: gone.pid!, command: "node" });
+      setPlatform("darwin");
+      const r = await reapOrphan(path, () => {});
+      expect(r.outcome).toBe("dead");
+      expect(r.maybeRunning).toBeUndefined();
+      expect(existsSync(path)).toBe(false);
+    });
+  });
+
   it.skipIf(!currentBootId())(
     "reapOrphan: none / dead / killed / another boot / forged / owner alive",
     async () => {

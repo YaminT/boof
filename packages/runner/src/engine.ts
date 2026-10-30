@@ -526,7 +526,9 @@ export class RunnerEngine {
                 `### Interrupted\n${INTERRUPTED_NOTE}` +
                 (reaped.outcome === "killed"
                   ? `\nThe agent process group ${reaped.record!.pgid} was still running and was killed.`
-                  : "");
+                  : reaped.maybeRunning
+                    ? `\nWarning: the agent process (pid ${reaped.record!.pgid}${reaped.record!.command ? `, ${reaped.record!.command}` : ""}) may still be running; this platform cannot stop it automatically. Stop it before you Retry, or a second agent will work in the same worktree.`
+                    : "");
               t.body.log = t.body.log.trim() ? `${t.body.log.trimEnd()}\n\n${block}` : block;
             },
             { reason: "interrupted: runner stopped unexpectedly" },

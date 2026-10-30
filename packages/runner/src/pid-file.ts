@@ -160,18 +160,34 @@ export async function killGroup(
  * exactly (a reused or forged pid differs), and the recording runner is not still its parent.
  * Records without a start time (older versions) are never killed. The command line is not
  * compared: shebang wrappers and exec chains change it. Skipped records are removed, except one
- * whose owner is alive.
+ * whose owner is alive. Off Linux nothing is killed: a live process keeps its record and is
+ * reported as `maybeRunning`; a dead one is removed.
  */
 export async function reapOrphan(
   path: string,
   log: (line: string) => void,
-): Promise<{ outcome: "none" | "dead" | "killed" | "skipped"; record?: PidRecord }> {
+): Promise<{
+  outcome: "none" | "dead" | "killed" | "skipped";
+  record?: PidRecord;
+  /** Off Linux only: the recorded process is still alive and was not killed (not supported). */
+  maybeRunning?: boolean;
+}> {
   const record = await readPidFile(path);
   if (!record) return { outcome: "none" };
   const finish = async (outcome: "dead" | "killed" | "skipped", remove = true) => {
     if (remove) await rm(path, { force: true }).catch(() => {});
     return { outcome, record };
   };
+  if (process.platform !== "linux") {
+    // Reaping needs /proc (boot id and exact start time), so nothing is killed here. A process
+    // that is still alive keeps its record and is reported instead of being silently forgotten.
+    const alive = process.platform === "win32" ? isAlive(record.pgid) : groupAlive(record.pgid);
+    if (!alive) return finish("dead");
+    log(
+      `orphan reaping is not supported on ${process.platform}; agent process ${record.pgid} (${record.command}) may still be running; not killing`,
+    );
+    return { outcome: "skipped", record, maybeRunning: true };
+  }
   const skip = (why: string, remove = true) => {
     log(`${why} (${record.pgid}); not killing`);
     return finish("skipped", remove);
