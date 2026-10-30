@@ -58,8 +58,24 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Workspace packages are symlinks
+        shell: bash
+        run: |
+          for d in node_modules/@boof-runner/*; do
+            test -L "$d" || { echo "$d is not a symlink: npm fetched it from the registry"; exit 1; }
+          done
+
       - name: Build
         run: npm run build:server
+
+      - name: Checkout is still git-clean
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "npm install or the build dirtied the checkout; the install script would refuse to update it"
+            exit 1
+          fi
 
       - name: Run the built CLI
         shell: bash
