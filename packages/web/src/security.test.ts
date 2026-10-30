@@ -376,7 +376,7 @@ describe("rate limit", () => {
     }
   });
 
-  it("limits failed authentication per client address before any key is checked", async () => {
+  it("counts only failed authentications per client address", async () => {
     await setSecurity({
       rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 3 },
     });

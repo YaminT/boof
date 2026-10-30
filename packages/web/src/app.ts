@@ -194,8 +194,9 @@ export function createApp(deps: AppDeps): Hono {
   for (const path of guarded) app.use(path, origins);
   const auth = createAuthenticator({ store: authStore, security, peerAddress, now: deps.now });
   const limiter = rateLimit({ security, now: deps.now });
-  // Before authenticate, so failed key guesses are throttled before any key is checked; after the
-  // Origin guard, so cross-site rejections do not spend a client's bucket.
+  // Before authenticate, so failed authentications are counted per address; a request whose key
+  // verifies is never limited. After the Origin guard, so cross-site rejections do not spend a
+  // client's bucket.
   const unauthenticated = unauthenticatedRateLimit({ security, peerAddress, now: deps.now });
   for (const path of guarded) {
     app.use(path, unauthenticated);

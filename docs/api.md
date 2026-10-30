@@ -14,7 +14,7 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 
 - Loopback peers are trusted as the local user when `security.auth.mode` is `local-trust` (the
   default). Anything else needs `Authorization: Bearer boof_...`.
-- **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` (host and port) is not the request's own `Host` or a `security.allowedHosts` entry with an explicit port (`403 origin_not_allowed`; `Origin: null` too), and a JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
+- **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` (host and port) is not the request's own `Host` or a `security.allowedHosts` entry. An entry without a port matches only the default port of the Origin's scheme (80 for http, 443 for https); an entry with a port matches that port. Such a request is refused with `403 origin_not_allowed` (`Origin: null` too), and so is any browser request with `Sec-Fetch-Site: cross-site`. A JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
 - Create a key (printed once) with the CLI or `POST /auth/clients`:
 
   ```bash
@@ -277,8 +277,8 @@ Each tool calls the same operation as its REST route, so scopes, project restric
 rules, input validation and error codes are identical, and every call is audited.
 
 - **Auth.** HTTP: `Authorization: Bearer boof_...` (or no header from a loopback peer under
-  `local-trust`), after the Host guard, an `Origin` check (absent, or an allowed host; else
-  `403 origin_not_allowed`), the body limit and the rate limit. stdio: `--client <id>` (no key
+  `local-trust`), after the Host guard, an `Origin` check (absent, or an allowed host, and no
+  `Sec-Fetch-Site: cross-site`; else `403 origin_not_allowed`), the body limit and the rate limit. stdio: `--client <id>` (no key
   needed), or the local principal under `local-trust`; with `auth.mode = "required"` and no
   `--client` the command refuses to start.
 - **Stateless.** One request, one answer (`application/json`). No sessions, so GET and DELETE on

@@ -283,7 +283,7 @@ export const SecuritySettingsSchema = z.object({
     .object({
       perMinute: z.number().int().min(1).default(600),
       attachmentsPerMinute: z.number().int().min(1).default(30),
-      /** Failed authentications per client address per minute, charged before any key is checked. */
+      /** Failed authentications per client address per minute; a request whose key verifies is never limited. */
       unauthenticatedPerMinute: z.number().int().min(1).default(30),
     })
     .prefault({}),
