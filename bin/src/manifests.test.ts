@@ -16,6 +16,28 @@ const read = async (rel: string) =>
   JSON.parse(await readFile(join(repo, rel, "package.json"), "utf8"));
 
 describe("workspace manifests", () => {
+  it("every @boof-runner/* dependency names a real workspace", async () => {
+    const names = new Set<string>();
+    for (const rel of manifests) names.add((await read(rel)).name);
+    let checked = 0;
+    for (const rel of manifests) {
+      const pkg = await read(rel);
+      for (const section of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+      ]) {
+        for (const name of Object.keys(pkg[section] ?? {})) {
+          if (!name.startsWith("@boof-runner/")) continue;
+          checked += 1;
+          expect(names.has(name), `${rel}: ${name} is not a workspace (${[...names]})`).toBe(true);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
   it("no workspace manifest uses the workspace: protocol and every CLI external is a root dependency", async () => {
     for (const rel of manifests) {
       const pkg = await read(rel);
