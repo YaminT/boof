@@ -14,7 +14,8 @@ const rpcError = (c: Context, status: 400 | 404 | 405, code: number, message: st
 
 /**
  * `/mcp`: MCP over Streamable HTTP in stateless mode (POST; GET and DELETE answer 405 because there are no sessions). Runs after the security
- * chain (Host guard, body limit, Origin check, authentication, rate limit, audit), so the
+ * chain (host guard, secure headers (+HSTS), audit, body limit, origin guard, authenticate (the
+ * unauthenticated limiter answers 429 on failure), per-principal limiter), so the
  * principal is already on the context. The audit line gets `action: mcp:<tool>` (or
  * `mcp:<method>` for other requests).
  */

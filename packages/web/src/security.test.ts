@@ -403,13 +403,54 @@ describe("rate limit", () => {
     peer = "10.9.9.9";
     expect((await guess()).status).toBe(401);
     peer = REMOTE;
-    // The bucket refills; valid requests never draw from it.
+    // A valid key from the drained address is not limited; the bucket refills.
+    expect((await call(app, "/api/v1/whoami", {}, key)).status).toBe(200);
     clock += 60_000;
     for (let i = 0; i < 10; i += 1) {
       expect((await call(app, "/api/v1/whoami", {}, key)).status).toBe(200);
     }
     for (let i = 0; i < 3; i += 1) expect((await guess()).status).toBe(401);
     expect((await guess()).status).toBe(429);
+  });
+
+  it("a valid key is never limited by it: 50 parallel creates from one address all succeed", async () => {
+    peer = REMOTE;
+    const key = await mint("par", ["tasks:read", "tasks:write"], { trust: "trusted" });
+    const app = build();
+    const res = await Promise.all(
+      Array.from({ length: 50 }, (_, i) =>
+        call(
+          app,
+          "/api/v1/projects/default/tasks",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ title: `P${i}` }),
+          },
+          key,
+        ),
+      ),
+    );
+    expect(res.map((r) => r.status)).toEqual(Array(50).fill(201));
+  });
+
+  it("a parallel burst of limit+5 bad keys gives exactly limit 401s and 5 429s, and a valid key still works", async () => {
+    await setSecurity({
+      rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 3 },
+    });
+    peer = REMOTE;
+    const key = await mint("ok", ["tasks:read"]);
+    const app = build();
+    const res = await Promise.all(
+      Array.from({ length: 8 }, () => call(app, "/api/v1/whoami", {}, "boof_ok_nope")),
+    );
+    expect(res.filter((r) => r.status === 401)).toHaveLength(3);
+    const limited = res.filter((r) => r.status === 429);
+    expect(limited).toHaveLength(5);
+    expect(limited[0].headers.get("retry-after")).not.toBeNull();
+    // The bucket is drained, yet a valid key (and the next bad one) behave as stated.
+    expect((await call(app, "/api/v1/whoami", {}, key)).status).toBe(200);
+    expect((await call(app, "/api/v1/whoami", {}, "boof_ok_nope")).status).toBe(429);
   });
 
   it("X-Forwarded-For splits buckets only when the peer is a trusted proxy", async () => {
@@ -545,6 +586,45 @@ describe("CSRF (Origin and Content-Type)", () => {
     expect((await call(app, queue, { method: "POST", headers: scheme })).status).not.toBe(403);
     const own = { host: "127.0.0.1:4319", origin: "http://127.0.0.1:4319" };
     expect((await call(app, queue, { method: "POST", headers: own })).status).toBe(200);
+  });
+
+  it("Host and Origin compare with the scheme's default port filled in", async () => {
+    await setSecurity({ allowedHosts: ["example.com:9", "app.example", "ui.example:8443"] });
+    const app = build();
+    const ok = async (host: string, origin: string) =>
+      (await call(app, "/api/v1/health", { headers: { host, origin } })).status === 200;
+    expect(await ok("example.com:443", "https://example.com")).toBe(true);
+    expect(await ok("example.com", "https://example.com:443")).toBe(true);
+    expect(await ok("example.com:80", "http://example.com")).toBe(true);
+    expect(await ok("example.com:8443", "https://example.com:8443")).toBe(true);
+    expect(await ok("example.com", "https://example.com:8443")).toBe(false);
+    expect(await ok("example.com:443", "http://example.com")).toBe(false);
+    expect(await ok("127.0.0.1:4319", "http://localhost:3000")).toBe(false);
+    // An allowedHosts entry without a port is the default port of the Origin's scheme only.
+    expect(await ok("127.0.0.1:4319", "https://app.example")).toBe(true);
+    expect(await ok("127.0.0.1:4319", "http://app.example")).toBe(true);
+    expect(await ok("127.0.0.1:4319", "https://app.example:8443")).toBe(false);
+    // An entry with a port matches that port.
+    expect(await ok("127.0.0.1:4319", "https://ui.example:8443")).toBe(true);
+    expect(await ok("127.0.0.1:4319", "https://ui.example")).toBe(false);
+  });
+
+  it("Sec-Fetch-Site: cross-site is refused on /api and /mcp, even for a GET", async () => {
+    const app = build();
+    const get = (site?: string) =>
+      call(app, "/api/v1/health", { headers: site ? { "sec-fetch-site": site } : {} });
+    const cross = await get("cross-site");
+    expect(cross.status).toBe(403);
+    expect((await cross.json()).error.code).toBe("origin_not_allowed");
+    for (const ok of ["same-origin", "same-site", "none", undefined]) {
+      expect((await get(ok)).status).toBe(200);
+    }
+    const mcp = await call(app, "/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+      body: "{}",
+    });
+    expect(mcp.status).toBe(403);
   });
 
   it("a JSON operation needs Content-Type: application/json; bodyless POSTs do not", async () => {
