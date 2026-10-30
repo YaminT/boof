@@ -20,6 +20,19 @@ describe("client address behind a proxy", () => {
     expect(lastForwardedFor("10.0.0.1", "for=192.0.2.60")).toBe("10.0.0.1");
   });
 
+  it("accepts only IP literals, stripping ports; anything else is not used", () => {
+    expect(lastForwardedFor("198.51.100.1:4711", undefined)).toBe("198.51.100.1");
+    expect(lastForwardedFor("[2001:db8::1]:4711", undefined)).toBe("2001:db8::1");
+    expect(lastForwardedFor("2001:db8::1", undefined)).toBe("2001:db8::1");
+    expect(lastForwardedFor("not-an-ip", undefined)).toBeUndefined();
+    expect(lastForwardedFor("x".repeat(5000), undefined)).toBeUndefined();
+    const h = (name: string) => (name === "x-forwarded-for" ? "garbage" : undefined);
+    expect(clientAddress(h, "127.0.0.1", ["loopback"])).toEqual({
+      peer: "127.0.0.1",
+      key: "127.0.0.1",
+    });
+  });
+
   it("trusts loopback and listed literals only", () => {
     expect(isTrustedProxy("127.0.0.1", ["loopback"])).toBe(true);
     expect(isTrustedProxy("::ffff:127.0.0.1", ["loopback"])).toBe(true);

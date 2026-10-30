@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { isLoopbackAddress } from "./auth.js";
 
 export interface ClientAddress {
@@ -19,15 +20,19 @@ export function isTrustedProxy(peer: string | undefined, trusted: readonly strin
   );
 }
 
-/** The `for=` value of one RFC 7239 element, unquoted and without brackets or port. */
+/** An address with any quotes, `[v6]` brackets and `:port` removed; undefined unless an IP literal. */
+function cleanAddress(raw: string): string | undefined {
+  let v = raw.trim().replace(/^"(.*)"$/, "$1");
+  if (v.startsWith("[")) v = v.slice(1, v.indexOf("]") === -1 ? undefined : v.indexOf("]"));
+  else if (/^[^:]+:\d+$/.test(v)) v = v.slice(0, v.indexOf(":"));
+  return isIP(v) !== 0 ? v : undefined;
+}
+
+/** The `for=` value of one RFC 7239 element. */
 function forwardedElementFor(element: string): string | undefined {
   for (const pair of element.split(";")) {
     const m = /^\s*for\s*=\s*(.+?)\s*$/i.exec(pair);
-    if (!m) continue;
-    let v = m[1].replace(/^"(.*)"$/, "$1");
-    if (v.startsWith("[")) v = v.slice(1, v.indexOf("]") === -1 ? undefined : v.indexOf("]"));
-    else if (/^[^:]+:\d+$/.test(v)) v = v.slice(0, v.indexOf(":"));
-    return v || undefined;
+    if (m) return cleanAddress(m[1]);
   }
   return undefined;
 }
@@ -45,7 +50,7 @@ export function lastForwardedFor(
     .map((s) => s.trim())
     .filter(Boolean)
     .at(-1);
-  if (last) return last;
+  if (last) return cleanAddress(last);
   const element = forwarded?.split(",").at(-1);
   return element ? forwardedElementFor(element) : undefined;
 }

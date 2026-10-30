@@ -3,6 +3,8 @@ import type { SecuritySettings } from "@boof-runner/shared";
 import type { PeerAddressResolver } from "./auth.js";
 import { clientAddress } from "./client-address.js";
 
+const MAX_BUCKETS = 10_000;
+
 interface Bucket {
   tokens: number;
   updated: number;
@@ -57,19 +59,33 @@ export function rateLimit(opts: {
 }
 
 /**
- * Failed authentications per client address, mounted before `authenticate`. A request is refused
- * (429) when its address's bucket is empty; one token is spent only when the answer is 401, so a
- * valid key never draws. See `clientAddress` for how the address is chosen behind a proxy.
+ * Failed authentications per client address, mounted before `authenticate`. A token is taken
+ * before the request runs (a parallel burst cannot slip past) and refunded unless the answer is
+ * 401, so a valid key never draws; the request is refused (429) when the bucket is empty. See `clientAddress` for how the address is chosen behind a proxy.
  */
 export function unauthenticatedRateLimit(opts: {
   security: () => Promise<SecuritySettings>;
   peerAddress: PeerAddressResolver;
   now?: () => number;
-}): MiddlewareHandler {
+  /** Cap on tracked addresses (default 10 000); beyond it full buckets are swept, then the oldest evicted. */
+  maxBuckets?: number;
+}): MiddlewareHandler & { size: () => number } {
   const now = opts.now ?? Date.now;
+  const maxBuckets = opts.maxBuckets ?? MAX_BUCKETS;
   const buckets = new Map<string, Bucket>();
 
-  return async (c, next) => {
+  /** Drop buckets that have fully refilled; if still over the cap, evict the oldest inserted. */
+  const sweep = (limit: number, t: number) => {
+    for (const [k, b] of buckets) {
+      if (b.tokens + ((t - b.updated) / 60_000) * limit >= limit) buckets.delete(k);
+    }
+    for (const k of buckets.keys()) {
+      if (buckets.size <= maxBuckets) break;
+      buckets.delete(k);
+    }
+  };
+
+  const handler: MiddlewareHandler = async (c, next) => {
     const cfg = await opts.security();
     const limit = cfg.rateLimit.unauthenticatedPerMinute;
     const peer = opts.peerAddress(c);
@@ -78,10 +94,19 @@ export function unauthenticatedRateLimit(opts: {
     c.set("clientAddress", addr);
     const t = now();
     const b = buckets.get(addr.key) ?? { tokens: limit, updated: t };
-    const retryAfter = take(b, limit, t, false);
-    buckets.set(addr.key, b);
+    // Take the token before the request runs, so a parallel burst cannot all pass the check.
+    const retryAfter = take(b, limit, t, true);
     if (retryAfter) return limited(c, retryAfter);
+    if (!buckets.has(addr.key)) {
+      buckets.set(addr.key, b);
+      if (buckets.size > maxBuckets) sweep(limit, t);
+    }
     await next();
-    if (c.res.status === 401) b.tokens = Math.max(0, b.tokens - 1);
+    if (c.res.status !== 401) {
+      // Not a failed authentication: give the token back; a full bucket is dropped.
+      b.tokens = Math.min(limit, b.tokens + 1);
+      if (b.tokens >= limit && buckets.get(addr.key) === b) buckets.delete(addr.key);
+    }
   };
+  return Object.assign(handler, { size: () => buckets.size });
 }
