@@ -57,12 +57,25 @@ describe("boof-runner top level", () => {
     expect(await readdir(dataRoot)).toEqual([]); // nothing scaffolded
   });
 
-  it("an unknown command prints an error and the help, exits 1, scaffolds nothing", async () => {
+  it("--version works after serve's own flags and starts nothing", async () => {
+    await main(["-d", dataRoot, "--version"]);
+    await main(["serve", "-v"]);
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toMatch(/^\d+\.\d+\.\d+/);
+    expect(await readdir(dataRoot)).toEqual([]);
+  });
+
+  it("an unknown command with --help is still unknown", async () => {
+    await main(["typo", "--help"]);
+    expect(process.exitCode).toBe(1);
+    expect(errs).toEqual(['boof-runner: unknown command "typo" (see "boof-runner --help")']);
+    expect(logs).toEqual([]);
+  });
+
+  it("an unknown command prints one error line, exits 1, scaffolds nothing", async () => {
     await main(["status"]);
     expect(process.exitCode).toBe(1);
-    expect(errs[0]).toBe('boof-runner: unknown command "status"\n');
-    expect(errs[1]).toContain("Usage:");
-    expect(errs[1]).toContain("boof-runner --version");
+    expect(errs).toEqual(['boof-runner: unknown command "status" (see "boof-runner --help")']);
     expect(logs).toEqual([]);
     expect(await readdir(dataRoot)).toEqual([]);
     expect(existsSync(join(process.cwd(), "data", "settings.json"))).toBe(false);

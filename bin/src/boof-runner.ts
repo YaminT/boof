@@ -311,18 +311,22 @@ export function firstPositional(argv: string[]): string | undefined {
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const [cmd, ...rest] = argv;
-  // Top-level --help (but let `run`/`scan --help` fall through to their handlers).
-  if (
-    hasFlag(argv, ["--help", "-h"]) &&
-    cmd !== "run" &&
-    cmd !== "scan" &&
-    cmd !== "auth" &&
-    cmd !== "remote" &&
-    cmd !== "service" &&
-    cmd !== "plan" &&
-    cmd !== "project" &&
-    cmd !== "mcp"
-  ) {
+  // --version also works after serve's own flags (`boof-runner -d x --version`).
+  if ((cmd === "serve" || isServeFlag(cmd ?? "")) && hasFlag(argv, ["--version", "-v"])) {
+    console.log(readVersion());
+    return;
+  }
+  // Top-level --help (but let the subcommands handle their own --help). An unknown first word is
+  // reported as unknown, even with --help.
+  const topLevel =
+    cmd === undefined ||
+    cmd === "serve" ||
+    cmd === "--help" ||
+    cmd === "-h" ||
+    cmd === "--version" ||
+    cmd === "-v" ||
+    isServeFlag(cmd);
+  if (hasFlag(argv, ["--help", "-h"]) && topLevel) {
     console.log(HELP);
     return;
   }
@@ -390,8 +394,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
         await serve(argv);
         return SERVE_FOREVER;
       }
-      console.error(`boof-runner: unknown command "${cmd}"\n`);
-      console.error(HELP);
+      console.error(`boof-runner: unknown command "${cmd}" (see "boof-runner --help")`);
       return 1;
   }
   return code;
