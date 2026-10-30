@@ -4,7 +4,7 @@ This runbook takes a fresh Linux server (written for Ubuntu 24.04) to a Boof Run
 
 What you need:
 
-- Node.js 22.22 or newer (for example through nvm), git 2.43 or newer, and bun 1.3 (optional; without it the script and the runbook use npm).
+- Node.js 22.22 or newer (for example through nvm), git 2.43 or newer, and bun 1.3 (optional; without it the script falls back to npm).
 - systemd 255 with user lingering on, so the service runs without a login session.
 - The agent CLIs you want to use (`claude`, `codex`, `opencode`) installed for this user.
 - A host name that points at the server, and nginx on the host (for TLS).
@@ -14,7 +14,8 @@ What you need:
 On a machine without a display (no `DISPLAY` or `WAYLAND_DISPLAY`) the install script skips the desktop app: it does not download Electron (about 100 MB) and builds only the web UI and the CLI. Set `BOOF_RUNNER_SKIP_DESKTOP=0` to override.
 
 ```bash
-git clone git@github.com:YaminT/boof.git ~/.local/share/boof-runner/source
+git clone https://github.com/YaminT/boof.git ~/.local/share/boof-runner/source
+# or over SSH, if you have a key on this server: git clone git@github.com:YaminT/boof.git ...
 bash ~/.local/share/boof-runner/source/scripts/install-or-update-boof-runner.sh
 boof-runner --version
 ```
@@ -70,7 +71,7 @@ systemctl --user restart boof-runner
 boof-runner service uninstall      # removes the unit, keeps your data
 ```
 
-`GET /healthz` is public and returns `{ ok, version, uptimeSeconds, runner: { enabled, running } }` with no project or task data; use it for uptime monitors. `runner.enabled` in the payload is cached for 5 seconds. On `systemctl stop` or a restart the runner asks the running task to stop (up to 30 s, `BOOF_RUNNER_SHUTDOWN_GRACE_MS`), kills the agent process, and leaves the task `failed` with its worktree kept. Retry it from the UI or API after the restart.
+`GET /healthz` is public and returns `{ ok, version, uptimeSeconds, runner: { enabled, running } }` with no project or task data; use it for uptime monitors. `runner.enabled` in the payload is cached for 5 seconds. On `systemctl stop` or a restart the runner asks the running task to stop (up to 30 s, `BOOF_RUNNER_SHUTDOWN_GRACE_MS`), kills the agent process, and ends the task as `stopped` (note `stopped by server shutdown`, listed under Stopped) with its worktree kept. Retry it from the UI or API after the restart. Only a crash ends a task as `failed`.
 
 ## 6. nginx
 
@@ -122,7 +123,7 @@ systemctl --user restart boof-runner
 boof-runner service status
 ```
 
-The script stops with a message if the checkout has uncommitted changes. Commit or stash them, or set `BOOF_RUNNER_FORCE_UPDATE=1` to save them to `~/.local/share/boof-runner/backups/<timestamp>.patch` (plus a tar of untracked files) and reset to the latest source. Restart (or run `service install` again) after changing the Node version so the unit records the new node path.
+The script stops with a message if the checkout has uncommitted changes. Commit or stash them, or set `BOOF_RUNNER_FORCE_UPDATE=1` to save them to `~/.local/share/boof-runner/backups/<timestamp>.patch` (plus a tar of untracked files) and reset to the latest source. After changing the Node version, run the install script and then `boof-runner service install` again: only `service install` rewrites the unit's node path (a restart records nothing), and with nvm the global link lives under the old Node's prefix.
 
 ## 9. Back up
 
