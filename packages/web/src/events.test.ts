@@ -355,17 +355,31 @@ describe("stream lifetime", () => {
           s.on("error", () => resolve());
         });
       }
-      await new Promise((r) => setTimeout(r, 300));
-      const ctrls: AbortController[] = [];
-      for (let i = 0; i < 16; i += 1) {
-        const ac = new AbortController();
-        ctrls.push(ac);
-        const res = await fetch(`http://127.0.0.1:${srv.port}/api/v1/events`, {
-          signal: ac.signal,
-        });
-        expect(res.status, `stream ${i}`).toBe(200);
+      // Every leaked slot would show up as a 429 below. Slots are released asynchronously, so retry
+      // until all 16 streams open (bounded ticks, not a fixed sleep); a leak never clears.
+      const openAll = async (): Promise<number> => {
+        const ctrls: AbortController[] = [];
+        let rejected = 0;
+        try {
+          for (let i = 0; i < 16; i += 1) {
+            const ac = new AbortController();
+            ctrls.push(ac);
+            const res = await fetch(`http://127.0.0.1:${srv.port}/api/v1/events`, {
+              signal: ac.signal,
+            });
+            if (res.status !== 200) rejected += 1;
+          }
+        } finally {
+          for (const ac of ctrls) ac.abort();
+        }
+        return rejected;
+      };
+      let rejected = await openAll();
+      for (let tick = 0; rejected > 0 && tick < 100; tick += 1) {
+        await new Promise((r) => setTimeout(r, 25));
+        rejected = await openAll();
       }
-      for (const ac of ctrls) ac.abort();
+      expect(rejected, "streams refused after the early disconnects").toBe(0);
     } finally {
       await srv.stop();
     }
