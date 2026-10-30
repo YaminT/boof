@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,8 +125,8 @@ describe("unit file text", () => {
     expect(mergePath("/usr/bin", undefined)).toBe("/usr/bin");
   });
 
-  it("round-trips values with newlines, #, quotes and % and keeps the unit valid", () => {
-    const env: [string, string][] = [["K", 'a\nb # c "d" 100%']];
+  it("round-trips values with #, quotes and % and keeps the unit valid", () => {
+    const env: [string, string][] = [["K", 'a b # c "d" 100% \\x']];
     const text = buildUnit({
       name: "x",
       data: "/d e",
@@ -370,6 +370,137 @@ describe("service install", () => {
     expect(out.join("\n")).toContain("env: API_KEY (changed)");
     expect(out.join("\n")).not.toContain("secret");
     expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
+  });
+  it("rejects control characters in --env, --data and --env-file and never splits a unit line", async () => {
+    expect(await run(["install", "--data", data, "--env", "K=a\nExecStartPre=/bin/evil"])).toBe(1);
+    expect(errs.join("\n")).toContain("--env K contains a control character");
+    errs = [];
+    expect(await run(["install", "--data", `${data}\nx`])).toBe(1);
+    expect(errs.join("\n")).toContain("--data contains a control character");
+    errs = [];
+    expect(await run(["install", "--data", data, "--env-file", "/x\ny"])).toBe(1);
+    expect(errs.join("\n")).toContain("--env-file contains a control character");
+    expect(existsSync(unitFile())).toBe(false);
+    expect(await run(["install", "--data", data, "--env", 'K=a b #"q" 5%'])).toBe(0);
+    const lines = (await readFile(unitFile(), "utf8")).split("\n");
+    expect(lines.filter((l) => l.startsWith("Environment=")).length).toBe(3);
+    expect(lines.filter((l) => l.startsWith("ExecStart=")).length).toBe(1);
+  });
+
+  it("does not echo the value of a bad --env key, and refuses PATH and HOME", async () => {
+    expect(await run(["install", "--data", data, "--env", "MY-TOKEN=sk-supersecret"])).toBe(1);
+    expect(errs.join("\n")).not.toContain("supersecret");
+    errs = [];
+    expect(await run(["install", "--data", data, "--env", "PATH=/only"])).toBe(1);
+    expect(errs.join("\n")).toContain("--env PATH is not allowed");
+    errs = [];
+    expect(await run(["install", "--data", data, "--env", "HOME=/x"])).toBe(1);
+    expect(errs.join("\n")).toContain("--env HOME is not allowed");
+  });
+
+  it("an invalid BOOF_RUNNER_PORT only matters when it is the default", async () => {
+    process.env.BOOF_RUNNER_PORT = "abc";
+    try {
+      expect(await run(["install", "--data", data, "--port", "4400"])).toBe(0);
+      expect(await run(["install", "--data", data])).toBe(0); // port kept from the unit
+      await rm(unitFile());
+      expect(await run(["install", "--data", data])).toBe(1);
+      expect(errs.join("\n")).toContain("BOOF_RUNNER_PORT must be 1-65535");
+    } finally {
+      delete process.env.BOOF_RUNNER_PORT;
+    }
+  });
+
+  it("writes the unit privately and atomically: no temp file is left and a 0644 unit becomes 0600", async () => {
+    expect(await run(["install", "--data", data])).toBe(0);
+    await chmod(unitFile(), 0o644);
+    expect(await run(["install", "--data", data])).toBe(0);
+    expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(home, ".config/systemd/user"))).toEqual(["boof-runner.service"]);
+  });
+
+  it("a read error other than a missing file fails the install", async () => {
+    await mkdir(unitFile(), { recursive: true }); // a directory where the unit should be
+    expect(await run(["install", "--data", data])).toBe(1);
+    expect(errs.join("\n")).toContain("EISDIR");
+  });
+
+  describe("an unusable options line", () => {
+    const ok = { data: "/srv/d", port: 4400, host: "127.0.0.1", env: [], path: "/usr/bin" };
+    const cases: [string, string][] = [
+      ["not valid JSON", "# boof-runner-options: {nope"],
+      ["port must be an integer from 1 to 65535", JSON.stringify({ ...ok, port: 70000 })],
+      ["data must be an absolute path", JSON.stringify({ ...ok, data: "rel/data" })],
+      ["envFile must be an absolute path", JSON.stringify({ ...ok, envFile: "rel.env" })],
+      ["path entries must be absolute", JSON.stringify({ ...ok, path: "/usr/bin:rel" })],
+      ['env key "A B" is not a valid name', JSON.stringify({ ...ok, env: [["A B", "x"]] })],
+      ["control character", JSON.stringify({ ...ok, env: [["Z", "1\nExecStartPre=/bin/evil"]] })],
+    ];
+    it.each(cases)(
+      "%s: exits non-zero, writes nothing, scaffolds nothing",
+      async (reason, line) => {
+        await mkdir(join(home, ".config/systemd/user"), { recursive: true });
+        const text = `${line.startsWith("#") ? line : `# boof-runner-options: ${line}`}\n[Unit]\n[Service]\nExecStart=/x\n`;
+        await writeFile(unitFile(), text);
+        expect(await run(["install"])).toBe(1);
+        expect(errs.join("\n")).toContain("options line");
+        expect(errs.join("\n")).toContain(reason);
+        expect(errs.join("\n")).toContain("--reset");
+        expect(await readFile(unitFile(), "utf8")).toBe(text);
+        expect(existsSync(data)).toBe(false);
+        expect(calls).toEqual([]);
+      },
+    );
+
+    it("--reset recovers from it", async () => {
+      await mkdir(join(home, ".config/systemd/user"), { recursive: true });
+      await writeFile(unitFile(), "# boof-runner-options: {nope\n[Unit]\n");
+      expect(await run(["install", "--data", data, "--reset"])).toBe(0);
+      expect(readInstallOptions(await readFile(unitFile(), "utf8"))?.data).toBe(data);
+    });
+  });
+
+  it("the first reinstall of a unit from an older version keeps its settings", async () => {
+    const envFile = join(home, "boof.env");
+    await writeFile(envFile, "T=secret\n", { mode: 0o600 });
+    await mkdir(join(home, ".config/systemd/user"), { recursive: true });
+    await writeFile(
+      unitFile(),
+      [
+        "[Unit]",
+        "Description=Boof Runner (boof-runner)",
+        "",
+        "[Service]",
+        "Type=simple",
+        `ExecStart=/old/node ${script} serve -d ${data} -p 4400 --host 127.0.0.1`,
+        `WorkingDirectory=${data}`,
+        "Environment=PATH=/home/u/.nvm/v22/bin:/usr/bin",
+        `Environment=HOME=${home}`,
+        'Environment="FOO=keep me 5%%"',
+        `EnvironmentFile=${envFile}`,
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+      ].join("\n"),
+    );
+    expect(await run(["install", "--data", data])).toBe(0);
+    const text = await readFile(unitFile(), "utf8");
+    expect(text).toContain(` serve -d ${data} -p 4400 --host 127.0.0.1\n`);
+    expect(text).toContain(`EnvironmentFile=${envFile}\n`);
+    expect(text).toContain('Environment="FOO=keep me 5%%"\n');
+    expect(text).toContain("/home/u/.nvm/v22/bin");
+    expect(readInstallOptions(text)).toMatchObject({
+      port: 4400,
+      envFile,
+      env: [["FOO", "keep me 5%"]],
+    });
+    const printed = out.join("\n");
+    expect(printed).toContain("older version");
+    expect(printed).toContain("port: 4400 (kept from the existing unit)");
+    expect(printed).toContain(`env-file: ${envFile} (kept from the existing unit)`);
+    expect(printed).toContain("env: FOO (kept from the existing unit)");
+    expect(printed).not.toContain("keep me");
   });
 });
 

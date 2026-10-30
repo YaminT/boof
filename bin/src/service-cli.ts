@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,9 @@ install    Writes ~/.config/systemd/user/<name>.service (node, the CLI and your 
            Refuses a --host the server itself would refuse (see: boof-runner remote setup).
            Run it again after an upgrade: every option you omit (--data, --port, --host, --env,
            --env-file and the recorded PATH) is reused from the installed unit and the command
-           prints what it kept and what changed; --reset starts from the flags alone. node and
+           prints what it kept and what changed; --reset starts from the flags alone (it drops
+           everything, the data root too: pass --data; single PATH entries or --env keys can only
+           be removed this way). A unit from an older version is read once and its settings kept. node and
            the CLI path are always taken from the current install. The unit records the options
            (including --env values) in a comment line, so it is written with mode 0600.
            --env-file loads KEY=VALUE lines (for example ANTHROPIC_BASE_URL and
@@ -169,38 +171,131 @@ export interface UnitOptions extends InstallOptions {
   home: string;
 }
 
-/** The options recorded in a unit by a previous install; undefined when absent or invalid. */
-export function readInstallOptions(unitText: string): InstallOptions | undefined {
+export type SavedOptions =
+  { kind: "none" } | { kind: "invalid"; reason: string } | { kind: "ok"; options: InstallOptions };
+
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Reads the options line of a unit: absent, present but unusable (with the reason), or valid. */
+export function inspectInstallOptions(unitText: string): SavedOptions {
   const line = unitText.split("\n").find((l) => l.startsWith(OPTIONS_MARKER));
-  if (line === undefined) return undefined;
+  if (line === undefined) return { kind: "none" };
+  const bad = (reason: string): SavedOptions => ({ kind: "invalid", reason });
   let o: unknown;
   try {
     o = JSON.parse(line.slice(OPTIONS_MARKER.length));
   } catch {
-    return undefined;
+    return bad("it is not valid JSON");
   }
-  if (typeof o !== "object" || o === null) return undefined;
+  if (typeof o !== "object" || o === null || Array.isArray(o)) return bad("it is not an object");
   const r = o as Record<string, unknown>;
-  const pair = (e: unknown): e is [string, string] =>
-    Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string";
-  if (
-    typeof r.data !== "string" ||
-    typeof r.host !== "string" ||
-    typeof r.path !== "string" ||
-    !Number.isInteger(r.port) ||
-    !Array.isArray(r.env) ||
-    !r.env.every(pair) ||
-    (r.envFile !== undefined && typeof r.envFile !== "string")
-  )
-    return undefined;
+  if (typeof r.data !== "string" || !isAbsolute(r.data))
+    return bad("data must be an absolute path");
+  if (typeof r.host !== "string" || !r.host) return bad("host must be a non-empty string");
+  if (typeof r.path !== "string") return bad("path must be a string");
+  if (typeof r.port !== "number" || !Number.isInteger(r.port) || r.port < 1 || r.port > 65535)
+    return bad("port must be an integer from 1 to 65535");
+  if (r.envFile !== undefined && (typeof r.envFile !== "string" || !isAbsolute(r.envFile)))
+    return bad("envFile must be an absolute path");
+  if (!Array.isArray(r.env)) return bad("env must be a list");
+  const env: [string, string][] = [];
+  for (const e of r.env) {
+    if (!Array.isArray(e) || e.length !== 2 || typeof e[0] !== "string" || typeof e[1] !== "string")
+      return bad("env entries must be [key, value] pairs");
+    if (!ENV_KEY_RE.test(e[0])) return bad(`env key "${e[0]}" is not a valid name`);
+    if (CONTROL_RE.test(e[1])) return bad(`env ${e[0]} contains a control character`);
+    env.push([e[0], e[1]]);
+  }
+  const strings = [r.data, r.host, r.path, ...(r.envFile ? [r.envFile as string] : [])];
+  if (strings.some((x) => CONTROL_RE.test(x))) return bad("a value contains a control character");
+  if (r.path.split(":").some((x) => x && !isAbsolute(x)))
+    return bad("path entries must be absolute");
   return {
-    data: r.data,
-    port: r.port as number,
-    host: r.host,
-    env: r.env as [string, string][],
-    ...(r.envFile !== undefined ? { envFile: r.envFile as string } : {}),
-    path: r.path,
+    kind: "ok",
+    options: {
+      data: r.data,
+      port: r.port,
+      host: r.host,
+      env,
+      ...(r.envFile !== undefined ? { envFile: r.envFile as string } : {}),
+      path: r.path,
+    },
   };
+}
+
+/** The options recorded in a unit by a previous install; undefined when absent or invalid. */
+export function readInstallOptions(unitText: string): InstallOptions | undefined {
+  const r = inspectInstallOptions(unitText);
+  return r.kind === "ok" ? r.options : undefined;
+}
+
+/** Splits a systemd command line into words (double and single quotes, backslash, %% -> %). */
+function splitExecWords(line: string): string[] {
+  const words: string[] = [];
+  let cur = "";
+  let inWord = false;
+  let q: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === "\\" && i + 1 < line.length && q !== "'") {
+      cur += line[++i];
+      inWord = true;
+    } else if (q) {
+      if (c === q) q = null;
+      else cur += c;
+    } else if (c === '"' || c === "'") {
+      q = c;
+      inWord = true;
+    } else if (/\s/.test(c)) {
+      if (inWord) words.push(cur);
+      cur = "";
+      inWord = false;
+    } else {
+      cur += c;
+      inWord = true;
+    }
+  }
+  if (inWord) words.push(cur);
+  return words.map((w) => w.replace(/%%/g, "%"));
+}
+
+/**
+ * Settings of a unit written before the options line existed: -d/-p/--host from ExecStart=,
+ * Environment= (PATH becomes `path`, HOME is dropped) and EnvironmentFile=. Undefined when the
+ * unit does not look like one of ours.
+ */
+export function readLegacyUnitOptions(unitText: string): InstallOptions | undefined {
+  const lines = unitText.split("\n");
+  const exec = lines.find((l) => l.startsWith("ExecStart="));
+  if (!exec) return undefined;
+  const words = splitExecWords(exec.slice("ExecStart=".length));
+  const after = (flag: string) => {
+    const k = words.indexOf(flag);
+    return k >= 0 ? words[k + 1] : undefined;
+  };
+  const data = after("-d");
+  const port = Number(after("-p"));
+  const host = after("--host");
+  if (!data || !isAbsolute(data) || !host || !Number.isInteger(port) || port < 1 || port > 65535)
+    return undefined;
+  let path = "";
+  const env: [string, string][] = [];
+  for (const l of lines) {
+    if (!l.startsWith("Environment=")) continue;
+    for (const a of splitExecWords(l.slice("Environment=".length))) {
+      const eq = a.indexOf("=");
+      const key = eq > 0 ? a.slice(0, eq) : "";
+      if (!ENV_KEY_RE.test(key)) continue;
+      const val = a.slice(eq + 1);
+      if (key === "PATH") path = val;
+      else if (key !== "HOME") env.push([key, val]);
+    }
+  }
+  const envFile = lines
+    .find((l) => l.startsWith("EnvironmentFile="))
+    ?.slice("EnvironmentFile=".length);
+  return { data, port, host, env, ...(envFile ? { envFile } : {}), path };
 }
 
 /** This shell's PATH entries followed by the previous ones not already present. */
@@ -479,22 +574,67 @@ async function install(
   for (const kv of (v.env as string[] | undefined) ?? []) {
     const eq = kv.indexOf("=");
     const key = eq > 0 ? kv.slice(0, eq) : "";
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      err(`service install: --env expects KEY=VALUE, got "${kv}"`);
+    if (!ENV_KEY_RE.test(key)) {
+      err(
+        `service install: --env expects KEY=VALUE, got "${eq > 0 ? key : "(no name)"}" before "="`,
+      );
+      return 1;
+    }
+    if (key === "PATH" || key === "HOME") {
+      err(
+        `service install: --env ${key} is not allowed (${key === "PATH" ? "PATH is merged from this shell and the previous install" : "the unit sets HOME itself"})`,
+      );
+      return 1;
+    }
+    if (CONTROL_RE.test(kv.slice(eq + 1))) {
+      err(`service install: --env ${key} contains a control character (newline, tab, ...)`);
       return 1;
     }
     extra.push([key, kv.slice(eq + 1)]);
+  }
+  for (const [flag, val] of [
+    ["--data", v.data],
+    ["--env-file", v["env-file"]],
+  ] as const) {
+    if (typeof val === "string" && CONTROL_RE.test(val)) {
+      err(`service install: ${flag} contains a control character (newline, tab, ...)`);
+      return 1;
+    }
   }
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(process.cwd(), p));
   const envFileOpt = v["env-file"] as string | undefined;
   const dataOpt = v.data as string | undefined;
   const file = unitPath(env, name);
-  const previousText = await readFile(file, "utf8").catch(() => undefined);
-  const previous = v.reset ? undefined : previousText && readInstallOptions(previousText);
-  const defaultPort = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
-  if (!Number.isInteger(defaultPort) || defaultPort < 1 || defaultPort > 65535) {
-    err("service install: BOOF_RUNNER_PORT must be 1-65535");
-    return 1;
+  let previousText: string | undefined;
+  try {
+    previousText = await readFile(file, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  let previous: InstallOptions | undefined;
+  let legacy = false;
+  if (!v.reset && previousText !== undefined) {
+    const saved = inspectInstallOptions(previousText);
+    if (saved.kind === "invalid") {
+      err(
+        `service install: the options line in ${file} is unusable (${saved.reason}); fix or delete that line, or pass --reset (with --data) to start from the flags`,
+      );
+      return 1;
+    }
+    if (saved.kind === "ok") previous = saved.options;
+    else {
+      previous = readLegacyUnitOptions(previousText);
+      legacy = previous !== undefined;
+    }
+  }
+  // BOOF_RUNNER_PORT only matters when neither a flag nor the previous install supplies the port.
+  let defaultPort = 4319;
+  if (portArg === undefined && !previous) {
+    defaultPort = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
+    if (!Number.isInteger(defaultPort) || defaultPort < 1 || defaultPort > 65535) {
+      err("service install: BOOF_RUNNER_PORT must be 1-65535");
+      return 1;
+    }
   }
   const { options, report } = mergeInstallOptions(
     {
@@ -505,19 +645,30 @@ async function install(
       envFile: envFileOpt === undefined ? undefined : abs(envFileOpt),
       path: env.path,
     },
-    previous || undefined,
+    previous,
     { data: defaultRoot, port: defaultPort },
   );
   out(
     v.reset
       ? "Ignoring the previous install's options (--reset)"
-      : previous
-        ? `Reusing options recorded in ${file}`
-        : previousText !== undefined
-          ? "Previous unit has no recorded options; installing from the flags"
-          : "No previous install found; installing from the flags",
+      : legacy
+        ? `Reusing the settings of the existing unit ${file} (installed by an older version, no options line)`
+        : previous
+          ? `Reusing options recorded in ${file}`
+          : previousText !== undefined
+            ? "Previous unit has no recorded options; installing from the flags"
+            : "No previous install found; installing from the flags",
   );
-  for (const l of report) out(`  ${l}`);
+  for (const l of report)
+    out(
+      `  ${
+        legacy
+          ? l
+              .replace(/\(kept\)/g, "(kept from the existing unit)")
+              .replace(/^PATH: kept/, "PATH: kept from the existing unit")
+          : l
+      }`,
+    );
   const { data, port, host, envFile } = options;
   if (envFile !== undefined) {
     let mode: number;
@@ -573,8 +724,15 @@ async function install(
     (await env.run("systemctl", ["--user", "is-active", "--quiet", unitName(name)])).code === 0;
   await mkdir(dirname(file), { recursive: true });
   // The unit records --env values in its options comment, so keep it private to the owner.
-  await writeFile(file, unit, { encoding: "utf8", mode: 0o600 });
-  await chmod(file, 0o600);
+  // Written to a private temp file next to it and renamed over: no window with wider permissions.
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(tmp, unit, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await rename(tmp, file);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
   out(`Wrote ${file}`);
 
   const steps: [string, string[]][] = [

@@ -114,6 +114,8 @@ bash ~/.local/share/boof-runner/source/scripts/install-or-update-boof-runner.sh
 boof-runner service install --data "$BOOF_DATA"     # rewrites the unit and restarts a running service
 # Options set at the first install (--env-file, --env, --port, --host) and the recorded PATH are reused and the
 # command prints what it kept; add --reset to start from the flags alone.
+# A unit installed by an older version has no recorded options: it is read once (ExecStart, Environment, EnvironmentFile) and its settings are kept.
+# --reset drops everything, including the data root (pass --data with it); removing one PATH entry or one --env key is only possible with --reset.
 # or only restart when nothing in the unit changed:
 systemctl --user restart boof-runner
 boof-runner service status
