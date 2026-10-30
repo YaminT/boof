@@ -49,6 +49,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Version from the tag
+        run: bash scripts/release-version.sh "$TAG" >> "$GITHUB_ENV"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -56,9 +59,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Version from the tag
-        run: bash scripts/release-version.sh "$TAG" >> "$GITHUB_ENV"
 
       - name: Build installers (${{ matrix.name }})
         run: npm run ${{ matrix.script }}
