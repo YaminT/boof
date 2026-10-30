@@ -195,15 +195,17 @@ Any other first word is an error (`unknown command`, exit 1); only serve's own f
 
 Common option: `-d, --data <path>` (data root, default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
 
-| Command   | Options                                                                                                                                                                 |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `serve`   | `-p, --port`, `--host`, `--tls-cert`, `--tls-key`, `--no-runner` (see [Options](#options-serve--the-default-command))                                                   |
-| `run`     | `-f, --file`, `--all`, `--project <id>`, `--repo <dir>`, `--base <ref>`, `--title`, `--tool`, `--model`, `--runs <n>`                                                   |
-| `scan`    | `--project <id>`, `--dry-run`, `--bump review\|done`, `--tool`, `--model`                                                                                               |
-| `project` | `add <dir> [--id] [--name] [--default]`, `list [--json]`, `remove <id> [--purge]`                                                                                       |
-| `plan`    | `import --project <id> [--plan <id>]`, `sync --project <id> --plan <id> [--dry-run] [--stop-running]`, `export --project <id> --plan <id> --out <dir>`                  |
-| `auth`    | `add --name <text> --scopes <a,b,c> [--projects <id,id>\|*] [--trust trusted\|review] [--expires 30d] [--kind harness\|mcp\|cli]`, `list`, `revoke <id>`, `rotate <id>` |
-| `mcp`     | `--client <id>`, `--project <id>`                                                                                                                                       |
+| Command   | Options                                                                                                                                                                                                                                                    |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `serve`   | `-p, --port`, `--host`, `--tls-cert`, `--tls-key`, `--no-runner` (see [Options](#options-serve--the-default-command))                                                                                                                                      |
+| `run`     | `-f, --file`, `--all`, `--project <id>`, `--repo <dir>`, `--base <ref>`, `--title`, `--tool`, `--model`, `--runs <n>`                                                                                                                                      |
+| `scan`    | `--project <id>`, `--dry-run`, `--bump review\|done`, `--tool`, `--model`                                                                                                                                                                                  |
+| `project` | `add <dir> [--id] [--name] [--default]`, `list [--json]`, `remove <id> [--purge]`                                                                                                                                                                          |
+| `plan`    | `import --project <id> [--plan <id>]`, `sync --project <id> --plan <id> [--dry-run] [--stop-running]`, `export --project <id> --plan <id> --out <dir>`                                                                                                     |
+| `auth`    | `add --name <text> --scopes <a,b,c> [--projects <id,id>\|*] [--trust trusted\|review] [--expires 30d] [--kind harness\|mcp\|cli]`, `list`, `revoke <id>`, `rotate <id>`                                                                                    |
+| `remote`  | `setup --hostname <host> [--allowed-root <dir>]... [--name] [--scopes] [--trust review\|trusted] [--expires] [--no-key] [-p]`, `status`, `disable`                                                                                                         |
+| `service` | `install [--data] [--port] [--host] [--env KEY=VALUE]... [--env-file <path>] [--name] [--reset]`, `uninstall`, `status`, `logs [-f]` (Linux, systemd user unit; omitted options are kept from the existing unit, see [deploy/README.md](deploy/README.md)) |
+| `mcp`     | `--client <id>`, `--project <id>`                                                                                                                                                                                                                          |
 
 Exit codes: 0 success; 1 a task failed, was stopped, parked, nothing was actionable, or bad usage.
 
