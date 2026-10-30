@@ -1,8 +1,10 @@
-import { mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
-import { basename, relative, isAbsolute } from "node:path";
+import { lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { atomicWrite, readText, withFileLock } from "./atomic.js";
 import { toKebabId, uniqueKebabId } from "./ids.js";
 import { assertKebabId, dataRootPaths, projectPaths, statusDir } from "./paths.js";
+import { isInsidePath, resolveUnbornPath } from "./project-path.js";
 import { nowIso } from "./runtime.js";
 import { ProjectSchema, type Project, type ProjectOrigin, type ProjectPatch } from "./schema.js";
 import { TaskStore } from "./store.js";
@@ -15,7 +17,11 @@ export type ProjectErrorCode =
   | "duplicate"
   | "same_repo"
   | "id_taken"
-  | "has_running_task";
+  | "has_running_task"
+  | "not_a_directory"
+  | "directory_not_empty"
+  | "directory_create_failed"
+  | "directory_not_allowed";
 
 /** A project operation was refused; `code` is stable for API mapping. */
 export class ProjectError extends Error {
@@ -34,15 +40,28 @@ export type RepoValidator = (dir: string) => Promise<boolean>;
 /** Resolves the git common dir (realpath) of a directory, shared by a repository's linked worktrees; null when it is not in a repository. */
 export type RepoCommonDir = (dir: string) => Promise<string | null>;
 
+/** How `create` treats the directory: use an existing git work tree, make one at a path, or make one under a projects root. */
+export type ProjectPathSpec =
+  | { mode: "existing" }
+  | { mode: "new"; confirm?: boolean }
+  | { mode: "auto"; projectsRoot: string };
+
 export interface ProjectStoreOptions {
   /** Called by create/update(workingDirectory); without it no git check is made. */
   isGitRepo?: RepoValidator;
   /** Called by create/update(workingDirectory) to refuse two projects in one repository. */
   repoCommonDir?: RepoCommonDir;
+  /** Called on a new or auto directory after it is made; without it the directory is created but no repository is initialised. */
+  initGitRepo?: (dir: string) => Promise<void>;
 }
 
 export interface CreateProjectInput {
-  workingDirectory: string;
+  /** Required unless `path.mode === "auto"`. */
+  workingDirectory?: string;
+  /** Default `{ mode: "existing" }`. */
+  path?: ProjectPathSpec;
+  /** What the project is for (trimmed; stored only when non-empty). */
+  brief?: string;
   /** Explicit id (kebab); default derived from the directory name. */
   id?: string;
   name?: string;
@@ -57,6 +76,10 @@ export interface CreateProjectInput {
   planWriteBack?: boolean;
 }
 
+function errCode(err: unknown): string {
+  return (err as NodeJS.ErrnoException).code ?? (err instanceof Error ? err.message : String(err));
+}
+
 async function isDirectory(p: string): Promise<boolean> {
   try {
     return (await stat(p)).isDirectory();
@@ -65,15 +88,11 @@ async function isDirectory(p: string): Promise<boolean> {
   }
 }
 
-function isInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 /** File-backed registry of projects under <root>/projects/<id>/project.json. */
 export class ProjectStore {
   private readonly isGitRepo?: RepoValidator;
   private readonly repoCommonDir?: RepoCommonDir;
+  private readonly initGitRepo?: (dir: string) => Promise<void>;
 
   constructor(
     private readonly root: string,
@@ -81,6 +100,7 @@ export class ProjectStore {
   ) {
     this.isGitRepo = opts.isGitRepo;
     this.repoCommonDir = opts.repoCommonDir;
+    this.initGitRepo = opts.initGitRepo;
   }
 
   /** Directory to hand to TaskStore / AttachmentStore / UsageStore for project `id`. */
@@ -140,7 +160,7 @@ export class ProjectStore {
       throw new ProjectError("directory_missing", `Not a directory: ${dir}`);
     }
     const dataRoot = await realpath(this.root).catch(() => this.root);
-    if (isInside(dataRoot, real)) {
+    if (isInsidePath(dataRoot, real)) {
       throw new ProjectError("inside_data_root", `Directory is inside the data root: ${real}`);
     }
     if (this.isGitRepo && !(await this.isGitRepo(real))) {
@@ -183,37 +203,156 @@ export class ProjectStore {
     return all.find((p) => p.workingDirectory === real) ?? null;
   }
 
+  /**
+   * Make (or accept an empty) directory for a `new` or `auto` project. Refuses before creating
+   * anything when the path is the filesystem root, the home directory or inside the data root, or
+   * when an entry on the way (a dangling symlink, something unreadable) cannot be told apart from
+   * absence. `created` is true only when this call made the directory.
+   */
+  private async prepareNewDirectory(
+    target: string,
+    opts: { confirm?: boolean },
+  ): Promise<{ real: string; created: boolean }> {
+    const { real, exists } = await resolveUnbornPath(target);
+    const dataRoot = await realpath(this.root).catch(() => this.root);
+    if (isInsidePath(dataRoot, real)) {
+      throw new ProjectError("inside_data_root", `Directory is inside the data root: ${real}`);
+    }
+    const home = await realpath(homedir()).catch(() => homedir());
+    if (real === dirname(real) || real === home) {
+      throw new ProjectError(
+        "directory_not_allowed",
+        "boof never initialises the filesystem root or the home directory as a project",
+      );
+    }
+    if (exists) {
+      if (!(await isDirectory(real))) {
+        throw new ProjectError("not_a_directory", `Not a directory: ${real}`);
+      }
+      let entries: string[];
+      try {
+        entries = await readdir(real);
+      } catch (err) {
+        throw new ProjectError(
+          "directory_create_failed",
+          `Cannot read directory ${real}: ${errCode(err)}`,
+        );
+      }
+      if (entries.some((e) => e !== ".git") && !opts.confirm) {
+        throw new ProjectError(
+          "directory_not_empty",
+          `Directory is not empty: ${real} (pass confirm to initialise it anyway)`,
+        );
+      }
+    } else {
+      // access() said "absent", but a dangling symlink or an unreadable entry says that too.
+      // Walk up to the first entry that really exists; any entry lstat can see on the way is not absent.
+      for (let p = real; !(await isDirectory(p)); p = dirname(p)) {
+        try {
+          await lstat(p);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw new ProjectError("directory_create_failed", `Cannot inspect ${p}: ${errCode(err)}`);
+        }
+        throw new ProjectError(
+          "directory_create_failed",
+          `Cannot create ${real}: ${p} exists but is not a usable directory (dangling symlink?)`,
+        );
+      }
+    }
+    let created = false;
+    if (!exists) {
+      try {
+        await mkdir(real, { recursive: true });
+      } catch (err) {
+        throw new ProjectError(
+          "directory_create_failed",
+          `Cannot create directory ${real}: ${errCode(err)}`,
+        );
+      }
+      created = true;
+    }
+    try {
+      await this.initGitRepo?.(real);
+    } catch (err) {
+      if (created) await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      throw new ProjectError(
+        "directory_create_failed",
+        `Cannot initialise a repository in ${real}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return { real, created };
+  }
+
   async create(input: CreateProjectInput): Promise<Project> {
-    const real = await this.vetDirectory(input.workingDirectory);
-    const existing = (await this.list({ includeArchived: true })).map((p) => p.id);
-    let id: string;
+    const spec: ProjectPathSpec = input.path ?? { mode: "existing" };
+    const existingIds = (await this.list({ includeArchived: true })).map((p) => p.id);
+    let id: string | undefined;
     if (input.id !== undefined) {
       id = assertKebabId(input.id);
-      if (existing.includes(id))
+      if (existingIds.includes(id))
         throw new ProjectError("id_taken", `Project id already exists: ${id}`);
-    } else {
-      id = uniqueKebabId(toKebabId(basename(real)) || "project", existing);
     }
-    const now = nowIso();
-    const project = ProjectSchema.parse({
-      id,
-      name: input.name?.trim() || basename(real) || id,
-      workingDirectory: real,
-      ...(input.defaultBase ? { defaultBase: input.defaultBase } : {}),
-      ...(input.roles ? { roles: input.roles } : {}),
-      ...(input.review ? { review: input.review } : {}),
-      ...(input.worktree ? { worktree: input.worktree } : {}),
-      ...(input.retries ? { retries: input.retries } : {}),
-      ...(input.budget ? { budget: input.budget } : {}),
-      ...(input.planWriteBack !== undefined ? { planWriteBack: input.planWriteBack } : {}),
-      labels: input.labels ?? [],
-      origin: input.origin ?? { kind: "api" },
-      created: now,
-      updated: now,
-    });
-    await this.write(project);
-    await this.ensureDirs(id);
-    return project;
+    let target: string;
+    if (spec.mode === "auto") {
+      if (id === undefined) {
+        // A name is occupied when its entry holds something; a missing or empty directory is reusable.
+        const occupied: string[] = [];
+        for (const e of await readdir(spec.projectsRoot, { withFileTypes: true }).catch(() => [])) {
+          const full = join(spec.projectsRoot, e.name);
+          const empty = e.isDirectory() && (await readdir(full).catch(() => ["?"])).length === 0;
+          if (!empty) occupied.push(e.name);
+        }
+        id = uniqueKebabId(toKebabId(input.name ?? "") || "project", [...existingIds, ...occupied]);
+      }
+      target = join(spec.projectsRoot, id);
+    } else {
+      if (!input.workingDirectory) {
+        throw new ProjectError("directory_missing", "workingDirectory is required");
+      }
+      target = input.workingDirectory;
+    }
+
+    let real: string;
+    let created = false;
+    if (spec.mode === "existing") {
+      real = await this.vetDirectory(target);
+    } else {
+      ({ real, created } = await this.prepareNewDirectory(target, {
+        confirm: spec.mode === "new" ? spec.confirm : undefined,
+      }));
+    }
+    try {
+      if (spec.mode !== "existing") real = await this.vetDirectory(real);
+      id ??= uniqueKebabId(toKebabId(basename(real)) || "project", existingIds);
+      const brief = input.brief?.trim();
+      const now = nowIso();
+      const project = ProjectSchema.parse({
+        id,
+        name: input.name?.trim() || basename(real) || id,
+        workingDirectory: real,
+        ...(brief ? { brief } : {}),
+        ...(input.defaultBase ? { defaultBase: input.defaultBase } : {}),
+        ...(input.roles ? { roles: input.roles } : {}),
+        ...(input.review ? { review: input.review } : {}),
+        ...(input.worktree ? { worktree: input.worktree } : {}),
+        ...(input.retries ? { retries: input.retries } : {}),
+        ...(input.budget ? { budget: input.budget } : {}),
+        ...(input.planWriteBack !== undefined ? { planWriteBack: input.planWriteBack } : {}),
+        labels: input.labels ?? [],
+        origin: input.origin ?? { kind: "api" },
+        created: now,
+        updated: now,
+      });
+      await this.write(project);
+      await this.ensureDirs(id);
+      return project;
+    } catch (err) {
+      if (created) {
+        await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      }
+      throw err;
+    }
   }
 
   /** Apply a patch (null clears an optional field), re-vetting a changed working directory. */

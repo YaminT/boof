@@ -583,7 +583,7 @@ export class TaskService {
    */
   async createProject(input: CreateProjectInput, actor?: Principal): Promise<Project> {
     if (actor && actor.kind !== "local")
-      await this.assertRegistrationAllowed(actor, input.workingDirectory);
+      await this.assertRegistrationAllowed(actor, input.workingDirectory ?? "");
     try {
       const project = await this.projects.create({
         ...input,
