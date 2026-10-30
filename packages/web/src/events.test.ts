@@ -13,6 +13,8 @@ import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
 import { DataWatcher } from "./watch.js";
+import { startServer } from "./server.js";
+import net from "node:net";
 
 let root: string;
 let base: string;
@@ -174,8 +176,8 @@ describe("GET /api/v1/events", () => {
 
 describe("stream lifetime", () => {
   const decoder = new TextDecoder();
-  const open = async (init: RequestInit = {}) => {
-    const res = await app.request("http://localhost/api/v1/events", init);
+  const open = async (init: RequestInit = {}, query = "") => {
+    const res = await app.request(`http://localhost/api/v1/events${query}`, init);
     return { res, reader: res.status === 200 ? res.body!.getReader() : null };
   };
   const next = async (r: ReadableStreamDefaultReader<Uint8Array>) => {
@@ -263,5 +265,109 @@ describe("stream lifetime", () => {
     expect(other.res.status).toBe(200);
     readers.push(other.reader!);
     for (const r of readers.slice(1)) await r.cancel();
+  });
+
+  it("ends a stream whose key expires (injected clock)", async () => {
+    const watcher = new DataWatcher(root);
+    let clock = Date.parse("2026-03-01T12:00:00Z");
+    authStore = new AuthStore(root, () => clock);
+    app = createApp({ service, authStore, peerAddress: () => peer, watcher, now: () => clock });
+    const { key } = await authStore.create({
+      name: "e",
+      scopes: ["tasks:read"],
+      trust: "trusted",
+      expiresAt: new Date(clock + 60_000).toISOString(),
+    });
+    peer = "10.0.0.9";
+    const live = await open({ headers: { authorization: `Bearer ${key}` } });
+    expect(await next(live.reader!)).toContain("event: ready");
+    clock += 120_000;
+    watcher.broadcast("changed", {});
+    expect(await rest(live.reader!)).toContain("event: unauthorized");
+  });
+
+  it("ends a deprecated /api/events stream when the key is revoked", async () => {
+    const watcher = new DataWatcher(root);
+    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    const { key, client } = await authStore.create({
+      name: "l",
+      scopes: ["tasks:read"],
+      trust: "trusted",
+    });
+    peer = "10.0.0.9";
+    const res = await app.request("http://localhost/api/events", {
+      headers: { authorization: `Bearer ${key}` },
+    });
+    const reader = res.body!.getReader();
+    expect(await next(reader)).toContain("event: ready");
+    await authStore.revoke(client.id);
+    watcher.broadcast("changed", { project: "a" });
+    expect(await rest(reader)).toContain("event: unauthorized");
+  });
+
+  it("sends nothing after unauthorized when the key is revoked during a replay", async () => {
+    const watcher = new DataWatcher(root);
+    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    const { key, client } = await authStore.create({
+      name: "p",
+      scopes: ["tasks:read"],
+      trust: "trusted",
+    });
+    peer = "10.0.0.9";
+    for (let i = 0; i < 1500; i += 1) await appendEvent(dir("a"), taskStatus("a", `t${i}`));
+    const live = await open(
+      {
+        headers: { authorization: `Bearer ${key}` },
+      },
+      "?since=start",
+    );
+    let text = "";
+    let revoked = false;
+    for (let chunk = await next(live.reader!); chunk !== null; chunk = await next(live.reader!)) {
+      text += chunk;
+      if (!revoked && text.includes("event: task.status")) {
+        revoked = true;
+        await authStore.revoke(client.id);
+        watcher.broadcast("changed", { project: "a" });
+      }
+    }
+    const at = text.indexOf("event: unauthorized");
+    expect(at).toBeGreaterThan(0);
+    expect(
+      text
+        .slice(at)
+        .split("\n\n")
+        .filter((b) => b.startsWith("event:")),
+    ).toHaveLength(1);
+  });
+
+  it("releases the slot of clients that disconnect before the response is written", async () => {
+    const srv = await startServer({ root, port: 0, warn: () => {} });
+    try {
+      const req = `GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1:${srv.port}\r\n\r\n`;
+      for (let i = 0; i < 40; i += 1) {
+        await new Promise<void>((resolve) => {
+          const s = net.connect(srv.port, "127.0.0.1", () => {
+            s.write(req);
+            setTimeout(() => s.destroy(), (i % 10) * 0.3);
+          });
+          s.on("close", () => resolve());
+          s.on("error", () => resolve());
+        });
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      const ctrls: AbortController[] = [];
+      for (let i = 0; i < 16; i += 1) {
+        const ac = new AbortController();
+        ctrls.push(ac);
+        const res = await fetch(`http://127.0.0.1:${srv.port}/api/v1/events`, {
+          signal: ac.signal,
+        });
+        expect(res.status, `stream ${i}`).toBe(200);
+      }
+      for (const ac of ctrls) ac.abort();
+    } finally {
+      await srv.stop();
+    }
   });
 });

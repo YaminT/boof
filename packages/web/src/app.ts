@@ -276,6 +276,14 @@ export function createApp(deps: AppDeps): Hono {
       return null;
     return r.principal;
   };
+  // Tell a stalled client at most 1 s: a full socket buffer must not hold the slot.
+  const sendUnauthorized = (stream: {
+    writeSSE(m: { event: string; data: string }): Promise<void>;
+  }) =>
+    Promise.race([
+      stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {}),
+      new Promise<void>((r) => setTimeout(r, 1000).unref()),
+    ]);
   const UNAUTHORIZED = JSON.stringify({
     message: "API key revoked, expired or no longer authorized",
   });
@@ -320,9 +328,11 @@ export function createApp(deps: AppDeps): Hono {
       let poll: ReturnType<typeof setInterval> | undefined;
       let beat: ReturnType<typeof setInterval> | undefined;
       let wake = () => {};
+      let closed = false;
       const finish = () => {
-        if (ended) return;
         ended = true;
+        if (closed) return;
+        closed = true;
         unsub();
         clearInterval(poll);
         clearInterval(beat);
@@ -330,6 +340,11 @@ export function createApp(deps: AppDeps): Hono {
         wake();
       };
       stream.onAbort(finish);
+      // A client that left before the response was written never aborts the stream; the request
+      // signal does.
+      const sig = c.req.raw.signal;
+      if (sig.aborted) finish();
+      else sig.addEventListener("abort", finish, { once: true });
       await stream.writeSSE({
         event: "ready",
         data: JSON.stringify({ cursor: encodeFeedCursor(cursor) }),
@@ -340,9 +355,11 @@ export function createApp(deps: AppDeps): Hono {
         do {
           again = false;
           for (;;) {
+            if (ended) return;
             const batch = await readFeed(service.root, await scopes(), cursor, 200);
             if (batch.length === 0) break;
             for (const e of batch) {
+              if (ended) return;
               await stream.writeSSE({
                 event: e.event.type,
                 id: e.cursor,
@@ -359,11 +376,14 @@ export function createApp(deps: AppDeps): Hono {
         if (ended) return false;
         const fresh = await resolveSame(c, principal);
         if (!fresh) {
-          await stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {});
+          if (ended) return false;
+          ended = true; // stops the replay before the event goes out
+          await sendUnauthorized(stream);
           finish();
           return false;
         }
         principal = fresh;
+        if (ended) return false;
         if (running) {
           again = true;
           await running;
@@ -386,7 +406,9 @@ export function createApp(deps: AppDeps): Hono {
             })
             .catch(() => {});
         });
-        poll = setInterval(() => void drain().catch(() => {}), 2000);
+        poll = setInterval(() => {
+          if (!running) void drain().catch(() => {});
+        }, 2000);
         beat = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), 15000);
       }
       try {
@@ -414,14 +436,19 @@ export function createApp(deps: AppDeps): Hono {
       let ended = false;
       let unsub = () => {};
       let wake = () => {};
+      let closed = false;
       const finish = () => {
-        if (ended) return;
         ended = true;
+        if (closed) return;
+        closed = true;
         unsub();
         releaseStream(streamId);
         wake();
       };
       stream.onAbort(finish);
+      const sig = c.req.raw.signal;
+      if (sig.aborted) finish();
+      else sig.addEventListener("abort", finish, { once: true });
       await stream.writeSSE({ event: "ready", data: "connected" });
       if (!deps.watcher) {
         // No watcher (e.g. tests): end after the greeting.
@@ -433,11 +460,13 @@ export function createApp(deps: AppDeps): Hono {
           if (ended) return;
           const fresh = await resolveSame(c, principal);
           if (!fresh) {
-            await stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {});
+            ended = true;
+            await sendUnauthorized(stream);
             finish();
             return;
           }
           principal = fresh;
+          if (ended) return;
           // A restricted client never hears about projects it may not read.
           if (data.project && !authorizeProject(principal, data.project)) return;
           await stream.writeSSE({ event, data: JSON.stringify(data) });
