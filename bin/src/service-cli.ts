@@ -564,6 +564,15 @@ async function install(
   err: (l: string) => void,
   env: ServiceEnv,
 ): Promise<number> {
+  for (const flag of ["data", "env-file", "host", "port"] as const) {
+    const val = v[flag];
+    if (typeof val === "string" && val.trim() === "") {
+      err(
+        `service install: --${flag} is empty (an unset shell variable?); give a value, or omit it to keep the existing unit's setting`,
+      );
+      return 1;
+    }
+  }
   const portFlag = v.port as string | undefined;
   const portArg = portFlag === undefined ? undefined : Number(portFlag);
   if (portArg !== undefined && (!Number.isInteger(portArg) || portArg < 1 || portArg > 65535)) {

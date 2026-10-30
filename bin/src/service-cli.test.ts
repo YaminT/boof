@@ -329,6 +329,22 @@ describe("service install", () => {
     expect(out.join("\n")).toContain("http://127.0.0.1:4500");
   });
 
+  it.each([
+    ["--data", ""],
+    ["--env-file", ""],
+    ["--host", ""],
+    ["--port", ""],
+    ["--data", "  "],
+  ])("rejects an empty %s and writes nothing", async (flag, val) => {
+    const argv =
+      flag === "--data" ? ["install", flag, val] : ["install", "--data", data, flag, val];
+    expect(await run(argv)).toBe(1);
+    expect(errs.join("\n")).toContain(`${flag} is empty`);
+    expect(existsSync(unitFile())).toBe(false);
+    expect(existsSync(data)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
   it("--reset ignores the previous install", async () => {
     const envFile = join(home, "boof.env");
     await writeFile(envFile, "X=1\n", { mode: 0o600 });
