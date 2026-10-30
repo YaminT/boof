@@ -595,7 +595,7 @@ Every error has this shape:
 
 ### Idempotency
 
-`projects.create`, `plans.create` and `tasks.create` accept the header `Idempotency-Key` (1 to 255 printable characters). Always send one on these creates. Make a new key (for example a UUID) per logical create. Reuse the same key when you retry after a timeout or a 5xx. Boof stores the first success for 24 hours and replays it with the header `Idempotency-Replayed: true`. The same key with a different body answers `409 idempotency_conflict`. MCP tools have no idempotency key: after a timeout, list before you create again.
+`projects.create`, `plans.create` and `tasks.create` accept the header `Idempotency-Key` (1 to 255 printable characters). Always send one on these creates. Make a new key (for example a UUID) per logical create. Reuse the same key when you retry after a timeout or a 5xx. Boof stores the first success for 24 hours and replays it with the header `Idempotency-Replayed: true`. The same key with a different body answers `409 idempotency_conflict`. If two of your requests with one key overlap, only one runs; the other gets the same answer with `Idempotency-Replayed: true`. A `409 conflict` on a create with a key means the first request is still running: wait a second and retry with the same key. MCP tools have no idempotency key: after a timeout, list before you create again.
 
 ### Pagination
 

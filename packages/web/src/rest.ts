@@ -215,40 +215,42 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
     if (key !== undefined && !/^[\x21-\x7e]{1,255}$/.test(key)) {
       throw new OpError(400, "Idempotency-Key must be 1-255 printable characters", "invalid_input");
     }
-    let fingerprint: string | undefined;
+    const run = async () => {
+      try {
+        return await op.execute(ctx, input);
+      } catch (err) {
+        throw toOpError(err);
+      }
+    };
+    const shape = (out: unknown) => ({
+      status: legacy ? 200 : (op.rest.status ?? 200),
+      body: legacy && op.rest.legacyOutput ? op.rest.legacyOutput(out as never) : out,
+      etag: op.rest.etag?.(out as never),
+    });
+
     if (key !== undefined) {
-      fingerprint =
+      const { file, ...rest } = input;
+      const fingerprint =
         op.rest.kind === "multipart"
           ? IdempotencyStore.fingerprintUpload(
-              (input["file"] as UploadedFile | undefined) ?? {
-                name: "",
-                type: "",
-                bytes: new Uint8Array(),
-              },
+              (file as UploadedFile | undefined) ?? { name: "", type: "", bytes: new Uint8Array() },
+              rest,
             )
           : IdempotencyStore.fingerprint(input);
-      const stored = await deps.idempotency.get(principal.id, op.name, key);
-      if (stored) {
-        if (stored.fingerprint !== fingerprint) {
-          throw new OpError(
-            409,
-            "This Idempotency-Key was used with a different request",
-            "idempotency_conflict",
-          );
-        }
-        if (stored.etag) c.header("ETag", stored.etag);
-        c.header("Idempotency-Replayed", "true");
-        setWarningHeader(c, stored.body);
-        return c.json(stored.body as object, stored.status as 200);
-      }
+      const { record, replayed } = await deps.idempotency.withKey(
+        principal.id,
+        op.name,
+        key,
+        fingerprint,
+        async () => shape(await run()),
+      );
+      if (replayed) c.header("Idempotency-Replayed", "true");
+      if (record.etag) c.header("ETag", record.etag);
+      setWarningHeader(c, record.body);
+      return c.json(record.body as object, record.status as 200);
     }
 
-    let out: unknown;
-    try {
-      out = await op.execute(ctx, input);
-    } catch (err) {
-      throw toOpError(err);
-    }
+    const out = await run();
 
     if (op.rest.kind === "binary") {
       const file = out as { bytes: Uint8Array; type: string };
@@ -261,19 +263,9 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
       c.header("Cache-Control", "no-cache");
       return c.text(op.rest.text(out as never), 200);
     }
-    const status = legacy ? 200 : (op.rest.status ?? 200);
-    const body = legacy && op.rest.legacyOutput ? op.rest.legacyOutput(out as never) : out;
-    const etag = op.rest.etag?.(out as never);
+    const { status, body, etag } = shape(out);
     if (etag) c.header("ETag", etag);
     setWarningHeader(c, out);
-    if (key !== undefined) {
-      await deps.idempotency.put(principal.id, op.name, key, {
-        fingerprint: fingerprint!,
-        status,
-        body,
-        etag,
-      });
-    }
     return c.json(body as object, status as 200);
   });
 }

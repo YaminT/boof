@@ -16,6 +16,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">IdempotencyStore.withKey chains concurrent callers of one (principal, op, key) in-process and writes a .pending marker on disk while executing: the second request replays the first record (Idempotency-Replayed: true), a different fingerprint is idempotency_conflict, a fresh marker from another process is 409 conflict, a stale one (60 s) is ignored and pruned; v1.test.ts pins two concurrent creates making one task.</version>
       </versions>
     </status>
     <tests>

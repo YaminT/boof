@@ -147,6 +147,37 @@ describe("v1 conventions", () => {
     expect(good.status).toBe(201); // the failure stored nothing, so the key is still free
   });
 
+  it("two concurrent requests with one Idempotency-Key execute once and answer alike", async () => {
+    const key = { "Idempotency-Key": "race-1" };
+    const [a, b] = await Promise.all([
+      call(`${V1}/projects/demo/tasks`, send("POST", { title: "Race" }, key)),
+      call(`${V1}/projects/demo/tasks`, send("POST", { title: "Race" }, key)),
+    ]);
+    expect([a.status, b.status]).toEqual([201, 201]);
+    const [ja, jb] = [await a.json(), await b.json()];
+    expect(jb).toEqual(ja);
+    expect(ja.frontmatter.id).toBe("race");
+    expect(
+      [a.headers.get("idempotency-replayed"), b.headers.get("idempotency-replayed")].filter(
+        Boolean,
+      ),
+    ).toEqual(["true"]);
+    expect(a.headers.get("etag")).toBe(b.headers.get("etag"));
+    const list = await (await call(`${V1}/projects/demo/tasks`)).json();
+    expect(list.items).toHaveLength(1);
+    const files = await readdir(join(root, "idempotency"));
+    expect(files).toHaveLength(1);
+    expect(files.some((n) => n.endsWith(".pending"))).toBe(false);
+    // Concurrent and different: the loser is a conflict, not a second task.
+    const other = { "Idempotency-Key": "race-2" };
+    const [c, d] = await Promise.all([
+      call(`${V1}/projects/demo/tasks`, send("POST", { title: "Left" }, other)),
+      call(`${V1}/projects/demo/tasks`, send("POST", { title: "Right" }, other)),
+    ]);
+    expect([c.status, d.status].sort()).toEqual([201, 409]);
+    expect((await (await call(`${V1}/projects/demo/tasks`)).json()).items).toHaveLength(2);
+  });
+
   it("returns 409 plan_version_conflict with the current version for a stale If-Match", async () => {
     const created = await call(`${V1}/projects/demo/plans`, send("POST", { title: "P", id: "p" }));
     expect(created.status).toBe(201);
