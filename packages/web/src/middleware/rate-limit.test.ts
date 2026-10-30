@@ -18,7 +18,12 @@ function setup(maxBuckets?: number) {
   });
   const app = new Hono();
   app.use("*", mw);
-  app.get("/", (c) => c.body(null, c.req.header("x-ok") ? 200 : 401));
+  // A stand-in for `authenticate`: a failed authentication calls the hook.
+  app.use("*", async (c, next) => {
+    if (c.req.header("x-ok")) return next();
+    return c.get("authFailed")?.(c) ?? c.body(null, 401);
+  });
+  app.get("/", (c) => c.body(null, 200));
   const hit = (ok = false) => app.request("/", ok ? { headers: { "x-ok": "1" } } : {});
   return { mw, hit, at: (p: string) => (peer = p), tick: (ms: number) => (clock += ms) };
 }
@@ -31,12 +36,13 @@ describe("unauthenticatedRateLimit", () => {
     expect(res.filter((r) => r.status === 429)).toHaveLength(5);
   });
 
-  it("refunds a valid request; a valid key from a drained address still gets 429", async () => {
+  it("a valid request never draws; a valid key from a drained address still succeeds", async () => {
     const { hit, tick } = setup();
     for (let i = 0; i < 2; i += 1) await hit();
     for (let i = 0; i < 10; i += 1) expect((await hit(true)).status).toBe(200); // never draws
     expect((await hit()).status).toBe(401); // third charge
-    expect((await hit(true)).status).toBe(429); // drained: even a valid key is refused
+    expect((await hit()).status).toBe(429); // drained: a bad key is refused with 429
+    expect((await hit(true)).status).toBe(200); // a valid key is never limited by this bucket
     tick(60_000);
     expect((await hit(true)).status).toBe(200);
   });

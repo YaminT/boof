@@ -59,9 +59,12 @@ export function rateLimit(opts: {
 }
 
 /**
- * Failed authentications per client address, mounted before `authenticate`. A token is taken
- * before the request runs (a parallel burst cannot slip past) and refunded unless the answer is
- * 401, so a valid key never draws; the request is refused (429) when the bucket is empty. See `clientAddress` for how the address is chosen behind a proxy.
+ * Failed authentications per client address, mounted before `authenticate`. It only records the
+ * client address and puts a hook on the context; `authenticate` calls the hook when a request ends
+ * up unauthenticated. The hook takes a token synchronously (no await between check and take, so a
+ * parallel burst cannot slip past) and answers 429 instead of 401 when the bucket is empty. A
+ * request whose key verifies (or that is the local principal) never touches it. See
+ * `clientAddress` for how the address is chosen behind a proxy.
  */
 export function unauthenticatedRateLimit(opts: {
   security: () => Promise<SecuritySettings>;
@@ -92,21 +95,17 @@ export function unauthenticatedRateLimit(opts: {
     const addr = clientAddress((n) => c.req.header(n), peer, cfg.trustedProxies);
     c.set("peerAddress", peer);
     c.set("clientAddress", addr);
-    const t = now();
-    const b = buckets.get(addr.key) ?? { tokens: limit, updated: t };
-    // Take the token before the request runs, so a parallel burst cannot all pass the check.
-    const retryAfter = take(b, limit, t, true);
-    if (retryAfter) return limited(c, retryAfter);
-    if (!buckets.has(addr.key)) {
-      buckets.set(addr.key, b);
-      if (buckets.size > maxBuckets) sweep(limit, t);
-    }
+    c.set("authFailed", (ctx) => {
+      const t = now();
+      const b = buckets.get(addr.key) ?? { tokens: limit, updated: t };
+      const retryAfter = take(b, limit, t, true);
+      if (!buckets.has(addr.key)) {
+        buckets.set(addr.key, b);
+        if (buckets.size > maxBuckets) sweep(limit, t);
+      }
+      return retryAfter ? limited(ctx, retryAfter) : undefined;
+    });
     await next();
-    if (c.res.status !== 401) {
-      // Not a failed authentication: give the token back; a full bucket is dropped.
-      b.tokens = Math.min(limit, b.tokens + 1);
-      if (b.tokens >= limit && buckets.get(addr.key) === b) buckets.delete(addr.key);
-    }
   };
   return Object.assign(handler, { size: () => buckets.size });
 }

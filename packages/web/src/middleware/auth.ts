@@ -18,6 +18,8 @@ declare module "hono" {
     clientAddress: ClientAddress;
     /** Extra fields the handler wants recorded in the audit line (never bodies or secrets). */
     auditExtra: Record<string, unknown>;
+    /** Set by the unauthenticated limiter: called when authentication fails; returns a 429 when the address is over its budget. */
+    authFailed: (c: Context) => Response | undefined;
   }
 }
 
@@ -161,7 +163,7 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
   const middleware: MiddlewareHandler = async (c, next) => {
     c.set("peerAddress", opts.peerAddress(c));
     const r = await resolve(c);
-    if (!r.ok) return unauthenticated(c, r.message);
+    if (!r.ok) return c.get("authFailed")?.(c) ?? unauthenticated(c, r.message);
     c.set("principal", r.principal);
     return next();
   };
