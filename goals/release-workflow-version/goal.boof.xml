@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">scripts/release-version.sh derives BOOF_RUNNER_APP_VERSION=${TAG#v} and RELEASE_PRERELEASE_FLAG (--prerelease only for a tag with a prerelease part) and refuses a malformed tag or a base version other than package.json's; release.yml sources it into GITHUB_ENV before the build and uses the flag; stage-app.mjs stages the env version or package.json's as is (no -beta). The GitHub run was not exercised on this machine; the wiring is pinned by release-version.test.ts.</version>
       </versions>
     </status>
     <tests>

@@ -16,12 +16,10 @@ const appDir = join(desktopDir, "build", "app");
 
 const pkg = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
 
-// The released app carries a beta pre-release identifier so the artifact names
-// and the GitHub release tag (v<version>) line up: 0.2.0 -> 0.2.0-beta.
+// The release workflow sets BOOF_RUNNER_APP_VERSION from the tag (scripts/release-version.sh);
+// a local build stages package.json's version as is.
 const baseVersion = pkg.version ?? "0.0.0";
-const appVersion =
-  process.env.BOOF_RUNNER_APP_VERSION ??
-  (baseVersion.includes("-") ? baseVersion : `${baseVersion}-beta`);
+const appVersion = process.env.BOOF_RUNNER_APP_VERSION ?? baseVersion;
 
 function need(path, hint) {
   if (!existsSync(path)) {

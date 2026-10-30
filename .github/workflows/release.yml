@@ -57,6 +57,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Version from the tag
+        run: bash scripts/release-version.sh "$TAG" >> "$GITHUB_ENV"
+
       - name: Build installers (${{ matrix.name }})
         run: npm run ${{ matrix.script }}
 
@@ -65,8 +68,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --title "$TAG" --notes "Boof Runner desktop beta — automated build." || true
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" $RELEASE_PRERELEASE_FLAG \
+              --title "$TAG" --notes "Boof Runner desktop $BOOF_RUNNER_APP_VERSION — automated build." || true
 
       - name: Upload ${{ matrix.name }} installers to $TAG
         env:

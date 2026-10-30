@@ -61,6 +61,8 @@ The desktop app boots the same Hono server and runner in its main process and op
 
 On first launch it asks for the first project's **working directory** (a full-screen picker that opens a native folder dialog). The project is saved in the data root and never asked again; change the directory any time via the folder icon in the top-right header.
 
+A release is built from a `v<version>` tag: the installers carry that version (`BOOF_RUNNER_APP_VERSION`), the GitHub release is a prerelease only when the tag has a `-` part, and the tag's base version must match `package.json` (`scripts/release-version.sh`).
+
 ### Running the built CLI
 
 ```bash

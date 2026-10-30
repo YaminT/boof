@@ -67,7 +67,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 ## Install and release
 
 - [ ] [`fix-npm-install-path`](fix-npm-install-path/goal.boof.xml) — Make npm-only installs work (workspace:* protocol, copy mode externals)
-- [ ] [`release-workflow-version`](release-workflow-version/goal.boof.xml) — Release workflow derives the app version and prerelease flag from the tag
+- [x] [`release-workflow-version`](release-workflow-version/goal.boof.xml) — Release workflow derives the app version and prerelease flag from the tag
 
 ## Web UI
 

@@ -38,7 +38,7 @@
     <goal id="security-headers-behind-proxy" path="goals/security-headers-behind-proxy" order="35" status="done"></goal>
     <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="done"></goal>
     <goal id="fix-npm-install-path" path="goals/fix-npm-install-path" order="37" status="plan"></goal>
-    <goal id="release-workflow-version" path="goals/release-workflow-version" order="38" status="plan"></goal>
+    <goal id="release-workflow-version" path="goals/release-workflow-version" order="38" status="done"></goal>
     <goal id="ui-drag-reorder-goals" path="goals/ui-drag-reorder-goals" order="39" status="done"></goal>
     <goal id="ui-linkable-tabs" path="goals/ui-linkable-tabs" order="40" status="done"></goal>
     <goal id="ui-archived-projects" path="goals/ui-archived-projects" order="41" status="plan"></goal>
