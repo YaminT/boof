@@ -24,6 +24,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`reject-nested-projects-same-repo`](reject-nested-projects-same-repo/goal.boof.xml) — Reject two projects rooted in the same git repository
 - [x] [`review-diff-includes-untracked`](review-diff-includes-untracked/goal.boof.xml) — Observer and reviewer see the content of new (untracked) files
 - [ ] [`questions-from-any-role`](questions-from-any-role/goal.boof.xml) — Route the planner's answers back to a developer, observer or reviewer that asked questions
+- [ ] [`desktop-orphan-reaping-macos-windows`](desktop-orphan-reaping-macos-windows/goal.boof.xml) — Reap orphaned agent processes on macOS and Windows, where the desktop app ships (after: orphan-agent-processes)
 
 ## Security
 
