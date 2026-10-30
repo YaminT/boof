@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import {
   buildUnit,
   envLine,
   execWord,
+  mergePath,
+  readInstallOptions,
   serviceCommand,
   type RunResult,
   type ServiceEnv,
@@ -92,6 +94,56 @@ describe("unit file text", () => {
     expect(envLine("X", "a b")).toBe('Environment="X=a b"');
   });
 
+  it("records the install options in a comment line that reads back", () => {
+    const o = {
+      name: "boof-runner",
+      data: "/srv/boof",
+      port: 4400,
+      host: "127.0.0.1",
+      nodePath: "/opt/node/bin/node",
+      scriptPath: "/opt/boof/bin/dist/boof-runner.js",
+      path: "/opt/node/bin:/usr/bin",
+      home: "/home/svc",
+      env: [["ANTHROPIC_BASE_URL", "https://proxy.example"]] as [string, string][],
+      envFile: "/home/svc/boof.env",
+    };
+    const text = buildUnit(o);
+    expect(text.split("\n")[0]).toMatch(/^# boof-runner-options: \{/);
+    expect(readInstallOptions(text)).toEqual({
+      data: "/srv/boof",
+      port: 4400,
+      host: "127.0.0.1",
+      env: [["ANTHROPIC_BASE_URL", "https://proxy.example"]],
+      envFile: "/home/svc/boof.env",
+      path: "/opt/node/bin:/usr/bin",
+    });
+    expect(readInstallOptions("[Unit]\nDescription=old\n")).toBeUndefined();
+    expect(readInstallOptions("# boof-runner-options: {broken\n[Unit]\n")).toBeUndefined();
+    expect(mergePath("/new/bin:/usr/bin", "/home/y/.nvm/v22/bin:/usr/bin:/home/y/.local/bin")).toBe(
+      "/new/bin:/usr/bin:/home/y/.nvm/v22/bin:/home/y/.local/bin",
+    );
+    expect(mergePath("/usr/bin", undefined)).toBe("/usr/bin");
+  });
+
+  it("round-trips values with newlines, #, quotes and % and keeps the unit valid", () => {
+    const env: [string, string][] = [["K", 'a\nb # c "d" 100%']];
+    const text = buildUnit({
+      name: "x",
+      data: "/d e",
+      port: 1,
+      host: "h",
+      nodePath: "/n",
+      scriptPath: "/s.js",
+      path: "/p",
+      home: "/h",
+      env,
+    });
+    expect(readInstallOptions(text)?.env).toEqual(env);
+    const comments = text.split("\n").filter((l) => l.startsWith("#"));
+    expect(comments).toHaveLength(2);
+    expect(text).toContain("100%%");
+  });
+
   it("lets --env replace PATH and HOME", () => {
     const text = buildUnit({
       name: "x",
@@ -114,9 +166,13 @@ describe("service install", () => {
   it("writes the unit and runs daemon-reload then enable --now", async () => {
     const code = await run(["install", "--data", data, "--env", "FOO=bar baz"]);
     expect(code).toBe(0);
+    expect(out.join("\n")).toContain("env: FOO");
+    expect(out.join("\n")).toContain("PATH: from this shell");
     const text = await readFile(unitFile(), "utf8");
     expect(text).toBe(
       [
+        `# boof-runner-options: ${JSON.stringify({ data, port: 4319, host: "127.0.0.1", env: [["FOO", "bar baz"]], path: "/home/yamin/.nvm/versions/node/v22.22.0/bin:/usr/bin" })}`,
+        "# Options you omit on the next `boof-runner service install` are reused from this line (--reset starts over).",
         "[Unit]",
         "Description=Boof Runner (boof-runner)",
         "",
@@ -208,6 +264,112 @@ describe("service install", () => {
     failOn = "enable --now";
     expect(await run(["install", "-d", data])).toBe(1);
     expect(errs.join("\n")).toContain("enable --now");
+  });
+
+  it("a reinstall with only --data keeps --env-file, --env, --port, --host and PATH, and prints what it kept", async () => {
+    const envFile = join(home, "boof.env");
+    await writeFile(envFile, "ANTHROPIC_AUTH_TOKEN=secret-token\n", { mode: 0o600 });
+    expect(
+      await run([
+        "install",
+        "--data",
+        data,
+        "--port",
+        "4400",
+        "--host",
+        "127.0.0.1",
+        "--env",
+        "FOO=bar",
+        "--env-file",
+        envFile,
+      ]),
+    ).toBe(0);
+    out = [];
+    // The upgrade, from a bare ssh shell: new node, poorer PATH, only --data (the runbook's step).
+    const bare = makeEnv({
+      path: "/usr/local/bin:/usr/bin",
+      nodePath: "/home/yamin/.nvm/versions/node/v22.23.0/bin/node",
+    });
+    expect(await run(["install", "--data", data], bare)).toBe(0);
+    const text = await readFile(unitFile(), "utf8");
+    expect(text).toContain(`EnvironmentFile=${envFile}\n`);
+    expect(text).toContain("Environment=FOO=bar\n");
+    expect(text).toContain(
+      "Environment=PATH=/usr/local/bin:/usr/bin:/home/yamin/.nvm/versions/node/v22.22.0/bin\n",
+    );
+    expect(text).toContain(
+      `ExecStart=/home/yamin/.nvm/versions/node/v22.23.0/bin/node ${script} serve -d ${data} -p 4400 --host 127.0.0.1\n`,
+    );
+    expect(text).not.toContain("secret-token");
+    const printed = out.join("\n");
+    expect(printed).toContain(`Reusing options recorded in ${unitFile()}`);
+    expect(printed).toContain(`  data: ${data} (kept)`);
+    expect(printed).toContain("  port: 4400 (kept)");
+    expect(printed).toContain("  host: 127.0.0.1 (kept)");
+    expect(printed).toContain(`  env-file: ${envFile} (kept)`);
+    expect(printed).toContain("  env: FOO (kept)");
+    expect(printed).toContain("  PATH: kept, 1 directory added from this shell");
+    // The recorded line now carries the merged options, so a third install keeps them too.
+    expect(readInstallOptions(text)).toMatchObject({ port: 4400, envFile, env: [["FOO", "bar"]] });
+  });
+
+  it("a flag given again overrides the kept value and is reported as changed", async () => {
+    expect(await run(["install", "--data", data, "--port", "4400", "--env", "FOO=bar"])).toBe(0);
+    out = [];
+    expect(await run(["install", "--port", "4500", "--env", "FOO=baz", "--env", "NEW=1"])).toBe(0);
+    const text = await readFile(unitFile(), "utf8");
+    expect(text).toContain(` -p 4500 --host 127.0.0.1\n`);
+    expect(text).toContain(`WorkingDirectory=${data}\n`); // --data kept
+    expect(text).toContain("Environment=FOO=baz\n");
+    expect(text).toContain("Environment=NEW=1\n");
+    const printed = out.join("\n");
+    expect(printed).toContain("  port: 4400 -> 4500");
+    expect(printed).toContain("  env: FOO (changed), NEW (new)");
+    expect(printed).toContain(`  data: ${data} (kept)`);
+    expect(out.join("\n")).toContain("http://127.0.0.1:4500");
+  });
+
+  it("--reset ignores the previous install", async () => {
+    const envFile = join(home, "boof.env");
+    await writeFile(envFile, "X=1\n", { mode: 0o600 });
+    expect(await run(["install", "--data", data, "--port", "4400", "--env-file", envFile])).toBe(0);
+    out = [];
+    expect(await run(["install", "--data", data, "--reset"])).toBe(0);
+    const text = await readFile(unitFile(), "utf8");
+    expect(text).not.toContain("EnvironmentFile=");
+    expect(text).toContain(" -p 4319 ");
+    expect(out.join("\n")).toContain("Ignoring the previous install's options (--reset)");
+  });
+
+  it("a unit without the options line installs from the flags alone", async () => {
+    await mkdir(join(home, ".config/systemd/user"), { recursive: true });
+    await writeFile(unitFile(), "[Unit]\nDescription=old\n\n[Service]\nExecStart=/x\n");
+    expect(await run(["install", "--data", data])).toBe(0);
+    expect(await readFile(unitFile(), "utf8")).toContain(` -p 4319 --host 127.0.0.1\n`);
+    expect(out.join("\n")).toContain(
+      "Previous unit has no recorded options; installing from the flags",
+    );
+  });
+
+  it("a kept --env-file is re-checked: a file that became world-readable refuses the install", async () => {
+    const envFile = join(home, "boof.env");
+    await writeFile(envFile, "X=1\n", { mode: 0o600 });
+    expect(await run(["install", "--data", data, "--env-file", envFile])).toBe(0);
+    await chmod(envFile, 0o644);
+    const before = await readFile(unitFile(), "utf8");
+    expect(await run(["install", "--data", data])).toBe(1);
+    expect(errs.join("\n")).toContain("is readable by other users");
+    expect(await readFile(unitFile(), "utf8")).toBe(before); // nothing written
+  });
+
+  it("the unit is private (0600) because it records --env values, and the report never prints them", async () => {
+    expect(await run(["install", "--data", data, "--env", "API_KEY=sk-very-secret"])).toBe(0);
+    expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
+    out = [];
+    expect(await run(["install", "--data", data, "--env", "API_KEY=sk-other-secret"])).toBe(0);
+    expect(out.join("\n")).toContain("env: API_KEY (changed)");
+    expect(out.join("\n")).not.toContain("secret");
+    expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
   });
 });
 

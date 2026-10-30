@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ export const SERVICE_HELP = `boof-runner service — run boof-runner as a system
 
 Usage:
   boof-runner service install [--data <dir>] [--port 4319] [--host 127.0.0.1] [--name boof-runner]
-                              [--env KEY=VALUE]... [--env-file <path>]
+                              [--env KEY=VALUE]... [--env-file <path>] [--reset]
   boof-runner service uninstall [--name boof-runner]
   boof-runner service status [--name boof-runner]
   boof-runner service logs [--name boof-runner] [-f] [-n <lines>]
@@ -22,7 +22,11 @@ install    Writes ~/.config/systemd/user/<name>.service (node, the CLI and your 
            recorded as absolute paths, so nvm node and the claude, codex and opencode CLIs are found),
            then runs systemctl --user daemon-reload and enable --now. A running service is restarted.
            Refuses a --host the server itself would refuse (see: boof-runner remote setup).
-           Run it again after an upgrade or to change options.
+           Run it again after an upgrade: every option you omit (--data, --port, --host, --env,
+           --env-file and the recorded PATH) is reused from the installed unit and the command
+           prints what it kept and what changed; --reset starts from the flags alone. node and
+           the CLI path are always taken from the current install. The unit records the options
+           (including --env values) in a comment line, so it is written with mode 0600.
            --env-file loads KEY=VALUE lines (for example ANTHROPIC_BASE_URL and
            ANTHROPIC_AUTH_TOKEN) from a private file (chmod 600) instead of writing
            secrets into the unit. Variables set only in your shell (e.g. fish universal
@@ -144,19 +148,151 @@ export function envLine(key: string, value: string): string {
     : `Environment=${assignment}`;
 }
 
-export interface UnitOptions {
-  name: string;
+export const OPTIONS_MARKER = "# boof-runner-options: ";
+
+/** The options the next install may reuse; recorded as a comment line in the unit. */
+export interface InstallOptions {
   data: string;
   port: number;
   host: string;
-  nodePath: string;
-  scriptPath: string;
-  path: string;
-  home: string;
   /** Extra KEY=VALUE pairs; they replace a PATH or HOME of the same name. */
   env: [string, string][];
   /** Absolute path of a KEY=VALUE file loaded by systemd (EnvironmentFile=); keeps secrets out of the unit. */
   envFile?: string;
+  path: string;
+}
+
+export interface UnitOptions extends InstallOptions {
+  name: string;
+  nodePath: string;
+  scriptPath: string;
+  home: string;
+}
+
+/** The options recorded in a unit by a previous install; undefined when absent or invalid. */
+export function readInstallOptions(unitText: string): InstallOptions | undefined {
+  const line = unitText.split("\n").find((l) => l.startsWith(OPTIONS_MARKER));
+  if (line === undefined) return undefined;
+  let o: unknown;
+  try {
+    o = JSON.parse(line.slice(OPTIONS_MARKER.length));
+  } catch {
+    return undefined;
+  }
+  if (typeof o !== "object" || o === null) return undefined;
+  const r = o as Record<string, unknown>;
+  const pair = (e: unknown): e is [string, string] =>
+    Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string";
+  if (
+    typeof r.data !== "string" ||
+    typeof r.host !== "string" ||
+    typeof r.path !== "string" ||
+    !Number.isInteger(r.port) ||
+    !Array.isArray(r.env) ||
+    !r.env.every(pair) ||
+    (r.envFile !== undefined && typeof r.envFile !== "string")
+  )
+    return undefined;
+  return {
+    data: r.data,
+    port: r.port as number,
+    host: r.host,
+    env: r.env as [string, string][],
+    ...(r.envFile !== undefined ? { envFile: r.envFile as string } : {}),
+    path: r.path,
+  };
+}
+
+/** This shell's PATH entries followed by the previous ones not already present. */
+export function mergePath(current: string, previous: string | undefined): string {
+  const all = [...current.split(":"), ...(previous?.split(":") ?? [])].filter(Boolean);
+  return [...new Set(all)].join(":");
+}
+
+/** flag > previous install > default; --env merged per key; the report never shows env values. */
+export function mergeInstallOptions(
+  args: {
+    data?: string;
+    port?: number;
+    host?: string;
+    env: [string, string][];
+    envFile?: string;
+    path: string;
+  },
+  previous: InstallOptions | undefined,
+  defaults: { data: () => string; port: number },
+): { options: InstallOptions; report: string[] } {
+  const report: string[] = [];
+  const scalar = <T extends string | number>(
+    label: string,
+    flag: T | undefined,
+    prev: T | undefined,
+    dflt: () => T,
+  ): T => {
+    if (flag !== undefined) {
+      report.push(
+        prev === undefined
+          ? `${label}: ${flag}`
+          : prev === flag
+            ? `${label}: ${flag} (kept)`
+            : `${label}: ${prev} -> ${flag}`,
+      );
+      return flag;
+    }
+    if (prev !== undefined) {
+      report.push(`${label}: ${prev} (kept)`);
+      return prev;
+    }
+    const d = dflt();
+    report.push(`${label}: ${d}`);
+    return d;
+  };
+  const data = scalar("data", args.data, previous?.data, defaults.data);
+  const port = scalar("port", args.port, previous?.port, () => defaults.port);
+  const host = scalar("host", args.host, previous?.host, () => "127.0.0.1");
+
+  const envFile = args.envFile ?? previous?.envFile;
+  report.push(
+    envFile === undefined
+      ? "env-file: none"
+      : args.envFile === undefined || args.envFile === previous?.envFile
+        ? `env-file: ${envFile} (kept)`
+        : `env-file: ${envFile}`,
+  );
+
+  const merged = new Map<string, string>(previous?.env ?? []);
+  const tags = new Map<string, string>([...merged.keys()].map((k) => [k, "kept"]));
+  for (const [k, val] of args.env) {
+    tags.set(k, !merged.has(k) ? "new" : merged.get(k) === val ? "kept" : "changed");
+    merged.set(k, val);
+  }
+  report.push(
+    tags.size === 0 ? "env: none" : `env: ${[...tags].map(([k, t]) => `${k} (${t})`).join(", ")}`,
+  );
+
+  const path = mergePath(args.path, previous?.path);
+  if (!previous) report.push("PATH: from this shell");
+  else {
+    const prevEntries = new Set(previous.path.split(":"));
+    const added = new Set(args.path.split(":").filter((e) => e && !prevEntries.has(e))).size;
+    report.push(
+      added === 0
+        ? "PATH: kept"
+        : `PATH: kept, ${added} ${added === 1 ? "directory" : "directories"} added from this shell`,
+    );
+  }
+
+  return {
+    options: {
+      data,
+      port,
+      host,
+      env: [...merged],
+      ...(envFile !== undefined ? { envFile } : {}),
+      path,
+    },
+    report,
+  };
 }
 
 /** Contents of the systemd user unit. */
@@ -179,8 +315,18 @@ export function buildUnit(o: UnitOptions): string {
   ]
     .map(execWord)
     .join(" ");
+  const recorded = {
+    data: o.data,
+    port: o.port,
+    host: o.host,
+    env: o.env,
+    envFile: o.envFile,
+    path: o.path,
+  };
   return (
     [
+      `${OPTIONS_MARKER}${JSON.stringify(recorded)}`,
+      "# Options you omit on the next `boof-runner service install` are reused from this line (--reset starts over).",
       "[Unit]",
       `Description=Boof Runner (${o.name})`,
       "",
@@ -271,6 +417,7 @@ export async function serviceCommand(
         name: { type: "string" },
         env: { type: "string", multiple: true },
         "env-file": { type: "string" },
+        reset: { type: "boolean" },
         follow: { type: "boolean", short: "f" },
         lines: { type: "string", short: "n" },
         help: { type: "boolean", short: "h" },
@@ -322,12 +469,12 @@ async function install(
   err: (l: string) => void,
   env: ServiceEnv,
 ): Promise<number> {
-  const port = Number((v.port as string | undefined) ?? process.env.BOOF_RUNNER_PORT ?? 4319);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  const portFlag = v.port as string | undefined;
+  const portArg = portFlag === undefined ? undefined : Number(portFlag);
+  if (portArg !== undefined && (!Number.isInteger(portArg) || portArg < 1 || portArg > 65535)) {
     err("service install: --port must be 1-65535");
     return 1;
   }
-  const host = (v.host as string | undefined) ?? "127.0.0.1";
   const extra: [string, string][] = [];
   for (const kv of (v.env as string[] | undefined) ?? []) {
     const eq = kv.indexOf("=");
@@ -338,10 +485,41 @@ async function install(
     }
     extra.push([key, kv.slice(eq + 1)]);
   }
+  const abs = (p: string) => (isAbsolute(p) ? p : resolve(process.cwd(), p));
   const envFileOpt = v["env-file"] as string | undefined;
-  let envFile: string | undefined;
-  if (envFileOpt !== undefined) {
-    envFile = isAbsolute(envFileOpt) ? envFileOpt : resolve(process.cwd(), envFileOpt);
+  const dataOpt = v.data as string | undefined;
+  const file = unitPath(env, name);
+  const previousText = await readFile(file, "utf8").catch(() => undefined);
+  const previous = v.reset ? undefined : previousText && readInstallOptions(previousText);
+  const defaultPort = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
+  if (!Number.isInteger(defaultPort) || defaultPort < 1 || defaultPort > 65535) {
+    err("service install: BOOF_RUNNER_PORT must be 1-65535");
+    return 1;
+  }
+  const { options, report } = mergeInstallOptions(
+    {
+      data: dataOpt === undefined ? undefined : abs(dataOpt),
+      port: portArg,
+      host: v.host as string | undefined,
+      env: extra,
+      envFile: envFileOpt === undefined ? undefined : abs(envFileOpt),
+      path: env.path,
+    },
+    previous || undefined,
+    { data: defaultRoot, port: defaultPort },
+  );
+  out(
+    v.reset
+      ? "Ignoring the previous install's options (--reset)"
+      : previous
+        ? `Reusing options recorded in ${file}`
+        : previousText !== undefined
+          ? "Previous unit has no recorded options; installing from the flags"
+          : "No previous install found; installing from the flags",
+  );
+  for (const l of report) out(`  ${l}`);
+  const { data, port, host, envFile } = options;
+  if (envFile !== undefined) {
     let mode: number;
     try {
       mode = (await stat(envFile)).mode;
@@ -356,12 +534,6 @@ async function install(
       return 1;
     }
   }
-  const dataOpt = v.data as string | undefined;
-  const data = dataOpt
-    ? isAbsolute(dataOpt)
-      ? dataOpt
-      : resolve(process.cwd(), dataOpt)
-    : defaultRoot();
 
   if (!(await requireSystemd(env, err))) return 1;
   if (!existsSync(env.scriptPath)) {
@@ -392,16 +564,17 @@ async function install(
     host,
     nodePath: env.nodePath,
     scriptPath: env.scriptPath,
-    path: env.path,
+    path: options.path,
     home: env.home,
-    env: extra,
+    env: options.env,
     envFile,
   });
-  const file = unitPath(env, name);
   const wasActive =
     (await env.run("systemctl", ["--user", "is-active", "--quiet", unitName(name)])).code === 0;
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, unit, "utf8");
+  // The unit records --env values in its options comment, so keep it private to the owner.
+  await writeFile(file, unit, { encoding: "utf8", mode: 0o600 });
+  await chmod(file, 0o600);
   out(`Wrote ${file}`);
 
   const steps: [string, string[]][] = [

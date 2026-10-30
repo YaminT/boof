@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">buildUnit records the install options as a "# boof-runner-options: {json}" comment line; install() reads the installed unit and reuses every omitted option (flag > previous > env var > default; --env merged per key, --env-file kept and re-checked, PATH = this shell's entries then the previous ones; node and CLI paths always current), prints one line per option (kept / old -> new / new) and --reset starts over; the unit is written 0600 because it records --env values, and the report never prints values; the acceptance test installs with --env-file, reinstalls with only --data and the EnvironmentFile line survives.</version>
       </versions>
     </status>
     <tests>

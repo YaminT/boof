@@ -48,7 +48,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`prune-worktrees-on-project-add`](prune-worktrees-on-project-add/goal.boof.xml) — Prune stale worktrees when a project is added or unarchived
 - [x] [`mcp-listchanged-and-log-tail`](mcp-listchanged-and-log-tail/goal.boof.xml) — MCP: drop listChanged in stateless mode, add tail to the task log tool
 - [x] [`desktop-graceful-quit`](desktop-graceful-quit/goal.boof.xml) — Desktop quit must shut the engine down gracefully
-- [ ] [`service-install-keeps-options`](service-install-keeps-options/goal.boof.xml) — service install keeps previously configured options
+- [x] [`service-install-keeps-options`](service-install-keeps-options/goal.boof.xml) — service install keeps previously configured options
 - [x] [`cli-version-and-unknown-command`](cli-version-and-unknown-command/goal.boof.xml) — Add --version and stop unknown commands from starting the server
 - [x] [`desktop-healthz-facts`](desktop-healthz-facts/goal.boof.xml) — Desktop server reports version and runner state on /healthz
 - [x] [`task-file-heading-escape`](task-file-heading-escape/goal.boof.xml) — Task markdown round-trip survives section headings in prompt, reports and log
