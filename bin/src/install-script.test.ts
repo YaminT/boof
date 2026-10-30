@@ -49,6 +49,31 @@ describe("install script", () => {
     expect(await ok("v22.23.3", ">=22.23.4")).toBe(false);
   });
 
+  it("resolves a relative checkout path and treats an unparseable range as unchecked", async () => {
+    await writeFile(join(dir, "package.json"), JSON.stringify({ engines: { node: ">=22.22" } }));
+    const rel = await run(
+      "bash",
+      [
+        "-c",
+        'source "$BOOF_SCRIPT"; cd "$(dirname "$1")"; node_floor "./$(basename "$1")"',
+        "fn",
+        dir,
+      ],
+      {
+        env: { ...process.env, BOOF_SCRIPT: script },
+      },
+    );
+    expect(rel.stdout).toBe(">=22.22\n");
+    expect((await fn('node_version_ok "$1" "$2"', "v22.22.0", "^22.22 || >=24")).code).toBe(2);
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ engines: { node: "^22.22 || >=24" } }),
+    );
+    const r = await fn('log() { echo "$*"; }; check_node "$1"', dir);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("cannot check the Node.js requirement");
+  });
+
   it("the floor in package.json is what the docs and the script promise", async () => {
     const pkg = JSON.parse(await readFile(join(repo, "package.json"), "utf8"));
     expect(pkg.engines.node).toBe(">=22.22");

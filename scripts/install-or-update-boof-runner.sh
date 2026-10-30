@@ -61,7 +61,7 @@ need_cmd() {
 
 # The engines.node range of the checkout's package.json, e.g. ">=22.22".
 node_floor() {
-  node -p 'require(process.argv[1]).engines.node' "$1/package.json"
+  node -p 'const e = require(require("path").resolve(process.argv[1], "package.json")).engines; (e && e.node) || ""' "$1" 2>/dev/null
 }
 
 # node_version_ok <version> <range>: exit 0 when <version> (with or without a leading v) satisfies
@@ -88,9 +88,14 @@ node_version_ok() {
 check_node() {
   local checkout="$1" floor
   need_cmd node
-  floor="$(node_floor "$checkout")"
-  node_version_ok "$(node --version)" "$floor" ||
-    die "Node.js $floor is required (package.json engines); found $(node --version)"
+  floor="$(node_floor "$checkout")" || floor=""
+  local status=0
+  if [[ -n "$floor" ]]; then node_version_ok "$(node --version)" "$floor" || status=$?; else status=2; fi
+  case "$status" in
+    0) ;;
+    2) log "warning: cannot check the Node.js requirement (engines.node: '${floor:-none}'); continuing" ;;
+    *) die "Node.js $floor is required (package.json engines); found $(node --version)" ;;
+  esac
 }
 
 script_checkout_root() {
@@ -276,6 +281,8 @@ main() {
   check_node "$dir"
 
   update_checkout "$dir"
+  # The update may have raised engines.node.
+  check_node "$dir"
   install_dependencies "$dir"
   build_app "$dir"
   install_command "$dir"
