@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>AuthStore.mutate locks only within one process, so a CLI `auth revoke` can be undone by the server's concurrent lastUsedAt write (SSE ticks now update it every minute). Make revocation and key writes safe across processes (a cross-process lock or a revocation list the server re-reads). Found by the group 4 review, 2026-10-30.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Found by the group 4 review, 2026-10-30; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests with vitest for the changed module; an integration test through the Hono app or CLI where the behaviour is observable there.</strategy>
+      <technology>vitest</technology>
+      <run>npm run typecheck &amp;&amp; npm test</run>
+    </tests>
+  </progress>
+</boof>
