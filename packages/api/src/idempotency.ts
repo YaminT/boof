@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite, dataRootPaths } from "@boof-runner/shared";
 import { OpError } from "./errors.js";
@@ -102,19 +102,11 @@ export class IdempotencyStore {
     fingerprint: string,
     execute: () => Promise<Omit<IdempotentRecord, "created" | "fingerprint">>,
   ): Promise<IdempotentOutcome> {
-    const stored = await this.get(principal, op, key);
-    if (stored) {
-      if (stored.fingerprint !== fingerprint) {
-        throw new OpError(
-          409,
-          "This Idempotency-Key was used with a different request",
-          "idempotency_conflict",
-        );
-      }
-      return { record: stored, replayed: true };
-    }
+    const before = await this.replay(principal, op, key, fingerprint);
+    if (before) return before;
     const marker = this.pendingPath(principal, op, key);
-    const claim = JSON.stringify({ fingerprint, created: this.now() });
+    const nonce = randomBytes(8).toString("hex");
+    const claim = JSON.stringify({ fingerprint, created: this.now(), nonce });
     for (let attempt = 0; ; attempt++) {
       try {
         await atomicWrite(marker, claim, { exclusive: true });
@@ -132,13 +124,42 @@ export class IdempotencyStore {
       }
     }
     try {
+      // Another process may have finished between our get and our claim: re-check.
+      const after = await this.replay(principal, op, key, fingerprint);
+      if (after) return after;
       const out = await execute();
       const record: IdempotentRecord = { ...out, fingerprint, created: this.now() };
       await this.put(principal, op, key, record);
       return { record, replayed: false };
     } finally {
-      await rm(marker, { force: true });
+      // Only our own claim: after PENDING_TTL_MS another request may hold the marker now.
+      // Never let cleanup replace the operation's result; the marker expires anyway.
+      await this.release(marker, nonce).catch(() => {});
     }
+  }
+
+  /** The stored outcome for this key, `null` when none; another fingerprint is a conflict. */
+  private async replay(
+    principal: string,
+    op: string,
+    key: string,
+    fingerprint: string,
+  ): Promise<IdempotentOutcome | null> {
+    const stored = await this.get(principal, op, key);
+    if (!stored) return null;
+    if (stored.fingerprint !== fingerprint) {
+      throw new OpError(
+        409,
+        "This Idempotency-Key was used with a different request",
+        "idempotency_conflict",
+      );
+    }
+    return { record: stored, replayed: true };
+  }
+
+  private async release(marker: string, nonce: string): Promise<void> {
+    const held = JSON.parse(await readFile(marker, "utf8")) as { nonce?: string };
+    if (held.nonce === nonce) await rm(marker, { force: true });
   }
 
   /** True when the marker is old or unreadable (a crash), false when it is still fresh. */
@@ -180,8 +201,18 @@ export class IdempotencyStore {
     }
     let removed = 0;
     for (const name of names) {
-      if (name.startsWith(".")) continue; // another writer's temp file
       const path = join(this.dir, name);
+      if (name.startsWith(".")) {
+        // A temp file of atomicWrite: only a crashed writer leaves one behind for long.
+        const old = await stat(path)
+          .then((st) => this.now() - st.mtimeMs >= PENDING_TTL_MS)
+          .catch(() => false);
+        if (old) {
+          await rm(path, { force: true });
+          removed += 1;
+        }
+        continue;
+      }
       try {
         const rec = JSON.parse(await readFile(path, "utf8")) as IdempotentRecord;
         const ttl = name.endsWith(".pending") ? PENDING_TTL_MS : this.ttlMs;

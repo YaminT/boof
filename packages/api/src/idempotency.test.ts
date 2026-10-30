@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dataRootPaths } from "@boof-runner/shared";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpError } from "./errors.js";
 import { IdempotencyStore } from "./idempotency.js";
 
@@ -131,5 +131,48 @@ describe("IdempotencyStore.withKey", () => {
       JSON.stringify({ fingerprint: "x", created: clock - 61_000 }),
     );
     expect(await store.prune()).toBe(1);
+  });
+
+  it("re-checks the stored record after claiming: a request that finished meanwhile is replayed", async () => {
+    const store = new IdempotencyStore(root, () => clock);
+    await store.put("p", "tasks.create", "k", { fingerprint: "fp", status: 201, body: "first" });
+    const get = vi.spyOn(store, "get");
+    get.mockResolvedValueOnce(null); // the lookup before the claim missed (another process was running)
+    const execute = vi.fn(async () => ({ status: 201, body: "second" }));
+    const out = await store.withKey("p", "tasks.create", "k", "fp", execute);
+    expect(out.replayed).toBe(true);
+    expect(out.record.body).toBe("first");
+    expect(execute).not.toHaveBeenCalled();
+    expect(await pendingFiles()).toEqual([]);
+    // With another fingerprint the same race is a conflict, not a second run.
+    get.mockResolvedValueOnce(null);
+    await expect(store.withKey("p", "tasks.create", "k", "fp-2", execute)).rejects.toMatchObject({
+      code: "idempotency_conflict",
+    });
+    expect(await pendingFiles()).toEqual([]);
+  });
+
+  it("removes only its own marker: a slower request never deletes the new holder's", async () => {
+    const store = new IdempotencyStore(root, () => clock);
+    const marker = store.pendingPath("p", "tasks.create", "k");
+    const out = await store.withKey("p", "tasks.create", "k", "fp", async () => {
+      // This run outlived PENDING_TTL_MS: another request took the key over.
+      await rm(marker, { force: true });
+      await writeFile(marker, JSON.stringify({ fingerprint: "fp", created: clock, nonce: "new" }));
+      return { status: 201, body: 1 };
+    });
+    expect(out.replayed).toBe(false);
+    expect(JSON.parse(await readFile(marker, "utf8")).nonce).toBe("new");
+  });
+
+  it("prune removes old atomicWrite temp files and keeps fresh ones", async () => {
+    const store = new IdempotencyStore(root, () => Date.now() + 61_000);
+    await mkdir(dir(), { recursive: true });
+    await writeFile(join(dir(), ".abc.tmp"), "partial");
+    expect(await store.prune()).toBe(1);
+    expect(await readdir(dir())).toEqual([]);
+    const fresh = new IdempotencyStore(root, () => Date.now());
+    await writeFile(join(dir(), ".def.tmp"), "partial");
+    expect(await fresh.prune()).toBe(0);
   });
 });

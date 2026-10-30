@@ -115,7 +115,12 @@ internals; validation errors list `details: [{ path, message }]`.
 `projects.create`, `plans.create` and `tasks.create` accept `Idempotency-Key: <1-255 printable
 characters>`. The first successful response is stored for 24 hours under
 `<data>/idempotency/` (keyed by client, operation and key) and replayed with
-`Idempotency-Replayed: true`. The same key with different input is `409 idempotency_conflict`. Two requests in flight with the same key run once: the second waits for the first and replays its response. A key that another server process is still processing answers `409 conflict`; retry after a moment.
+`Idempotency-Replayed: true`. The same key with different input is `409 idempotency_conflict`.
+Two requests in flight with the same key run once: the second waits for the first and replays its
+response. A key that another server process is still processing answers `409 conflict`; retry
+after a moment. An operation under one key should finish well within 60 seconds: after that a
+marker counts as left by a crash. Two processes recovering the same stale marker at the same
+instant can both run the operation (a crash-recovery limit).
 Failed requests are not stored, so a corrected retry works. Expired records are pruned when the
 server starts.
 
