@@ -13,8 +13,8 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@boof-runner/runner": "workspace:*",
-    "@boof-runner/shared": "workspace:*",
+    "@boof-runner/runner": "*",
+    "@boof-runner/shared": "*",
     "zod": "^4.6.7"
   }
 }

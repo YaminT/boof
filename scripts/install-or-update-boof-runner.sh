@@ -36,7 +36,9 @@ Environment:
   BOOF_RUNNER_DIR           Install/update directory for cloned source.
   BOOF_RUNNER_BRANCH        Branch/tag to checkout before building.
   BOOF_RUNNER_SKIP_UPDATE   Set to 1 to build/link without pulling.
-  BOOF_RUNNER_INSTALL_MODE  link or copy. Default: link.
+  BOOF_RUNNER_INSTALL_MODE  link (npm link) or copy (npm install -g <checkout>; npm 7+ links the
+                            directory too, so both resolve dependencies from the checkout).
+                            Default: link.
   BOOF_RUNNER_SKIP_DESKTOP  1: do not download Electron or build the desktop app (web UI + CLI only).
                             0: always build everything. Default: 1 on Linux without DISPLAY or
                             WAYLAND_DISPLAY (a headless server), otherwise 0.
@@ -190,7 +192,8 @@ install_dependencies() {
     (cd "$dir" && bun install --frozen-lockfile)
   else
     log "Installing dependencies with npm"
-    (cd "$dir" && npm install)
+    # npm (no bun): package-lock.json is git-ignored, so the checkout stays clean for the next update.
+    (cd "$dir" && npm install --no-audit --no-fund)
   fi
 }
 
@@ -214,6 +217,7 @@ install_command() {
       ;;
     copy)
       log "Installing boof-runner globally"
+      # npm 7+ symlinks a directory install, so the CLI's external dependencies resolve from $dir.
       npm install -g "$dir"
       ;;
     *)

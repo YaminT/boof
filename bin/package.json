@@ -8,10 +8,10 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@boof-runner/mcp": "workspace:*",
-    "@boof-runner/runner": "workspace:*",
-    "@boof-runner/shared": "workspace:*",
-    "@boof-runner/web": "workspace:*",
+    "@boof-runner/mcp": "*",
+    "@boof-runner/runner": "*",
+    "@boof-runner/shared": "*",
+    "@boof-runner/web": "*",
     "@hono/node-server": "^2.0.0",
     "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",

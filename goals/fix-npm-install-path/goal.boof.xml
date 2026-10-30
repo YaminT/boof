@@ -16,6 +16,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Every workspace reference is "*" (npm and bun both link the workspace); the five CLI externals are root dependencies; package-lock.json is git-ignored and bun.lock regenerated; CI gains an npm-only job (npm install, build:server, --version, unknown command exits 1, npm install -g into a temp prefix); the install script's npm branch uses npm install and the docs say so. Finding: npm 10 symlinks a global directory install, so the copy-mode ERR_MODULE_NOT_FOUND did not reproduce; the manifests are fixed regardless.</version>
       </versions>
     </status>
     <tests>

@@ -4,7 +4,7 @@ This runbook takes a fresh Linux server (written for Ubuntu 24.04) to a Boof Run
 
 What you need:
 
-- Node.js 22.22 or newer (for example through nvm), git 2.43 or newer, and bun 1.3 (optional; npm works too).
+- Node.js 22.22 or newer (for example through nvm), git 2.43 or newer, and bun 1.3 (optional; without it the script and the runbook use npm).
 - systemd 255 with user lingering on, so the service runs without a login session.
 - The agent CLIs you want to use (`claude`, `codex`, `opencode`) installed for this user.
 - A host name that points at the server, and nginx on the host (for TLS).

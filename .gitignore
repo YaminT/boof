@@ -9,6 +9,7 @@ data/commands/
 data/settings.json
 data/.runner.pid
 *.log
+package-lock.json
 .boof-runner-worktrees/
 
 # Local planning notes (never committed)

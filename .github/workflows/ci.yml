@@ -40,3 +40,32 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  npm-install:
+    name: npm-only install
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build:server
+
+      - name: Run the built CLI
+        shell: bash
+        run: |
+          ls -la node_modules/@boof-runner
+          test "$(node bin/dist/boof-runner.js --version)" = "$(node -p "require('./package.json').version")"
+          if node bin/dist/boof-runner.js status; then echo "an unknown command must exit 1"; exit 1; fi
+          npm install -g --prefix "$RUNNER_TEMP/prefix" . --no-audit --no-fund
+          "$RUNNER_TEMP/prefix/bin/boof-runner" --version

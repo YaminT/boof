@@ -4,6 +4,13 @@
   "workspaces": {
     "": {
       "name": "boof-runner",
+      "dependencies": {
+        "@hono/node-server": "^2.0.0",
+        "chokidar": "^6.0.0",
+        "gray-matter": "^4.0.3",
+        "hono": "^4.13.13",
+        "zod": "^4.6.7",
+      },
       "devDependencies": {
         "@types/node": "^22.20.5",
         "prettier": "^3.9.10",
@@ -17,10 +24,10 @@
       "name": "@boof-runner/cli",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/mcp": "workspace:*",
-        "@boof-runner/runner": "workspace:*",
-        "@boof-runner/shared": "workspace:*",
-        "@boof-runner/web": "workspace:*",
+        "@boof-runner/mcp": "*",
+        "@boof-runner/runner": "*",
+        "@boof-runner/shared": "*",
+        "@boof-runner/web": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
@@ -32,8 +39,8 @@
       "name": "@boof-runner/api",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/runner": "workspace:*",
-        "@boof-runner/shared": "workspace:*",
+        "@boof-runner/runner": "*",
+        "@boof-runner/shared": "*",
         "zod": "^4.6.7",
       },
     },
@@ -41,9 +48,9 @@
       "name": "@boof-runner/desktop",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/runner": "workspace:*",
-        "@boof-runner/shared": "workspace:*",
-        "@boof-runner/web": "workspace:*",
+        "@boof-runner/runner": "*",
+        "@boof-runner/shared": "*",
+        "@boof-runner/web": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
@@ -59,20 +66,20 @@
       "name": "@boof-runner/mcp",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/api": "workspace:*",
-        "@boof-runner/shared": "workspace:*",
+        "@boof-runner/api": "*",
+        "@boof-runner/shared": "*",
         "@modelcontextprotocol/sdk": "~1.32.2",
         "zod": "^4.6.7",
       },
       "devDependencies": {
-        "@boof-runner/runner": "workspace:*",
+        "@boof-runner/runner": "*",
       },
     },
     "packages/runner": {
       "name": "@boof-runner/runner",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/shared": "workspace:*",
+        "@boof-runner/shared": "*",
       },
     },
     "packages/shared": {
@@ -88,10 +95,10 @@
       "name": "@boof-runner/web",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/api": "workspace:*",
-        "@boof-runner/mcp": "workspace:*",
-        "@boof-runner/runner": "workspace:*",
-        "@boof-runner/shared": "workspace:*",
+        "@boof-runner/api": "*",
+        "@boof-runner/mcp": "*",
+        "@boof-runner/runner": "*",
+        "@boof-runner/shared": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "hono": "^4.13.13",

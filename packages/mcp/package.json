@@ -13,12 +13,12 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@boof-runner/api": "workspace:*",
-    "@boof-runner/shared": "workspace:*",
+    "@boof-runner/api": "*",
+    "@boof-runner/shared": "*",
     "@modelcontextprotocol/sdk": "~1.32.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@boof-runner/runner": "workspace:*"
+    "@boof-runner/runner": "*"
   }
 }

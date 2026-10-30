@@ -13,6 +13,6 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@boof-runner/shared": "workspace:*"
+    "@boof-runner/shared": "*"
   }
 }

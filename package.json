@@ -17,6 +17,13 @@
   "bin": {
     "boof-runner": "bin/dist/boof-runner.js"
   },
+  "dependencies": {
+    "@hono/node-server": "^2.0.0",
+    "chokidar": "^6.0.0",
+    "gray-matter": "^4.0.3",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "build:server": "npm run build -w @boof-runner/web && npm run build -w @boof-runner/cli",

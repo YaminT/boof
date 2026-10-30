@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.0",
-    "@boof-runner/runner": "workspace:*",
-    "@boof-runner/shared": "workspace:*",
-    "@boof-runner/web": "workspace:*",
+    "@boof-runner/runner": "*",
+    "@boof-runner/shared": "*",
+    "@boof-runner/web": "*",
     "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.13",

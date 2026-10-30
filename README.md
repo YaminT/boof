@@ -158,7 +158,7 @@ Exactly what happens:
 bash scripts/install-or-update-boof-runner.sh
 ```
 
-The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `git@github.com:YaminT/boof.git`.
+The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. Without bun it uses `npm install` (`package-lock.json` is git-ignored; `bun.lock` is the lockfile). A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `git@github.com:YaminT/boof.git`.
 
 ## Run on a server
 
