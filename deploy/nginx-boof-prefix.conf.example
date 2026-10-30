@@ -26,8 +26,9 @@ location /boof/ {
     # Tells boof where it is mounted, for the URLs it emits itself (OpenAPI "servers", Link headers).
     proxy_set_header X-Forwarded-Prefix /boof;
 
-    # TLS is nginx's business: boof's default HSTS header carries includeSubDomains, which would
-    # pin every subdomain of the site to HTTPS for 180 days. Set HSTS in the server block instead.
+    # boof sends no HSTS header when a proxy terminates TLS (X-Forwarded-Proto is set), and never
+    # includeSubDomains. Set HSTS in the server block. proxy_hide_header is kept for older boof
+    # versions.
     proxy_hide_header Strict-Transport-Security;
 
     # Server-sent events (/boof/api/v1/events, the live log) and long requests:

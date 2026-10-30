@@ -35,7 +35,7 @@
     <goal id="atomic-write-lock-map-and-fsync" path="goals/atomic-write-lock-map-and-fsync" order="32" status="done"></goal>
     <goal id="attachment-upload-no-json-fingerprint" path="goals/attachment-upload-no-json-fingerprint" order="33" status="done"></goal>
     <goal id="audit-forwarded-ip" path="goals/audit-forwarded-ip" order="34" status="done"></goal>
-    <goal id="security-headers-behind-proxy" path="goals/security-headers-behind-proxy" order="35" status="plan"></goal>
+    <goal id="security-headers-behind-proxy" path="goals/security-headers-behind-proxy" order="35" status="done"></goal>
     <goal id="mcp-resources-degrade-by-scope" path="goals/mcp-resources-degrade-by-scope" order="36" status="done"></goal>
     <goal id="fix-npm-install-path" path="goals/fix-npm-install-path" order="37" status="plan"></goal>
     <goal id="release-workflow-version" path="goals/release-workflow-version" order="38" status="plan"></goal>

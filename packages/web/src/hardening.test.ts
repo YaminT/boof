@@ -61,6 +61,34 @@ describe("host guard", () => {
     const res = await req("/api/tasks");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
+
+  it("sends HSTS only when it terminates TLS itself, never with includeSubDomains", async () => {
+    expect((await req("/api/tasks")).headers.get("strict-transport-security")).toBeNull();
+    app = createApp({ service, peerAddress: () => "127.0.0.1", tls: true });
+    expect((await req("/api/tasks")).headers.get("strict-transport-security")).toBe(
+      "max-age=15552000",
+    );
+    expect((await req("/healthz")).headers.get("strict-transport-security")).toBe(
+      "max-age=15552000",
+    );
+    // A proxy terminated TLS: HSTS is its business.
+    const viaProxy = await req("/api/tasks", { headers: { "x-forwarded-proto": "https" } });
+    expect(viaProxy.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("the public docs are readable cross-origin; everything else stays same-origin", async () => {
+    for (const path of ["/harness.txt", "/harness.md", "/llms.txt"]) {
+      const res = await req(path);
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("cross-origin-resource-policy"), path).toBe("cross-origin");
+      expect(res.headers.get("x-content-type-options"), path).toBe("nosniff");
+    }
+    for (const path of ["/api/tasks", "/healthz", "/api/v1/openapi.json"]) {
+      expect((await req(path)).headers.get("cross-origin-resource-policy"), path).toBe(
+        "same-origin",
+      );
+    }
+  });
 });
 
 describe("id validation", () => {

@@ -60,7 +60,14 @@ export interface AppDeps {
   runnerRunning?: () => boolean;
   /** Clock override for tests (rate limit, client cache, audit). */
   now?: () => number;
+  /** True when this process terminates TLS itself (--tls-cert): the only case boof sends Strict-Transport-Security. */
+  tls?: boolean;
 }
+
+/** The public documents an agent or another origin may read; they get CORP cross-origin. */
+const PUBLIC_DOCS = new Set(["/harness.md", "/harness.txt", "/llms.txt"]);
+/** No includeSubDomains: this header pins one host, not every subdomain of the site. */
+const HSTS = "max-age=15552000";
 
 const MARKDOWN = "text/markdown; charset=utf-8";
 const PLAIN = "text/plain; charset=utf-8";
@@ -106,7 +113,20 @@ export function createApp(deps: AppDeps): Hono {
     "*",
     hostGuard(async () => [...(deps.allowedHosts ?? []), ...(await security()).allowedHosts]),
   );
-  app.use("*", secureHeaders());
+  // secureHeaders sets its headers after next(), so a route cannot override them: the public
+  // docs get their own configuration. HSTS is added only when boof itself terminated TLS and no
+  // proxy says it did (X-Forwarded-Proto); behind a proxy, HSTS belongs to the proxy.
+  const apiHeaders = secureHeaders({ strictTransportSecurity: false });
+  const docsHeaders = secureHeaders({
+    strictTransportSecurity: false,
+    crossOriginResourcePolicy: "cross-origin",
+  });
+  app.use("*", (c, next) => (PUBLIC_DOCS.has(c.req.path) ? docsHeaders : apiHeaders)(c, next));
+  app.use("*", async (c, next) => {
+    await next();
+    if (deps.tls && c.req.header("x-forwarded-proto") === undefined)
+      c.res.headers.set("Strict-Transport-Security", HSTS);
+  });
   // Public liveness probe for systemd, load balancers and uptime monitors. Carries no
   // project or task data; it sits behind the Host guard like the docs below.
   const startedAt = (deps.now ?? Date.now)();

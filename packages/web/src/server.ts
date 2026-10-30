@@ -136,6 +136,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     isSelfUrl,
     version: opts.version,
     runnerRunning: opts.runnerRunning,
+    tls: tls !== undefined,
   });
 
   const server = await new Promise<ServerType>((resolve, reject) => {

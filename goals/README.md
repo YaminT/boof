@@ -59,7 +59,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 - [x] [`attachment-upload-no-json-fingerprint`](attachment-upload-no-json-fingerprint/goal.boof.xml) — Do not JSON-fingerprint attachment uploads
 - [x] [`audit-forwarded-ip`](audit-forwarded-ip/goal.boof.xml) — Audit log records the forwarded client address behind a proxy
-- [ ] [`security-headers-behind-proxy`](security-headers-behind-proxy/goal.boof.xml) — HSTS and CORP headers fit a TLS-terminating proxy and public docs
+- [x] [`security-headers-behind-proxy`](security-headers-behind-proxy/goal.boof.xml) — HSTS and CORP headers fit a TLS-terminating proxy and public docs
 - [x] [`mcp-resources-degrade-by-scope`](mcp-resources-degrade-by-scope/goal.boof.xml) — MCP resources/list degrades to empty for keys without projects:read
 
 ## Install and release
