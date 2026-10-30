@@ -124,6 +124,7 @@ export function createApp(deps: AppDeps): Hono {
   app.use("*", (c, next) => (PUBLIC_DOCS.has(c.req.path) ? docsHeaders : apiHeaders)(c, next));
   app.use("*", async (c, next) => {
     await next();
+    // A client that sends X-Forwarded-Proto itself can only suppress HSTS for its own response; accepted.
     if (deps.tls && c.req.header("x-forwarded-proto") === undefined)
       c.res.headers.set("Strict-Transport-Security", HSTS);
   });

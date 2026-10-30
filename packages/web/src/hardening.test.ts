@@ -83,6 +83,8 @@ describe("host guard", () => {
       expect(res.headers.get("cross-origin-resource-policy"), path).toBe("cross-origin");
       expect(res.headers.get("x-content-type-options"), path).toBe("nosniff");
     }
+    const head = await req("/llms.txt", { method: "HEAD" });
+    expect(head.headers.get("cross-origin-resource-policy"), "HEAD /llms.txt").toBe("cross-origin");
     for (const path of ["/api/tasks", "/healthz", "/api/v1/openapi.json"]) {
       expect((await req(path)).headers.get("cross-origin-resource-policy"), path).toBe(
         "same-origin",
