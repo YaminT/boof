@@ -235,7 +235,7 @@ url = "https://boof.example.com/mcp"
 bearer_token_env_var = "BOOF_KEY"
 ```
 
-A browser-origin request whose `Origin` (host and port) is not the server's own `Host` answers `403 origin_not_allowed`. Agents do not send `Origin`.
+A browser-origin request whose `Origin` (host and port, the scheme's default port counted) is not the server's own `Host`, or that carries `Sec-Fetch-Site: cross-site`, answers `403 origin_not_allowed`. Agents do not send `Origin`.
 
 Call the endpoint with plain HTTP (useful to test). The server is stateless: there is no session id, and each request stands alone. A client still sends the standard three steps. Send `Accept: application/json, text/event-stream` on every request, or the server answers `406`.
 
@@ -550,39 +550,39 @@ Every error has this shape:
 
 ### Error codes
 
-| Code                       | Status | What you do                                                                                                                                                     |
-| -------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_input`            | 400    | Fix the request using `details`. Do not retry unchanged. A 400 for a non-running task on stop or inject also uses this code.                                    |
-| `invalid_plan`             | 400    | Fix the goals using `details` (schema error, unknown `dependsOn` id, cycle). Do not retry unchanged.                                                            |
-| `not_a_git_repo`           | 400    | The directory is not a git work tree. Ask the user for the right path.                                                                                          |
-| `nothing_to_import`        | 400    | The repository has no `goal.boof.xml` files. Create the plan with `plans.create` instead.                                                                       |
-| `no_default_project`       | 404    | You used an unversioned task route. Use `/api/v1/projects/{projectId}/tasks` instead.                                                                           |
-| `unauthenticated`          | 401    | The key is invalid, expired or revoked. Stop. Ask the user for a new key.                                                                                       |
-| `forbidden_scope`          | 403    | You lack the scope in `details.scope`. Tell the user. Do not retry.                                                                                             |
-| `forbidden_project`        | 403    | Your key may not use this project. Tell the user.                                                                                                               |
-| `forbidden_trust`          | 403    | Your key has `review` trust. Tell the user to approve the item in the web UI. Do not retry.                                                                     |
-| `project_root_not_allowed` | 403    | The directory is outside `security.allowedProjectRoots`. Tell the user to add the root in `settings.json`.                                                      |
-| `origin_not_allowed`       | 403    | You sent an `Origin` header a browser sends. Call the API from a non-browser client, or ask the user to add your site to `security.allowedHosts`.               |
-| `not_found`                | 404    | The task, command, client or webhook id is wrong. List the items and check the id.                                                                              |
-| `project_not_found`        | 404    | Check the project id with `projects.list`.                                                                                                                      |
-| `branch_not_found`         | 404    | The task branch `boof-runner/<task-id>` does not exist (deleted by `onDone: "delete"`, or the task never ran in a worktree). Read the task and its log instead. |
-| `plan_not_found`           | 404    | Check the plan id with `plans.list`.                                                                                                                            |
-| `goal_not_found`           | 404    | Check the goal id with `plans.get`.                                                                                                                             |
-| `conflict`                 | 409    | The change conflicts with the current state (for example a project id is taken). Read the message. Change the input.                                            |
-| `invalid_transition`       | 409    | The task is in a status that does not allow this move. Read the task and check its status.                                                                      |
-| `plan_version_conflict`    | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                   |
-| `task_modified`            | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
-| `plan_exists`              | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                              |
-| `plan_not_active`          | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                       |
-| `goal_has_dependents`      | 409    | Other goals depend on this goal (`details.dependents`). Ask the user. Then repeat with `cascade=true` or change the dependents first.                           |
-| `project_exists`           | 409    | A project for this directory exists. Use `projects.list` to find it.                                                                                            |
-| `project_busy`             | 409    | A task of the project runs. Wait or stop it (ask the user first).                                                                                               |
-| `idempotency_conflict`     | 409    | You reused an `Idempotency-Key` with a different request. Use a new key for a new request.                                                                      |
-| `host_not_allowed`         | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                  |
-| `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                               |
-| `unsupported_media_type`   | 415    | Send the body with `Content-Type: application/json`.                                                                                                            |
-| `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                   |
-| `internal`                 | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                 |
+| Code                       | Status | What you do                                                                                                                                                                                                       |
+| -------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_input`            | 400    | Fix the request using `details`. Do not retry unchanged. A 400 for a non-running task on stop or inject also uses this code.                                                                                      |
+| `invalid_plan`             | 400    | Fix the goals using `details` (schema error, unknown `dependsOn` id, cycle). Do not retry unchanged.                                                                                                              |
+| `not_a_git_repo`           | 400    | The directory is not a git work tree. Ask the user for the right path.                                                                                                                                            |
+| `nothing_to_import`        | 400    | The repository has no `goal.boof.xml` files. Create the plan with `plans.create` instead.                                                                                                                         |
+| `no_default_project`       | 404    | You used an unversioned task route. Use `/api/v1/projects/{projectId}/tasks` instead.                                                                                                                             |
+| `unauthenticated`          | 401    | The key is invalid, expired or revoked. Stop. Ask the user for a new key.                                                                                                                                         |
+| `forbidden_scope`          | 403    | You lack the scope in `details.scope`. Tell the user. Do not retry.                                                                                                                                               |
+| `forbidden_project`        | 403    | Your key may not use this project. Tell the user.                                                                                                                                                                 |
+| `forbidden_trust`          | 403    | Your key has `review` trust. Tell the user to approve the item in the web UI. Do not retry.                                                                                                                       |
+| `project_root_not_allowed` | 403    | The directory is outside `security.allowedProjectRoots`. Tell the user to add the root in `settings.json`.                                                                                                        |
+| `origin_not_allowed`       | 403    | You sent an `Origin` header a browser sends. Call the API from a non-browser client, or ask the user to add your site to `security.allowedHosts` (a site on a non-default port needs the port, e.g. `host:8443`). |
+| `not_found`                | 404    | The task, command, client or webhook id is wrong. List the items and check the id.                                                                                                                                |
+| `project_not_found`        | 404    | Check the project id with `projects.list`.                                                                                                                                                                        |
+| `branch_not_found`         | 404    | The task branch `boof-runner/<task-id>` does not exist (deleted by `onDone: "delete"`, or the task never ran in a worktree). Read the task and its log instead.                                                   |
+| `plan_not_found`           | 404    | Check the plan id with `plans.list`.                                                                                                                                                                              |
+| `goal_not_found`           | 404    | Check the goal id with `plans.get`.                                                                                                                                                                               |
+| `conflict`                 | 409    | The change conflicts with the current state (for example a project id is taken). Read the message. Change the input.                                                                                              |
+| `invalid_transition`       | 409    | The task is in a status that does not allow this move. Read the task and check its status.                                                                                                                        |
+| `plan_version_conflict`    | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                                                                     |
+| `task_modified`            | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                                                                              |
+| `plan_exists`              | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                                                                                |
+| `plan_not_active`          | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                                                                         |
+| `goal_has_dependents`      | 409    | Other goals depend on this goal (`details.dependents`). Ask the user. Then repeat with `cascade=true` or change the dependents first.                                                                             |
+| `project_exists`           | 409    | A project for this directory exists. Use `projects.list` to find it.                                                                                                                                              |
+| `project_busy`             | 409    | A task of the project runs. Wait or stop it (ask the user first).                                                                                                                                                 |
+| `idempotency_conflict`     | 409    | You reused an `Idempotency-Key` with a different request. Use a new key for a new request.                                                                                                                        |
+| `host_not_allowed`         | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                                                                    |
+| `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                                                                                 |
+| `unsupported_media_type`   | 415    | Send the body with `Content-Type: application/json`.                                                                                                                                                              |
+| `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                                                                     |
+| `internal`                 | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                                                                   |
 
 `origin_not_allowed` (403) appears on `/api/*` and `/mcp` for requests with a cross-site `Origin` header.
 
@@ -611,7 +611,7 @@ A create can answer with `warnings` when the server changed a requested value be
 
 ### Rate limits
 
-The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications are limited separately per client address (default 30 per minute): after that every request from the address answers `429` until the bucket refills, so never retry a `401` in a loop.
+The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications are limited separately per client address (default 30 per minute): after that a request that fails authentication answers `429` instead of `401` until the bucket refills, so never retry a `401` in a loop. A request with a valid key is never limited by this bucket.
 
 ### Host errors
 

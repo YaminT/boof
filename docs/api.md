@@ -161,7 +161,7 @@ read). Each event arrives as `event: <type>`, `id: <cursor>`, `data: <event json
   project changed without a typed event (the UI uses it for a running task's log).
 - `event: unauthorized` (data `{ message }`) ends the stream when the key was revoked, expired or
   lost `tasks:read` meanwhile, or when `auth.mode` changed. The check runs at every tick (each
-  change and a 2 s poll), so a revocation stops a stream within a few seconds: at once for a key
+  change and a 2 s poll), so a revocation stops a stream within a few seconds: within the 2 s poll for a key
   revoked in the server process, up to about 7 s (5 s client cache plus the 2 s poll) when
   `boof-runner auth revoke` runs in another process. Get a new key and reconnect. At most 16 open
   streams per principal; the 17th answers `429 rate_limited` with `Retry-After: 5`.

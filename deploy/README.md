@@ -81,7 +81,7 @@ sudo ln -s /etc/nginx/sites-available/boof /etc/nginx/sites-enabled/boof
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Certificates: `sudo certbot --nginx -d boof.example.com` creates them and edits the server block; or run `sudo certbot certonly --webroot -w /var/www/html -d boof.example.com` first and keep the paths in the example. The `Host` header must reach boof unchanged (`proxy_set_header Host $host;`), and buffering must stay off for the live event stream.
+Certificates: `sudo certbot --nginx -d boof.example.com` creates them and edits the server block; or run `sudo certbot certonly --webroot -w /var/www/html -d boof.example.com` first and keep the paths in the example. The `Host` header must reach boof unchanged (`proxy_set_header Host $host;`), and buffering must stay off for the live event stream. boof refuses a browser `Origin` that is not its own `Host` (scheme default ports are filled in, so `Host: example.com:443` matches `https://example.com`). When nginx listens on a non-default port (for example 8443), the browser sends `Origin: https://example.com:8443`, so use `proxy_set_header Host $host:$server_port;` in the proxy block, or list `example.com:8443` in `security.allowedHosts` (an entry without a port matches only port 80 or 443).
 
 **Path prefix.** To serve boof from a path of a site that already exists (for example `https://example.com/boof/`), include [deploy/nginx-boof-prefix.conf.example](nginx-boof-prefix.conf.example) inside that site's `server` block instead of adding a site of its own:
 
@@ -95,7 +95,7 @@ The trailing slash on `proxy_pass` strips `/boof`, so boof itself is unchanged; 
 
 boof sets `Strict-Transport-Security` (`max-age=15552000`, no `includeSubDomains`) only when it terminates TLS itself (`--tls-cert`/`--tls-key`); behind nginx, HSTS belongs in the nginx server block. `/harness.txt`, `/harness.md` and `/llms.txt` answer `Cross-Origin-Resource-Policy: cross-origin`, so other origins can load or embed them. A page on another origin still cannot read them with `fetch()`, because boof sends no CORS headers.
 
-Behind Cloudflare: use a proxied (orange cloud) DNS record, SSL mode Full (strict) with a valid certificate on the origin, and keep nginx's `proxy_buffering off;`. Cloudflare passes server-sent events as long as the origin does not buffer them, and drops idle connections after about 100 s, so clients reconnect with `Last-Event-ID` (boof replays missed events).
+Behind Cloudflare: use a proxied (orange cloud) DNS record, SSL mode Full (strict) with a valid certificate on the origin, and keep nginx's `proxy_buffering off;`. Cloudflare passes server-sent events as long as the origin does not buffer them, and drops idle connections after about 100 s, so clients reconnect with `Last-Event-ID` (boof replays missed events). Behind Cloudflare (or any CDN in front of nginx) also enable nginx's realip module (`set_real_ip_from <Cloudflare ranges>;` and `real_ip_header CF-Connecting-IP;`), so the address nginx forwards in `X-Forwarded-For` is the visitor's and not a shared Cloudflare address that all visitors would share one rate-limit bucket on.
 
 ## 7. Give an AI harness access
 
