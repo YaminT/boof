@@ -2125,7 +2125,11 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
         });
         const gone = new Promise<void>((r) => orphan.on("exit", () => r()));
         try {
-          await writePidFile(taskPidPath(projectDir, "t1"), { pgid: orphan.pid!, command: "node" });
+          await writePidFile(taskPidPath(projectDir, "t1"), {
+            pgid: orphan.pid!,
+            command: "node",
+            ownerPid: null,
+          });
           expect(await engine.recoverInterrupted()).toEqual(["t1"]);
           await gone;
           expect(isAlive(orphan.pid!)).toBe(false);
@@ -2153,6 +2157,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       await writePidFile(taskPidPath(projectDir, "t1"), { pgid: done.pid!, command: "node" });
       expect(await engine.recoverInterrupted()).toEqual(["t1"]);
       expect((await store.get("t1"))?.body.log).not.toContain("was still running");
+      expect(existsSync(taskPidPath(projectDir, "t1"))).toBe(false);
     });
 
     it("the pipeline records the step's group under control/pid while the tool runs", async () => {

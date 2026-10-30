@@ -85,7 +85,7 @@ describe("pid file", () => {
   });
 
   it.skipIf(!currentBootId())(
-    "reapOrphan: none / dead / killed / another boot / not a group leader",
+    "reapOrphan: none / dead / killed / another boot / forged / owner alive",
     async () => {
       const log: string[] = [];
       const path = join(dir, "pid");
@@ -99,7 +99,7 @@ describe("pid file", () => {
 
       const live = sleeper();
       const liveGone = exited(live);
-      await writePidFile(path, { pgid: live.pid!, command: "node" });
+      await writePidFile(path, { pgid: live.pid!, command: "node", ownerPid: null });
       const killed = await reapOrphan(path, (l) => log.push(l));
       expect(killed).toMatchObject({
         outcome: "killed",
@@ -116,27 +116,54 @@ describe("pid file", () => {
       expect(log.at(-1)).toBe(`pid file is from another boot (${other.pid}); not killing`);
       expect(existsSync(path)).toBe(false);
 
-      // A live process that is not a group leader (a plain child of this runner shares its
-      // group) is never killed, even with a matching boot id.
+      // A live process that leads no group (a plain child of this runner shares its group) is
+      // not a group at all: nothing is signalled, and the answer does not wait.
       const member = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
         stdio: "ignore",
       });
       try {
-        await writePidFile(path, { pgid: member.pid!, command: "node" });
-        expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
+        await writePidFile(path, { pgid: member.pid!, command: "node", ownerPid: null });
+        const t0 = Date.now();
+        expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("dead");
+        expect(Date.now() - t0).toBeLessThan(1000);
         expect(isAlive(member.pid!)).toBe(true);
       } finally {
         member.kill("SIGKILL");
       }
 
-      // A record written before the process started (a reused pid) is never killed.
-      const late = sleeper();
-      await writePidFile(path, { pgid: late.pid!, command: "node" });
+      // A forged record naming a real older group leader with the wrong start time.
+      const older = sleeper();
+      await writePidFile(path, { pgid: older.pid!, command: "node", ownerPid: null });
       const rec = JSON.parse(await readFile(path, "utf8"));
-      rec.startedAt = new Date(Date.now() - 3_600_000).toISOString();
-      await writeFile(path, JSON.stringify(rec));
+      await writeFile(path, JSON.stringify({ ...rec, startTicks: rec.startTicks - 1 }));
       expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
-      expect(isAlive(late.pid!)).toBe(true);
+      expect(log.at(-1)).toContain("not the recorded agent group leader");
+      expect(isAlive(older.pid!)).toBe(true);
+      expect(existsSync(path)).toBe(false);
+
+      // A record from an older version (no start time) is never killed.
+      await writePidFile(path, {
+        pgid: older.pid!,
+        command: "node",
+        ownerPid: null,
+        startTicks: null,
+      });
+      expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
+      expect(log.at(-1)).toContain("no process start time");
+      expect(isAlive(older.pid!)).toBe(true);
+
+      // While the recording runner is alive and still the leader's parent, nothing is killed
+      // and the file stays.
+      await writePidFile(path, { pgid: older.pid!, command: "node", ownerPid: process.pid });
+      expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
+      expect(log.at(-1)).toContain("is still running");
+      expect(isAlive(older.pid!)).toBe(true);
+      expect(existsSync(path)).toBe(true);
+
+      // Once the owner is gone the same record is reaped, including a group member that
+      // outlives its leader being a separate concern: the whole group is signalled.
+      await writePidFile(path, { pgid: older.pid!, command: "node", ownerPid: null });
+      expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("killed");
     },
   );
 });

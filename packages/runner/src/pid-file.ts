@@ -8,6 +8,34 @@ export interface PidRecord {
   command: string;
   startedAt: string;
   bootId: string | null;
+  /** Field 22 of /proc/<pgid>/stat (clock ticks since boot) when written; null off Linux. */
+  startTicks: number | null;
+  /** Pid of the runner process that spawned the group; null when unknown. */
+  ownerPid: number | null;
+}
+
+interface ProcStat {
+  ppid: number;
+  pgrp: number;
+  sid: number;
+  startTicks: number;
+}
+
+/** Linux only: parse /proc/<pid>/stat after the last ")" (the command may contain anything). */
+function readProcStat(pid: number | "self"): ProcStat | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    const r = {
+      ppid: Number(f[1]),
+      pgrp: Number(f[2]),
+      sid: Number(f[3]),
+      startTicks: Number(f[19]),
+    };
+    return Object.values(r).every(Number.isFinite) ? r : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 let bootIdCache: string | null | undefined;
@@ -26,7 +54,13 @@ export function currentBootId(): string | null {
 
 export async function writePidFile(
   path: string,
-  rec: { pgid: number; command: string; bootId?: string | null },
+  rec: {
+    pgid: number;
+    command: string;
+    bootId?: string | null;
+    startTicks?: number | null;
+    ownerPid?: number | null;
+  },
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await atomicWrite(
@@ -36,6 +70,11 @@ export async function writePidFile(
       command: rec.command,
       startedAt: new Date().toISOString(),
       bootId: rec.bootId === undefined ? currentBootId() : rec.bootId,
+      startTicks:
+        rec.startTicks === undefined
+          ? (readProcStat(rec.pgid)?.startTicks ?? null)
+          : rec.startTicks,
+      ownerPid: rec.ownerPid === undefined ? process.pid : rec.ownerPid,
     }),
   );
 }
@@ -49,6 +88,8 @@ export async function readPidFile(path: string): Promise<PidRecord | undefined> 
       command: typeof raw.command === "string" ? raw.command : "",
       startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
       bootId: typeof raw.bootId === "string" ? raw.bootId : null,
+      startTicks: Number.isInteger(raw.startTicks) ? (raw.startTicks as number) : null,
+      ownerPid: Number.isInteger(raw.ownerPid) ? (raw.ownerPid as number) : null,
     };
   } catch {
     return undefined;
@@ -64,37 +105,30 @@ export function isAlive(pid: number): boolean {
   }
 }
 
-/** Never signal init, the kernel, or the runner's own process/group. */
-function isSignalable(pgid: number): boolean {
-  return Number.isInteger(pgid) && pgid > 1 && pgid !== process.pid && pgid !== process.ppid;
+/** True while any member of the group exists (EPERM: exists, not ours to signal). */
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
-/**
- * Linux only: true when `pid` is the leader of its own process group and started no later than
- * the pid file was written (a reused pid would have started after). `false` when unverifiable.
- */
-function isRecordedLeader(pid: number, startedAt: string): boolean {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    const pgrp = Number(f[2]);
-    const startTicks = Number(f[19]);
-    if (pgrp !== pid || !Number.isFinite(startTicks)) return false;
-    const btime = /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"));
-    const written = Date.parse(startedAt);
-    if (!btime || Number.isNaN(written)) return false;
-    const procStart = (Number(btime[1]) + startTicks / 100) * 1000;
-    return procStart <= written + 2000;
-  } catch {
+/** Never signal init, the kernel, or the runner's own process, parent, group or session. */
+function isSignalable(pgid: number): boolean {
+  if (!Number.isInteger(pgid) || pgid <= 1 || pgid === process.pid || pgid === process.ppid) {
     return false;
   }
+  const self = readProcStat("self");
+  return !self || (pgid !== self.pgrp && pgid !== self.sid);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function waitGone(pid: number, ms: number, pollMs: number): Promise<boolean> {
+async function waitGone(pgid: number, ms: number, pollMs: number): Promise<boolean> {
   const deadline = Date.now() + ms;
-  while (isAlive(pid)) {
+  while (groupAlive(pgid)) {
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);
   }
@@ -122,8 +156,11 @@ export async function killGroup(
 
 /**
  * Kill the process group a crashed runner recorded. Kills only when the boot id is known and
- * equal to the recorded one, and `pgid` is still a group leader that started before the record
- * was written; anything else (other boot, unknown boot id, reused or foreign pid) is skipped.
+ * equal, the group is not the runner's own, its leader's start time equals the recorded one
+ * exactly (a reused or forged pid differs), and the recording runner is not still its parent.
+ * Records without a start time (older versions) are never killed. The command line is not
+ * compared: shebang wrappers and exec chains change it. Skipped records are removed, except one
+ * whose owner is alive.
  */
 export async function reapOrphan(
   path: string,
@@ -131,29 +168,32 @@ export async function reapOrphan(
 ): Promise<{ outcome: "none" | "dead" | "killed" | "skipped"; record?: PidRecord }> {
   const record = await readPidFile(path);
   if (!record) return { outcome: "none" };
-  const finish = async (outcome: "dead" | "killed" | "skipped") => {
-    await rm(path, { force: true }).catch(() => {});
+  const finish = async (outcome: "dead" | "killed" | "skipped", remove = true) => {
+    if (remove) await rm(path, { force: true }).catch(() => {});
     return { outcome, record };
   };
+  const skip = (why: string, remove = true) => {
+    log(`${why} (${record.pgid}); not killing`);
+    return finish("skipped", remove);
+  };
   const boot = currentBootId();
-  if (!boot || !record.bootId) {
-    log(`boot id cannot be determined (${record.pgid}); not killing`);
-    return finish("skipped");
+  if (!boot || !record.bootId) return skip("boot id cannot be determined");
+  if (record.bootId !== boot) return skip("pid file is from another boot");
+  if (!isSignalable(record.pgid)) return skip("refusing to signal this process group");
+  if (!groupAlive(record.pgid)) return finish("dead");
+  if (record.startTicks === null) return skip("pid file has no process start time");
+  const leader = readProcStat(record.pgid);
+  if (!leader || leader.pgrp !== record.pgid || leader.startTicks !== record.startTicks) {
+    return skip("process is not the recorded agent group leader (pid reused?)");
   }
-  if (record.bootId !== boot) {
-    log(`pid file is from another boot (${record.pgid}); not killing`);
-    return finish("skipped");
-  }
-  if (!isSignalable(record.pgid)) {
-    log(`refusing to signal process group ${record.pgid}`);
-    return finish("skipped");
-  }
-  if (!isAlive(record.pgid)) return finish("dead");
-  if (!isRecordedLeader(record.pgid, record.startedAt)) {
-    log(`process ${record.pgid} is not the recorded agent group leader (pid reused?); not killing`);
-    return finish("skipped");
+  if (record.ownerPid && isAlive(record.ownerPid) && leader.ppid === record.ownerPid) {
+    return skip(`recording runner ${record.ownerPid} is still running`, false);
   }
   const result = await killGroup(record.pgid);
+  if (result === "survived") {
+    log(`could not kill orphaned agent process group ${record.pgid} (${record.command}): survived`);
+    return finish("skipped");
+  }
   log(`killed orphaned agent process group ${record.pgid} (${record.command}): ${result}`);
-  return finish(result === "survived" ? "skipped" : "killed");
+  return finish("killed");
 }
