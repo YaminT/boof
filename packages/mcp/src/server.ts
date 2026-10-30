@@ -51,6 +51,8 @@ export interface BoofMcpOptions {
   ops?: readonly AnyOperation[];
   version?: string;
   now?: () => string;
+  /** The HTTP request's signal (stateless HTTP); stdio leaves it unset. */
+  signal?: AbortSignal;
 }
 
 /** What the server hands to the tool, resource and prompt builders. */
@@ -59,7 +61,7 @@ export interface McpRuntime {
   ops: readonly AnyOperation[];
   principal(): Promise<Principal>;
   /** Run an operation as the current principal. */
-  run(op: AnyOperation, raw: unknown): Promise<unknown>;
+  run(op: AnyOperation, raw: unknown, signal?: AbortSignal): Promise<unknown>;
   op(name: string): AnyOperation;
 }
 
@@ -142,13 +144,17 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
   const resolve = async (): Promise<Principal> =>
     typeof options.principal === "function" ? options.principal() : options.principal;
 
-  const run = async (op: AnyOperation, raw: unknown): Promise<unknown> => {
+  const run = async (op: AnyOperation, raw: unknown, signal?: AbortSignal): Promise<unknown> => {
     const principal = await resolve();
     const ctx: OpContext = {
       root: options.root,
       principal,
       services: options.services,
       authStore: options.authStore,
+      signal:
+        options.signal && signal
+          ? AbortSignal.any([options.signal, signal])
+          : (options.signal ?? signal),
       now: options.now ?? (() => new Date().toISOString()),
     };
     return op.execute(ctx, raw);
@@ -190,7 +196,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     };
   });
 
-  server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const op = byTool.get(request.params.name);
     if (!op) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${request.params.name}`);
     const args = request.params.arguments ?? {};
@@ -204,7 +210,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
         : undefined;
     const principal = await resolve();
     try {
-      const result = await run(op, raw);
+      const result = await run(op, raw, extra.signal);
       options.onCall?.({ tool: op.mcp.name!, principal, projectId, ok: true });
       return successResult(op, result);
     } catch (err) {

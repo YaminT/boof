@@ -18,9 +18,12 @@ import { TaskService } from "@boof-runner/api";
 import {
   closeWhenDrained,
   createBoofMcpServer,
+  handleMcpHttp,
   exposedOps,
   principalFromClient,
   stdioPrincipal,
+  type BoofMcpOptions,
+  type ToolCallInfo,
 } from "./index.js";
 
 let base: string;
@@ -43,8 +46,12 @@ const goal = (id: string, deps: string[] = []) => ({
   spec: spec(`Build ${id}`),
 });
 
-async function connect(principal: Principal, project?: string): Promise<Client> {
-  const server = createBoofMcpServer({ root, principal, services, authStore, project });
+async function connect(
+  principal: Principal,
+  project?: string,
+  extra: Partial<BoofMcpOptions> = {},
+): Promise<Client> {
+  const server = createBoofMcpServer({ root, principal, services, authStore, project, ...extra });
   const client = new Client({ name: "test", version: "1.0.0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -103,6 +110,35 @@ afterEach(async () => {
 });
 
 describe("tools generated from the registry", () => {
+  it("a cancelled boof_wait_task releases the server-side wait at once", async () => {
+    let finished!: (info: ToolCallInfo) => void;
+    const done = new Promise<ToolCallInfo>((r) => (finished = r));
+    const admin = await connect(LOCAL_PRINCIPAL, undefined, {
+      onCall: (info) => {
+        if (info.tool === "boof_wait_task") finished(info);
+      },
+    });
+    await call(admin, "boof_create_project", { workingDirectory: repo, id: "shop" });
+    await call(admin, "boof_create_task", { projectId: "shop", title: "Idle", status: "pending" });
+    const ctrl = new AbortController();
+    const started = Date.now();
+    const pending = admin.callTool(
+      {
+        name: "boof_wait_task",
+        arguments: { projectId: "shop", taskId: "idle", timeoutSeconds: 30 },
+      },
+      undefined,
+      { signal: ctrl.signal },
+    );
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort(); // the client sends notifications/cancelled and rejects locally
+    await expect(pending).rejects.toThrow();
+    // The server side is the proof: onCall fires only when the handler returned.
+    const info = await done;
+    expect(info).toMatchObject({ tool: "boof_wait_task", ok: true });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
   it("lists the tools with their scopes (snapshot of names)", async () => {
     const client = await connect(LOCAL_PRINCIPAL);
     const { tools } = await client.listTools();
@@ -574,5 +610,51 @@ describe("closeWhenDrained", () => {
     const { drain, closes } = setup();
     drain.stdinEnded();
     expect(closes).toEqual([1]);
+  });
+});
+
+describe("handleMcpHttp", () => {
+  it("a disconnected HTTP wait releases the handler", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    await call(await connect(LOCAL_PRINCIPAL), "boof_create_task", {
+      projectId: "shop",
+      title: "Idle",
+      status: "pending",
+    });
+    let finished!: (info: ToolCallInfo) => void;
+    const done = new Promise<ToolCallInfo>((r) => (finished = r));
+    const ctrl = new AbortController();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "boof_wait_task",
+        arguments: { projectId: "shop", taskId: "idle", timeoutSeconds: 30 },
+      },
+    });
+    const request = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body,
+      signal: ctrl.signal,
+    });
+    const started = Date.now();
+    const pending = handleMcpHttp(request, {
+      root,
+      principal: LOCAL_PRINCIPAL,
+      services,
+      authStore,
+      parsedBody: JSON.parse(body),
+      onCall: finished,
+    });
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort();
+    await pending.catch(() => undefined); // the transport may reject once the request is aborted
+    expect((await done).tool).toBe("boof_wait_task");
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

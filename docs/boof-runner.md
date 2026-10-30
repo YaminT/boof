@@ -423,7 +423,7 @@ Every status change and plan write appends one JSON line to `<project>/events.js
 The REST surface is the registry (see above); the full list with inputs, outputs, scopes and errors is the generated reference in [harness.md](harness.md) and the OpenAPI document. In short:
 
 - projects: list, create, get, update, archive, unarchive, pause, resume, delete (`?purge=true` removes the data and is refused with `409 project_busy` while a task runs), usage
-- per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll), stop and prompt injection (modes `next-step` and `now`)
+- per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll; stops when the client disconnects), stop and prompt injection (modes `next-step` and `now`)
 - per-project plans under `/api/v1/projects/{p}/plans…`: list, create, get, update, replace goals, upsert and remove a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`
 - `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates (writes: `settings:write`), settings, tool health, models, token usage, API clients (`auth:admin`) and webhooks (`admin`)
 

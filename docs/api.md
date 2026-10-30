@@ -283,7 +283,7 @@ rules, input validation and error codes are identical, and every call is audited
   `--client` the command refuses to start.
 - **Stateless.** One request, one answer (`application/json`). No sessions, so GET and DELETE on
   `/mcp` answer `405` and there are no server-initiated notifications. Use `boof_wait_task`
-  (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress. The server advertises `listChanged: false` for tools, resources and prompts.
+  (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress. A wait ends as soon as the caller goes away: an HTTP disconnect, or an MCP `notifications/cancelled`. The server advertises `listChanged: false` for tools, resources and prompts.
 - **Results.** Success: `content[0]` is a one-line summary, `content[1]` the JSON result,
   `structuredContent` the result. Failure: `isError: true` and text `<code>: <message> <details>`
   with the codes of the Errors section (`plan_version_conflict`, `forbidden_scope`, ...).

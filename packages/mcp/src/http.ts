@@ -11,7 +11,10 @@ export async function handleMcpHttp(
   options: BoofMcpOptions & { parsedBody?: unknown },
 ): Promise<Response> {
   const { parsedBody, ...serverOptions } = options;
-  const server = createBoofMcpServer(serverOptions);
+  const server = createBoofMcpServer({
+    ...serverOptions,
+    signal: serverOptions.signal ?? request.signal,
+  });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

@@ -199,6 +199,7 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
     }
 
     const ctx: OpContext = {
+      signal: c.req.raw.signal,
       root: deps.service.root,
       principal,
       services: deps.service,

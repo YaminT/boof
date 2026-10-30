@@ -1947,6 +1947,7 @@ The result is `{ "changed": true|false, "timedOut": true|false, "terminal": true
 - `terminal` is `true` when the status is `done`, `failed`, `stopped` or `archived`. Stop waiting then.
 - `action` returns at once and is not terminal: answer the questions (recipe 5), then wait again.
 - If `timedOut` is `true`, call again. Pass `since=<status>` to wait for a change from a known status.
+- If you abort the request, the server stops waiting at once; nothing is left running for you.
 - To follow a whole plan, use `plans.wait` instead (recipe 10).
 
 Method B, server-sent events:

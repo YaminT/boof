@@ -42,7 +42,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 - [x] [`idempotency-key-concurrency`](idempotency-key-concurrency/goal.boof.xml) — Serialize concurrent requests with the same Idempotency-Key
 - [x] [`migration-lock`](migration-lock/goal.boof.xml) — Guard the v1 to v2 data migration against two processes
-- [ ] [`cancel-waits-on-disconnect`](cancel-waits-on-disconnect/goal.boof.xml) — Cancel long waits when the client disconnects
+- [x] [`cancel-waits-on-disconnect`](cancel-waits-on-disconnect/goal.boof.xml) — Cancel long waits when the client disconnects
 - [x] [`plan-approval-backfill`](plan-approval-backfill/goal.boof.xml) — Backfill approval for plans activated before approvedBy existed (after: migration-lock)
 - [x] [`prune-worktrees-on-project-add`](prune-worktrees-on-project-add/goal.boof.xml) — Prune stale worktrees when a project is added or unarchived
 - [x] [`mcp-listchanged-and-log-tail`](mcp-listchanged-and-log-tail/goal.boof.xml) — MCP: drop listChanged in stateless mode, add tail to the task log tool

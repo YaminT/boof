@@ -29,6 +29,11 @@ export interface OpContext {
   /** DNS for the webhook target check; tests inject a fake. */
   resolveHost?: ResolveHost;
   /** Receives the operation's audit extras once the input is valid (REST puts them in the audit line). */
+  /**
+   * Aborted when the caller went away (HTTP disconnect, MCP cancellation). Long waits return
+   * early; other handlers may ignore it.
+   */
+  signal?: AbortSignal;
   audit?: (extra: Record<string, unknown>) => void;
 }
 

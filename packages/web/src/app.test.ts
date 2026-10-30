@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import net, { type AddressInfo } from "node:net";
+import { serve } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultSettings,
@@ -407,6 +409,86 @@ describe("running task controls", () => {
     await (await req("/api/tasks", json({ title: "Draft" }))).json();
     expect((await req("/api/tasks/draft/inject", json({ prompt: "x" }))).status).toBe(400);
     expect((await req("/api/tasks/draft/stop", { method: "POST" })).status).toBe(400);
+  });
+});
+
+describe("long polls end when the client disconnects", () => {
+  it("tasks.wait and plans.wait return as soon as the request is aborted", async () => {
+    await (await req("/api/tasks", json({ title: "Slow", status: "pending" }))).json();
+    const planRes = await req(
+      "/api/v1/projects/default/plans",
+      json({
+        id: "p",
+        title: "P",
+        status: "active",
+        autoSync: true,
+        goals: [
+          {
+            id: "a",
+            title: "A",
+            dependsOn: [],
+            spec: {
+              goal: "Build a",
+              stack: "TypeScript",
+              rules: { do: ["Write a failing test first."] },
+              tests: { strategy: "TDD", technology: "vitest", run: "npm test" },
+            },
+          },
+        ],
+      }),
+    );
+    expect(planRes.status).toBe(201);
+    for (const path of [
+      "/api/v1/projects/default/tasks/slow/wait?timeoutSeconds=30",
+      "/api/v1/projects/default/plans/p/wait?timeoutSeconds=30",
+    ]) {
+      const ctrl = new AbortController();
+      const started = Date.now();
+      const pending = req(path, { signal: ctrl.signal });
+      await new Promise((r) => setImmediate(r)); // the handler is inside its first poll by now
+      ctrl.abort();
+      const res = await pending;
+      expect(res.status, path).toBe(200);
+      expect(await res.json()).toMatchObject({ changed: false, timedOut: true });
+      expect(Date.now() - started, path).toBeLessThan(5_000); // not the 30 s deadline
+    }
+  });
+
+  it("a raw socket disconnect aborts the wait handler", async () => {
+    await (await req("/api/tasks", json({ title: "Slow", status: "pending" }))).json();
+    let finished!: () => void;
+    const done = new Promise<void>((r) => (finished = r));
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => (entered = r));
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (request) => {
+        entered();
+        return Promise.resolve(app.fetch(request)).then((res) => {
+          finished();
+          return res;
+        });
+      },
+    });
+    try {
+      await new Promise((r) => server.once("listening", r));
+      const { port } = server.address() as AddressInfo;
+      const started = Date.now();
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.write(
+        `GET /api/v1/projects/default/tasks/slow/wait?timeoutSeconds=30 HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n\r\n`,
+      );
+      await inside;
+      await new Promise((r) => setTimeout(r, 20)); // the handler is polling now
+      socket.destroy();
+      await done;
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
   });
 });
 

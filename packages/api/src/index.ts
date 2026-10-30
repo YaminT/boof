@@ -1,3 +1,4 @@
+export * from "./abort.js";
 export * from "./errors.js";
 export * from "./define-op.js";
 export * from "./registry.js";

@@ -34,6 +34,7 @@ import {
 } from "@boof-runner/runner";
 import type { z } from "zod";
 import { formatIssues, OpError } from "../errors.js";
+import { sleepUnlessAborted } from "../abort.js";
 import { statusDowngraded, type Warning } from "../warnings.js";
 import type { TaskService } from "./service.js";
 
@@ -259,7 +260,7 @@ export class PlanService {
    */
   async waitFor(
     planId: string,
-    opts: { sinceVersion?: number; timeoutMs: number; pollMs?: number },
+    opts: { sinceVersion?: number; timeoutMs: number; pollMs?: number; signal?: AbortSignal },
   ): Promise<WaitPlanResult> {
     const first = await this.progress(planId);
     const since = opts.sinceVersion ?? first.version;
@@ -270,9 +271,11 @@ export class PlanService {
         return { ...now, changed: now.version > since, timedOut: false };
       if (now.version > since) return { ...now, changed: true, timedOut: false };
       if (Date.now() >= deadline) return { ...now, changed: false, timedOut: true };
-      await new Promise((r) =>
-        setTimeout(r, Math.max(1, Math.min(opts.pollMs ?? 500, deadline - Date.now()))),
+      const slept = await sleepUnlessAborted(
+        Math.max(1, Math.min(opts.pollMs ?? 500, deadline - Date.now())),
+        opts.signal,
       );
+      if (slept === "aborted") return { ...now, changed: false, timedOut: true };
       now = await this.progress(planId);
     }
   }

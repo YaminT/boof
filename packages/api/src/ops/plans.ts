@@ -392,6 +392,7 @@ export const plansWait = defineOp({
     (await requireProject(ctx, input.projectId)).plans.waitFor(input.planId, {
       sinceVersion: input.sinceVersion,
       timeoutMs: (input.timeoutSeconds ?? 30) * 1000,
+      signal: ctx.signal,
     }),
 });
 

@@ -22,7 +22,7 @@
     <goal id="inject-and-stop-respect-trust" path="goals/inject-and-stop-respect-trust" order="19" status="done"></goal>
     <goal id="webhook-ssrf-guard" path="goals/webhook-ssrf-guard" order="20" status="done"></goal>
     <goal id="idempotency-key-concurrency" path="goals/idempotency-key-concurrency" order="21" status="done"></goal>
-    <goal id="cancel-waits-on-disconnect" path="goals/cancel-waits-on-disconnect" order="22" status="plan"></goal>
+    <goal id="cancel-waits-on-disconnect" path="goals/cancel-waits-on-disconnect" order="22" status="done"></goal>
     <goal id="plan-approval-backfill" path="goals/plan-approval-backfill" order="23" status="done"><depends-on>migration-lock</depends-on></goal>
     <goal id="prune-worktrees-on-project-add" path="goals/prune-worktrees-on-project-add" order="24" status="done"></goal>
     <goal id="mcp-listchanged-and-log-tail" path="goals/mcp-listchanged-and-log-tail" order="25" status="done"></goal>

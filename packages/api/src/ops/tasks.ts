@@ -2,6 +2,7 @@ import { z } from "zod";
 import { StatusSchema } from "@boof-runner/shared";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
+import { sleepUnlessAborted } from "../abort.js";
 import { promptFingerprint } from "../audit.js";
 import {
   AnswersBody,
@@ -529,8 +530,12 @@ export const tasksWait = defineOp({
     for (;;) {
       const status = task.frontmatter.status;
       if (status !== since || status === input.until) return reply(task, true, false);
-      if (Date.now() >= deadline) return reply(task, false, true);
-      await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, deadline - Date.now())));
+      if (Date.now() >= deadline || ctx.signal?.aborted) return reply(task, false, true);
+      if (
+        (await sleepUnlessAborted(Math.min(WAIT_POLL_MS, deadline - Date.now()), ctx.signal)) ===
+        "aborted"
+      )
+        return reply(task, false, true);
       const next = await svc.get(input.taskId);
       if (!next) throw new OpError(404, "Task not found");
       task = next;

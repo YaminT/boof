@@ -16,6 +16,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">OpContext.signal carries the HTTP request's AbortSignal (REST and /mcp) or AbortSignal.any with the MCP request's extra.signal; tasks.wait and plans.waitFor sleep with sleepUnlessAborted, which clears its timer on abort, and answer like a timeout when cancelled; pinned over REST, MCP (client signal → notifications/cancelled → onCall within 5 s) and handleMcpHttp with an aborted Request.</version>
       </versions>
     </status>
     <tests>
