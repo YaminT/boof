@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">startServer in the desktop app receives version app.getVersion() and runnerRunning () => engine !== null through lifecycle.serverOptions, so /healthz reports the real version and runner state; pinned by lifecycle.test.ts; typecheck only for main.ts on a headless machine.</version>
       </versions>
     </status>
     <tests>

@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">before-quit defers the quit and awaits engine.shutdown(BOOF_RUNNER_SHUTDOWN_GRACE_MS, default 30 s) then server.stop() before app.exit(0), so a running task ends stopped and its agent group is killed; a second quit request quits at once; lifecycle.test.ts pins the order, the second request, a rejected shutdown and the timed-out grace message.</version>
       </versions>
     </status>
     <tests>

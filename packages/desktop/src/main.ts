@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electro
 import { RunnerEngine } from "@boof-runner/runner";
 import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
+import { createQuitHandler, serverOptions, shutdownGraceMs } from "./lifecycle.js";
 
 // Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
 // window/menu. Must run before any getPath("userData") call.
@@ -128,7 +129,9 @@ async function boot(): Promise<void> {
     console.error("desktop auth setup failed; using local-trust:", err);
     return undefined;
   });
-  server = await startServer({ root, port: PORT, uiDir: uiDir() });
+  server = await startServer(
+    serverOptions({ root, port: PORT, uiDir: uiDir() }, app.getVersion(), () => engine),
+  );
   engine = new RunnerEngine({ root });
   void engine.loop();
   createWindow(server.port);
@@ -162,18 +165,12 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== "darwin") app.quit();
   });
 
-  let shuttingDown = false;
-  app.on("before-quit", (event) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    event.preventDefault();
-    void (async () => {
-      try {
-        engine?.stop();
-        await server?.stop();
-      } finally {
-        app.exit(0);
-      }
-    })();
+  const quit = createQuitHandler({
+    engine: () => engine,
+    server: () => server,
+    exit: (code) => app.exit(code),
+    graceMs: shutdownGraceMs(),
+    log: console.log,
   });
+  app.on("before-quit", (event) => void quit(event));
 }
