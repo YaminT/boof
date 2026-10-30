@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <boof>
   <overal>
-    <goal>Orphan reaping works only on Linux (it needs /proc for the boot id and the exact process start time), but the desktop app ships only for macOS and Windows. After a desktop crash or a forced second quit the detached agent keeps running; on the next launch the runner now keeps the record, fails the task and warns that the agent process may still be running, but it does not stop it, so a Retry can still start a second agent in the same worktree. Add real reaping on macOS and Windows with the same safety as Linux: never signal a process unless its boot identity and exact start time match the pid record. macOS: boot time from `sysctl -n kern.boottime`, start time from `ps -o lstart= -p PID` (or `proc_pidinfo`). Windows: boot time and process creation time from `Win32_OperatingSystem.LastBootUpTime` and `Win32_Process.CreationDate` (or `wmic`/PowerShell), kill the process tree with `taskkill /T /F` since there are no process groups. Also show a "Stopping running task... (quit again to force)" notice in the desktop app while the quit drain runs.</goal>
+    <goal>Orphan reaping works only on Linux (it needs /proc for the boot id and the exact process start time), but the desktop app ships only for macOS and Windows. After a desktop crash or a forced second quit the detached agent keeps running; on the next launch the runner fails the task and warns in the Interrupted block that the agent process may still be running, but it does not stop it, and the pid record is deleted with the task's working area when the task moves to failed, so a Retry can still start a second agent in the same worktree. Add real reaping on macOS and Windows with the same safety as Linux: never signal a process unless its boot identity and exact start time match the pid record. macOS: boot time from `sysctl -n kern.boottime`, start time from `ps -o lstart= -p PID` (or `proc_pidinfo`). Windows: boot time and process creation time from `Win32_OperatingSystem.LastBootUpTime` and `Win32_Process.CreationDate` (or `wmic`/PowerShell), kill the process tree with `taskkill /T /F` since there are no process groups. Also show a "Stopping running task... (quit again to force)" notice in the desktop app while the quit drain runs.</goal>
     <stack>TypeScript monorepo (Node 22 / Bun), Electron desktop app, vitest</stack>
     <rules>
       <do>Read README.md, docs/boof-runner.md (crash recovery) and goals/orphan-agent-processes/goal.boof.xml for the intended behaviour before changing code.</do>
       <do>Write a failing test first, then make it pass; keep the change focused on this goal. Mock the platform and the probe commands in unit tests.</do>
+      <do>Retry must refuse (or at least warn and require confirmation) while a recorded agent process is still alive. Store the pid, start time and boot identity somewhere that survives the move to failed (for example the task frontmatter), because the working-area pid record is deleted on that transition; the check must work from that stored identity.</do>
       <do>Keep the Linux behaviour unchanged and keep the "never kill on doubt" rule: a record with an unknown boot id, a different start time or a missing start time is never signalled.</do>
       <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
       <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
@@ -15,7 +16,7 @@
   <progress>
     <status>
       <versions>
-        <version number="1" status="plan">Filed from the group 5 review (2026-10-30). Interim step done: off Linux a still-alive orphan keeps its pid record and the Interrupted block warns that the agent process (pid N) may still be running and to stop it before Retry. Real reaping on macOS and Windows is not started.</version>
+        <version number="1" status="plan">Filed from the group 5 review (2026-10-30). Interim step done: off Linux a still-alive orphan is reported as maybeRunning, the Interrupted block warns that the agent process (pid N) may still be running and to stop it before Retry, and its pid record is deleted with the working area when the task fails. Retry does not yet refuse while the agent is alive. Real reaping on macOS and Windows is not started.</version>
       </versions>
     </status>
     <tests>

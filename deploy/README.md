@@ -113,9 +113,7 @@ Check it works: `curl https://boof.example.com/healthz`, then `curl -H "Authoriz
 ```bash
 bash ~/.local/share/boof-runner/source/scripts/install-or-update-boof-runner.sh
 boof-runner service install     # rewrites the unit and restarts a running service; no --data needed
-# The existing unit's options (data root, --env-file, --env, --port, --host) and the recorded PATH are kept: the report shows "(kept from the existing unit)" for each. Do not pass --data "$BOOF_DATA" here; an unset variable would be empty (service install now rejects that).
-# Options set at the first install (--env-file, --env, --port, --host) and the recorded PATH are reused and the
-# command prints what it kept; add --reset to start from the flags alone.
+# The existing unit's options (data root, --env-file, --env, --port, --host) and the recorded PATH are kept and the report shows "(kept from the existing unit)" for each; add --reset to start from the flags alone. Do not pass --data "$BOOF_DATA" here; an unset variable would be empty (service install now rejects that).
 # A unit installed by an older version has no recorded options: it is read once (ExecStart, Environment, EnvironmentFile) and its settings are kept.
 # --reset drops everything, including the data root (pass --data with it); removing one PATH entry or one --env key is only possible with --reset.
 # or only restart when nothing in the unit changed:

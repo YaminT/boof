@@ -567,6 +567,7 @@ async function install(
   err: (l: string) => void,
   env: ServiceEnv,
 ): Promise<number> {
+  // Node rejects `--env-file ""` itself before the CLI runs (exit 9), so this message never shows for that flag.
   for (const flag of ["data", "env-file", "host", "port"] as const) {
     const val = v[flag];
     if (typeof val === "string" && val.trim() === "") {
