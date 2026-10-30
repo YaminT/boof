@@ -15,6 +15,7 @@ import {
   reviewSettings,
   taskAssetPath,
   taskPromptInjectionsPath,
+  taskPidPath,
   taskSteerRequestPath,
   taskStopRequestPath,
   TaskStore,
@@ -327,6 +328,7 @@ export class Pipeline {
             resumeSessionId,
             idleTimeoutMs,
             stopSignalPath: taskStopRequestPath(this.deps.root, id),
+            pidFilePath: taskPidPath(this.deps.root, id),
             steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
             onChunk: (c) => void this.streamChunk(id, c),
           });

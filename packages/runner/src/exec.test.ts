@@ -1,4 +1,5 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -95,6 +96,35 @@ describe("execCommand", () => {
       expect(none.steered).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes control/pid with the child's process group while it runs and removes it on close", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-exec-pid-"));
+    try {
+      const pidFilePath = join(dir, "control", "pid");
+      const stop = join(dir, "control", "stop");
+      const running = execCommand(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        cwd: dir,
+        pidFilePath,
+        stopSignalPath: stop,
+        stopPollMs: 20,
+        timeoutMs: 15_000,
+      });
+      while (!existsSync(pidFilePath)) await new Promise((r) => setImmediate(r));
+      const rec = JSON.parse(await readFile(pidFilePath, "utf8"));
+      expect(rec).toMatchObject({ command: "node" });
+      expect(rec.pgid).toBeGreaterThan(0);
+      expect(() => process.kill(rec.pgid, 0)).not.toThrow();
+      await writeFile(stop, "test\n");
+      const res = await running;
+      expect(res.stopped).toBe(true);
+      expect(existsSync(pidFilePath)).toBe(false);
+      // A child that finishes on its own leaves no file either.
+      await execCommand("true", [], { cwd: dir, pidFilePath });
+      expect(existsSync(pidFilePath)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

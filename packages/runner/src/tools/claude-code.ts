@@ -98,6 +98,7 @@ export class ClaudeCodeTool implements Tool {
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
       steerSignalPath: opts.steerSignalPath,
+      pidFilePath: opts.pidFilePath,
       idleTimeoutMs: opts.idleTimeoutMs,
       onData: (chunk) => render.push(chunk),
     });

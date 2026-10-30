@@ -18,3 +18,4 @@ export * from "./boof-scan.js";
 export * from "./plan-import.js";
 export * from "./plan-sync.js";
 export { branchExists, isAncestor, createIntegrationBranch } from "./plan-base.js";
+export * from "./pid-file.js";

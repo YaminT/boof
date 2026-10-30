@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">execCommand writes control/pid ({ pgid, command, startedAt, bootId }) for the span of the child and removes it on close; the pipeline passes taskPidPath to every tool adapter; recoverInterrupted reaps the group (SIGTERM then SIGKILL, never across a boot id change, and only a verified group leader) before failing the task and notes it in the Interrupted block. Decision: kill, not refuse-retry. Pinned in pid-file.test.ts, exec.test.ts and engine.test.ts.</version>
       </versions>
     </status>
     <tests>

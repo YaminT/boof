@@ -17,7 +17,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`running-task-edits-survive`](running-task-edits-survive/goal.boof.xml) — Edits to a running task survive the run (no stale overwrite)
 - [x] [`task-store-atomicity`](task-store-atomicity/goal.boof.xml) — TaskStore transitions and create are atomic (no task in two status dirs)
 - [x] [`shutdown-fill-race`](shutdown-fill-race/goal.boof.xml) — No task starts after shutdown() began
-- [ ] [`orphan-agent-processes`](orphan-agent-processes/goal.boof.xml) — Record agent process groups and reap orphans on recovery (after: desktop-graceful-quit)
+- [x] [`orphan-agent-processes`](orphan-agent-processes/goal.boof.xml) — Record agent process groups and reap orphans on recovery (after: desktop-graceful-quit)
 - [x] [`prompt-via-stdin-for-codex-opencode`](prompt-via-stdin-for-codex-opencode/goal.boof.xml) — Pass large prompts to codex/opencode without hitting argv limits
 - [x] [`usage-ledger-accuracy`](usage-ledger-accuracy/goal.boof.xml) — Usage ledger: codex cost is unknown, failed attempts are not recorded
 - [x] [`git-worktree-add-timeout`](git-worktree-add-timeout/goal.boof.xml) — Do not SIGKILL slow `git worktree add`; clean up a failed add

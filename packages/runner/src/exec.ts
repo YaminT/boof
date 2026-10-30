@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { basename } from "node:path";
+import { writePidFile } from "./pid-file.js";
 
 export interface ExecResult {
   code: number | null;
@@ -31,6 +34,11 @@ export interface ExecOptions {
    * file; a stop request wins when both exist.
    */
   steerSignalPath?: string;
+  /**
+   * Written right after spawn with the child's process group (`PidRecord`) and removed when the
+   * child closes; `recoverInterrupted` reaps what it names after a crash.
+   */
+  pidFilePath?: string;
   /**
    * Kill the child (SIGTERM, then SIGKILL) when it emits no stdout/stderr chunk
    * for this long; the result has `stalled: true`.
@@ -79,6 +87,16 @@ export function execCommand(
       // everything it spawned, not just the top process.
       detached: process.platform !== "win32",
     });
+    const pidWritten =
+      opts.pidFilePath && child.pid
+        ? writePidFile(opts.pidFilePath, { pgid: child.pid, command: basename(command) }).catch(
+            () => {},
+          )
+        : Promise.resolve();
+    const cleanPid = async () => {
+      await pidWritten;
+      if (opts.pidFilePath) await rm(opts.pidFilePath, { force: true }).catch(() => {});
+    };
     const kill = (signal: NodeJS.Signals) => {
       try {
         if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
@@ -152,8 +170,9 @@ export function execCommand(
       opts.onData?.(s);
     });
 
-    child.on("error", (err) => {
+    child.on("error", async (err) => {
       clearTimers();
+      await cleanPid();
       resolve({
         code: null,
         stdout,
@@ -165,8 +184,9 @@ export function execCommand(
       });
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       clearTimers();
+      await cleanPid();
       resolve({ code, stdout, stderr, timedOut, stopped, steered, stalled });
     });
 

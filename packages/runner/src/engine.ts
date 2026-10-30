@@ -14,6 +14,7 @@ import {
   SettingsStore,
   statusDir,
   TaskStore,
+  taskPidPath,
   workingAreaDir,
   type Project,
   type Status,
@@ -23,6 +24,7 @@ import {
 } from "@boof-runner/shared";
 import { announceBudgetExceeded } from "./budget.js";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
+import { reapOrphan } from "./pid-file.js";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { isGitRepo, pruneStaleWorktrees } from "./worktree.js";
@@ -509,6 +511,9 @@ export class RunnerEngine {
             console.warn(`recovery: skipping ${project.id}/${id}: no task.md in ongoing/${id}`);
             continue;
           }
+          const reaped = await reapOrphan(taskPidPath(dir, id), (l) =>
+            console.warn(`recovery: ${project.id}/${id}: ${l}`),
+          );
           const live = await readFile(join(workingAreaDir(dir, id), "log.txt"), "utf8").catch(
             () => "",
           );
@@ -517,7 +522,11 @@ export class RunnerEngine {
             "failed",
             (t) => {
               if (live.trim()) t.body.log = live;
-              const block = `### Interrupted\n${INTERRUPTED_NOTE}`;
+              const block =
+                `### Interrupted\n${INTERRUPTED_NOTE}` +
+                (reaped.outcome === "killed"
+                  ? `\nThe agent process group ${reaped.record!.pgid} was still running and was killed.`
+                  : "");
               t.body.log = t.body.log.trim() ? `${t.body.log.trimEnd()}\n\n${block}` : block;
             },
             { reason: "interrupted: runner stopped unexpectedly" },

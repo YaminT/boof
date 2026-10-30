@@ -120,6 +120,7 @@ export class CodexTool implements Tool {
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
         steerSignalPath: opts.steerSignalPath,
+        pidFilePath: opts.pidFilePath,
         idleTimeoutMs: opts.idleTimeoutMs,
         onData: opts.onChunk ? (c) => live.push(c) : undefined,
       });

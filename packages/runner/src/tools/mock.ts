@@ -220,6 +220,7 @@ export class MockTool implements Tool {
         idleTimeoutMs: opts.idleTimeoutMs,
         stopSignalPath: opts.stopSignalPath,
         steerSignalPath: opts.steerSignalPath,
+        pidFilePath: opts.pidFilePath,
       });
       throw new ToolRunError(
         "mock",

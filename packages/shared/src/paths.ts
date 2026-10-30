@@ -150,6 +150,11 @@ export function taskSteerRequestPath(root: string, id: string): string {
   return join(taskControlDir(root, id), "steer");
 }
 
+/** The running step's process group, written by execCommand for the span of the child: { pgid, command, startedAt, bootId }. */
+export function taskPidPath(root: string, id: string): string {
+  return join(taskControlDir(root, id), "pid");
+}
+
 /** User prompts injected while a task is running, consumed between pipeline steps. */
 export function taskPromptInjectionsPath(root: string, id: string): string {
   return join(taskControlDir(root, id), "prompts.md");

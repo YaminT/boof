@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   appendFile,
@@ -26,6 +27,7 @@ import {
   parseInjected,
   taskControlDir,
   taskFilePath,
+  taskPidPath,
   taskPromptInjectionsPath,
   taskSteerRequestPath,
   taskStopRequestPath,
@@ -37,6 +39,7 @@ import {
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
+import { currentBootId, isAlive, writePidFile } from "./pid-file.js";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";
@@ -2110,6 +2113,65 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(await engine.recoverInterrupted()).toEqual(["t1"]);
       expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
       expect(await exists(workingAreaDir(projectDir, "ghost"))).toBe(true);
+    });
+
+    it.skipIf(!currentBootId())(
+      "kills an agent process group a crashed runner left behind, then fails the task",
+      async () => {
+        await crash();
+        const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        const gone = new Promise<void>((r) => orphan.on("exit", () => r()));
+        try {
+          await writePidFile(taskPidPath(projectDir, "t1"), { pgid: orphan.pid!, command: "node" });
+          expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+          await gone;
+          expect(isAlive(orphan.pid!)).toBe(false);
+          const t = await store.get("t1");
+          expect(t?.frontmatter.status).toBe("failed");
+          expect(t?.body.log).toContain("### Interrupted\nThe runner stopped unexpectedly");
+          expect(t?.body.log).toContain(
+            `The agent process group ${orphan.pid} was still running and was killed.`,
+          );
+          expect(await exists(workingAreaDir(projectDir, "t1"))).toBe(false);
+        } finally {
+          try {
+            process.kill(-orphan.pid!, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        }
+      },
+    );
+
+    it("a pid file whose process already ended changes nothing", async () => {
+      await crash();
+      const done = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+      await new Promise<void>((r) => done.on("exit", () => r()));
+      await writePidFile(taskPidPath(projectDir, "t1"), { pgid: done.pid!, command: "node" });
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      expect((await store.get("t1"))?.body.log).not.toContain("was still running");
+    });
+
+    it("the pipeline records the step's group under control/pid while the tool runs", async () => {
+      await store.create(newTask(fm(), "Build it. [[mock-stall planner=1 developer=1]]"));
+      const pid = taskPidPath(projectDir, "t1");
+      const done = engine.loop();
+      try {
+        while (!existsSync(pid)) await new Promise((r) => setTimeout(r, 20));
+        const rec = JSON.parse(await readFile(pid, "utf8"));
+        expect(rec.command).toBe("node");
+        expect(isAlive(rec.pgid)).toBe(true);
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await writeFile(taskStopRequestPath(projectDir, "t1"), "test\n");
+      } finally {
+        engine.stop();
+        await done;
+      }
+      expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
+      expect(existsSync(pid)).toBe(false);
     });
 
     it("does nothing when no engine loop runs (the --no-runner path)", async () => {

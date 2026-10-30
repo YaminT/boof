@@ -33,6 +33,8 @@ export interface RunOptions {
   stopSignalPath?: string;
   /** File whose presence interrupts the tool process so the step can be rerun with new instructions. */
   steerSignalPath?: string;
+  /** File that holds the tool process group while it runs (see taskPidPath). */
+  pidFilePath?: string;
   /**
    * Continue the tool's earlier session (its id from `RunResult.sessionId` or
    * `ToolRunError.sessionId`); `prompt` is then only the new message. Used when a step is
