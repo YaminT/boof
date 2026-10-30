@@ -30,7 +30,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`webhook-secrets-at-rest`](webhook-secrets-at-rest/goal.boof.xml) — Protect webhook secrets at rest (after: migration-lock)
 - [x] [`client-create-inherits-restrictions`](client-create-inherits-restrictions/goal.boof.xml) — auth.clients.create cannot escalate projects or expiry
 - [x] [`command-templates-respect-project-scope`](command-templates-respect-project-scope/goal.boof.xml) — Command templates respect project restrictions
-- [ ] [`sse-principal-revocation`](sse-principal-revocation/goal.boof.xml) — Event streams stop when the key is revoked
+- [x] [`sse-principal-revocation`](sse-principal-revocation/goal.boof.xml) — Event streams stop when the key is revoked
 - [x] [`rate-limit-unauthenticated-and-healthz`](rate-limit-unauthenticated-and-healthz/goal.boof.xml) — Rate limit unauthenticated requests and cache /healthz
 - [x] [`csrf-content-type-and-origin`](csrf-content-type-and-origin/goal.boof.xml) — CSRF defence for the local-trust principal
 - [x] [`inject-and-stop-respect-trust`](inject-and-stop-respect-trust/goal.boof.xml) — tasks.inject and tasks.stop respect the trust level

@@ -44,6 +44,10 @@ export function useLive(handlers: LiveHandlers): void {
       url: EVENTS_URL,
       headers: authHeaders,
       onMessage: (m) => {
+        if (m.event === "unauthorized") {
+          notifyUnauthorized(); // the key stopped working: open the gate, as a 401 does
+          return;
+        }
         if (m.event === "ready" || m.event === "ping") return;
         if (m.event === "changed") {
           ref.current.onChanged?.(parse<{ project?: string }>(m.data)?.project);

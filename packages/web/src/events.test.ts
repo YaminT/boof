@@ -2,15 +2,23 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendEvent, AuthStore, defaultSettings, SettingsStore } from "@boof-runner/shared";
+import {
+  appendEvent,
+  AuthStore,
+  defaultSettings,
+  SecuritySettingsSchema,
+  SettingsStore,
+} from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
+import { DataWatcher } from "./watch.js";
 
 let root: string;
 let base: string;
 let app: ReturnType<typeof createApp>;
 let authStore: AuthStore;
+let service: TaskService;
 let peer = "127.0.0.1";
 
 beforeEach(async () => {
@@ -18,7 +26,7 @@ beforeEach(async () => {
   root = join(base, "data");
   await mkdir(root, { recursive: true });
   await new SettingsStore(root).save(defaultSettings());
-  const service = new TaskService(root, new ToolRegistry([new MockTool()]));
+  service = new TaskService(root, new ToolRegistry([new MockTool()]));
   for (const id of ["a", "b"]) {
     const repo = join(base, id);
     await mkdir(repo);
@@ -161,5 +169,99 @@ describe("GET /api/v1/events", () => {
       "runner.enabled",
     ]);
     expect(events[2]).toMatchObject({ from: "draft", to: "pending", by: "local" });
+  });
+});
+
+describe("stream lifetime", () => {
+  const decoder = new TextDecoder();
+  const open = async (init: RequestInit = {}) => {
+    const res = await app.request("http://localhost/api/v1/events", init);
+    return { res, reader: res.status === 200 ? res.body!.getReader() : null };
+  };
+  const next = async (r: ReadableStreamDefaultReader<Uint8Array>) => {
+    const { value, done } = await r.read();
+    return done ? null : decoder.decode(value);
+  };
+  const rest = async (r: ReadableStreamDefaultReader<Uint8Array>) => {
+    let text = "";
+    for (let chunk = await next(r); chunk !== null; chunk = await next(r)) text += chunk;
+    return text;
+  };
+
+  it("ends with an unauthorized event when the key is revoked, at the next tick", async () => {
+    const watcher = new DataWatcher(root); // never started: broadcast() stands in for a file change
+    let clock = Date.parse("2026-03-01T12:00:00Z");
+    authStore = new AuthStore(root, () => clock);
+    app = createApp({ service, authStore, peerAddress: () => peer, watcher, now: () => clock });
+    const { key, client } = await authStore.create({
+      name: "r",
+      scopes: ["tasks:read"],
+      trust: "trusted",
+    });
+    peer = "10.0.0.9";
+    const live = await open({ headers: { authorization: `Bearer ${key}` } });
+    expect(live.res.status).toBe(200);
+    expect(await next(live.reader!)).toContain("event: ready");
+    await appendEvent(dir("a"), taskStatus("a", "t1"));
+    watcher.broadcast("changed", { project: "a" });
+    let seen = "";
+    while (!seen.includes("event: changed")) seen += (await next(live.reader!)) ?? "";
+    expect(seen).toContain("event: task.status");
+    // Revoked in this process: the cache reloads on the next check, the next tick ends the stream.
+    await authStore.revoke(client.id);
+    await appendEvent(dir("a"), taskStatus("a", "t2"));
+    watcher.broadcast("changed", { project: "a" });
+    const tail = await rest(live.reader!);
+    expect(tail).toContain("event: unauthorized");
+    expect(tail).not.toContain('"t2"'); // nothing of the revoked tick, no changed hint after the end
+    expect(tail.indexOf("event: changed")).toBe(-1);
+    // A new connection with the revoked key is refused outright.
+    expect((await open({ headers: { authorization: `Bearer ${key}` } })).res.status).toBe(401);
+  });
+
+  it("ends a local stream when auth.mode flips to required", async () => {
+    const watcher = new DataWatcher(root);
+    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    const live = await open();
+    expect(await next(live.reader!)).toContain("event: ready");
+    const settings = new SettingsStore(root);
+    const cur = await settings.load();
+    await settings.save({
+      ...cur,
+      security: SecuritySettingsSchema.parse({ ...cur.security, auth: { mode: "required" } }),
+    });
+    // The security reader re-reads when settings.json changes (mtime or size).
+    watcher.broadcast("changed", {});
+    expect(await rest(live.reader!)).toContain("event: unauthorized");
+  });
+
+  it("caps open streams per principal and frees the slot on disconnect", async () => {
+    const watcher = new DataWatcher(root);
+    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      const { res, reader } = await open();
+      expect(res.status, `stream ${i}`).toBe(200);
+      expect(await next(reader!)).toContain("event: ready");
+      readers.push(reader!);
+    }
+    const extra = await open();
+    expect(extra.res.status).toBe(429);
+    expect(extra.res.headers.get("retry-after")).toBe("5");
+    expect((await extra.res.json()).error).toMatchObject({
+      code: "rate_limited",
+      details: { retryAfter: 5 },
+    });
+    await readers[0].cancel(); // the client went away: onAbort frees the slot
+    const again = await open();
+    expect(again.res.status).toBe(200);
+    readers.push(again.reader!);
+    // A different principal has its own allowance.
+    const { key } = await authStore.create({ name: "o", scopes: ["tasks:read"], trust: "trusted" });
+    peer = "10.0.0.9";
+    const other = await open({ headers: { authorization: `Bearer ${key}` } });
+    expect(other.res.status).toBe(200);
+    readers.push(other.reader!);
+    for (const r of readers.slice(1)) await r.cancel();
   });
 });

@@ -154,6 +154,12 @@ read). Each event arrives as `event: <type>`, `id: <cursor>`, `data: <event json
   that event, then stay live. Cursors are opaque; an unknown one is `400`.
 - `event: ready` opens the stream, `event: changed` (no id, never replayed) hints that files of a
   project changed without a typed event (the UI uses it for a running task's log).
+- `event: unauthorized` (data `{ message }`) ends the stream when the key was revoked, expired or
+  lost `tasks:read` meanwhile, or when `auth.mode` changed. The check runs at every tick (each
+  change and a 2 s poll), so a revocation stops a stream within a few seconds: at once for a key
+  revoked in the server process, up to about 7 s (5 s client cache plus the 2 s poll) when
+  `boof-runner auth revoke` runs in another process. Get a new key and reconnect. At most 16 open
+  streams per principal; the 17th answers `429 rate_limited` with `Retry-After: 5`.
 
 ```bash
 curl -N -H "Authorization: Bearer $BOOF" "http://127.0.0.1:4319/api/v1/events?since=start"

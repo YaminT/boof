@@ -2,7 +2,14 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
-import { AuthStore, authorizeProject, isKebabId, MAX_ATTACHMENT_BYTES } from "@boof-runner/shared";
+import {
+  AuthStore,
+  authorize,
+  authorizeProject,
+  isKebabId,
+  MAX_ATTACHMENT_BYTES,
+  type Principal,
+} from "@boof-runner/shared";
 import {
   buildOpenApi,
   IdempotencyStore,
@@ -16,7 +23,7 @@ import {
 import { hostGuard } from "./middleware/host-guard.js";
 import { originGuard } from "./middleware/origin-guard.js";
 import {
-  authenticate,
+  createAuthenticator,
   defaultPeerAddress,
   requireScope,
   type PeerAddressResolver,
@@ -94,6 +101,8 @@ function publicPrefix(c: Context): string {
 }
 
 const JSON_BODY_LIMIT = 1_000_000;
+/** Open event streams one principal may hold; the next one answers 429 rate_limited. */
+const MAX_EVENT_STREAMS_PER_PRINCIPAL = 16;
 const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
 
 /**
@@ -183,14 +192,14 @@ export function createApp(deps: AppDeps): Hono {
     ...(await security()).allowedHosts,
   ]);
   for (const path of guarded) app.use(path, origins);
-  const authenticator = authenticate({ store: authStore, security, peerAddress, now: deps.now });
+  const auth = createAuthenticator({ store: authStore, security, peerAddress, now: deps.now });
   const limiter = rateLimit({ security, now: deps.now });
   // Before authenticate, so failed key guesses are throttled before any key is checked; after the
   // Origin guard, so cross-site rejections do not spend a client's bucket.
   const unauthenticated = unauthenticatedRateLimit({ security, peerAddress, now: deps.now });
   for (const path of guarded) {
     app.use(path, unauthenticated);
-    app.use(path, authenticator);
+    app.use(path, auth.middleware);
     app.use(path, limiter);
   }
 
@@ -240,10 +249,41 @@ export function createApp(deps: AppDeps): Hono {
 
   const who = (c: Context) => c.get("principal");
 
+  // Open event streams per principal: each holds a watcher subscription and two timers.
+  const openStreams = new Map<string, number>();
+  const acquireStream = (c: Context, id: string): void => {
+    const n = openStreams.get(id) ?? 0;
+    if (n >= MAX_EVENT_STREAMS_PER_PRINCIPAL) {
+      c.header("Retry-After", "5");
+      throw new OpError(
+        429,
+        `Too many open event streams for this principal (max ${MAX_EVENT_STREAMS_PER_PRINCIPAL})`,
+        "rate_limited",
+        { retryAfter: 5 },
+      );
+    }
+    openStreams.set(id, n + 1);
+  };
+  const releaseStream = (id: string): void => {
+    const n = (openStreams.get(id) ?? 1) - 1;
+    if (n <= 0) openStreams.delete(id);
+    else openStreams.set(id, n);
+  };
+  // The key (or auth mode) may have changed since the stream opened: same principal, still allowed.
+  const resolveSame = async (c: Context, current: Principal): Promise<Principal | null> => {
+    const r = await auth.resolve(c);
+    if (!r.ok || r.principal.id !== current.id || !authorize(r.principal, "tasks:read"))
+      return null;
+    return r.principal;
+  };
+  const UNAUTHORIZED = JSON.stringify({
+    message: "API key revoked, expired or no longer authorized",
+  });
+
   // --- SSE ---
   // v1: typed events from the events files, replayable by cursor (see events.ts).
   api.get("/v1/events", requireScope("tasks:read"), async (c) => {
-    const principal = who(c);
+    let principal = who(c);
     const project = c.req.query("project");
     if (project !== undefined) {
       if (!isKebabId(project)) throw new OpError(400, "Invalid project id", "invalid_input");
@@ -272,85 +312,144 @@ export function createApp(deps: AppDeps): Hono {
       cursor = decoded;
     }
     c.header("X-Accel-Buffering", "no"); // nginx: never buffer the event stream
+    const streamId = principal.id;
+    acquireStream(c, streamId);
     return streamSSE(c, async (stream) => {
+      let ended = false;
+      let unsub = () => {};
+      let poll: ReturnType<typeof setInterval> | undefined;
+      let beat: ReturnType<typeof setInterval> | undefined;
+      let wake = () => {};
+      const finish = () => {
+        if (ended) return;
+        ended = true;
+        unsub();
+        clearInterval(poll);
+        clearInterval(beat);
+        releaseStream(streamId);
+        wake();
+      };
+      stream.onAbort(finish);
       await stream.writeSSE({
         event: "ready",
         data: JSON.stringify({ cursor: encodeFeedCursor(cursor) }),
       });
-      let draining = false;
+      let running: Promise<void> | null = null;
       let again = false;
-      const drain = async () => {
-        if (draining) {
-          again = true;
-          return;
-        }
-        draining = true;
-        try {
-          do {
-            again = false;
-            for (;;) {
-              const batch = await readFeed(service.root, await scopes(), cursor, 200);
-              if (batch.length === 0) break;
-              for (const e of batch) {
-                await stream.writeSSE({
-                  event: e.event.type,
-                  id: e.cursor,
-                  data: JSON.stringify(e.event),
-                });
-              }
-              cursor = decodeFeedCursor(batch[batch.length - 1].cursor) ?? cursor;
+      const readAll = async () => {
+        do {
+          again = false;
+          for (;;) {
+            const batch = await readFeed(service.root, await scopes(), cursor, 200);
+            if (batch.length === 0) break;
+            for (const e of batch) {
+              await stream.writeSSE({
+                event: e.event.type,
+                id: e.cursor,
+                data: JSON.stringify(e.event),
+              });
             }
-          } while (again);
-        } finally {
-          draining = false;
-        }
+            cursor = decodeFeedCursor(batch[batch.length - 1].cursor) ?? cursor;
+          }
+        } while (again);
       };
-      await drain();
-      if (!deps.watcher) return; // no live source (tests): replay only
-      const unsub = deps.watcher.subscribe((_event, data) => {
-        // Typed events first (replayable); then a `changed` hint for file changes that are not
-        // events (a streaming log, an edited prompt). Hints are never replayed.
-        if (data.project && !authorizeProject(principal, data.project)) return;
-        if (project && data.project && data.project !== project) return;
-        void drain()
-          .then(() => stream.writeSSE({ event: "changed", data: JSON.stringify(data) }))
-          .catch(() => {});
-      });
-      const poll = setInterval(() => void drain().catch(() => {}), 2000);
-      const beat = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), 15000);
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          unsub();
-          clearInterval(poll);
-          clearInterval(beat);
-          resolve();
+      // False once the stream is over: the key stopped working (the unauthorized event is sent).
+      // A call during a running drain waits for it, so a `changed` hint never overtakes events.
+      const drain = async (): Promise<boolean> => {
+        if (ended) return false;
+        const fresh = await resolveSame(c, principal);
+        if (!fresh) {
+          await stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {});
+          finish();
+          return false;
+        }
+        principal = fresh;
+        if (running) {
+          again = true;
+          await running;
+        } else {
+          running = readAll().finally(() => (running = null));
+          await running;
+        }
+        return !ended;
+      };
+      // Subscribe before the first drain, so a change during the replay is not missed.
+      if (deps.watcher) {
+        unsub = deps.watcher.subscribe((_event, data) => {
+          // Typed events first (replayable); then a `changed` hint for file changes that are not
+          // events (a streaming log, an edited prompt). Hints are never replayed.
+          if (data.project && !authorizeProject(principal, data.project)) return;
+          if (project && data.project && data.project !== project) return;
+          void drain()
+            .then(async (alive) => {
+              if (alive) await stream.writeSSE({ event: "changed", data: JSON.stringify(data) });
+            })
+            .catch(() => {});
         });
+        poll = setInterval(() => void drain().catch(() => {}), 2000);
+        beat = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), 15000);
+      }
+      try {
+        await drain();
+      } catch (err) {
+        finish();
+        throw err;
+      }
+      if (ended || !deps.watcher) {
+        finish(); // no live source (tests): replay only
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        wake = resolve;
       });
     });
   });
 
   // Deprecated: untyped `changed` pings (the old UI refetches on each).
-  api.get("/events", requireScope("tasks:read"), (c) =>
-    streamSSE(c, async (stream) => {
+  api.get("/events", requireScope("tasks:read"), (c) => {
+    const streamId = who(c).id;
+    acquireStream(c, streamId);
+    return streamSSE(c, async (stream) => {
+      let principal = who(c);
+      let ended = false;
+      let unsub = () => {};
+      let wake = () => {};
+      const finish = () => {
+        if (ended) return;
+        ended = true;
+        unsub();
+        releaseStream(streamId);
+        wake();
+      };
+      stream.onAbort(finish);
       await stream.writeSSE({ event: "ready", data: "connected" });
       if (!deps.watcher) {
-        // No watcher (e.g. tests): keep the stream open briefly then end.
+        // No watcher (e.g. tests): end after the greeting.
+        finish();
         return;
       }
-      const unsub = deps.watcher.subscribe((event, data) => {
-        // A restricted client never hears about projects it may not read.
-        if (data.project && !authorizeProject(who(c), data.project)) return;
-        void stream.writeSSE({ event, data: JSON.stringify(data) });
+      unsub = deps.watcher.subscribe((event, data) => {
+        void (async () => {
+          if (ended) return;
+          const fresh = await resolveSame(c, principal);
+          if (!fresh) {
+            await stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {});
+            finish();
+            return;
+          }
+          principal = fresh;
+          // A restricted client never hears about projects it may not read.
+          if (data.project && !authorizeProject(principal, data.project)) return;
+          await stream.writeSSE({ event, data: JSON.stringify(data) });
+        })().catch(() => {});
       });
-      // Keep the connection open until the client disconnects.
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          unsub();
-          resolve();
+      // Keep the connection open until the client disconnects or the key stops working.
+      if (!ended)
+        await new Promise<void>((resolve) => {
+          wake = resolve;
         });
-      });
-    }),
-  );
+    });
+  });
 
   app.all("/mcp", mcpRoute({ service, authStore }));
 

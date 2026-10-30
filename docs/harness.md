@@ -1961,6 +1961,8 @@ curl -sS -N -H "Authorization: Bearer $BOOF_KEY" \
 - Keep the last `id`. On disconnect reconnect with it.
 - `event: ready` opens the stream. `event: changed` is a hint without id. Ignore hints, or re-read the task after one.
 - Keep-alive comments (`: keepalive`) arrive every 15 seconds.
+- `event: unauthorized` means your key stopped working. The stream ends. Stop. Ask the user for a new key.
+- Keep at most a few streams open per key (limit 16; more answer `429`).
 
 Method C, polling: `GET /api/v1/projects/shop/tasks?status=running` every 10 seconds or more. Poll `GET .../tasks/<task-id>` for one task.
 

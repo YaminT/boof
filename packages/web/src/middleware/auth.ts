@@ -102,20 +102,27 @@ export interface AuthenticateOptions {
   now?: () => number;
 }
 
+export type AuthResult = { ok: true; principal: Principal } | { ok: false; message: string };
+
+export interface Authenticator {
+  middleware: MiddlewareHandler;
+  /** The principal a request would get right now; what the middleware runs, callable again later (an SSE tick). */
+  resolve(c: Context): Promise<AuthResult>;
+}
+
 /**
  * Establish the request's principal.
  * - `Authorization: Bearer boof_...` is verified against the client registry.
  * - No header, loopback peer, no proxy headers, mode `local-trust` -> the local principal.
  * - Anything else -> 401.
  */
-export function authenticate(opts: AuthenticateOptions): MiddlewareHandler {
+export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
   const now = opts.now ?? Date.now;
   const cache = new ClientCache(opts.store, now);
   const lastTouch = new Map<string, number>();
 
-  return async (c, next) => {
+  const resolve = async (c: Context): Promise<AuthResult> => {
     const peer = opts.peerAddress(c);
-    c.set("peerAddress", peer);
     const header = c.req.header("authorization");
 
     if (header === undefined) {
@@ -124,14 +131,13 @@ export function authenticate(opts: AuthenticateOptions): MiddlewareHandler {
       const proxied =
         c.req.header("x-forwarded-for") !== undefined || c.req.header("forwarded") !== undefined;
       if (auth.mode === "local-trust" && isLoopbackAddress(peer) && !proxied) {
-        c.set("principal", LOCAL_PRINCIPAL);
-        return next();
+        return { ok: true, principal: LOCAL_PRINCIPAL };
       }
-      return unauthenticated(c);
+      return { ok: false, message: "Authentication required" };
     }
 
     const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
-    if (!m) return unauthenticated(c, "Malformed Authorization header");
+    if (!m) return { ok: false, message: "Malformed Authorization header" };
     const result = opts.store.verifyAgainst(await cache.get(), m[1]);
     if (!result.ok) {
       const message =
@@ -140,7 +146,7 @@ export function authenticate(opts: AuthenticateOptions): MiddlewareHandler {
           : result.reason === "expired"
             ? "API key expired"
             : "Invalid API key";
-      return unauthenticated(c, message);
+      return { ok: false, message };
     }
 
     const { client } = result;
@@ -149,9 +155,21 @@ export function authenticate(opts: AuthenticateOptions): MiddlewareHandler {
       lastTouch.set(client.id, t);
       opts.store.touch(client.id).catch((err) => console.error("lastUsedAt update failed", err));
     }
-    c.set("principal", principalFromClient(client));
+    return { ok: true, principal: principalFromClient(client) };
+  };
+
+  const middleware: MiddlewareHandler = async (c, next) => {
+    c.set("peerAddress", opts.peerAddress(c));
+    const r = await resolve(c);
+    if (!r.ok) return unauthenticated(c, r.message);
+    c.set("principal", r.principal);
     return next();
   };
+  return { middleware, resolve };
+}
+
+export function authenticate(opts: AuthenticateOptions): MiddlewareHandler {
+  return createAuthenticator(opts).middleware;
 }
 
 /** Per-route scope check: 403 `forbidden_scope` unless the principal holds the scope. */

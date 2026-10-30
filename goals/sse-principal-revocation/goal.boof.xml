@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">createAuthenticator exposes resolve(c); /api/v1/events and /api/events re-resolve the principal on every drain (broadcast or 2 s poll), write event: unauthorized and end when the key is revoked/expired/unscoped or auth.mode changed, filter with the fresh principal, and are capped at 16 streams per principal (429 rate_limited, Retry-After 5); the UI opens the token gate on the event; events.test.ts pins revocation, mode flip and the cap.</version>
       </versions>
     </status>
     <tests>

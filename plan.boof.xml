@@ -16,7 +16,7 @@
     <goal id="webhook-secrets-at-rest" path="goals/webhook-secrets-at-rest" order="13" status="done"><depends-on>migration-lock</depends-on></goal>
     <goal id="client-create-inherits-restrictions" path="goals/client-create-inherits-restrictions" order="14" status="done"></goal>
     <goal id="command-templates-respect-project-scope" path="goals/command-templates-respect-project-scope" order="15" status="done"></goal>
-    <goal id="sse-principal-revocation" path="goals/sse-principal-revocation" order="16" status="plan"></goal>
+    <goal id="sse-principal-revocation" path="goals/sse-principal-revocation" order="16" status="done"></goal>
     <goal id="rate-limit-unauthenticated-and-healthz" path="goals/rate-limit-unauthenticated-and-healthz" order="17" status="done"></goal>
     <goal id="csrf-content-type-and-origin" path="goals/csrf-content-type-and-origin" order="18" status="done"></goal>
     <goal id="inject-and-stop-respect-trust" path="goals/inject-and-stop-respect-trust" order="19" status="done"></goal>

@@ -412,7 +412,7 @@ For `/api/*` and `/mcp`: host guard (`421`), secure headers (HSTS only when boof
 
 ### Events and webhooks
 
-Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles and `runner.budget_exceeded` to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature (secret from `webhooks/secrets.json`, 0600), retries and a dead-letter directory. See [api.md](api.md).
+Every status change and plan write appends one JSON line to `<project>/events.jsonl` (runner toggles and `runner.budget_exceeded` to `<data>/events.jsonl`; files rotate monthly). `GET /api/v1/events` streams them as server-sent events with opaque cursors, replayable with `since` or `Last-Event-ID`, plus unnumbered `changed` hints from the file watcher. Each stream re-resolves its principal on every drain (watcher broadcast or the 2 s poll) and ends with `event: unauthorized` when the key no longer authenticates (about 7 s at most for a revocation made in another process: the 5 s client cache plus the poll); open streams are capped at 16 per principal. `WebhookDispatcher` (web process only) delivers the same events to `settings.webhooks` with an HMAC-SHA256 signature (secret from `webhooks/secrets.json`, 0600), retries and a dead-letter directory. See [api.md](api.md).
 
 ### MCP
 
