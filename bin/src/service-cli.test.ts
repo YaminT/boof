@@ -518,6 +518,26 @@ describe("service install", () => {
     expect(printed).toContain("env: FOO (kept from the existing unit)");
     expect(printed).not.toContain("keep me");
   });
+
+  it("migrating a legacy unit unescapes $$ in ExecStart and strips the optional - of EnvironmentFile", async () => {
+    const odd = join(home, "my data", "$boof%x");
+    const envFile = join(home, "boof.env");
+    await writeFile(envFile, "T=1\n", { mode: 0o600 });
+    await mkdir(join(home, ".config/systemd/user"), { recursive: true });
+    await writeFile(
+      unitFile(),
+      [
+        "[Service]",
+        `ExecStart=/old/node ${script} serve -d "${odd.replace(/\$/g, "$$$$").replace(/%/g, "%%")}" -p 4400 --host 127.0.0.1`,
+        'Environment="COST=$5 a"',
+        `EnvironmentFile=-${envFile}`,
+        "",
+      ].join("\n"),
+    );
+    expect(await run(["install"])).toBe(0);
+    const opts = readInstallOptions(await readFile(unitFile(), "utf8"));
+    expect(opts).toMatchObject({ data: odd, envFile, env: [["COST", "$5 a"]] });
+  });
 });
 
 describe("platform and systemd checks", () => {

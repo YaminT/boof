@@ -231,7 +231,7 @@ export function readInstallOptions(unitText: string): InstallOptions | undefined
 }
 
 /** Splits a systemd command line into words (double and single quotes, backslash, %% -> %). */
-function splitExecWords(line: string): string[] {
+function splitExecWords(line: string, unescapeDollar = false): string[] {
   const words: string[] = [];
   let cur = "";
   let inWord = false;
@@ -257,7 +257,8 @@ function splitExecWords(line: string): string[] {
     }
   }
   if (inWord) words.push(cur);
-  return words.map((w) => w.replace(/%%/g, "%"));
+  // ExecStart= (not Environment=) treats $$ as a literal $; execWord writes it that way.
+  return words.map((w) => (unescapeDollar ? w.replace(/\$\$/g, "$") : w).replace(/%%/g, "%"));
 }
 
 /**
@@ -269,7 +270,7 @@ export function readLegacyUnitOptions(unitText: string): InstallOptions | undefi
   const lines = unitText.split("\n");
   const exec = lines.find((l) => l.startsWith("ExecStart="));
   if (!exec) return undefined;
-  const words = splitExecWords(exec.slice("ExecStart=".length));
+  const words = splitExecWords(exec.slice("ExecStart=".length), true);
   const after = (flag: string) => {
     const k = words.indexOf(flag);
     return k >= 0 ? words[k + 1] : undefined;
@@ -292,9 +293,11 @@ export function readLegacyUnitOptions(unitText: string): InstallOptions | undefi
       else if (key !== "HOME") env.push([key, val]);
     }
   }
+  // A leading "-" marks the file optional for systemd; it is not part of the path.
   const envFile = lines
     .find((l) => l.startsWith("EnvironmentFile="))
-    ?.slice("EnvironmentFile=".length);
+    ?.slice("EnvironmentFile=".length)
+    .replace(/^-/, "");
   return { data, port, host, env, ...(envFile ? { envFile } : {}), path };
 }
 
