@@ -106,6 +106,7 @@ boof-runner run --all -d ./data            # then drive them to completion
 | `--tls-cert <file>` | —                       | —         | PEM certificate; with `--tls-key` the server speaks HTTPS |
 | `--tls-key <file>`  | —                       | —         | PEM private key                                           |
 | `--no-runner`       | —                       | runner on | Start the web server only                                 |
+| `-v, --version`     | —                       | —         | Print the version                                         |
 | `-h, --help`        | —                       | —         | Show help                                                 |
 
 Run `boof-runner --help` for the full command reference.
@@ -185,7 +186,10 @@ boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access
 boof-runner service <install|uninstall|status|logs>  Run as a systemd user service (Linux)
 boof-runner mcp [options]              Serve boof over MCP on stdin/stdout
 boof-runner --help                     Show help (also: <command> --help)
+boof-runner --version                  Print the version (also: -v)
 ```
+
+Any other first word is an error (`unknown command`, exit 1); only serve's own flags (`-d`, `-p`, `--host`, `--no-runner`, `--tls-*`) may stand first without `serve`.
 
 Common option: `-d, --data <path>` (data root, default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
 

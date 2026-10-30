@@ -16,7 +16,7 @@ On a machine without a display (no `DISPLAY` or `WAYLAND_DISPLAY`) the install s
 ```bash
 git clone git@github.com:YaminT/boof.git ~/.local/share/boof-runner/source
 bash ~/.local/share/boof-runner/source/scripts/install-or-update-boof-runner.sh
-boof-runner --help | head -1
+boof-runner --version
 ```
 
 The script links `boof-runner` into your global npm prefix (with nvm that is under `~/.nvm`, no `sudo`). Other variables: `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, `BOOF_RUNNER_BRANCH`, `BOOF_RUNNER_SKIP_UPDATE`, `BOOF_RUNNER_INSTALL_MODE`, `BOOF_RUNNER_FORCE_UPDATE` (see `--help`).

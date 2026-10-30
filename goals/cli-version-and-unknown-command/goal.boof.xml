@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">dispatch answers --version/-v with the root package.json version, falls through to serve only for serve's own flags (isServeFlag) and prints "unknown command" with the help and exit 1 otherwise; the install script and runbook read the version with --version; boof-runner.test.ts pins all three.</version>
       </versions>
     </status>
     <tests>

@@ -224,7 +224,7 @@ install_command() {
 
 verify_install() {
   command -v boof-runner >/dev/null 2>&1 || die "boof-runner is not on PATH after install"
-  log "Installed $(boof-runner --help | sed -n '1p')"
+  log "Installed boof-runner $(boof-runner --version)"
   log "Command path: $(command -v boof-runner)"
 }
 

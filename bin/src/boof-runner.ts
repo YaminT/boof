@@ -63,6 +63,7 @@ Usage:
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
   boof-runner --help                   Show this help
+  boof-runner --version                Print the version (also: -v)
 
 Common options:
   -d, --data <path>   Data root directory (default: ./data, or $BOOF_RUNNER_DATA_ROOT)
@@ -112,6 +113,25 @@ function readVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+/** serve's own flags: the only tokens that may stand first without the `serve` word. */
+export const SERVE_FLAGS = [
+  "--data",
+  "-d",
+  "--port",
+  "-p",
+  "--no-runner",
+  "--host",
+  "--tls-cert",
+  "--tls-key",
+] as const;
+
+export function isServeFlag(token: string): boolean {
+  return (
+    SERVE_FLAGS.includes(token as (typeof SERVE_FLAGS)[number]) ||
+    SERVE_FLAGS.some((f) => f.startsWith("--") && token.startsWith(`${f}=`))
+  );
 }
 
 function parseServeArgs(argv: string[]): ServeArgs {
@@ -353,6 +373,10 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
     case "mcp":
       code = await mcpCommand(rest, defaultDataRoot);
       break;
+    case "--version":
+    case "-v":
+      console.log(readVersion());
+      break;
     case "serve":
       await serve(rest);
       return SERVE_FOREVER; // serve runs forever
@@ -360,10 +384,15 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       await serve([]);
       return SERVE_FOREVER;
     default:
-      // Unknown first token → treat the whole invocation as serve options so
-      // existing `boof-runner -d ... -p ...` usage keeps working.
-      await serve(argv);
-      return SERVE_FOREVER;
+      // Only serve's own flags may stand first (the legacy `boof-runner -d ... -p ...`
+      // form); any other token is an unknown command, never a silent server start.
+      if (isServeFlag(cmd)) {
+        await serve(argv);
+        return SERVE_FOREVER;
+      }
+      console.error(`boof-runner: unknown command "${cmd}"\n`);
+      console.error(HELP);
+      return 1;
   }
   return code;
 }
