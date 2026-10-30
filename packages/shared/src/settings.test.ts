@@ -170,6 +170,15 @@ describe("legacy settings.json compatibility", () => {
 });
 
 describe("v2 settings store", () => {
+  it("round-trips projectsRoot and SettingsPatchSchema accepts it (null clears)", async () => {
+    const store = new SettingsStore(root);
+    await store.save({ ...defaultSettings(), projectsRoot: "~/p" });
+    expect((await store.load()).projectsRoot).toBe("~/p");
+    expect(SettingsPatchSchema.parse({ projectsRoot: null })).toEqual({ projectsRoot: null });
+    expect(SettingsPatchSchema.safeParse({ projectsRoot: "" }).success).toBe(false);
+    expect((await store.update({ projectsRoot: null })).projectsRoot).toBeUndefined();
+  });
+
   it("scaffolds v2 defaults: schemaVersion 2, no default project, concurrency 1, no workingDirectory", async () => {
     const s = await new SettingsStore(root).load();
     expect(s.schemaVersion).toBe(2);

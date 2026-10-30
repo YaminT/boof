@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidIdError, projectPaths } from "./paths.js";
+import { ProjectPatchSchema, ProjectSchema } from "./schema.js";
 import { ProjectError, ProjectStore } from "./project-store.js";
 import { TaskStore } from "./store.js";
 
@@ -245,4 +246,18 @@ describe("ProjectStore", () => {
     await writeFile(join(root, "projects", "broken", "project.json"), "{not json");
     expect((await store.list()).map((p) => p.id)).toEqual(["app"]);
   });
+});
+
+it("ProjectSchema parses a project.json without brief, and ProjectPatchSchema takes brief or null", () => {
+  const minimal = {
+    id: "a",
+    name: "A",
+    workingDirectory: "/x",
+    origin: { kind: "cli" },
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+  };
+  expect(ProjectSchema.parse(minimal).brief).toBeUndefined();
+  expect(ProjectPatchSchema.parse({ brief: "  Build it  " })).toEqual({ brief: "Build it" });
+  expect(ProjectPatchSchema.parse({ brief: null })).toEqual({ brief: null });
 });

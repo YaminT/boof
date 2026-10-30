@@ -343,6 +343,8 @@ export const SettingsSchema = z.object({
   runner: RunnerSettingsSchema,
   /** Project the legacy /api/tasks routes and the UI start on; null when unset. */
   defaultProject: kebab.nullable().default(null),
+  /** Where `auto` and the UI's default create project directories; `~` expands. Unset: `~/boof-projects`. */
+  projectsRoot: z.string().min(1).optional(),
   roles: RolesSchema,
   review: ReviewSettingsSchema.optional(),
   worktree: WorktreeSettingsSchema.optional(),
@@ -386,6 +388,7 @@ export const SettingsPatchSchema = z
       })
       .optional(),
     defaultProject: kebab.nullable().optional(),
+    projectsRoot: z.string().trim().min(1).max(4096).nullable().optional(),
     roles: RolesSchema.optional(),
     review: ReviewSettingsSchema.optional(),
     worktree: WorktreeSettingsSchema.optional(),
@@ -437,6 +440,8 @@ export const ProjectSchema = z.object({
    * data root that never had a working directory; the runner skips such projects.
    */
   workingDirectory: z.string(),
+  /** What the project is for; given to every agent prompt as `## Project`. Absent on projects created before 0.3. */
+  brief: z.string().optional(),
   /** The runner skips a paused project. */
   paused: z.boolean().default(false),
   archived: z.boolean().default(false),
@@ -461,6 +466,7 @@ export const ProjectPatchSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(200),
     workingDirectory: z.string().min(1),
+    brief: z.string().trim().max(20_000).nullable(),
     paused: z.boolean(),
     archived: z.boolean(),
     defaultBase: z.string().min(1).nullable(),

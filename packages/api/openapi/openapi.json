@@ -999,6 +999,9 @@
             "default": false,
             "type": "boolean"
           },
+          "brief": {
+            "type": "string"
+          },
           "budget": {
             "additionalProperties": false,
             "properties": {
@@ -1335,6 +1338,10 @@
               "type": "string"
             },
             "type": "object"
+          },
+          "projectsRoot": {
+            "minLength": 1,
+            "type": "string"
           },
           "retries": {
             "additionalProperties": false,
@@ -3142,6 +3149,9 @@
                             "default": false,
                             "type": "boolean"
                           },
+                          "brief": {
+                            "type": "string"
+                          },
                           "budget": {
                             "additionalProperties": false,
                             "properties": {
@@ -3790,6 +3800,9 @@
                       "default": false,
                       "type": "boolean"
                     },
+                    "brief": {
+                      "type": "string"
+                    },
                     "budget": {
                       "additionalProperties": false,
                       "properties": {
@@ -4098,6 +4111,17 @@
                 "properties": {
                   "archived": {
                     "type": "boolean"
+                  },
+                  "brief": {
+                    "anyOf": [
+                      {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "budget": {
                     "anyOf": [
@@ -9109,6 +9133,18 @@
                       "type": "string"
                     },
                     "type": "object"
+                  },
+                  "projectsRoot": {
+                    "anyOf": [
+                      {
+                        "maxLength": 4096,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "retries": {
                     "properties": {
