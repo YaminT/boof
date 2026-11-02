@@ -49,7 +49,14 @@ export const ERROR_CODES = {
   plan_not_active: [409, "The plan is not active; activate it before syncing."],
   goal_has_dependents: [409, "Other goals depend on this one; pass cascade to remove them too."],
   project_exists: [409, "A project for this directory already exists."],
-  project_busy: [409, "A task of the project is running."],
+  project_busy: [
+    409,
+    "A task of the project is running, or another project is being created right now; retry shortly.",
+  ],
+  directory_not_empty: [
+    409,
+    "The directory exists and is not empty; send path.confirm: true to initialise it anyway.",
+  ],
   idempotency_conflict: [409, "The Idempotency-Key was already used with a different request."],
   host_not_allowed: [421, "The Host header is not a loopback name or an allowed host."],
   payload_too_large: [413, "The request body exceeds the size limit."],

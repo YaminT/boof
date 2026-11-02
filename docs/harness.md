@@ -576,7 +576,8 @@ Every error has this shape:
 | `plan_not_active`          | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                       |
 | `goal_has_dependents`      | 409    | Other goals depend on this goal (`details.dependents`). Ask the user. Then repeat with `cascade=true` or change the dependents first.                           |
 | `project_exists`           | 409    | A project for this directory exists. Use `projects.list` to find it.                                                                                            |
-| `project_busy`             | 409    | A task of the project runs. Wait or stop it (ask the user first).                                                                                               |
+| `project_busy`             | 409    | A task of the project runs, or another project is being created. Wait or stop it (ask the user first).                                                          |
+| `directory_not_empty`      | 409    | Ask the user; retry with `path.confirm: true` only if they agree to initialise the folder.                                                                      |
 | `idempotency_conflict`     | 409    | You reused an `Idempotency-Key` with a different request. Use a new key for a new request.                                                                      |
 | `host_not_allowed`         | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                  |
 | `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                               |
@@ -845,23 +846,25 @@ Query parameters:
 - Operation: `projects.create`
 - Scope: `projects:write`
 - MCP tool: `boof_create_project`
-- What it does: Registers a git work tree as a project. Inputs: workingDirectory (required, under an allowed root for API clients) and optional id, name and overrides. Creates the project's data directory.
+- What it does: Registers or creates a project. Inputs: either workingDirectory (an existing git work tree; the original form) or path: {mode: "existing", directory}, {mode: "new", directory, confirm?} (boof creates the directory, runs git init and makes an empty first commit; a non-empty directory answers 409 directory_not_empty unless confirm is true) or {mode: "auto"} (boof creates <settings.projectsRoot>/<id>, default ~/boof-projects). brief is required for new and auto, optional for existing; it is stored on the project and given to every agent prompt as ## Project. Optional id, name and overrides. API clients: existing and new directories must lie under security.allowedProjectRoots, and so must the projects root for auto. Creates the project's data directory; read workingDirectory from the result.
 - Success: HTTP 201 with `Project`.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `409 idempotency_conflict`, `400 not_a_git_repo`, `403 project_root_not_allowed`, `409 project_exists`, `409 conflict`
 
 JSON body (unknown keys are rejected):
 
+- `brief`: `string`, optional; max length 20000
 - `budget`: `{ onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }`, optional
 - `defaultBase`: `string`, optional; max length 200
 - `id`: `kebab-id`, optional
 - `labels`: `string[]`, optional; max 50 item(s)
 - `name`: `string`, optional; max length 200
+- `path`: `{ directory: string, mode: "existing" } | { confirm?: boolean, directory: string, mode: "new" } | { mode: "auto" }`, optional; `existing`: register a git work tree. `new`: create the directory (mkdir, git init, an empty first commit); a non-empty directory is refused unless `confirm` is true. `auto`: create `<settings.projectsRoot>/<id>`
 - `planWriteBack`: `boolean`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }`, optional
 - `roles`: `{ developer?: { model: string, tool: string }, observer?: { model: string, tool: string }, planner?: { model: string, tool: string }, reviewer?: { model: string, tool: string } }`, optional
-- `workingDirectory`: `string`, required; max length 4096
+- `workingDirectory`: `string`, optional; max length 4096
 - `worktree`: `{ onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string }`, optional
 
 #### `GET /api/v1/projects/{projectId}` (Get a project)
@@ -882,7 +885,7 @@ Path parameters (all required):
 - Operation: `projects.update`
 - Scope: `projects:write`
 - MCP tool: `boof_update_project`
-- What it does: Changes project fields (name, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.
+- What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.
 - Success: HTTP 200 with `Project`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `400 not_a_git_repo`, `403 project_root_not_allowed`
 

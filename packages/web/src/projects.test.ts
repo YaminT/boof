@@ -1,15 +1,25 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthStore,
+  dataRootPaths,
   defaultSettings,
+  ProjectStore,
   SecuritySettingsSchema,
   SettingsStore,
   type Scope,
 } from "@boof-runner/shared";
-import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
+import {
+  execCommand,
+  initGitRepo,
+  isGitRepo,
+  MockTool,
+  repoCommonDir,
+  ToolRegistry,
+} from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "@boof-runner/api";
 import { DataWatcher } from "./watch.js";
@@ -615,6 +625,95 @@ describe("project registration by non-local principals (project_root_not_allowed
     }
   });
 
+  describe("new and auto paths", () => {
+    let projectsRoot: string;
+    beforeEach(async () => {
+      projectsRoot = join(base, "projects-root");
+      await new SettingsStore(root).update({ projectsRoot });
+    });
+    const createPath = (path: unknown, key = writer, extra: object = {}) =>
+      call("/api/v1/projects", post({ path, brief: "b", ...extra }), key);
+
+    it("new: a client may create only under an allowed root; the ancestor is realpath'd", async () => {
+      await setSecurity({ allowedProjectRoots: [allowedRoot] });
+      const ok = await createPath({ mode: "new", directory: join(allowedRoot, "made") });
+      expect(ok.status).toBe(201);
+      const out = await createPath({ mode: "new", directory: join(base, "elsewhere", "x") });
+      expect(out.status).toBe(403);
+      expect((await out.json()).error.code).toBe("project_root_not_allowed");
+      expect(existsSync(join(base, "elsewhere", "x"))).toBe(false);
+    });
+
+    it("new: refuses a path whose existing ancestor is a symlink out of the allowed roots", async () => {
+      await setSecurity({ allowedProjectRoots: [allowedRoot] });
+      await mkdir(join(base, "outside"), { recursive: true });
+      await symlink(join(base, "outside"), join(allowedRoot, "link"));
+      const res = await createPath({ mode: "new", directory: join(allowedRoot, "link", "new") });
+      expect(res.status).toBe(403);
+      expect(existsSync(join(base, "outside", "new"))).toBe(false);
+    });
+
+    it("auto: a client needs the projects root under an allowed root; the message names the setting", async () => {
+      await setSecurity({ allowedProjectRoots: [allowedRoot] });
+      const body = { name: "a" };
+      const denied = await createPath({ mode: "auto" }, writer, body);
+      expect(denied.status).toBe(403);
+      expect((await denied.json()).error.message).toContain("settings.projectsRoot");
+      expect(existsSync(projectsRoot)).toBe(false);
+      await setSecurity({ allowedProjectRoots: [allowedRoot, projectsRoot] });
+      const okAuto = await createPath({ mode: "auto" }, writer, body);
+      expect(await okAuto.json()).toMatchObject({ id: "a" });
+    });
+
+    it("auto: vets <projectsRoot>/<id> too, so an id that is a symlink out of the root is refused", async () => {
+      await mkdir(projectsRoot, { recursive: true });
+      await mkdir(join(base, "outside"), { recursive: true });
+      await symlink(join(base, "outside"), join(projectsRoot, "trap"));
+      await setSecurity({ allowedProjectRoots: [projectsRoot] });
+      const res = await createPath({ mode: "auto" }, writer, { id: "trap" });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe("project_root_not_allowed");
+    });
+
+    it("the local principal may create new anywhere except /, home and the data root", async () => {
+      peer = LOOPBACK;
+      const ok = await createPath({ mode: "new", directory: join(base, "local-new") }, "");
+      expect(ok.status).toBe(201);
+      const inData = await createPath({ mode: "new", directory: join(root, "x") }, "");
+      expect(inData.status).toBe(400);
+      expect((await inData.json()).error.code).toBe("invalid_input");
+      expect(existsSync(join(root, "x"))).toBe(false);
+      const home = join(base, "fake-home");
+      await mkdir(home, { recursive: true });
+      const saved = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        const atHome = await createPath({ mode: "new", directory: home, confirm: true }, "");
+        expect(atHome.status).toBe(400);
+        expect((await atHome.json()).error.code).toBe("invalid_input");
+        expect(existsSync(join(home, ".git"))).toBe(false);
+      } finally {
+        process.env.HOME = saved;
+      }
+    });
+
+    it("a remote client gets 403 for new at the home directory even when / is an allowed root", async () => {
+      await setSecurity({ allowedProjectRoots: ["/"] });
+      const home = join(base, "fake-home");
+      await mkdir(home, { recursive: true });
+      const saved = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        const res = await createPath({ mode: "new", directory: home, confirm: true });
+        expect(res.status).toBe(403);
+        expect((await res.json()).error.code).toBe("project_root_not_allowed");
+        expect(existsSync(join(home, ".git"))).toBe(false);
+      } finally {
+        process.env.HOME = saved;
+      }
+    });
+  });
+
   it("lists the allowed roots in the error only for admins", async () => {
     await setSecurity({ allowedProjectRoots: [allowedRoot] });
     const outside = await repo("outside");
@@ -676,5 +775,159 @@ describe("SSE", () => {
     const text = await readEvents(res, 2);
     expect(text).toContain('"project":"a"');
     expect(text).not.toContain('"project":"b"');
+  });
+});
+
+describe("project creation with path and brief", () => {
+  let projectsRoot: string;
+  beforeEach(async () => {
+    projectsRoot = join(base, "projects-root");
+    await new SettingsStore(root).update({ projectsRoot });
+  });
+  const create = (body: unknown) => call("/api/v1/projects", post(body));
+
+  it("legacy body: workingDirectory alone still registers an existing work tree, brief optional", async () => {
+    const dir = await repo("legacy");
+    const res = await create({ workingDirectory: dir });
+    expect(res.status).toBe(201);
+    expect((await res.json()).brief).toBeUndefined();
+  });
+
+  it("existing: path.directory registers a work tree and stores the brief", async () => {
+    const dir = await repo("ex");
+    const res = await create({ path: { mode: "existing", directory: dir }, brief: "B" });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ workingDirectory: dir, brief: "B" });
+  });
+
+  it("new: creates the directory with a repository and one commit; the id comes from the folder", async () => {
+    const dir = join(base, "repos", "Brand New");
+    const res = await create({ path: { mode: "new", directory: dir }, brief: "New thing" });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      id: "brand-new",
+      workingDirectory: dir,
+      brief: "New thing",
+    });
+    expect(
+      (await execCommand("git", ["rev-list", "--count", "HEAD"], { cwd: dir })).stdout.trim(),
+    ).toBe("1");
+  });
+
+  it("new: a non-empty directory is 409 directory_not_empty, and confirm initialises it", async () => {
+    const dir = join(base, "full");
+    await mkdir(dir);
+    await writeFile(join(dir, "keep.txt"), "x");
+    const res = await create({ path: { mode: "new", directory: dir }, brief: "b" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe("directory_not_empty");
+    const ok = await create({ path: { mode: "new", directory: dir, confirm: true }, brief: "b" });
+    expect(ok.status).toBe(201);
+    expect(existsSync(join(dir, "keep.txt"))).toBe(true);
+  });
+
+  it("new: refuses a path that is a file, and a relative path", async () => {
+    const file = join(base, "afile");
+    await writeFile(file, "x");
+    const isFile = await create({ path: { mode: "new", directory: file }, brief: "b" });
+    expect(isFile.status).toBe(400);
+    expect((await isFile.json()).error.code).toBe("invalid_input");
+    const rel = await create({ path: { mode: "new", directory: "rel/dir" }, brief: "b" });
+    expect(rel.status).toBe(400);
+    const body = await rel.json();
+    expect(body.error.code).toBe("invalid_input");
+    expect(body.error.details).toEqual([
+      { path: "path.directory", message: expect.stringContaining("absolute") },
+    ]);
+  });
+
+  it("new and auto require a brief; existing does not", async () => {
+    const res = await create({ path: { mode: "auto" }, name: "x" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.details).toEqual([
+      { path: "brief", message: expect.stringContaining("required") },
+    ]);
+    const dir = await repo("nobrief");
+    expect((await create({ path: { mode: "existing", directory: dir } })).status).toBe(201);
+  });
+
+  it("workingDirectory and path together, or neither, are 400 invalid_input", async () => {
+    const dir = await repo("both");
+    for (const body of [
+      { workingDirectory: dir, path: { mode: "existing", directory: dir } },
+      { name: "x", brief: "b" },
+    ]) {
+      const res = await create(body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe("invalid_input");
+    }
+  });
+
+  it("auto: the response carries the real directory under the projects root, and it is a repository", async () => {
+    const res = await create({ path: { mode: "auto" }, name: "Auto One", brief: "b" });
+    expect(res.status).toBe(201);
+    const p = await res.json();
+    expect(p.workingDirectory).toBe(join(await realpath(projectsRoot), "auto-one"));
+    expect(await isGitRepo(p.workingDirectory)).toBe(true);
+  });
+
+  it("auto: resolves ~/boof-projects when projectsRoot is unset, without writing it", async () => {
+    const fakeHome = join(base, "home");
+    await mkdir(fakeHome, { recursive: true });
+    await new SettingsStore(root).update({ projectsRoot: null });
+    await create({ workingDirectory: await repo("dup"), id: "dup" });
+    const saved = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      const res = await create({ path: { mode: "auto" }, id: "dup", brief: "b" });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe("conflict");
+      expect(existsSync(join(fakeHome, "boof-projects"))).toBe(false);
+    } finally {
+      process.env.HOME = saved;
+    }
+  });
+
+  describe("store failures", () => {
+    const useStore = (lock: object) => {
+      (service as unknown as { projects: ProjectStore }).projects = new ProjectStore(root, {
+        isGitRepo,
+        repoCommonDir,
+        initGitRepo,
+        lock,
+      });
+    };
+
+    it("a busy create lock is 409 project_busy and does not reveal the holder's pid", async () => {
+      const projects = dataRootPaths(root).projects;
+      await mkdir(projects, { recursive: true });
+      await writeFile(join(projects, ".create.lock"), String(process.ppid));
+      useStore({ lockTimeoutMs: 100, lockPollMs: 20 });
+      const res = await create({ path: { mode: "auto" }, name: "x", brief: "b" });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error.code).toBe("project_busy");
+      expect(JSON.stringify(body)).not.toContain(String(process.ppid));
+    });
+
+    it("a filesystem error from the store is a generic 500 internal with no paths", async () => {
+      const projects = dataRootPaths(root).projects;
+      await rm(projects, { recursive: true, force: true });
+      await writeFile(projects, "not a directory");
+      useStore({});
+      const log = console.error;
+      const logged: unknown[][] = [];
+      console.error = (...a: unknown[]) => void logged.push(a);
+      try {
+        const res = await create({ path: { mode: "auto" }, name: "x", brief: "b" });
+        expect(res.status).toBe(500);
+        const body = await res.json();
+        expect(body.error.code).toBe("internal");
+        expect(JSON.stringify(body)).not.toContain(base);
+        expect(JSON.stringify(logged)).toContain("projects");
+      } finally {
+        console.error = log;
+      }
+    });
   });
 });

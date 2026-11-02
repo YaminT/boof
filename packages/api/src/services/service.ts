@@ -16,7 +16,10 @@ import {
   newTask,
   ProjectError,
   ProjectStore,
+  expandHome,
   isInsidePath,
+  resolveProjectsRoot,
+  resolveUnbornPath,
   SettingsStore,
   securitySettings,
   taskPromptInjectionsPath,
@@ -27,8 +30,8 @@ import {
   workingAreaDir,
   type Attachment,
   type InjectMode,
-  type CreateProjectInput,
   type Project,
+  type ProjectOrigin,
   type ProjectPatch,
   type TokenUsage,
   type Principal,
@@ -47,9 +50,11 @@ import {
   atomicWrite,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
+import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
+  initGitRepo,
   isGitRepo,
   pruneStaleWorktrees,
   repoCommonDir,
@@ -542,7 +547,7 @@ export class TaskService {
     readonly root: string,
     registry: ToolRegistry = new ToolRegistry(),
   ) {
-    this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir });
+    this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
@@ -578,16 +583,48 @@ export class TaskService {
   }
 
   /**
-   * Register a project. A non-local principal may only register a git work tree whose
-   * realpath is under `security.allowedProjectRoots` (and never `/`, the home directory or
-   * the data root): otherwise 403 `project_root_not_allowed`.
+   * Register or create a project. A non-local principal may only use a directory whose realpath
+   * (for `new`, of its deepest existing ancestor plus the rest) is under
+   * `security.allowedProjectRoots`, and never `/`, the home directory or the data root; for
+   * `auto` the projects root itself must be under an allowed root. Otherwise 403
+   * `project_root_not_allowed`.
    */
-  async createProject(input: CreateProjectInput, actor?: Principal): Promise<Project> {
-    if (actor && actor.kind !== "local")
-      await this.assertRegistrationAllowed(actor, input.workingDirectory ?? "");
+  async createProject(
+    input: CreateProjectBodyInput & { origin?: ProjectOrigin },
+    actor?: Principal,
+  ): Promise<Project> {
+    const { path, workingDirectory, brief, ...rest } = input;
+    const mode = path?.mode ?? "existing";
+    const directory = path?.mode === "auto" ? undefined : (path?.directory ?? workingDirectory);
+    const projectsRoot = resolveProjectsRoot(await this.loadSettings());
+    if (actor && actor.kind !== "local") {
+      if (mode === "auto") {
+        const why = `outside the allowed project roots (settings.projectsRoot is ${projectsRoot}; add it to security.allowedProjectRoots to let API clients create projects automatically)`;
+        await this.assertRegistrationAllowed(actor, projectsRoot, { mayNotExist: true, why });
+        // The final directory is <projectsRoot>/<id>; an id that is a symlink must not lead out.
+        if (rest.id !== undefined) {
+          await this.assertRegistrationAllowed(actor, join(projectsRoot, rest.id), {
+            mayNotExist: true,
+            why,
+          });
+        }
+      } else {
+        await this.assertRegistrationAllowed(actor, directory ?? "", {
+          mayNotExist: mode === "new",
+        });
+      }
+    }
     try {
       const project = await this.projects.create({
-        ...input,
+        ...rest,
+        workingDirectory: directory,
+        brief,
+        path:
+          path?.mode === "auto"
+            ? { mode: "auto", projectsRoot }
+            : path?.mode === "new"
+              ? { mode: "new", confirm: path.confirm }
+              : { mode: "existing" },
         origin:
           input.origin ??
           (actor?.kind === "client" ? { kind: "api", client: actor.id } : { kind: "ui" }),
@@ -647,6 +684,7 @@ export class TaskService {
     return { ok: true };
   }
 
+  /** Every ProjectError code is mapped here explicitly; the `never` default keeps it exhaustive. */
   private mapProjectError(err: unknown, actor?: Principal): unknown {
     if (!(err instanceof ProjectError)) return err;
     const remote = actor !== undefined && actor.kind !== "local";
@@ -654,18 +692,25 @@ export class TaskService {
       case "not_found":
         return new OpError(404, err.message, "project_not_found");
       case "id_taken":
+        return new OpError(409, err.message, "conflict");
       case "duplicate":
-        return new OpError(
-          409,
-          err.message,
-          err.code === "duplicate" ? "project_exists" : "conflict",
-        );
       case "same_repo":
         return new OpError(409, err.message, "project_exists");
       case "has_running_task":
         return new OpError(409, err.message, "project_busy");
+      case "busy":
+        // The message names the lock holder's pid; log it, do not send it.
+        console.error(err.message);
+        return new OpError(
+          409,
+          "Another project is being created right now; try again in a moment.",
+          "project_busy",
+        );
+      case "directory_not_empty":
+        return new OpError(409, err.message, "directory_not_empty");
       case "not_git_repo":
       case "inside_data_root":
+      case "directory_not_allowed":
         return remote
           ? new OpError(403, err.message, "project_root_not_allowed")
           : new OpError(
@@ -673,12 +718,25 @@ export class TaskService {
               err.message,
               err.code === "not_git_repo" ? "not_a_git_repo" : "invalid_input",
             );
-      default:
+      case "directory_missing":
+      case "not_a_directory":
+      case "directory_create_failed":
+        // The directory was already checked to be inside an allowed root, so its state is no secret.
+        if (err.code === "directory_create_failed") console.error(err.message);
         return new OpError(400, err.message, "invalid_input");
+      default: {
+        const unmapped: never = err.code;
+        console.error(`unmapped project error code: ${String(unmapped)}`);
+        return new OpError(500, "Internal error", "internal");
+      }
     }
   }
 
-  private async assertRegistrationAllowed(actor: Principal, dir: string): Promise<void> {
+  private async assertRegistrationAllowed(
+    actor: Principal,
+    dir: string,
+    opts: { mayNotExist?: boolean; why?: string } = {},
+  ): Promise<void> {
     const { allowedProjectRoots } = securitySettings(await this.loadSettings());
     const deny = (why: string): OpError =>
       new OpError(
@@ -689,26 +747,37 @@ export class TaskService {
       );
     if (allowedProjectRoots.length === 0) throw deny("no allowedProjectRoots are configured");
     let real: string;
-    try {
-      real = await realpath(dir);
-    } catch {
-      throw new OpError(400, `Directory does not exist: ${dir}`, "invalid_input");
+    if (opts.mayNotExist) {
+      try {
+        real = (await resolveUnbornPath(dir)).real;
+      } catch {
+        throw new OpError(400, `Not a usable absolute path: ${dir}`, "invalid_input");
+      }
+    } else {
+      try {
+        real = await realpath(dir);
+      } catch {
+        throw new OpError(400, `Directory does not exist: ${dir}`, "invalid_input");
+      }
     }
     if (real === resolve("/") || real === (await realpath(homedir()).catch(() => homedir()))) {
       throw deny("the filesystem root and the home directory cannot be projects");
     }
     const roots = await Promise.all(
       allowedProjectRoots.map(async (r) => {
-        const expanded =
-          r === "~" ? homedir() : r.startsWith("~/") ? join(homedir(), r.slice(2)) : r;
-        return realpath(expanded).catch(() => null);
+        // A root that does not exist yet (the default ~/boof-projects) still counts, resolved
+        // through its deepest existing ancestor like the target.
+        return resolveUnbornPath(expandHome(r)).then(
+          (u) => u.real,
+          () => null,
+        );
       }),
     );
     const inside = roots.some((r) => {
       if (!r) return false;
       return isInsidePath(r, real);
     });
-    if (!inside) throw deny("outside the allowed project roots");
+    if (!inside) throw deny(opts.why ?? "outside the allowed project roots");
     // Git work tree and data-root checks happen in ProjectStore (mapped to the same code).
   }
 

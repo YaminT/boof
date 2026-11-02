@@ -39,7 +39,7 @@ export const projectsCreate = defineOp({
   name: "projects.create",
   title: "Create a project",
   description:
-    "Registers a git work tree as a project. Inputs: workingDirectory (required, under an allowed root for API clients) and optional id, name and overrides. Creates the project's data directory.",
+    'Registers or creates a project. Inputs: either workingDirectory (an existing git work tree; the original form) or path: {mode: "existing", directory}, {mode: "new", directory, confirm?} (boof creates the directory, runs git init and makes an empty first commit; a non-empty directory answers 409 directory_not_empty unless confirm is true) or {mode: "auto"} (boof creates <settings.projectsRoot>/<id>, default ~/boof-projects). brief is required for new and auto, optional for existing; it is stored on the project and given to every agent prompt as ## Project. Optional id, name and overrides. API clients: existing and new directories must lie under security.allowedProjectRoots, and so must the projects root for auto. Creates the project\'s data directory; read workingDirectory from the result.',
   scope: "projects:write",
   projectScoped: false,
   input: CreateProjectBody,
@@ -69,7 +69,7 @@ export const projectsUpdate = defineOp({
   name: "projects.update",
   title: "Update a project",
   description:
-    "Changes project fields (name, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
+    "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
   scope: "projects:write",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, ...ProjectPatchSchema.shape }),

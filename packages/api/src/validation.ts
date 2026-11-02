@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import {
   ClientKindSchema,
@@ -56,9 +57,33 @@ export const CommandBody = z
   .object({ name: z.string().trim().min(1).max(200), body: z.string().max(200_000).optional() })
   .strict();
 
+const absoluteDirectory = z
+  .string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .refine(isAbsolute, { message: "must be an absolute path on the boof machine" });
+
+export const ProjectPathSchema = z
+  .discriminatedUnion("mode", [
+    z.strictObject({ mode: z.literal("existing"), directory: absoluteDirectory }),
+    z.strictObject({
+      mode: z.literal("new"),
+      directory: absoluteDirectory,
+      confirm: z.boolean().optional(),
+    }),
+    z.strictObject({ mode: z.literal("auto") }),
+  ])
+  .meta({
+    description:
+      "`existing`: register a git work tree. `new`: create the directory (mkdir, git init, an empty first commit); a non-empty directory is refused unless `confirm` is true. `auto`: create `<settings.projectsRoot>/<id>`.",
+  });
+
 export const CreateProjectBody = z
   .object({
-    workingDirectory: z.string().trim().min(1).max(4096),
+    workingDirectory: z.string().trim().min(1).max(4096).optional(),
+    path: ProjectPathSchema.optional(),
+    brief: z.string().trim().max(20_000).optional(),
     id: z
       .string()
       .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
@@ -74,7 +99,31 @@ export const CreateProjectBody = z
     budget: ProjectBudgetOverrideSchema.optional(),
     planWriteBack: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.workingDirectory !== undefined && v.path !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["path"],
+        message: "give workingDirectory or path, not both",
+      });
+    } else if (v.workingDirectory === undefined && v.path === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["path"],
+        message: "workingDirectory or path is required",
+      });
+    }
+    if (v.path && v.path.mode !== "existing" && !v.brief) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["brief"],
+        message: "brief is required for a new or automatic path",
+      });
+    }
+  });
+
+export type CreateProjectBodyInput = z.output<typeof CreateProjectBody>;
 
 const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 

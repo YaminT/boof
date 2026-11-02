@@ -110,6 +110,21 @@ afterEach(async () => {
 });
 
 describe("tools generated from the registry", () => {
+  it("boof_create_project takes path and brief; the tool schema lists the three modes", async () => {
+    const admin = await connect(LOCAL_PRINCIPAL);
+    const tool = (await admin.listTools()).tools.find((t) => t.name === "boof_create_project")!;
+    expect(JSON.stringify(tool.inputSchema)).toContain('"auto"');
+    const res = await call(admin, "boof_create_project", {
+      path: { mode: "new", directory: join(base, "fresh") },
+      brief: "Fresh",
+    });
+    expect(res.structuredContent).toMatchObject({
+      id: "fresh",
+      brief: "Fresh",
+      workingDirectory: join(base, "fresh"),
+    });
+  });
+
   it("a cancelled boof_wait_task releases the server-side wait at once", async () => {
     let finished!: (info: ToolCallInfo) => void;
     const done = new Promise<ToolCallInfo>((r) => (finished = r));

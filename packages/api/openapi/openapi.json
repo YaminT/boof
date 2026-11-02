@@ -121,6 +121,7 @@
                   "goal_has_dependents",
                   "project_exists",
                   "project_busy",
+                  "directory_not_empty",
                   "idempotency_conflict",
                   "host_not_allowed",
                   "payload_too_large",
@@ -3445,7 +3446,7 @@
         "x-mcp-tool": "boof_list_projects"
       },
       "post": {
-        "description": "Registers a git work tree as a project. Inputs: workingDirectory (required, under an allowed root for API clients) and optional id, name and overrides. Creates the project's data directory.",
+        "description": "Registers or creates a project. Inputs: either workingDirectory (an existing git work tree; the original form) or path: {mode: \"existing\", directory}, {mode: \"new\", directory, confirm?} (boof creates the directory, runs git init and makes an empty first commit; a non-empty directory answers 409 directory_not_empty unless confirm is true) or {mode: \"auto\"} (boof creates <settings.projectsRoot>/<id>, default ~/boof-projects). brief is required for new and auto, optional for existing; it is stored on the project and given to every agent prompt as ## Project. Optional id, name and overrides. API clients: existing and new directories must lie under security.allowedProjectRoots, and so must the projects root for auto. Creates the project's data directory; read workingDirectory from the result.",
         "operationId": "projects.create",
         "parameters": [
           {
@@ -3465,6 +3466,10 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "brief": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
                   "budget": {
                     "additionalProperties": false,
                     "properties": {
@@ -3519,6 +3524,65 @@
                     "maxLength": 200,
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "path": {
+                    "description": "`existing`: register a git work tree. `new`: create the directory (mkdir, git init, an empty first commit); a non-empty directory is refused unless `confirm` is true. `auto`: create `<settings.projectsRoot>/<id>`.",
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "directory": {
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "mode": {
+                            "const": "existing",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "directory"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "confirm": {
+                            "type": "boolean"
+                          },
+                          "directory": {
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "mode": {
+                            "const": "new",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "directory"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mode": {
+                            "const": "auto",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "type": "object"
+                      }
+                    ]
                   },
                   "planWriteBack": {
                     "type": "boolean"
@@ -3671,14 +3735,11 @@
                     "type": "object"
                   }
                 },
-                "required": [
-                  "workingDirectory"
-                ],
                 "type": "object"
               }
             }
           },
-          "required": true
+          "required": false
         },
         "responses": {
           "201": {
@@ -4088,7 +4149,7 @@
         "x-mcp-tool": "boof_get_project"
       },
       "put": {
-        "description": "Changes project fields (name, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
+        "description": "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
         "operationId": "projects.update",
         "parameters": [
           {
@@ -10060,6 +10121,10 @@
       "description": "The change conflicts with the current state.",
       "status": 409
     },
+    "directory_not_empty": {
+      "description": "The directory exists and is not empty; send path.confirm: true to initialise it anyway.",
+      "status": 409
+    },
     "forbidden_project": {
       "description": "The client may not access this project.",
       "status": 403
@@ -10145,7 +10210,7 @@
       "status": 409
     },
     "project_busy": {
-      "description": "A task of the project is running.",
+      "description": "A task of the project is running, or another project is being created right now; retry shortly.",
       "status": 409
     },
     "project_exists": {

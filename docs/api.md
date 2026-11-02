@@ -47,8 +47,9 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   itself. A client may always rotate or revoke itself. An `auth:admin` key manages only clients
   within its own reach (scopes, trust, projects and expiry); the local principal and an
   unrestricted, non-expiring trusted admin key manage every client.
-- Registering a project as an API client needs the directory to be inside
-  `security.allowedProjectRoots` (settings.json).
+- Registering a project as an API client needs the directory (for `path.mode` `new`: the
+  directory it will become) to be inside `security.allowedProjectRoots` (settings.json); `auto`
+  needs `settings.projectsRoot` itself inside an allowed root.
 - `GET /api/v1/openapi.json` needs any valid principal.
 - `GET /api/v1/whoami` (MCP `boof_whoami`) needs no scope: it returns `{ principal: { kind, id, name, trust, scopes[], projects }, server: { version, authMode, mcpEnabled } }`. Call it first to learn what a key may do.
 
@@ -91,7 +92,8 @@ internals; validation errors list `details: [{ path, message }]`.
 | `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                                                     |
 | `goal_has_dependents`      | 409    | Other goals depend on this one; pass cascade to remove them too.                                        |
 | `project_exists`           | 409    | A project for this directory already exists.                                                            |
-| `project_busy`             | 409    | A task of the project is running.                                                                       |
+| `project_busy`             | 409    | A task of the project is running, or another project is being created right now; retry shortly.         |
+| `directory_not_empty`      | 409    | The directory exists and is not empty; send path.confirm: true to initialise it anyway.                 |
 | `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.                                          |
 | `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                              |
 | `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                |
@@ -365,6 +367,9 @@ The full list, inputs and outputs are in the OpenAPI document. Areas: `projects.
 `webhooks.*`. Request bodies are strict: unknown keys are `400 invalid_input`. GET and DELETE
 inputs come from the query string (`?purge=1`, `?cascade=true`); path placeholders are input
 fields; everything else is the JSON body. Bodies are limited to 1 MB (attachments 25 MB).
+
+`projects.create` takes `workingDirectory` (an existing work tree) or `path` (`{mode: "existing"|"new", directory}`
+or `{mode: "auto"}`) plus `brief` (required for `new` and `auto`); see the OpenAPI document for the shapes.
 
 ### Editing the contract
 
