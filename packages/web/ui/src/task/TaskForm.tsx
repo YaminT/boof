@@ -94,13 +94,16 @@ export function TaskForm({
   const noticeId = useId();
 
   /** End the conflict: forget what the refused save carried, and keep focus out of the void. */
-  const clearConflict = () => {
+  const clearConflict = (moveFocus = true) => {
     setConflict(false);
     conflictStatus.current = undefined;
     conflictUpdated.current = undefined;
+    if (!moveFocus) return;
+    // Focus that sat in the notice, or fell to the page when the pressed button went away.
     const a = document.activeElement;
-    if (noticeRef.current && a && noticeRef.current.contains(a)) titleRef.current?.focus();
-    else if (a === noticeRef.current) titleRef.current?.focus();
+    const lost =
+      !a || a === document.body || a === noticeRef.current || !!noticeRef.current?.contains(a);
+    if (lost) titleRef.current?.focus();
   };
   // The prompt the user had typed when a run started, kept so it can be copied.
   const [lost, setLost] = useState<{ prompt: string | null } | null>(null);
@@ -144,7 +147,8 @@ export function TaskForm({
     setBase(server);
     setForm(server);
     setElsewhere(false);
-    clearConflict();
+    // The form is locked: its fields cannot take focus, so leave focus where it is.
+    clearConflict(false);
     baseUpdated.current = task?.frontmatter.updated;
   }, [locked]);
 

@@ -145,7 +145,13 @@ export function PlanPage({
 
   const changed = () => void data.refresh();
   const openGoal = (id: string) => navigate({ name: "plans", pid, planId, goalId: id });
-  const closePanel = () => navigate({ name: "plans", pid, planId });
+  const focusSoon = (selector: string) =>
+    window.setTimeout(() => document.querySelector<HTMLElement>(selector)?.focus(), 60);
+  const closePanel = () => {
+    const id = goalId;
+    navigate({ name: "plans", pid, planId });
+    if (id) focusSoon(`li[data-goal-id="${CSS.escape(id)}"] a`);
+  };
   const taskRoute = (id: string, view: "edit" | "changes" = "edit"): Route => ({
     name: "task",
     pid,
@@ -352,6 +358,7 @@ export function PlanPage({
           <Button
             variant="outline"
             size="sm"
+            data-add-goal
             className="mt-3"
             onClick={() => {
               setEditing("new");
@@ -368,9 +375,13 @@ export function PlanPage({
               pid={pid}
               plan={plan}
               goal={editing === "new" ? null : (plan.goals.find((g) => g.id === editing) ?? null)}
-              onCancel={() => setEditing(null)}
+              onCancel={() => {
+                setEditing(null);
+                focusSoon(editing === "new" ? "[data-add-goal]" : "[data-edit-goal]");
+              }}
               onSaved={async (id) => {
                 setEditing(null);
+                if (id === goalId) focusSoon("[data-edit-goal]");
                 // The plan must hold the goal before its URL does, or the URL is "corrected" away.
                 await reload();
                 changed();

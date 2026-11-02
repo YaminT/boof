@@ -87,3 +87,17 @@ export function goalFormProblems(v: GoalValues, isNew: boolean, takenIds: string
 export function sameGoalValues(a: GoalValues, b: GoalValues): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
+
+/**
+ * What an open editor takes from the live plan. A clean form follows everything (this goal's
+ * values and the plan version). A dirty form keeps its edits and still takes the version while
+ * this goal itself is unchanged, since a save only replaces this goal and so cannot lose another
+ * writer's work. When this goal changed, the version stays: the save must meet the conflict.
+ */
+export function followLive(o: { isNew: boolean; dirty: boolean; elsewhere: boolean }): {
+  values: boolean;
+  version: boolean;
+} {
+  if (!o.dirty) return { values: !o.isNew, version: true };
+  return { values: false, version: o.isNew || !o.elsewhere };
+}

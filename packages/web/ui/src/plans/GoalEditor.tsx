@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, ApiError, type Goal, type Plan } from "../api.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
@@ -6,6 +6,7 @@ import { Textarea } from "@/ui/textarea";
 import { act } from "../lib/act.js";
 import { conflictOf } from "../lib/conflict.js";
 import {
+  followLive,
   goalFormProblems,
   goalValues,
   sameGoalValues,
@@ -44,6 +45,8 @@ export function GoalEditor({
   const [lines, setLines] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const noticeRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const noticeId = useId();
   const [tick, setTick] = useState(0);
 
   const live = useMemo(() => goalValues(goal), [goal]);
@@ -58,13 +61,19 @@ export function GoalEditor({
   const set = <K extends keyof GoalValues>(k: K, v: GoalValues[K]) =>
     setValues((s) => ({ ...s, [k]: v }));
 
-  // A clean form follows the live goal; a dirty one keeps its edits and says so.
+  // Follow the live plan as far as is safe (see followLive); a dirty form keeps its edits.
   useEffect(() => {
-    if (isNew || !elsewhere || dirty) return;
-    setBase(live);
-    setValues(live);
-    setBaseVersion(plan.version);
-  }, [live]);
+    const take = followLive({ isNew, dirty, elsewhere });
+    if (take.values && elsewhere) {
+      setBase(live);
+      setValues(live);
+    }
+    if (take.version) {
+      setBaseVersion(plan.version);
+      // A 409 caused only by another goal's change is over once the version is current.
+      if (!elsewhere) setConflict(false);
+    }
+  }, [live, plan.version]);
 
   useEffect(() => {
     if (tick > 0) noticeRef.current?.focus();
@@ -103,17 +112,28 @@ export function GoalEditor({
   const reload = async () => {
     const f = await act(fresh, { failure: "Could not reload the plan" });
     if (!f) return;
+    if (!isNew && !f.goal) {
+      setConflict(false);
+      setLines(["This goal was deleted."]);
+      return;
+    }
     const next = goalValues(f.goal);
     setBase(next);
     setValues(next);
     setBaseVersion(f.version);
     setConflict(false);
     setLines([]);
+    titleRef.current?.focus();
   };
   const overwrite = async () => {
     const f = await act(fresh, { failure: "Could not reload the plan" });
     if (!f) return;
-    setBaseVersion(f.version);
+    if (!isNew && !f.goal) {
+      // Deleted elsewhere: saving would bring it back.
+      setConflict(false);
+      setLines(["This goal was deleted."]);
+      return;
+    }
     setConflict(false);
     await save(f.version);
   };
@@ -134,6 +154,7 @@ export function GoalEditor({
         ref={noticeRef}
         tabIndex={-1}
         role={conflict ? "alert" : "status"}
+        aria-labelledby={noticeId}
         className={
           conflict || elsewhere
             ? "flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -142,7 +163,7 @@ export function GoalEditor({
       >
         {conflict ? (
           <>
-            <span>This plan changed after you opened the form.</span>
+            <span id={noticeId}>This plan changed after you opened the form.</span>
             <Button
               type="button"
               variant="outline"
@@ -164,7 +185,7 @@ export function GoalEditor({
           </>
         ) : elsewhere ? (
           <>
-            <span>This goal changed elsewhere.</span>
+            <span id={noticeId}>This goal changed elsewhere.</span>
             <Button
               type="button"
               variant="outline"
@@ -180,6 +201,7 @@ export function GoalEditor({
       <label className={label}>
         Title
         <Input
+          ref={titleRef}
           autoFocus
           className="mt-0 font-normal"
           value={values.title}

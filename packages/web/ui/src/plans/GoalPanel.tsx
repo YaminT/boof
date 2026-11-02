@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { XIcon } from "lucide-react";
 import type { Goal, Plan, TaskView } from "../api.js";
 import { Button } from "@/ui/button";
@@ -49,6 +49,11 @@ export function GoalPanel({
 }) {
   const s = goal.spec;
   const [earlierOpen, setEarlierOpen] = useState(false);
+  // Opening a goal (or following a link to another) puts focus on its heading.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+  }, [goal.id]);
   const goalHref = (id: string) => formatRoute({ name: "plans", pid, planId: plan.id, goalId: id });
   const taskHref = (id: string, view: "edit" | "changes" = "edit") =>
     formatRoute({ name: "task", pid, taskId: id, view });
@@ -65,7 +70,11 @@ export function GoalPanel({
     >
       <header className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <h2 className="m-0 text-[length:var(--text-section)] leading-tight font-semibold">
+          <h2
+            ref={heading}
+            tabIndex={-1}
+            className="m-0 text-[length:var(--text-section)] leading-tight font-semibold outline-none"
+          >
             {goal.title}
           </h2>
           <p className="m-0 mt-1 font-mono text-[length:var(--text-meta)] text-ink-muted">
@@ -73,7 +82,7 @@ export function GoalPanel({
           </p>
         </div>
         <TonePill tone={goalStatusTone(goal.status)}>{goal.status}</TonePill>
-        <Button variant="outline" size="sm" onClick={onEdit}>
+        <Button variant="outline" size="sm" data-edit-goal onClick={onEdit}>
           Edit goal
         </Button>
         <Button variant="ghost" size="icon-sm" aria-label="Close goal" onClick={onClose}>
