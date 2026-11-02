@@ -6,7 +6,7 @@ import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
 import { TaskDetailPage } from "./task/TaskDetailPage.js";
 import { CommandsTab } from "./components/CommandsTab.js";
-import { ActionsTab } from "./components/ActionsTab.js";
+import { InboxPage } from "./inbox/InboxPage.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
 import { PlansPage } from "./plans/PlansPage.js";
@@ -29,7 +29,7 @@ export function App() {
   const reloadRef = useRef<() => Promise<void>>(async () => {});
   const reloadProjects = useCallback(() => reloadRef.current(), []);
   const data = useAppData(selectedId, reloadProjects);
-  const { settings, actions, budget, refresh, needsToken, clearNeedsToken } = data;
+  const { settings, budget, refresh, needsToken, clearNeedsToken } = data;
   const { projects, selected, select, reload } = useProjects(settings, routePid(route));
   reloadRef.current = reload;
   // The route before this one, for "← Tasks"; switching tabs of one task keeps the origin.
@@ -168,7 +168,12 @@ export function App() {
           />
         )}
       {route?.name === "inbox" && (
-        <ActionsTab actions={actions} projects={projects ?? []} onChange={refresh} />
+        <InboxPage
+          selectedPid={selected?.id ?? null}
+          data={data}
+          projects={projects ?? []}
+          navigate={navigate}
+        />
       )}
     </AppShell>
   );

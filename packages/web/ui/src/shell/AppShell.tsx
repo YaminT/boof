@@ -10,6 +10,8 @@ import { ProjectMenu } from "./ProjectMenu.js";
 import { Rail } from "./Rail.js";
 import { RunnerSwitch } from "./RunnerSwitch.js";
 import { ThemeMenu } from "./ThemeMenu.js";
+import { inboxCount, inboxGroups } from "../lib/inbox.js";
+import { groupTasks } from "../lib/task-groups.js";
 import { navKey, type NavCounts, type NavKey } from "./nav.js";
 
 const OPEN_STATUSES = new Set(["draft", "pending", "running", "action"]);
@@ -51,7 +53,15 @@ export function AppShell({
   const counts: NavCounts = {
     tasks: data.tasks.filter((t) => OPEN_STATUSES.has(t.frontmatter.status)).length,
     plans: data.plans.length,
-    inbox: data.actions.length,
+    inbox: inboxCount(
+      inboxGroups(
+        data.actions,
+        selected
+          ? { pid: selected.id, needsYou: groupTasks(data.tasks, data.plans).needsYou }
+          : null,
+        projects ?? [],
+      ),
+    ),
   };
 
   const go = (key: NavKey) => {
