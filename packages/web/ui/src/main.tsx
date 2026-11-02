@@ -15,7 +15,13 @@ import { applyTheme, readThemePref } from "./lib/theme.js";
 // it, then replace an old #/... link with its path once.
 document.querySelector("base")?.setAttribute("href", document.baseURI);
 const legacy = legacyHashTarget(location.hash);
-if (legacy !== null) history.replaceState(null, "", legacy);
+if (legacy !== null) {
+  try {
+    history.replaceState(null, "", legacy);
+  } catch {
+    /* an unusable hash is left as it is; the app opens on its default route */
+  }
+}
 
 applyTheme(readThemePref());
 

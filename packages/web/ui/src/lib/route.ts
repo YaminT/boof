@@ -19,17 +19,20 @@ const SETTINGS_PAGES: readonly SettingsPageId[] = [
 /** Parses an app-relative path such as "p/boof/tasks"; one leading "/" is ignored. */
 export function parseRoute(path: string): Route | null {
   if (path.startsWith("#")) return null;
+  // One leading and one trailing slash are fine; empty, "." and ".." segments are not routes, and
+  // neither are paths longer than the ones the server answers with the UI (see isUiPath).
+  const trimmed = path.replace(/^\//, "").replace(/\/$/, "");
+  if (trimmed === "") return null;
   let segs: string[];
   try {
-    segs = path
-      .split("/")
-      .filter((s) => s !== "")
-      .map((s) => decodeURIComponent(s));
+    segs = trimmed.split("/").map((s) => decodeURIComponent(s));
   } catch {
     return null;
   }
-  if (segs.length === 0) return null;
-  if (segs[0] === "inbox") return { name: "inbox" };
+  if (trimmed.split("/").some((s) => s === "" || s === "." || s === "..")) return null;
+  if (segs.some((s) => s === "." || s === "..")) return null;
+  if (segs[0] === "inbox") return segs.length === 1 ? { name: "inbox" } : null;
+  if (segs.length > 5) return null;
   if (segs[0] !== "p" || !segs[1]) return null;
   const pid = segs[1];
   const [section, a, b] = segs.slice(2);

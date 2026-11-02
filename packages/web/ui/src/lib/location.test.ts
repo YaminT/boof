@@ -4,6 +4,7 @@ import {
   basePath,
   isPlainLeftClick,
   legacyHashTarget,
+  locationKey,
   routeFromLocation,
 } from "./location";
 
@@ -33,6 +34,15 @@ describe("legacyHashTarget", () => {
     expect(legacyHashTarget("#/elsewhere")).toBe("./");
     expect(legacyHashTarget("")).toBeNull();
     expect(legacyHashTarget("#section")).toBeNull();
+  });
+  it("never yields a path that leaves the base", () => {
+    for (const h of ["#//p/x", "#///p/x", "#///evil.com", "#/p/x/../../..", "#/p/../x", "#/p/x/"]) {
+      const t = legacyHashTarget(h);
+      expect(t, h).not.toBeNull();
+      expect(t, h).not.toMatch(/^\/|(^|\/)\.\.(\/|$)/);
+    }
+    expect(legacyHashTarget("#///evil.com")).toBe("./");
+    expect(legacyHashTarget("#/p/x/")).toBe("p/x");
   });
 });
 
@@ -66,5 +76,13 @@ describe("isPlainLeftClick", () => {
     for (const k of ["metaKey", "ctrlKey", "shiftKey", "altKey", "defaultPrevented"] as const)
       expect(isPlainLeftClick({ ...e, [k]: true })).toBe(false);
     expect(isPlainLeftClick({ ...e, button: 1 })).toBe(false);
+  });
+});
+
+describe("locationKey", () => {
+  it("includes the query, so a query-only change is a different place", () => {
+    const base = "https://h/boof/";
+    expect(locationKey("p/x/tasks", base)).toBe("/boof/p/x/tasks");
+    expect(locationKey("p/x/tasks?state=done", base)).toBe("/boof/p/x/tasks?state=done");
   });
 });

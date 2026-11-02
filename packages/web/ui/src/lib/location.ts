@@ -1,4 +1,4 @@
-import { parseRoute, type Route } from "./route";
+import { formatRoute, parseRoute, type Route } from "./route";
 
 /** Pathname of the document base, always ending in "/". */
 export function basePath(baseURI: string): string {
@@ -17,8 +17,9 @@ export function routeFromLocation(pathname: string, base: string): Route | null 
 /** App-relative path replacing a legacy `#/...` URL ("./" when unknown); null if not a legacy hash. */
 export function legacyHashTarget(hash: string): string | null {
   if (!hash.startsWith("#/")) return null;
-  const path = hash.slice(2);
-  return parseRoute(path) ? path.replace(/\/+$/, "") : "./";
+  // Rebuilt from the parsed route, so odd slashes or dot segments can never leave the base.
+  const route = parseRoute(hash.slice(2));
+  return route ? formatRoute(route) : "./";
 }
 
 /** The app-relative path for a same-origin link under the base that is a route; else null. */
@@ -37,6 +38,12 @@ export function appPathOf(href: string, baseURI: string): string | null {
   const rest = url.pathname.slice(prefix.length);
   if (!parseRoute(rest)) return null;
   return rest + url.search;
+}
+
+/** pathname and query of an app-relative path, as the browser will show them. */
+export function locationKey(path: string, baseURI: string): string {
+  const u = new URL(path, baseURI);
+  return u.pathname + u.search;
 }
 
 export function isPlainLeftClick(

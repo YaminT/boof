@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { appPathOf, basePath, isPlainLeftClick, routeFromLocation } from "./location";
+import { appPathOf, basePath, isPlainLeftClick, locationKey, routeFromLocation } from "./location";
 import { formatRoute, type Route } from "./route";
 
 const readRoute = (): Route | null =>
@@ -31,7 +31,10 @@ export function useRoute(): {
       const path = appPathOf(a.href, document.baseURI);
       if (path === null) return;
       e.preventDefault();
-      if (new URL(path, document.baseURI).pathname !== window.location.pathname) {
+      if (
+        locationKey(path, document.baseURI) !==
+        window.location.pathname + window.location.search
+      ) {
         history.pushState(null, "", path);
         notify();
       }
@@ -43,7 +46,11 @@ export function useRoute(): {
   const navigate = useCallback((to: Route, opts?: { replace?: boolean }) => {
     const path = formatRoute(to);
     if (opts?.replace) history.replaceState(null, "", path);
-    else if (new URL(path, document.baseURI).pathname === window.location.pathname) return;
+    else if (
+      locationKey(path, document.baseURI) ===
+      window.location.pathname + window.location.search
+    )
+      return;
     else history.pushState(null, "", path);
     notify();
   }, []);

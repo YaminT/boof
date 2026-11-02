@@ -80,6 +80,21 @@ describe("parseRoute", () => {
     for (const h of ["", "/", "elsewhere", "#/p/boof"]) expect(parseRoute(h)).toBeNull();
   });
 
+  it("rejects over-long paths, empty and dot segments", () => {
+    for (const p of [
+      "inbox/a",
+      "inbox/a/b/c",
+      "p/x/tasks/a/b/c/d/e",
+      "p//x",
+      "//p/x",
+      "p/x/../y",
+      "p/./x",
+      "p/..",
+    ])
+      expect(parseRoute(p), p).toBeNull();
+    expect(parseRoute("p/x/tasks/a/b")).not.toBeNull();
+  });
+
   it("ignores one leading slash", () => {
     expect(parseRoute("/p/boof/")).toEqual({ name: "overview", pid: "boof" });
   });

@@ -7,6 +7,7 @@ import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
 import { isUiPath, relativeBase } from "./ui-document.js";
+import { parseRoute } from "../ui/src/lib/route";
 
 describe("relativeBase", () => {
   it.each([
@@ -134,5 +135,29 @@ describe("UI document and SPA fallback", () => {
     const doc = await get("/p/boof");
     expect(doc.headers.get("x-frame-options")).toBeTruthy();
     expect(doc.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
+describe("router and server agree", () => {
+  const paths = [
+    "inbox",
+    "inbox/a",
+    "inbox/a/b/c",
+    "p/x",
+    "p/x/tasks",
+    "p/x/tasks/t1/changes",
+    "p/x/tasks/t1/changes/more",
+    "p/x/tasks/a/b/c/d/e",
+    "p//x",
+    "p/x//tasks",
+    "p/x/",
+    "p",
+    "p/",
+    "elsewhere",
+  ];
+  it.each(paths)("%s", (p) => {
+    const served = isUiPath("/" + p);
+    // The server also serves "/", which the router reads as no route.
+    expect(parseRoute(p) !== null, p).toBe(served);
   });
 });
