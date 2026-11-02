@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readlinkSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite } from "./atomic.js";
@@ -20,8 +20,26 @@ export interface ProcessLockOptions {
   bootId?: string | null;
   /** Start time of a pid, default {@link processStartTicks}. Tests use it to simulate other processes. */
   startTicks?: (pid: number) => number | undefined;
+  /**
+   * Our pid namespace, default {@link currentPidNamespace}; `null` = unknown. A holder's pid and
+   * start time mean something only inside the namespace it recorded.
+   */
+  pidNamespace?: string | null;
   /** Test hook: runs while the takeover guard is held. */
   guardHeld?: () => Promise<void>;
+}
+
+let pidNamespace: string | undefined | null = null;
+
+/** `pid:[4026531836]`: the pid namespace of this process (Linux), or undefined where unreadable. */
+export function currentPidNamespace(): string | undefined {
+  if (pidNamespace !== null) return pidNamespace;
+  try {
+    pidNamespace = readlinkSync("/proc/self/ns/pid");
+  } catch {
+    pidNamespace = undefined;
+  }
+  return pidNamespace;
 }
 
 const BOOT_UUID = /^[0-9a-f][0-9a-f-]{15,}$/i;
@@ -141,12 +159,14 @@ async function canonicalLockPath(lock: string): Promise<string> {
   return join(await realpath(dir), basename(lock));
 }
 
-const LOCK_TEXT = /^(\d+)(?: (\S+))?(?: (\d+))?$/;
+const LOCK_TEXT = /^(\d+)(?: (\S+))?(?: (\d+))?(?: (\S+))?$/;
 
 interface ParsedLock {
   pid: number;
   boot?: string;
   ticks?: number;
+  /** The pid namespace the holder recorded. */
+  ns?: string;
 }
 
 function parseLock(text: string): ParsedLock | undefined {
@@ -156,6 +176,7 @@ function parseLock(text: string): ParsedLock | undefined {
     pid: Number(m[1]),
     ...(m[2] !== undefined ? { boot: m[2] } : {}),
     ...(m[3] !== undefined ? { ticks: Number(m[3]) } : {}),
+    ...(m[4] !== undefined ? { ns: m[4] } : {}),
   };
 }
 
@@ -178,12 +199,21 @@ function ourBoot(opts: ProcessLockOptions): string | undefined {
   return opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
 }
 
-/** What we write: `<pid>`, plus ` <boot id>` and, with it, ` <start ticks>` where known. */
+function ourNamespace(opts: ProcessLockOptions): string | undefined {
+  return opts.pidNamespace === undefined ? currentPidNamespace() : (opts.pidNamespace ?? undefined);
+}
+
+/**
+ * What we write: `<pid>`, plus ` <boot id>` and, with it, ` <start ticks>` and ` <pid namespace>`
+ * where known (the start time only means something inside the namespace).
+ */
 function lockContent(pid: number, opts: ProcessLockOptions): string {
   const boot = ourBoot(opts);
   if (!boot) return `${pid}\n`;
   const ticks = (opts.startTicks ?? processStartTicks)(pid);
-  return ticks === undefined ? `${pid} ${boot}\n` : `${pid} ${boot} ${ticks}\n`;
+  if (ticks === undefined) return `${pid} ${boot}\n`;
+  const ns = ourNamespace(opts);
+  return ns === undefined ? `${pid} ${boot} ${ticks}\n` : `${pid} ${boot} ${ticks} ${ns}\n`;
 }
 
 /**
@@ -201,8 +231,11 @@ function isStale(held: ParsedLock, pid: number, opts: ProcessLockOptions): boole
     held.boot !== undefined && BOOT_UUID.test(held.boot) ? held.boot.toLowerCase() : undefined;
   const sameBootKnown = ours !== undefined && theirs === ours;
   const otherBoot = ours !== undefined && theirs !== undefined && theirs !== ours;
-  if (otherBoot || held.pid === pid || !(opts.isProcessAlive ?? defaultAlive)(held.pid))
-    return true;
+  if (otherBoot) return true;
+  // A pid, and its start time, name a process only inside the namespace the holder recorded. From
+  // another one (a container sharing the data root), or when we cannot tell, wait: never guess.
+  if (held.ns !== undefined && held.ns !== ourNamespace(opts)) return false;
+  if (held.pid === pid || !(opts.isProcessAlive ?? defaultAlive)(held.pid)) return true;
   if (sameBootKnown && held.ticks !== undefined) {
     const now = (opts.startTicks ?? processStartTicks)(held.pid);
     if (now !== undefined && now !== held.ticks) return true;

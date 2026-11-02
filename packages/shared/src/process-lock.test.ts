@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   currentBootId,
+  currentPidNamespace,
   inspectProcessLock,
   processStartTicks,
   tryAcquireProcessLock,
@@ -28,7 +29,7 @@ afterEach(async () => {
 });
 
 describe("the lock file content", () => {
-  it("names the pid, the boot and the start time", async () => {
+  it("names the pid, the boot, the start time and the pid namespace", async () => {
     let seen = "";
     await withProcessLock(
       lock,
@@ -40,10 +41,11 @@ describe("the lock file content", () => {
     );
     const boot = currentBootId();
     const ticks = processStartTicks(process.pid);
+    const ns = currentPidNamespace();
     expect(seen).toBe(
       !boot
         ? `${process.pid}\n`
-        : `${process.pid} ${boot}${ticks === undefined ? "" : ` ${ticks}`}\n`,
+        : `${process.pid} ${boot}${ticks === undefined ? "" : ` ${ticks}${ns === undefined ? "" : ` ${ns}`}`}\n`,
     );
     await expect(stat(lock)).rejects.toThrow();
   });
@@ -271,5 +273,71 @@ describe("round 3 minors", () => {
       go(join(dir, "alias", "k.lock")),
     ]);
     expect(overlap).toBe(0);
+  });
+});
+
+describe("an unreadable start time", () => {
+  const THIS = "11111111-1111-4111-8111-111111111111";
+
+  it("does not make a live holder look reused: the lock is judged by its pid", async () => {
+    // Same boot, a live pid, a recorded start time we cannot compare (hidepid, no /proc).
+    await writeFile(lock, `${process.ppid} ${THIS} 12345\n`);
+    await expect(run({ ...fast, bootId: THIS, startTicks: () => undefined })).rejects.toThrow(
+      /busy/,
+    );
+    // And a readable one that differs is still a reused pid.
+    expect(await run({ ...fast, bootId: THIS, startTicks: () => 99999 })).toBe("ran");
+  });
+});
+
+describe("pid namespaces", () => {
+  const THIS = "11111111-1111-4111-8111-111111111111";
+  const here = { ...fast, bootId: THIS, pidNamespace: "pid:[4026531836]" };
+
+  it("records our namespace as the fourth field", async () => {
+    let seen = "";
+    await withProcessLock(
+      lock,
+      { ...here, startTicks: () => 777 },
+      async () => {
+        seen = await readFile(lock, "utf8");
+      },
+      timeoutError,
+    );
+    expect(seen).toBe(`${process.pid} ${THIS} 777 pid:[4026531836]\n`);
+  });
+
+  it("does not judge a holder from another pid namespace by its pid: it is waited for", async () => {
+    // The pid is dead here, and a live one would have another start time: neither means anything
+    // across namespaces (a container sharing the data root and the boot id).
+    for (const pid of [99999999, process.ppid]) {
+      await writeFile(lock, `${pid} ${THIS} 1 pid:[4026532000]\n`);
+      await expect(run({ ...here, startTicks: () => 5 })).rejects.toThrow(/busy/);
+    }
+  });
+
+  it("a process that cannot read its namespace waits for a holder that recorded one", async () => {
+    await writeFile(lock, `${process.ppid} ${THIS} 1 pid:[4026531836]\n`);
+    await expect(run({ ...here, pidNamespace: null, startTicks: () => 5 })).rejects.toThrow(/busy/);
+  });
+
+  it("in the same namespace the pid and the start time decide, as before", async () => {
+    await writeFile(lock, `99999999 ${THIS} 1 pid:[4026531836]\n`);
+    expect(await run(here)).toBe("ran");
+    await writeFile(lock, `${process.ppid} ${THIS} 1 pid:[4026531836]\n`);
+    expect(await run({ ...here, startTicks: () => 5 })).toBe("ran"); // pid reused: other start time
+  });
+
+  it("another boot is decisive whatever the namespace", async () => {
+    await writeFile(
+      lock,
+      `${process.ppid} 22222222-2222-4222-8222-222222222222 1 pid:[4026532000]\n`,
+    );
+    expect(await run(here)).toBe("ran");
+  });
+
+  it("a lock without a namespace (written before this field) is judged as before", async () => {
+    await writeFile(lock, `99999999 ${THIS} 1\n`);
+    expect(await run(here)).toBe("ran");
   });
 });

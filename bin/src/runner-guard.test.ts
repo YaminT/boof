@@ -95,31 +95,48 @@ describe("RunnerGuard", () => {
 describe("RunnerGuard across processes", () => {
   const child = fileURLToPath(new URL("../test-support/guard-child.mts", import.meta.url));
   const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+  interface Report {
+    acquired: boolean;
+    at: number;
+    released?: number;
+  }
   const run = (mode: string, startAt: number, holdMs: number) =>
-    new Promise<{ acquired: boolean }>((resolve, reject) => {
+    new Promise<Report>((resolve, reject) => {
       execFile(
         process.execPath,
         ["--import", "tsx", child, root, mode, String(startAt), String(holdMs)],
         { cwd: repoRoot },
         (err, stdout, stderr) => {
-          // A crashing child exits by signal: its output line is still the first line.
-          const line = stdout.trim().split("\n")[0];
-          if (!line) return reject(new Error(`${err?.message}\n${stderr}`));
-          resolve(JSON.parse(line));
+          // A crashing child exits by signal: its first line is still there.
+          const lines = stdout.trim().split("\n").filter(Boolean);
+          if (lines.length === 0) return reject(new Error(`${err?.message}\n${stderr}`));
+          const report: Report = JSON.parse(lines[0]);
+          if (lines[1]) report.released = JSON.parse(lines[1]).released;
+          resolve(report);
         },
       );
     });
 
-  it("exactly one of two processes starting together gets the guard", async () => {
+  // Not "exactly one wins": under load one child can start (tsx) after the other has already
+  // released, and then both rightly acquire in turn. What must hold is that the intervals during
+  // which two children held the guard never overlap, and that at least one got it.
+  it("two processes starting together never hold the guard at once", async () => {
     const startAt = Date.now() + 1500;
-    const results = await Promise.all([run("hold", startAt, 1000), run("hold", startAt, 1000)]);
-    expect(results.filter((r) => r.acquired)).toHaveLength(1);
+    const results = await Promise.all([run("hold", startAt, 800), run("hold", startAt, 800)]);
+    const held = results.filter((r) => r.acquired);
+    expect(held.length).toBeGreaterThanOrEqual(1);
+    expect(held.every((r) => r.released !== undefined)).toBe(true);
+    if (held.length === 2) {
+      const [first, second] = [...held].sort((a, b) => a.at - b.at);
+      // The second one got it only after the first had released it.
+      expect(second.at).toBeGreaterThanOrEqual(first.released!);
+    }
     // It was released at the end, so the next start can take it.
     expect(await new RunnerGuard(root).acquire()).toBe(true);
   }, 30_000);
 
   it("after a crash (SIGKILL, no release) the next start takes it over", async () => {
-    expect(await run("crash", Date.now(), 0)).toEqual({ acquired: true });
+    expect(await run("crash", Date.now(), 0)).toMatchObject({ acquired: true });
     expect(await exists(pidFile)).toBe(true); // left behind
     expect(await new RunnerGuard(root).acquire()).toBe(true);
   }, 30_000);

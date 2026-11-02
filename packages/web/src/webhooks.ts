@@ -10,6 +10,9 @@ import {
   type AuthStore,
   type BoofEvent,
   type Client,
+  tryAcquireProcessLock,
+  type HeldProcessLock,
+  type ProcessLockOptions,
   type Webhook,
 } from "@boof-runner/shared";
 import {
@@ -380,4 +383,69 @@ export class WebhookDispatcher {
       "utf8",
     );
   }
+}
+
+export interface DispatcherGate {
+  /** Settles once the first attempt to take the lock is over (and the dispatcher started if won). */
+  readonly ready: Promise<void>;
+  /** Stop the dispatcher if running and free the lock. Safe to call twice, or before `ready`. */
+  stop(): Promise<void>;
+}
+
+/**
+ * Run `dispatcher` only while this process holds the pid lock `lockPath`
+ * (`<data>/webhooks/.dispatcher.lock`), so that two servers on one data root do not both read the
+ * event feed and deliver every event twice. A process that does not get the lock retries every
+ * `retryMs` and takes over when the holder exits or dies (a stale lock is taken over at once). It
+ * is deliberately not the runner guard: a lone `--no-runner` server must still deliver.
+ */
+export function runDispatcherWhileHolding(
+  dispatcher: { start(): void; stop(): void },
+  lockPath: string,
+  opts: { retryMs?: number; lock?: ProcessLockOptions } = {},
+): DispatcherGate {
+  let held: HeldProcessLock | null = null;
+  let stopped = false;
+  let timer: NodeJS.Timeout | null = null;
+  const retryMs = opts.retryMs ?? 5000;
+
+  const attempt = async (): Promise<void> => {
+    if (held || stopped) return;
+    let got: HeldProcessLock | null = null;
+    try {
+      got = await tryAcquireProcessLock(lockPath, opts.lock);
+    } catch (err) {
+      console.error("webhooks: could not take the dispatcher lock", err);
+    }
+    if (!got) return;
+    if (stopped) {
+      // stop() arrived while we were taking it.
+      await got.release();
+      return;
+    }
+    held = got;
+    dispatcher.start();
+  };
+  const schedule = () => {
+    if (stopped) return;
+    timer = setTimeout(() => void attempt().finally(schedule), retryMs);
+    timer.unref();
+  };
+
+  const ready = attempt().finally(schedule);
+  return {
+    ready,
+    async stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      await ready;
+      const lock = held;
+      held = null;
+      if (lock) {
+        dispatcher.stop();
+        await lock.release();
+      }
+    },
+  };
 }

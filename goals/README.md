@@ -42,6 +42,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`auth-store-cross-process`](auth-store-cross-process/goal.boof.xml) — Revocation and key writes are safe across processes
 - [x] [`task-lock-cross-process`](task-lock-cross-process/goal.boof.xml) — Make the per-task lock work across processes (withProcessLock), so the CLI and MCP stdio cannot race the runner
 - [x] [`runner-guard-identity`](runner-guard-identity/goal.boof.xml) — Give the single-runner pidfile a boot id and an atomic acquire
+- [x] [`webhook-dispatcher-single`](webhook-dispatcher-single/goal.boof.xml) — One webhook dispatcher per data root, held by a pid lock
 - [x] [`worktree-root-scope`](worktree-root-scope/goal.boof.xml) — Limit worktree.root to the allowed project roots for remote clients
 - [x] [`webhook-update-and-event-names`](webhook-update-and-event-names/goal.boof.xml) — Webhook update (enable, disable, edit) and underscores in event names
 - [x] [`settings-version-check`](settings-version-check/goal.boof.xml) — Optimistic concurrency for PUT /settings (low priority)

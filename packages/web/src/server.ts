@@ -1,10 +1,12 @@
 import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import { ToolRegistry } from "@boof-runner/runner";
 import {
   AuthStore,
+  dataRootPaths,
   LOCAL_MCP_ID,
   migrateDataRoot,
   securitySettings,
@@ -16,7 +18,7 @@ import { pruneAudit } from "./middleware/audit.js";
 import { IdempotencyStore, TaskService } from "@boof-runner/api";
 import { DataWatcher } from "./watch.js";
 import { hostnameOf } from "./middleware/host-guard.js";
-import { WebhookDispatcher } from "./webhooks.js";
+import { runDispatcherWhileHolding, WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
   root: string;
@@ -38,6 +40,10 @@ export interface StartServerOptions {
   runnerRunning?: () => boolean;
   /** Receives non-fatal startup warnings (default: console.warn). */
   warn?: (message: string) => void;
+  /** How often the webhook dispatcher looks for events (default 1000 ms). */
+  webhookIntervalMs?: number;
+  /** How often a server that is not delivering retries the dispatcher lock (default 5000 ms). */
+  webhookLockRetryMs?: number;
 }
 
 export interface RunningServer {
@@ -173,9 +179,22 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const port = typeof address === "object" && address ? address.port : (opts.port ?? 4319);
   boundPort = port;
 
-  // Webhooks are delivered by this process only (headless run/scan processes do not deliver).
-  const webhooks = new WebhookDispatcher({ root: opts.root, service, authStore });
-  webhooks.start();
+  // Webhooks are delivered by one server per data root (headless run/scan processes do not
+  // deliver): the one holding `webhooks/.dispatcher.lock`. A second server waits and takes over
+  // when the first exits or dies. Independent of the runner guard: a lone --no-runner server
+  // still delivers.
+  const webhooks = new WebhookDispatcher({
+    root: opts.root,
+    service,
+    authStore,
+    intervalMs: opts.webhookIntervalMs,
+  });
+  const dispatcherGate = runDispatcherWhileHolding(
+    webhooks,
+    join(dataRootPaths(opts.root).webhooks, ".dispatcher.lock"),
+    { retryMs: opts.webhookLockRetryMs },
+  );
+  await dispatcherGate.ready;
 
   return {
     server,
@@ -184,7 +203,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     service,
     port,
     stop: async () => {
-      webhooks.stop();
+      await dispatcherGate.stop();
       await watcher.stop();
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
