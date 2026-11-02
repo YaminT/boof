@@ -6,7 +6,7 @@ import {
   principalFromClient,
   TaskService,
 } from "@boof-runner/api";
-import { AuthStore, mcpSettings, type Principal } from "@boof-runner/shared";
+import { AuthStore, mcpSettings, type Principal, type ToolCatalog } from "@boof-runner/shared";
 import { createBoofMcpServer } from "./server.js";
 
 export class McpStartError extends Error {}
@@ -17,6 +17,8 @@ export interface StdioOptions {
   root: string;
   /** API client id; its scopes, projects and trust apply. No key is needed (the OS user owns the data root). */
   client?: string;
+  /** The tools, built by the composition root (bin); MCP never constructs a registry. */
+  catalog: ToolCatalog;
   /** Serve one project only and hide the `projectId` argument. */
   project?: string;
   /**
@@ -103,7 +105,7 @@ export function closeWhenDrained(
 export async function runStdio(opts: StdioOptions): Promise<void> {
   // stdout carries the protocol: nothing else may write to it.
   console.log = (...args: unknown[]) => console.error(...args);
-  const services = new TaskService(opts.root);
+  const services = new TaskService(opts.root, opts.catalog);
   const authStore = new AuthStore(opts.root);
   const principal = await stdioPrincipal(services, authStore, opts);
   if (opts.project !== undefined) await services.requireProject(opts.project);

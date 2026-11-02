@@ -1512,9 +1512,15 @@ describe("server binding", () => {
   });
 
   it("startServer refuses a non-loopback bind without required mode", async () => {
-    await expect(startServer({ root, port: 0, host: "0.0.0.0", warn: () => {} })).rejects.toThrow(
-      /refusing to bind 0\.0\.0\.0/,
-    );
+    await expect(
+      startServer({
+        catalog: new ToolRegistry([new MockTool()]),
+        root,
+        port: 0,
+        host: "0.0.0.0",
+        warn: () => {},
+      }),
+    ).rejects.toThrow(/refusing to bind 0\.0\.0\.0/);
   });
 
   it("serves a required-mode server on a wildcard bind: 401 without key, 200 with key, warns about TLS", async () => {
@@ -1522,6 +1528,7 @@ describe("server binding", () => {
     const key = await mint("a", ["tasks:read"]);
     const warnings: string[] = [];
     const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
       root,
       port: 0,
       host: "0.0.0.0",
@@ -1546,7 +1553,12 @@ describe("server binding", () => {
     raw.clients[0].id = "local-mcp";
     await writeFile(file, JSON.stringify(raw));
     const warnings: string[] = [];
-    const running = await startServer({ root, port: 0, warn: (m) => warnings.push(m) });
+    const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: (m) => warnings.push(m),
+    });
     try {
       expect(warnings.join("\n")).toMatch(/local-mcp/);
       // It names both keyless surfaces: stdio refuses to start, keyless /mcp answers 403.
@@ -1557,7 +1569,12 @@ describe("server binding", () => {
   });
 
   it("local-trust over a real socket: loopback peer without a key is allowed", async () => {
-    const running = await startServer({ root, port: 0, warn: () => {} });
+    const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: () => {},
+    });
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/api/tasks`);
       expect(res.status).toBe(200);
@@ -1593,6 +1610,7 @@ describe("server binding", () => {
         return ctx.skip();
       }
       const running = await startServer({
+        catalog: new ToolRegistry([new MockTool()]),
         root,
         port: 0,
         tlsCert: join(dir, "c.pem"),

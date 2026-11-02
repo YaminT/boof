@@ -343,7 +343,12 @@ describe("stream lifetime", () => {
   });
 
   it("releases the slot of clients that disconnect before the response is written", async () => {
-    const srv = await startServer({ root, port: 0, warn: () => {} });
+    const srv = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: () => {},
+    });
     try {
       const req = `GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1:${srv.port}\r\n\r\n`;
       for (let i = 0; i < 40; i += 1) {

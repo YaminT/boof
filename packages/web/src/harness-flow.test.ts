@@ -15,7 +15,7 @@ import {
   TaskStore,
   execCommand,
 } from "@boof-runner/shared";
-import { RunnerEngine, resetMock } from "@boof-runner/runner";
+import { RunnerEngine, resetMock, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
 
@@ -104,7 +104,7 @@ beforeEach(async () => {
     })
   ).key;
   app = createApp({
-    service: new TaskService(root),
+    service: new TaskService(root, new ToolRegistry([new MockTool()])),
     authStore,
     peerAddress: () => "10.0.0.7",
   });

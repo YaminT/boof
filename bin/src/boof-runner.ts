@@ -213,6 +213,7 @@ export async function serve(argv: string[]): Promise<void> {
   try {
     running = await startServer({
       root,
+      catalog: new ToolRegistry(),
       port: args.port,
       host: args.host,
       uiDir,
@@ -480,7 +481,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       code = await taskCommand(rest, defaultDataRoot);
       break;
     case "mcp":
-      code = await mcpCommand(rest, defaultDataRoot);
+      code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());
       break;
     case "--version":
     case "-v":

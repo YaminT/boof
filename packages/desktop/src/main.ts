@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
-import { RunnerEngine } from "@boof-runner/runner";
+import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
 import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
 import {
@@ -159,7 +159,7 @@ async function boot(): Promise<void> {
   });
   server = await startServer(
     serverOptions(
-      { root, port: PORT, uiDir: uiDir() },
+      { root, port: PORT, uiDir: uiDir(), catalog: new ToolRegistry() },
       app.getVersion(),
       () => engine,
       operatorClientId(desktopToken),

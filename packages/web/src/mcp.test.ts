@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, dataRootPaths, defaultSettings, SettingsStore } from "@boof-runner/shared";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 
 let base: string;
 let root: string;
@@ -69,7 +70,11 @@ beforeEach(async () => {
   await setup("required");
   authStore = new AuthStore(root);
   key = (await authStore.create({ name: "h", scopes: ["projects:read"], trust: "review" })).key;
-  app = createApp({ service: new TaskService(root), authStore, peerAddress: () => "10.0.0.7" });
+  app = createApp({
+    service: new TaskService(root, new ToolRegistry([new MockTool()])),
+    authStore,
+    peerAddress: () => "10.0.0.7",
+  });
 });
 
 afterEach(async () => {
@@ -96,7 +101,7 @@ describe("POST /mcp", () => {
   it("accepts a loopback Origin and an allowed-host Origin", async () => {
     expect((await post(INIT, { origin: "http://localhost", host: "localhost" })).status).toBe(200);
     const withHost = createApp({
-      service: new TaskService(root),
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "10.0.0.7",
       allowedHosts: ["boof.example.com"],
@@ -189,7 +194,7 @@ describe("/mcp under local-trust", () => {
   it("serves a loopback peer without a key, and refuses a remote one", async () => {
     await setup("local-trust");
     const local = createApp({
-      service: new TaskService(root),
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "127.0.0.1",
     });
@@ -217,7 +222,7 @@ describe("/mcp under local-trust", () => {
     const admin = (await authStore.create({ name: "adm", scopes: ["admin"], trust: "trusted" }))
       .key;
     const withSelf = createApp({
-      service: new TaskService(root),
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "10.0.0.7",
       isSelfUrl: (u) => u.hostname === "self.test",
@@ -245,7 +250,7 @@ describe("/mcp under local-trust", () => {
   describe("keyless loopback under local-trust", () => {
     const keyless = async () => {
       await setup("local-trust");
-      const svc = new TaskService(root);
+      const svc = new TaskService(root, new ToolRegistry([new MockTool()]));
       const local = createApp({ service: svc, authStore, peerAddress: () => "127.0.0.1" });
       const rpcCall = async (body: string) => {
         const res = await local.request("http://localhost/mcp", {

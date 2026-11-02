@@ -73,12 +73,14 @@ import {
   UNKNOWN_USAGE,
   UsageStore,
   type TaskDiff,
+  type CachedHealth,
+  type HealthResult,
+  type ToolCatalog,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
-import { ToolRegistry, type CachedHealth, type HealthResult } from "@boof-runner/runner";
 
 export interface CreateTaskInput {
   title: string;
@@ -825,18 +827,19 @@ export class TaskService {
   readonly commands: CommandStore;
   readonly settingsStore: SettingsStore;
   readonly webhookSecrets: WebhookSecretStore;
-  readonly registry: ToolRegistry;
+  /** The tools, injected by the composition root (bin, desktop): Heart never builds one. */
+  readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
 
   constructor(
     readonly root: string,
-    registry: ToolRegistry = new ToolRegistry(),
+    catalog: ToolCatalog,
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
-    this.registry = registry;
+    this.catalog = catalog;
   }
 
   /** The (cached) service of project `id`. Does not check that the project exists. */
@@ -1334,24 +1337,24 @@ export class TaskService {
    */
   async health(): Promise<Record<string, HealthResult>> {
     const { runner } = await this.loadSettings();
-    return this.registry.healthAll(HEALTH_COOLDOWN_MS, {
+    return this.catalog.healthAll(HEALTH_COOLDOWN_MS, {
       inheritMcpServers: runner.inheritMcpServers === true,
     });
   }
 
   /** The last health results of this process, without running a tool (empty until a check ran). */
   cachedHealth(): Record<string, CachedHealth> {
-    return this.registry.lastHealth();
+    return this.catalog.lastHealth();
   }
 
   /** Ask the tools for their models now (spawns processes) and remember the lists. */
   listModels(): Promise<Record<string, string[]>> {
-    return this.registry.modelsAll();
+    return this.catalog.modelsAll();
   }
 
   /** The last model lists (or the built-in defaults), without running a tool. */
   cachedModels(): Record<string, string[]> {
-    return this.registry.cachedModels();
+    return this.catalog.cachedModels();
   }
 }
 

@@ -3,7 +3,6 @@ import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
-import { ToolRegistry } from "@boof-runner/runner";
 import {
   AuthStore,
   dataRootPaths,
@@ -11,6 +10,7 @@ import {
   migrateDataRoot,
   securitySettings,
   type Settings,
+  type ToolCatalog,
 } from "@boof-runner/shared";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
@@ -30,7 +30,8 @@ export interface StartServerOptions {
   uiDir?: string;
   /** Extra Host header names accepted besides loopback. */
   allowedHosts?: string[];
-  registry?: ToolRegistry;
+  /** The tools. Required: the composition root (bin, desktop) builds the registry; Heart never does. */
+  catalog: ToolCatalog;
   /** PEM file paths; when both are set the server speaks HTTPS. */
   tlsCert?: string;
   tlsKey?: string;
@@ -90,7 +91,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const migration = await migrateDataRoot(opts.root);
   if (migration.kind === "migrated")
     warn(`migrated data root ${opts.root} to v2 (see migration-v2.log)`);
-  const service = new TaskService(opts.root, opts.registry ?? new ToolRegistry());
+  const service = new TaskService(opts.root, opts.catalog);
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);

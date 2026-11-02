@@ -213,7 +213,7 @@ describe("v1 conventions", () => {
       "plans.sync",
     );
     const remote = createApp({
-      service: new TaskService(root),
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
       peerAddress: () => "10.1.2.3",
     });
     expect((await remote.request("http://localhost/api/v1/openapi.json")).status).toBe(401);

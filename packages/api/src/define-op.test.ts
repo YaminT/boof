@@ -7,6 +7,7 @@ import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof-ru
 import { defineOp, type OpContext } from "./define-op.js";
 import { OpError } from "./errors.js";
 import { TaskService } from "./services/service.js";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 
 let root: string;
 let ctx: OpContext;
@@ -24,7 +25,7 @@ beforeEach(async () => {
   ctx = {
     root,
     principal: LOCAL_PRINCIPAL,
-    services: new TaskService(root),
+    services: new TaskService(root, new ToolRegistry([new MockTool()])),
     authStore: new AuthStore(root),
     now: () => "2026-01-01T00:00:00.000Z",
   };

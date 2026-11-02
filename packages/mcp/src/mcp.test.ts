@@ -14,7 +14,7 @@ import {
   type Scope,
   execCommand,
 } from "@boof-runner/shared";
-import { resetMock, RunnerEngine } from "@boof-runner/runner";
+import { resetMock, RunnerEngine, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import {
   closeWhenDrained,
@@ -99,7 +99,7 @@ beforeEach(async () => {
     reviewer: { tool: "mock", model: "mock-default" },
   };
   await new SettingsStore(root).save(settings);
-  services = new TaskService(root);
+  services = new TaskService(root, new ToolRegistry([new MockTool()]));
   authStore = new AuthStore(root);
   resetMock();
 });

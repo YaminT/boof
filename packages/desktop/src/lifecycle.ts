@@ -11,7 +11,7 @@ export type ServerOptions = Parameters<typeof startServer>[0];
  * `operatorClientId` (the id of the desktop's own key) that key registers projects like the local user.
  */
 export function serverOptions(
-  base: Pick<ServerOptions, "root" | "port" | "uiDir">,
+  base: Pick<ServerOptions, "root" | "port" | "uiDir" | "catalog">,
   version: string,
   engine: () => RunnerEngine | null,
   operatorClientId?: string,

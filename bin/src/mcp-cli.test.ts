@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { AuthStore } from "@boof-runner/shared";
 import { mcpCommand, MCP_HELP } from "./mcp-cli.js";
 
@@ -214,6 +215,7 @@ describe("mcpCommand", () => {
       await mcpCommand(
         ["--help"],
         () => root,
+        new ToolRegistry([new MockTool()]),
         console.error,
         (l) => out.push(l),
       ),
@@ -227,6 +229,7 @@ describe("mcpCommand", () => {
       mcpCommand(
         argv,
         () => root,
+        new ToolRegistry([new MockTool()]),
         (l) => errs.push(l),
       );
     expect(await run(["-d", root, "--client", "nobody"])).toBe(1);

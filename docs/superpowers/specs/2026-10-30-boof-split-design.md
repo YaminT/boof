@@ -158,6 +158,8 @@ export interface ToolCatalog {
 }
 ```
 
+**As built (M1):** the interface carries the members `TaskService` actually calls, so behaviour stays identical: `list()`, `get(id)`, `healthAll(maxAgeMs?, { inheritMcpServers? })` returning plain `HealthResult`s, `lastHealth()`, `modelsAll()`, `cachedModels()` and `cachedLiveModels()` (`packages/shared/src/tool-catalog.ts`). The sketch above is the intended shape; `cachedHealth(id)` and `listModels()` were not needed.
+
 `HealthResult` and `HealthStatus` move here from `runner/src/tools/types.ts` (Runner re-exports them, so adapters do not change). Runner's `ToolRegistry` implements `ToolCatalog` (its `Tool` objects satisfy `ToolInfo` structurally). `TaskService`, `startServer`, `runStdio` and `handleMcpHttp` take a `ToolCatalog` and no longer construct a registry; `bin` and `desktop` pass `new ToolRegistry()`. Tests in Heart server pass a stub catalog or Runner's `MockTool` registry.
 
 ### 5.3 The operations registry: Heart's contract with every surface

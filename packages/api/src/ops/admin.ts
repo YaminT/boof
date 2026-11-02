@@ -168,14 +168,14 @@ export const settingsModelDetails = defineOp({
     const projects = (await ctx.services.listProjects()).filter((p) =>
       authorizeProject(ctx.principal, p.id),
     );
-    const { registry } = ctx.services;
+    const { catalog } = ctx.services;
     return {
       tools: buildModelDetails({
-        tools: registry.list(),
-        live: registry.cachedLiveModels(),
+        tools: catalog.list(),
+        live: catalog.cachedLiveModels(),
         settings,
         projects,
-        health: registry.lastHealth(),
+        health: catalog.lastHealth(),
       }),
     };
   },

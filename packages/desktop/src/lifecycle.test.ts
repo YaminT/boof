@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RunnerEngine } from "@boof-runner/runner";
+import { MockTool, ToolRegistry, type RunnerEngine } from "@boof-runner/runner";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,12 @@ import {
 describe("desktop /healthz facts", () => {
   it("passes the app version and a live runnerRunning to the server", () => {
     let engine: RunnerEngine | null = null;
-    const opts = serverOptions({ root: "/r", port: 4319, uiDir: "/ui" }, "0.2.0", () => engine);
+    const catalog = new ToolRegistry([new MockTool()]);
+    const opts = serverOptions(
+      { root: "/r", port: 4319, uiDir: "/ui", catalog },
+      "0.2.0",
+      () => engine,
+    );
     expect(opts).toMatchObject({ root: "/r", port: 4319, uiDir: "/ui", version: "0.2.0" });
     expect(opts.runnerRunning?.()).toBe(false);
     engine = {} as RunnerEngine; // engine.loop() started
@@ -24,7 +29,7 @@ describe("desktop /healthz facts", () => {
   });
 
   it("marks the desktop client as the operator only when an id is given", () => {
-    const base = { root: "/r", port: 1 };
+    const base = { root: "/r", port: 1, catalog: new ToolRegistry([new MockTool()]) };
     expect(serverOptions(base, "1.0.0", () => null, "desktop-ui").operatorClients).toEqual(
       new Set(["desktop-ui"]),
     );

@@ -13,6 +13,7 @@ import {
   HARNESS_MD as HARNESS_MD_PATH,
   HARNESS_TS,
 } from "../../../scripts/gen-harness-reference.js";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 
 const UPDATE = process.env["UPDATE_HARNESS_DOCS"] === "1";
 
@@ -79,7 +80,10 @@ describe("public docs routes", () => {
     };
     await new SettingsStore(root).save(settings);
     // A remote peer: no local trust, so any 200 below proves the routes need no key.
-    app = createApp({ service: new TaskService(root), peerAddress: () => "10.1.2.3" });
+    app = createApp({
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
+      peerAddress: () => "10.1.2.3",
+    });
   });
 
   afterEach(async () => {
