@@ -100,9 +100,9 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 ## UI redesign, remaining (2026-10-29)
 
-- [ ] [`ui-url-no-hash`](ui-url-no-hash/goal.boof.xml) — No `#` in the UI's URLs: path-based routing that still works under `/boof/` and the desktop app
-- [ ] [`ui-url-follows-state`](ui-url-follows-state/goal.boof.xml) — The URL follows state changes (project switch, deleted task) so no invalid URL or error screen is shown
-- [ ] [`ui-phase-3-residuals`](ui-phase-3-residuals/goal.boof.xml) — Three small regressions left by the phase 3 fix wave
+- [x] [`ui-url-no-hash`](ui-url-no-hash/goal.boof.xml) — No `#` in the UI's URLs: path-based routing that still works under `/boof/` and the desktop app
+- [x] [`ui-url-follows-state`](ui-url-follows-state/goal.boof.xml) — The URL follows state changes (project switch, deleted task) so no invalid URL or error screen is shown
+- [x] [`ui-phase-3-residuals`](ui-phase-3-residuals/goal.boof.xml) — Three small regressions left by the phase 3 fix wave
 - [ ] [`ui-redesign-phase-4`](ui-redesign-phase-4/goal.boof.xml) — Plans screen and the Inbox / Needs-you group
 - [ ] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
 - [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
