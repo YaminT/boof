@@ -67,6 +67,7 @@ export function TaskForm({
   reload,
   onCreated,
   handle,
+  parentId,
 }: {
   pid: string;
   task: TaskView | null;
@@ -75,6 +76,8 @@ export function TaskForm({
   /** A new task was saved (or got its first attachment) under this id. */
   onCreated: (id: string) => void;
   handle?: RefObject<FormHandle | null>;
+  /** A new task is created as a subtask of this task. */
+  parentId?: string;
 }) {
   const isNew = task === null;
   const server = useMemo(() => (task ? toValues(task) : EMPTY), [task]);
@@ -226,7 +229,7 @@ export function TaskForm({
       () =>
         createdId.current
           ? api.updateTask(pid, createdId.current, { ...payload(), status })
-          : api.createTask(pid, { ...payload(), status }),
+          : api.createTask(pid, { ...payload(), status, ...(parentId ? { parentId } : {}) }),
       { success: status === "pending" ? "Queued" : "Saved as draft", failure: "Could not save" },
     );
     if (made) onCreated(made.frontmatter.id);
@@ -244,6 +247,7 @@ export function TaskForm({
       ...payload(),
       title: form.title.trim() || "Untitled task",
       status: "draft",
+      ...(parentId ? { parentId } : {}),
     });
     createdId.current = made.frontmatter.id;
     return made.frontmatter.id;

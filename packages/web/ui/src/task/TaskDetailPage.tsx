@@ -5,6 +5,7 @@ import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
 import { stepHeaders } from "../lib/log-tail.js";
+import { parentFromSearch } from "../lib/task-links.js";
 import { backFor, formatRoute, type Route, type TaskView as RouteView } from "../lib/route.js";
 import { useElapsed } from "../overview/useElapsed.js";
 import { useTaskActions } from "../tasks/useTaskActions.js";
@@ -13,6 +14,7 @@ import { ChangesTab } from "./ChangesTab.js";
 import { QuestionsTab } from "./QuestionsTab.js";
 import { RunTab } from "./RunTab.js";
 import { StepStrip } from "./StepStrip.js";
+import { TaskHierarchy } from "./TaskHierarchy.js";
 import { TaskForm, type FormHandle } from "./TaskForm.js";
 import { TaskHeader } from "./TaskHeader.js";
 import { useTask } from "./useTask.js";
@@ -50,6 +52,9 @@ export function TaskDetailPage({
     navigate({ name: "task", pid, taskId: id, view: "edit" }, opts);
 
   if (taskId === NEW_TASK) {
+    // The "Add subtask" link on a task page: /p/<pid>/tasks/__new__?parent=<id>.
+    const parentId = parentFromSearch(window.location.search);
+    const parent = parentId ? data.tasks.find((t) => t.frontmatter.id === parentId) : undefined;
     return (
       <div className="flex max-w-2xl flex-col gap-4">
         <a
@@ -58,10 +63,25 @@ export function TaskDetailPage({
         >
           {back.label}
         </a>
-        <h1 className="m-0 text-[length:var(--text-section)] font-semibold">New task</h1>
+        <h1 className="m-0 text-[length:var(--text-section)] font-semibold">
+          {parentId ? "New subtask" : "New task"}
+        </h1>
+        {parentId && (
+          <p className="m-0 text-[length:var(--text-row)] text-ink-muted">
+            Subtask of{" "}
+            <a
+              href={formatRoute({ name: "task", pid, taskId: parentId, view: "edit" })}
+              className="text-ink hover:underline"
+            >
+              {parent?.frontmatter.title ?? parentId}
+            </a>
+            . It takes the parent's epic.
+          </p>
+        )}
         <TaskForm
           pid={pid}
           task={null}
+          parentId={parentId ?? undefined}
           locked={false}
           reload={async () => {}}
           onCreated={(id) => {
@@ -196,6 +216,7 @@ function Loaded({
         onRetry={() => void retry()}
         onDelete={() => void remove()}
       />
+      <TaskHierarchy pid={pid} task={task} tasks={data.tasks} actions={actions} />
       <StepStrip task={task} now={Date.now()} logHeaders={stepHeaders(task.body.log)} />
       <div className="grid items-start gap-6 min-[1024px]:grid-cols-[2fr_3fr]">
         <TaskForm

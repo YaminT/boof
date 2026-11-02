@@ -13,6 +13,7 @@ import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
+import { epicFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
 import { OverviewPage } from "./overview/OverviewPage.js";
@@ -120,7 +121,12 @@ export function App() {
       {routeReady && route.name === "tasks" && (
         <>
           <NowStrip pid={pid} groups={groups} />
-          <TasksPage pid={pid} data={data} navigate={navigate} />
+          <TasksPage
+            pid={pid}
+            data={data}
+            navigate={navigate}
+            epic={epicFromSearch(window.location.search)}
+          />
         </>
       )}
       {routeReady && route.name === "task" && (

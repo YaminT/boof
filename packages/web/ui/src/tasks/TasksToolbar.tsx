@@ -19,11 +19,16 @@ export function TasksToolbar({
   labels,
   onFilter,
   onNew,
+  epicTitle,
+  onClearEpic,
 }: {
   filter: TaskFilter;
   labels: string[];
   onFilter: (next: TaskFilter) => void;
   onNew: () => void;
+  /** The epic the list is limited to ("none": tasks without one), or null. */
+  epicTitle: string | null;
+  onClearEpic: () => void;
 }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -62,6 +67,15 @@ export function TasksToolbar({
             </option>
           ))}
         </NativeSelect>
+      )}
+      {filter.epic !== null && (
+        <Button variant="outline" size="sm" onClick={onClearEpic} className="max-w-full">
+          <span className="truncate">
+            {filter.epic === "none" ? "No epic" : `Epic: ${epicTitle ?? filter.epic}`}
+          </span>
+          <span aria-hidden>×</span>
+          <span className="sr-only">Clear the epic filter</span>
+        </Button>
       )}
       <Kbd className="ml-auto hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
     </div>

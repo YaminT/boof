@@ -5,6 +5,8 @@ export interface TaskFilter {
   query: string;
   state: "all" | "needs-you" | "running" | "queued" | "drafts" | "finished";
   label: string | null;
+  /** An epic id, `none` for tasks without an epic, or null for every task. */
+  epic: string | null;
 }
 
 const FINISHED = new Set(["done", "failed", "stopped", "archived"]);
@@ -39,6 +41,9 @@ export function filterTasks(tasks: TaskView[], f: TaskFilter): TaskView[] {
     const { id, title, labels } = t.frontmatter;
     if (q && !title.toLowerCase().includes(q) && !id.toLowerCase().includes(q)) return false;
     if (f.label !== null && !labels.includes(f.label)) return false;
+    // `epicId` on the view is the effective epic, so a subtask matches through its parent.
+    if (f.epic === "none" ? t.epicId !== undefined : f.epic !== null && t.epicId !== f.epic)
+      return false;
     return inState(t);
   });
 }

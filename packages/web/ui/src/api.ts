@@ -172,6 +172,9 @@ export const api = {
       command?: string | null;
       status?: "draft" | "pending";
       runs?: number;
+      /** Make this a subtask (one level); it takes its parent's epic. */
+      parentId?: string;
+      epicId?: string;
     },
   ) => httpTask(`${P(pid)}/tasks`, { method: "POST", body: JSON.stringify(input) }),
   updateTask: (

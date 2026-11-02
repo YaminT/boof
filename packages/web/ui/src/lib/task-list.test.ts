@@ -5,7 +5,7 @@ import { allLabels, filterTasks, listKeyAction, moveQueued, type TaskFilter } fr
 const mk = (
   id: string,
   status: string,
-  o: { title?: string; labels?: string[]; origin?: string } = {},
+  o: { title?: string; labels?: string[]; origin?: string; epicId?: string } = {},
 ) =>
   ({
     frontmatter: {
@@ -15,9 +15,10 @@ const mk = (
       labels: o.labels ?? [],
       origin: o.origin ? { kind: o.origin } : undefined,
     },
+    epicId: o.epicId,
   }) as unknown as TaskView;
 
-const all: TaskFilter = { query: "", state: "all", label: null };
+const all: TaskFilter = { query: "", state: "all", label: null, epic: null };
 const tasks = [
   mk("t-1", "action", { title: "Fix Login", labels: ["bug"] }),
   mk("t-2", "draft", { origin: "mcp", labels: ["ux"] }),
@@ -92,15 +93,40 @@ describe("filterTasks", () => {
   });
   it("filters by label and combines", () => {
     expect(ids(filterTasks(tasks, { ...all, label: "ux" }))).toEqual(["t-2", "t-4"]);
-    expect(ids(filterTasks(tasks, { query: "t-", state: "running", label: "bug" }))).toEqual([
-      "t-4",
-    ]);
-    expect(filterTasks(tasks, { query: "t-", state: "running", label: "nope" })).toEqual([]);
+    expect(
+      ids(filterTasks(tasks, { ...all, query: "t-", state: "running", label: "bug" })),
+    ).toEqual(["t-4"]);
+    expect(filterTasks(tasks, { ...all, query: "t-", state: "running", label: "nope" })).toEqual(
+      [],
+    );
   });
 });
 
 describe("allLabels", () => {
   it("dedupes and sorts", () => {
     expect(allLabels(tasks)).toEqual(["bug", "ux"]);
+  });
+});
+
+describe("filterTasks by epic", () => {
+  const withEpics = [
+    mk("e-1", "draft", { epicId: "checkout" }),
+    mk("e-2", "pending", { epicId: "checkout" }),
+    mk("e-3", "draft", { epicId: "search" }),
+    mk("e-4", "draft"),
+  ];
+  it("keeps the tasks of one epic (a subtask counts through its parent's epic)", () => {
+    expect(ids(filterTasks(withEpics, { ...all, epic: "checkout" }))).toEqual(["e-1", "e-2"]);
+  });
+  it("`none` keeps the tasks without an epic", () => {
+    expect(ids(filterTasks(withEpics, { ...all, epic: "none" }))).toEqual(["e-4"]);
+  });
+  it("combines with the other filters", () => {
+    expect(ids(filterTasks(withEpics, { ...all, epic: "checkout", state: "queued" }))).toEqual([
+      "e-2",
+    ]);
+  });
+  it("null means every epic", () => {
+    expect(filterTasks(withEpics, all)).toHaveLength(4);
   });
 });

@@ -21,7 +21,7 @@ import { TaskSection } from "./TaskSection.js";
 import { TasksToolbar } from "./TasksToolbar.js";
 import { useTaskActions } from "./useTaskActions.js";
 
-const NO_FILTER: TaskFilter = { query: "", state: "all", label: null };
+const NO_FILTER: TaskFilter = { query: "", state: "all", label: null, epic: null };
 const FINISHED = new Set(["done", "failed", "stopped", "archived"]);
 
 const isTyping = (el: EventTarget | null) =>
@@ -35,13 +35,17 @@ export function TasksPage({
   pid,
   data,
   navigate,
+  epic,
 }: {
   pid: string;
   data: AppData;
-  navigate: (to: Route) => void;
+  navigate: (to: Route, opts?: { replace?: boolean }) => void;
+  /** The epic in the URL (`?epic=<id>`, or `none`), which the filter follows. */
+  epic: string | null;
 }) {
   const actions = useTaskActions(pid, data, navigate);
-  const [filter, setFilter] = useState(NO_FILTER);
+  const [filter, setFilter] = useState<TaskFilter>({ ...NO_FILTER, epic });
+  useEffect(() => setFilter((f) => (f.epic === epic ? f : { ...f, epic })), [epic]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showFinished, setShowFinished] = useState(false);
   const [stopId, setStopId] = useState<string | null>(null);
@@ -73,7 +77,9 @@ export function TasksPage({
   const rows = useMemo(() => {
     const q = filter.query.trim().toLowerCase();
     const plansShown =
-      (filter.state === "all" || filter.state === "needs-you") && filter.label === null
+      (filter.state === "all" || filter.state === "needs-you") &&
+      filter.label === null &&
+      filter.epic === null
         ? plans.filter((p) => p.status === "draft" && (!q || p.title.toLowerCase().includes(q)))
         : [];
     const task = (kind: Task["kind"], t: TaskView): Task =>
@@ -125,7 +131,16 @@ export function TasksPage({
     };
   }, [groups, plans, filter, filtered, shownPending, queuedOrder, tasks]);
 
-  const filtering = filter.query.trim() !== "" || filter.state !== "all" || filter.label !== null;
+  const filtering =
+    filter.query.trim() !== "" ||
+    filter.state !== "all" ||
+    filter.label !== null ||
+    filter.epic !== null;
+  // The epic filter lives in the URL too, so clearing it clears the query.
+  const clearEpic = () => {
+    setFilter((f) => ({ ...f, epic: null }));
+    if (epic !== null) navigate({ name: "tasks", pid }, { replace: true });
+  };
   const finishedOpen = showFinished || filtering;
   const visible: RowEntry[] = [
     ...rows.needs,
@@ -224,7 +239,18 @@ export function TasksPage({
 
   return (
     <div>
-      <TasksToolbar filter={filter} labels={labels} onFilter={setFilter} onNew={newTask} />
+      <TasksToolbar
+        filter={filter}
+        labels={labels}
+        onFilter={setFilter}
+        onNew={newTask}
+        epicTitle={
+          filter.epic === null || filter.epic === "none"
+            ? null
+            : (epics.get(filter.epic)?.title ?? filter.epic)
+        }
+        onClearEpic={clearEpic}
+      />
       {data.tasksLoaded && tasks.length === 0 && plans.every((p) => p.status !== "draft") && (
         <div className="py-8">
           <p className="mt-0 mb-3 text-ink-muted">
@@ -238,7 +264,13 @@ export function TasksPage({
           <p className="mt-0 mb-3 text-ink-muted">
             No tasks match. Clear the search or the filters.
           </p>
-          <Button variant="outline" onClick={() => setFilter(NO_FILTER)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setFilter(NO_FILTER);
+              if (epic !== null) navigate({ name: "tasks", pid }, { replace: true });
+            }}
+          >
             Clear filters
           </Button>
         </div>
