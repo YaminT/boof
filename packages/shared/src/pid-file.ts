@@ -10,6 +10,7 @@ import {
   readProcStat,
   sharesRunnerGroup,
   verifiedDescendants,
+  killVerified,
   type IdentityDeps,
 } from "./process-identity.js";
 
@@ -166,23 +167,37 @@ export interface ReapResult {
 }
 
 /**
- * Windows has no process groups. The agent was verified by its creation time; its children are
- * found by walking ONE process-table query downward, taking only processes created after their
- * parent (Windows does not reparent orphans, so a stranger may list a reused pid as its parent).
- * Each is stopped with `taskkill /F /PID`: never `/T`, which follows parent ids blindly. If the
- * table cannot be read or does not show the agent as recorded, only the agent is stopped. A Job
- * Object (kill-on-close) at spawn is the long-term fix; see goals/desktop-orphan-reaping-macos-windows.
+ * Windows has no process groups. The agent was verified by its creation time (the `-Filter`
+ * probe); its children are found by walking ONE process-table query downward, taking only
+ * processes created after their parent (Windows does not reparent orphans, so a stranger may list
+ * a reused pid as its parent). Never `taskkill /T`, which follows parent ids blindly.
+ *
+ * The table is a second look, a moment later. If it is readable and does not show the agent with
+ * the recorded creation time, the agent has gone (its pid may already belong to someone else):
+ * nothing is killed (`"gone"`). Only an unreadable table falls back to stopping the verified agent
+ * alone with `taskkill /F /PID`. Otherwise the agent and its children are stopped deepest first
+ * by {@link killVerified}: one PowerShell process that opens each process and compares its start
+ * time before it kills, so the pid cannot be reused between the check and the kill. A Job Object
+ * (kill on close) at spawn is the long-term fix; see goals/desktop-orphan-reaping-macos-windows.
  */
 async function killTree(
   record: PidRecord,
   identity: IdentityDeps,
-): Promise<"exited" | "killed" | "survived"> {
+): Promise<"exited" | "killed" | "survived" | "gone"> {
   const run = identity.run ?? runProbe;
   const rows = processTable(identity);
-  const root = rows?.find((r) => r.pid === record.pgid);
-  const children =
-    rows && root && root.created === record.startTime ? verifiedDescendants(record.pgid, rows) : [];
-  for (const pid of [...children, record.pgid]) run("taskkill", ["/F", "/PID", String(pid)]);
+  if (rows === null) {
+    run("taskkill", ["/F", "/PID", String(record.pgid)]);
+  } else {
+    const root = rows.find((r) => r.pid === record.pgid);
+    if (!root || root.created !== record.startTime) return "gone";
+    const byPid = new Map(rows.map((r) => [r.pid, r]));
+    const list = [...verifiedDescendants(record.pgid, rows), record.pgid].map((pid) => ({
+      pid,
+      created: byPid.get(pid)!.created,
+    }));
+    killVerified(list, identity);
+  }
   for (let i = 0; i < 20; i += 1) {
     if (agentStatus(record, identity) !== "running") return "killed";
     await sleep(100);
@@ -284,6 +299,12 @@ async function reapOffLinux(
     : platform === "win32"
       ? await killTree(record, identity)
       : await killGroup(record.pgid);
+  if (result === "gone") {
+    log(
+      `agent ${record.pgid} (${record.command}) is gone: its pid shows another process; not killing`,
+    );
+    return finish("dead");
+  }
   if (result === "survived") {
     log(`could not kill orphaned agent ${record.pgid} (${record.command}): survived`);
     return { outcome: "skipped", record, stillRunning: true };

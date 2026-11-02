@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   agentStatus,
   bootIdentity,
+  killVerified,
   probeEnv,
   probeProcess,
   processTable,
@@ -240,5 +241,35 @@ describe("Windows process table", () => {
     ];
     expect(verifiedDescendants(10, rows)).toEqual([12, 11]);
     expect(verifiedDescendants(99, rows)).toEqual([]);
+  });
+});
+
+describe("killVerified", () => {
+  const T = "2026-11-02T10:00:00.0000000Z";
+  it("refuses a pid that is not a positive integer or a time that is not the fixed UTC form, before running anything", () => {
+    const calls: string[] = [];
+    const deps = { platform: "win32" as const, run: (c: string) => (calls.push(c), "") };
+    for (const bad of [
+      { pid: 0, created: T },
+      { pid: 1.5, created: T },
+      { pid: 7, created: "yesterday" },
+      { pid: 7, created: `${T}'; calc` },
+    ]) {
+      expect(killVerified([bad], deps)).toBe(false);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("runs one PowerShell process with the pairs on stdin", () => {
+    const seen: { cmd: string; input?: string }[] = [];
+    const deps = {
+      platform: "win32" as const,
+      run: (cmd: string, _a: string[], o?: { input?: string }) => (
+        seen.push({ cmd, input: o?.input }),
+        ""
+      ),
+    };
+    expect(killVerified([{ pid: 7, created: T }], deps)).toBe(true);
+    expect(seen).toEqual([{ cmd: "powershell", input: JSON.stringify([{ pid: 7, created: T }]) }]);
   });
 });

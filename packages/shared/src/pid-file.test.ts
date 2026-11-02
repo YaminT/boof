@@ -326,49 +326,89 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
   const WIN_BOOT = "2024-11-01T08:00:00.0000000Z";
   const winBootSec = Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000);
   const AGENT_START = "2026-11-02T17:30:07.1234567Z";
+  type Pair = { pid: number; created: string };
   /**
-   * A Windows box: `table` is the CIM process table (`pid|ppid|created` lines), `taskkills` collects
-   * the commands, and the agent disappears once it has been told to stop.
+   * A Windows box. `table` is the CIM process table (`pid|ppid|created` lines; null: the query
+   * fails). The kill script gets its (pid, created) pairs as JSON on stdin and the agent
+   * disappears once its pid is among them; `taskkill` (the fallback) collects its arguments.
    */
-  const win = (table: string, taskkills: string[]) => {
-    let stopped = false;
-    return {
+  const win = (table: string | null) => {
+    const box = {
+      pairs: [] as Pair[][],
+      scripts: [] as string[],
+      scriptArgs: [] as string[][],
+      taskkills: [] as string[],
+      stopped: false,
+      identity: undefined as unknown as {
+        platform: "win32";
+        run: (cmd: string, args: string[], opts?: { input?: string }) => string | null;
+      },
+    };
+    box.identity = {
       platform: "win32" as const,
-      run: (cmd: string, args: string[]) => {
+      run: (cmd, args, opts) => {
         if (cmd === "taskkill") {
-          taskkills.push(args.join(" "));
-          if (args.includes("4242")) stopped = true;
+          box.taskkills.push(args.join(" "));
+          if (args.includes("4242")) box.stopped = true;
           return "SUCCESS";
         }
         if (cmd !== "powershell") return null;
         const text = args.join(" ");
         if (text.includes("LastBootUpTime")) return WIN_BOOT;
-        if (text.includes("-Filter")) return stopped ? "" : `${AGENT_START}|1`;
-        return stopped ? "" : table;
+        if (text.includes("-Filter")) return box.stopped ? "" : `${AGENT_START}|1`;
+        if (opts?.input !== undefined) {
+          const pairs = JSON.parse(opts.input) as Pair[];
+          box.pairs.push(pairs);
+          box.scripts.push(text);
+          box.scriptArgs.push(args);
+          if (pairs.some((x) => x.pid === 4242)) box.stopped = true;
+          return "";
+        }
+        return box.stopped ? "" : table;
       },
     };
+    return box;
   };
+  const winRecord = () => write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
 
-  it("Windows: stops the agent and its verified children one by one with taskkill /F /PID, never /T", async () => {
-    const taskkills: string[] = [];
+  it("Windows: stops the agent and its verified children, deepest first, in one PowerShell process, never taskkill /T", async () => {
     const table = [
       `4242|1|${AGENT_START}`,
       `5000|4242|2026-11-02T17:30:09.0000000Z`, // child
       `5001|5000|2026-11-02T17:30:10.0000000Z`, // grandchild
       `9999|1|2026-11-02T17:00:00.0000000Z`,
     ].join("\r\n");
-    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
-    const res = await reapOrphan(path, log, {
-      identity: win(table, taskkills),
-      isAlive: () => true,
-    });
+    const box = win(table);
+    const path = await winRecord();
+    const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
     expect(res.outcome).toBe("killed");
-    expect(taskkills).toEqual(["/F /PID 5001", "/F /PID 5000", "/F /PID 4242"]);
+    expect(box.pairs).toEqual([
+      [
+        { pid: 5001, created: "2026-11-02T17:30:10.0000000Z" },
+        { pid: 5000, created: "2026-11-02T17:30:09.0000000Z" },
+        { pid: 4242, created: AGENT_START },
+      ],
+    ]);
+    expect(box.taskkills).toEqual([]);
     expect(existsSync(path)).toBe(false);
   });
 
+  it("Windows: the kill script is fixed text; pids and times only travel as JSON on stdin", async () => {
+    const box = win([`4242|1|${AGENT_START}`, `5000|4242|2026-11-02T17:30:09.0000000Z`].join("\n"));
+    await reapOrphan(await winRecord(), log, { identity: box.identity, isAlive: () => true });
+    expect(box.scripts).toHaveLength(1);
+    const script = box.scripts[0]!;
+    // Opens the process (a held handle keeps the pid from being reused), compares the start time
+    // with the one verified from the table, and kills only on a match.
+    expect(script).toContain("Get-Process -Id");
+    expect(script).toContain("StartTime");
+    expect(script).toContain(".Kill()");
+    expect(script).not.toMatch(/4242|5000|2026-11-02/);
+    expect(box.scriptArgs[0]).toContain("-NoProfile");
+    expect(box.scriptArgs[0]!.join(" ")).not.toMatch(/4242|5000/);
+  });
+
   it("Windows: an older unrelated process that lists the agent's pid as its parent is not killed", async () => {
-    const taskkills: string[] = [];
     const table = [
       `4242|1|${AGENT_START}`,
       // Started before the agent, from a launcher that once had pid 4242; Windows keeps the dead
@@ -379,30 +419,42 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
       `6002|4242|${AGENT_START}`,
       `5000|4242|2026-11-02T17:30:09.0000000Z`, // the one real child
     ].join("\n");
-    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
-    const res = await reapOrphan(path, log, {
-      identity: win(table, taskkills),
+    const box = win(table);
+    const res = await reapOrphan(await winRecord(), log, {
+      identity: box.identity,
       isAlive: () => true,
     });
     expect(res.outcome).toBe("killed");
-    expect(taskkills).toEqual(["/F /PID 5000", "/F /PID 4242"]);
-    expect(taskkills.join(" ")).not.toMatch(/6000|6001|6002|\/T/);
+    expect(box.pairs[0]!.map((x) => x.pid)).toEqual([5000, 4242]);
+    expect(JSON.stringify(box.pairs)).not.toMatch(/6000|6001|6002/);
+    expect(box.taskkills).toEqual([]);
   });
 
-  it("Windows: when the process table cannot be read only the verified agent is stopped", async () => {
-    const taskkills: string[] = [];
-    const base = win("", taskkills);
-    const identity = {
-      ...base,
-      run: (cmd: string, args: string[]) =>
-        cmd === "powershell" && !args.join(" ").match(/LastBootUpTime|-Filter/)
-          ? null
-          : base.run(cmd, args),
-    };
-    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
-    const res = await reapOrphan(path, log, { identity, isAlive: () => true });
+  it("Windows: a readable table whose agent row has another creation time means the agent is gone: nothing is killed", async () => {
+    // The agent exited between the probe and the table read and its pid was reused.
+    for (const table of [
+      `4242|1|2026-11-02T17:31:00.0000000Z\n5000|4242|2026-11-02T17:31:05.0000000Z`,
+      `9999|1|2026-11-02T17:00:00.0000000Z`, // no row for the pid at all
+    ]) {
+      const box = win(table);
+      const path = await winRecord();
+      const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
+      expect(res.outcome, table).toBe("dead");
+      expect(box.pairs).toEqual([]);
+      expect(box.taskkills).toEqual([]);
+      expect(existsSync(path)).toBe(false);
+    }
+  });
+
+  it("Windows: only an unreadable table falls back to stopping the verified agent alone (taskkill /F /PID, no /T)", async () => {
+    const box = win(null);
+    const res = await reapOrphan(await winRecord(), log, {
+      identity: box.identity,
+      isAlive: () => true,
+    });
     expect(res.outcome).toBe("killed");
-    expect(taskkills).toEqual(["/F /PID 4242"]);
+    expect(box.taskkills).toEqual(["/F /PID 4242"]);
+    expect(box.pairs).toEqual([]);
   });
 
   it("macOS: a record naming the runner's own process group or session is never killed", async () => {

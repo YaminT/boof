@@ -14,8 +14,8 @@ import { readFileSync } from "node:fs";
 
 export interface IdentityDeps {
   platform?: NodeJS.Platform;
-  /** Run a command and return its stdout, or null on any failure or timeout. */
-  run?: (cmd: string, args: string[]) => string | null;
+  /** Run a command and return its stdout, or null on any failure or timeout. `input` goes to its stdin. */
+  run?: (cmd: string, args: string[], opts?: { input?: string }) => string | null;
   /** Read a file as text, or null. */
   readFile?: (path: string) => string | null;
   /** Does a process with this pid exist (signal 0)? Tests inject it for made-up pids. */
@@ -39,13 +39,18 @@ export const probeEnv = (base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 });
 
 /** Run a probe command: stdout, or null on any failure or timeout. */
-export const runProbe = (cmd: string, args: string[]): string | null => {
+export const runProbe = (
+  cmd: string,
+  args: string[],
+  opts: { input?: string } = {},
+): string | null => {
   try {
     return execFileSync(cmd, args, {
       encoding: "utf8",
       timeout: 5000,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
+      ...(opts.input !== undefined ? { input: opts.input } : {}),
+      stdio: [opts.input !== undefined ? "pipe" : "ignore", "pipe", "ignore"],
       env: probeEnv(),
     });
   } catch {
@@ -253,7 +258,7 @@ export interface ProcessRow {
   created: string;
 }
 
-const ISO_O = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/;
+export const ISO_O = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/;
 
 /**
  * Windows: every process with its parent and creation time, from ONE CIM query (null when
@@ -318,4 +323,39 @@ export function sharesRunnerGroup(pgid: number, d: IdentityDeps = {}): boolean |
   const target = /^\s*(\S+)\s*$/m.exec(run("ps", ["-o", "sess=", "-p", String(pgid)]) ?? "");
   if (!self || !target) return undefined;
   return Number(self[1]) === pgid || self[2] === target[1];
+}
+
+/** One process to stop: its pid and the creation time it was verified to have (`ISO_O`). */
+export interface VerifiedProcess {
+  pid: number;
+  created: string;
+}
+
+/**
+ * The kill script is fixed text. The (pid, created) pairs arrive as JSON on stdin, never inside
+ * the script. For each pair it opens the process (a held handle keeps Windows from handing the
+ * pid to someone else), compares its start time with the verified one, and only then kills it.
+ */
+const KILL_SCRIPT =
+  "$ErrorActionPreference = 'SilentlyContinue'; " +
+  "foreach ($t in ($input | Out-String | ConvertFrom-Json)) { " +
+  "$p = Get-Process -Id ([int]$t.pid); " +
+  "if ($p -and $p.StartTime.ToUniversalTime().ToString('o') -eq [string]$t.created) { $p.Kill() } }";
+
+/**
+ * Windows: stop these processes, in the order given, from ONE PowerShell process. A pair whose
+ * pid is not an integer or whose time is not the fixed UTC form is refused before anything runs.
+ * Returns false when nothing could be run.
+ */
+export function killVerified(list: VerifiedProcess[], d: IdentityDeps = {}): boolean {
+  const { run } = resolveDeps(d);
+  if (list.length === 0) return true;
+  for (const t of list) {
+    if (!validPid(t.pid) || !ISO_O.test(t.created)) return false;
+  }
+  return (
+    run("powershell", ["-NoProfile", "-NonInteractive", "-Command", KILL_SCRIPT], {
+      input: JSON.stringify(list.map((t) => ({ pid: t.pid, created: t.created }))),
+    }) !== null
+  );
 }
