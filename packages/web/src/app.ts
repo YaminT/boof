@@ -31,6 +31,7 @@ import {
 import { rateLimit, unauthenticatedRateLimit } from "./middleware/rate-limit.js";
 import { audit } from "./middleware/audit.js";
 import { securityConfigReader } from "./security-config.js";
+import { isUiPath, uiDocument } from "./ui-document.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { existsSync } from "node:fs";
 import { DataWatcher } from "./watch.js";
@@ -501,8 +502,11 @@ export function createApp(deps: AppDeps): Hono {
 
   // --- Static UI (optional) ---
   if (deps.uiDir && existsSync(deps.uiDir)) {
+    // UI paths get index.html with a relative <base>, so the app works at / and behind a stripped
+    // prefix; anything else is a real file or a 404.
+    const doc = uiDocument(deps.uiDir);
+    app.get("*", (c, next) => (isUiPath(new URL(c.req.url).pathname) ? doc(c) : next()));
     app.use("/*", serveStatic({ root: deps.uiDir }));
-    app.get("/*", serveStatic({ path: "index.html", root: deps.uiDir }));
   } else {
     app.get("/", (c) => c.text("Boof Runner Agent Task Runner — UI not built. API at api/v1/*"));
   }
