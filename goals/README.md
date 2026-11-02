@@ -109,6 +109,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
 - [ ] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
 - [ ] [`audit-stdio-and-cli-writes`](audit-stdio-and-cli-writes/goal.boof.xml) — Audit the writes made over stdio MCP and through the CLI (after: boof-split, with M3)
+- [ ] [`agent-containment`](agent-containment/goal.boof.xml) — Run task agents isolated from boof: no route to the boof port, no data root, no credentials (investigate the Claude and Codex sandboxes, a separate OS user, a container)
 
 ## Verification and release
 

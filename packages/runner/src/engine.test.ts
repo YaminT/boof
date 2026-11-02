@@ -1145,6 +1145,18 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(seen.every((v) => v === true)).toBe(true);
   });
 
+  it("passes runner.agentEnv to every tool run", async () => {
+    const seen: (readonly string[] | undefined)[] = [];
+    mockState.onRun = async (opts) => {
+      seen.push(opts.agentEnv);
+    };
+    const s = await engine.settingsStore.load();
+    await engine.settingsStore.save({ ...s, runner: { ...s.runner, agentEnv: ["MY_TOKEN"] } });
+    await run("With env");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v?.join() === "MY_TOKEN")).toBe(true);
+  });
+
   it("puts ## Hierarchy after ## Project and before ## Prompt", async () => {
     await new ProjectStore(dataRoot).update("default", { brief: "A shop for hats." });
     await store.create(newTask(fm({ id: "p", status: "draft", title: "Parent" }), "parent"));

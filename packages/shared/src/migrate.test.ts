@@ -609,3 +609,20 @@ describe("webhook secrets", () => {
     expect(err?.message).not.toContain("leakme");
   });
 });
+
+describe("startup and the key directory", () => {
+  it("tightens an auth directory that an older version left looser than 0700", async () => {
+    const { chmod, mkdir, mkdtemp, rm, stat } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "boof-auth-mode-"));
+    try {
+      await mkdir(join(dir, "auth"), { recursive: true });
+      await chmod(join(dir, "auth"), 0o755);
+      await migrateDataRoot(dir);
+      expect((await stat(join(dir, "auth"))).mode & 0o777).toBe(0o700);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

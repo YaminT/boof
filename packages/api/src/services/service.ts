@@ -1231,8 +1231,11 @@ export class TaskService {
    * Run the tools' health checks (each sends a short, paid prompt) and remember the results.
    * Concurrent calls share one check, and a check less than a minute old is returned as it is.
    */
-  health(): Promise<Record<string, HealthResult>> {
-    return this.registry.healthAll(HEALTH_COOLDOWN_MS);
+  async health(): Promise<Record<string, HealthResult>> {
+    const { runner } = await this.loadSettings();
+    return this.registry.healthAll(HEALTH_COOLDOWN_MS, {
+      inheritMcpServers: runner.inheritMcpServers === true,
+    });
   }
 
   /** The last health results of this process, without running a tool (empty until a check ran). */

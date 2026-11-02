@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commandExists, execCommand } from "../exec.js";
 import { ToolRunError } from "./errors.js";
-import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { agentEnv } from "../agent-env.js";
+import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { parseUsage } from "./usage.js";
 import { withQuestions } from "./questions.js";
@@ -19,7 +20,7 @@ export class CodexTool implements Tool {
   readonly defaultModels = ["gpt-5.5"];
   private readonly bin = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
 
-  async detect(): Promise<HealthResult> {
+  async detect(detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
@@ -35,9 +36,18 @@ export class CodexTool implements Tool {
       this.bin,
       // The probe runs outside any repository (the server's cwd); codex refuses
       // that without --skip-git-repo-check. Empty stdin so it never waits for input.
-      ["exec", "--skip-git-repo-check", "--model", model, "Reply with exactly: hi"],
+      [
+        "exec",
+        "--skip-git-repo-check",
+        "--model",
+        model,
+        // Like a run: not the user's config.toml (where the MCP servers are).
+        ...(detect.inheritMcpServers ? [] : ["--ignore-user-config"]),
+        "Reply with exactly: hi",
+      ],
       {
         cwd: process.cwd(),
+        env: agentEnv(),
         input: "",
         timeoutMs: 60000,
       },
@@ -120,6 +130,7 @@ export class CodexTool implements Tool {
       const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
+        env: agentEnv(process.env, opts.agentEnv),
         input: this.promptText(opts),
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,

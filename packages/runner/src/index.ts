@@ -1,4 +1,5 @@
 export * from "./exec.js";
+export * from "./agent-env.js";
 export * from "./prompt-hierarchy.js";
 export * from "./tools/types.js";
 export * from "./tools/usage.js";

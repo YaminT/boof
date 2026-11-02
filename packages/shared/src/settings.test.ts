@@ -303,3 +303,16 @@ describe("runner.inheritMcpServers", () => {
     });
   });
 });
+
+describe("runner.agentEnv", () => {
+  it("lists extra environment variable names for the agents and is empty by default", () => {
+    expect(defaultSettings().runner.agentEnv ?? []).toEqual([]);
+    expect(SettingsPatchSchema.parse({ runner: { agentEnv: ["GITHUB_TOKEN", "MY_VAR"] } })).toEqual(
+      {
+        runner: { agentEnv: ["GITHUB_TOKEN", "MY_VAR"] },
+      },
+    );
+    expect(() => SettingsPatchSchema.parse({ runner: { agentEnv: ["bad name"] } })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ runner: { agentEnv: ["A=B"] } })).toThrow();
+  });
+});

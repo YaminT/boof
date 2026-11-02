@@ -360,6 +360,12 @@ const RolesSchema = z.object({
   reviewer: RoleAssignmentSchema,
 });
 
+/** An environment variable name. */
+const EnvNameSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name")
+  .max(200);
+
 /** Runner section of settings.json. */
 export const RunnerSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -371,6 +377,12 @@ export const RunnerSettingsSchema = z.object({
    * skipped must not get the user's other tools (mail, browser, cloud accounts).
    */
   inheritMcpServers: z.boolean().default(false),
+  /**
+   * Extra environment variable names task agents may inherit from the server, on top of the basics
+   * and each tool's own variables (ANTHROPIC_*, OPENAI_*, ...). Other variables, and every BOOF_*
+   * one, are not passed on.
+   */
+  agentEnv: z.array(EnvNameSchema).max(100).optional(),
 });
 export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
 
@@ -426,6 +438,7 @@ export const SettingsPatchSchema = z
         enabled: z.boolean().optional(),
         concurrency: z.number().int().min(1).optional(),
         inheritMcpServers: z.boolean().optional(),
+        agentEnv: z.array(EnvNameSchema).max(100).optional(),
       })
       .optional(),
     defaultProject: kebab.nullable().optional(),

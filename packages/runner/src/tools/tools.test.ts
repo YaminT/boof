@@ -941,4 +941,32 @@ describe("user MCP servers", () => {
       "--ignore-user-config",
     );
   });
+
+  it("the health probes ignore the user's MCP servers too, unless asked not to", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-probe-"));
+    try {
+      const mk = async (name: string, varName: string) => {
+        const bin = join(dir, name);
+        await writeFile(bin, `#!/bin/sh\nprintf '%s\\n' "$@" >> "${dir}/${name}.argv"\necho hi\n`);
+        await chmod(bin, 0o755);
+        process.env[varName] = bin;
+      };
+      await mk("claude", "BOOF_RUNNER_CLAUDE_BIN");
+      await mk("codex", "BOOF_RUNNER_CODEX_BIN");
+      await new ClaudeCodeTool().detect();
+      await new CodexTool().detect();
+      expect(await readFile(join(dir, "claude.argv"), "utf8")).toContain("--strict-mcp-config");
+      expect(await readFile(join(dir, "codex.argv"), "utf8")).toContain("--ignore-user-config");
+      await rm(join(dir, "claude.argv"));
+      await rm(join(dir, "codex.argv"));
+      await new ClaudeCodeTool().detect({ inheritMcpServers: true });
+      await new CodexTool().detect({ inheritMcpServers: true });
+      expect(await readFile(join(dir, "claude.argv"), "utf8")).not.toContain("--strict-mcp-config");
+      expect(await readFile(join(dir, "codex.argv"), "utf8")).not.toContain("--ignore-user-config");
+    } finally {
+      delete process.env.BOOF_RUNNER_CLAUDE_BIN;
+      delete process.env.BOOF_RUNNER_CODEX_BIN;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

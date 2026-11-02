@@ -75,7 +75,8 @@ export function creatorLive(
   clients: readonly Client[] | undefined,
   nowMs: number,
 ): boolean {
-  if (!clients) return true;
+  // `local` is the local principal; it is never looked up as a client (no client may hold the id).
+  if (!clients || hook.createdBy === "local") return true;
   const creator = clients.find((c) => c.id === hook.createdBy);
   // A webhook from before the flag counts as client-made when its creator is a known client.
   if (!hook.createdByClient && !creator) return true;

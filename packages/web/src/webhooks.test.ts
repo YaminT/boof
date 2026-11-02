@@ -240,6 +240,36 @@ describe("webhooks of restricted keys", () => {
     expect(hits).toHaveLength(1);
   });
 
+  it("a webhook created by local always means the local principal, never a client of that id", async () => {
+    const { creatorLive } = await import("./webhooks.js");
+    const hook = {
+      id: "wh-1",
+      url: "http://h",
+      events: ["*"],
+      projects: ["a"],
+      enabled: true,
+      createdBy: "local",
+      created: "x",
+    } as never;
+    const forged = [
+      {
+        id: "local",
+        name: "local",
+        kind: "harness",
+        keyHash: "x",
+        scopes: [],
+        projects: ["b"],
+        trust: "review",
+        created: "x",
+        revokedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ] as never;
+    expect(creatorLive(hook, forged, Date.now())).toBe(true);
+    expect(
+      creatorLive({ ...(hook as object), createdByClient: true } as never, forged, Date.now()),
+    ).toBe(true);
+  });
+
   it("refuses a webhook with an empty project list", async () => {
     const res = await create({ url: "http://hook.test/x", projects: [] });
     expect(res.status).toBe(400);

@@ -1,6 +1,7 @@
 import type { TokenUsage } from "@boof-runner/shared";
 import { commandExists, execCommand } from "../exec.js";
-import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { agentEnv } from "../agent-env.js";
+import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { ToolRunError } from "./errors.js";
 import { parseUsage } from "./usage.js";
 import { withQuestions } from "./questions.js";
@@ -21,7 +22,7 @@ export class ClaudeCodeTool implements Tool {
   readonly defaultModels = ["opus", "sonnet", "haiku"];
   private readonly bin = process.env.BOOF_RUNNER_CLAUDE_BIN ?? "claude";
 
-  async detect(): Promise<HealthResult> {
+  async detect(detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
@@ -35,8 +36,17 @@ export class ClaudeCodeTool implements Tool {
     const model = (await this.listModels()).find((m) => m === "sonnet") ?? this.defaultModels[1];
     const probe = await execCommand(
       this.bin,
-      ["--print", "--output-format", "text", "--model", model, "Reply with exactly: hi"],
-      { cwd: process.cwd(), timeoutMs: 45000 },
+      [
+        "--print",
+        "--output-format",
+        "text",
+        "--model",
+        model,
+        // The probe, too, stays away from the user's MCP servers.
+        ...(detect.inheritMcpServers ? [] : ["--strict-mcp-config"]),
+        "Reply with exactly: hi",
+      ],
+      { cwd: process.cwd(), timeoutMs: 45000, env: agentEnv() },
     );
     if (probe.code !== 0 || probe.timedOut || !probe.stdout.trim()) {
       return {
@@ -97,6 +107,7 @@ export class ClaudeCodeTool implements Tool {
     const render = new StreamRenderer((text) => opts.onChunk?.(text));
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
+      env: agentEnv(process.env, opts.agentEnv),
       input: opts.prompt,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

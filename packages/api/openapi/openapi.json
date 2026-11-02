@@ -1635,6 +1635,15 @@
           "runner": {
             "additionalProperties": false,
             "properties": {
+              "agentEnv": {
+                "items": {
+                  "maxLength": 200,
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
               "concurrency": {
                 "default": 1,
                 "maximum": 9007199254740991,
@@ -11140,6 +11149,15 @@
                   "runner": {
                     "additionalProperties": false,
                     "properties": {
+                      "agentEnv": {
+                        "items": {
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
                       "concurrency": {
                         "maximum": 9007199254740991,
                         "minimum": 1,

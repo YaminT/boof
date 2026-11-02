@@ -10,6 +10,11 @@ export interface HealthResult {
   version?: string;
 }
 
+export interface DetectOptions {
+  /** As `RunOptions.inheritMcpServers`: false (default) keeps the probe away from the user's MCP servers. */
+  inheritMcpServers?: boolean;
+}
+
 export interface RunOptions {
   role: Role;
   model: string;
@@ -21,10 +26,12 @@ export interface RunOptions {
   autoApprove: boolean;
   /**
    * Let the agent load the user's own MCP servers (`runner.inheritMcpServers`). Default false: the
-   * claude adapter then passes `--strict-mcp-config`. Codex and opencode read their own config and
-   * have no flag boof can rely on, so they are not isolated.
+   * claude adapter then passes `--strict-mcp-config` and codex `--ignore-user-config`. opencode
+   * reads its own config and has no flag boof can rely on, so it is not isolated.
    */
   inheritMcpServers?: boolean;
+  /** Extra environment variable names the agent may inherit (`runner.agentEnv`); see `agentEnv()`. */
+  agentEnv?: readonly string[];
   /** Optional timeout for this run. */
   timeoutMs?: number;
   /**
@@ -70,7 +77,8 @@ export interface Tool {
   id: string;
   displayName: string;
   defaultModels: string[];
-  detect(): Promise<HealthResult>;
+  /** Check that the tool is installed and usable (sends a short, paid prompt). */
+  detect(opts?: DetectOptions): Promise<HealthResult>;
   listModels(): Promise<string[]>;
   /** True when `run` honours `resumeSessionId`; otherwise a steered step restarts. */
   readonly supportsResume?: boolean;

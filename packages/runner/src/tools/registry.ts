@@ -2,7 +2,7 @@ import { ClaudeCodeTool } from "./claude-code.js";
 import { CodexTool } from "./codex.js";
 import { MockTool } from "./mock.js";
 import { OpencodeTool } from "./opencode.js";
-import type { HealthResult, Tool } from "./types.js";
+import type { DetectOptions, HealthResult, Tool } from "./types.js";
 
 /** A health result plus when it was computed in this server process. */
 export interface CachedHealth extends HealthResult {
@@ -50,7 +50,7 @@ export class ToolRegistry {
    * Run every tool's health check (each one sends a short, paid prompt) unless the last check is
    * younger than `maxAgeMs`, and share one check between concurrent callers. Returns id → result.
    */
-  healthAll(maxAgeMs = 0): Promise<Record<string, HealthResult>> {
+  healthAll(maxAgeMs = 0, detect: DetectOptions = {}): Promise<Record<string, HealthResult>> {
     if (this.healthInFlight) return this.healthInFlight;
     const cached = this.lastHealth();
     const ids = this.list().map((t) => t.id);
@@ -69,20 +69,20 @@ export class ToolRegistry {
         >,
       );
     }
-    const run = this.runHealth().finally(() => {
+    const run = this.runHealth(detect).finally(() => {
       this.healthInFlight = undefined;
     });
     this.healthInFlight = run;
     return run;
   }
 
-  private async runHealth(): Promise<Record<string, HealthResult>> {
+  private async runHealth(detect: DetectOptions): Promise<Record<string, HealthResult>> {
     const out: Record<string, HealthResult> = {};
     await Promise.all(
       this.list().map(async (t) => {
         let result: HealthResult;
         try {
-          result = await t.detect();
+          result = await t.detect(detect);
         } catch (err) {
           result = { status: "unavailable", message: String(err) };
         }

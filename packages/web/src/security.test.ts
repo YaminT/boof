@@ -416,8 +416,16 @@ describe("authorize (scopes)", () => {
       expect((await put(review, body)).status, JSON.stringify(body)).toBe(200);
     }
     expect((await put(trusted, { brief: "ok" })).status).toBe(200);
-    // Creating a project is an operator action.
-    await new SettingsStore(root).update({});
+    // Creating a project is an operator action: refused as review trust, not as a bad root,
+    // even when the path is allowed and the directory is fresh.
+    const { SecuritySettingsSchema } = await import("@boof-runner/shared");
+    const settings = new SettingsStore(root);
+    const cur = await settings.load();
+    const allowed = join(root, "allowed-projects");
+    await settings.save({
+      ...cur,
+      security: SecuritySettingsSchema.parse({ ...cur.security, allowedProjectRoots: [allowed] }),
+    });
     const make = (key: string, body: object) => call(app, "/api/v1/projects", post(body), key);
     const refused = await make(review, { workingDirectory: repo });
     expect(refused.status).toBe(403);
@@ -427,6 +435,12 @@ describe("authorize (scopes)", () => {
       brief: "b",
     });
     expect(refusedNew.status).toBe(403);
+    const fresh = join(allowed, "fresh");
+    const inAllowed = await make(review, { path: { mode: "new", directory: fresh }, brief: "b" });
+    expect(inAllowed.status).toBe(403);
+    expect((await inAllowed.json()).error.code).toBe("forbidden_trust");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(fresh)).toBe(false);
   });
 
   it("the runner switch needs a trusted client", async () => {
