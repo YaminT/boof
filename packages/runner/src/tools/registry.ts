@@ -2,18 +2,16 @@ import { ClaudeCodeTool } from "./claude-code.js";
 import { CodexTool } from "./codex.js";
 import { MockTool } from "./mock.js";
 import { OpencodeTool } from "./opencode.js";
-import type { DetectOptions, HealthResult, Tool } from "./types.js";
+import type { CachedHealth, HealthResult, ToolCatalog } from "@boof-runner/shared";
+import type { DetectOptions, Tool } from "./types.js";
 
-/** A health result plus when it was computed in this server process. */
-export interface CachedHealth extends HealthResult {
-  checkedAt: string;
-}
+export type { CachedHealth } from "@boof-runner/shared";
 
 /**
  * Registry of available tools. New tools register here without the pipeline
  * needing to know their concrete types (tool-adapters spec).
  */
-export class ToolRegistry {
+export class ToolRegistry implements ToolCatalog {
   private readonly tools = new Map<string, Tool>();
   /** Last health result per tool id, written by {@link healthAll}. */
   private readonly healthCache = new Map<string, CachedHealth>();

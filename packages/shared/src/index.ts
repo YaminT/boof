@@ -46,3 +46,4 @@ export * from "./boof-scan.js";
 export * from "./plan-import.js";
 export * from "./plan-sync.js";
 export * from "./plan-base.js";
+export * from "./tool-catalog.js";
