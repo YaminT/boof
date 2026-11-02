@@ -12,6 +12,14 @@ describe("desktop /healthz facts", () => {
     expect(opts.runnerRunning?.()).toBe(true);
   });
 
+  it("marks the desktop client as the operator only when an id is given", () => {
+    const base = { root: "/r", port: 1 };
+    expect(serverOptions(base, "1.0.0", () => null, "desktop-ui").operatorClients).toEqual(
+      new Set(["desktop-ui"]),
+    );
+    expect(serverOptions(base, "1.0.0", () => null).operatorClients).toBeUndefined();
+  });
+
   it("reads the grace period from BOOF_RUNNER_SHUTDOWN_GRACE_MS, default 30 s", () => {
     expect(shutdownGraceMs({})).toBe(30_000);
     expect(shutdownGraceMs({ BOOF_RUNNER_SHUTDOWN_GRACE_MS: "5000" })).toBe(5_000);

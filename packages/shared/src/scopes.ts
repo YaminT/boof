@@ -13,6 +13,12 @@ export interface Principal {
   trust: Trust;
   /** Client kind, for task provenance. Absent for the local principal. */
   clientKind?: ClientKind;
+  /**
+   * A client key the server was started to treat as the local operator (the desktop app's own key,
+   * used from loopback without proxy headers). Project registration applies the local principal's
+   * rules; every other check uses the client's scopes, trust and projects as usual.
+   */
+  operator?: true;
 }
 
 export function hasScope(principal: Principal, scope: Scope): boolean {

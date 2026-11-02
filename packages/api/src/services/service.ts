@@ -598,7 +598,7 @@ export class TaskService {
     const directory = path?.mode === "auto" ? undefined : (path?.directory ?? workingDirectory);
     const projectsRoot = resolveProjectsRoot(await this.loadSettings());
     let assertTarget: ((real: string) => Promise<void>) | undefined;
-    if (actor && actor.kind !== "local") {
+    if (actor && !this.actsAsLocal(actor)) {
       // Vet the path as given (fast path), then hand the store the same check to run on the
       // directory it really uses, under the create lock and after the mkdir.
       const why =
@@ -655,7 +655,7 @@ export class TaskService {
 
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
     let assertTarget: ((real: string) => Promise<void>) | undefined;
-    if (patch.workingDirectory !== undefined && actor && actor.kind !== "local") {
+    if (patch.workingDirectory !== undefined && actor && !this.actsAsLocal(actor)) {
       await this.assertRegistrationAllowed(actor, patch.workingDirectory);
       // The store resolves the path again; check the directory it really uses.
       assertTarget = (real) => this.assertRegistrationAllowed(actor, real);
@@ -702,10 +702,15 @@ export class TaskService {
     return { ok: true };
   }
 
+  /** The local principal, no principal at all, or a client key the server treats as the local operator. */
+  private actsAsLocal(actor?: Principal): boolean {
+    return actor === undefined || actor.kind === "local" || actor.operator === true;
+  }
+
   /** Every ProjectError code is mapped here explicitly; the `never` default keeps it exhaustive. */
   private mapProjectError(err: unknown, actor?: Principal): unknown {
     if (!(err instanceof ProjectError)) return err;
-    const remote = actor !== undefined && actor.kind !== "local";
+    const remote = !this.actsAsLocal(actor);
     switch (err.code) {
       case "not_found":
         return new OpError(404, err.message, "project_not_found");

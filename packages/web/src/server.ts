@@ -14,6 +14,8 @@ import { WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
   root: string;
+  /** Client ids treated as the local operator for project registration (the desktop's own key). */
+  operatorClients?: ReadonlySet<string>;
   port?: number;
   /** Bind address. Default 127.0.0.1; anything non-loopback requires `auth.mode = "required"`. */
   host?: string;
@@ -133,6 +135,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     uiDir: opts.uiDir,
     allowedHosts,
     authStore,
+    operatorClients: opts.operatorClients,
     isSelfUrl,
     version: opts.version,
     runnerRunning: opts.runnerRunning,

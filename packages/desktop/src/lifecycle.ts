@@ -5,13 +5,22 @@ import type { RunningServer, startServer } from "@boof-runner/web";
 
 export type ServerOptions = Parameters<typeof startServer>[0];
 
-/** Server options for the desktop app: the app version and whether the engine loop runs. */
+/**
+ * Server options for the desktop app: the app version and whether the engine loop runs. With
+ * `operatorClientId` (the id of the desktop's own key) that key registers projects like the local user.
+ */
 export function serverOptions(
   base: Pick<ServerOptions, "root" | "port" | "uiDir">,
   version: string,
   engine: () => RunnerEngine | null,
+  operatorClientId?: string,
 ): ServerOptions {
-  return { ...base, version, runnerRunning: () => engine() !== null };
+  return {
+    ...base,
+    version,
+    runnerRunning: () => engine() !== null,
+    ...(operatorClientId ? { operatorClients: new Set([operatorClientId]) } : {}),
+  };
 }
 
 const DEFAULT_GRACE_MS = 30_000;

@@ -48,6 +48,8 @@ import { HARNESS_MD } from "./generated/harness.js";
 
 export interface AppDeps {
   service: TaskService;
+  /** Client ids treated as the local operator for project registration (see `AuthenticateOptions`). */
+  operatorClients?: ReadonlySet<string>;
   watcher?: DataWatcher;
   /** Absolute path to the built UI directory (index.html + assets), if any. */
   uiDir?: string;
@@ -192,7 +194,13 @@ export function createApp(deps: AppDeps): Hono {
     ...(await security()).allowedHosts,
   ]);
   for (const path of guarded) app.use(path, origins);
-  const auth = createAuthenticator({ store: authStore, security, peerAddress, now: deps.now });
+  const auth = createAuthenticator({
+    store: authStore,
+    security,
+    peerAddress,
+    now: deps.now,
+    operatorClients: deps.operatorClients,
+  });
   const limiter = rateLimit({ security, now: deps.now });
   // Before authenticate, so failed authentications are counted per address; a request whose key
   // verifies is never limited. After the Origin guard, so cross-site rejections do not spend a

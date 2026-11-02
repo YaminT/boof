@@ -1078,3 +1078,101 @@ describe("project creation with path and brief", () => {
     });
   });
 });
+
+describe("the desktop operator key", () => {
+  let op: Awaited<ReturnType<AuthStore["create"]>>;
+  const asOperator = (id: string) => {
+    app = createApp({
+      service,
+      watcher,
+      authStore,
+      peerAddress: () => peer,
+      operatorClients: new Set([id]),
+    });
+  };
+  const register = (dir: string, key: string, headers: Record<string, string> = {}) => {
+    const init = post({ workingDirectory: dir });
+    return call(
+      "/api/v1/projects",
+      { ...init, headers: { ...(init.headers as object), ...headers } },
+      key,
+    );
+  };
+  beforeEach(async () => {
+    await setSecurity({ allowedProjectRoots: [] });
+    op = await authStore.create({
+      name: "desktop-ui",
+      kind: "ui",
+      scopes: ["admin"],
+      trust: "trusted",
+    });
+    asOperator(op.client.id);
+    peer = LOOPBACK;
+  });
+
+  it("registers and creates outside allowedProjectRoots from loopback", async () => {
+    const res = await call(
+      "/api/v1/projects",
+      post({ path: { mode: "new", directory: join(base, "desk") }, brief: "b" }),
+      op.key,
+    );
+    expect(res.status).toBe(201);
+    expect((await res.json()).origin).toMatchObject({ kind: "api", client: op.client.id });
+    expect((await register(await repo("existing"), op.key)).status).toBe(201);
+  });
+
+  it("can move a project's working directory like the local operator", async () => {
+    expect((await register(await repo("r0"), op.key)).status).toBe(201);
+    const res = await call(
+      "/api/projects/r0",
+      put({ workingDirectory: await repo("moved") }),
+      op.key,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("stays the client in whoami and keeps its scopes", async () => {
+    const who = await (await call("/api/v1/whoami", {}, op.key)).json();
+    expect(who.principal).toMatchObject({ kind: "client", id: op.client.id });
+  });
+
+  it("is an ordinary client from a remote peer", async () => {
+    peer = REMOTE;
+    const res = await register(await repo("r1"), op.key);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe("project_root_not_allowed");
+  });
+
+  it.each([
+    ["x-forwarded-for", "10.0.0.9"],
+    ["forwarded", "for=10.0.0.9"],
+  ])("is an ordinary client behind a %s header", async (name, value) => {
+    const res = await register(await repo("r2"), op.key, { [name]: value });
+    expect(res.status).toBe(403);
+  });
+
+  it("another admin key from loopback is still bound by allowedProjectRoots", async () => {
+    const other = await mint(["admin"], "*", "other");
+    expect((await register(await repo("r3"), other)).status).toBe(403);
+  });
+
+  it.each([
+    ["is not admin", { scopes: ["projects:write", "projects:read"] as Scope[] }],
+    ["is restricted to projects", { scopes: ["admin"] as Scope[], projects: ["x"] }],
+    ["has review trust", { scopes: ["admin"] as Scope[], trust: "review" as const }],
+    [
+      "expires",
+      { scopes: ["admin"] as Scope[], expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
+    ],
+  ])("loses operator status when its client %s", async (_label, extra) => {
+    const weak = await authStore.create({ name: "weak", ...extra });
+    asOperator(weak.client.id);
+    expect((await register(await repo("r4"), weak.key)).status).toBe(403);
+  });
+
+  it("a key that is not listed gets nothing from other keys being listed", async () => {
+    const other = await authStore.create({ name: "other", scopes: ["admin"], trust: "trusted" });
+    expect((await register(await repo("r5"), other.key)).status).toBe(403);
+    expect((await register(await repo("r6"), op.key)).status).toBe(201);
+  });
+});

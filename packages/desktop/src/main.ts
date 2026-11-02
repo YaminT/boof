@@ -132,8 +132,16 @@ async function boot(): Promise<void> {
     console.error("desktop auth setup failed; using local-trust:", err);
     return undefined;
   });
+  const operatorClientId = desktopToken
+    ? (await new AuthStore(root).get(DESKTOP_CLIENT_NAME))?.id
+    : undefined;
   server = await startServer(
-    serverOptions({ root, port: PORT, uiDir: uiDir() }, app.getVersion(), () => engine),
+    serverOptions(
+      { root, port: PORT, uiDir: uiDir() },
+      app.getVersion(),
+      () => engine,
+      operatorClientId,
+    ),
   );
   engine = new RunnerEngine({ root });
   void engine.loop();

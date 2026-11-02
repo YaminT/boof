@@ -80,7 +80,7 @@ class ClientCache {
   }
 }
 
-export function principalFromClient(client: Client): Principal {
+export function principalFromClient(client: Client, opts: { operator?: boolean } = {}): Principal {
   return {
     kind: "client",
     id: client.id,
@@ -89,6 +89,7 @@ export function principalFromClient(client: Client): Principal {
     projects: client.projects === "*" ? "*" : new Set(client.projects),
     trust: client.trust,
     clientKind: client.kind,
+    ...(opts.operator ? { operator: true as const } : {}),
   };
 }
 
@@ -102,6 +103,11 @@ export interface AuthenticateOptions {
   security: () => Promise<SecuritySettings>;
   peerAddress: PeerAddressResolver;
   now?: () => number;
+  /**
+   * Client ids the server treats as the local operator, but only for a key with full power (admin
+   * scope, trusted, every project, no expiry) used from loopback without proxy headers.
+   */
+  operatorClients?: ReadonlySet<string>;
 }
 
 export type AuthResult = { ok: true; principal: Principal } | { ok: false; message: string };
@@ -157,7 +163,18 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       lastTouch.set(client.id, t);
       opts.store.touch(client.id).catch((err) => console.error("lastUsedAt update failed", err));
     }
-    return { ok: true, principal: principalFromClient(client) };
+    // A local reverse proxy makes every peer look like loopback; never trust those.
+    const proxied =
+      c.req.header("x-forwarded-for") !== undefined || c.req.header("forwarded") !== undefined;
+    const operator =
+      opts.operatorClients?.has(client.id) === true &&
+      isLoopbackAddress(peer) &&
+      !proxied &&
+      client.scopes.includes("admin") &&
+      client.trust === "trusted" &&
+      client.projects === "*" &&
+      !client.expiresAt;
+    return { ok: true, principal: principalFromClient(client, { operator }) };
   };
 
   const middleware: MiddlewareHandler = async (c, next) => {
