@@ -761,7 +761,7 @@ describe("delivery after a webhook is updated", () => {
       root,
       service,
       authStore,
-      fetch: (async (url: string, init: { body: string }) => {
+      unpinnedFetchForTests: (async (url: string, init: { body: string }) => {
         hits.push({ url: String(url), project: JSON.parse(init.body).project });
         return new Response("", { status: answer() });
       }) as unknown as typeof fetch,

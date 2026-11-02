@@ -113,7 +113,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.rotate": {
     none: "the clients screen can create and revoke, not rotate; use REST, MCP or the CLI",
   },
-  "webhooks.list": { none: "no webhook screen; use REST, MCP or the CLI" },
-  "webhooks.create": { none: "no webhook screen; use REST, MCP or the CLI" },
-  "webhooks.delete": { none: "no webhook screen; use REST, MCP or the CLI" },
+  "webhooks.list": { where: "listWebhooks \u2014 Webhooks (the Automation page)" },
+  "webhooks.create": {
+    where: "createWebhook \u2014 Webhooks (add a webhook; the secret is shown once)",
+  },
+  "webhooks.update": { where: "updateWebhook \u2014 Webhooks (enable, disable, edit)" },
+  "webhooks.delete": { where: "deleteWebhook \u2014 Webhooks (delete a webhook)" },
 };

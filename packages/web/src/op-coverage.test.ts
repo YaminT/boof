@@ -39,9 +39,6 @@ describe("UI coverage of the operations", () => {
         "runner.status",
         "runner.overview",
         "auth.clients.rotate",
-        "webhooks.list",
-        "webhooks.create",
-        "webhooks.delete",
       ]
     `);
   });
