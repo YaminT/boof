@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import * as prettier from "prettier";
 import { buildOpenApi, getOp, registry } from "../packages/api/src/index.js";
 import { SCOPES } from "../packages/shared/src/index.js";
+import { commandPath } from "../bin/src/ops-cli.js";
 
 export const BEGIN = "<!-- BEGIN GENERATED REFERENCE -->";
 export const END = "<!-- END GENERATED REFERENCE -->";
@@ -202,6 +203,7 @@ function operationSection(opName: string, method: string, path: string, o: Json)
   out.push(`- Operation: ${code(opName)}`);
   out.push(`- Scope: ${scopeText(op)}`);
   out.push(`- MCP tool: ${op.mcp.expose ? code(op.mcp.name!) : "none (REST only)"}`);
+  out.push(`- CLI: ${code(`boof-runner ${commandPath(op).join(" ")}`)}`);
   out.push(`- What it does: ${op.description}`);
   const ok = Object.entries((o["responses"] ?? {}) as Json).find(([k]) => k !== "default");
   const okSchema = ok?.[1]?.["content"];

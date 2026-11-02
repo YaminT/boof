@@ -1,7 +1,9 @@
 # boof-runner REST API (v1)
 
-The API is generated from one operations registry (`packages/api`), so REST and the MCP tools
-(see "MCP" below) stay identical. The machine-readable contract is the OpenAPI 3.1 document at
+The API is generated from one operations registry (`packages/api`), so REST, the MCP tools
+(see "MCP" below) and the CLI commands (`boof-runner <area> <verb>`) stay identical. The exceptions:
+attachment upload and download are not MCP tools, and the gaps of the web UI are listed in
+`packages/web/ui/src/op-coverage.ts`. The machine-readable contract is the OpenAPI 3.1 document at
 `GET /api/v1/openapi.json` (a sorted copy is committed as `packages/api/openapi/openapi.json`).
 Generate a client from it, or use the examples below.
 

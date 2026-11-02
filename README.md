@@ -13,7 +13,7 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 - **Worktrees** — every task runs on its own branch `boof-runner/<task-id>`. Branches are kept; failed or stopped work is never discarded.
 - **Web UI** — React and Vite over a Hono server, with live updates and agent output streaming.
 - **Desktop app** — Electron wrapper that runs server, runner and UI in one window.
-- **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, no web server needed.
+- **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, plus `boof-runner <area> <verb>` for every API operation, no web server needed.
 - **REST API** — versioned `/api/v1` generated from one operations registry, with an OpenAPI 3.1 document, ETags, idempotency keys and paging.
 - **MCP** — the same operations as 72 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
 - **Events and webhooks** — replayable server-sent events and HMAC-signed webhooks.
@@ -194,6 +194,8 @@ boof-runner plan <import|sync|export>  Import goal files into a plan, sync it to
 boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access
 boof-runner service <install|uninstall|status|logs>  Run as a systemd user service (Linux)
 boof-runner mcp [options]              Serve boof over MCP on stdin/stdout
+boof-runner ops                        List the operation commands (every REST/MCP operation)
+boof-runner <area> <verb> [flags]      Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
 boof-runner --help                     Show help (also: <command> --help)
 boof-runner --version                  Print the version (also: -v)
 ```
@@ -215,6 +217,21 @@ Common option: `-d, --data <path>` (data root, default `./data` or `$BOOF_RUNNER
 | `mcp`     | `--client <id>`, `--project <id>`                                                                                                                                                                                                                          |
 
 Exit codes: 0 success; 1 a task failed, was stopped, parked, nothing was actionable, or bad usage.
+
+### Operation commands
+
+Every operation of the API is also a command, `boof-runner <area> <verb>`, generated from the same registry as the REST routes and the MCP tools (`boof-runner ops` lists them; `<area> <verb> --help` shows the flags and the scope). They run in-process, with no server.
+
+```bash
+boof-runner tasks create --project shop --title "Fix login" --prompt "The login form drops the redirect."
+boof-runner plans sync --project shop --plan-id q4 --json
+boof-runner auth clients create --name ci --scopes tasks:read,tasks:write
+```
+
+- **Flags** are the input fields in kebab-case (`projectId` is `--project-id`, and `--project` also works). A value may start with `-` or contain `=`. Booleans are bare (`--dry-run`), `--dry-run=false` or `--no-dry-run`. Lists are comma-separated or repeated; objects and arrays of objects are JSON text or `@file.json`; `null` clears a nullable field. `--input '<json>'` or `--input @file.json` gives the whole input, and flags override its keys. A project-scoped command without `--project` uses `settings.defaultProject`.
+- **Output** is for people by default (the summary line). `--json` prints the result as JSON and nothing else, so `| jq` works; warnings (`warning (subtasks_open): ...`) go to stderr. A key or signing secret shown once (`auth clients create`, `auth clients rotate`, `webhooks create`) is printed as a `key:` or `secret:` line in human mode; keep it, it is not shown again. A download needs `--out <file>` (or `--out -`).
+- **Identity** is the local administrator under `security.auth.mode = "local-trust"`, the same as a command you type on the machine. With `required`, pass `--client <id>` (no key is needed: the OS user owns the data root); that client's scopes, projects and trust apply. A revoked client is refused on the next command.
+- **Exit codes** of these commands: 0 success; 1 bad usage or any other error; 2 not found; 3 not allowed (identity, scope, project, trust); 130 interrupted (Ctrl-C ends a `tasks wait` at once).
 
 ## Configuration
 

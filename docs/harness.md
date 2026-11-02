@@ -788,6 +788,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - Operation: `auth.whoami`
 - Scope: none (any authenticated caller)
 - MCP tool: `boof_whoami`
+- CLI: `boof-runner auth whoami`
 - What it does: Returns the calling principal (kind, id, name, trust, scopes, projects) and basic server facts (version, auth mode, whether MCP is enabled). No input. Needs no scope; any authenticated caller may use it. No side effects.
 - Success: HTTP 200 with `{ principal: { expiresAt?: string, id: string, kind: "local" | "client", name: string, projects: "*" | string[], scopes: Scope[], trust: "trusted" | "review" }, server: { authMode: "local-trust" | "required", mcpEnabled: boolean, version: string } }`.
 - Errors: none beyond the generic ones
@@ -797,6 +798,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - Operation: `auth.clients.list`
 - Scope: `auth:admin`
 - MCP tool: `boof_list_clients`
+- CLI: `boof-runner auth clients list`
 - What it does: Lists the API clients without their keys. No input. Shows only the clients the caller may manage (and itself).
 - Success: HTTP 200 with `{ clients: Client[] }`.
 - Errors: `403 forbidden_scope`
@@ -806,6 +808,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - Operation: `auth.clients.create`
 - Scope: `auth:admin`
 - MCP tool: `boof_create_client`
+- CLI: `boof-runner auth clients create`
 - What it does: Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes, trust, projects or an expiry the caller lacks; a restricted caller's projects and expiry are inherited when omitted.
 - Success: HTTP 201 with `{ client: Client, key: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `403 forbidden_trust`
@@ -824,6 +827,7 @@ JSON body (unknown keys are rejected):
 - Operation: `auth.clients.revoke`
 - Scope: `auth:admin`
 - MCP tool: `boof_revoke_client`
+- CLI: `boof-runner auth clients revoke`
 - What it does: Revokes a client's key for good. Input: clientId. Marks the client revoked. A client with more scopes, trust, projects or expiry than the caller answers 404, like an unknown id.
 - Success: HTTP 200 with `{ client: Client }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
@@ -837,6 +841,7 @@ Path parameters (all required):
 - Operation: `auth.clients.rotate`
 - Scope: `auth:admin`
 - MCP tool: `boof_rotate_client`
+- CLI: `boof-runner auth clients rotate`
 - What it does: Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. A client with more scopes, trust, projects or expiry than the caller answers 404, like an unknown id.
 - Success: HTTP 200 with `{ client: Client, key: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
@@ -852,6 +857,7 @@ Path parameters (all required):
 - Operation: `projects.list`
 - Scope: `projects:read`
 - MCP tool: `boof_list_projects`
+- CLI: `boof-runner projects list`
 - What it does: Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.
 - Success: HTTP 200 with `{ projects: { archived: boolean, brief?: string, budget?: object, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planWriteBack: boolean, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
@@ -865,6 +871,7 @@ Query parameters:
 - Operation: `projects.create`
 - Scope: `projects:write`
 - MCP tool: `boof_create_project`
+- CLI: `boof-runner projects create`
 - What it does: Registers or creates a project. Inputs: either workingDirectory (an existing git work tree; the original form) or path: {mode: "existing", directory}, {mode: "new", directory, confirm?} (boof creates the directory, runs git init and makes an empty first commit; a non-empty directory answers 409 directory_not_empty unless confirm is true) or {mode: "auto"} (boof creates <settings.projectsRoot>/<id>, default ~/boof-projects). brief is required for new and auto, optional for existing; it is stored on the project and given to every agent prompt as ## Project. Optional id, name and overrides. API clients: existing and new directories must lie under security.allowedProjectRoots, and so must the projects root for auto. Creates the project's data directory; read workingDirectory from the result.
 - Success: HTTP 201 with `Project`.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
@@ -891,6 +898,7 @@ JSON body (unknown keys are rejected):
 - Operation: `projects.get`
 - Scope: `projects:read`
 - MCP tool: `boof_get_project`
+- CLI: `boof-runner projects get`
 - What it does: Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.
 - Success: HTTP 200 with `{ archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -904,6 +912,7 @@ Path parameters (all required):
 - Operation: `projects.update`
 - Scope: `projects:write`
 - MCP tool: `boof_update_project`
+- CLI: `boof-runner projects update`
 - What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.
 - Success: HTTP 200 with `Project`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `400 not_a_git_repo`, `403 project_root_not_allowed`
@@ -933,6 +942,7 @@ JSON body (unknown keys are rejected):
 - Operation: `projects.archive`
 - Scope: `projects:write`
 - MCP tool: `boof_archive_project`
+- CLI: `boof-runner projects archive`
 - What it does: Archives a project: it disappears from listings and the runner skips it. Input: projectId. Sets archived on project.json; the data is kept.
 - Success: HTTP 200 with `Project`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -946,6 +956,7 @@ Path parameters (all required):
 - Operation: `projects.unarchive`
 - Scope: `projects:write`
 - MCP tool: `boof_unarchive_project`
+- CLI: `boof-runner projects unarchive`
 - What it does: Restores an archived project. Input: projectId. Clears archived on project.json.
 - Success: HTTP 200 with `Project`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -959,6 +970,7 @@ Path parameters (all required):
 - Operation: `projects.pause`
 - Scope: any one of `runner:control`, `projects:write`
 - MCP tool: `boof_pause_project`
+- CLI: `boof-runner projects pause`
 - What it does: Stops the runner from starting tasks of a project; a running task finishes. Input: projectId. Sets paused on project.json.
 - Success: HTTP 200 with `Project`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -972,6 +984,7 @@ Path parameters (all required):
 - Operation: `projects.resume`
 - Scope: any one of `runner:control`, `projects:write`
 - MCP tool: `boof_resume_project`
+- CLI: `boof-runner projects resume`
 - What it does: Lets the runner pick up tasks of a paused project again. Input: projectId. Clears paused.
 - Success: HTTP 200 with `Project`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -985,6 +998,7 @@ Path parameters (all required):
 - Operation: `projects.delete`
 - Scope: `projects:write`
 - MCP tool: `boof_delete_project`
+- CLI: `boof-runner projects delete`
 - What it does: Archives a project, or with purge removes its data directory for good. Inputs: projectId, purge. Refused while a task of the project runs; the repository itself is never touched.
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 project_busy`
@@ -1002,6 +1016,7 @@ Query parameters:
 - Operation: `projects.usage`
 - Scope: any one of `projects:read`, `tasks:read`
 - MCP tool: `boof_get_project_usage`
+- CLI: `boof-runner projects usage`
 - What it does: Returns the token usage and cost of one project. Input: projectId. No side effects.
 - Success: HTTP 200 with `TokenUsage`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1017,6 +1032,7 @@ Path parameters (all required):
 - Operation: `plans.list`
 - Scope: `plans:read`
 - MCP tool: `boof_list_plans`
+- CLI: `boof-runner plans list`
 - What it does: Lists a project's plans with goal counts, without the goals. Input: projectId. No side effects.
 - Success: HTTP 200 with `{ plans: { approvedBy?: object, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, doneCount: integer, goalCount: integer, id: kebab-id, source: object, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1 }[] }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1030,6 +1046,7 @@ Path parameters (all required):
 - Operation: `plans.create`
 - Scope: `plans:write`
 - MCP tool: `boof_create_plan`
+- CLI: `boof-runner plans create`
 - What it does: Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan; the result then has warnings (status_downgraded) and the HTTP header Boof-Warning. A human approves the plan (sets it active); its tasks are then created pending.
 - Success: HTTP 201 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, goals: Goal[], id: kebab-id, source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
@@ -1054,6 +1071,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.get`
 - Scope: `plans:read`
 - MCP tool: `boof_get_plan`
+- CLI: `boof-runner plans get`
 - What it does: Returns a plan with all goals, its version and mergeOrder (the final task branch of each goal in topological plan order). Inputs: projectId, planId. No side effects.
 - Success: HTTP 200 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, goals: Goal[], id: kebab-id, mergeOrder: { branch: string, goalId: string, taskId: string }[], source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1 }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_input`
@@ -1068,6 +1086,7 @@ Path parameters (all required):
 - Operation: `plans.update`
 - Scope: `plans:write`
 - MCP tool: `boof_update_plan`
+- CLI: `boof-runner plans update`
 - What it does: Changes plan fields (title, description, status, autoSync, bumpTo). Inputs: projectId, planId, fields, expectedVersion (HTTP If-Match) to refuse a stale write. Bumps the plan version.
 - Success: HTTP 200 with `Plan`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1092,6 +1111,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.replaceGoals`
 - Scope: `plans:write`
 - MCP tool: `boof_replace_goals`
+- CLI: `boof-runner plans replace-goals`
 - What it does: Replaces the whole goal graph; goals not listed are removed. Inputs: projectId, planId, goals, expectedVersion (If-Match). Bumps the plan version; the graph is validated.
 - Success: HTTP 200 with `Plan`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1112,6 +1132,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.upsertGoal`
 - Scope: `plans:write`
 - MCP tool: `boof_upsert_goal`
+- CLI: `boof-runner plans upsert-goal`
 - What it does: Adds a goal or changes the one named in the path. Inputs: projectId, planId, goalId, goal fields, expectedVersion (If-Match). Bumps the goal revision when its spec changes.
 - Success: HTTP 200 with `Plan`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1141,6 +1162,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.removeGoal`
 - Scope: `plans:write`
 - MCP tool: `boof_remove_goal`
+- CLI: `boof-runner plans remove-goal`
 - What it does: Removes a goal; refused while other goals depend on it unless cascade. Inputs: projectId, planId, goalId, cascade, stopRunning (needs tasks:control), expectedVersion. Archives the goal's open tasks.
 - Success: HTTP 200 with `Plan`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1163,6 +1185,7 @@ Query parameters:
 - Operation: `plans.reorderGoals`
 - Scope: `plans:write`
 - MCP tool: `boof_reorder_goals`
+- CLI: `boof-runner plans reorder-goals`
 - What it does: Sets the goal order, dependencies first. Inputs: projectId, planId, order (every goal id once), expectedVersion. Bumps the plan version.
 - Success: HTTP 200 with `Plan`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1183,6 +1206,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.setGoalStatus`
 - Scope: `plans:write`
 - MCP tool: `boof_set_goal_status`
+- CLI: `boof-runner plans set-goal-status`
 - What it does: Sets a goal's status (plan, develop, review, done) and records it in the goal history. Inputs: projectId, planId, goalId, status, optional description, expectedVersion.
 - Success: HTTP 200 with `Plan`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1205,6 +1229,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.import`
 - Scope: `plans:write`
 - MCP tool: `boof_import_plan`
+- CLI: `boof-runner plans import`
 - What it does: Reads goal.boof.xml and plan.boof.xml files from the project's repository into a plan. Inputs: projectId, optional planId, merge, title, status, expectedVersion. Creates or (with merge) updates a plan.
 - Success: HTTP 200 with `{ added: string[], plan: Plan, unchanged: string[], updated: string[], warnings: string[] }`. The response has an `ETag` header.
 - Header `If-Match`: The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.
@@ -1229,6 +1254,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.export`
 - Scope: `plans:read`
 - MCP tool: `boof_export_plan`
+- CLI: `boof-runner plans export`
 - What it does: Renders a plan as plan.boof.xml and goal.boof.xml files, as a map of file name to content. Inputs: projectId, planId. Nothing is written into the repository.
 - Success: HTTP 200 with `{ [key: string]: string }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_input`
@@ -1243,6 +1269,7 @@ Path parameters (all required):
 - Operation: `plans.sync`
 - Scope: `plans:write`
 - MCP tool: `boof_sync_plan`
+- CLI: `boof-runner plans sync`
 - What it does: Creates one task per unblocked goal of an active plan and updates tasks of changed goals. Inputs: projectId, planId, dryRun, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.
 - Success: HTTP 200 with `{ archived: { action: "archived" | "stop-requested", goalId: string, reason: "goal-removed", taskId: string }[], created: { followUp: boolean, goalId: string, revision: integer, skip: boolean, status: string, taskId: string }[], dryRun: boolean, plan: Plan, planId: string, skipped: { goalId: string, reason: "blocked", taskId?: string }[], updated: { action: "rewritten" | "appended" | "injected" | "unskipped" | "blocked", goalId: string, revision: integer, taskId: string }[] }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_input`, `409 plan_not_active`
@@ -1262,6 +1289,7 @@ JSON body (unknown keys are rejected):
 - Operation: `plans.wait`
 - Scope: `plans:read`
 - MCP tool: `boof_wait_plan`
+- CLI: `boof-runner plans wait`
 - What it does: Long-polls a plan for up to 60 seconds. Returns at once when every goal is done (complete) or the plan cannot go on without you (stuck: a goal's task failed, was stopped or has questions, or no task can run). Otherwise returns when the plan version passes sinceVersion, or on timeout. Inputs: projectId, planId, optional sinceVersion, timeoutSeconds. A draft plan returns at once with stuck true, one reason {status: plan-not-active} and awaitingApproval true. Output: plan, version, complete, stuck, stuckReasons, awaitingApproval, changed, timedOut. No side effects; call it again after a timeout.
 - Success: HTTP 200 with `{ awaitingApproval: boolean, changed: boolean, complete: boolean, plan: Plan, stuck: boolean, stuckReasons: { goalId: string, status: string, taskId: string | null }[], timedOut: boolean, version: integer }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_plan`
@@ -1283,6 +1311,7 @@ Query parameters:
 - Operation: `tasks.list`
 - Scope: `tasks:read`
 - MCP tool: `boof_list_tasks`
+- CLI: `boof-runner tasks list`
 - What it does: Lists a project's tasks, newest update first (order=priority: scheduler order), without their logs. Inputs: projectId, optional status, plan, label, epic and parent filters (the value none means no epic / top-level; an epic filter matches subtasks through their parent), order and limit/cursor paging. Each task shows its effective epicId, subtask progress and parentMissing/epicMissing flags. No side effects.
 - Success: HTTP 200 with `{ items: Task[], nextCursor: string | null }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1307,6 +1336,7 @@ Query parameters:
 - Operation: `tasks.get`
 - Scope: `tasks:read`
 - MCP tool: `boof_get_task`
+- CLI: `boof-runner tasks get`
 - What it does: Returns one task with its prompt, questions, answers and reports. Inputs: projectId, taskId, and include=log to add the raw agent log (large). No side effects.
 - Success: HTTP 200 with `Task`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
@@ -1325,6 +1355,7 @@ Query parameters:
 - Operation: `tasks.diff`
 - Scope: `tasks:read`
 - MCP tool: `boof_get_task_diff`
+- CLI: `boof-runner tasks diff`
 - What it does: Shows what a task's branch boof-runner/<id> changed against its base: commits, changed files with +/- counts and a unified diff. A running task or a kept worktree adds its uncommitted changes (includesUncommitted). Inputs: projectId, taskId, optional path (one repo-relative file, returns only its patch), context lines, maxBytes (default 400000; a bigger whole diff returns files without a patch and truncated=true). 404 branch_not_found when the branch is gone. Read-only.
 - Success: HTTP 200 with `{ base: { ref: string, sha: string }, commits: { author: string, date: string, sha: string, subject: string }[], files: { additions: integer, deletions: integer, oldPath?: string, path: string, status: "added" | "modified" | "deleted" | "renamed" | "binary" }[], head: { ref: string, sha: string }, includesUncommitted?: boolean, leftovers?: { ref: string, sha: string }, patch?: string, stats: { additions: integer, deletions: integer, files: integer }, truncated: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `404 branch_not_found`
@@ -1345,6 +1376,7 @@ Query parameters:
 - Operation: `tasks.create`
 - Scope: `tasks:write`
 - MCP tool: `boof_create_task`
+- CLI: `boof-runner tasks create`
 - What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs, optional epicId or parentId (one level of subtasks; a subtask takes its parent's epic). Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.
 - Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
@@ -1371,6 +1403,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.update`
 - Scope: `tasks:write`
 - MCP tool: `boof_update_task`
+- CLI: `boof-runner tasks update`
 - What it does: Edits task fields; a changed status is a transition. Inputs: projectId, taskId, fields to change, and expectedUpdated (HTTP If-Match) to refuse a stale edit. Rewrites the task file.
 - Success: HTTP 200 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `If-Match`: The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.
@@ -1398,6 +1431,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.move`
 - Scope: `tasks:write`
 - MCP tool: `boof_move_task`
+- CLI: `boof-runner tasks move`
 - What it does: Changes a task's epic or parent. Inputs: projectId, taskId, and epicId or parentId (not both; null clears). One level of subtasks: a parent has no parent, a task with subtasks cannot become a subtask, and setting a parent clears the task's own epic (a subtask takes its parent's). Appends a task.moved event. Review-trust clients may move only tasks they created (403 forbidden_trust).
 - Success: HTTP 200 with `Task`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `404 epic_not_found`, `404 parent_not_found`, `409 invalid_hierarchy`, `409 has_children`
@@ -1417,6 +1451,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.queue`
 - Scope: `tasks:write`
 - MCP tool: `boof_queue_task`
+- CLI: `boof-runner tasks queue`
 - What it does: Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. A parent queued while some subtasks are not done succeeds with a subtasks_open warning (header Boof-Warning). Review-trust clients are refused (403 forbidden_trust).
 - Success: HTTP 200 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
@@ -1431,6 +1466,7 @@ Path parameters (all required):
 - Operation: `tasks.skip`
 - Scope: `tasks:write`
 - MCP tool: `boof_skip_task`
+- CLI: `boof-runner tasks skip`
 - What it does: Sets the skip flag of a task; the runner ignores skipped tasks. Inputs: projectId, taskId, skip.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
@@ -1449,6 +1485,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.reorder`
 - Scope: `tasks:write`
 - MCP tool: `boof_reorder_tasks`
+- CLI: `boof-runner tasks reorder`
 - What it does: Sets the priority order of tasks. Inputs: projectId, order (task ids, first runs first). Rewrites the priority of each listed task.
 - Success: HTTP 200 with `{ tasks: Task[] }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1466,6 +1503,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.retry`
 - Scope: `tasks:write`
 - MCP tool: `boof_retry_task`
+- CLI: `boof-runner tasks retry`
 - What it does: Moves a failed or stopped task back to pending (a stopped task continues in its kept worktree). Inputs: projectId, taskId. Review-trust clients are refused.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
@@ -1480,6 +1518,7 @@ Path parameters (all required):
 - Operation: `tasks.archive`
 - Scope: `tasks:write`
 - MCP tool: `boof_archive_task`
+- CLI: `boof-runner tasks archive`
 - What it does: Archives a task that is not running. Inputs: projectId, taskId. Moves the task file to archived.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `409 invalid_transition`
@@ -1494,6 +1533,7 @@ Path parameters (all required):
 - Operation: `tasks.unarchive`
 - Scope: `tasks:write`
 - MCP tool: `boof_unarchive_task`
+- CLI: `boof-runner tasks unarchive`
 - What it does: Moves an archived task back to pending. Inputs: projectId, taskId. Review-trust clients are refused.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
@@ -1508,6 +1548,7 @@ Path parameters (all required):
 - Operation: `tasks.delete`
 - Scope: `tasks:write`
 - MCP tool: `boof_delete_task`
+- CLI: `boof-runner tasks delete`
 - What it does: Permanently deletes a task and its attachments; a running task must finish first. A task with subtasks is refused (409 has_children) unless detach=true, which makes the subtasks top-level tasks in the parent's epic. Inputs: projectId, taskId, optional detach (?detach=true). Review-trust clients may not detach. Removes files.
 - Success: HTTP 200 with `{ detached: string[], ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is running)`, `403 forbidden_trust`, `409 has_children`
@@ -1526,6 +1567,7 @@ Query parameters:
 - Operation: `tasks.answers`
 - Scope: `tasks:write`
 - MCP tool: `boof_answer_task`
+- CLI: `boof-runner tasks answers`
 - What it does: Answers the planner's questions of a parked task and resumes it. Inputs: projectId, taskId, answers (text). Moves the task from action to pending.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
@@ -1544,6 +1586,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.stop`
 - Scope: `tasks:control`
 - MCP tool: `boof_stop_task`
+- CLI: `boof-runner tasks stop`
 - What it does: Asks the runner to stop a running task. Inputs: projectId, taskId. Writes a stop request the engine acts on; the task then moves to the stopped status with its worktree and branch kept, and tasks.retry continues it there. Review-trust clients may only stop tasks they created (403 forbidden_trust).
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
@@ -1558,6 +1601,7 @@ Path parameters (all required):
 - Operation: `tasks.inject`
 - Scope: `tasks:control`
 - MCP tool: `boof_inject_prompt`
+- CLI: `boof-runner tasks inject`
 - What it does: Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).
 - Success: HTTP 200 with `{ applied: "pending", mode: "next-step" | "now", ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
@@ -1577,6 +1621,7 @@ JSON body (unknown keys are rejected):
 - Operation: `tasks.liveLog`
 - Scope: `tasks:read`
 - MCP tool: `boof_get_task_log`
+- CLI: `boof-runner tasks live-log`
 - What it does: Returns the streaming agent log of a running task, or the stored log after it finished. Inputs: projectId, taskId, optional tail (last N lines) and format=text (REST: text/plain instead of JSON). No side effects.
 - Success: HTTP 200 with `{ log: string, running: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
@@ -1596,6 +1641,7 @@ Query parameters:
 - Operation: `tasks.wait`
 - Scope: `tasks:read`
 - MCP tool: `boof_wait_task`
+- CLI: `boof-runner tasks wait`
 - What it does: Waits up to 60 seconds until a task leaves the status it is in (or the status given in since), or reaches the status given in until, then returns the task. A task that is already done, failed, stopped, action or archived, or already in the until status, returns at once with changed false. Inputs: projectId, taskId, optional since, until, timeoutSeconds. Output: changed, timedOut, terminal (true for done, failed, stopped, archived), task. No side effects; call it again after a timeout.
 - Success: HTTP 200 with `{ changed: boolean, task: Task, terminal: boolean, timedOut: boolean }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`
@@ -1616,6 +1662,7 @@ Query parameters:
 - Operation: `tasks.attachments.add`
 - Scope: `tasks:write`
 - MCP tool: none (REST only)
+- CLI: `boof-runner tasks attachments add`
 - What it does: Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task. Review-trust clients may attach only to their own drafts (403 forbidden_trust).
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1632,6 +1679,7 @@ Multipart body: one field `file` (image or PDF, at most 25 MB).
 - Operation: `tasks.attachments.remove`
 - Scope: `tasks:write`
 - MCP tool: `boof_remove_attachment`
+- CLI: `boof-runner tasks attachments remove`
 - What it does: Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file. Review-trust clients may change only their own drafts.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1647,6 +1695,7 @@ Path parameters (all required):
 - Operation: `tasks.attachments.get`
 - Scope: `tasks:read`
 - MCP tool: none (REST only)
+- CLI: `boof-runner tasks attachments get`
 - What it does: Returns an attachment's bytes with its content type. Inputs: projectId, taskId, attachmentName. No side effects.
 - Success: HTTP 200 with binary file.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1664,6 +1713,7 @@ Path parameters (all required):
 - Operation: `epics.list`
 - Scope: `tasks:read`
 - MCP tool: `boof_list_epics`
+- CLI: `boof-runner epics list`
 - What it does: Lists a project's epics (priority descending, then oldest update) with their progress: non-archived top-level tasks and how many are done. Inputs: projectId, optional includeArchived. No side effects.
 - Success: HTTP 200 with `{ items: { archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: object, priority: integer, progress: object, title: string, updated: ISO-8601 string }[] }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
@@ -1681,6 +1731,7 @@ Query parameters:
 - Operation: `epics.get`
 - Scope: `tasks:read`
 - MCP tool: `boof_get_epic`
+- CLI: `boof-runner epics get`
 - What it does: Returns one epic with its progress. Inputs: projectId, epicId. No side effects.
 - Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: { client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 epic_not_found`
@@ -1695,6 +1746,7 @@ Path parameters (all required):
 - Operation: `epics.create`
 - Scope: `tasks:write`
 - MCP tool: `boof_create_epic`
+- CLI: `boof-runner epics create`
 - What it does: Creates an epic, a named group of tasks in one project. Inputs: projectId, title, optional id (kebab; derived from the title; none is reserved), description, priority. Writes the project's epics.json.
 - Success: HTTP 201 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: { client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
@@ -1716,6 +1768,7 @@ JSON body (unknown keys are rejected):
 - Operation: `epics.update`
 - Scope: `tasks:write`
 - MCP tool: `boof_update_epic`
+- CLI: `boof-runner epics update`
 - What it does: Edits an epic. Inputs: projectId, epicId, fields to change (title, description or null, priority, archived) and expectedUpdated (HTTP If-Match) to refuse a stale edit. Archiving hides the epic from the default list; its tasks keep it. Rewrites epics.json.
 - Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: { client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
 - Header `If-Match`: The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.
@@ -1739,6 +1792,7 @@ JSON body (unknown keys are rejected):
 - Operation: `epics.delete`
 - Scope: `tasks:write`
 - MCP tool: `boof_delete_epic`
+- CLI: `boof-runner epics delete`
 - What it does: Deletes an epic. An epic that tasks name is refused (409 has_tasks) unless detach=true, which clears their epic; archive it instead to keep the grouping. Inputs: projectId, epicId, optional detach (?detach=true). Review-trust clients may not delete epics. Rewrites epics.json and task files.
 - Success: HTTP 200 with `{ detached: string[], ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 epic_not_found`, `409 has_tasks`
@@ -1759,6 +1813,7 @@ Query parameters:
 - Operation: `settings.get`
 - Scope: `settings:read`
 - MCP tool: `boof_get_settings`
+- CLI: `boof-runner settings get`
 - What it does: Returns the global settings (runner, roles, review, security, models). No side effects.
 - Success: HTTP 200 with `Settings`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`
@@ -1768,6 +1823,7 @@ Query parameters:
 - Operation: `settings.update`
 - Scope: `settings:write`
 - MCP tool: `boof_update_settings`
+- CLI: `boof-runner settings update`
 - What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.
 - Success: HTTP 200 with `Settings`. The response has an `ETag` header.
 - Header `If-Match`: The ETag of GET /settings you last saw, e.g. W/"3fa9c1d2e4b5a687". Settings that changed since answer 409 settings_modified. Omit it (or send *) for an unconditional write.
@@ -1791,6 +1847,7 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.health`
 - Scope: `settings:read`
 - MCP tool: `boof_get_health`
+- CLI: `boof-runner settings health`
 - What it does: Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.
 - Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
 - Errors: `403 forbidden_scope`
@@ -1800,6 +1857,7 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.checkHealth`
 - Scope: `settings:write`
 - MCP tool: `boof_check_health`
+- CLI: `boof-runner settings check-health`
 - What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Spawns each tool and sends it a short prompt (a paid model call per tool). Concurrent calls share one check, and a check less than a minute old is not repeated. Needs settings:write.
 - Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
 - Errors: `403 forbidden_scope`
@@ -1809,6 +1867,7 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.models`
 - Scope: `settings:read`
 - MCP tool: `boof_list_models`
+- CLI: `boof-runner settings models`
 - What it does: Lists the models each tool offers, as last fetched by this server process (the built-in defaults until settings.refreshModels ran). No input. No side effects: it runs no tool.
 - Success: HTTP 200 with `{ models: { [key: string]: string[] } }`.
 - Errors: `403 forbidden_scope`
@@ -1818,6 +1877,7 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.refreshModels`
 - Scope: `settings:read`
 - MCP tool: `boof_refresh_models`
+- CLI: `boof-runner settings refresh-models`
 - What it does: Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes); concurrent calls share one query.
 - Success: HTTP 200 with `{ models: { [key: string]: string[] } }`.
 - Errors: `403 forbidden_scope`
@@ -1829,6 +1889,7 @@ JSON body (unknown keys are rejected):
 - Operation: `models.details`
 - Scope: `settings:read`
 - MCP tool: `boof_get_model_details`
+- CLI: `boof-runner models details`
 - What it does: Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no tool (it uses the lists settings.refreshModels last fetched).
 - Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[] } } }`.
 - Errors: `403 forbidden_scope`
@@ -1840,6 +1901,7 @@ JSON body (unknown keys are rejected):
 - Operation: `usage.global`
 - Scope: any one of `projects:read`, `tasks:read`
 - MCP tool: `boof_get_usage`
+- CLI: `boof-runner usage global`
 - What it does: Returns the token usage and cost summed over the projects the client may access. No input.
 - Success: HTTP 200 with `TokenUsage`.
 - Errors: `403 forbidden_scope`
@@ -1849,6 +1911,7 @@ JSON body (unknown keys are rejected):
 - Operation: `usage.budget`
 - Scope: any one of `settings:read`, `tasks:read`
 - MCP tool: `boof_get_budget`
+- CLI: `boof-runner usage budget`
 - What it does: Returns the configured budget limits, today's spend per scope (global, per project, per tool), what remains, which budgets are spent and when they reset. Steps with unknown cost count as 0 (see unknownSteps). No input. No side effects.
 - Success: HTTP 200 with `{ date: string, exceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], limits: { onExceed: "pause" | "fail", perDayUsd?: number, perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number }, timezone?: string }, projects: { id: string, onExceed: "pause" | "fail", perTaskUsd: number | null }[], resetsAt: string, scopes: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], timezone: string, unknownSteps: integer }`.
 - Errors: `403 forbidden_scope`
@@ -1860,6 +1923,7 @@ JSON body (unknown keys are rejected):
 - Operation: `runner.status`
 - Scope: `settings:read`
 - MCP tool: `boof_get_runner`
+- CLI: `boof-runner runner status`
 - What it does: Returns whether the runner is enabled and its concurrency. No input. No side effects.
 - Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean }`.
 - Errors: `403 forbidden_scope`
@@ -1869,6 +1933,7 @@ JSON body (unknown keys are rejected):
 - Operation: `runner.overview`
 - Scope: `settings:read`
 - MCP tool: `boof_runner_status`
+- CLI: `boof-runner runner overview`
 - What it does: Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.
 - Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
 - Errors: `403 forbidden_scope`
@@ -1878,6 +1943,7 @@ JSON body (unknown keys are rejected):
 - Operation: `runner.setEnabled`
 - Scope: any one of `runner:control`, `settings:write`
 - MCP tool: `boof_set_runner`
+- CLI: `boof-runner runner set-enabled`
 - What it does: Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A review-trust key is refused (403 forbidden_trust) and so is a project-restricted one (403 forbidden_project); it can pause its own projects.
 - Success: HTTP 200 with `{ concurrency: integer, enabled: boolean }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
@@ -1893,6 +1959,7 @@ JSON body (unknown keys are rejected):
 - Operation: `actions.list`
 - Scope: `tasks:read`
 - MCP tool: `boof_list_actions`
+- CLI: `boof-runner actions list`
 - What it does: Lists tasks parked with questions across the projects the client may access. No input. No side effects.
 - Success: HTTP 200 with `{ actions: Task[] }`.
 - Errors: `403 forbidden_scope`
@@ -1904,6 +1971,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.list`
 - Scope: `tasks:read`
 - MCP tool: `boof_list_commands`
+- CLI: `boof-runner commands list`
 - What it does: Lists the global command templates. No input.
 - Success: HTTP 200 with `{ commands: { body: string, id: string, name: string }[] }`.
 - Errors: `403 forbidden_scope`
@@ -1913,6 +1981,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.create`
 - Scope: `settings:write`
 - MCP tool: `boof_create_command`
+- CLI: `boof-runner commands create`
 - What it does: Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.
 - Success: HTTP 200 with `{ body: string, id: string, name: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
@@ -1927,6 +1996,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.update`
 - Scope: `settings:write`
 - MCP tool: `boof_update_command`
+- CLI: `boof-runner commands update`
 - What it does: Renames or rewrites a template and repoints the tasks that use it, except running ones (listed in `skippedTasks`; they keep their copy). Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.
 - Success: HTTP 200 with `{ body: string, id: string, name: string, skippedTasks?: string[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
@@ -1945,6 +2015,7 @@ JSON body (unknown keys are rejected):
 - Operation: `commands.delete`
 - Scope: `settings:write`
 - MCP tool: `boof_delete_command`
+- CLI: `boof-runner commands delete`
 - What it does: Deletes a template; tasks that referenced it keep their copy. Input: commandId. Removes the file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a delete reports references from every project.
 - Success: HTTP 200 with `{ referencedBy: string[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
@@ -1960,6 +2031,7 @@ Path parameters (all required):
 - Operation: `webhooks.list`
 - Scope: `admin`
 - MCP tool: `boof_list_webhooks`
+- CLI: `boof-runner webhooks list`
 - What it does: Lists the webhook subscriptions without their secrets; each URL is shown as scheme://host/… (the full address is shown once, at create). No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.
 - Success: HTTP 200 with `{ webhooks: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string }[] }`.
 - Errors: `403 forbidden_scope`
@@ -1969,6 +2041,7 @@ Path parameters (all required):
 - Operation: `webhooks.create`
 - Scope: `admin`
 - MCP tool: `boof_create_webhook`
+- CLI: `boof-runner webhooks create`
 - What it does: Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; the secret is kept in <data>/webhooks/secrets.json (mode 0600), never in settings.json.
 - Success: HTTP 201 with `{ secret: string, webhook: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string } }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `400 invalid_input (bad URL, URL is this server, unknown event)`
@@ -1985,6 +2058,7 @@ JSON body (unknown keys are rejected):
 - Operation: `webhooks.delete`
 - Scope: `admin`
 - MCP tool: `boof_delete_webhook`
+- CLI: `boof-runner webhooks delete`
 - What it does: Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404), and a review-trust key only one it created (403).
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
