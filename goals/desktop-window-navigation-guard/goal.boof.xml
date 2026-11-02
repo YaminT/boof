@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Found in the Task 6 review (2026-11-02), outside that task: the window can navigate to a foreign origin and the preload hands the key to any page.</version>
+        <version number="2" status="done">Shipped: will-navigate and will-redirect keep the window on the app origin (others open in the system browser, http(s) only); the get-token and folder-picker IPC answer only frames of the app origin; isAppUrl and isExternalUrl are pure and tested.</version>
       </versions>
     </status>
     <tests>

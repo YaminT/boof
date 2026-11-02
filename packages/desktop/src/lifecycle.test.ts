@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { AuthStore } from "@boof-runner/shared";
 import {
   createQuitHandler,
+  isAppUrl,
+  isExternalUrl,
   operatorClientId,
   serverOptions,
   shutdownGraceMs,
@@ -128,5 +130,48 @@ describe("operatorClientId", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("isAppUrl", () => {
+  const origin = "http://127.0.0.1:4319";
+  it("accepts pages of the app's own origin", () => {
+    for (const u of [origin, `${origin}/`, `${origin}/p/a/tasks?x=1#h`])
+      expect(isAppUrl(u, origin)).toBe(true);
+  });
+  it("refuses every other origin and odd scheme", () => {
+    for (const u of [
+      "http://127.0.0.1:4319@evil.com/",
+      "http://127.0.0.1:4319.evil.com/",
+      "http://user@127.0.0.1:4319/",
+      "http://127.0.0.1:4320/",
+      "http://localhost:4319/",
+      "https://127.0.0.1:4319/",
+      "http://[::1]:4319/",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "data:text/html,<p>x</p>",
+      "about:blank",
+      "",
+      "not a url",
+    ])
+      expect(isAppUrl(u, origin), u).toBe(false);
+  });
+});
+
+describe("isExternalUrl", () => {
+  it("allows only http and https for the system browser", () => {
+    expect(isExternalUrl("https://example.com/docs")).toBe(true);
+    expect(isExternalUrl("http://example.com")).toBe(true);
+    for (const u of [
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "data:text/html,x",
+      "smb://h/s",
+      "ssh://h",
+      "",
+      "nope",
+    ])
+      expect(isExternalUrl(u), u).toBe(false);
   });
 });

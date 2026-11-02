@@ -80,3 +80,23 @@ export function createQuitHandler(deps: QuitDeps): (event: QuitEvent) => Promise
     })();
   };
 }
+
+/** True when `url` is a page of the app's own server: same origin, no userinfo. */
+export function isAppUrl(url: string, appOrigin: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" && !u.username && !u.password && u.origin === appOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/** True for URLs that may be handed to the system browser: http(s) only. */
+export function isExternalUrl(url: string): boolean {
+  try {
+    const p = new URL(url).protocol;
+    return p === "http:" || p === "https:";
+  } catch {
+    return false;
+  }
+}

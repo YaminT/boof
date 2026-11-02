@@ -7,6 +7,8 @@ import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
 import {
   createQuitHandler,
+  isAppUrl,
+  isExternalUrl,
   operatorClientId,
   serverOptions,
   shutdownGraceMs,
@@ -65,8 +67,13 @@ async function ensureDesktopToken(root: string): Promise<string | undefined> {
 }
 
 // The preload script reads the key synchronously before the page's scripts run.
+// Only the app's own pages get the key; a foreign page that got into the window sees null.
+let appOrigin = "";
+const fromApp = (event: { senderFrame?: { url: string } | null }): boolean =>
+  !!event.senderFrame && isAppUrl(event.senderFrame.url, appOrigin);
+
 ipcMain.on("boof-runner:get-token", (event) => {
-  event.returnValue = desktopToken ?? null;
+  event.returnValue = fromApp(event) ? (desktopToken ?? null) : null;
 });
 
 /**
@@ -108,11 +115,23 @@ function createWindow(port: number): void {
   });
   // Open external links (e.g. docs) in the default browser, not a chrome-less
   // Electron window.
+  const openExternal = (url: string) => {
+    if (isExternalUrl(url)) void shell.openExternal(url);
+  };
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternal(url);
     return { action: "deny" };
   });
-  void win.loadURL(`http://127.0.0.1:${port}`);
+  // The window never leaves the app origin: other URLs go to the system browser instead.
+  const guard = (event: { preventDefault(): void }, url: string) => {
+    if (isAppUrl(url, appOrigin)) return;
+    event.preventDefault();
+    openExternal(url);
+  };
+  win.webContents.on("will-navigate", (event, url) => guard(event, url));
+  win.webContents.on("will-redirect", (event, url) => guard(event, url));
+  appOrigin = `http://127.0.0.1:${port}`;
+  void win.loadURL(appOrigin);
   win.on("closed", () => {
     win = null;
   });
@@ -120,7 +139,8 @@ function createWindow(port: number): void {
 
 ipcMain.handle(
   "boof-runner:pick-directory",
-  async (_event, current?: string, opts?: { title?: string }) => {
+  async (event, current?: string, opts?: { title?: string }) => {
+    if (!fromApp(event)) return null;
     const result = await dialog.showOpenDialog({
       title: opts?.title ?? "Choose working directory",
       properties: ["openDirectory", "createDirectory"],
