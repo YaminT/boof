@@ -1,5 +1,6 @@
 export * from "./abort.js";
 export * from "./errors.js";
+export * from "./local-principal.js";
 export * from "./define-op.js";
 export * from "./registry.js";
 export * from "./schemas.js";

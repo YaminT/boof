@@ -1,29 +1,17 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { TaskService } from "@boof-runner/api";
 import {
-  AuthStore,
-  LOCAL_PRINCIPAL,
-  mcpSettings,
-  securitySettings,
-  type Client,
-  type Principal,
-} from "@boof-runner/shared";
+  LocalPrincipalError,
+  localPrincipal,
+  principalFromClient,
+  TaskService,
+} from "@boof-runner/api";
+import { AuthStore, mcpSettings, type Principal } from "@boof-runner/shared";
 import { createBoofMcpServer } from "./server.js";
 
 export class McpStartError extends Error {}
 
-export function principalFromClient(client: Client): Principal {
-  return {
-    kind: "client",
-    id: client.id,
-    name: client.name,
-    scopes: new Set(client.scopes),
-    projects: client.projects === "*" ? "*" : new Set(client.projects),
-    trust: client.trust,
-    clientKind: client.kind,
-  };
-}
+export { principalFromClient };
 
 export interface StdioOptions {
   root: string;
@@ -51,26 +39,14 @@ export async function stdioPrincipal(
   if (!mcpSettings(settings).enabled) {
     throw new McpStartError("MCP is disabled (settings.mcp.enabled is false)");
   }
-  const resolveClient = async (id: string): Promise<Principal> => {
-    const client = await authStore.get(id);
-    if (!client) throw new McpStartError(`unknown client: ${id}`);
-    if (client.revokedAt) throw new McpStartError(`client ${id} is revoked`);
-    if (client.expiresAt && Date.parse(client.expiresAt) <= Date.now()) {
-      throw new McpStartError(`client ${id} has expired`);
-    }
-    return principalFromClient(client);
+  // One identity rule for every local surface; its refusals are start errors here.
+  const asStartError = (err: unknown): never => {
+    throw err instanceof LocalPrincipalError ? new McpStartError(err.message) : err;
   };
-  if (opts.client !== undefined) {
-    const id = opts.client;
-    await resolveClient(id); // fail at start, not on the first call
-    return () => resolveClient(id);
-  }
-  if (securitySettings(settings).auth.mode !== "local-trust") {
-    throw new McpStartError(
-      'security.auth.mode is "required": pass --client <id> (create one with "boof-runner auth add")',
-    );
-  }
-  return async () => LOCAL_PRINCIPAL;
+  const resolve = await localPrincipal({ settings, authStore, client: opts.client }).catch(
+    asStartError,
+  );
+  return () => resolve().catch(asStartError);
 }
 
 /** What {@link closeWhenDrained} needs of a transport; the SDK's stdio transport satisfies it. */
