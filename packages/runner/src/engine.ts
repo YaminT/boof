@@ -23,13 +23,14 @@ import {
   atomicWrite,
   clearMissingCommand,
   CommandStore,
+  isGitRepo,
+  pruneStaleWorktrees,
 } from "@boof-runner/shared";
 import { announceBudgetExceeded } from "./budget.js";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
 import { reapOrphan } from "@boof-runner/shared";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { isGitRepo, pruneStaleWorktrees } from "./worktree.js";
 
 export interface EngineOptions {
   root: string;

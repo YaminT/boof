@@ -1,6 +1,10 @@
 import { z } from "zod";
-import { authorizeProject, ProjectPatchSchema, type Project } from "@boof-runner/shared";
-import { currentBranch } from "@boof-runner/runner";
+import {
+  authorizeProject,
+  ProjectPatchSchema,
+  type Project,
+  currentBranch,
+} from "@boof-runner/shared";
 import { defineOp } from "../define-op.js";
 import { CreateProjectBody } from "../validation.js";
 import { OkSchema, ProjectSchema, ProjectViewSchema, TokenUsageSchema } from "../schemas.js";

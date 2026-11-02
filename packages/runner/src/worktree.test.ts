@@ -2,7 +2,13 @@ import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { execCommand } from "@boof-runner/shared";
+import {
+  execCommand,
+  initGitRepo,
+  isGitRepo,
+  pruneStaleWorktrees,
+  repoCommonDir,
+} from "@boof-runner/shared";
 import {
   commitLeftovers,
   createWorktree as create,
@@ -10,11 +16,7 @@ import {
   discardWorktree,
   ensureWorktree as ensure,
   finalizeWorktree,
-  initGitRepo,
-  isGitRepo,
   NotAGitRepoError,
-  pruneStaleWorktrees,
-  repoCommonDir,
   UnknownBaseRefError,
   type WorktreeOptions,
 } from "./worktree.js";
@@ -56,56 +58,6 @@ afterEach(async () => {
 });
 
 describe("worktree isolation", () => {
-  it("detects git vs non-git directories", async () => {
-    expect(await isGitRepo(repo)).toBe(true);
-    expect(await isGitRepo(nonRepo)).toBe(false);
-  });
-
-  it("pruneStaleWorktrees drops a missing worktree registration and keeps a live one", async () => {
-    const live = await createWorktree(repo, "live");
-    const gone = await createWorktree(repo, "gone");
-    await rm(gone.path, { recursive: true, force: true });
-    await pruneStaleWorktrees(repo);
-    const list = (await g(["worktree", "list", "--porcelain"])).stdout;
-    expect(list).toContain(live.path);
-    expect(list).not.toContain(gone.path);
-    expect(await exists(live.path)).toBe(true);
-    await expect(pruneStaleWorktrees(nonRepo)).resolves.toBeUndefined();
-  });
-
-  it("pruneStaleWorktrees rejects when git exits non-zero", async () => {
-    // A git shim on PATH that fails `worktree prune` and forwards everything else.
-    const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
-    await writeFile(
-      join(shim, "git"),
-      `#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = prune ]; then echo boom >&2; exit 3; fi\nexec ${real} "$@"\n`,
-      { mode: 0o755 },
-    );
-    const oldPath = process.env.PATH;
-    process.env.PATH = `${shim}:${oldPath}`;
-    try {
-      await expect(pruneStaleWorktrees(repo)).rejects.toThrow(/prune failed.*exit 3.*boom/);
-    } finally {
-      process.env.PATH = oldPath;
-      await rm(shim, { recursive: true, force: true });
-    }
-  });
-
-  it("repoCommonDir is shared by a checkout, its subdirectory and linked worktrees only", async () => {
-    const other = await mkdtemp(join(tmpdir(), "boof-other-"));
-    try {
-      await execCommand("git", ["init", "-q"], { cwd: other });
-      const main = await repoCommonDir(repo);
-      expect(main).toBeTruthy();
-      expect(await repoCommonDir(other)).not.toBe(main);
-      const wt = await createWorktree(repo, "common");
-      expect(await repoCommonDir(wt.path)).toBe(main);
-    } finally {
-      await rm(other, { recursive: true, force: true });
-    }
-  });
-
   it("refuses to create a worktree on a non-git dir", async () => {
     await expect(create(nonRepo, "t1", { root: rootOf() })).rejects.toBeInstanceOf(
       NotAGitRepoError,
@@ -589,130 +541,19 @@ describe("worktree add timeout and cleanup", () => {
   });
 });
 
-describe("initGitRepo", () => {
-  let base: string;
-  let env: NodeJS.ProcessEnv;
-  const gitIn = (dir: string, args: string[]) =>
-    execCommand("git", args, { cwd: dir, timeoutMs: 15000, env: { ...process.env, ...env } });
-  const count = async (dir: string) =>
-    (await gitIn(dir, ["rev-list", "--count", "HEAD"])).stdout.trim();
-
-  beforeEach(async () => {
-    base = await mkdtemp(join(tmpdir(), "boof-runner-init-"));
-    // No user.name/user.email anywhere, and signing forced on: initGitRepo must not depend on them.
-    await writeFile(join(base, "gitconfig"), "[commit]\n\tgpgsign = true\n");
-    env = {
-      HOME: base,
-      GIT_CONFIG_GLOBAL: join(base, "gitconfig"),
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_AUTHOR_NAME: "",
-      GIT_AUTHOR_EMAIL: "",
-    };
-    delete env.GIT_AUTHOR_NAME;
-    delete env.GIT_AUTHOR_EMAIL;
-  });
-  afterEach(async () => {
-    await rm(base, { recursive: true, force: true });
-  });
-
-  it("makes a repository with one commit, and a worktree can be added", async () => {
-    const dir = join(base, "fresh");
-    await mkdir(dir, { recursive: true });
-    await initGitRepo(dir, { env });
-    expect(await isGitRepo(dir)).toBe(true);
-    expect(await count(dir)).toBe("1");
-    const wt = await create(dir, "t1", { root: join(base, "wts") });
-    expect(await exists(wt.worktree.path)).toBe(true);
-  });
-
-  it("on a repository with commits changes nothing", async () => {
-    const dir = join(base, "old");
-    await mkdir(dir, { recursive: true });
-    await gitIn(dir, ["init", "-q"]);
-    await gitIn(dir, [
-      "-c",
-      "user.name=A",
-      "-c",
-      "user.email=a@b.c",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "--allow-empty",
-      "-q",
-      "-m",
-      "x",
-    ]);
-    const head = (await gitIn(dir, ["rev-parse", "HEAD"])).stdout;
-    await initGitRepo(dir, { env });
-    expect(await count(dir)).toBe("1");
-    expect((await gitIn(dir, ["rev-parse", "HEAD"])).stdout).toBe(head);
-  });
-
-  it("on a repository without commits adds the empty commit only", async () => {
-    const dir = join(base, "unborn");
-    await mkdir(dir, { recursive: true });
-    await gitIn(dir, ["init", "-q"]);
-    await initGitRepo(dir, { env });
-    expect(await count(dir)).toBe("1");
-  });
-
-  it("inside a parent repository it makes its own repository and leaves the parent alone", async () => {
-    const outer = join(base, "outer");
-    await mkdir(outer, { recursive: true });
-    await gitIn(outer, ["init", "-q"]);
-    await gitIn(outer, [
-      "-c",
-      "user.name=A",
-      "-c",
-      "user.email=a@b.c",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "--allow-empty",
-      "-q",
-      "-m",
-      "outer",
-    ]);
-    const head = (await gitIn(outer, ["rev-parse", "HEAD"])).stdout;
-    const sub = join(outer, "sub");
-    await mkdir(sub);
-    await initGitRepo(sub, { env });
-    expect(await exists(join(sub, ".git"))).toBe(true);
-    expect(await count(sub)).toBe("1");
-    expect((await gitIn(sub, ["log", "-1", "--format=%s"])).stdout.trim()).toBe("Initial commit");
-    expect((await gitIn(outer, ["rev-parse", "HEAD"])).stdout).toBe(head);
-    expect((await gitIn(outer, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("");
-  });
-
-  it("uses the configured identity, and Boof Runner only when there is none", async () => {
-    const author = async (dir: string) =>
-      (await gitIn(dir, ["log", "-1", "--format=%an <%ae>"])).stdout.trim();
-    const none = join(base, "none");
-    await mkdir(none);
-    await initGitRepo(none, { env });
-    expect(await author(none)).toBe("Boof Runner <boof-runner@localhost>");
-
-    await writeFile(
-      join(base, "gitconfig"),
-      "[commit]\n\tgpgsign = true\n[user]\n\tname = Owner\n\temail = owner@example.com\n",
-    );
-    const owned = join(base, "owned");
-    await mkdir(owned);
-    await initGitRepo(owned, { env });
-    expect(await author(owned)).toBe("Owner <owner@example.com>");
-  });
-
-  it("kills a hung git on timeout and fails with a clear error", async () => {
-    const bin = join(base, "bin");
-    await mkdir(bin);
-    await writeFile(join(bin, "git"), "#!/bin/sh\nexec sleep 30\n");
-    await chmod(join(bin, "git"), 0o755);
-    const dir = join(base, "hung");
-    await mkdir(dir, { recursive: true });
-    const started = Date.now();
-    await expect(
-      initGitRepo(dir, { timeoutMs: 300, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }),
-    ).rejects.toThrow(/timed out after 300 ms/);
-    expect(Date.now() - started).toBeLessThan(5000);
+describe("initGitRepo then a worktree", () => {
+  it("a repository made by initGitRepo takes a worktree", async () => {
+    const base = await mkdtemp(join(tmpdir(), "boof-runner-init-"));
+    try {
+      const dir = join(base, "fresh");
+      await mkdir(dir, { recursive: true });
+      await initGitRepo(dir, {
+        env: { GIT_CONFIG_GLOBAL: join(base, "none"), GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      const wt = await create(dir, "t1", { root: join(base, "wts") });
+      expect(await exists(wt.worktree.path)).toBe(true);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   });
 });

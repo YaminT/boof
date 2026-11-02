@@ -27,6 +27,9 @@ import {
   type Task,
   type TokenUsage,
   type Verdict,
+  branchHead,
+  currentBranch,
+  isGitRepo,
 } from "@boof-runner/shared";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { sumUsage } from "./tools/usage.js";
@@ -37,13 +40,10 @@ import { announceBudgetExceeded } from "./budget.js";
 import { UsageStore } from "./usage-store.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 import {
-  branchHead,
-  currentBranch,
   diffAgainstBase,
   discardWorktree,
   ensureWorktree,
   finalizeWorktree,
-  isGitRepo,
   type Worktree,
 } from "./worktree.js";
 

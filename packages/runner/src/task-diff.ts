@@ -1,8 +1,7 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
-import { execCommand } from "@boof-runner/shared";
+import { execCommand, leftoversBranch, registeredWorktreeBranch } from "@boof-runner/shared";
 import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
-import { leftoversBranch, registeredWorktreeBranch } from "./worktree.js";
 
 const BRANCH_PREFIX = "boof-runner/";
 const MAX_COMMITS = 200;
@@ -309,7 +308,7 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
       return { sha, subject, author, date };
     });
 
-  const lb = leftoversBranch({ branch, path: "", base: "" });
+  const lb = leftoversBranch({ branch });
   const leftSha = await revParse(workingDir, `refs/heads/${lb}`);
 
   return {

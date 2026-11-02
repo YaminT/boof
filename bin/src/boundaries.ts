@@ -44,11 +44,9 @@ export const BROWSER_SAFE: Record<string, string> = {
 export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [
   { file: "packages/api/src/services/service.ts", to: "runner", fixedBy: "M1" },
   { file: "packages/api/src/services/plan-service.ts", to: "runner", fixedBy: "M1" },
-  { file: "packages/api/src/ops/projects.ts", to: "runner", fixedBy: "M1" },
   { file: "packages/api/src/services/model-details.ts", to: "runner", fixedBy: "M1" },
   { file: "packages/web/src/server.ts", to: "runner", fixedBy: "M1" },
   { file: "bin/src/plan-cli.ts", to: "runner", fixedBy: "M1" },
-  { file: "bin/src/project-cli.ts", to: "runner", fixedBy: "M1" },
   // Not in the design's list of seven: plan-cli reaches the composition root's project resolver.
   // `resolveProject` and `ProjectResolutionError` move into Heart core with the plan helpers.
   { file: "bin/src/plan-cli.ts", to: "bin", fixedBy: "M1 (resolveProject re-homed)" },

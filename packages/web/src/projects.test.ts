@@ -12,8 +12,11 @@ import {
   SettingsStore,
   type Scope,
   execCommand,
+  initGitRepo,
+  isGitRepo,
+  repoCommonDir,
 } from "@boof-runner/shared";
-import { initGitRepo, isGitRepo, MockTool, repoCommonDir, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "@boof-runner/api";
 import { DataWatcher } from "./watch.js";

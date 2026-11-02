@@ -9,8 +9,11 @@ import {
   resolveProjectsRoot,
   type Project,
   scaffoldDataRoot,
+  initGitRepo,
+  isGitRepo,
+  pruneStaleWorktrees,
+  repoCommonDir,
 } from "@boof-runner/shared";
-import { initGitRepo, isGitRepo, pruneStaleWorktrees, repoCommonDir } from "@boof-runner/runner";
 
 export const PROJECT_HELP = `boof-runner project — manage the projects (git repositories) one data root serves
 

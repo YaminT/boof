@@ -62,16 +62,16 @@ import {
   WebhookSecretStore,
   atomicWrite,
   settingsVersion,
+  initGitRepo,
+  isGitRepo,
+  pruneStaleWorktrees,
+  repoCommonDir,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
-  initGitRepo,
-  isGitRepo,
-  pruneStaleWorktrees,
-  repoCommonDir,
   taskDiff,
   BranchNotFoundError,
   InvalidDiffPathError,
