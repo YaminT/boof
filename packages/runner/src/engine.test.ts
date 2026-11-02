@@ -1841,18 +1841,43 @@ describe("multi-project engine (mock tool)", () => {
   });
 
   /** Tracks how many roles run at once per repository and overall, with a delay in every step. */
-  const trackConcurrency = (repos: string[]) => {
+  const trackConcurrency = (repos: string[], opts: { rendezvous?: boolean } = {}) => {
     const active = new Map<string, number>();
     const maxPerRepo = new Map<string, number>();
     let activeTotal = 0;
     let maxTotal = 0;
-    mockState.onRun = async (opts) => {
-      const repo = repos.find((r) => opts.cwd.startsWith(`${r}/`)) ?? "?";
+    // With `rendezvous`, the first step of each repository waits until every repository has a
+    // step running. Overlap is then guaranteed when the engine runs them together (and a
+    // deadlock, ending in a failed task, when it does not), instead of depending on how long a
+    // worktree takes to set up on a loaded machine against a fixed delay.
+    const arrived = new Set<string>();
+    let allArrived!: () => void;
+    const together = new Promise<void>((r) => (allArrived = r));
+    mockState.onRun = async (run) => {
+      const repo = repos.find((r) => run.cwd.startsWith(`${r}/`)) ?? "?";
       const n = (active.get(repo) ?? 0) + 1;
       active.set(repo, n);
       maxPerRepo.set(repo, Math.max(maxPerRepo.get(repo) ?? 0, n));
       activeTotal += 1;
       maxTotal = Math.max(maxTotal, activeTotal);
+      if (opts.rendezvous && !arrived.has(repo)) {
+        arrived.add(repo);
+        if (arrived.size === repos.length) allArrived();
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            together,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("the other project never started a step")),
+                10_000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
       await new Promise((r) => setTimeout(r, 25));
       active.set(repo, (active.get(repo) ?? 1) - 1);
       activeTotal -= 1;
@@ -1870,7 +1895,7 @@ describe("multi-project engine (mock tool)", () => {
       await s.create(newTask(fm({ id: `${label}1`, priority: 50 }), `${label}1`));
       await s.create(newTask(fm({ id: `${label}2`, priority: 40 }), `${label}2`));
     }
-    const track = trackConcurrency([workDir, b.repo]);
+    const track = trackConcurrency([workDir, b.repo], { rendezvous: true });
 
     const results = await engine.runUntilIdle();
     expect(order(results).sort()).toEqual(["b/b1", "b/b2", "default/a1", "default/a2"]);
