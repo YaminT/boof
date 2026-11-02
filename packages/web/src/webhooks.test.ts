@@ -587,6 +587,29 @@ describe("webhook delivery", () => {
     expect(h.hits).toHaveLength(1); // the cursor moved on
   });
 
+  it("hands the delivery the addresses the check approved, resolving the name once", async () => {
+    await subscribe({ url: "http://hook.test/in" });
+    const sent: { url: string; addresses: readonly string[] }[] = [];
+    let lookups = 0;
+    const dispatcher = new WebhookDispatcher({
+      root,
+      service,
+      send: async (req) => {
+        sent.push({ url: req.url, addresses: req.addresses });
+        return { status: 200 };
+      },
+      resolveHost: async (host) => {
+        lookups++;
+        return resolveHost(host);
+      },
+    });
+    await dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    await dispatcher.tick();
+    expect(sent).toEqual([{ url: "http://hook.test/in", addresses: ["93.184.216.34"] }]);
+    expect(lookups).toBe(1);
+  });
+
   it("re-resolves at delivery: a host rebound to a private address is never posted to", async () => {
     const { id } = await subscribe({ url: "http://hook.test/in" });
     const h = harness();

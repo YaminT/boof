@@ -27,6 +27,7 @@ import {
   readFeed,
   type FeedCursor,
 } from "./events.js";
+import { pinnedPost, type PinnedPostInit } from "./pinned-post.js";
 
 /** Delay before retry n (1-based) after a failed delivery; a 6th failure dead-letters. */
 export const RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000, 3_600_000];
@@ -52,6 +53,11 @@ type State = Record<string, HookState>;
 export interface DispatcherOptions {
   root: string;
   service: TaskService;
+  /** Test seam replacing the delivery: gets the checked addresses the connection must use. */
+  send?: (req: PinnedPostInit & { url: string; addresses: readonly string[] }) => Promise<{
+    status: number;
+  }>;
+  /** Test seam: deliver with this `fetch` instead (it does not pin the connection). */
   fetch?: typeof fetch;
   now?: () => number;
   /** DNS for the target check before each delivery; tests inject a fake. */
@@ -106,7 +112,7 @@ export function wants(hook: Webhook, event: BoofEvent): boolean {
  */
 export class WebhookDispatcher {
   private readonly dir: string;
-  private readonly doFetch: typeof fetch;
+  private readonly send: NonNullable<DispatcherOptions["send"]>;
   private readonly now: () => number;
   private readonly secrets: WebhookSecretStore;
   private state: State | null = null;
@@ -115,7 +121,22 @@ export class WebhookDispatcher {
 
   constructor(private readonly opts: DispatcherOptions) {
     this.dir = dataRootPaths(opts.root).webhooks;
-    this.doFetch = opts.fetch ?? fetch;
+    const doFetch = opts.fetch;
+    this.send =
+      opts.send ??
+      (doFetch
+        ? async ({ url, headers, body, signal }) => {
+            const res = await doFetch(url, {
+              method: "POST",
+              redirect: "manual",
+              signal,
+              headers,
+              body,
+            });
+            await res.body?.cancel().catch(() => {});
+            return { status: res.status };
+          }
+        : ({ url, addresses, ...init }) => pinnedPost(url, addresses, init));
     this.now = opts.now ?? Date.now;
     this.secrets = new WebhookSecretStore(opts.root);
   }
@@ -273,9 +294,9 @@ export class WebhookDispatcher {
 
   /**
    * POST the event. Returns null on a 2xx answer, else a short error text. The target is checked
-   * again first: a name can resolve somewhere else than when the webhook was created. (`fetch`
-   * looks the name up once more itself, so a TTL-0 rebind in between is not closed here; pinning
-   * the connection needs undici, a follow-up goal.)
+   * again first: a name can resolve somewhere else than when the webhook was created. The
+   * connection is then pinned to the addresses that check approved (`pinnedPost`), so the name
+   * is not looked up a second time and a TTL-0 rebind in between cannot redirect the request.
    */
   private async post(
     hook: Webhook,
@@ -297,9 +318,9 @@ export class WebhookDispatcher {
     if (!target.ok) return `blocked: ${target.reason}`;
     const body = JSON.stringify({ id: p.deliveryId, ...p.event });
     try {
-      const res = await this.doFetch(hook.url, {
-        method: "POST",
-        redirect: "manual",
+      const res = await this.send({
+        url: hook.url,
+        addresses: target.addresses,
         signal: AbortSignal.timeout(TIMEOUT_MS),
         headers: {
           "Content-Type": "application/json",
@@ -310,7 +331,6 @@ export class WebhookDispatcher {
         },
         body,
       });
-      await res.body?.cancel().catch(() => {});
       return res.status >= 200 && res.status < 300 ? null : `HTTP ${res.status}`;
     } catch (err) {
       return (err as Error).message || "request failed";

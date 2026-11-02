@@ -37,7 +37,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`csrf-content-type-and-origin`](csrf-content-type-and-origin/goal.boof.xml) — CSRF defence for the local-trust principal
 - [x] [`inject-and-stop-respect-trust`](inject-and-stop-respect-trust/goal.boof.xml) — tasks.inject and tasks.stop respect the trust level
 - [x] [`webhook-ssrf-guard`](webhook-ssrf-guard/goal.boof.xml) — Webhook URLs reject loopback, link-local and private addresses
-- [ ] [`webhook-dns-pinning`](webhook-dns-pinning/goal.boof.xml) — Pin webhook connections to the address the SSRF guard checked (needs undici)
+- [x] [`webhook-dns-pinning`](webhook-dns-pinning/goal.boof.xml) — Pin webhook connections to the address the SSRF guard checked
 - [x] [`restricted-admin-scope-gaps`](restricted-admin-scope-gaps/goal.boof.xml) — Webhooks, settings and archived plans respect restricted keys; hidden clients look unknown
 - [x] [`auth-store-cross-process`](auth-store-cross-process/goal.boof.xml) — Revocation and key writes are safe across processes
 - [x] [`worktree-root-scope`](worktree-root-scope/goal.boof.xml) — Limit worktree.root to the allowed project roots for remote clients

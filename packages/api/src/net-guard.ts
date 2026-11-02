@@ -141,9 +141,9 @@ async function lookupWithTimeout(
  * Is `raw` an acceptable webhook target? A bad URL, protocol or the server itself throws
  * (`assertWebhookUrl`); a blocked or unresolvable address answers `{ ok: false }`.
  *
- * Residual risk: `fetch` resolves the name again on its own, so a record with TTL 0 can answer
- * differently from the lookup here (DNS rebinding). Pinning the connection to the checked
- * address needs undici's `Agent({ connect: { lookup } })`, a new dependency: a follow-up goal.
+ * `addresses` are the ones that passed the check. The caller must connect to them and not resolve
+ * the name again, or a record with TTL 0 could answer differently (DNS rebinding): the webhook
+ * dispatcher does (`pinnedPost`). An exempted host returns none (no pinning).
  */
 export async function checkWebhookTarget(
   raw: string,

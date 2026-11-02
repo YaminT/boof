@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Filed by the group 3 review (M3); not started. Blocked on owner approval of the undici dependency.</version>
+        <version number="2" status="done">Done without a new dependency: deliveries go through pinnedPost (packages/web/src/pinned-post.ts), node:http(s).request with a lookup that returns only the addresses checkWebhookTarget approved (all of them when the runtime asks for a list), so the name is not resolved a second time; the URL host stays the Host header and the TLS server name (checked against a self-signed certificate by hand). No redirects, no connection reuse (agent: false). Exempted hosts (allowedPrivateWebhookHosts) resolve normally. undici was therefore not needed.</version>
       </versions>
     </status>
     <tests>
