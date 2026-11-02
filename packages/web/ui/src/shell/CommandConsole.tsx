@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { Scope } from "@boof-runner/shared/schema";
 import { Input } from "@/ui/input";
-import { api } from "../api.js";
-import { heldScopes } from "../lib/clients.js";
+import { useHeldScopes } from "../lib/useHeldScopes.js";
 import type { CommandAction } from "../lib/command-actions.js";
 import {
   appendOutput,
@@ -33,20 +31,8 @@ export function CommandConsole({
   const [output, setOutput] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [held, setHeld] = useState<ReadonlySet<Scope> | "all">("all");
+  const held = useHeldScopes();
   const logRef = useRef<HTMLDivElement>(null);
-
-  // What this key may do narrows the actions; if whoami fails the server stays the judge.
-  useEffect(() => {
-    let live = true;
-    api.whoami().then(
-      (w) => live && setHeld(heldScopes(w)),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (open && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;

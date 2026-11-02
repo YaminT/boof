@@ -8,6 +8,7 @@ import {
   newSubtaskHref,
   parentFromSearch,
   tasksForEpicHref,
+  withEpicQuery,
 } from "./task-links.js";
 
 const task = (id: string, o: Partial<TaskView> = {}, f: Record<string, unknown> = {}) =>
@@ -96,5 +97,15 @@ describe("hierarchyLine", () => {
 
   it("has nothing for a plain task", () => {
     expect(hierarchyLine(task("p"), epics, [])).toEqual({ epic: null, parent: null });
+  });
+});
+
+describe("withEpicQuery", () => {
+  it("sets, replaces and removes the epic, keeping the path and other keys", () => {
+    expect(withEpicQuery("/p/a/tasks", "", "x")).toBe("/p/a/tasks?epic=x");
+    expect(withEpicQuery("/p/a/tasks", "?epic=old&q=1", "new")).toBe("/p/a/tasks?epic=new&q=1");
+    expect(withEpicQuery("/p/a/tasks", "?epic=old", null)).toBe("/p/a/tasks");
+    expect(withEpicQuery("/p/a/tasks", "?q=1", null)).toBe("/p/a/tasks?q=1");
+    expect(withEpicQuery("/p/a/tasks", "", "none")).toBe("/p/a/tasks?epic=none");
   });
 });

@@ -132,7 +132,8 @@ export function TaskForm({
       // The server copy matches what the form started from again: nothing to warn about.
       baseUpdated.current = task.frontmatter.updated;
       setElsewhere(false);
-      clearConflict();
+      // Only a notice that is going away has focus to hand back; on load nothing should be focused.
+      clearConflict(conflict);
       return;
     }
     if (dirty) setElsewhere(true);

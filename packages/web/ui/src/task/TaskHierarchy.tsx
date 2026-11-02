@@ -27,7 +27,7 @@ export function TaskHierarchy({
   tasks: TaskView[];
   actions: TaskActions;
 }) {
-  const epics = useEpics(pid, tasks);
+  const epics = useEpics(pid, tasks).byId;
   const f = task.frontmatter;
   const line = hierarchyLine(task, epics, tasks);
   const kids = childTasks(tasks, f.id);
@@ -107,7 +107,7 @@ export function TaskHierarchy({
                 >
                   <a
                     href={taskHref(pid, c.frontmatter.id)}
-                    className={`${link} min-w-0 flex-1 truncate font-medium no-underline`}
+                    className={`${link} min-w-0 flex-1 truncate font-medium underline decoration-ink-muted/40`}
                   >
                     {c.frontmatter.title}
                   </a>

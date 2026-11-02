@@ -7,7 +7,7 @@
 export const OP_COVERAGE: Record<string, { where: string } | { none: string }> = {
   "auth.whoami": {
     where:
-      "whoami \u2014 AutomationPage, KeysPage, CommandConsole (who the key is, what it may do)",
+      "whoami \u2014 AutomationPage, KeysPage, useHeldScopes (who the key is, what it may do; the console and Manage epics use it)",
   },
   "projects.list": {
     where:
@@ -81,9 +81,11 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "epics.list": { where: "listEpics \u2014 useEpics (epic names on task rows and task pages)" },
   "epics.get": { none: "the hierarchy UI is not built yet" },
-  "epics.create": { none: "the hierarchy UI is not built yet" },
-  "epics.update": { none: "the hierarchy UI is not built yet" },
-  "epics.delete": { none: "the hierarchy UI is not built yet" },
+  "epics.create": { where: "createEpic \u2014 ManageEpicsSheet (add an epic)" },
+  "epics.update": {
+    where: "updateEpic \u2014 ManageEpicsSheet (rename, priority, archive, restore)",
+  },
+  "epics.delete": { where: "deleteEpic \u2014 ManageEpicsSheet (delete, or delete and detach)" },
   "settings.get": { where: "getSettings \u2014 useAppData (global settings)" },
   "settings.update": {
     where:

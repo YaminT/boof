@@ -72,3 +72,12 @@ export function hierarchyLine(
     : null;
   return { epic, parent };
 }
+
+/** The current path and query with `epic` set (or removed when null); other query keys stay. */
+export function withEpicQuery(pathname: string, search: string, epic: string | null): string {
+  const q = new URLSearchParams(search);
+  if (epic === null) q.delete("epic");
+  else q.set("epic", epic);
+  const text = q.toString();
+  return text ? `${pathname}?${text}` : pathname;
+}

@@ -13,7 +13,22 @@ import {
 } from "../lib/task-list.js";
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import type { AppData } from "../useAppData.js";
-import { QueuedSection } from "./QueuedSection.js";
+import { QueuedSection, type QueuedGroup } from "./QueuedSection.js";
+import { EpicHeader } from "./EpicHeader.js";
+import { ManageEpicsSheet } from "./ManageEpicsSheet.js";
+import {
+  groupTasksByEpic,
+  isCollapsed,
+  readCollapsed,
+  readGrouping,
+  reorderWithinGroup,
+  writeCollapsed,
+  writeGrouping,
+  type EpicSection,
+  type PrefStore,
+} from "../lib/epic-grouping.js";
+import { useHeldScopes } from "../lib/useHeldScopes.js";
+import { withEpicQuery } from "../lib/task-links.js";
 import { groupSubtasks } from "../lib/task-hierarchy.js";
 import { TaskRow, type RowContext, type RowEntry } from "./TaskRow.js";
 import { useEpics } from "./useEpics.js";
@@ -29,6 +44,23 @@ const isTyping = (el: EventTarget | null) =>
   (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
 type Task = Exclude<RowEntry, { kind: "plan" }>;
+
+const safeStorage = (): PrefStore | null => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+/** A state section's rows, split by epic when grouping is on (one group with no header otherwise). */
+interface EpicGroup<E> {
+  key: string;
+  section: EpicSection | null;
+  entries: E[];
+  /** The group is folded: its header shows, its rows do not. */
+  folded: boolean;
+}
 
 /** The Tasks screen: tasks grouped by what they wait for, with search, filters and the keyboard. */
 export function TasksPage({
@@ -46,6 +78,15 @@ export function TasksPage({
   const actions = useTaskActions(pid, data, navigate);
   const [filter, setFilter] = useState<TaskFilter>({ ...NO_FILTER, epic });
   useEffect(() => setFilter((f) => (f.epic === epic ? f : { ...f, epic })), [epic]);
+  const store = useMemo(safeStorage, []);
+  const [grouping, setGrouping] = useState(() => readGrouping(store, pid));
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(store, pid));
+  const [managing, setManaging] = useState(false);
+  const held = useHeldScopes();
+  useEffect(() => {
+    setGrouping(readGrouping(store, pid));
+    setCollapsed(readCollapsed(store, pid));
+  }, [store, pid]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showFinished, setShowFinished] = useState(false);
   const [stopId, setStopId] = useState<string | null>(null);
@@ -72,7 +113,8 @@ export function TasksPage({
     return [...ids].sort((a, b) => at(a) - at(b));
   }, [shownPending, localOrder]);
 
-  const epics = useEpics(pid, tasks);
+  const epicState = useEpics(pid, tasks);
+  const epics = epicState.byId;
 
   const rows = useMemo(() => {
     const q = filter.query.trim().toLowerCase();
@@ -118,28 +160,90 @@ export function TasksPage({
       ).map((h) => ({ ...byTask.get(h.task.frontmatter.id)!, hier: h }) as RowEntry);
       return [...grouped, ...entries.filter((e) => e.kind === "plan")];
     };
+    const asGroups = <E extends Task>(entries: E[], nest: boolean): EpicGroup<E>[] => {
+      const split = grouping
+        ? groupTasksByEpic(
+            entries.map((e) => e.task),
+            epicState.list,
+          )
+        : [];
+      if (!split.some((g) => g.epic !== null))
+        return [
+          {
+            key: "all",
+            section: null,
+            entries: withHierarchy(entries, nest) as E[],
+            folded: false,
+          },
+        ];
+      return split.map((g) => {
+        const ids = new Set(g.tasks.map((t) => t.frontmatter.id));
+        return {
+          key: g.key,
+          section: g,
+          entries: withHierarchy(
+            entries.filter((e) => ids.has(e.task.frontmatter.id)),
+            nest,
+          ) as E[],
+          folded: isCollapsed(collapsed, g),
+        };
+      });
+    };
+    const queuedGroups = asGroups(queued, false);
+    const draftGroups = asGroups(
+      [...groups.drafts].sort(runOrder).map((t) => task("draft", t)) as Task[],
+      true,
+    );
+    const shownRows = <E,>(gs: EpicGroup<E>[]) => gs.flatMap((g) => (g.folded ? [] : g.entries));
+    const count = <E,>(gs: EpicGroup<E>[]) => gs.reduce((n, g) => n + g.entries.length, 0);
     return {
       needs: withHierarchy(needs),
       proposed: withHierarchy(proposed),
       running: withHierarchy(groups.running.map((t) => task("running", t))),
-      queued: withHierarchy(queued, false) as typeof queued,
-      drafts: withHierarchy([...groups.drafts].sort(runOrder).map((t) => task("draft", t))),
+      queued: shownRows(queuedGroups) as RowEntry[],
+      queuedGroups,
+      queuedCount: count(queuedGroups),
+      drafts: shownRows(draftGroups) as RowEntry[],
+      draftGroups,
+      draftCount: count(draftGroups),
       finished: withHierarchy(finished.map((t) => task("finished", t))) as Exclude<
         RowEntry,
         { kind: "plan" }
       >[],
     };
-  }, [groups, plans, filter, filtered, shownPending, queuedOrder, tasks]);
+  }, [
+    groups,
+    plans,
+    filter,
+    filtered,
+    shownPending,
+    queuedOrder,
+    tasks,
+    grouping,
+    collapsed,
+    epicState.list,
+  ]);
 
   const filtering =
     filter.query.trim() !== "" ||
     filter.state !== "all" ||
     filter.label !== null ||
     filter.epic !== null;
-  // The epic filter lives in the URL too, so clearing it clears the query.
-  const clearEpic = () => {
-    setFilter((f) => ({ ...f, epic: null }));
-    if (epic !== null) navigate({ name: "tasks", pid }, { replace: true });
+  // The epic filter lives in the URL (the epic chip on a task page links to it): changing it
+  // rewrites the query in place and the filter follows.
+  const setEpic = (next: string | null) => {
+    const url = withEpicQuery(window.location.pathname, window.location.search, next);
+    history.replaceState(null, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  const toggleGrouping = (on: boolean) => {
+    setGrouping(on);
+    writeGrouping(store, pid, on);
+  };
+  const toggleFold = (section: EpicSection) => {
+    const next = { ...collapsed, [section.key]: !isCollapsed(collapsed, section) };
+    setCollapsed(next);
+    writeCollapsed(store, pid, next);
   };
   const finishedOpen = showFinished || filtering;
   const visible: RowEntry[] = [
@@ -150,7 +254,8 @@ export function TasksPage({
     ...rows.drafts,
     ...(finishedOpen ? rows.finished : []),
   ];
-  const total = visible.length + (finishedOpen ? 0 : rows.finished.length);
+  const foldedRows = rows.queuedCount - rows.queued.length + (rows.draftCount - rows.drafts.length);
+  const total = visible.length + foldedRows + (finishedOpen ? 0 : rows.finished.length);
   const selected = visible.find((r) => r.key === selectedKey) ?? null;
 
   const reorder = (order: string[]) => {
@@ -244,12 +349,11 @@ export function TasksPage({
         labels={labels}
         onFilter={setFilter}
         onNew={newTask}
-        epicTitle={
-          filter.epic === null || filter.epic === "none"
-            ? null
-            : (epics.get(filter.epic)?.title ?? filter.epic)
-        }
-        onClearEpic={clearEpic}
+        epics={epicState.list}
+        onEpic={setEpic}
+        grouping={grouping}
+        onGrouping={toggleGrouping}
+        onManageEpics={() => setManaging(true)}
       />
       {data.tasksLoaded && tasks.length === 0 && plans.every((p) => p.status !== "draft") && (
         <div className="py-8">
@@ -268,7 +372,7 @@ export function TasksPage({
             variant="outline"
             onClick={() => {
               setFilter(NO_FILTER);
-              if (epic !== null) navigate({ name: "tasks", pid }, { replace: true });
+              if (epic !== null) setEpic(null);
             }}
           >
             Clear filters
@@ -290,17 +394,40 @@ export function TasksPage({
           {list(rows.running)}
         </TaskSection>
       )}
-      {rows.queued.length > 0 && (
+      {rows.queuedCount > 0 && (
         <QueuedSection
-          entries={rows.queued}
+          groups={rows.queuedGroups.map((g): QueuedGroup => ({
+            key: g.key,
+            header: g.section && (
+              <EpicHeader
+                section={g.section}
+                shown={g.entries.length}
+                collapsed={g.folded}
+                onToggle={() => toggleFold(g.section!)}
+              />
+            ),
+            entries: g.folded ? [] : g.entries,
+          }))}
           ctx={ctx}
           canReorder={canReorder}
-          onReorder={reorder}
+          onReorder={(group, next) => reorder(reorderWithinGroup(queuedOrder, group, next))}
         />
       )}
-      {rows.drafts.length > 0 && (
-        <TaskSection title="Drafts" count={rows.drafts.length}>
-          {list(rows.drafts)}
+      {rows.draftCount > 0 && (
+        <TaskSection title="Drafts" count={rows.draftCount}>
+          {rows.draftGroups.map((g) => (
+            <div key={g.key}>
+              {g.section && (
+                <EpicHeader
+                  section={g.section}
+                  shown={g.entries.length}
+                  collapsed={g.folded}
+                  onToggle={() => toggleFold(g.section!)}
+                />
+              )}
+              {!g.folded && list(g.entries)}
+            </div>
+          ))}
         </TaskSection>
       )}
       {rows.finished.length > 0 && (
@@ -324,6 +451,15 @@ export function TasksPage({
           {finishedOpen && list(rows.finished)}
         </TaskSection>
       )}
+      <ManageEpicsSheet
+        open={managing}
+        onOpenChange={setManaging}
+        pid={pid}
+        epics={epicState}
+        tasks={tasks}
+        held={held}
+        onChanged={() => void data.refresh()}
+      />
       <StopTaskDialog
         open={stopId !== null}
         onOpenChange={(open) => !open && setStopId(null)}

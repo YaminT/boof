@@ -2,6 +2,7 @@ import { NativeSelect } from "@/ui/native-select";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Kbd } from "@/ui/kbd";
+import type { EpicView } from "../api.js";
 import type { TaskFilter } from "../lib/task-list.js";
 import { paletteShortcutLabel } from "../shell/CommandPalette.js";
 
@@ -19,17 +20,25 @@ export function TasksToolbar({
   labels,
   onFilter,
   onNew,
-  epicTitle,
-  onClearEpic,
+  epics,
+  onEpic,
+  grouping,
+  onGrouping,
+  onManageEpics,
 }: {
   filter: TaskFilter;
   labels: string[];
   onFilter: (next: TaskFilter) => void;
   onNew: () => void;
-  /** The epic the list is limited to ("none": tasks without one), or null. */
-  epicTitle: string | null;
-  onClearEpic: () => void;
+  /** Every epic of the project (archived ones included). */
+  epics: EpicView[];
+  /** The epic filter changed (null: every epic); the page keeps the URL in step. */
+  onEpic: (epic: string | null) => void;
+  grouping: boolean;
+  onGrouping: (on: boolean) => void;
+  onManageEpics: () => void;
 }) {
+  const shown = epics.filter((e) => !e.archived || e.id === filter.epic);
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <Button onClick={onNew}>New task</Button>
@@ -68,15 +77,41 @@ export function TasksToolbar({
           ))}
         </NativeSelect>
       )}
-      {filter.epic !== null && (
-        <Button variant="outline" size="sm" onClick={onClearEpic} className="max-w-full">
-          <span className="truncate">
-            {filter.epic === "none" ? "No epic" : `Epic: ${epicTitle ?? filter.epic}`}
-          </span>
-          <span aria-hidden>×</span>
-          <span className="sr-only">Clear the epic filter</span>
-        </Button>
+      {(epics.length > 0 || filter.epic !== null) && (
+        <NativeSelect
+          aria-label="Epic"
+          className="w-auto max-w-56"
+          value={filter.epic ?? ""}
+          onChange={(e) => onEpic(e.target.value || null)}
+        >
+          <option value="">All epics</option>
+          <option value="none">No epic</option>
+          {filter.epic !== null &&
+            filter.epic !== "none" &&
+            !epics.some((e) => e.id === filter.epic) && (
+              <option value={filter.epic}>{filter.epic}</option>
+            )}
+          {shown.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.title}
+              {e.archived ? " (archived)" : ""}
+            </option>
+          ))}
+        </NativeSelect>
       )}
+      {epics.length > 0 && (
+        <label className="flex h-8 items-center gap-1.5 text-[length:var(--text-row)] whitespace-nowrap text-ink">
+          <input
+            type="checkbox"
+            checked={grouping}
+            onChange={(e) => onGrouping(e.target.checked)}
+          />
+          Group by epic
+        </label>
+      )}
+      <Button variant="ghost" size="sm" onClick={onManageEpics}>
+        Manage epics…
+      </Button>
       <Kbd className="ml-auto hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
     </div>
   );
