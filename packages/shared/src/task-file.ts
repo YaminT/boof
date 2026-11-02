@@ -64,7 +64,7 @@ function splitSections(
 /** Parse a task file's raw markdown into a structured Task. Validates frontmatter. */
 export function parseTask(raw: string): Task {
   const parsed = matter(raw);
-  const frontmatter = TaskFrontmatterSchema.parse(parsed.data);
+  const frontmatter = withoutEmptyHierarchyKeys(TaskFrontmatterSchema.parse(parsed.data));
   const body = emptyBody();
 
   const sections = splitSections(parsed.content, 2, TOP_SECTIONS, "first");
@@ -114,10 +114,18 @@ function reportBlock(title: string, content: string): string {
   return trimmed ? `### ${title}\n\n${trimmed}\n` : `### ${title}\n`;
 }
 
+/** A hand-cleared hierarchy key parses to `undefined`; drop the key so it is never written. */
+function withoutEmptyHierarchyKeys(fm: TaskFrontmatter): TaskFrontmatter {
+  for (const key of ["epicId", "parentId"] as const) {
+    if (fm[key] === undefined) delete fm[key];
+  }
+  return fm;
+}
+
 /** Serialize a Task back to canonical markdown (frontmatter + fixed sections). */
 export function serializeTask(task: Task): string {
   // Validate on the way out too, so we never persist an invalid frontmatter.
-  const fm = TaskFrontmatterSchema.parse(task.frontmatter);
+  const fm = withoutEmptyHierarchyKeys(TaskFrontmatterSchema.parse(task.frontmatter));
   const reports = [
     "## Reports",
     "",

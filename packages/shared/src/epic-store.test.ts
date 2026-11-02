@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EpicError, EpicStore } from "./epic-store.js";
 import { readEvents } from "./events.js";
 
@@ -89,5 +89,78 @@ describe("EpicStore", () => {
 
   it("remove of a missing epic is not_found", async () => {
     expect(await code(store.remove("nope"))).toBe("not_found");
+  });
+});
+
+describe("EpicStore validation, locking and hand edits", () => {
+  const bytes = () => readFile(join(dir, "epics.json"), "utf8").catch(() => null);
+
+  it.each([
+    ["an empty title", { title: "" }],
+    ["a 201-char title", { title: "x".repeat(201) }],
+    ["a fractional priority", { title: "a", priority: 1.5 }],
+    ["a NaN priority", { title: "a", priority: NaN }],
+    ["a 20001-char description", { title: "a", description: "d".repeat(20_001) }],
+  ])("create refuses %s and leaves the file untouched", async (_n, input) => {
+    await store.create({ title: "keep" });
+    const before = await bytes();
+    await expect(store.create(input)).rejects.toThrow();
+    expect(await bytes()).toBe(before);
+    expect((await store.list()).map((e) => e.id)).toEqual(["keep"]);
+  });
+
+  it("update refuses an invalid patch and leaves the file untouched", async () => {
+    const e = await store.create({ title: "keep" });
+    const before = await bytes();
+    await expect(store.update(e.id, { priority: 1.5 })).rejects.toThrow();
+    await expect(store.update(e.id, { title: "" })).rejects.toThrow();
+    expect(await bytes()).toBe(before);
+  });
+
+  it("serializes concurrent updates to several epics and a create", async () => {
+    const made = [];
+    for (let i = 0; i < 8; i++) made.push(await store.create({ title: `e${i}` }));
+    await Promise.all([
+      ...made.map((e, i) => store.update(e.id, { priority: i + 1 })),
+      store.create({ title: "extra" }),
+    ]);
+    const all = await store.list();
+    expect(all).toHaveLength(9);
+    for (const [i, e] of made.entries()) {
+      expect(all.find((x) => x.id === e.id)!.priority).toBe(i + 1);
+    }
+  });
+
+  it("two stores with differently spelled directories share one lock", async () => {
+    const a = new EpicStore(dir);
+    const b = new EpicStore(dir + "/");
+    await Promise.all(Array.from({ length: 10 }, (_, i) => (i % 2 ? a : b).create({ title: "E" })));
+    expect(await store.list()).toHaveLength(10);
+  });
+
+  it("ignores duplicate ids and an epic named none with a warning, and keeps them on disk", async () => {
+    const rec = (id: string, title: string) => ({
+      id,
+      title,
+      priority: 0,
+      archived: false,
+      created: "2026-06-04T10:00:00.000Z",
+      updated: "2026-06-04T10:00:00.000Z",
+    });
+    await writeFile(
+      join(dir, "epics.json"),
+      JSON.stringify({ epics: [rec("a", "first"), rec("a", "second"), rec("none", "n")] }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect((await store.list()).map((e) => [e.id, e.title])).toEqual([["a", "first"]]);
+      expect(warn).toHaveBeenCalled();
+      await store.update("a", { priority: 3 });
+      const file = JSON.parse((await bytes())!);
+      expect(file.epics).toHaveLength(3);
+      expect(file.epics.map((e: { title: string }) => e.title)).toContain("second");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

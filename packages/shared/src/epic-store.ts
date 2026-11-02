@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { atomicWrite, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
 import { assertKebabId } from "./paths.js";
@@ -48,22 +48,47 @@ export class EpicStore {
   private readonly path: string;
 
   constructor(private readonly projectDir: string) {
-    this.path = `${projectDir}/epics.json`;
+    // Resolved, so differently spelled directories share one lock.
+    this.path = join(resolve(projectDir), "epics.json");
   }
 
-  private async read(): Promise<Epic[]> {
+  /**
+   * The usable epics, plus the records left out of them: a duplicate id (the first wins) or the
+   * reserved `none` in a hand-edited file. Writes put the ignored ones back, so they never vanish.
+   */
+  private async load(): Promise<{ epics: Epic[]; ignored: Epic[] }> {
     let text: string;
     try {
       text = await readFile(this.path, "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { epics: [], ignored: [] };
       throw err;
     }
-    return EpicsFileSchema.parse(JSON.parse(text)).epics;
+    const epics: Epic[] = [];
+    const ignored: Epic[] = [];
+    const seen = new Set<string>();
+    for (const e of EpicsFileSchema.parse(JSON.parse(text)).epics) {
+      if (RESERVED_IDS.includes(e.id) || seen.has(e.id)) {
+        console.warn(
+          `epics.json: ignoring epic "${e.title}" (id "${e.id}" is duplicate or reserved)`,
+        );
+        ignored.push(e);
+      } else {
+        seen.add(e.id);
+        epics.push(e);
+      }
+    }
+    return { epics, ignored };
   }
 
-  private write(epics: Epic[]): Promise<void> {
-    return atomicWrite(this.path, JSON.stringify({ epics }, null, 2) + "\n");
+  private async read(): Promise<Epic[]> {
+    return (await this.load()).epics;
+  }
+
+  /** Validates before writing: a bad record must never make the file unreadable. */
+  private write(epics: Epic[], ignored: Epic[] = []): Promise<void> {
+    const file = EpicsFileSchema.parse({ epics: [...epics, ...ignored] });
+    return atomicWrite(this.path, JSON.stringify(file, null, 2) + "\n");
   }
 
   private announce(epic: string, change: "created" | "updated" | "deleted", by?: string) {
@@ -94,7 +119,7 @@ export class EpicStore {
   async create(input: CreateEpicInput, opts: { by?: string } = {}): Promise<Epic> {
     const explicit = input.id === undefined ? undefined : assertKebabId(input.id);
     const epic = await withFileLock(this.path, async () => {
-      const epics = await this.read();
+      const { epics, ignored } = await this.load();
       const taken = epics.map((e) => e.id);
       if (explicit !== undefined && (taken.includes(explicit) || RESERVED_IDS.includes(explicit))) {
         throw new EpicError("exists", `Epic id already exists or is reserved: ${explicit}`);
@@ -102,14 +127,14 @@ export class EpicStore {
       const now = nowIso();
       const created: Epic = {
         id: explicit ?? uniqueKebabId(input.title, [...taken, ...RESERVED_IDS]),
-        title: input.title,
+        title: input.title.trim(),
         ...(input.description !== undefined ? { description: input.description } : {}),
         priority: input.priority ?? 0,
         archived: false,
         created: now,
         updated: now,
       };
-      await this.write([...epics, created]);
+      await this.write([...epics, created], ignored);
       return created;
     });
     await this.announce(epic.id, "created", opts.by);
@@ -123,7 +148,7 @@ export class EpicStore {
   ): Promise<Epic> {
     const clean = EpicPatchSchema.parse(patch);
     const epic = await withFileLock(this.path, async () => {
-      const epics = await this.read();
+      const { epics, ignored } = await this.load();
       const current = epics.find((e) => e.id === id);
       if (!current) throw new EpicError("not_found", `Epic not found: ${id}`);
       if (opts.expectedUpdated !== undefined && opts.expectedUpdated !== current.updated) {
@@ -136,7 +161,10 @@ export class EpicStore {
         else (next as Record<string, unknown>)[key] = value;
       }
       next.updated = nowIso();
-      await this.write(epics.map((e) => (e.id === id ? next : e)));
+      await this.write(
+        epics.map((e) => (e.id === id ? next : e)),
+        ignored,
+      );
       return next;
     });
     await this.announce(id, "updated", opts.by);
@@ -149,10 +177,13 @@ export class EpicStore {
    */
   async remove(id: string, opts: { by?: string } = {}): Promise<void> {
     await withFileLock(this.path, async () => {
-      const epics = await this.read();
+      const { epics, ignored } = await this.load();
       if (!epics.some((e) => e.id === id))
         throw new EpicError("not_found", `Epic not found: ${id}`);
-      await this.write(epics.filter((e) => e.id !== id));
+      await this.write(
+        epics.filter((e) => e.id !== id),
+        ignored,
+      );
     });
     await this.announce(id, "deleted", opts.by);
   }

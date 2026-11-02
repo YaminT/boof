@@ -2,7 +2,15 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendEvent, encodePos, eventsEnd, parsePos, readEvents } from "./events.js";
+import {
+  BoofEventSchema,
+  EVENT_TYPES,
+  appendEvent,
+  encodePos,
+  eventsEnd,
+  parsePos,
+  readEvents,
+} from "./events.js";
 import { PlanStore } from "./plan-store.js";
 import { TaskStore } from "./store.js";
 import { newTask } from "./task-file.js";
@@ -128,5 +136,12 @@ describe("hierarchy events", () => {
     });
     const got = await readEvents(dir, null);
     expect(got.map((e) => e.event.type)).toEqual(["task.moved", "epic.updated"]);
+  });
+});
+
+describe("EVENT_TYPES", () => {
+  it("lists exactly the types of BoofEventSchema", () => {
+    const types = BoofEventSchema.options.map((o) => o.shape.type.value);
+    expect([...EVENT_TYPES].sort()).toEqual([...types].sort());
   });
 });

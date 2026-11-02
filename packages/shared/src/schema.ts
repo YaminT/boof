@@ -35,6 +35,20 @@ const isoDatetime = z.preprocess(
 export const KebabIdSchema = kebab;
 export const IsoDatetimeSchema = isoDatetime;
 
+/**
+ * A hierarchy key (`epicId`, `parentId`) read from a task file. These are the keys people are told
+ * to hand-edit, so an emptied value (`key:`, `''`), the reserved `none` or a non-string counts as
+ * absent: a task file must never become unparseable because of them.
+ */
+function hierarchyKey() {
+  return z
+    .preprocess(
+      (v) => (typeof v === "string" && v !== "" && v !== "none" ? v : undefined),
+      kebab.optional(),
+    )
+    .optional();
+}
+
 /** A tool+model assignment for a single role. */
 export const RoleAssignmentSchema = z.object({
   tool: z.string().min(1),
@@ -136,9 +150,9 @@ export const TaskFrontmatterSchema = z.object({
   origin: TaskOriginSchema.optional(),
   // The task's epic (a record in the project's epics.json). A subtask has none of its own: its epic
   // is its parent's. Both keys resolve only inside the task's project; a missing target is dangling.
-  epicId: kebab.optional(),
+  epicId: hierarchyKey(),
   // The parent task (one level only). Written only by hierarchy.ts, through TaskStore.modify.
-  parentId: kebab.optional(),
+  parentId: hierarchyKey(),
   created: isoDatetime,
   updated: isoDatetime,
 });

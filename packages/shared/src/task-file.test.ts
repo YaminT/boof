@@ -335,6 +335,26 @@ hi
     expect(parseTask(text)).toEqual(task);
   });
 
+  it.each([
+    ["parentId:", undefined],
+    ["parentId: ''", undefined],
+    ["parentId: null", undefined],
+    ["parentId: 123", undefined],
+    ["parentId: none", undefined],
+    ["epicId: none", undefined],
+    ["epicId:", undefined],
+    ["epicId: 7", undefined],
+  ])("treats a hand-cleared or invalid key (%s) as absent", (line) => {
+    const raw = old.replace(
+      "updated: 2026-06-04T10:00:00.000Z\n",
+      `updated: 2026-06-04T10:00:00.000Z\n${line}\n`,
+    );
+    const task = parseTask(raw);
+    expect(task.frontmatter.parentId).toBeUndefined();
+    expect(task.frontmatter.epicId).toBeUndefined();
+    expect(serializeTask(task)).not.toMatch(/parentId|epicId/);
+  });
+
   it("round-trips epicId and parentId", () => {
     const back = parseTask(serializeTask(newTask(fm({ epicId: "web", parentId: "t1" }), "p")));
     expect(back.frontmatter).toMatchObject({ epicId: "web", parentId: "t1" });
