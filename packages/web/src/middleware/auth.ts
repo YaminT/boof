@@ -16,6 +16,8 @@ declare module "hono" {
     principal: Principal;
     peerAddress: string | undefined;
     clientAddress: ClientAddress;
+    /** Set on /mcp when a keyless loopback caller was turned into the `local-mcp` principal. */
+    keylessMcp: boolean;
     /** Extra fields the handler wants recorded in the audit line (never bodies or secrets). */
     auditExtra: Record<string, unknown>;
     /** Set by the unauthenticated limiter: called when authentication fails; returns a 429 when the address is over its budget. */

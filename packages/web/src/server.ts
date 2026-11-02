@@ -99,7 +99,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   await assertBindAllowed(host, settings, authStore);
   if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
     warn(
-      `auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID}: a keyless "boof-runner mcp" refuses to start until its entry is removed`,
+      `auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID}: a keyless "boof-runner mcp" refuses to start, and a keyless /mcp answers 403, until its entry is removed`,
     );
   }
 

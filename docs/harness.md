@@ -205,7 +205,7 @@ Boof has two ways to call the same operations. Both use the same scopes, trust r
 
 ### MCP over HTTP (remote)
 
-The endpoint is `$BOOF_URL/mcp`. It uses Streamable HTTP in stateless mode. There are no sessions. Use `POST` only. `GET` and `DELETE` answer `405`. Send the header `Authorization: Bearer <key>`.
+The endpoint is `$BOOF_URL/mcp`. It uses Streamable HTTP in stateless mode. There are no sessions. Use `POST` only. `GET` and `DELETE` answer `405`. Send the header `Authorization: Bearer <key>`. Without it, a loopback caller on a server in `local-trust` mode is not an administrator: it acts as the review-trust principal `local-mcp` (as on stdio without `--admin`: administration tools hidden, your tasks and plans are drafts a human approves) with its own rate limit, and `403 forbidden_trust` while `auth/clients.json` holds a stored client of that reserved id. Administration over HTTP needs a key.
 
 Claude Code:
 

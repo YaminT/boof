@@ -1548,6 +1548,8 @@ describe("server binding", () => {
     const running = await startServer({ root, port: 0, warn: (m) => warnings.push(m) });
     try {
       expect(warnings.join("\n")).toMatch(/local-mcp/);
+      // It names both keyless surfaces: stdio refuses to start, keyless /mcp answers 403.
+      expect(warnings.join("\n")).toMatch(/\/mcp/);
     } finally {
       await running.stop();
     }

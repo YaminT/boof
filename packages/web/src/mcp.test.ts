@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -44,14 +44,18 @@ async function auditLines(): Promise<Record<string, unknown>[]> {
   return out;
 }
 
-async function setup(mode: "required" | "local-trust", mcp?: { enabled: boolean }) {
+async function setup(
+  mode: "required" | "local-trust",
+  mcp?: { enabled: boolean },
+  perMinute = 600,
+) {
   const settings = defaultSettings();
   settings.security = {
     allowedHosts: [],
     auth: { mode },
     allowedProjectRoots: [],
     externalTasksRequireApproval: true,
-    rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 },
+    rateLimit: { perMinute, attachmentsPerMinute: 30, unauthenticatedPerMinute: 30 },
     trustedProxies: ["loopback"],
     audit: { enabled: true, retentionDays: 90 },
   };
@@ -272,6 +276,72 @@ describe("/mcp under local-trust", () => {
       expect(names).toContain("boof_create_task");
       const whoami = await rpcCall(rpc("tools/call", { name: "boof_whoami", arguments: {} }));
       expect(JSON.stringify(whoami.structuredContent)).toContain("local-mcp");
+    });
+
+    it("is recorded in the audit log as local-mcp, while the UI's keyless calls stay local", async () => {
+      await setup("local-trust");
+      const local = createApp({
+        service: new TaskService(root),
+        authStore,
+        peerAddress: () => "127.0.0.1",
+      });
+      await local.request("http://localhost/mcp", {
+        method: "POST",
+        body: rpc("tools/call", { name: "boof_list_projects", arguments: {} }),
+        headers: { "content-type": "application/json", accept: ACCEPT },
+      });
+      await local.request("http://localhost/api/v1/whoami");
+      const lines = await auditLines();
+      const mcpLine = lines.find((l) => l.action === "mcp:boof_list_projects");
+      expect(mcpLine).toMatchObject({ principal: "local-mcp", kind: "client" });
+      expect(lines.find((l) => String(l.action).startsWith("GET /api/v1/whoami"))).toMatchObject({
+        principal: "local",
+        kind: "local",
+      });
+    });
+
+    it("has its own rate-limit bucket, separate from the UI's", async () => {
+      await setup("local-trust", undefined, 3);
+      const local = createApp({
+        service: new TaskService(root),
+        authStore,
+        peerAddress: () => "127.0.0.1",
+      });
+      const mcp = () =>
+        local.request("http://localhost/mcp", {
+          method: "POST",
+          body: rpc("tools/list"),
+          headers: { "content-type": "application/json", accept: ACCEPT },
+        });
+      const statuses = [];
+      for (let i = 0; i < 5; i++) statuses.push((await mcp()).status);
+      expect(statuses.slice(0, 3)).toEqual([200, 200, 200]);
+      expect(statuses.slice(3)).toEqual([429, 429]);
+      // The UI's keyless bucket is untouched by the model host's burst.
+      expect((await local.request("http://localhost/api/v1/whoami")).status).toBe(200);
+    });
+
+    it("refuses while clients.json holds a client with the reserved id, as stdio does", async () => {
+      await setup("local-trust");
+      await authStore.create({ name: "old", scopes: ["tasks:read"] });
+      const file = join(root, "auth", "clients.json");
+      const raw = JSON.parse(await readFile(file, "utf8"));
+      raw.clients[0].id = "local-mcp";
+      await writeFile(file, JSON.stringify(raw));
+      const local = createApp({
+        service: new TaskService(root),
+        authStore: new AuthStore(root),
+        peerAddress: () => "127.0.0.1",
+      });
+      const res = await local.request("http://localhost/mcp", {
+        method: "POST",
+        body: rpc("tools/list"),
+        headers: { "content-type": "application/json", accept: ACCEPT },
+      });
+      expect(res.status).toBe(403);
+      expect(JSON.stringify(await res.json())).toMatch(/local-mcp.*clients\.json/s);
+      // The UI's keyless REST path is not affected.
+      expect((await local.request("http://localhost/api/v1/whoami")).status).toBe(200);
     });
 
     it("cannot mint a key, toggle the runner or create a pending task", async () => {

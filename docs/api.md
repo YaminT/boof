@@ -296,7 +296,7 @@ Each tool calls the same operation as its REST route, so scopes, project restric
 rules, input validation and error codes are identical, and every call is audited.
 
 - **Auth.** HTTP: `Authorization: Bearer boof_...` (or no header from a loopback peer under
-  `local-trust`), after the Host guard, an `Origin` check (absent, or an allowed host, and no
+  `local-trust`; that caller is not the UI's administrator but the review-trust `local-mcp` principal, with its own rate-limit bucket and audit name, no administration tools, and `403` while `clients.json` holds a stored client of that reserved id), after the Host guard, an `Origin` check (absent, or an allowed host, and no
   `Sec-Fetch-Site: cross-site`; else `403 origin_not_allowed`), the body limit and the rate limit. stdio: `--client <id>` (no key
   needed), or the local principal under `local-trust`; with `auth.mode = "required"` and no
   `--client` the command refuses to start.
