@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Found by the group 4 review, 2026-10-30; not started.</version>
+        <version number="2" status="done">AuthStore writes run under auth/.clients.lock (withProcessLock); a two-process test (one touching lastUsedAt, one revoking) reproduced the lost revokes and now passes.</version>
       </versions>
     </status>
     <tests>

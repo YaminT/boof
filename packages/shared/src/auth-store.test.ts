@@ -1,7 +1,10 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { atomicWrite } from "./atomic.js";
 import {
   AuthStore,
   authorize,
@@ -163,4 +166,50 @@ describe("scopes and durations", () => {
     expect(parseDuration("12h")).toBe(12 * 3_600_000);
     expect(() => parseDuration("soon")).toThrow();
   });
+});
+
+describe("across processes", () => {
+  const lockFile = () => join(root, "auth", ".clients.lock");
+
+  it("waits for a live holder, then gives up with a clear error and changes nothing", async () => {
+    const { client } = await store.create({ name: "a", scopes: ["tasks:read"] });
+    await atomicWrite(lockFile(), `${process.ppid}\n`);
+    const s = new AuthStore(root, () => clock, { lock: { lockTimeoutMs: 200, lockPollMs: 20 } });
+    await expect(s.revoke(client.id)).rejects.toThrow(/another boof process/i);
+    expect((await store.get(client.id))!.revokedAt).toBeUndefined();
+  });
+
+  it("takes over a lock left by a dead process", async () => {
+    const { client } = await store.create({ name: "a", scopes: ["tasks:read"] });
+    await atomicWrite(lockFile(), "99999999\n");
+    await store.revoke(client.id);
+    expect((await store.get(client.id))!.revokedAt).toBeDefined();
+    await expect(stat(lockFile())).rejects.toThrow();
+  });
+
+  it("a CLI revoke is never undone by the server's concurrent lastUsedAt writes", async () => {
+    const child = fileURLToPath(new URL("../test-support/auth-child.mts", import.meta.url));
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      ids.push((await store.create({ name: `c${i}`, scopes: ["tasks:read"] })).client.id);
+    }
+    const run = (mode: string, startAt: number) =>
+      new Promise<{ ok: boolean; ops?: number; message?: string }>((resolve, reject) => {
+        execFile(
+          process.execPath,
+          ["--import", "tsx", child, root, mode, String(startAt), ids.join(",")],
+          { cwd: repoRoot },
+          (err, stdout, stderr) => {
+            if (err) return reject(new Error(`${err.message}\n${stderr}`));
+            resolve(JSON.parse(stdout.trim().split("\n").pop() as string));
+          },
+        );
+      });
+    const startAt = Date.now() + 1500;
+    const [touch, revoke] = await Promise.all([run("touch", startAt), run("revoke", startAt)]);
+    expect(touch).toMatchObject({ ok: true });
+    expect(revoke).toMatchObject({ ok: true, ops: 12 });
+    expect((await store.list()).filter((c) => !c.revokedAt)).toEqual([]);
+  }, 30000);
 });

@@ -1,7 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
-import { lockedAtomicWrite, withFileLock } from "./atomic.js";
+import { lockedAtomicWrite } from "./atomic.js";
+import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { uniqueKebabId } from "./ids.js";
 import { dataRootPaths } from "./paths.js";
 import {
@@ -76,13 +78,17 @@ export class AuthStore {
   /** Bumped on every write by this instance; lets in-process caches invalidate at once. */
   version = 0;
 
+  private readonly lockOpts: ProcessLockOptions;
+
   constructor(
     root: string,
     private readonly now: () => number = Date.now,
+    opts: { lock?: ProcessLockOptions } = {},
   ) {
     const p = dataRootPaths(root);
     this.path = p.authClients;
     this.dir = p.auth;
+    this.lockOpts = opts.lock ?? {};
   }
 
   get filePath(): string {
@@ -126,14 +132,28 @@ export class AuthStore {
     this.version += 1;
   }
 
-  /** Read-modify-write. The write itself takes the per-path lock; this serializes the cycle. */
-  private mutate<T>(fn: (clients: Client[]) => T): Promise<T> {
-    return withFileLock(`${this.path}#mutate`, async () => {
-      const clients = await this.list();
-      const out = fn(clients);
-      await this.save(clients);
-      return out;
-    });
+  /**
+   * Read-modify-write under `auth/.clients.lock`, so the CLI, the server and the desktop never
+   * overwrite each other: a revoke made by one process is not undone by another's `lastUsedAt`
+   * write. The lock also queues callers inside this process. A holder that is gone is taken over.
+   */
+  private async mutate<T>(fn: (clients: Client[]) => T): Promise<T> {
+    // The directory first, with its private mode: the lock file is created inside it.
+    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    return withProcessLock(
+      join(this.dir, ".clients.lock"),
+      this.lockOpts,
+      async () => {
+        const clients = await this.list();
+        const out = fn(clients);
+        await this.save(clients);
+        return out;
+      },
+      (holder) =>
+        new Error(
+          `Another boof process is updating the API clients (pid ${holder}); try again in a moment`,
+        ),
+    );
   }
 
   async create(input: CreateClientInput): Promise<{ client: PublicClient; key: string }> {
