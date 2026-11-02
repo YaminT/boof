@@ -1,4 +1,3 @@
-export * from "./exec.js";
 export * from "./agent-env.js";
 export * from "./prompt-hierarchy.js";
 export * from "./tools/types.js";
@@ -20,4 +19,3 @@ export * from "./boof-scan.js";
 export * from "./plan-import.js";
 export * from "./plan-sync.js";
 export { branchExists, isAncestor, createIntegrationBranch } from "./plan-base.js";
-export * from "./pid-file.js";

@@ -2,8 +2,13 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createTaskInHierarchy, newTask, ProjectStore, TaskStore } from "@boof-runner/shared";
-import { execCommand } from "@boof-runner/runner";
+import {
+  createTaskInHierarchy,
+  newTask,
+  ProjectStore,
+  TaskStore,
+  execCommand,
+} from "@boof-runner/shared";
 import { epicCommand } from "./epic-cli.js";
 import { projectCommand } from "./project-cli.js";
 

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";

@@ -12,8 +12,9 @@ import {
   SettingsStore,
   type Principal,
   type Scope,
+  execCommand,
 } from "@boof-runner/shared";
-import { execCommand, resetMock, RunnerEngine } from "@boof-runner/runner";
+import { resetMock, RunnerEngine } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import {
   closeWhenDrained,

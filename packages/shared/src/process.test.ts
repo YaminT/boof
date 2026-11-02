@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { execCommand, MAX_ARG_STRLEN } from "./exec.js";
+import { execCommand, MAX_ARG_STRLEN } from "./process.js";
 
 describe("execCommand", () => {
   it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {

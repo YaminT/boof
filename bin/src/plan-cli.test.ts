@@ -11,13 +11,9 @@ import {
   serializePlan,
   TaskStore,
   type BoofGoal,
-} from "@boof-runner/shared";
-import {
-  buildUnitPrompt,
   execCommand,
-  selectActionableUnits,
-  ToolRegistry,
-} from "@boof-runner/runner";
+} from "@boof-runner/shared";
+import { buildUnitPrompt, selectActionableUnits, ToolRegistry } from "@boof-runner/runner";
 import { drainQueue, scanRepoToTasks } from "./headless.js";
 import { planCommand } from "./plan-cli.js";
 

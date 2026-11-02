@@ -5,7 +5,7 @@
  */
 import { appendFile, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { createIntegrationBranch, isAncestor } from "./plan-base.js";
 import {
   appendEvent,

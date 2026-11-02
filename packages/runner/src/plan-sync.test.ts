@@ -17,7 +17,7 @@ import {
   type Plan,
   type Project,
 } from "@boof-runner/shared";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { buildGoalPrompt, PlanNotActiveError, syncPlan, taskStatusForPlan } from "./plan-sync.js";
 
 let dataRoot: string;

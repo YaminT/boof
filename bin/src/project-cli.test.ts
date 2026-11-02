@@ -3,8 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ProjectStore, SettingsStore } from "@boof-runner/shared";
-import { execCommand } from "@boof-runner/runner";
+import { ProjectStore, SettingsStore, execCommand } from "@boof-runner/shared";
 import { projectCommand } from "./project-cli.js";
 import { scaffoldDataRoot } from "./scaffold.js";
 import { main } from "./boof-runner.js";

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import {
   commitLeftovers,
   createWorktree as create,

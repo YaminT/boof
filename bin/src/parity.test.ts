@@ -12,8 +12,9 @@ import {
   LOCAL_PRINCIPAL,
   defaultSettings,
   SettingsStore,
+  execCommand,
 } from "@boof-runner/shared";
-import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { cliOps, commandPath, matchOpCommand, opsCommand } from "./ops-cli.js";
 
 // REST is proven by packages/web/src/contract.test.ts (every operation has a route and a test of

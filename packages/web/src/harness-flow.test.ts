@@ -13,8 +13,9 @@ import {
   ProjectStore,
   SettingsStore,
   TaskStore,
+  execCommand,
 } from "@boof-runner/shared";
-import { execCommand, RunnerEngine, resetMock } from "@boof-runner/runner";
+import { RunnerEngine, resetMock } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
 

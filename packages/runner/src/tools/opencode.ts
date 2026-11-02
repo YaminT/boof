@@ -1,4 +1,4 @@
-import { commandExists, execCommand } from "../exec.js";
+import { commandExists, execCommand } from "@boof-runner/shared";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";

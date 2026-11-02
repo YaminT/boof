@@ -8,8 +8,8 @@ import {
   newTask,
   ProjectStore,
   TaskStore,
+  execCommand,
 } from "@boof-runner/shared";
-import { execCommand } from "@boof-runner/runner";
 import { projectCommand } from "./project-cli.js";
 import { taskCommand } from "./task-cli.js";
 

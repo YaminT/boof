@@ -39,9 +39,9 @@ import {
   appendAnswerRound,
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
-import { currentBootId, isAlive, writePidFile } from "./pid-file.js";
+import { currentBootId, isAlive, writePidFile } from "@boof-runner/shared";
 import { ensureWorktree, initGitRepo, isGitRepo, repoCommonDir } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";

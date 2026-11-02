@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseVerdict } from "@boof-runner/shared";
-import { execCommand } from "../exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { MockTool, mockState, resetMock } from "./mock.js";
 import { parseUsage, sumUsage, UNKNOWN_USAGE } from "./usage.js";
 import { ToolRegistry } from "./registry.js";

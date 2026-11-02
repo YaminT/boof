@@ -12,7 +12,7 @@ import {
   type Goal,
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { createIntegrationBranch } from "./plan-base.js";
 import { mockState, resetMock } from "./tools/mock.js";
 

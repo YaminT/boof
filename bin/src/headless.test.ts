@@ -10,8 +10,9 @@ import {
   ProjectStore,
   SettingsStore,
   TaskStore,
+  execCommand,
 } from "@boof-runner/shared";
-import { MockTool, ToolRegistry, execCommand, mockState, resetMock } from "@boof-runner/runner";
+import { MockTool, ToolRegistry, mockState, resetMock } from "@boof-runner/runner";
 import {
   drainQueue,
   ProjectResolutionError,

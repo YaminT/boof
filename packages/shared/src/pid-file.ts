@@ -1,13 +1,13 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
+import { atomicWrite } from "./atomic.js";
 import {
   agentStatus,
-  atomicWrite,
   bootIdentity,
   probeProcess,
   readProcStat,
   type IdentityDeps,
-} from "@boof-runner/shared";
+} from "./process-identity.js";
 
 export interface PidRecord {
   pgid: number;

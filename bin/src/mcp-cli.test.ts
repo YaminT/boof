@@ -133,8 +133,7 @@ describe("boof-runner mcp over stdio", () => {
   };
 
   it("without --admin the host acts as a review-trust client: the unattended-agent chain fails at every step", async () => {
-    const { ProjectStore } = await import("@boof-runner/shared");
-    const { execCommand } = await import("@boof-runner/runner");
+    const { ProjectStore, execCommand } = await import("@boof-runner/shared");
     const base = await mkdtemp(join(tmpdir(), "boof-mcp-repos-"));
     const repoDir = join(base, "repo");
     const elsewhere = join(base, "elsewhere");

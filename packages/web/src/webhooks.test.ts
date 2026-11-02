@@ -11,8 +11,9 @@ import {
   SettingsStore,
   WebhookSecretStore,
   type SecuritySettings,
+  execCommand,
 } from "@boof-runner/shared";
-import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
 import { pinnedPost } from "./pinned-post.js";

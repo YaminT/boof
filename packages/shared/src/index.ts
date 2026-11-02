@@ -22,6 +22,8 @@ export * from "./project-path.js";
 export * from "./migrate.js";
 export * from "./process-lock.js";
 export * from "./process-identity.js";
+export * from "./process.js";
+export * from "./pid-file.js";
 export * from "./webhook-secrets.js";
 export * from "./plan-schema.js";
 export * from "./plan-validate.js";

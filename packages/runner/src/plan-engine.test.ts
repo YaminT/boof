@@ -16,7 +16,7 @@ import {
   type TaskFrontmatter,
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { mockState, resetMock } from "./tools/mock.js";
 
 let dataRoot: string;

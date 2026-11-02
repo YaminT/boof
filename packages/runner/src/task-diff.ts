@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof-runner/shared";
 import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
 import { leftoversBranch, registeredWorktreeBranch } from "./worktree.js";
 
