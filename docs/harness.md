@@ -644,7 +644,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 74 operations. Every path below starts with `/api/v1`.
+There are 75 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -2052,6 +2052,26 @@ JSON body (unknown keys are rejected):
 - `events`: `string[]`, optional; min 1 item(s); max 20 item(s)
 - `projects`: `"*" | kebab-id[]`, optional
 - `url`: `string`, required; max length 2000
+
+#### `PUT /api/v1/webhooks/{webhookId}` (Update a webhook)
+
+- Operation: `webhooks.update`
+- Scope: `admin`
+- MCP tool: none (REST only)
+- What it does: Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is "*" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed.
+- Success: HTTP 200 with `{ created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `webhookId`: `kebab-id`, required; Webhook id
+
+JSON body (unknown keys are rejected):
+
+- `enabled`: `boolean`, optional
+- `events`: `string[]`, optional; min 1 item(s); max 20 item(s)
+- `projects`: `"*" | kebab-id[]`, optional
+- `url`: `string`, optional; max length 2000
 
 #### `DELETE /api/v1/webhooks/{webhookId}` (Delete a webhook)
 

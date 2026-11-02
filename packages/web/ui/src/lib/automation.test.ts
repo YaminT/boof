@@ -38,10 +38,12 @@ describe("webhookFormProblems", () => {
     expect(webhookFormProblems({ ...ok, url: "ftp://x" })).toEqual([
       "Enter a URL that starts with http:// or https://.",
     ]);
-    // The server's pattern has no underscore (see the goal webhook-update-and-event-names).
-    expect(webhookFormProblems({ ...ok, events: "runner.budget_exceeded" })).toEqual([
-      "Use event types such as task.status or patterns such as plan.*.",
-    ]);
+    expect(webhookFormProblems({ ...ok, events: "runner.budget_exceeded" })).toEqual([]);
+    for (const events of ["runner._x", "Runner.enabled", "runner.budget__exceeded", "a b"]) {
+      expect(webhookFormProblems({ ...ok, events: events === "a b" ? "ok.* ?x" : events })).toEqual(
+        ["Use event types such as task.status or patterns such as plan.*."],
+      );
+    }
     expect(webhookFormProblems({ ...ok, projects: [] })).toEqual([
       "Choose at least one project, or send events from every project.",
     ]);

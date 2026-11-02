@@ -220,16 +220,29 @@ export const CreateClientBody = z
 
 // --- Webhooks ---
 
+/** An event type or `prefix.*` pattern; words may contain single underscores (runner.budget_exceeded). */
+const EVENT_PATTERN = /^(\*|[a-z]+(_[a-z]+)*(\.([a-z]+(_[a-z]+)*|\*))?)$/;
+
+const webhookEvents = z.array(z.string().regex(EVENT_PATTERN)).min(1).max(20);
+const webhookProjects = z.union([z.literal("*"), z.array(kebabId).min(1).max(200)]);
+
 export const CreateWebhookBody = z
   .object({
     url: z.string().trim().min(1).max(2000),
     /** Event types or `prefix.*` patterns; default: every event. */
-    events: z
-      .array(z.string().regex(/^(\*|[a-z]+(\.[a-z]+|\.\*)?)$/))
-      .min(1)
-      .max(20)
-      .optional(),
-    projects: z.union([z.literal("*"), z.array(kebabId).min(1).max(200)]).optional(),
+    events: webhookEvents.optional(),
+    /** `"*"` or at least one project. */
+    projects: webhookProjects.optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+/** The fields of a webhook an update may change; the id, creator and secret never change. */
+export const UpdateWebhookFields = z
+  .object({
+    url: z.string().trim().min(1).max(2000).optional(),
+    events: webhookEvents.optional(),
+    projects: webhookProjects.optional(),
     enabled: z.boolean().optional(),
   })
   .strict();

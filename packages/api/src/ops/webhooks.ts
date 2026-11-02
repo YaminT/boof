@@ -5,8 +5,8 @@ import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { assertWebhookTarget } from "../net-guard.js";
 import { PublicWebhookSchema, OkSchema } from "../schemas.js";
-import { CreateWebhookBody } from "../validation.js";
-import { DESTRUCTIVE, webhookIdParam, WRITE, READ } from "./common.js";
+import { CreateWebhookBody, UpdateWebhookFields } from "../validation.js";
+import { DESTRUCTIVE, IDEMPOTENT_WRITE, webhookIdParam, WRITE, READ } from "./common.js";
 
 /** True when `pattern` (`*`, `plan.*` or an exact type) selects event type `type`. */
 export function eventMatches(pattern: string, type: string): boolean {
@@ -108,26 +108,10 @@ export const webhooksCreate = defineOp({
         ]);
       }
     }
-    // A project-restricted key cannot subscribe to events of projects it may not access: the
-    // default is its own projects, and a wider list is refused.
+    // The default for a project-restricted key is its own projects.
     const mine = ctx.principal.projects;
-    let projects: "*" | string[] = input.projects ?? "*";
-    if (mine !== "*") {
-      if (input.projects === undefined) projects = [...mine];
-      else {
-        const outside = input.projects === "*" ? ["*"] : input.projects.filter((p) => !mine.has(p));
-        if (outside.length > 0) {
-          throw new OpError(
-            403,
-            "Webhook reaches projects you may not access",
-            "forbidden_project",
-            {
-              projects: outside,
-            },
-          );
-        }
-      }
-    }
+    const checked = reachableProjects(ctx, input.projects);
+    const projects: "*" | string[] = checked ?? (mine === "*" ? "*" : [...mine]);
     const webhook: Webhook = {
       id: `wh-${randomBytes(4).toString("hex")}`,
       url: input.url,
@@ -145,6 +129,84 @@ export const webhooksCreate = defineOp({
       webhooks: [...(settings.webhooks ?? []), webhook],
     }));
     return { webhook, secret };
+  },
+});
+
+/**
+ * A project-restricted key cannot subscribe to events of projects it may not access: a wider list
+ * is refused. Shared by create and update; `undefined` means the caller did not ask for any.
+ */
+function reachableProjects(
+  ctx: OpContext,
+  requested: "*" | string[] | undefined,
+): "*" | string[] | undefined {
+  const mine = ctx.principal.projects;
+  if (mine === "*" || requested === undefined) return requested;
+  const outside = requested === "*" ? ["*"] : requested.filter((p) => !mine.has(p));
+  if (outside.length > 0) {
+    throw new OpError(403, "Webhook reaches projects you may not access", "forbidden_project", {
+      projects: outside,
+    });
+  }
+  return requested;
+}
+
+export const webhooksUpdate = defineOp({
+  name: "webhooks.update",
+  title: "Update a webhook",
+  description:
+    'Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is "*" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed.',
+  scope: "admin",
+  projectScoped: false,
+  input: z
+    .strictObject({ webhookId: webhookIdParam, ...UpdateWebhookFields.shape })
+    .refine((v) => Object.keys(v).length > 1, { message: "Send at least one field to change" }),
+  output: PublicWebhookSchema,
+  rest: { method: "PUT", path: "/webhooks/{webhookId}" },
+  mcp: { expose: false, annotations: IDEMPOTENT_WRITE },
+  handler: async (ctx, { webhookId, ...patch }) => {
+    // The URL is vetted before anything is written, exactly as on create.
+    if (patch.url !== undefined) {
+      await assertWebhookTarget(patch.url, {
+        isSelf: ctx.isSelfUrl,
+        resolve: ctx.resolveHost,
+        allowedPrivateHosts: securitySettings(await ctx.services.loadSettings())
+          .allowedPrivateWebhookHosts,
+      });
+    }
+    for (const pattern of patch.events ?? []) {
+      if (!EVENT_TYPES.some((t) => eventMatches(pattern, t))) {
+        throw new OpError(400, `Unknown event type: ${pattern}`, "invalid_input", [
+          { path: "events", message: `Unknown event type: ${pattern}` },
+        ]);
+      }
+    }
+    const projects = reachableProjects(ctx, patch.projects);
+    let updated!: Webhook;
+    await ctx.services.settingsStore.mutate((settings) => {
+      const hooks = settings.webhooks ?? [];
+      const hook = hooks.find((h) => h.id === webhookId);
+      // A webhook beyond the caller's reach answers like an unknown one.
+      if (!hook || !withinReach(ctx, hook)) throw new OpError(404, "Webhook not found");
+      // A review-trust key changes only the webhooks it created.
+      if (ctx.principal.trust === "review" && hook.createdBy !== ctx.principal.id) {
+        throw new OpError(
+          403,
+          "This client has review trust and can only change webhooks it created",
+          "forbidden_trust",
+        );
+      }
+      // Only these four fields change; id, createdBy, createdByClient and created stay.
+      updated = {
+        ...hook,
+        ...(patch.url !== undefined ? { url: patch.url } : {}),
+        ...(patch.events !== undefined ? { events: patch.events } : {}),
+        ...(projects !== undefined ? { projects } : {}),
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+      };
+      return { ...settings, webhooks: hooks.map((h) => (h.id === webhookId ? updated : h)) };
+    });
+    return updated;
   },
 });
 
@@ -181,4 +243,4 @@ export const webhooksDelete = defineOp({
   },
 });
 
-export const webhookOps = [webhooksList, webhooksCreate, webhooksDelete];
+export const webhookOps = [webhooksList, webhooksCreate, webhooksUpdate, webhooksDelete];

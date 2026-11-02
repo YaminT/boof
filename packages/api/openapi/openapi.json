@@ -11670,7 +11670,7 @@
                   },
                   "events": {
                     "items": {
-                      "pattern": "^(\\*|[a-z]+(\\.[a-z]+|\\.\\*)?)$",
+                      "pattern": "^(\\*|[a-z]+(_[a-z]+)*(\\.([a-z]+(_[a-z]+)*|\\*))?)$",
                       "type": "string"
                     },
                     "maxItems": 20,
@@ -11864,6 +11864,154 @@
         ],
         "x-boof-scope": "admin",
         "x-mcp-tool": "boof_delete_webhook"
+      },
+      "put": {
+        "description": "Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is \"*\" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed.",
+        "operationId": "webhooks.update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "webhookId",
+            "required": true,
+            "schema": {
+              "description": "Webhook id.",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "events": {
+                    "items": {
+                      "pattern": "^(\\*|[a-z]+(_[a-z]+)*(\\.([a-z]+(_[a-z]+)*|\\*))?)$",
+                      "type": "string"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "projects": {
+                    "anyOf": [
+                      {
+                        "const": "*",
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "maxItems": 200,
+                        "minItems": 1,
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "maxLength": 2000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "created": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "createdByClient": {
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "events": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "projects": {
+                      "anyOf": [
+                        {
+                          "const": "*",
+                          "type": "string"
+                        },
+                        {
+                          "items": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      ],
+                      "default": "*"
+                    },
+                    "url": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "url",
+                    "events",
+                    "projects",
+                    "enabled",
+                    "createdBy",
+                    "created"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Update a webhook",
+        "tags": [
+          "webhooks"
+        ],
+        "x-boof-scope": "admin"
       }
     },
     "/whoami": {

@@ -41,6 +41,7 @@ export const EVENT_HINTS = [
   "task.status",
   "task.questions",
   "plan.synced",
+  "runner.budget_exceeded",
 ] as const;
 
 /** Event types and patterns from a text field; empty means every event. */
@@ -50,7 +51,7 @@ export function parseEvents(text: string): string[] {
 }
 
 // The server's pattern for an event type or `prefix.*`.
-const EVENT = /^(\*|[a-z]+(\.[a-z]+|\.\*)?)$/;
+const EVENT = /^(\*|[a-z]+(_[a-z]+)*(\.([a-z]+(_[a-z]+)*|\*))?)$/;
 
 export function webhookFormProblems(
   v: {
