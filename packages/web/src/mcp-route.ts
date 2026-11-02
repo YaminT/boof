@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { handleMcpHttp } from "@boof-runner/mcp";
-import { mcpSettings, type AuthStore } from "@boof-runner/shared";
-import type { ResolveHost, TaskService } from "@boof-runner/api";
+import { LOCAL_PRINCIPAL, mcpSettings, type AuthStore } from "@boof-runner/shared";
+import { LOCAL_MCP_PRINCIPAL, type ResolveHost, type TaskService } from "@boof-runner/api";
 
 export interface McpRouteDeps {
   service: TaskService;
@@ -54,9 +54,14 @@ export function mcpRoute(deps: McpRouteDeps) {
       c.set("auditExtra", { action: `mcp:${method}` });
     }
 
+    // A keyless loopback caller under local-trust is a model host, not the administrator: it is
+    // the review-trust `local-mcp` principal with the administration tools hidden, as on stdio.
+    const caller = c.get("principal");
+    const keyless = caller.kind === LOCAL_PRINCIPAL.kind && caller.id === LOCAL_PRINCIPAL.id;
     return handleMcpHttp(c.req.raw, {
       root: deps.service.root,
-      principal: c.get("principal"),
+      principal: keyless ? LOCAL_MCP_PRINCIPAL : caller,
+      ...(keyless ? { adminTools: false } : {}),
       services: deps.service,
       authStore: deps.authStore,
       isSelfUrl: deps.isSelfUrl,

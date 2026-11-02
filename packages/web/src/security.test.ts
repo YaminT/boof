@@ -443,6 +443,59 @@ describe("authorize (scopes)", () => {
     expect(existsSync(fresh)).toBe(false);
   });
 
+  it("a review-trust key cannot resume a project a human paused", async () => {
+    peer = REMOTE;
+    const review = await mint("rev", ["projects:read", "projects:write"], {
+      projects: ["default"],
+    });
+    const app = build();
+    await service.pauseProject("default");
+    const resume = await call(app, "/api/v1/projects/default/resume", post({}), review);
+    expect(resume.status).toBe(403);
+    expect((await resume.json()).error.code).toBe("forbidden_trust");
+    const put = await call(
+      app,
+      "/api/v1/projects/default",
+      { ...post({ paused: false }), method: "PUT" },
+      review,
+    );
+    expect(put.status).toBe(403);
+    expect((await service.getProject("default")).paused).toBe(true);
+    // Pausing stays allowed.
+    const pause = await call(
+      app,
+      "/api/v1/projects/default",
+      { ...post({ paused: true }), method: "PUT" },
+      review,
+    );
+    expect(pause.status).toBe(200);
+  });
+
+  it("a review-trust key skips and reorders only tasks it created", async () => {
+    peer = REMOTE;
+    const review = await mint("rev", ["tasks:read", "tasks:write"], { projects: ["default"] });
+    const app = build();
+    const human = await service.forProject("default").create({ title: "Human", status: "draft" });
+    const mine = await (
+      await call(app, "/api/v1/projects/default/tasks", post({ title: "Mine" }), review)
+    ).json();
+    const mineId = (mine.task ?? mine).frontmatter.id as string;
+    const skipUrl = (id: string) => `/api/v1/projects/default/tasks/${id}/skip`;
+    const refused = await call(app, skipUrl(human.frontmatter.id), post({ skip: true }), review);
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error.code).toBe("forbidden_trust");
+    expect((await call(app, skipUrl(mineId), post({ skip: true }), review)).status).toBe(200);
+    const reorder = (order: string[]) =>
+      call(app, "/api/v1/projects/default/tasks/reorder", post({ order }), review);
+    const before = (await service.forProject("default").get(human.frontmatter.id))!.frontmatter
+      .priority;
+    expect((await reorder([human.frontmatter.id, mineId])).status).toBe(403);
+    expect(
+      (await service.forProject("default").get(human.frontmatter.id))!.frontmatter.priority,
+    ).toBe(before);
+    expect((await reorder([mineId])).status).toBe(200);
+  });
+
   it("a review-trust key cannot archive, unarchive or purge a project", async () => {
     peer = REMOTE;
     const review = await mint("rev", ["projects:read", "projects:write"], {

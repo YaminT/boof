@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSettings, SettingsStore } from "@boof-runner/shared";
 import { ERROR_CODES, registry, TaskService } from "@boof-runner/api";
+import { exposedOps } from "@boof-runner/mcp";
 import { createApp } from "./app.js";
 import { HARNESS_MD } from "./generated/harness.js";
 import {
@@ -36,6 +37,22 @@ describe("the generated harness guide", () => {
     for (const code of Object.keys(ERROR_CODES)) {
       expect(HARNESS_MD, code).toMatch(new RegExp(`^\\| \`${code}\``, "m"));
     }
+  });
+
+  it("states the real tool count and lists every exposed tool in the MCP table", () => {
+    const tools = exposedOps(registry);
+    const n = tools.length;
+    expect(HARNESS_MD).toContain(`There are ${n} tools`);
+    expect(HARNESS_MD).toContain(`Tools (${n}).`);
+    const table = HARNESS_MD.slice(
+      HARNESS_MD.indexOf(`Tools (${n}).`),
+      HARNESS_MD.indexOf("MCP results:"),
+    );
+    for (const op of tools) expect(table, op.mcp.name).toContain(`\`${op.mcp.name}\``);
+    // And the identity story an agent needs: keyless stdio is not the administrator.
+    expect(HARNESS_MD).toContain("local-mcp");
+    expect(HARNESS_MD).toContain("--admin");
+    expect(HARNESS_MD).toMatch(/Exit codes[^\n]*130/);
   });
 
   it("starts the connection steps with section 1", () => {

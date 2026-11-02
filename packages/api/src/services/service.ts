@@ -287,7 +287,7 @@ export class ProjectService {
   /** A review-trust client may move, edit and delete only the tasks it created. */
   private async assertMayChange(
     task: Task,
-    verb: "move" | "edit" | "delete",
+    verb: "move" | "edit" | "delete" | "skip" | "reorder",
     actor?: Principal,
   ): Promise<void> {
     if (!(await this.needsApproval(actor))) return;
@@ -297,6 +297,17 @@ export class ProjectService {
       `This client has review trust and can only ${verb} tasks it created`,
       "forbidden_trust",
     );
+  }
+
+  /** A review-trust client may skip and reorder only its own tasks (an unknown id is left to the store). */
+  private async assertOwnTask(
+    id: string,
+    verb: "skip" | "reorder",
+    actor?: Principal,
+  ): Promise<void> {
+    if (!(await this.needsApproval(actor))) return;
+    const task = await this.tasks.get(id);
+    if (task) await this.assertMayChange(task, verb, actor);
   }
 
   /** Change a task's epic or parent (null clears). One level of subtasks; a parent clears the epic. */
@@ -475,7 +486,8 @@ export class ProjectService {
     return { task, warnings: [] };
   }
 
-  setSkip(id: string, skip: boolean): Promise<Task> {
+  async setSkip(id: string, skip: boolean, actor?: Principal): Promise<Task> {
+    await this.assertOwnTask(id, "skip", actor);
     return this.tasks.setSkip(id, skip);
   }
 
@@ -483,7 +495,8 @@ export class ProjectService {
    * Reorder by a list of ids (first = highest priority). Rewrites priority on
    * each listed task with gaps so later single-item drags stay stable.
    */
-  async reorder(orderedIds: string[]): Promise<Task[]> {
+  async reorder(orderedIds: string[], actor?: Principal): Promise<Task[]> {
+    for (const id of orderedIds) await this.assertOwnTask(id, "reorder", actor);
     const n = orderedIds.length;
     const out: Task[] = [];
     for (let i = 0; i < n; i += 1) {
@@ -921,13 +934,15 @@ export class TaskService {
       );
     }
     const ALLOWED = new Set(["name", "labels", "paused"]);
+    // A human's pause is theirs to lift: a restricted caller may pause, never resume.
+    const resumes = (values as { paused?: unknown }).paused === false;
     const touched = Object.entries(values)
-      .filter(([k, v]) => v !== undefined && !ALLOWED.has(k))
+      .filter(([k, v]) => v !== undefined && (!ALLOWED.has(k) || (k === "paused" && resumes)))
       .map(([k]) => k);
     if (touched.length > 0) {
       throw new OpError(
         403,
-        `This client has review trust and may change only name, labels and paused of a project (not ${touched.join(", ")})`,
+        `This client has review trust and may change only name, labels and pausing of a project (not ${touched.join(", ")})`,
         "forbidden_trust",
       );
     }

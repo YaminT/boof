@@ -201,7 +201,7 @@ Fix errors this way:
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 39 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Operations without a tool (attachments, settings writes, commands, clients, webhooks, project archive and delete, task delete and skip, epic delete) are REST only.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 72 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
 
 ### MCP over HTTP (remote)
 
@@ -272,33 +272,38 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (39). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (72). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
-| Area         | Tools                                                                                                                                                                                          |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity     | `boof_whoami`                                                                                                                                                                                  |
-| Projects     | `boof_list_projects`, `boof_create_project`, `boof_get_project`, `boof_update_project`                                                                                                         |
-| Plans        | `boof_list_plans`, `boof_create_plan`, `boof_get_plan`, `boof_update_plan`, `boof_export_plan`, `boof_import_plan`                                                                             |
-| Goals        | `boof_replace_goals`, `boof_upsert_goal`, `boof_remove_goal`, `boof_reorder_goals`, `boof_set_goal_status`                                                                                     |
-| Plan to task | `boof_sync_plan`, `boof_wait_plan`                                                                                                                                                             |
-| Tasks        | `boof_list_tasks`, `boof_get_task`, `boof_create_task`, `boof_update_task`, `boof_move_task`, `boof_queue_task`, `boof_retry_task`, `boof_archive_task`, `boof_get_task_log`, `boof_wait_task` |
-| Epics        | `boof_list_epics`, `boof_get_epic`, `boof_create_epic`, `boof_update_epic`                                                                                                                     |
-| Control      | `boof_answer_task`, `boof_list_actions`, `boof_stop_task`, `boof_inject_prompt`                                                                                                                |
-| Runner       | `boof_runner_status`, `boof_set_runner`                                                                                                                                                        |
+| Area                       | Tools                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity                   | `boof_whoami`                                                                                                                                                                                                                                                                                                                                                                                 |
+| Projects                   | `boof_list_projects`, `boof_create_project`, `boof_get_project`, `boof_update_project`, `boof_archive_project`, `boof_unarchive_project`, `boof_pause_project`, `boof_resume_project`, `boof_delete_project`, `boof_get_project_usage`                                                                                                                                                        |
+| Plans and goals            | `boof_list_plans`, `boof_create_plan`, `boof_get_plan`, `boof_update_plan`, `boof_replace_goals`, `boof_upsert_goal`, `boof_remove_goal`, `boof_reorder_goals`, `boof_set_goal_status`, `boof_import_plan`, `boof_export_plan`, `boof_sync_plan`, `boof_wait_plan`                                                                                                                            |
+| Tasks                      | `boof_list_tasks`, `boof_get_task`, `boof_get_task_diff`, `boof_create_task`, `boof_update_task`, `boof_move_task`, `boof_queue_task`, `boof_skip_task`, `boof_reorder_tasks`, `boof_retry_task`, `boof_archive_task`, `boof_unarchive_task`, `boof_delete_task`, `boof_answer_task`, `boof_stop_task`, `boof_inject_prompt`, `boof_get_task_log`, `boof_wait_task`, `boof_remove_attachment` |
+| Epics                      | `boof_list_epics`, `boof_get_epic`, `boof_create_epic`, `boof_update_epic`, `boof_delete_epic`                                                                                                                                                                                                                                                                                                |
+| Settings, models and usage | `boof_get_settings`, `boof_update_settings`, `boof_get_health`, `boof_check_health`, `boof_list_models`, `boof_refresh_models`, `boof_get_model_details`, `boof_get_usage`, `boof_get_budget`                                                                                                                                                                                                 |
+| Runner and actions         | `boof_get_runner`, `boof_runner_status`, `boof_set_runner`, `boof_list_actions`                                                                                                                                                                                                                                                                                                               |
+| Command templates          | `boof_list_commands`, `boof_create_command`, `boof_update_command`, `boof_delete_command`                                                                                                                                                                                                                                                                                                     |
+| API clients                | `boof_list_clients`, `boof_create_client`, `boof_revoke_client`, `boof_rotate_client`                                                                                                                                                                                                                                                                                                         |
+| Webhooks                   | `boof_list_webhooks`, `boof_create_webhook`, `boof_delete_webhook`                                                                                                                                                                                                                                                                                                                            |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
 
 ### MCP over stdio (agent on the boof machine)
 
-If you run on the same machine as boof, the host starts boof as a child process. No server and no key are needed. A local agent without MCP can run the same operations as `boof-runner <area> <verb> --json` (for example `boof-runner tasks list --project shop --json`), with the same `--client` rule:
+If you run on the same machine as boof, the host starts boof as a child process. No server and no key are needed:
 
 ```bash
 claude mcp add boof -- boof-runner mcp -d <data-root> --client <client-id>
 ```
 
-- `--client <id>`: act as this API client. Its scopes, projects and trust apply. Without it you are the local administrator, and only when `security.auth.mode` is `local-trust`.
-- `--project <id>`: serve one project. The `projectId` argument is filled in and hidden from the tool schemas.
+- `--client <id>`: act as this API client. Its scopes, projects and trust apply, so it is the right choice for an agent host. Give an agent the client the user created for it.
+- Without `--client` (and only when `security.auth.mode` is `local-trust`) you act as the reserved review-trust principal `local-mcp`, shared by every keyless host on the machine: your tasks and plans are drafts a human approves in the UI, you cannot queue, retry, answer, activate a plan, switch the runner or create a project, you change only your own work and only the name, labels and paused state of a project (you cannot resume one), and you have no administration tools (API clients, webhooks, settings writes, command templates, the health check, project deletion).
+- `--admin`: without `--client`, act as the local administrator with every tool. It is refused together with `--client`.
+- `--project <id>`: serve one project. The `projectId` argument is filled in and hidden from the tool schemas, you reach no other project, and the API-client and webhook tools are hidden.
 - `-d <data-root>`: the data root (default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
+
+An agent that has a shell but no MCP can run the same operations as `boof-runner <area> <verb> --json` (for example `boof-runner tasks list --project shop --json`). That CLI is not the MCP identity: **without `--client` it acts as the local administrator** (the human at their own terminal); with `--client <id>` that client's scopes, projects and trust apply. Use the client the user gives you. Exit codes: 0 success; 1 bad usage or any other error; 2 not found; 3 not allowed (identity, scope, project, trust); 130 interrupted.
 
 ## 4. Core concepts
 

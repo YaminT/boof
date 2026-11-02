@@ -391,7 +391,11 @@ export const tasksSkip = defineOp({
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
-    return taskView(ctx, input.projectId, await svc.setSkip(input.taskId, input.skip));
+    return taskView(
+      ctx,
+      input.projectId,
+      await svc.setSkip(input.taskId, input.skip, ctx.principal),
+    );
   },
 });
 
@@ -410,7 +414,9 @@ export const tasksReorder = defineOp({
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
     return {
-      tasks: (await svc.reorder(input.order)).map((t) => taskView(ctx, input.projectId, t)),
+      tasks: (await svc.reorder(input.order, ctx.principal)).map((t) =>
+        taskView(ctx, input.projectId, t),
+      ),
     };
   },
 });

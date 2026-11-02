@@ -237,4 +237,59 @@ describe("/mcp under local-trust", () => {
     const ok = await call("http://hook.test/in");
     expect(ok.isError).toBeFalsy();
   });
+
+  describe("keyless loopback under local-trust", () => {
+    const keyless = async () => {
+      await setup("local-trust");
+      const svc = new TaskService(root);
+      const local = createApp({ service: svc, authStore, peerAddress: () => "127.0.0.1" });
+      const rpcCall = async (body: string) => {
+        const res = await local.request("http://localhost/mcp", {
+          method: "POST",
+          body,
+          headers: { "content-type": "application/json", accept: ACCEPT },
+        });
+        return (await res.json()).result;
+      };
+      return { svc, rpcCall };
+    };
+
+    it("is the review-trust local-mcp principal with no administration tools", async () => {
+      const { rpcCall } = await keyless();
+      const list = await rpcCall(rpc("tools/list"));
+      const names = list.tools.map((t: { name: string }) => t.name);
+      for (const n of [
+        "boof_create_client",
+        "boof_list_clients",
+        "boof_create_webhook",
+        "boof_update_settings",
+        "boof_create_command",
+        "boof_delete_project",
+        "boof_check_health",
+      ]) {
+        expect(names, n).not.toContain(n);
+      }
+      expect(names).toContain("boof_create_task");
+      const whoami = await rpcCall(rpc("tools/call", { name: "boof_whoami", arguments: {} }));
+      expect(JSON.stringify(whoami.structuredContent)).toContain("local-mcp");
+    });
+
+    it("cannot mint a key, toggle the runner or create a pending task", async () => {
+      const { svc, rpcCall } = await keyless();
+      await svc.projects.create({ workingDirectory: base, id: "shop" }).catch(() => undefined);
+      const call = (name: string, args: object) =>
+        rpcCall(rpc("tools/call", { name, arguments: args }));
+      // A tool that is not listed does not exist for this caller.
+      const mint = await rpcCall(
+        rpc("tools/call", {
+          name: "boof_create_client",
+          arguments: { name: "x", scopes: ["admin"], trust: "trusted" },
+        }),
+      ).catch(() => undefined);
+      expect(mint).toBeUndefined();
+      const runner = await call("boof_set_runner", { enabled: true });
+      expect(runner.isError).toBe(true);
+      expect(runner.content[0].text).toMatch(/^forbidden_trust:/);
+    });
+  });
 });
