@@ -6,6 +6,7 @@ import type {
   Status,
   TokenUsage,
 } from "@boof-runner/shared/schema";
+import type { PublicWebhook } from "@boof-runner/shared/schema";
 import type { Task } from "@boof-runner/shared/task-types";
 import type {
   BudgetStatus,
@@ -270,6 +271,14 @@ export const api = {
     return URL.createObjectURL(await res.blob());
   },
 
+  listWebhooks: () => http<{ webhooks: PublicWebhook[] }>(`${V1}/webhooks`).then((r) => r.webhooks),
+  createWebhook: (input: { url: string; events: string[]; projects: "*" | string[] }) =>
+    http<{ webhook: PublicWebhook; secret: string }>(`${V1}/webhooks`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteWebhook: (id: string) =>
+    http<{ ok: true }>(`${V1}/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   whoami: () => http<Whoami>(`${V1}/whoami`),
   listClients: () => http<{ clients: PublicClient[] }>(`${V1}/auth/clients`).then((r) => r.clients),
   createClient: (input: {

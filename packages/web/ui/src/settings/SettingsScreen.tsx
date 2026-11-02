@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
-import { CommandsTab } from "../components/CommandsTab.js";
 import type { SettingsPageId } from "../lib/route.js";
 import { projectPage } from "../lib/settings-project.js";
 import { agentsPage } from "../lib/settings-agents.js";
 import { budgetsPage } from "../lib/settings-budgets.js";
 import type { AppData } from "../useAppData.js";
 import { AgentsPage } from "./AgentsPage.js";
+import { AutomationPage } from "./AutomationPage.js";
 import { BudgetsPage } from "./BudgetsPage.js";
 import { KeysPage } from "./KeysPage.js";
 import { setLeaveGuard, staysInSettings } from "../lib/leave-guard.js";
@@ -153,7 +153,7 @@ export function SettingsScreen({
         </>
       )}
       {page === "keys" && <KeysPage projects={projects} />}
-      {page === "automation" && <CommandsTab onChange={data.refresh} />}
+      {page === "automation" && <AutomationPage projects={projects} onChange={data.refresh} />}
     </div>
   );
 }

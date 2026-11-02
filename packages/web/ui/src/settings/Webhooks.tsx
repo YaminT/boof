@@ -1,0 +1,306 @@
+import { useCallback, useEffect, useState } from "react";
+import { EllipsisIcon } from "lucide-react";
+import { toast } from "sonner";
+import type { Project, PublicWebhook } from "@boof-runner/shared/schema";
+import { api, ApiError } from "../api.js";
+import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown-menu";
+import { act } from "../lib/act.js";
+import {
+  EVENT_HINTS,
+  inputErrorLines,
+  parseEvents,
+  webhookFormProblems,
+} from "../lib/automation.js";
+import { relativeTime } from "../lib/time.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
+import { OneTimeSecretDialog } from "./OneTimeSecretDialog.js";
+
+const label = "flex flex-col gap-1.5 text-sm font-medium";
+
+/** Settings › Automation: webhooks. The signing secret is shown once, in its own dialog. */
+export function Webhooks({ projects }: { projects: Project[] }) {
+  const [list, setList] = useState<PublicWebhook[] | null>(null);
+  const [error, setError] = useState<"forbidden" | "failed" | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<PublicWebhook | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
+  const [url, setUrl] = useState("");
+  const [events, setEvents] = useState("");
+  const [scope, setScope] = useState<"*" | string[]>("*");
+  const [lines, setLines] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setList(await api.listWebhooks());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError && e.status === 403 ? "forbidden" : "failed");
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const problems = webhookFormProblems({ url, events, projects: scope });
+  const open = () => {
+    setUrl("");
+    setEvents("");
+    setScope("*");
+    setLines([]);
+    setCreating(true);
+  };
+  const addHint = (h: string) =>
+    setEvents((t) =>
+      parseEvents(t).includes(h) && t.trim() ? t : [t.trim(), h].filter(Boolean).join(", "),
+    );
+
+  const create = async () => {
+    if (problems.length > 0 || busy) return;
+    setBusy(true);
+    setLines([]);
+    try {
+      const r = await api.createWebhook({
+        url: url.trim(),
+        events: parseEvents(events),
+        projects: scope,
+      });
+      setCreating(false);
+      setSecret(r.secret);
+      await load();
+    } catch (e) {
+      setLines(inputErrorLines(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const names = (w: PublicWebhook) =>
+    w.projects === "*"
+      ? "All projects"
+      : w.projects.map((id) => projects.find((p) => p.id === id)?.name ?? id).join(", ");
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Webhooks</h2>
+        <Button className="ml-auto" onClick={open} disabled={error === "forbidden"}>
+          New webhook
+        </Button>
+      </div>
+      {error === "forbidden" ? (
+        <p className="m-0 text-[length:var(--text-body)] text-attention">
+          This browser&apos;s key cannot manage webhooks. It needs the admin scope.
+        </p>
+      ) : error === "failed" ? (
+        <div className="flex items-center gap-2 text-[length:var(--text-row)] text-ink-muted">
+          Could not load the webhooks.
+          <Button variant="outline" size="xs" onClick={() => void load()}>
+            Try again
+          </Button>
+        </div>
+      ) : list === null ? null : list.length === 0 ? (
+        <p className="m-0 text-[length:var(--text-row)] text-ink-muted">
+          No webhooks. Add one to send events to another system.
+        </p>
+      ) : (
+        <ul className="m-0 list-none p-0">
+          {list.map((w) => (
+            <li
+              key={w.id}
+              className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line py-1.5 text-[length:var(--text-row)] last:border-b-0"
+            >
+              <span className="min-w-0 max-w-[28rem] truncate font-mono text-[13px]" title={w.url}>
+                {w.url}
+              </span>
+              <span className="text-ink-muted">{w.events.join(", ")}</span>
+              <span className="hidden text-ink-muted min-[720px]:inline">{names(w)}</span>
+              <span className="hidden text-ink-muted min-[720px]:inline">
+                Created {relativeTime(w.created)}
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label={`More actions for the webhook to ${w.url}`}
+                  className="ml-auto inline-flex size-7 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <EllipsisIcon className="size-4" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void navigator.clipboard?.writeText(w.id).then(
+                        () => toast.success("Copied"),
+                        () => toast.error("Could not copy."),
+                      )
+                    }
+                  >
+                    Copy id
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDeleting(w)}>
+                    Delete webhook…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent showCloseButton className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>New webhook</DialogTitle>
+            <DialogDescription>Boof sends the events you choose to this URL.</DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void create();
+            }}
+          >
+            <label className={label}>
+              URL
+              <Input
+                autoFocus
+                className="mt-0 font-mono font-normal"
+                value={url}
+                placeholder="https://example.com/hook"
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </label>
+            <label className={label}>
+              Events
+              <Input
+                className="mt-0 font-normal"
+                value={events}
+                placeholder="task.*, plan.*"
+                onChange={(e) => setEvents(e.target.value)}
+              />
+              <span className="flex flex-wrap gap-1.5">
+                {EVENT_HINTS.map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => addHint(h)}
+                    className="rounded-md border border-line bg-transparent px-1.5 py-0.5 font-mono text-[length:var(--text-meta)] font-normal text-ink-muted hover:text-ink"
+                  >
+                    {h}
+                  </button>
+                ))}
+              </span>
+              <span className="text-[length:var(--text-row)] font-normal text-ink-muted">
+                Leave it empty for every event.
+              </span>
+            </label>
+            <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0">
+              <legend className="mb-1 p-0 text-sm font-medium">Projects</legend>
+              <label className="check m-0 text-[length:var(--text-row)] font-normal">
+                <input
+                  type="radio"
+                  name="wh-projects"
+                  className="m-0 size-4 w-4"
+                  checked={scope === "*"}
+                  onChange={() => setScope("*")}
+                />
+                Every project
+              </label>
+              <label className="check m-0 text-[length:var(--text-row)] font-normal">
+                <input
+                  type="radio"
+                  name="wh-projects"
+                  className="m-0 size-4 w-4"
+                  checked={scope !== "*"}
+                  onChange={() => setScope([])}
+                />
+                Only these projects
+              </label>
+              {scope !== "*" && (
+                <div className="ml-6 flex max-h-40 flex-col gap-1 overflow-auto">
+                  {projects.map((p) => (
+                    <label
+                      key={p.id}
+                      className="check m-0 text-[length:var(--text-row)] font-normal"
+                    >
+                      <input
+                        type="checkbox"
+                        className="m-0 size-4 w-4"
+                        checked={scope.includes(p.id)}
+                        onChange={(e) =>
+                          setScope(
+                            e.target.checked ? [...scope, p.id] : scope.filter((x) => x !== p.id),
+                          )
+                        }
+                      />
+                      {p.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+            {(problems.length > 0 || lines.length > 0) && (
+              <div
+                role="alert"
+                className="flex flex-col gap-0.5 text-[length:var(--text-row)] text-failed"
+              >
+                {lines.map((l) => (
+                  <span key={l}>{l}</span>
+                ))}
+                {problems.map((p) => (
+                  <span key={p}>{p}</span>
+                ))}
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreating(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={problems.length > 0 || busy}>
+                Create webhook
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(o) => !o && setDeleting(null)}
+        title="Delete webhook"
+        body={deleting ? `Delete the webhook to ${deleting.url}? Deliveries stop at once.` : ""}
+        confirmLabel="Delete webhook"
+        destructive
+        onConfirm={async () => {
+          if (!deleting) return;
+          const ok = await act(() => api.deleteWebhook(deleting.id), {
+            success: "Webhook deleted",
+            failure: "Could not delete the webhook",
+          });
+          if (ok) await load();
+        }}
+      />
+      <OneTimeSecretDialog
+        open={secret !== null}
+        title="Copy this signing secret now"
+        intro="Use it to check the X-Boof-Signature header of each delivery. It is shown once."
+        secret={secret ?? ""}
+        onDone={() => setSecret(null)}
+      />
+    </section>
+  );
+}
