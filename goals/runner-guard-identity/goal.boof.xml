@@ -16,6 +16,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Filed from the re-review of the process-lock boot id change (M2, 2026-11-02); not started.</version>
+        <version number="2" status="done">RunnerGuard (bin/src/runner-guard.ts) is now tryAcquireProcessLock on .runner.pid: an exclusive create (no check-then-write), holding "&lt;pid&gt; &lt;boot uuid&gt; &lt;start ticks&gt;", released only if the file still names us. New shared helpers in process-lock.ts: tryAcquireProcessLock (non-blocking, held for the life of the process), inspectProcessLock (read-only, used by migrate's "is the runner alive" check, which no longer breaks on the new format) and processStartTicks (field 22 of /proc/&lt;pid&gt;/stat, now also written by withProcessLock, so a pid reused inside one boot is told apart on Linux). Taken over: a dead pid, another boot uuid with a live pid, another start time with a live pid; kept: a live holder with a matching identity or an old pid-only file. Tests: two child processes starting together, exactly one wins; SIGKILL while holding, the next start takes over; fake files for reboot-with-reused-pid and same-boot reuse; helper unit tests; migrate reads the new format. Checked with the built CLI on a scratch root: a second serve refuses to start a runner, after kill -9 of the first a third one takes over, a clean SIGTERM removes the file. pid-file.ts (the agent process group record) keeps its own /proc reading; it could use processStartTicks later.</version>
       </versions>
     </status>
     <tests>

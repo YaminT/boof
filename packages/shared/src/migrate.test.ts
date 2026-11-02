@@ -245,6 +245,27 @@ describe("migrateDataRoot", () => {
     ).toBeUndefined();
   });
 
+  it("reads the runner guard's current file format too: a live holder refuses, another boot does not", async () => {
+    await writeV1Root(repo);
+    await writeFile(join(root, ".runner.pid"), "4242 11111111-1111-4111-8111-111111111111 777\n");
+    await expect(
+      migrateDataRoot(root, {
+        isProcessAlive: () => true,
+        bootId: "11111111-1111-4111-8111-111111111111",
+        startTicks: () => 777,
+      }),
+    ).rejects.toThrow(/runner is alive/);
+    // The same file written before a reboot: the pid is not the runner any more.
+    expect(
+      (
+        await migrateDataRoot(root, {
+          isProcessAlive: () => true,
+          bootId: "22222222-2222-4222-8222-222222222222",
+        })
+      ).kind,
+    ).toBe("migrated");
+  });
+
   it("migrates when the pid is stale, or when nothing is ongoing", async () => {
     await writeV1Root(repo);
     await writeFile(join(root, ".runner.pid"), "4242");

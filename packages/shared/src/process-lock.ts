@@ -18,6 +18,8 @@ export interface ProcessLockOptions {
    * A lock that names another boot is stale, but only when both sides have a boot id.
    */
   bootId?: string | null;
+  /** Start time of a pid, default {@link processStartTicks}. Tests use it to simulate other processes. */
+  startTicks?: (pid: number) => number | undefined;
   /** Test hook: runs while the takeover guard is held. */
   guardHeld?: () => Promise<void>;
 }
@@ -126,28 +128,94 @@ export async function withProcessLock<T>(
   }
 }
 
-async function acquireFileLock(
-  lock: string,
-  pid: number,
-  opts: ProcessLockOptions,
-  timeoutError: (holder: string, lockPath: string) => Error,
-): Promise<void> {
-  const alive = opts.isProcessAlive ?? defaultAlive;
-  const boot = opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
-  const timeoutMs = opts.lockTimeoutMs ?? 30_000;
-  const pollMs = opts.lockPollMs ?? 50;
+const LOCK_TEXT = /^(\d+)(?: (\S+))?(?: (\d+))?$/;
+
+interface ParsedLock {
+  pid: number;
+  boot?: string;
+  ticks?: number;
+}
+
+function parseLock(text: string): ParsedLock | undefined {
+  const m = LOCK_TEXT.exec(text);
+  if (!m || Number(m[1]) <= 0) return undefined;
+  return {
+    pid: Number(m[1]),
+    ...(m[2] !== undefined ? { boot: m[2] } : {}),
+    ...(m[3] !== undefined ? { ticks: Number(m[3]) } : {}),
+  };
+}
+
+/**
+ * Clock ticks since boot at which process `pid` started (field 22 of `/proc/<pid>/stat`), or
+ * undefined where that is not readable (not Linux, no such process). With the boot id it names one
+ * process for good: a pid reused inside a boot starts at another time.
+ */
+export function processStartTicks(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+    return Number.isFinite(ticks) ? ticks : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ourBoot(opts: ProcessLockOptions): string | undefined {
+  return opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
+}
+
+/** What we write: `<pid>`, plus ` <boot id>` and, with it, ` <start ticks>` where known. */
+function lockContent(pid: number, opts: ProcessLockOptions): string {
+  const boot = ourBoot(opts);
+  if (!boot) return `${pid}\n`;
+  const ticks = (opts.startTicks ?? processStartTicks)(pid);
+  return ticks === undefined ? `${pid} ${boot}\n` : `${pid} ${boot} ${ticks}\n`;
+}
+
+/**
+ * Is the lock `held` (parsed) left by a process that is gone? Another boot (both ids real uuids)
+ * overrides a live pid; so does a start time that differs from the live pid's (same boot, pid
+ * reused). A lock without those (old format, a legacy `t:` id, a process that could not read
+ * them) is judged by the pid alone. `pid` is us: a lock naming our own pid that we do not hold is
+ * a leftover from before a reboot.
+ */
+function isStale(held: ParsedLock, pid: number, opts: ProcessLockOptions): boolean {
+  const boot = ourBoot(opts);
+  const sameBootKnown =
+    boot !== undefined &&
+    held.boot !== undefined &&
+    BOOT_UUID.test(held.boot) &&
+    held.boot.toLowerCase() === boot.toLowerCase();
+  const otherBoot =
+    boot !== undefined &&
+    held.boot !== undefined &&
+    BOOT_UUID.test(held.boot) &&
+    held.boot.toLowerCase() !== boot.toLowerCase();
+  if (otherBoot || held.pid === pid || !(opts.isProcessAlive ?? defaultAlive)(held.pid))
+    return true;
+  if (sameBootKnown && held.ticks !== undefined) {
+    const now = (opts.startTicks ?? processStartTicks)(held.pid);
+    if (now !== undefined && now !== held.ticks) return true;
+  }
+  return false;
+}
+
+type Attempt = { acquired: true } | { acquired: false; holder: string };
+
+/**
+ * One try at the lock file: create it exclusively; if it exists and is stale (see `isStale`, or
+ * empty and old), take it over under the guard and try again; otherwise report the holder.
+ */
+async function attemptLock(lock: string, pid: number, opts: ProcessLockOptions): Promise<Attempt> {
   const guard = `${lock}.takeover`;
   await mkdir(dirname(lock), { recursive: true });
-  const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
       // No fsync: a lock is stale after a crash anyway, and a file that comes back empty after a
       // power loss is taken over once it is old enough.
-      await atomicWrite(lock, boot ? `${pid} ${boot}\n` : `${pid}\n`, {
-        exclusive: true,
-        sync: false,
-      });
-      return;
+      await atomicWrite(lock, lockContent(pid, opts), { exclusive: true, sync: false });
+      return { acquired: true };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
@@ -158,25 +226,83 @@ async function acquireFileLock(
       if ((err as NodeJS.ErrnoException).code === "ENOENT") continue; // just released
       throw err;
     }
-    const held = /^(\d+)(?: (\S+))?$/.exec(text);
-    const holder = held ? Number(held[1]) : 0;
-    const holderBoot = held?.[2];
-    if (holder > 0) {
-      // Another boot overrides a live pid only when both ids are real uuids; a lock without one
-      // (old format, a legacy `t:` id, a process that could not read it) is judged by the pid.
-      const otherBoot =
-        boot !== undefined &&
-        holderBoot !== undefined &&
-        BOOT_UUID.test(holderBoot) &&
-        holderBoot.toLowerCase() !== boot.toLowerCase();
-      const stale = otherBoot || holder === pid || !alive(holder);
-      if (stale && (await takeOver(lock, guard, text, opts.guardHeld))) continue;
-    } else if (await olderThan(lock, INCOMPLETE_LOCK_STALE_MS)) {
-      if (await takeOver(lock, guard, text, opts.guardHeld)) continue;
-    }
-    if (Date.now() >= deadline) throw timeoutError(held ? String(holder) : text, lock);
+    const held = parseLock(text);
+    const stale = held ? isStale(held, pid, opts) : await olderThan(lock, INCOMPLETE_LOCK_STALE_MS);
+    if (stale && (await takeOver(lock, guard, text, opts.guardHeld))) continue;
+    return { acquired: false, holder: held ? String(held.pid) : text };
+  }
+}
+
+async function acquireFileLock(
+  lock: string,
+  pid: number,
+  opts: ProcessLockOptions,
+  timeoutError: (holder: string, lockPath: string) => Error,
+): Promise<void> {
+  const deadline = Date.now() + (opts.lockTimeoutMs ?? 30_000);
+  const pollMs = opts.lockPollMs ?? 50;
+  for (;;) {
+    const attempt = await attemptLock(lock, pid, opts);
+    if (attempt.acquired) return;
+    if (Date.now() >= deadline) throw timeoutError(attempt.holder, lock);
     await sleep(pollMs);
   }
+}
+
+export interface HeldProcessLock {
+  /** Free the lock, if the file still names us (a takeover by another process is left alone). */
+  release(): Promise<void>;
+}
+
+/** Locks this process holds through {@link tryAcquireProcessLock}, keyed `lock\0pid`. */
+const heldHere = new Set<string>();
+
+/**
+ * Take the lock for as long as the process needs it (a runner guard), without waiting: null when
+ * a live process, or this one, holds it. Staleness is judged as for {@link withProcessLock}. The
+ * lock is not queued like `withProcessLock`'s: do not use the same file with both.
+ */
+export async function tryAcquireProcessLock(
+  lock: string,
+  opts: ProcessLockOptions = {},
+): Promise<HeldProcessLock | null> {
+  const pid = opts.pid ?? process.pid;
+  const key = `${lock}\0${pid}`;
+  if (heldHere.has(key)) return null;
+  heldHere.add(key); // before any await: concurrent callers in this process must not both try
+  try {
+    if (!(await attemptLock(lock, pid, opts)).acquired) {
+      heldHere.delete(key);
+      return null;
+    }
+  } catch (err) {
+    heldHere.delete(key);
+    throw err;
+  }
+  return {
+    async release() {
+      heldHere.delete(key);
+      const text = await readFile(lock, "utf8").catch(() => "");
+      if (parseLock(text.trim())?.pid === pid) await rm(lock, { force: true });
+    },
+  };
+}
+
+/**
+ * Is a live process holding `lock`? Reads only: a stale file is neither removed nor taken over.
+ * The holder may be this process (`pid` is then our own, held through {@link tryAcquireProcessLock}).
+ */
+export async function inspectProcessLock(
+  lock: string,
+  opts: ProcessLockOptions = {},
+): Promise<{ held: false } | { held: true; pid: number }> {
+  const pid = opts.pid ?? process.pid;
+  const text = (await readFile(lock, "utf8").catch(() => "")).trim();
+  const held = parseLock(text);
+  if (!held) return { held: false };
+  if (held.pid === pid)
+    return heldHere.has(`${lock}\0${pid}`) ? { held: true, pid } : { held: false };
+  return isStale(held, pid, opts) ? { held: false } : { held: true, pid: held.pid };
 }
 
 async function olderThan(path: string, ms: number): Promise<boolean> {

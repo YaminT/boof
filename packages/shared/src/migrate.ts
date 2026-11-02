@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { atomicWrite, lockedAtomicWrite, withFileLock } from "./atomic.js";
-import { defaultAlive, withProcessLock } from "./process-lock.js";
+import { defaultAlive, inspectProcessLock, withProcessLock } from "./process-lock.js";
 import { dataRootPaths, projectPaths } from "./paths.js";
 import { PlanSchema } from "./plan-schema.js";
 import { nowIso } from "./runtime.js";
@@ -40,6 +40,10 @@ export interface MigrateOptions {
   lockPollMs?: number;
   /** Our pid in the lock file; default `process.pid`. Tests use it to simulate other processes. */
   pid?: number;
+  /** Our boot id, as {@link ProcessLockOptions.bootId}; tests use it. */
+  bootId?: string | null;
+  /** Start time of a pid, as {@link ProcessLockOptions.startTicks}; tests use it. */
+  startTicks?: (pid: number) => number | undefined;
 }
 
 /** `<root>/.migration.lock`: holds the pid of the process migrating the root. */
@@ -56,13 +60,9 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function runnerIsLive(pidFile: string, alive: (pid: number) => boolean): Promise<boolean> {
-  try {
-    const pid = Number((await readFile(pidFile, "utf8")).trim());
-    return Boolean(pid) && pid !== process.pid && alive(pid);
-  } catch {
-    return false;
-  }
+async function runnerIsLive(pidFile: string, opts: MigrateOptions): Promise<boolean> {
+  // The runner guard's lock file: `<pid> [<boot id> [<start time>]]`, read the way the guard does.
+  return (await inspectProcessLock(pidFile, { ...opts, isProcessAlive: opts.isProcessAlive })).held;
 }
 
 async function hasOngoingTask(tasksDir: string): Promise<boolean> {
@@ -301,7 +301,10 @@ async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<Migr
 
   // v1 (or a v1 tasks/ tree whose settings.json is missing).
   const alive = opts.isProcessAlive ?? defaultAlive;
-  if ((await hasOngoingTask(legacyTasks)) && (await runnerIsLive(paths.runnerPid, alive))) {
+  if (
+    (await hasOngoingTask(legacyTasks)) &&
+    (await runnerIsLive(paths.runnerPid, { ...opts, isProcessAlive: alive }))
+  ) {
     throw new MigrationError(
       "cannot migrate the data root to v2: a task is running and the runner is alive; stop the runner and start boof-runner again",
     );

@@ -2,7 +2,14 @@ import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { currentBootId, withProcessLock, type ProcessLockOptions } from "./process-lock.js";
+import {
+  currentBootId,
+  inspectProcessLock,
+  processStartTicks,
+  tryAcquireProcessLock,
+  withProcessLock,
+  type ProcessLockOptions,
+} from "./process-lock.js";
 
 let dir: string;
 let lock: string;
@@ -21,7 +28,7 @@ afterEach(async () => {
 });
 
 describe("the lock file content", () => {
-  it("names the pid and the boot", async () => {
+  it("names the pid, the boot and the start time", async () => {
     let seen = "";
     await withProcessLock(
       lock,
@@ -32,7 +39,12 @@ describe("the lock file content", () => {
       timeoutError,
     );
     const boot = currentBootId();
-    expect(seen).toBe(boot ? `${process.pid} ${boot}\n` : `${process.pid}\n`);
+    const ticks = processStartTicks(process.pid);
+    expect(seen).toBe(
+      !boot
+        ? `${process.pid}\n`
+        : `${process.pid} ${boot}${ticks === undefined ? "" : ` ${ticks}`}\n`,
+    );
     await expect(stat(lock)).rejects.toThrow();
   });
 
@@ -122,5 +134,83 @@ describe("the takeover guard", () => {
     await writeFile(lock, "99999999\n");
     expect(await run()).toBe("ran");
     await expect(stat(`${lock}.takeover`)).rejects.toThrow();
+  });
+});
+
+describe("tryAcquireProcessLock (a lock held for a long time)", () => {
+  it("takes a free lock, refuses a second take (even in this process) and frees on release", async () => {
+    const held = await tryAcquireProcessLock(lock, fast);
+    expect(held).not.toBeNull();
+    expect(await tryAcquireProcessLock(lock, fast)).toBeNull();
+    await held!.release();
+    await expect(stat(lock)).rejects.toThrow();
+    const again = await tryAcquireProcessLock(lock, fast);
+    expect(again).not.toBeNull();
+    await again!.release();
+  });
+
+  it("does not wait: a live holder gives null at once", async () => {
+    await writeFile(lock, `${process.ppid}\n`);
+    const started = Date.now();
+    expect(await tryAcquireProcessLock(lock, { lockTimeoutMs: 10_000 })).toBeNull();
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("writes pid, boot and (on Linux) the start time, and releases only its own file", async () => {
+    const held = await tryAcquireProcessLock(lock, fast);
+    const [pid, boot, ticks] = (await readFile(lock, "utf8")).trim().split(" ");
+    expect(pid).toBe(String(process.pid));
+    expect(boot).toBe(currentBootId());
+    if (process.platform === "linux") expect(ticks).toBe(String(processStartTicks(process.pid)));
+    await writeFile(lock, `${process.ppid}\n`); // taken over by someone else
+    await held!.release();
+    expect((await readFile(lock, "utf8")).trim()).toBe(String(process.ppid));
+  });
+
+  it("takes over a dead holder and another boot's lock", async () => {
+    await writeFile(lock, "99999999\n");
+    const a = await tryAcquireProcessLock(lock, fast);
+    expect(a).not.toBeNull();
+    await a!.release();
+    await writeFile(lock, `${process.ppid} 22222222-2222-4222-8222-222222222222\n`);
+    const b = await tryAcquireProcessLock(lock, {
+      ...fast,
+      bootId: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(b).not.toBeNull();
+    await b!.release();
+  });
+
+  it.runIf(process.platform === "linux")(
+    "takes over a lock whose live pid started at another time (pid reused in this boot)",
+    async () => {
+      await writeFile(lock, `${process.ppid} ${currentBootId()} 1\n`);
+      const held = await tryAcquireProcessLock(lock, fast);
+      expect(held).not.toBeNull();
+      await held!.release();
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "keeps a lock whose live pid has the recorded start time",
+    async () => {
+      await writeFile(
+        lock,
+        `${process.ppid} ${currentBootId()} ${processStartTicks(process.ppid)}\n`,
+      );
+      expect(await tryAcquireProcessLock(lock, fast)).toBeNull();
+    },
+  );
+});
+
+describe("inspectProcessLock", () => {
+  it("reports a live holder and nothing for a free, dead or other-boot lock", async () => {
+    expect(await inspectProcessLock(lock, fast)).toEqual({ held: false });
+    await writeFile(lock, `${process.ppid}\n`);
+    expect(await inspectProcessLock(lock, fast)).toEqual({ held: true, pid: process.ppid });
+    await writeFile(lock, "99999999\n");
+    expect(await inspectProcessLock(lock, fast)).toEqual({ held: false });
+    // inspecting never removes the file
+    expect((await readFile(lock, "utf8")).trim()).toBe("99999999");
   });
 });

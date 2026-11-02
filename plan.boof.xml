@@ -83,6 +83,6 @@
     <goal id="settings-version-check" path="goals/settings-version-check" order="78" status="done"></goal>
     <goal id="command-template-rename-safety" path="goals/command-template-rename-safety" order="79" status="done"></goal>
     <goal id="task-lock-cross-process" path="goals/task-lock-cross-process" order="80" status="done"></goal>
-    <goal id="runner-guard-identity" path="goals/runner-guard-identity" order="81" status="plan"></goal>
+    <goal id="runner-guard-identity" path="goals/runner-guard-identity" order="81" status="done"></goal>
   </goals>
 </plan>
