@@ -231,6 +231,7 @@ describe("tools generated from the registry", () => {
         "boof_rotate_client",
         "boof_list_webhooks",
         "boof_create_webhook",
+        "boof_update_webhook",
         "boof_delete_webhook",
       ]
     `);
@@ -240,7 +241,7 @@ describe("tools generated from the registry", () => {
       (o) => !o.rest.kind || o.rest.kind === "json",
     );
     expect(names).toHaveLength(jsonOps.length);
-    expect(names).toHaveLength(72);
+    expect(names).toHaveLength(73);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("@boof-runner/api").then((m) => m.registry)).map((o) => [
         o.mcp.name,

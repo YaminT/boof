@@ -115,7 +115,7 @@ describe("webhooks.update", () => {
     const body = await res.json();
     expect(body).toMatchObject({
       id: webhook.id,
-      url: "https://hooks.example/b",
+      url: "https://hooks.example/…",
       events: ["plan.*", "runner.budget_exceeded"],
       projects: ["alpha"],
       enabled: false,
@@ -123,6 +123,7 @@ describe("webhooks.update", () => {
     expect(JSON.stringify(body)).not.toContain("whsec_");
     expect("secret" in body).toBe(false);
     const after = (await settingsHooks())[0];
+    expect(after.url).toBe("https://hooks.example/b"); // stored in full, shown redacted
     expect(after.createdBy).toBe(before.createdBy);
     expect(after.createdByClient).toBe(before.createdByClient);
     expect(after.created).toBe(before.created);
@@ -135,7 +136,7 @@ describe("webhooks.update", () => {
     const res = await update(webhook.id, { enabled: false });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
-      url: "https://hooks.example/a",
+      url: "https://hooks.example/…",
       events: ["task.*"],
       enabled: false,
     });

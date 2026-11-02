@@ -4,7 +4,6 @@ import { join } from "node:path";
 import {
   atomicWrite,
   dataRootPaths,
-  isExpired,
   securitySettings,
   isUsableSecret,
   WebhookSecretStore,
@@ -15,6 +14,7 @@ import {
 } from "@boof-runner/shared";
 import {
   checkWebhookTarget,
+  creatorProblem,
   eventMatches,
   type ResolveHost,
   type TaskService,
@@ -34,6 +34,8 @@ export const RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000, 3_600_000];
 const TIMEOUT_MS = 10_000;
 
 interface Pending {
+  /** The address the event was meant for; a retry for another address is dropped (older entries have none). */
+  url?: string;
   deliveryId: string;
   event: BoofEvent;
   /** Failed attempts so far. */
@@ -81,14 +83,7 @@ export function creatorLive(
   clients: readonly Client[] | undefined,
   nowMs: number,
 ): boolean {
-  // `local` is the local principal; it is never looked up as a client (no client may hold the id).
-  if (!clients || hook.createdBy === "local") return true;
-  const creator = clients.find((c) => c.id === hook.createdBy);
-  // A webhook from before the flag counts as client-made when its creator is a known client.
-  if (!hook.createdByClient && !creator) return true;
-  if (!creator || creator.revokedAt || isExpired(creator, nowMs)) return false;
-  if (creator.projects === "*") return true;
-  return hook.projects !== "*" && hook.projects.every((p) => creator.projects.includes(p));
+  return creatorProblem(hook, clients, nowMs) === null;
 }
 
 /** Sign `body` with the webhook secret: `sha256=<hex hmac>`. */
@@ -98,7 +93,11 @@ export function sign(secret: string, body: string): string {
 
 /** Does `hook` want `event`? Event type patterns and the project filter (global events need `*`). */
 export function wants(hook: Webhook, event: BoofEvent): boolean {
-  if (!hook.enabled) return false;
+  return hook.enabled && subscribed(hook, event);
+}
+
+/** Does the subscription (events and projects) cover `event`, whether or not the hook is enabled? */
+function subscribed(hook: Webhook, event: BoofEvent): boolean {
   if (!hook.events.some((p) => eventMatches(p, event.type))) return false;
   if (hook.projects === "*") return true;
   return "project" in event && event.project !== undefined && hook.projects.includes(event.project);
@@ -238,10 +237,26 @@ export class WebhookDispatcher {
       };
       changed = true;
     }
-    // Retries that are due.
+    if (!hook.enabled) {
+      // Disabled means stopped: its events are skipped and its queued retries dropped, so
+      // enabling it again starts fresh instead of replaying what happened meanwhile.
+      const live = encodeFeedCursor(await liveCursor(this.opts.root, scopes));
+      if (hs.cursor !== live || hs.pending.length > 0) {
+        hs.cursor = live;
+        hs.pending = [];
+        changed = true;
+      }
+      return changed;
+    }
+    // Retries that are due. One captured for another address, or for an event the webhook no
+    // longer covers (it was edited since), is dropped.
     const keep: Pending[] = [];
     for (const p of hs.pending) {
-      if (p.nextAt > this.now() || !hook.enabled) {
+      if ((p.url !== undefined && p.url !== hook.url) || !subscribed(hook, p.event)) {
+        changed = true;
+        continue;
+      }
+      if (p.nextAt > this.now()) {
         keep.push(p);
         continue;
       }
@@ -260,7 +275,14 @@ export class WebhookDispatcher {
           if (wants(hook, event)) {
             const retry = await this.attempt(
               hook,
-              { deliveryId: randomUUID(), event, attempts: 0, nextAt: 0, lastError: "" },
+              {
+                url: hook.url,
+                deliveryId: randomUUID(),
+                event,
+                attempts: 0,
+                nextAt: 0,
+                lastError: "",
+              },
               allowed,
               secret,
             );

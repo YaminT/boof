@@ -88,3 +88,9 @@ export function inputErrorLines(err: unknown): string[] {
   }
   return [errorMessage(err)];
 }
+
+/** Same projects, whatever the order. */
+export function sameProjects(a: "*" | string[], b: "*" | string[]): boolean {
+  if (a === "*" || b === "*") return a === b;
+  return a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
+}

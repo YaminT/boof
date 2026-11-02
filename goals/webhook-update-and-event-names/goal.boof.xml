@@ -15,7 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Filed with phase 5 of the UI redesign (2026-11-02); not started.</version>
-        <version number="2" status="done">Shipped: PUT /webhooks/{id} (enable, disable, edit url, events and projects; REST only, like the other webhook operations) with every rule of create (URL guard, event names, reach and review-trust limits, empty project list refused) and a secret and creator that never change; underscores allowed in event names; the Automation page can enable, disable and edit.</version>
+        <version number="2" status="done">Shipped: PUT /webhooks/{id} (enable, disable, edit url, events and projects; over REST and MCP as boof_update_webhook, like the other webhook operations) with every rule of create (URL guard, event names, reach and review-trust limits, empty project list refused) and a secret and creator that never change; underscores allowed in event names; the Automation page can enable, disable and edit. Disabled webhooks skip events (re-enabling starts fresh); an edit drops queued retries that no longer fit; widening beyond the creating client's reach is refused; the list shows notDelivering.</version>
       </versions>
     </status>
     <tests>

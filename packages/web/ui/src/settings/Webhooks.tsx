@@ -28,6 +28,7 @@ import {
   parseEvents,
   webhookFormProblems,
 } from "../lib/automation.js";
+import { sameProjects } from "../lib/automation.js";
 import { sameValue } from "../lib/settings-draft.js";
 import { relativeTime } from "../lib/time.js";
 import { TonePill } from "../shell/StatusPill.js";
@@ -36,14 +37,17 @@ import { OneTimeSecretDialog } from "./OneTimeSecretDialog.js";
 
 const label = "flex flex-col gap-1.5 text-sm font-medium";
 
+/** A webhook as listed: the address is shown as scheme://host/… and `notDelivering` says why an enabled one sends nothing. */
+type Listed = PublicWebhook & { notDelivering?: string };
+
 /** Settings › Automation: webhooks. The signing secret is shown once, in its own dialog. */
 export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects: Project[] }) {
-  const [list, setList] = useState<PublicWebhook[] | null>(null);
+  const [list, setList] = useState<Listed[] | null>(null);
   const [error, setError] = useState<"forbidden" | "failed" | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<PublicWebhook | null>(null);
   // The webhook the dialog edits; null while it creates one.
-  const [editing, setEditing] = useState<PublicWebhook | null>(null);
+  const [editing, setEditing] = useState<Listed | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState("");
@@ -66,7 +70,11 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
   const newButton = useRef<HTMLButtonElement>(null);
   const reach = callerProjects(whoami);
   const selectable = reach ? projects.filter((p) => reach.includes(p.id)) : projects;
-  const problems = webhookFormProblems({ url, events, projects: scope }, reach);
+  // While editing, an empty URL field keeps the current address (the list only shows scheme://host/…).
+  const problems = webhookFormProblems(
+    { url: editing && !url.trim() ? editing.url : url, events, projects: scope },
+    reach,
+  );
   // The problems show after a first try to create; a server error clears when the URL changes.
   const [attempted, setAttempted] = useState(false);
   const open = () => {
@@ -83,9 +91,9 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
       parseEvents(t).includes(h) && t.trim() ? t : [t.trim(), h].filter(Boolean).join(", "),
     );
 
-  const openEdit = (w: PublicWebhook) => {
+  const openEdit = (w: Listed) => {
     setEditing(w);
-    setUrl(w.url);
+    setUrl("");
     setEvents(w.events.join(", "));
     setScope(w.projects === "*" ? "*" : [...w.projects]);
     setLines([]);
@@ -93,12 +101,17 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
     setCreating(true);
   };
 
-  const toggle = async (w: PublicWebhook) => {
-    const ok = await act(() => api.updateWebhook(w.id, { enabled: !w.enabled }), {
-      success: w.enabled ? "Webhook disabled" : "Webhook enabled",
+  const toggle = async (w: Listed) => {
+    // Decide from the webhook as it is now, not as the list last showed it.
+    const fresh = (await api.listWebhooks().catch(() => [w])).find((x) => x.id === w.id) ?? w;
+    const ok = await act(() => api.updateWebhook(w.id, { enabled: !fresh.enabled }), {
+      success: fresh.enabled
+        ? "Webhook disabled. Its events are skipped until you enable it again."
+        : "Webhook enabled. It sends events from now on.",
       failure: "Could not change the webhook",
     });
-    if (ok) await load();
+    await load();
+    void ok;
   };
 
   const create = async () => {
@@ -111,9 +124,11 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
         // Only what changed is sent; an edit never shows or changes the signing secret.
         const nextEvents = parseEvents(events);
         const patch = {
-          ...(url.trim() !== editing.url ? { url: url.trim() } : {}),
-          ...(!sameValue(nextEvents, editing.events) ? { events: nextEvents } : {}),
-          ...(!sameValue(scope, editing.projects) ? { projects: scope } : {}),
+          ...(url.trim() ? { url: url.trim() } : {}),
+          ...(!sameValue([...nextEvents].sort(), [...editing.events].sort())
+            ? { events: nextEvents }
+            : {}),
+          ...(!sameProjects(scope, editing.projects) ? { projects: scope } : {}),
         };
         if (Object.keys(patch).length > 0) {
           await api.updateWebhook(editing.id, patch);
@@ -177,13 +192,21 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 {w.url}
               </span>
               {!w.enabled && <TonePill tone="neutral">disabled</TonePill>}
+              {w.enabled && w.notDelivering && (
+                <TonePill tone="attention">not delivering: {w.notDelivering}</TonePill>
+              )}
               <span className="text-ink-muted">{w.events.join(", ")}</span>
               <span className="hidden text-ink-muted min-[720px]:inline">{names(w)}</span>
               <span className="hidden text-ink-muted min-[720px]:inline">
                 Created {relativeTime(w.created)}
               </span>
               <span className="ml-auto flex items-center gap-1">
-                <Button size="sm" variant="outline" onClick={() => void toggle(w)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label={`${w.enabled ? "Disable" : "Enable"} the webhook to ${w.url}`}
+                  onClick={() => void toggle(w)}
+                >
                   {w.enabled ? "Disable" : "Enable"}
                 </Button>
                 <DropdownMenu>
@@ -239,7 +262,9 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 autoFocus
                 className="mt-0 font-mono font-normal"
                 value={url}
-                placeholder="https://example.com/hook"
+                placeholder={
+                  editing ? `${editing.url} (leave empty to keep it)` : "https://example.com/hook"
+                }
                 onChange={(e) => {
                   setUrl(e.target.value);
                   setLines([]);
@@ -294,6 +319,9 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 />
                 Only these projects
               </label>
+              <span className="ml-6 text-[length:var(--text-meta)] text-ink-muted">
+                A webhook limited to projects never receives global events such as runner.enabled.
+              </span>
               {scope !== "*" && (
                 <div className="ml-6 flex max-h-40 flex-col gap-1 overflow-auto">
                   {selectable.map((p) => (

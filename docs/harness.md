@@ -2033,7 +2033,7 @@ Path parameters (all required):
 - MCP tool: `boof_list_webhooks`
 - CLI: `boof-runner webhooks list`
 - What it does: Lists the webhook subscriptions without their secrets; each URL is shown as scheme://host/… (the full address is shown once, at create). No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.
-- Success: HTTP 200 with `{ webhooks: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string }[] }`.
+- Success: HTTP 200 with `{ webhooks: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, notDelivering?: string, projects: "*" | kebab-id[], url: string }[] }`.
 - Errors: `403 forbidden_scope`
 
 #### `POST /api/v1/webhooks` (Create a webhook)
@@ -2043,7 +2043,7 @@ Path parameters (all required):
 - MCP tool: `boof_create_webhook`
 - CLI: `boof-runner webhooks create`
 - What it does: Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; the secret is kept in <data>/webhooks/secrets.json (mode 0600), never in settings.json.
-- Success: HTTP 201 with `{ secret: string, webhook: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string } }`.
+- Success: HTTP 201 with `{ secret: string, webhook: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, notDelivering?: string, projects: "*" | kebab-id[], url: string } }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `400 invalid_input (bad URL, URL is this server, unknown event)`
 
 JSON body (unknown keys are rejected):
@@ -2057,9 +2057,9 @@ JSON body (unknown keys are rejected):
 
 - Operation: `webhooks.update`
 - Scope: `admin`
-- MCP tool: none (REST only)
-- What it does: Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is "*" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed.
-- Success: HTTP 200 with `{ created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string }`.
+- MCP tool: `boof_update_webhook`
+- What it does: Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is "*" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed. A webhook made by a project-restricted client cannot be widened beyond that client's projects (403). Disabling stops delivery: events that happen while it is disabled are skipped and queued retries are dropped, so enabling it again starts fresh. Changing the URL, events or projects drops queued retries that no longer fit. The list shows `notDelivering` for an enabled webhook whose creator is revoked, expired, gone or out of reach. The answer shows the URL as scheme://host/… only.
+- Success: HTTP 200 with `{ created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, notDelivering?: string, projects: "*" | kebab-id[], url: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 Path parameters (all required):

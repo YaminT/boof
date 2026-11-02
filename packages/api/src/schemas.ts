@@ -187,7 +187,8 @@ export const PublicSettingsSchema = SettingsSchema.omit({ webhooks: true });
 
 export const PublicClientSchema = ClientSchema.omit({ keyHash: true });
 
-export const PublicWebhookSchema = WebhookSchema;
+/** A webhook as listed: `notDelivering` says why one that is enabled still sends nothing. */
+export const PublicWebhookSchema = WebhookSchema.extend({ notDelivering: z.string().optional() });
 
 export const HealthResultSchema = z.object({
   status: z.enum(["available", "unavailable"]),

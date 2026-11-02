@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import { EVENT_TYPES, securitySettings, type Webhook } from "@boof-runner/shared";
+import {
+  EVENT_TYPES,
+  isExpired,
+  securitySettings,
+  type Client,
+  type Webhook,
+} from "@boof-runner/shared";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { assertWebhookTarget } from "../net-guard.js";
@@ -54,6 +60,30 @@ export function redactUrl(url: string): string {
   }
 }
 
+/**
+ * Why a webhook made by an API client is not delivered: the client is revoked, expired or gone, or
+ * no longer covers the webhook's projects. Null when it is delivered. Webhooks of the local
+ * principal, and older ones whose creator is not a known client, are never a problem. `clients`
+ * undefined (no client list) checks nothing.
+ */
+export function creatorProblem(
+  hook: Webhook,
+  clients: readonly Client[] | undefined,
+  nowMs: number,
+): string | null {
+  // `local` is the local principal; it is never looked up as a client.
+  if (!clients || hook.createdBy === "local") return null;
+  const creator = clients.find((c) => c.id === hook.createdBy);
+  if (!hook.createdByClient && !creator) return null;
+  if (!creator) return `creator ${hook.createdBy} no longer exists`;
+  if (creator.revokedAt) return `creator ${creator.name} is revoked`;
+  if (isExpired(creator, nowMs)) return `creator ${creator.name} has expired`;
+  if (creator.projects === "*") return null;
+  if (hook.projects === "*" || !hook.projects.every((p) => creator.projects.includes(p)))
+    return `creator ${creator.name} cannot reach its projects`;
+  return null;
+}
+
 /** True when the caller's projects cover everything the webhook reaches (same rule as client management). */
 function withinReach(ctx: OpContext, hook: Webhook): boolean {
   const mine = ctx.principal.projects;
@@ -73,11 +103,18 @@ export const webhooksList = defineOp({
   rest: { method: "GET", path: "/webhooks" },
   mcp: { expose: true, name: "boof_list_webhooks", annotations: READ },
   summary: (r) => `${r.webhooks.length} webhooks`,
-  handler: async (ctx) => ({
-    webhooks: ((await ctx.services.loadSettings()).webhooks ?? [])
-      .filter((h) => withinReach(ctx, h))
-      .map((h) => ({ ...h, url: redactUrl(h.url) })),
-  }),
+  handler: async (ctx) => {
+    const clients = await ctx.authStore.list();
+    const now = Date.now();
+    return {
+      webhooks: ((await ctx.services.loadSettings()).webhooks ?? [])
+        .filter((h) => withinReach(ctx, h))
+        .map((h) => {
+          const problem = h.enabled ? creatorProblem(h, clients, now) : null;
+          return { ...h, url: redactUrl(h.url), ...(problem ? { notDelivering: problem } : {}) };
+        }),
+    };
+  },
 });
 
 export const webhooksCreate = defineOp({
@@ -155,7 +192,7 @@ export const webhooksUpdate = defineOp({
   name: "webhooks.update",
   title: "Update a webhook",
   description:
-    'Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is "*" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed.',
+    'Enables, disables or edits a webhook without recreating it: its signing secret and id stay, and the secret is never returned. Inputs: webhookId plus at least one of url, events, projects, enabled. The URL goes through the same guard as on create, events must be known types or prefix.* patterns, and projects is "*" or a non-empty list. Admin only; a project-restricted key may change only a webhook that reaches its projects alone (others answer 404) and not widen it, and a review-trust key only one it created (403). The creator cannot be changed. A webhook made by a project-restricted client cannot be widened beyond that client\'s projects (403). Disabling stops delivery: events that happen while it is disabled are skipped and queued retries are dropped, so enabling it again starts fresh. Changing the URL, events or projects drops queued retries that no longer fit. The list shows `notDelivering` for an enabled webhook whose creator is revoked, expired, gone or out of reach. The answer shows the URL as scheme://host/… only.',
   scope: "admin",
   projectScoped: false,
   input: z
@@ -163,7 +200,8 @@ export const webhooksUpdate = defineOp({
     .refine((v) => Object.keys(v).length > 1, { message: "Send at least one field to change" }),
   output: PublicWebhookSchema,
   rest: { method: "PUT", path: "/webhooks/{webhookId}" },
-  mcp: { expose: false, annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_update_webhook", annotations: IDEMPOTENT_WRITE },
+  summary: (w) => `Updated webhook ${w.id}`,
   handler: async (ctx, { webhookId, ...patch }) => {
     // The URL is vetted before anything is written, exactly as on create.
     if (patch.url !== undefined) {
@@ -182,6 +220,7 @@ export const webhooksUpdate = defineOp({
       }
     }
     const projects = reachableProjects(ctx, patch.projects);
+    const clients = await ctx.authStore.list();
     let updated!: Webhook;
     await ctx.services.settingsStore.mutate((settings) => {
       const hooks = settings.webhooks ?? [];
@@ -196,6 +235,22 @@ export const webhooksUpdate = defineOp({
           "forbidden_trust",
         );
       }
+      // The creator's reach limits the webhook too: delivery stops for one that outgrows it.
+      if (projects !== undefined && hook.createdBy !== "local") {
+        const creator = clients.find((c) => c.id === hook.createdBy);
+        if (creator && creator.projects !== "*") {
+          const outside =
+            projects === "*" ? ["*"] : projects.filter((p) => !creator.projects.includes(p));
+          if (outside.length > 0) {
+            throw new OpError(
+              403,
+              `This webhook was created by ${creator.name}, whose key cannot reach ${outside.join(", ")}`,
+              "forbidden_project",
+              { projects: outside },
+            );
+          }
+        }
+      }
       // Only these four fields change; id, createdBy, createdByClient and created stay.
       updated = {
         ...hook,
@@ -206,7 +261,8 @@ export const webhooksUpdate = defineOp({
       };
       return { ...settings, webhooks: hooks.map((h) => (h.id === webhookId ? updated : h)) };
     });
-    return updated;
+    // Like the list, the answer shows the address as scheme://host/… only.
+    return { ...updated, url: redactUrl(updated.url) };
   },
 });
 

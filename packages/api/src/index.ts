@@ -15,5 +15,5 @@ export * from "./idempotency.js";
 export type { UploadedFile } from "./ops/tasks.js";
 export * from "./openapi.js";
 export * from "./net-guard.js";
-export { assertWebhookUrl, eventMatches } from "./ops/webhooks.js";
+export { assertWebhookUrl, creatorProblem, eventMatches } from "./ops/webhooks.js";
 export { WhoamiSchema } from "./ops/whoami.js";

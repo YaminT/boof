@@ -5,6 +5,7 @@ import {
   commandIdFor,
   inputErrorLines,
   parseEvents,
+  sameProjects,
   templateFormProblems,
   webhookFormProblems,
 } from "./automation.js";
@@ -102,5 +103,14 @@ describe("canChangeTemplates", () => {
     expect(canChangeTemplates(w("client", "trusted", "*"))).toBe(true);
     expect(canChangeTemplates(w("client", "review", "*"))).toBe(false);
     expect(canChangeTemplates(w("client", "trusted", ["a"]))).toBe(false);
+  });
+});
+
+describe("sameProjects", () => {
+  it("ignores order and tells * from a list", () => {
+    expect(sameProjects(["b", "a"], ["a", "b"])).toBe(true);
+    expect(sameProjects("*", "*")).toBe(true);
+    expect(sameProjects("*", ["a"])).toBe(false);
+    expect(sameProjects(["a"], ["a", "b"])).toBe(false);
   });
 });

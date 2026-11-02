@@ -750,3 +750,116 @@ describe("webhook delivery", () => {
     expect(h.hits).toHaveLength(0);
   });
 });
+
+describe("delivery after a webhook is updated", () => {
+  const put = (id: string, body: object, key?: string) =>
+    call(`/api/v1/webhooks/${id}`, { method: "PUT", body: JSON.stringify(body) }, key);
+  const rig = (answer: () => number) => {
+    const hits: { url: string; project: string }[] = [];
+    let t = Date.now();
+    const dispatcher = new WebhookDispatcher({
+      root,
+      service,
+      authStore,
+      fetch: (async (url: string, init: { body: string }) => {
+        hits.push({ url: String(url), project: JSON.parse(init.body).project });
+        return new Response("", { status: answer() });
+      }) as unknown as typeof fetch,
+      now: () => t,
+      resolveHost,
+    });
+    return { hits, dispatcher, advance: (ms: number) => (t += ms) };
+  };
+  const wait = RETRY_DELAYS_MS[0] + 1;
+
+  it("a retry queued before a URL change is dropped, not sent to the new address", async () => {
+    const r = rig(() => 500);
+    const made = await (await create({ url: "http://hook.test/old", events: ["task.*"] })).json();
+    await r.dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t1"));
+    await r.dispatcher.tick();
+    expect(r.hits.map((h) => h.url)).toEqual(["http://hook.test/old"]);
+    expect((await put(made.webhook.id, { url: "http://hook.test/new" })).status).toBe(200);
+    r.advance(wait);
+    await r.dispatcher.tick();
+    expect(r.hits.map((h) => h.url)).toEqual(["http://hook.test/old"]);
+  });
+
+  it("a retry for an event the narrowed webhook no longer wants is dropped", async () => {
+    const r = rig(() => 500);
+    const made = await (await create({ url: "http://hook.test/x", events: ["task.*"] })).json();
+    await r.dispatcher.tick();
+    await appendEvent(join(root, "projects", "b"), status("b", "t1"));
+    await r.dispatcher.tick();
+    expect(r.hits).toHaveLength(1);
+    await put(made.webhook.id, { projects: ["a"] });
+    r.advance(wait);
+    await r.dispatcher.tick();
+    expect(r.hits).toHaveLength(1);
+  });
+
+  it("a retry that the webhook still wants is kept and sent", async () => {
+    let status500 = true;
+    const r = rig(() => (status500 ? 500 : 200));
+    await create({ url: "http://hook.test/x", events: ["task.*"] });
+    await r.dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t1"));
+    await r.dispatcher.tick();
+    status500 = false;
+    r.advance(wait);
+    await r.dispatcher.tick();
+    expect(r.hits).toHaveLength(2);
+  });
+
+  it("disabling skips events: enabling again starts fresh and replays nothing", async () => {
+    const r = rig(() => 200);
+    const made = await (await create({ url: "http://hook.test/x", events: ["task.*"] })).json();
+    await r.dispatcher.tick();
+    await put(made.webhook.id, { enabled: false });
+    await appendEvent(join(root, "projects", "a"), status("a", "while-disabled-1"));
+    await appendEvent(join(root, "projects", "a"), status("a", "while-disabled-2"));
+    await r.dispatcher.tick();
+    await put(made.webhook.id, { enabled: true });
+    await r.dispatcher.tick();
+    expect(r.hits).toHaveLength(0);
+    await appendEvent(join(root, "projects", "a"), status("a", "after"));
+    await r.dispatcher.tick();
+    expect(r.hits).toHaveLength(1);
+  });
+
+  it("refuses to widen a webhook beyond the reach of the client that created it", async () => {
+    peer = "10.1.2.3";
+    const lim = await authStore.create({
+      name: "lim",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "trusted",
+    });
+    const made = await (await create({ url: "http://hook.test/x" }, lim.key)).json();
+    peer = "127.0.0.1";
+    const res = await put(made.webhook.id, { projects: "*" });
+    expect(res.status).toBe(403);
+    const err = (await res.json()).error;
+    expect(err.code).toBe("forbidden_project");
+    expect(err.message).toContain("lim");
+    expect((await put(made.webhook.id, { projects: ["a", "b"] })).status).toBe(403);
+    expect((await put(made.webhook.id, { projects: ["a"], enabled: false })).status).toBe(200);
+  });
+
+  it("the list says why a webhook is not delivering when its creator is gone", async () => {
+    peer = "10.1.2.3";
+    const lim = await authStore.create({
+      name: "lim",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "trusted",
+    });
+    await create({ url: "http://hook.test/x" }, lim.key);
+    peer = "127.0.0.1";
+    const before = (await (await call("/api/v1/webhooks")).json()).webhooks[0];
+    expect(before.notDelivering).toBeUndefined();
+    await authStore.revoke(lim.client.id);
+    const after = (await (await call("/api/v1/webhooks")).json()).webhooks[0];
+    expect(after.notDelivering).toMatch(/creator.*revoked/);
+  });
+});
