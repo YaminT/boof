@@ -44,7 +44,7 @@ import {
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof-runner/shared";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
-import { currentBootId, isAlive, writePidFile } from "@boof-runner/shared";
+import { currentBootIdentity, isAlive, writePidFile } from "@boof-runner/shared";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";
@@ -2271,7 +2271,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(await exists(workingAreaDir(projectDir, "ghost"))).toBe(true);
     });
 
-    it.skipIf(!currentBootId())(
+    it.skipIf(!currentBootIdentity())(
       "kills an agent process group a crashed runner left behind, then fails the task",
       async () => {
         await crash();
@@ -2306,7 +2306,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       },
     );
 
-    it.skipIf(!currentBootId())(
+    it.skipIf(!currentBootIdentity())(
       "keeps the identity of an agent that is still running in the failed task, so Retry can refuse",
       async () => {
         await crash();
@@ -2328,7 +2328,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
           expect(t?.frontmatter.agentProcess).toMatchObject({
             pgid: live.pid,
             command: "node",
-            bootId: currentBootId(),
+            bootId: currentBootIdentity(),
           });
           expect(t?.frontmatter.agentProcess?.startTicks).toEqual(expect.any(Number));
         } finally {

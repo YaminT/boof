@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  currentBootId,
+  currentBootIdentity,
   isAlive,
   killGroup,
   readPidFile,
@@ -42,7 +42,7 @@ describe("pid file", () => {
     const path = join(dir, "control", "pid");
     await writePidFile(path, { pgid: 4242, command: "claude" });
     const rec = await readPidFile(path);
-    expect(rec).toMatchObject({ pgid: 4242, command: "claude", bootId: currentBootId() });
+    expect(rec).toMatchObject({ pgid: 4242, command: "claude", bootId: currentBootIdentity() });
     expect(rec?.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(rec);
   });
@@ -119,7 +119,7 @@ describe("pid file", () => {
     });
   });
 
-  it.skipIf(!currentBootId())(
+  it.skipIf(!currentBootIdentity())(
     "reapOrphan: none / dead / killed / another boot / forged / owner alive",
     async () => {
       const log: string[] = [];

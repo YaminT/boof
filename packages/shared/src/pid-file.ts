@@ -28,7 +28,7 @@ export interface PidRecord {
 }
 
 /** The current boot (Linux boot id, or `boottime:<sec>` on macOS and Windows); null on any error. */
-export function currentBootId(): string | null {
+export function currentBootIdentity(): string | null {
   return bootIdentity();
 }
 
@@ -224,7 +224,7 @@ export async function reapOrphan(
     log(`${why} (${record.pgid}); not killing`);
     return finish("skipped", remove);
   };
-  const boot = currentBootId();
+  const boot = currentBootIdentity();
   if (!boot || !record.bootId) return skip("boot id cannot be determined");
   if (record.bootId !== boot) return skip("pid file is from another boot");
   if (!isSignalable(record.pgid)) return skip("refusing to signal this process group");
