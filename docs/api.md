@@ -405,6 +405,9 @@ epics they created (`origin.client`; an epic without `origin` is a human's: `403
 `If-Match` takes a single ETag (a list is `400`; weak and strong forms both match) and wins over a body
 `expectedUpdated`. An empty `PUT` body changes nothing and keeps the ETag. Epics need the `tasks:read` / `tasks:write` scopes.
 
+Goals in `plans.*` inputs take an optional `epicId` (omitted keeps the stored one, `null` clears it);
+plan sync copies it onto the goal's task.
+
 ### Editing the contract
 
 Operations are defined once with `defineOp()` in `packages/api/src/ops/`. After a change run

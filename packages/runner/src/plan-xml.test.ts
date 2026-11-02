@@ -11,6 +11,7 @@ import {
   parseGoal,
   serializeGoal,
   serializePlan,
+  testGoal,
   validatePlan,
   type BoofGoal,
   type Plan,
@@ -167,6 +168,15 @@ describe("goalsFromScan ids", () => {
     expect(web.id).toBe("packagesweb");
     expect(web.title).toBe("packages/web");
     expect(warnings.some((w) => w.includes("packages/web"))).toBe(true);
+  });
+});
+
+describe("mergeImportedGoals keeps a goal's epic", () => {
+  it("an imported goal (no epicId in the XML) leaves the stored epicId alone", () => {
+    const stored = [testGoal("a", 1, [], { path: "a", epicId: "web" })];
+    const fresh = [testGoal("a", 1, [], { path: "a" })];
+    const merged = mergeImportedGoals(stored, fresh);
+    expect(merged.goals[0]!.epicId).toBe("web");
   });
 });
 

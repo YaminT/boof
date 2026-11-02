@@ -730,6 +730,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 #### `Goal`
 
 - `dependsOn`: `kebab-id[]`, required; default `[]`
+- `epicId`: `kebab-id`, optional
 - `history`: `{ at: ISO-8601 string, description: string, number?: integer >= 1, revision: integer >= 1, status: "plan" | "develop" | "review" | "done", taskId?: kebab-id }[]`, required; default `[]`
 - `id`: `kebab-id`, required
 - `model`: `string`, optional
@@ -746,6 +747,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 #### `GoalInput`
 
 - `dependsOn`: `kebab-id[]`, optional; default `[]`
+- `epicId`: `kebab-id | null`, optional; Epic the goal's task belongs to. Omitted: keep the stored one. null: clear it
 - `id`: `kebab-id`, required
 - `model`: `string`, optional
 - `order`: `integer >= 1`, optional
@@ -1121,6 +1123,7 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `dependsOn`: `kebab-id[]`, optional; default `[]`
+- `epicId`: `kebab-id | null`, optional; Epic the goal's task belongs to. Omitted: keep the stored one. null: clear it
 - `expectedVersion`: `integer >= 1`, optional
 - `id`: `kebab-id`, optional
 - `model`: `string`, optional

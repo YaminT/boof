@@ -96,6 +96,8 @@ export const GoalSchema = z.object({
   status: GoalStatusSchema.default("plan"),
   /** Goal-level model hint (BoofGoal.model). */
   model: z.string().min(1).optional(),
+  /** The epic the goal's task belongs to (sync copies it; it is not part of the goal's content). */
+  epicId: kebab.optional(),
   spec: GoalSpecSchema,
   /** Bumped on every spec / dependsOn / model change. */
   revision: z.number().int().min(1).default(1),
@@ -159,6 +161,9 @@ export const GoalInputSchema = z.object({
   /** Omitted: a stored goal keeps its status, a new one starts at `plan`. */
   status: GoalStatusSchema.optional(),
   model: z.string().min(1).optional(),
+  epicId: kebab.nullable().optional().meta({
+    description: "Epic the goal's task belongs to. Omitted: keep the stored one. null: clear it.",
+  }),
   spec: GoalSpecSchema,
 });
 export type GoalInput = z.input<typeof GoalInputSchema>;

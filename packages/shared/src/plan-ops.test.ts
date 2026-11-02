@@ -43,6 +43,35 @@ describe("applyGoalInputs: a changed spec reopens a done goal", () => {
   });
 });
 
+describe("applyGoalInputs: the goal's epic", () => {
+  const input = (extra: object = {}) => ({
+    id: "a",
+    title: "A",
+    dependsOn: [],
+    spec: testGoal("a", 1).spec,
+    ...extra,
+  });
+
+  it("sets, keeps and clears a goal epicId without bumping the revision", () => {
+    const [made] = applyGoalInputs([], [input({ epicId: "web" })], { replace: false });
+    expect(made!.epicId).toBe("web");
+    const [kept] = applyGoalInputs([made!], [input()], { replace: false });
+    expect(kept!.epicId).toBe("web");
+    expect(kept!.revision).toBe(1);
+    const [changed] = applyGoalInputs([kept!], [input({ epicId: "ops" })], { replace: false });
+    expect(changed).toMatchObject({ epicId: "ops", revision: 1 });
+    const [cleared] = applyGoalInputs([changed!], [input({ epicId: null })], { replace: false });
+    expect(cleared!.epicId).toBeUndefined();
+    expect(cleared!.revision).toBe(1);
+  });
+
+  it("an omitted epicId keeps the stored one when goals are replaced too", () => {
+    const stored = testGoal("a", 1, [], { epicId: "web" });
+    const [g] = applyGoalInputs([stored], [input()], { replace: true });
+    expect(g!.epicId).toBe("web");
+  });
+});
+
 describe("runtime fields stay out of the XML export", () => {
   it("ignores goal.tasks, taskId and history task ids", () => {
     const plain = testGoal("a", 1, [], { path: "a", history: [] });

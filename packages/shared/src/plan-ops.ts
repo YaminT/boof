@@ -57,6 +57,7 @@ export function applyGoalInputs(
         dependsOn: input.dependsOn,
         status,
         ...(model ? { model } : {}),
+        ...(input.epicId ? { epicId: input.epicId } : {}),
         spec: input.spec,
         revision: 1,
         taskId: null,
@@ -82,6 +83,9 @@ export function applyGoalInputs(
     if (input.path) goal.path = input.path; // omitted: the stored path stays
     if (model) goal.model = model;
     else delete goal.model;
+    // The epic is not part of the goal's content (no revision bump): omitted keeps, null clears.
+    if (input.epicId) goal.epicId = input.epicId;
+    else if (input.epicId === null) delete goal.epicId;
     if (input.status && input.status !== old.status) {
       return withGoalStatus(goal, input.status, "status set by a plan edit", at);
     }

@@ -547,6 +547,10 @@
             },
             "type": "array"
           },
+          "epicId": {
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
           "history": {
             "default": [],
             "items": {
@@ -883,6 +887,18 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "epicId": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Epic the goal's task belongs to. Omitted: keep the stored one. null: clear it."
           },
           "id": {
             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -6621,6 +6637,18 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "epicId": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Epic the goal's task belongs to. Omitted: keep the stored one. null: clear it."
                   },
                   "expectedVersion": {
                     "maximum": 9007199254740991,

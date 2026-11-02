@@ -221,6 +221,67 @@ describe("syncPlan: materialising goals", () => {
   });
 });
 
+describe("syncPlan: epics and the hierarchy", () => {
+  const withEpic = (epicId: string | null) =>
+    plans.modify("p", (p) => ({
+      ...p,
+      goals: applyGoalInputs(p.goals, [{ ...p.goals[0]!, epicId, spec: p.goals[0]!.spec }], {
+        replace: false,
+      }),
+    }));
+
+  it("copies a goal epicId onto the task it creates", async () => {
+    await makePlan([testGoal("a", 1, [], { epicId: "web" })]);
+    await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("web");
+  });
+
+  it("applies a changed goal epicId to the live task without a revision bump", async () => {
+    await makePlan([testGoal("a", 1)]);
+    await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBeUndefined();
+    await withEpic("web");
+    const res = await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("web");
+    expect(res.updated).toEqual([]);
+    expect((await plans.require("p")).goals[0]!.revision).toBe(1);
+  });
+
+  it("sync preserves a human's epicId when the goal has none, across a rewrite", async () => {
+    await makePlan([testGoal("a", 1)]);
+    await sync();
+    await tasks.modify("boof-a", (t) => {
+      t.frontmatter.epicId = "ops";
+    });
+    await editGoal("a", "Build a better a");
+    const res = await sync();
+    expect(res.updated.map((u) => u.action)).toContain("rewritten");
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("ops");
+  });
+
+  it("sync never gives a subtask an epic or removes its parent", async () => {
+    await makePlan([testGoal("a", 1, [], { epicId: "web" })]);
+    await sync();
+    await tasks.modify("boof-a", (t) => {
+      delete t.frontmatter.epicId;
+      t.frontmatter.parentId = "someone";
+    });
+    await editGoal("a", "Build a better a");
+    await sync();
+    const f = (await tasks.get("boof-a"))!.frontmatter;
+    expect(f.parentId).toBe("someone");
+    expect(f.epicId).toBeUndefined();
+  });
+
+  it("dry run writes no epicId", async () => {
+    await makePlan([testGoal("a", 1)]);
+    await sync();
+    await withEpic("web");
+    await sync({ dryRun: true });
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBeUndefined();
+  });
+});
+
 describe("syncPlan: goal changes (section 5)", () => {
   it("rewrites the prompt of a pending task and logs the change", async () => {
     await makePlan([testGoal("a", 1)]);

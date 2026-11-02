@@ -571,6 +571,7 @@ async function syncOnce(
         planRef: { planId: plan.id, goalId: g.id, revision: g.revision },
         promptSource: "plan",
         ...(origin ? { origin } : {}),
+        ...(g.epicId ? { epicId: g.epicId } : {}),
         created: "",
         updated: "",
       },
@@ -736,6 +737,20 @@ async function syncOnce(
           taskId: current.frontmatter.id,
           action: "unskipped",
           revision: g.revision,
+        });
+      }
+      // The goal's epic follows to the live task unless a human made it a subtask (a subtask has
+      // its parent's epic). A goal without an epic never touches the task's epic or parent. Not
+      // reported in the result, and an epic that does not exist is the tolerated dangling case.
+      if (
+        !dry &&
+        g.epicId &&
+        !current.frontmatter.parentId &&
+        current.frontmatter.epicId !== g.epicId
+      ) {
+        const epicId = g.epicId;
+        await store.modify(current.frontmatter.id, (t) => {
+          if (!t.frontmatter.parentId) t.frontmatter.epicId = epicId;
         });
       }
       g.taskId = current.frontmatter.id;
