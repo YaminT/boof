@@ -5,6 +5,8 @@ import {
   isDirty,
   sameValue,
   savedDraft,
+  rebase,
+  changedLeaves,
   serverMoved,
   startDraft,
 } from "./settings-draft.js";
@@ -83,5 +85,35 @@ describe("savedDraft", () => {
 describe("changedKeys", () => {
   it("lists the keys whose values differ", () => {
     expect(changedKeys({ a: 1, b: [1] }, { a: 1, b: [2] })).toEqual(["b"]);
+  });
+});
+
+describe("rebase", () => {
+  it("keeps what the user typed during the save on top of what the server returned", () => {
+    const sent = { a: 2, b: 1 };
+    const form = { a: 2, b: 1, c: "x" };
+    const saved = { a: 2, b: 9 };
+    const out = rebase<Record<string, unknown>>(saved, sent, form);
+    expect(out).toEqual({ a: 2, b: 9, c: "x" });
+    expect(changedKeys(out, saved)).toEqual(["c"]);
+  });
+  it("follows the server for untouched fields another writer changed", () => {
+    expect(rebase({ on: true, n: 1 }, { on: false, n: 1 }, { on: false, n: 5 })).toEqual({
+      on: true,
+      n: 5,
+    });
+  });
+});
+
+describe("changedLeaves", () => {
+  it("reports leaves, not whole nested objects", () => {
+    const base = { limits: { perDayUsd: 1, perTaskUsd: 2 }, list: [1] };
+    const form = { limits: { perDayUsd: 1, perTaskUsd: 3 }, list: [1, 2] };
+    expect(changedLeaves(form, base)).toEqual(["limits.perTaskUsd", "list"]);
+    expect(changedLeaves(base, base)).toEqual([]);
+  });
+  it("sees added and removed keys", () => {
+    expect(changedLeaves({ a: { b: 1 } }, {})).toEqual(["a.b"]);
+    expect(changedLeaves({}, { a: 1 })).toEqual(["a"]);
   });
 });

@@ -20,12 +20,27 @@ describe("parseCount", () => {
 });
 
 describe("parseUsd", () => {
-  it("reads positive amounts and treats empty as no limit", () => {
+  it("reads positive amounts, rounds to cents and treats empty as no limit", () => {
     expect(parseUsd("2.5")).toEqual({ ok: true, value: 2.5 });
+    expect(parseUsd("2.999")).toEqual({ ok: true, value: 3 });
+    expect(parseUsd("0.01")).toEqual({ ok: true, value: 0.01 });
     expect(parseUsd("")).toEqual({ ok: true, value: undefined });
   });
   it("refuses zero, negatives and words", () => {
-    for (const t of ["0", "-1", "abc", "Infinity"]) expect(parseUsd(t)).toEqual({ ok: false });
+    for (const t of [
+      "0",
+      "-1",
+      "abc",
+      "Infinity",
+      "0x10",
+      "0b11",
+      "1e3",
+      "1e-9",
+      "0.004",
+      "1,5",
+      "$5",
+    ])
+      expect(parseUsd(t)).toEqual({ ok: false });
   });
 });
 
@@ -39,6 +54,9 @@ describe("tool limits", () => {
       ok: true,
       value: { codex: 5, opencode: 1 },
     });
+  });
+  it("refuses a repeated tool", () => {
+    expect(parseToolLimits("codex=1, codex=2")).toEqual({ ok: false });
   });
   it("refuses a bad entry and treats nothing as unset", () => {
     expect(parseToolLimits("codex")).toEqual({ ok: false });

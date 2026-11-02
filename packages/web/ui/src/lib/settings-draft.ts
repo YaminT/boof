@@ -48,13 +48,31 @@ export function editDraft<V>(d: Draft<V>, form: V, server: V): Draft<V> {
   return d.elsewhere && !isDirty(next) ? startDraft(server) : next;
 }
 
+const isPlain = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * `saved` with the leaves where `form` differs from `sent` taken from `form`: what the user changed
+ * since the write was sent, applied on top of what the server now holds. Fields the user did not
+ * touch follow the server, so another writer's change is never written back with a stale value.
+ */
+export function rebase<V>(saved: V, sent: V, form: V): V {
+  if (sameValue(form, sent)) return saved;
+  if (isPlain(form) && isPlain(sent) && isPlain(saved)) {
+    const out: Record<string, unknown> = { ...saved };
+    for (const k of new Set([...Object.keys(sent), ...Object.keys(form)])) {
+      const v = rebase(saved[k], sent[k], form[k]);
+      if (v === undefined) delete out[k];
+      else out[k] = v;
+    }
+    return out as V;
+  }
+  return form;
+}
+
 /** A save went through: `sent` is what was written, `saved` what the server now holds. */
 export function savedDraft<V>(d: Draft<V>, sent: V, saved: V): Draft<V> {
-  return {
-    base: saved,
-    form: sameValue(d.form, sent) ? saved : d.form,
-    elsewhere: false,
-  };
+  return { base: saved, form: rebase(saved, sent, d.form), elsewhere: false };
 }
 
 /** The keys whose values differ. */
@@ -80,4 +98,20 @@ export interface PageModel<V extends PageValues<unknown, unknown>> {
   values(s: Settings, p: Project): V;
   problems(v: V): string[];
   patches(form: V, base: V, latest: { settings: Settings; project: Project }): PagePatches;
+}
+
+/** The dotted paths of the leaves whose values differ; arrays and primitives are leaves. */
+export function changedLeaves(form: unknown, base: unknown, path = ""): string[] {
+  if (sameValue(form, base)) return [];
+  if (isPlain(form) && isPlain(base)) {
+    return [...new Set([...Object.keys(base), ...Object.keys(form)])].flatMap((k) =>
+      changedLeaves(form[k], base[k], path ? `${path}.${k}` : k),
+    );
+  }
+  if (isPlain(form) && base === undefined) {
+    return Object.keys(form).flatMap((k) =>
+      changedLeaves(form[k], undefined, path ? `${path}.${k}` : k),
+    );
+  }
+  return [path];
 }

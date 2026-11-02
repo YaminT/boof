@@ -3,10 +3,10 @@ import { toast } from "sonner";
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import { api } from "../api.js";
 import { act } from "../lib/act.js";
+import { afterSaveEdits, performSave } from "../lib/settings-save.js";
 import {
   editDraft,
   isDirty,
-  savedDraft,
   serverMoved,
   stableKey,
   startDraft,
@@ -46,38 +46,38 @@ export function useSettingsPage<V extends PageValues<unknown, unknown>>(
     setSavedAt(null);
   }, []);
 
+  const saving = useRef(false);
   const save = useCallback(async () => {
+    if (saving.current) return;
     const { settings: s, project: p, draft: d } = latest.current;
-    const sent = d.form;
-    const patches = model.patches(d.form, d.base, { settings: s, project: p });
+    if (model.problems(d.form).length > 0) return;
+    saving.current = true;
     setBusy(true);
-    let newSettings: Settings | undefined;
-    let newProject: Project | undefined;
-    let ok = true;
-    if (patches.settings) {
-      newSettings = await act(() => api.updateSettings(patches.settings!), {
-        failure: "Could not save the settings",
-      });
-      if (!newSettings) ok = false;
-    }
-    if (patches.project) {
-      newProject = await act(() => api.updateProject(pid, patches.project!), {
-        failure: "Could not save the project",
-      });
-      if (!newProject) ok = false;
-    }
-    const saved = model.values(newSettings ?? s, newProject ?? p);
-    // A half whose write failed keeps its old base, so it stays dirty.
-    const merged: V = {
-      global: patches.settings && !newSettings ? d.base.global : saved.global,
-      project: patches.project && !newProject ? d.base.project : saved.project,
-    } as V;
-    setDraft((cur) => savedDraft(cur, sent, merged));
-    setBusy(false);
-    if (ok) {
-      setSavedAt(Date.now());
-      toast.success("Settings saved");
-      await onSaved();
+    try {
+      const sent = d.form;
+      const result = await performSave(
+        model,
+        d,
+        { settings: s, project: p },
+        {
+          settings: (patch) =>
+            act(() => api.updateSettings(patch), { failure: "Could not save the settings" }),
+          project: (patch) =>
+            act(() => api.updateProject(pid, patch), { failure: "Could not save the project" }),
+        },
+      );
+      if (result.nothing) return;
+      // Edits typed while the write ran stay, on top of what the server returned.
+      setDraft((cur) => afterSaveEdits(result.draft, sent, cur));
+      if (result.allOk) {
+        setSavedAt(Date.now());
+        toast.success("Settings saved");
+      }
+      // Any write that went through makes the app's copies stale.
+      if (result.anyOk) await onSaved().catch(() => {});
+    } finally {
+      saving.current = false;
+      setBusy(false);
     }
   }, [model, pid, onSaved]);
 
