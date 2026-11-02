@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import {
   parseDuration,
   parseKey,
   sha256Hex,
+  tightenAuthDir,
   type Principal,
 } from "./index.js";
 
@@ -166,6 +167,26 @@ describe("scopes and durations", () => {
     expect(parseDuration("30d")).toBe(30 * 86_400_000);
     expect(parseDuration("12h")).toBe(12 * 3_600_000);
     expect(() => parseDuration("soon")).toThrow();
+  });
+});
+
+describe("client ids", () => {
+  it("never gives a client the id local (the local principal's), and suffixes on request", async () => {
+    const { client } = await store.create({ name: "Local", scopes: ["tasks:read"] });
+    expect(client.id).not.toBe("local");
+    expect(client.id).toMatch(/^local-[0-9a-f]{4}/);
+    const api = await store.create({ name: "fresh", scopes: ["tasks:read"], randomSuffix: true });
+    expect(api.client.id).toMatch(/^fresh-[0-9a-f]{6}$/);
+    expect((await store.create({ name: "plain", scopes: ["tasks:read"] })).client.id).toBe("plain");
+  });
+
+  it("tightens an existing auth directory to 0700", async () => {
+    await mkdir(join(root, "auth"), { recursive: true, mode: 0o755 });
+    await chmod(join(root, "auth"), 0o755);
+    await tightenAuthDir(root);
+    expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
+    await rm(join(root, "auth"), { recursive: true });
+    await tightenAuthDir(root); // nothing to do, no error
   });
 });
 

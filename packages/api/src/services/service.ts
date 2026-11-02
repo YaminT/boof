@@ -811,7 +811,7 @@ export class TaskService {
     input: CreateProjectBodyInput & { origin?: ProjectOrigin },
     actor?: Principal,
   ): Promise<Project> {
-    await this.assertMayChangeProjectSettings(input, actor);
+    await this.assertMayChangeProject(input, actor, true);
     const { path, workingDirectory, brief, ...rest } = input;
     const mode = path?.mode ?? "existing";
     const directory = path?.mode === "auto" ? undefined : (path?.directory ?? workingDirectory);
@@ -873,27 +873,44 @@ export class TaskService {
     }
   }
 
-  /** A project's own settings (roles, review gate, worktree, retries, budget) need a trusted client. */
-  private async assertMayChangeProjectSettings(values: object, actor?: Principal): Promise<void> {
-    const touched = ["roles", "review", "worktree", "retries", "budget"].filter(
-      (k) => (values as Record<string, unknown>)[k] !== undefined,
-    );
-    if (touched.length === 0) return;
-    // Review trust with approval on, the same condition as the other review-client rules.
+  /**
+   * A review-trust client may change only `name`, `labels` and `paused` of a project: the rest
+   * steers work a human approved (the brief is printed into every prompt, `defaultBase` and
+   * `workingDirectory` decide where tasks run, roles, review, worktree, retries and budget decide
+   * how). It may not create a project at all: that registers a directory and a queue.
+   */
+  private async assertMayChangeProject(
+    values: object,
+    actor: Principal | undefined,
+    creating: boolean,
+  ): Promise<void> {
     const review =
       actor?.kind === "client" &&
       actor.trust === "review" &&
       securitySettings(await this.loadSettings()).externalTasksRequireApproval;
     if (!review) return;
-    throw new OpError(
-      403,
-      `This client has review trust and cannot change project settings (${touched.join(", ")}); a human or a trusted client must`,
-      "forbidden_trust",
-    );
+    if (creating) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot create projects; a human or a trusted client must",
+        "forbidden_trust",
+      );
+    }
+    const ALLOWED = new Set(["name", "labels", "paused"]);
+    const touched = Object.entries(values)
+      .filter(([k, v]) => v !== undefined && !ALLOWED.has(k))
+      .map(([k]) => k);
+    if (touched.length > 0) {
+      throw new OpError(
+        403,
+        `This client has review trust and may change only name, labels and paused of a project (not ${touched.join(", ")})`,
+        "forbidden_trust",
+      );
+    }
   }
 
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
-    await this.assertMayChangeProjectSettings(patch, actor);
+    await this.assertMayChangeProject(patch, actor, false);
     if (
       actor &&
       !this.actsAsLocal(actor) &&

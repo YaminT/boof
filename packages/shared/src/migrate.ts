@@ -13,6 +13,7 @@ import {
   type Project,
 } from "./schema.js";
 import { defaultSettings } from "./settings.js";
+import { tightenAuthDir } from "./auth-store.js";
 import { isUsableSecret, WebhookSecretStore } from "./webhook-secrets.js";
 
 /** The data root cannot be migrated right now (live runner) or is from a newer release. */
@@ -104,6 +105,8 @@ export async function migrateDataRoot(
   root: string,
   opts: MigrateOptions = {},
 ): Promise<MigrationResult> {
+  // An older data root may have the key directory looser than 0700.
+  await tightenAuthDir(root);
   // Fast path: settings.json is written last and atomically, so a v2 file means nothing to do.
   try {
     const raw = JSON.parse(await readFile(dataRootPaths(root).settings, "utf8")) as {

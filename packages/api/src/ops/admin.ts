@@ -296,7 +296,7 @@ export const runnerSetEnabled = defineOp({
   name: "runner.setEnabled",
   title: "Start or pause the runner",
   description:
-    "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A project-restricted key is refused (403 forbidden_project); it can pause its own projects.",
+    "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A review-trust key is refused (403 forbidden_trust) and so is a project-restricted one (403 forbidden_project); it can pause its own projects.",
   scope: ["runner:control", "settings:write"],
   projectScoped: false,
   input: z.strictObject({ enabled: z.boolean() }),
@@ -305,7 +305,15 @@ export const runnerSetEnabled = defineOp({
   mcp: { expose: true, name: "boof_set_runner", annotations: IDEMPOTENT_WRITE },
   summary: (r) => `Runner ${r.enabled ? "enabled" : "disabled"}`,
   handler: async (ctx, input) => {
-    // The toggle is global: a project-restricted key has projects.pause and projects.resume.
+    // The toggle is global: a review-trust key may not use it, and a project-restricted key has
+    // projects.pause and projects.resume.
+    if (ctx.principal.trust !== "trusted") {
+      throw new OpError(
+        403,
+        "The runner switch covers every project: only trusted clients may use it",
+        "forbidden_trust",
+      );
+    }
     if (ctx.principal.projects !== "*") {
       throw new OpError(
         403,
@@ -591,6 +599,7 @@ export const clientsCreate = defineOp({
       projects,
       trust: body.trust,
       expiresAt,
+      randomSuffix: true,
     });
   },
 });

@@ -53,6 +53,24 @@ export interface CreateClientInput {
   trust?: Trust;
   /** ISO timestamp. */
   expiresAt?: string;
+  /**
+   * Always append a random suffix to the id (`name-1a2b3c`). The API sets it: a bare name when it
+   * is free and a suffix when it is taken would tell a caller that cannot see every client which
+   * names exist.
+   */
+  randomSuffix?: boolean;
+}
+
+/** `local` names the local principal, so no client may hold that id. */
+const RESERVED_CLIENT_IDS = ["local"];
+
+/** Tighten an existing `auth/` directory (an older data root may have it looser) to mode 0700. */
+export async function tightenAuthDir(root: string): Promise<void> {
+  try {
+    await chmod(dataRootPaths(root).auth, 0o700);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
 }
 
 /** Parse "30d", "12h", "90m" into a duration in ms. */
@@ -159,12 +177,12 @@ export class AuthStore {
   async create(input: CreateClientInput): Promise<{ client: PublicClient; key: string }> {
     const secret = randomBytes(32).toString("base64url");
     return this.mutate((clients) => {
-      const taken = new Set(clients.map((c) => c.id));
-      let id = uniqueKebabId(input.name, []);
-      // A taken id gets a random suffix, not "-2": a sequential one would tell a caller who may
-      // not see every client that a client with that name exists.
+      const taken = new Set([...clients.map((c) => c.id), ...RESERVED_CLIENT_IDS]);
+      const base = uniqueKebabId(input.name, []);
+      let id = input.randomSuffix ? `${base}-${randomBytes(3).toString("hex")}` : base;
+      // A taken id gets a random suffix, not "-2" (see `randomSuffix`).
       while (taken.has(id))
-        id = `${uniqueKebabId(input.name, [])}-${randomBytes(2).toString("hex")}`;
+        id = `${base}-${randomBytes(input.randomSuffix ? 3 : 2).toString("hex")}`;
       const client: Client = ClientSchema.parse({
         id,
         name: input.name,

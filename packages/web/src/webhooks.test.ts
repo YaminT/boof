@@ -172,6 +172,40 @@ describe("webhooks of restricted keys", () => {
     t += 1;
   });
 
+  it("a webhook made before the creator flag existed is checked too, when its creator is a client", async () => {
+    peer = "10.1.2.3";
+    const lim = await authStore.create({
+      name: "lim",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "trusted",
+    });
+    await create({ url: "http://hook.test/old" }, lim.key);
+    // Strip the flag, as a webhook created by an older version looks.
+    const raw = JSON.parse(await readFile(join(root, "settings.json"), "utf8"));
+    delete raw.webhooks[0].createdByClient;
+    await writeFile(join(root, "settings.json"), JSON.stringify(raw));
+    const hits: string[] = [];
+    const dispatcher = new WebhookDispatcher({
+      root,
+      service,
+      authStore,
+      fetch: (async (url: string) => {
+        hits.push(String(url));
+        return new Response("", { status: 200 });
+      }) as unknown as typeof fetch,
+      resolveHost,
+    });
+    await dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t1"));
+    await dispatcher.tick();
+    expect(hits).toHaveLength(1);
+    await authStore.revoke(lim.client.id);
+    await appendEvent(join(root, "projects", "a"), status("a", "t2"));
+    await dispatcher.tick();
+    expect(hits).toHaveLength(1);
+  });
+
   it("an expired creator's webhook stops, and one whose creator's reach shrank too", async () => {
     peer = "10.1.2.3";
     const soon = new Date(Date.now() + 3_600_000).toISOString();

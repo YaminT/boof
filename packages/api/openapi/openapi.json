@@ -10693,7 +10693,7 @@
         "x-boof-scope": "settings:read"
       },
       "put": {
-        "description": "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A project-restricted key is refused (403 forbidden_project); it can pause its own projects.",
+        "description": "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A review-trust key is refused (403 forbidden_trust) and so is a project-restricted one (403 forbidden_project); it can pause its own projects.",
         "operationId": "runner.setEnabled",
         "parameters": [],
         "requestBody": {

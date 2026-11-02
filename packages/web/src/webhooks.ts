@@ -75,8 +75,10 @@ export function creatorLive(
   clients: readonly Client[] | undefined,
   nowMs: number,
 ): boolean {
-  if (!clients || !hook.createdByClient) return true;
+  if (!clients) return true;
   const creator = clients.find((c) => c.id === hook.createdBy);
+  // A webhook from before the flag counts as client-made when its creator is a known client.
+  if (!hook.createdByClient && !creator) return true;
   if (!creator || creator.revokedAt || isExpired(creator, nowMs)) return false;
   if (creator.projects === "*") return true;
   return hook.projects !== "*" && hook.projects.every((p) => creator.projects.includes(p));

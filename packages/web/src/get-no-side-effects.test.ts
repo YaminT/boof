@@ -27,6 +27,7 @@ class SpyTool extends MockTool {
   probes = 0;
   override async detect(): Promise<HealthResult> {
     this.probes++;
+    await new Promise((r) => setTimeout(r, 50)); // callers overlap while a check runs
     return super.detect();
   }
   override async listModels(): Promise<string[]> {
