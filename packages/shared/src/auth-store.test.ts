@@ -125,7 +125,8 @@ describe("storage", () => {
   it("assigns unique ids for repeated names and records lastUsedAt", async () => {
     const a = await store.create({ name: "bot", scopes: ["tasks:read"] });
     const b = await store.create({ name: "bot", scopes: ["tasks:read"] });
-    expect([a.client.id, b.client.id]).toEqual(["bot", "bot-2"]);
+    expect(a.client.id).toBe("bot");
+    expect(b.client.id).toMatch(/^bot-[0-9a-f]{4}$/);
     await store.touch("bot");
     expect((await store.get("bot"))!.lastUsedAt).toBe("2026-01-01T00:00:00.000Z");
   });

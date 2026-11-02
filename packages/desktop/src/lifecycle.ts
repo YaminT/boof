@@ -26,7 +26,7 @@ export function serverOptions(
 
 /**
  * The id of the client the desktop's own key belongs to, read from the key it holds. After the
- * `desktop-ui` client is revoked a new one (`desktop-ui-2`) is issued, so the id is not a constant.
+ * `desktop-ui` client is revoked a new one (`desktop-ui-<hex>`) is issued, so the id is not a constant.
  */
 export function operatorClientId(token: string | undefined): string | undefined {
   return token ? parseKey(token)?.clientId : undefined;

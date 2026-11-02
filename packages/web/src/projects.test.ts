@@ -1186,13 +1186,13 @@ describe("the desktop operator key", () => {
     expect((await denied.json()).error.code).toBe("project_root_not_allowed");
   });
 
-  it("a second client named desktop-ui (id desktop-ui-2) is not the operator", async () => {
+  it("a second client named desktop-ui (a different id) is not the operator", async () => {
     const twin = await authStore.create({
       name: "desktop-ui",
       scopes: ["admin"],
       trust: "trusted",
     });
-    expect(twin.client.id).toBe("desktop-ui-2");
+    expect(twin.client.id).toMatch(/^desktop-ui-[0-9a-f]{4}$/);
     expect((await register(await repo("r7"), twin.key)).status).toBe(403);
   });
 

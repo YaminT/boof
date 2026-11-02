@@ -163,7 +163,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   boundPort = port;
 
   // Webhooks are delivered by this process only (headless run/scan processes do not deliver).
-  const webhooks = new WebhookDispatcher({ root: opts.root, service });
+  const webhooks = new WebhookDispatcher({ root: opts.root, service, authStore });
   webhooks.start();
 
   return {

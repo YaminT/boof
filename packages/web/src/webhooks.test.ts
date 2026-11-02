@@ -126,6 +126,115 @@ describe("webhooks and a restricted admin key", () => {
   });
 });
 
+describe("webhooks of restricted keys", () => {
+  it("a webhook is not delivered after its creator is revoked or expired, or no longer covers it", async () => {
+    peer = "10.1.2.3";
+    const lim = await authStore.create({
+      name: "lim",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "trusted",
+    });
+    const made = await (await create({ url: "http://hook.test/in" }, lim.key)).json();
+    expect(made.webhook.projects).toEqual(["a"]);
+    const withAuth = (clock: () => number) => {
+      const hits: string[] = [];
+      const dispatcher = new WebhookDispatcher({
+        root,
+        service,
+        authStore,
+        fetch: (async (url: string) => {
+          hits.push(String(url));
+          return new Response("", { status: 200 });
+        }) as unknown as typeof fetch,
+        now: clock,
+        resolveHost,
+      });
+      return { hits, dispatcher };
+    };
+    let t = Date.now();
+    const live = withAuth(() => t);
+    await live.dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t2"));
+    await live.dispatcher.tick();
+    expect(live.hits).toHaveLength(1);
+    await authStore.revoke(lim.client.id);
+    await appendEvent(join(root, "projects", "a"), status("a", "t3"));
+    await live.dispatcher.tick();
+    expect(live.hits).toHaveLength(1);
+    // A hook made by the local principal is unaffected.
+    peer = "127.0.0.1";
+    await create({ url: "http://hook.test/local" });
+    await live.dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t4"));
+    await live.dispatcher.tick();
+    expect(live.hits.filter((u) => u.endsWith("/local"))).toHaveLength(1);
+    t += 1;
+  });
+
+  it("an expired creator's webhook stops, and one whose creator's reach shrank too", async () => {
+    peer = "10.1.2.3";
+    const soon = new Date(Date.now() + 3_600_000).toISOString();
+    const lim = await authStore.create({
+      name: "lim",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "trusted",
+      expiresAt: soon,
+    });
+    await create({ url: "http://hook.test/exp" }, lim.key);
+    const hits: string[] = [];
+    let now = Date.now();
+    const dispatcher = new WebhookDispatcher({
+      root,
+      service,
+      authStore,
+      fetch: (async (url: string) => {
+        hits.push(String(url));
+        return new Response("", { status: 200 });
+      }) as unknown as typeof fetch,
+      now: () => now,
+      resolveHost,
+    });
+    await dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t1"));
+    await dispatcher.tick();
+    expect(hits).toHaveLength(1);
+    now = Date.parse(soon) + 1000;
+    await appendEvent(join(root, "projects", "a"), status("a", "t2"));
+    await dispatcher.tick();
+    expect(hits).toHaveLength(1);
+  });
+
+  it("refuses a webhook with an empty project list", async () => {
+    const res = await create({ url: "http://hook.test/x", projects: [] });
+    expect(res.status).toBe(400);
+  });
+
+  it("a review-trust key deletes only the webhooks it created", async () => {
+    peer = "10.1.2.3";
+    const rev = await authStore.create({
+      name: "rev",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "review",
+    });
+    const mine = await (await create({ url: "http://hook.test/m" }, rev.key)).json();
+    const trusted = await authStore.create({
+      name: "tru",
+      scopes: ["admin"],
+      projects: ["a"],
+      trust: "trusted",
+    });
+    const theirs = await (await create({ url: "http://hook.test/t" }, trusted.key)).json();
+    const del = (id: string) => call(`/api/v1/webhooks/${id}`, { method: "DELETE" }, rev.key);
+    const refused = await del(theirs.webhook.id);
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error.code).toBe("forbidden_trust");
+    expect((await del(mine.webhook.id)).status).toBe(200);
+  });
+});
+
 describe("webhook operations", () => {
   it("returns the secret once and never lists it", async () => {
     const res = await create({

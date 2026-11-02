@@ -4,10 +4,13 @@ import { join } from "node:path";
 import {
   atomicWrite,
   dataRootPaths,
+  isExpired,
   securitySettings,
   isUsableSecret,
   WebhookSecretStore,
+  type AuthStore,
   type BoofEvent,
+  type Client,
   type Webhook,
 } from "@boof-runner/shared";
 import {
@@ -55,6 +58,28 @@ export interface DispatcherOptions {
   resolveHost?: ResolveHost;
   /** How often to look for new events and due retries. */
   intervalMs?: number;
+  /**
+   * With it, a webhook an API client created is delivered only while that client is live (not
+   * revoked or expired) and still covers the webhook's projects; without it nothing is checked.
+   */
+  authStore?: AuthStore;
+}
+
+/**
+ * False when an API client created `hook` and is now revoked or expired, or no longer covers the
+ * hook's projects: the hook would outlive the key that made it. Webhooks of the local principal,
+ * older ones and every hook when no client list is given are live.
+ */
+export function creatorLive(
+  hook: Webhook,
+  clients: readonly Client[] | undefined,
+  nowMs: number,
+): boolean {
+  if (!clients || !hook.createdByClient) return true;
+  const creator = clients.find((c) => c.id === hook.createdBy);
+  if (!creator || creator.revokedAt || isExpired(creator, nowMs)) return false;
+  if (creator.projects === "*") return true;
+  return hook.projects !== "*" && hook.projects.every((p) => creator.projects.includes(p));
 }
 
 /** Sign `body` with the webhook secret: `sha256=<hex hmac>`. */
@@ -144,16 +169,21 @@ export class WebhookDispatcher {
       }
       const scopes = await this.scopesFor();
       const secrets = await this.secrets.all();
+      const clients = this.opts.authStore ? await this.opts.authStore.list() : undefined;
       const results = await Promise.all(
-        hooks.map((h) =>
-          this.pass(
-            h,
-            state,
-            scopes,
-            allowed,
-            Object.hasOwn(secrets, h.id) ? secrets[h.id] : undefined,
+        hooks
+          .map((hook) =>
+            creatorLive(hook, clients, this.now()) ? hook : { ...hook, enabled: false },
+          )
+          .map((h) =>
+            this.pass(
+              h,
+              state,
+              scopes,
+              allowed,
+              Object.hasOwn(secrets, h.id) ? secrets[h.id] : undefined,
+            ),
           ),
-        ),
       );
       if (dirty || results.some(Boolean)) await this.save(state);
     } finally {

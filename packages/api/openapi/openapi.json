@@ -10688,7 +10688,7 @@
         "x-boof-scope": "settings:read"
       },
       "put": {
-        "description": "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event.",
+        "description": "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A project-restricted key is refused (403 forbidden_project); it can pause its own projects.",
         "operationId": "runner.setEnabled",
         "parameters": [],
         "requestBody": {
@@ -11482,6 +11482,9 @@
                           "createdBy": {
                             "type": "string"
                           },
+                          "createdByClient": {
+                            "type": "boolean"
+                          },
                           "enabled": {
                             "default": true,
                             "type": "boolean"
@@ -11593,6 +11596,7 @@
                           "type": "string"
                         },
                         "maxItems": 200,
+                        "minItems": 1,
                         "type": "array"
                       }
                     ]
@@ -11630,6 +11634,9 @@
                         },
                         "createdBy": {
                           "type": "string"
+                        },
+                        "createdByClient": {
+                          "type": "boolean"
                         },
                         "enabled": {
                           "default": true,
@@ -11710,7 +11717,7 @@
     },
     "/webhooks/{webhookId}": {
       "delete": {
-        "description": "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404).",
+        "description": "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404), and a review-trust key only one it created (403).",
         "operationId": "webhooks.delete",
         "parameters": [
           {

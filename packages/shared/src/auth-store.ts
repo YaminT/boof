@@ -159,10 +159,12 @@ export class AuthStore {
   async create(input: CreateClientInput): Promise<{ client: PublicClient; key: string }> {
     const secret = randomBytes(32).toString("base64url");
     return this.mutate((clients) => {
-      const id = uniqueKebabId(
-        input.name,
-        clients.map((c) => c.id),
-      );
+      const taken = new Set(clients.map((c) => c.id));
+      let id = uniqueKebabId(input.name, []);
+      // A taken id gets a random suffix, not "-2": a sequential one would tell a caller who may
+      // not see every client that a client with that name exists.
+      while (taken.has(id))
+        id = `${uniqueKebabId(input.name, [])}-${randomBytes(2).toString("hex")}`;
       const client: Client = ClientSchema.parse({
         id,
         name: input.name,

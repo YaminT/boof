@@ -296,7 +296,7 @@ export const runnerSetEnabled = defineOp({
   name: "runner.setEnabled",
   title: "Start or pause the runner",
   description:
-    "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event.",
+    "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A project-restricted key is refused (403 forbidden_project); it can pause its own projects.",
   scope: ["runner:control", "settings:write"],
   projectScoped: false,
   input: z.strictObject({ enabled: z.boolean() }),
@@ -305,6 +305,14 @@ export const runnerSetEnabled = defineOp({
   mcp: { expose: true, name: "boof_set_runner", annotations: IDEMPOTENT_WRITE },
   summary: (r) => `Runner ${r.enabled ? "enabled" : "disabled"}`,
   handler: async (ctx, input) => {
+    // The toggle is global: a project-restricted key has projects.pause and projects.resume.
+    if (ctx.principal.projects !== "*") {
+      throw new OpError(
+        403,
+        "The runner switch covers every project: a project-restricted key may not use it (pause the project instead)",
+        "forbidden_project",
+      );
+    }
     const { runner } = await ctx.services.updateSettings(
       { runner: { enabled: input.enabled } },
       ctx.principal,

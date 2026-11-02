@@ -229,7 +229,7 @@ export const CreateWebhookBody = z
       .min(1)
       .max(20)
       .optional(),
-    projects: z.union([z.literal("*"), z.array(kebabId).max(200)]).optional(),
+    projects: z.union([z.literal("*"), z.array(kebabId).min(1).max(200)]).optional(),
     enabled: z.boolean().optional(),
   })
   .strict();

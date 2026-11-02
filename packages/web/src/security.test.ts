@@ -344,6 +344,73 @@ describe("authorize (scopes)", () => {
     expect((await service.loadSettings()).runner.concurrency).toBe(2);
   });
 
+  it("toggling the runner is refused to project-restricted keys on every transport", async () => {
+    peer = REMOTE;
+    const limited = await mint("lim", ["runner:control", "settings:write"], {
+      trust: "trusted",
+      projects: ["default"],
+    });
+    const full = await mint("full", ["runner:control"], { trust: "trusted" });
+    const before = (await service.loadSettings()).runner.enabled;
+    const app = build();
+    const put = (path: string, key: string) =>
+      call(app, path, { ...post({ enabled: !before }), method: "PUT" }, key);
+    for (const path of ["/api/v1/runner", "/api/runner"]) {
+      const res = await put(path, limited);
+      expect(res.status, path).toBe(403);
+      expect((await res.json()).error.code).toBe("forbidden_project");
+    }
+    // MCP boof_set_runner goes through the same operation.
+    const mcp = await call(
+      app,
+      "/mcp",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "boof_set_runner", arguments: { enabled: false } },
+        }),
+      },
+      limited,
+    );
+    expect(await mcp.text()).toContain("forbidden_project");
+    expect((await service.loadSettings()).runner.enabled).toBe(before);
+    expect((await put("/api/v1/runner", full)).status).toBe(200);
+  });
+
+  it("a review-trust key cannot change a project's settings or create a project with them", async () => {
+    peer = REMOTE;
+    const review = await mint("rev", ["projects:read", "projects:write"], {
+      projects: ["default"],
+    });
+    const trusted = await mint("tru", ["projects:read", "projects:write"], {
+      trust: "trusted",
+      projects: ["default"],
+    });
+    const app = build();
+    const put = (key: string, body: object) =>
+      call(app, "/api/v1/projects/default", { ...post(body), method: "PUT" }, key);
+    for (const body of [
+      { review: { gate: false } },
+      { budget: { perTaskUsd: 100000 } },
+      { worktree: { onDone: "delete" } },
+      { retries: { transient: 9 } },
+      { roles: { developer: { tool: "mock", model: "x" } } },
+    ]) {
+      const res = await put(review, body);
+      expect(res.status, JSON.stringify(body)).toBe(403);
+      expect((await res.json()).error.code).toBe("forbidden_trust");
+    }
+    expect((await put(review, { name: "Renamed" })).status).toBe(200);
+    expect((await put(trusted, { review: { gate: false } })).status).toBe(200);
+  });
+
   it("maps health/models to settings:read and usage/events to tasks:read", async () => {
     peer = REMOTE;
     const reader = await mint("reader", ["tasks:read"]);
@@ -1208,6 +1275,34 @@ describe("client management is capped by the caller", () => {
     expect(
       (await call(app, `/api/auth/clients/${peerKid.client.id}/rotate`, post({}), newKey)).status,
     ).toBe(200);
+  });
+
+  it("creating a client with a taken name does not reveal a hidden client", async () => {
+    peer = REMOTE;
+    await store.create({ name: "boss", scopes: ["admin"], trust: "trusted" });
+    const lim = await store.create({
+      name: "lim",
+      scopes: ["auth:admin", "tasks:read"],
+      projects: ["demo"],
+    });
+    const app = build();
+    const make = async (name: string) => {
+      const res = await call(
+        app,
+        "/api/auth/clients",
+        post({ name, scopes: ["tasks:read"], projects: ["demo"] }),
+        lim.key,
+      );
+      const body = await res.json();
+      if (!body.client) throw new Error(JSON.stringify(body));
+      return body.client.id as string;
+    };
+    const taken = await make("boss");
+    const free = await make("nobody");
+    expect(free).toBe("nobody");
+    // No sequential "-2": the suffix is random, so a taken name looks like no other collision.
+    expect(taken).toMatch(/^boss-[0-9a-f]{4,}$/);
+    expect(taken).not.toBe("boss-2");
   });
 
   it("answers a client the caller may not manage exactly like an unknown one", async () => {

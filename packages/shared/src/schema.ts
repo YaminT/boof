@@ -345,6 +345,8 @@ export const WebhookSchema = z.object({
   projects: z.union([z.literal("*"), z.array(kebab)]).default("*"),
   enabled: z.boolean().default(true),
   createdBy: z.string(),
+  /** True when an API client created it: delivery then needs that client to be live and to cover `projects`. */
+  createdByClient: z.boolean().optional(),
   created: z.string(),
 });
 export type Webhook = z.infer<typeof WebhookSchema>;

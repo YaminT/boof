@@ -792,6 +792,7 @@ export class TaskService {
     input: CreateProjectBodyInput & { origin?: ProjectOrigin },
     actor?: Principal,
   ): Promise<Project> {
+    await this.assertMayChangeProjectSettings(input, actor);
     const { path, workingDirectory, brief, ...rest } = input;
     const mode = path?.mode ?? "existing";
     const directory = path?.mode === "auto" ? undefined : (path?.directory ?? workingDirectory);
@@ -853,7 +854,27 @@ export class TaskService {
     }
   }
 
+  /** A project's own settings (roles, review gate, worktree, retries, budget) need a trusted client. */
+  private async assertMayChangeProjectSettings(values: object, actor?: Principal): Promise<void> {
+    const touched = ["roles", "review", "worktree", "retries", "budget"].filter(
+      (k) => (values as Record<string, unknown>)[k] !== undefined,
+    );
+    if (touched.length === 0) return;
+    // Review trust with approval on, the same condition as the other review-client rules.
+    const review =
+      actor?.kind === "client" &&
+      actor.trust === "review" &&
+      securitySettings(await this.loadSettings()).externalTasksRequireApproval;
+    if (!review) return;
+    throw new OpError(
+      403,
+      `This client has review trust and cannot change project settings (${touched.join(", ")}); a human or a trusted client must`,
+      "forbidden_trust",
+    );
+  }
+
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
+    await this.assertMayChangeProjectSettings(patch, actor);
     if (
       actor &&
       !this.actsAsLocal(actor) &&

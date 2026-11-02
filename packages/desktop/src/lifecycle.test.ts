@@ -125,8 +125,8 @@ describe("operatorClientId", () => {
         scopes: ["admin"],
         trust: "trusted",
       });
-      expect(second.client.id).toBe("desktop-ui-2");
-      expect(operatorClientId(second.key)).toBe("desktop-ui-2");
+      expect(second.client.id).toMatch(/^desktop-ui-[0-9a-f]{4}$/);
+      expect(operatorClientId(second.key)).toBe(second.client.id);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

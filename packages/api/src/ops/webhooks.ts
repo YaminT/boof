@@ -118,6 +118,7 @@ export const webhooksCreate = defineOp({
       projects,
       enabled: input.enabled ?? true,
       createdBy: ctx.principal.id,
+      ...(ctx.principal.kind === "client" ? { createdByClient: true } : {}),
       created: ctx.now(),
     };
     const secret = `whsec_${randomBytes(24).toString("hex")}`;
@@ -134,7 +135,7 @@ export const webhooksDelete = defineOp({
   name: "webhooks.delete",
   title: "Delete a webhook",
   description:
-    "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404).",
+    "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404), and a review-trust key only one it created (403).",
   scope: "admin",
   projectScoped: false,
   input: z.strictObject({ webhookId: webhookIdParam }),
@@ -147,6 +148,14 @@ export const webhooksDelete = defineOp({
       // A webhook beyond the caller's reach answers like an unknown one.
       const hook = hooks.find((h) => h.id === input.webhookId);
       if (!hook || !withinReach(ctx, hook)) throw new OpError(404, "Webhook not found");
+      // A review-trust key removes only the webhooks it created.
+      if (ctx.principal.trust === "review" && hook.createdBy !== ctx.principal.id) {
+        throw new OpError(
+          403,
+          "This client has review trust and can only delete webhooks it created",
+          "forbidden_trust",
+        );
+      }
       return { ...settings, webhooks: hooks.filter((h) => h.id !== input.webhookId) };
     });
     await ctx.services.webhookSecrets.delete(input.webhookId);
