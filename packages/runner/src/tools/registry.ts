@@ -17,6 +17,8 @@ export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
   /** Last health result per tool id, written by {@link healthAll}. */
   private readonly healthCache = new Map<string, CachedHealth>();
+  /** Last live model list per tool id, written by {@link liveModels}. */
+  private readonly modelCache = new Map<string, string[]>();
 
   constructor(tools: Tool[] = defaultTools()) {
     for (const t of tools) this.register(t);
@@ -63,7 +65,10 @@ export class ToolRegistry {
     return Object.fromEntries(this.healthCache);
   }
 
-  /** Models each tool's listModels() returns now; empty for a tool whose listing failed or was empty. */
+  /**
+   * Models each tool's listModels() returns now (runs the tools); empty for a tool whose listing
+   * failed or was empty. Remembered for {@link cachedLiveModels}.
+   */
   async liveModels(): Promise<Record<string, string[]>> {
     const out: Record<string, string[]> = {};
     await Promise.all(
@@ -73,14 +78,30 @@ export class ToolRegistry {
         } catch {
           out[t.id] = [];
         }
+        this.modelCache.set(t.id, out[t.id]);
       }),
     );
     return out;
   }
 
-  /** Fetch current model lists from every tool, falling back to built-in defaults. */
+  /** The lists the last {@link liveModels} found, without running a tool; a tool not asked yet maps to []. */
+  cachedLiveModels(): Record<string, string[]> {
+    return Object.fromEntries(
+      this.list().map((t) => [t.id, [...(this.modelCache.get(t.id) ?? [])]]),
+    );
+  }
+
+  /** Fetch current model lists from every tool (runs them), falling back to built-in defaults. */
   async modelsAll(): Promise<Record<string, string[]>> {
-    const live = await this.liveModels();
+    return this.withDefaults(await this.liveModels());
+  }
+
+  /** The last fetched model lists (or the built-in defaults), without running a tool. */
+  cachedModels(): Record<string, string[]> {
+    return this.withDefaults(this.cachedLiveModels());
+  }
+
+  private withDefaults(live: Record<string, string[]>): Record<string, string[]> {
     const out: Record<string, string[]> = {};
     for (const t of this.list()) {
       const models = live[t.id] ?? [];

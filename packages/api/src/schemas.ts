@@ -193,6 +193,10 @@ export const HealthResultSchema = z.object({
   status: z.enum(["available", "unavailable"]),
   message: z.string(),
   version: z.string().optional(),
+  checkedAt: z
+    .string()
+    .optional()
+    .meta({ description: "ISO-8601 time the check ran in this server process (GET /health)." }),
 });
 
 /** One model of a tool, as `models.details` reports it. */

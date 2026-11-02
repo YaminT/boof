@@ -238,6 +238,8 @@ describe("settings & health API", () => {
   });
 
   it("reports tool health", async () => {
+    expect((await (await req("/api/health")).json()).tools).toEqual({});
+    await req("/api/health/check", { method: "POST" });
     const res = await (await req("/api/health")).json();
     expect(res.tools.mock.status).toBe("available");
   });

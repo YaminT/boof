@@ -230,8 +230,16 @@ export const api = {
   getSettings: () => http<Settings>(`${V1}/settings`),
   updateSettings: (patch: SettingsPatch) =>
     http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
-  health: () => http<{ tools: Record<string, HealthResult> }>(`${V1}/health`).then((r) => r.tools),
-  models: () => http<{ models: Record<string, string[]> }>(`${V1}/models`).then((r) => r.models),
+  /** Runs the tools' version probes (POST), then returns their results. GET /health only reads the last ones. */
+  health: () =>
+    http<{ tools: Record<string, HealthResult> }>(`${V1}/health/check`, { method: "POST" }).then(
+      (r) => r.tools,
+    ),
+  /** Asks the tools for their models (POST). GET /models only reads the last lists. */
+  models: () =>
+    http<{ models: Record<string, string[]> }>(`${V1}/models/refresh`, { method: "POST" }).then(
+      (r) => r.models,
+    ),
   modelDetails: () =>
     http<{ tools: Record<string, ToolModelDetails> }>(`${V1}/models/details`).then((r) => r.tools),
   usage: () => http<TokenUsage>(`${V1}/usage`),

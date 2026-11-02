@@ -71,7 +71,7 @@ export const settingsHealth = defineOp({
   name: "settings.health",
   title: "Tool health",
   description:
-    "Checks that each agent tool (claude-code, codex, opencode) is installed and usable. No input. Runs version probes.",
+    "Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({}),
@@ -82,19 +82,56 @@ export const settingsHealth = defineOp({
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.status}`)
       .join(", "),
-  handler: async (ctx) => ({ tools: await ctx.services.health() }),
+  handler: async (ctx) => ({ tools: ctx.services.cachedHealth() }),
+});
+
+export const settingsCheckHealth = defineOp({
+  name: "settings.checkHealth",
+  title: "Check tool health",
+  description:
+    "Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Runs version probes (spawns processes).",
+  scope: "settings:read",
+  projectScoped: false,
+  input: z.strictObject({}),
+  output: z.object({ tools: z.record(z.string(), HealthResultSchema) }),
+  rest: { method: "POST", path: "/health/check" },
+  mcp: { expose: false, name: "boof_check_health", annotations: WRITE },
+  summary: (r) =>
+    Object.entries(r.tools)
+      .map(([k, v]) => `${k}: ${v.status}`)
+      .join(", "),
+  handler: async (ctx) => {
+    await ctx.services.health();
+    return { tools: ctx.services.cachedHealth() };
+  },
 });
 
 export const settingsModels = defineOp({
   name: "settings.models",
   title: "List models",
-  description: "Lists the models each tool offers. No input. Queries the tools.",
+  description:
+    "Lists the models each tool offers, as last fetched by this server process (the built-in defaults until settings.refreshModels ran). No input. No side effects: it runs no tool.",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({}),
   output: z.object({ models: z.record(z.string(), z.array(z.string())) }),
   rest: { method: "GET", path: "/models" },
   mcp: { expose: false, name: "boof_list_models", annotations: READ },
+  summary: (r) => Object.keys(r.models).join(", "),
+  handler: async (ctx) => ({ models: ctx.services.cachedModels() }),
+});
+
+export const settingsRefreshModels = defineOp({
+  name: "settings.refreshModels",
+  title: "Refresh models",
+  description:
+    "Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes).",
+  scope: "settings:read",
+  projectScoped: false,
+  input: z.strictObject({}),
+  output: z.object({ models: z.record(z.string(), z.array(z.string())) }),
+  rest: { method: "POST", path: "/models/refresh" },
+  mcp: { expose: false, name: "boof_refresh_models", annotations: WRITE },
   summary: (r) => Object.keys(r.models).join(", "),
   handler: async (ctx) => ({ models: await ctx.services.listModels() }),
 });
@@ -103,7 +140,7 @@ export const settingsModelDetails = defineOp({
   name: "models.details",
   title: "Model details",
   description:
-    "Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no health probe or smoke prompt.",
+    "Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no tool (it uses the lists settings.refreshModels last fetched).",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({}),
@@ -123,7 +160,7 @@ export const settingsModelDetails = defineOp({
     return {
       tools: buildModelDetails({
         tools: registry.list(),
-        live: await registry.liveModels(),
+        live: registry.cachedLiveModels(),
         settings,
         projects,
         health: registry.lastHealth(),
@@ -580,7 +617,9 @@ export const adminOps = [
   settingsGet,
   settingsUpdate,
   settingsHealth,
+  settingsCheckHealth,
   settingsModels,
+  settingsRefreshModels,
   settingsModelDetails,
   usageGlobal,
   usageBudget,

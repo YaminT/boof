@@ -232,8 +232,8 @@ export function SettingsPage({
   useEffect(() => {
     let cancelled = false;
 
-    // Model details list no probes, so they load at once. They load again after the health check
-    // so the badges show the time of the check that just ran.
+    // Model details run no tool: they show the last health check and model lists of the server, so
+    // they load at once and again after the health check and the model fetch below (both POSTs).
     const loadDetails = () =>
       api
         .modelDetails()
@@ -265,6 +265,7 @@ export function SettingsPage({
       .then((fetched) => {
         if (cancelled) return;
         setModels((m) => withRoleModels(mergeModels(fetched, m), settings.roles));
+        void loadDetails(); // the lists the details show were just fetched
       })
       .catch((err) => {
         if (!cancelled) setModelsError(errorText(err));

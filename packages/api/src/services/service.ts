@@ -77,6 +77,7 @@ import {
   ToolRegistry,
   UNKNOWN_USAGE,
   UsageStore,
+  type CachedHealth,
   type HealthResult,
 } from "@boof-runner/runner";
 
@@ -1166,12 +1167,24 @@ export class TaskService {
     return next;
   }
 
+  /** Run the tools' health checks now (spawns processes) and remember the results. */
   health(): Promise<Record<string, HealthResult>> {
     return this.registry.healthAll();
   }
 
+  /** The last health results of this process, without running a tool (empty until a check ran). */
+  cachedHealth(): Record<string, CachedHealth> {
+    return this.registry.lastHealth();
+  }
+
+  /** Ask the tools for their models now (spawns processes) and remember the lists. */
   listModels(): Promise<Record<string, string[]>> {
     return this.registry.modelsAll();
+  }
+
+  /** The last model lists (or the built-in defaults), without running a tool. */
+  cachedModels(): Record<string, string[]> {
+    return this.registry.cachedModels();
   }
 }
 

@@ -3050,7 +3050,7 @@
     },
     "/health": {
       "get": {
-        "description": "Checks that each agent tool (claude-code, codex, opencode) is installed and usable. No input. Runs version probes.",
+        "description": "Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.",
         "operationId": "settings.health",
         "parameters": [],
         "responses": {
@@ -3064,6 +3064,10 @@
                       "additionalProperties": {
                         "additionalProperties": false,
                         "properties": {
+                          "checkedAt": {
+                            "description": "ISO-8601 time the check ran in this server process (GET /health).",
+                            "type": "string"
+                          },
                           "message": {
                             "type": "string"
                           },
@@ -3117,9 +3121,82 @@
         "x-boof-scope": "settings:read"
       }
     },
+    "/health/check": {
+      "post": {
+        "description": "Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Runs version probes (spawns processes).",
+        "operationId": "settings.checkHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "tools": {
+                      "additionalProperties": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "checkedAt": {
+                            "description": "ISO-8601 time the check ran in this server process (GET /health).",
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "available",
+                              "unavailable"
+                            ],
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "tools"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Check tool health",
+        "tags": [
+          "settings"
+        ],
+        "x-boof-scope": "settings:read"
+      }
+    },
     "/models": {
       "get": {
-        "description": "Lists the models each tool offers. No input. Queries the tools.",
+        "description": "Lists the models each tool offers, as last fetched by this server process (the built-in defaults until settings.refreshModels ran). No input. No side effects: it runs no tool.",
         "operationId": "settings.models",
         "parameters": [],
         "responses": {
@@ -3171,7 +3248,7 @@
     },
     "/models/details": {
       "get": {
-        "description": "Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no health probe or smoke prompt.",
+        "description": "Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no tool (it uses the lists settings.refreshModels last fetched).",
         "operationId": "models.details",
         "parameters": [],
         "responses": {
@@ -3299,6 +3376,58 @@
         "summary": "Model details",
         "tags": [
           "models"
+        ],
+        "x-boof-scope": "settings:read"
+      }
+    },
+    "/models/refresh": {
+      "post": {
+        "description": "Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes).",
+        "operationId": "settings.refreshModels",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "models": {
+                      "additionalProperties": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "models"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Refresh models",
+        "tags": [
+          "settings"
         ],
         "x-boof-scope": "settings:read"
       }

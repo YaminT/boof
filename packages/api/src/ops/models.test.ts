@@ -107,6 +107,9 @@ describe("models.details operation", () => {
 
   it("labels each model by source and marks the tool's first default", async () => {
     await configure();
+    // The details show the lists of the last refresh; before it they run no tool.
+    expect(model(await details(), "fake", "fake-a")).toMatchObject({ source: "default" });
+    await getOp("settings.refreshModels")!.execute(ctx, {});
     const out = await details();
     expect(out.tools.fake.displayName).toBe("Fake Tool");
     expect(model(out, "fake", "fake-a")).toMatchObject({ source: "cli", isDefault: true });

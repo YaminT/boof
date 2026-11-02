@@ -432,7 +432,7 @@ The REST surface is the registry (see above); the full list with inputs, outputs
 - epics: `/api/v1/projects/{p}/epics…` (list, get, create, update with `PUT` and `If-Match`, delete with `?detach=true`); a task joins an epic with `epicId` on create or `tasks.move`, and a subtask with `parentId`
 - per-project tasks under `/api/v1/projects/{p}/tasks…`: CRUD, reorder, skip, retry, archive, unarchive, delete, queue, answers for parked tasks, attachments, live log, wait (long poll; stops when the client disconnects), stop and prompt injection (modes `next-step` and `now`)
 - per-project plans under `/api/v1/projects/{p}/plans…`: list, create, get, update, replace goals, upsert and remove a goal, reorder, goal status, repo import, XML export, sync (`dryRun`). Writes honour `If-Match: "<version>"` or `expectedVersion`
-- `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates (writes: `settings:write`), settings, tool health, models, token usage, API clients (`auth:admin`) and webhooks (`admin`)
+- `GET /api/v1/actions`, `GET /api/v1/whoami`, runner status and toggle, command templates (writes: `settings:write`), settings, tool health and models (`GET /health` and `GET /models` only report the last probe of this server process; `POST /health/check` and `POST /models/refresh` run the tools), token usage, API clients (`auth:admin`) and webhooks (`admin`)
 
 The unversioned routes (`/api/projects/…`, and `/api/tasks…` as aliases of `settings.defaultProject`) still work but answer `Deprecation: true` and `Sunset`. They keep their old shapes. New code uses `/api/v1`.
 

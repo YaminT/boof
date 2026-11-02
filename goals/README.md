@@ -65,7 +65,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`audit-forwarded-ip`](audit-forwarded-ip/goal.boof.xml) — Audit log records the forwarded client address behind a proxy
 - [x] [`security-headers-behind-proxy`](security-headers-behind-proxy/goal.boof.xml) — HSTS and CORP headers fit a TLS-terminating proxy and public docs
 - [x] [`mcp-resources-degrade-by-scope`](mcp-resources-degrade-by-scope/goal.boof.xml) — MCP resources/list degrades to empty for keys without projects:read
-- [ ] [`get-endpoints-no-side-effects`](get-endpoints-no-side-effects/goal.boof.xml) — Every GET is free of side effects (health and models probes)
+- [x] [`get-endpoints-no-side-effects`](get-endpoints-no-side-effects/goal.boof.xml) — Every GET is free of side effects (health and models probes)
 
 ## Install and release
 

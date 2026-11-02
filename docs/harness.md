@@ -641,7 +641,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 72 operations. Every path below starts with `/api/v1`.
+There are 74 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -1786,8 +1786,17 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.health`
 - Scope: `settings:read`
 - MCP tool: none (REST only)
-- What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable. No input. Runs version probes.
-- Success: HTTP 200 with `{ tools: { [key: string]: { message: string, status: "available" | "unavailable", version?: string } } }`.
+- What it does: Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.
+- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
+- Errors: `403 forbidden_scope`
+
+#### `POST /api/v1/health/check` (Check tool health)
+
+- Operation: `settings.checkHealth`
+- Scope: `settings:read`
+- MCP tool: none (REST only)
+- What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Runs version probes (spawns processes).
+- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/models` (List models)
@@ -1795,7 +1804,16 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.models`
 - Scope: `settings:read`
 - MCP tool: none (REST only)
-- What it does: Lists the models each tool offers. No input. Queries the tools.
+- What it does: Lists the models each tool offers, as last fetched by this server process (the built-in defaults until settings.refreshModels ran). No input. No side effects: it runs no tool.
+- Success: HTTP 200 with `{ models: { [key: string]: string[] } }`.
+- Errors: `403 forbidden_scope`
+
+#### `POST /api/v1/models/refresh` (Refresh models)
+
+- Operation: `settings.refreshModels`
+- Scope: `settings:read`
+- MCP tool: none (REST only)
+- What it does: Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes).
 - Success: HTTP 200 with `{ models: { [key: string]: string[] } }`.
 - Errors: `403 forbidden_scope`
 
@@ -1806,7 +1824,7 @@ JSON body (unknown keys are rejected):
 - Operation: `models.details`
 - Scope: `settings:read`
 - MCP tool: none (REST only)
-- What it does: Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no health probe or smoke prompt.
+- What it does: Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no tool (it uses the lists settings.refreshModels last fetched).
 - Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[] } } }`.
 - Errors: `403 forbidden_scope`
 

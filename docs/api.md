@@ -408,6 +408,11 @@ epics they created (`origin.client`; an epic without `origin` is a human's: `403
 Goals in `plans.*` inputs take an optional `epicId` (omitted keeps the stored one, `null` clears it);
 plan sync copies it onto the goal's task.
 
+No `GET` changes state or runs anything: `GET /health` and `GET /models` (and `GET /models/details`) answer
+from the last probe of this server process, and `POST /health/check` and `POST /models/refresh` run the
+tool probes and remember the results. (The audit log and a client's `lastUsedAt` are bookkeeping, not
+state a `GET` changes.) `get-no-side-effects.test.ts` calls every `GET` and checks the data root.
+
 ### Editing the contract
 
 Operations are defined once with `defineOp()` in `packages/api/src/ops/`. After a change run
