@@ -659,7 +659,12 @@ async function syncOnce(
         t.body.log = [t.body.log, note].filter(Boolean).join("\n\n");
       });
     }
+    // The spec snapshot moves on; the epic last applied does not (the epic step below owns it), or a
+    // goal edit that changes both would record an epic that was never applied.
+    const appliedEpic = g.synced?.epicId;
     g.synced = snapshotOf(g);
+    if (appliedEpic) g.synced.epicId = appliedEpic;
+    else delete g.synced.epicId;
     result.updated.push({
       goalId: g.id,
       taskId: id,

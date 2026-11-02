@@ -684,9 +684,11 @@ export class ProjectService {
     filename: string,
     type: string,
     bytes: Uint8Array,
+    actor?: Principal,
   ): Promise<Task> {
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
+    await this.assertMayAttach(task, actor);
     if (!isAllowedAttachmentType(type)) {
       throw new OpError(400, `Unsupported attachment type: ${type || "unknown"}`);
     }
@@ -702,10 +704,27 @@ export class ProjectService {
     return this.tasks.save(task);
   }
 
+  /**
+   * A review-trust client changes attachments only on its own drafts: the prompt tells the agent
+   * to read every attachment, so a file on a task a human approved would reach it unreviewed.
+   */
+  private async assertMayAttach(task: Task, actor?: Principal): Promise<void> {
+    if (!(await this.needsApproval(actor))) return;
+    await this.assertMayChange(task, "edit", actor);
+    if (task.frontmatter.status !== "draft") {
+      throw new OpError(
+        403,
+        "This client has review trust and can only change attachments of its own drafts",
+        "forbidden_trust",
+      );
+    }
+  }
+
   /** Remove an attachment's file and frontmatter entry. */
-  async removeAttachment(id: string, name: string): Promise<Task> {
+  async removeAttachment(id: string, name: string, actor?: Principal): Promise<Task> {
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
+    await this.assertMayAttach(task, actor);
     await this.attachments.remove(id, name);
     task.frontmatter.attachments = task.frontmatter.attachments.filter((a) => a.name !== name);
     return this.tasks.save(task);

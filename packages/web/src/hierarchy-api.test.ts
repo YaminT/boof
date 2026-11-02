@@ -409,4 +409,52 @@ describe("task hierarchy over the API", () => {
       spy.mockRestore();
     }
   });
+
+  it("a review client attaches to and removes from only its own drafts", async () => {
+    const store = new AuthStore(root);
+    const rev = (
+      await store.create({ name: "rev", scopes: ["tasks:read", "tasks:write"], trust: "review" })
+    ).key;
+    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    const as = (path: string, init: RequestInit) =>
+      call(path, {
+        ...init,
+        headers: { ...(init.headers as object), authorization: `Bearer ${rev}` },
+      });
+    const png = Uint8Array.from(
+      atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      ),
+      (c) => c.charCodeAt(0),
+    );
+    const upload = (id: string, key = true) => {
+      const form = new FormData();
+      form.append("file", new File([png], "a.png", { type: "image/png" }));
+      const init: RequestInit = { method: "POST", body: form };
+      const path = `${V1}/projects/demo/tasks/${id}/attachments`;
+      return key ? as(path, init) : call(path, init);
+    };
+    await mk("Human");
+    await upload("human", false); // a human attached a file
+    const mine = await as(
+      `${V1}/projects/demo/tasks`,
+      send("POST", { title: "Mine", prompt: "p" }),
+    );
+    expect(mine.status).toBe(201);
+    expect(await code(await upload("human"))).toEqual([403, "forbidden_trust"]);
+    expect(
+      await code(
+        await as(`${V1}/projects/demo/tasks/human/attachments/a.png`, { method: "DELETE" }),
+      ),
+    ).toEqual([403, "forbidden_trust"]);
+    expect((await upload("mine")).status).toBe(200);
+    // Once a human queued it, the client may not change its attachments either.
+    await call(`${V1}/projects/demo/tasks/mine/queue`, send("POST"));
+    expect(await code(await upload("mine"))).toEqual([403, "forbidden_trust"]);
+    expect(
+      await code(
+        await as(`${V1}/projects/demo/tasks/mine/attachments/a.png`, { method: "DELETE" }),
+      ),
+    ).toEqual([403, "forbidden_trust"]);
+  });
 });

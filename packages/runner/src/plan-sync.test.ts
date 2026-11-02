@@ -288,6 +288,29 @@ describe("syncPlan: epics and the hierarchy", () => {
     expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("docs");
   });
 
+  it("applies a goal's new epic when the spec changes in the same edit", async () => {
+    await makePlan([testGoal("a", 1, [], { epicId: "e1" })]);
+    await sync();
+    await withEpic("e2");
+    await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("e2");
+    // One edit changes both the spec and the epic.
+    await plans.modify("p", (p) => {
+      const g = p.goals[0]!;
+      return {
+        ...p,
+        goals: applyGoalInputs(
+          p.goals,
+          [{ ...g, epicId: "e3", spec: { ...g.spec, goal: "Build a better a" } }],
+          { replace: false },
+        ),
+      };
+    });
+    const res = await sync();
+    expect(res.updated.map((u) => u.action)).toContain("rewritten");
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("e3");
+  });
+
   it("dry run writes no epicId", async () => {
     await makePlan([testGoal("a", 1)]);
     await sync();

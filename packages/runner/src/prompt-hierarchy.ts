@@ -2,6 +2,8 @@ import { buildHierarchyIndex, type Epic, type Task } from "@boof-runner/shared";
 
 const MAX_LISTED = 50;
 
+const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)}…` : s);
+
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
 function bullets(tasks: Task[]): string[] {
@@ -30,7 +32,7 @@ export function hierarchyPromptSection(task: Task, tasks: Task[], epics: Epic[])
   const epic = epicId === undefined ? undefined : epics.find((e) => e.id === epicId);
   // The title of an epic a client created is client text no human approved (it can be renamed after
   // the work was approved), so only its id, which is kebab-case, is printed.
-  if (epic) lines.push(`Epic: ${epic.origin?.client ? epic.id : oneLine(epic.title)}`);
+  if (epic) lines.push(`Epic: ${epic.origin?.client ? clip(epic.id, 64) : oneLine(epic.title)}`);
 
   const parentId = task.frontmatter.parentId;
   const parent =

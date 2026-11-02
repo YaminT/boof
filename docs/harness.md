@@ -466,7 +466,7 @@ If `principal.trust` is `review` and `security.externalTasksRequireApproval` is 
 
 - A task you create is `draft` and gets the label `external:<your-client-id>`.
 - A plan you create is `draft`, even if you send `status: "active"`.
-- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), changing the title or prompt of a task that is not a draft, stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`), moving, editing (`tasks.update`, rename included) or deleting a task you did not create (`tasks.move`, `tasks.update`, `tasks.delete`), passing `detach` on a delete, changing a project's own settings (`roles`, `review`, `worktree`, `retries`, `budget`), deleting a webhook you did not create, updating an epic you did not create (an epic made by a human has no `origin` and counts as human), and deleting any epic.
+- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), changing the title, prompt, command or run count of a task that is not a draft, adding or removing an attachment on any task but your own draft, stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`), moving, editing (`tasks.update`, rename included) or deleting a task you did not create (`tasks.move`, `tasks.update`, `tasks.delete`), passing `detach` on a delete, changing a project's own settings (`roles`, `review`, `worktree`, `retries`, `budget`), deleting a webhook you did not create, updating an epic you did not create (an epic made by a human has no `origin` and counts as human), and deleting any epic.
 - You may create subtasks under any task (they stay drafts), create epics, and update your own epics. A prompt only names the title of an epic a human created; for an epic you created it names the id.
 - A human sets the plan to `active` in the Plans tab (button Approve). That records `approvedBy` on the plan: the human approved the content. From then on sync creates the plan's tasks as `pending`, for every dependency layer, with no per-task approval.
 - A review client may set its own active plan back to `draft` (`PUT .../plans/<plan-id>` with `{"status":"draft"}` and `If-Match`; no other field in the same call). That clears `approvedBy` and stops new task creation. It does not stop or change running tasks. The client may then edit the goals. It still cannot set the plan `active`: the user approves again.
@@ -1615,7 +1615,7 @@ Query parameters:
 - Operation: `tasks.attachments.add`
 - Scope: `tasks:write`
 - MCP tool: none (REST only)
-- What it does: Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task.
+- What it does: Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task. Review-trust clients may attach only to their own drafts (403 forbidden_trust).
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
@@ -1631,7 +1631,7 @@ Multipart body: one field `file` (image or PDF, at most 25 MB).
 - Operation: `tasks.attachments.remove`
 - Scope: `tasks:write`
 - MCP tool: none (REST only)
-- What it does: Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file.
+- What it does: Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file. Review-trust clients may change only their own drafts.
 - Success: HTTP 200 with `Task`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 

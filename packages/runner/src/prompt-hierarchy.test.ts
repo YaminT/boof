@@ -121,4 +121,12 @@ describe("hierarchyPromptSection", () => {
     expect(hierarchyPromptSection(kid, [b, kid], [byClient])).toContain("Epic: docs");
     expect(hierarchyPromptSection(kid, [b, kid], [byClient])).not.toContain("IGNORE");
   });
+
+  it("prints at most 64 characters of a client-made epic id", () => {
+    const longId = "a".repeat(120);
+    const byClient: Epic = { ...epic(longId, "T"), origin: { kind: "api", client: "rev" } };
+    const t = mk("t", { epicId: longId });
+    const out = hierarchyPromptSection(t, [t], [byClient])!;
+    expect(out).toBe(`## Hierarchy\nEpic: ${"a".repeat(64)}…`);
+  });
 });

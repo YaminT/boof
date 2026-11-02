@@ -685,7 +685,7 @@ export const attachmentsAdd = defineOp({
   name: "tasks.attachments.add",
   title: "Attach a file to a task",
   description:
-    "Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task.",
+    "Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task. Review-trust clients may attach only to their own drafts (403 forbidden_trust).",
   scope: "tasks:write",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, file: uploadedFile }),
@@ -699,7 +699,11 @@ export const attachmentsAdd = defineOp({
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
     const { name, type, bytes } = input.file;
-    return taskView(ctx, input.projectId, await svc.addAttachment(input.taskId, name, type, bytes));
+    return taskView(
+      ctx,
+      input.projectId,
+      await svc.addAttachment(input.taskId, name, type, bytes, ctx.principal),
+    );
   },
 });
 
@@ -707,7 +711,7 @@ export const attachmentsRemove = defineOp({
   name: "tasks.attachments.remove",
   title: "Remove a task attachment",
   description:
-    "Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file.",
+    "Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file. Review-trust clients may change only their own drafts.",
   scope: "tasks:write",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, attachmentName }),
@@ -722,7 +726,7 @@ export const attachmentsRemove = defineOp({
     return taskView(
       ctx,
       input.projectId,
-      await svc.removeAttachment(input.taskId, input.attachmentName),
+      await svc.removeAttachment(input.taskId, input.attachmentName, ctx.principal),
     );
   },
 });

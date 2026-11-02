@@ -8955,7 +8955,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/attachments": {
       "post": {
-        "description": "Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task.",
+        "description": "Uploads an image or PDF (multipart field `file`, max 25 MB) to a task. Inputs: projectId, taskId, file. Stores the file and lists it in the task. Review-trust clients may attach only to their own drafts (403 forbidden_trust).",
         "operationId": "tasks.attachments.add",
         "parameters": [
           {
@@ -9031,7 +9031,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/attachments/{attachmentName}": {
       "delete": {
-        "description": "Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file.",
+        "description": "Deletes an attachment of a task. Inputs: projectId, taskId, attachmentName. Removes the file. Review-trust clients may change only their own drafts.",
         "operationId": "tasks.attachments.remove",
         "parameters": [
           {
