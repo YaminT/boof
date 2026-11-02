@@ -138,6 +138,22 @@ describe("runTask (headless)", () => {
   });
 });
 
+describe("run --parent and --epic", () => {
+  it("creates the task as a subtask of the given parent, and refuses an unknown parent or epic", async () => {
+    const base = { root: dataRoot, repo, tool: "mock", registry: registry(), out: silent };
+    const parent = await runTask({ ...base, prompt: "Parent task." });
+    const child = await runTask({ ...base, prompt: "Child task.", parentId: parent.id });
+    const task = await tasksOf(child.projectId).get(child.id);
+    expect(task!.frontmatter.parentId).toBe(parent.id);
+    await expect(runTask({ ...base, prompt: "Orphan.", parentId: "ghost" })).rejects.toThrow(
+      ProjectResolutionError,
+    );
+    await expect(runTask({ ...base, prompt: "Lost.", epicId: "ghost" })).rejects.toThrow(
+      /Epic not found/,
+    );
+  });
+});
+
 describe("run --base and --title", () => {
   const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
 

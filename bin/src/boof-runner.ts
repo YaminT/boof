@@ -9,7 +9,9 @@ import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
 import { remoteCommand } from "./remote-cli.js";
 import { serviceCommand } from "./service-cli.js";
+import { epicCommand } from "./epic-cli.js";
 import { projectCommand } from "./project-cli.js";
+import { taskCommand } from "./task-cli.js";
 import { planCommand } from "./plan-cli.js";
 import { mcpCommand } from "./mcp-cli.js";
 import { drainQueue, ProjectResolutionError, runTask, scanRepoToTasks } from "./headless.js";
@@ -57,6 +59,8 @@ Usage:
   boof-runner run --all [options]      Drive the pending queue of every project to completion
   boof-runner scan <repo> [options]    Turn a repo's not-done goal.boof.xml units into tasks
   boof-runner project <add|list|remove>  Manage projects (git repositories) served by this data root
+  boof-runner epic <add|list|archive|remove>  Manage a project's epics, named groups of tasks (see: epic --help)
+  boof-runner task <list|move>         List tasks with epics and subtasks, move a task (see: task --help)
   boof-runner plan <import|sync|export>  Import a repo's goal files into a plan, sync it to tasks, export XML (see: plan --help)
   boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
@@ -87,6 +91,8 @@ run options:
       --tool <id>     Force all roles to this tool (e.g. mock, claude-code, codex, opencode)
       --model <name>  Model for --tool
       --runs <n>      Run the pipeline N times for the task (default 1)
+      --epic <id>     Put the task in this epic of the project
+      --parent <id>   Make the task a subtask of this task (not with --epic)
 
 scan options:
       --project <id>  Project the tasks go to (default: the project of <repo>, registered if needed)
@@ -236,6 +242,12 @@ export async function runCommand(argv: string[]): Promise<number> {
   }
 
   const runsOpt = getOpt(argv, ["--runs"]);
+  const epic = getOpt(argv, ["--epic"]);
+  const parent = getOpt(argv, ["--parent"]);
+  if (epic && parent) {
+    console.error("run: give --epic or --parent, not both: a subtask takes its parent's epic.");
+    return 1;
+  }
   const summary = await runTask({
     root,
     prompt,
@@ -246,6 +258,8 @@ export async function runCommand(argv: string[]): Promise<number> {
     ...(tool ? { tool } : {}),
     ...(model ? { model } : {}),
     ...(runsOpt ? { runs: Number(runsOpt) } : {}),
+    ...(epic ? { epicId: epic } : {}),
+    ...(parent ? { parentId: parent } : {}),
   });
   return summary.ok ? 0 : 1;
 }
@@ -290,6 +304,8 @@ export function firstPositional(argv: string[]): string | undefined {
     "--tool",
     "--model",
     "--runs",
+    "--epic",
+    "--parent",
     "--bump",
     "--port",
     "-p",
@@ -373,6 +389,12 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "project":
       code = await projectCommand(rest, defaultDataRoot);
+      break;
+    case "epic":
+      code = await epicCommand(rest, defaultDataRoot);
+      break;
+    case "task":
+      code = await taskCommand(rest, defaultDataRoot);
       break;
     case "mcp":
       code = await mcpCommand(rest, defaultDataRoot);

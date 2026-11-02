@@ -8,6 +8,8 @@
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  createTaskInHierarchy,
+  HierarchyError,
   newTask,
   PlanStore,
   ProjectStore,
@@ -198,6 +200,9 @@ export interface RunTaskOptions {
   tool?: string;
   model?: string;
   runs?: number;
+  /** Put the task in this epic of the project, or make it a subtask of this task (not both). */
+  epicId?: string;
+  parentId?: string;
   registry?: ToolRegistry;
   out?: Out;
 }
@@ -228,29 +233,39 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   const registry = opts.registry ?? new ToolRegistry();
   const title = opts.title ?? firstLine(opts.prompt);
   const tools = toolOverride(registry, settings, opts.tool, opts.model);
-  const { frontmatter } = await store.createUnique(
-    newTask(
-      {
-        id: "pending-id",
-        title,
-        status: "pending",
-        priority: 1000, // ahead of any pre-existing queue so it runs first
-        skip: false,
-        labels: ["cli-run"],
-        command: null,
-        attachments: [],
-        questions: "none",
-        runs: Math.max(1, Math.floor(opts.runs ?? 1)),
-        completedRuns: 0,
-        ...(opts.base ? { base: opts.base } : {}),
-        ...(tools ? { tools } : {}),
-        created: "",
-        updated: "",
-      },
-      opts.prompt,
-    ),
-  );
-  const id = frontmatter.id;
+  let created;
+  try {
+    created = await createTaskInHierarchy(
+      new ProjectStore(opts.root).dir(project.id),
+      newTask(
+        {
+          id: "pending-id",
+          title,
+          status: "pending",
+          priority: 1000, // ahead of any pre-existing queue so it runs first
+          skip: false,
+          labels: ["cli-run"],
+          command: null,
+          attachments: [],
+          questions: "none",
+          runs: Math.max(1, Math.floor(opts.runs ?? 1)),
+          completedRuns: 0,
+          ...(opts.base ? { base: opts.base } : {}),
+          ...(tools ? { tools } : {}),
+          ...(opts.epicId ? { epicId: opts.epicId } : {}),
+          ...(opts.parentId ? { parentId: opts.parentId } : {}),
+          created: "",
+          updated: "",
+        },
+        opts.prompt,
+      ),
+      { by: "cli" },
+    );
+  } catch (err) {
+    if (err instanceof HierarchyError) throw new ProjectResolutionError(err.message);
+    throw err;
+  }
+  const id = created.frontmatter.id;
 
   const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
   // Drive until our task leaves the active states. One tick fully runs the

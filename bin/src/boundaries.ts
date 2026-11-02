@@ -66,7 +66,7 @@ const PACKAGE_PART: Record<string, Part> = {
   desktop: "desktop",
 };
 
-const CLI_COMMANDS = ["auth", "plan", "project", "remote", "service", "mcp"].map(
+const CLI_COMMANDS = ["auth", "epic", "plan", "project", "remote", "service", "task", "mcp"].map(
   (c) => `${c}-cli.ts`,
 );
 

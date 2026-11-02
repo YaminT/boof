@@ -80,6 +80,9 @@ boof-runner project add /path/to/new-dir --new [--confirm] --brief <text>   # mk
 boof-runner project add --auto --brief <text> [--name <text>]               # creates <settings.projectsRoot>/<id>
 boof-runner project list [--json]
 boof-runner project remove <id> [--purge]   # archive; --purge deletes the project's data, never the repo
+boof-runner epic add <title> [--priority <n>] [--description <text>]   # an epic groups tasks; also: list, archive, remove
+boof-runner task list [--epic <id>|none] [--parent <id>|none]          # subtasks are shown under their parent; also: move
+boof-runner run "<prompt>" --epic <id>      # or --parent <id> to make the task a subtask
 
 # Run a single prompt through the pipeline and stream progress.
 # Exits non-zero if the task fails or parks for answers.
@@ -184,6 +187,8 @@ boof-runner run <prompt> [options]     Enqueue a prompt and drive it to completi
 boof-runner run --file <path> [...]    Same, reading the prompt from a file
 boof-runner run --all [options]        Drive the pending queue of every project to completion
 boof-runner scan <repo> [options]      Turn a repo's not-done goal.boof.xml units into tasks
+boof-runner epic <add|list|archive|remove>  Manage the epics (groups of tasks) of a project
+boof-runner task <list|move>            List tasks with epics and subtasks; move a task
 boof-runner project <add|list|remove>  Manage projects of this data root; `add --new|--auto --brief …` creates the repository
 boof-runner plan <import|sync|export>  Import goal files into a plan, sync it to tasks, export XML
 boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access

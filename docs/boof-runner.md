@@ -125,6 +125,8 @@ The body stores human-readable content:
 
 A line inside a section that would start another section (`## Log`, `### Reviewer`, ...) is stored indented by one space; only the first occurrence of each heading opens a section.
 
+Epics and subtasks. A project can hold epics (`epics.json`), and a task can sit in one (`epicId`) or under a parent task (`parentId`, one level). A subtask has no epic of its own; it shows its parent's. Progress is derived and never stored: a task shows `done/total` of its non-archived subtasks and an epic `done/total` of its non-archived top-level tasks. Deleting a task with subtasks or an epic with tasks is refused unless `detach` is given. The scheduler ignores the hierarchy; queuing a parent whose subtasks are not done only adds a `subtasks_open` warning. CLI: `epic add|list|archive|remove`, `task list|move`, and `run --epic <id>` / `run --parent <id>`.
+
 This format keeps task data editable, inspectable, and portable outside the app.
 
 ## Plans
