@@ -27,7 +27,7 @@ import type { Task } from "./task-file.js";
 export function defaultSettings(): Settings {
   return {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
-    runner: { enabled: false, concurrency: 1 },
+    runner: { enabled: false, concurrency: 1, inheritMcpServers: false },
     defaultProject: null,
     roles: {
       planner: { tool: "claude-code", model: "opus" },

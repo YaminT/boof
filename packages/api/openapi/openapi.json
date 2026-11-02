@@ -1643,11 +1643,16 @@
               },
               "enabled": {
                 "type": "boolean"
+              },
+              "inheritMcpServers": {
+                "default": false,
+                "type": "boolean"
               }
             },
             "required": [
               "enabled",
-              "concurrency"
+              "concurrency",
+              "inheritMcpServers"
             ],
             "type": "object"
           },
@@ -11141,6 +11146,9 @@
                         "type": "integer"
                       },
                       "enabled": {
+                        "type": "boolean"
+                      },
+                      "inheritMcpServers": {
                         "type": "boolean"
                       }
                     },

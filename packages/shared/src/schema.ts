@@ -365,6 +365,12 @@ export const RunnerSettingsSchema = z.object({
   enabled: z.boolean(),
   /** Tasks the engine may run at once; at most one per project (multi-project spec). */
   concurrency: z.number().int().min(1).default(1),
+  /**
+   * Let task agents load the MCP servers of the user's own config (claude: `~/.claude.json`,
+   * project `.mcp.json`). Off by default: an agent run unattended with every permission prompt
+   * skipped must not get the user's other tools (mail, browser, cloud accounts).
+   */
+  inheritMcpServers: z.boolean().default(false),
 });
 export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
 
@@ -419,6 +425,7 @@ export const SettingsPatchSchema = z
       .strictObject({
         enabled: z.boolean().optional(),
         concurrency: z.number().int().min(1).optional(),
+        inheritMcpServers: z.boolean().optional(),
       })
       .optional(),
     defaultProject: kebab.nullable().optional(),

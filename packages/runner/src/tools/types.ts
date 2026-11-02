@@ -19,6 +19,12 @@ export interface RunOptions {
   cwd: string;
   /** Auto mode: pass non-interactive / no-permission-prompt flags. */
   autoApprove: boolean;
+  /**
+   * Let the agent load the user's own MCP servers (`runner.inheritMcpServers`). Default false: the
+   * claude adapter then passes `--strict-mcp-config`. Codex and opencode read their own config and
+   * have no flag boof can rely on, so they are not isolated.
+   */
+  inheritMcpServers?: boolean;
   /** Optional timeout for this run. */
   timeoutMs?: number;
   /**

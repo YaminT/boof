@@ -174,6 +174,8 @@ The runner polls `tasks/pending/` of every active, non-paused project that has a
 
 ### Concurrency
 
+Task agents do not inherit your MCP servers. `claude` runs with `--strict-mcp-config` (and no `--mcp-config`), so neither `~/.claude.json` nor the repository's `.mcp.json` loads, unless `settings.runner.inheritMcpServers` is `true` (default `false`; `PUT /settings` with `{"runner":{"inheritMcpServers":true}}`). The health probe and model listing are not affected. `codex` and `opencode` read MCP servers from their own config (`~/.codex/config.toml`, `opencode.json`); boof passes no flag for them because none could be verified to drop servers a config defines (a `codex -c mcp_servers={}` override merges into the config and did not remove a configured server in `codex mcp list`), so keep MCP servers you do not want agents to use out of those configs, or run boof under a home directory that has none.
+
 `settings.runner.concurrency` (default 1) is the number of tasks in flight. The invariant is **at most one running task per project**: the engine keeps a map of in-flight pipelines by project id and `selectNext()` skips those projects, because worktree creation, the `.meta` sidecar and branch creation in one repository are not race-safe. With concurrency 2 two projects can run side by side; two tasks of one project never do. Concurrent agent CLIs share CPU, memory and API rate limits. The mock tool's `mockState` is module-global, so tests that run tasks concurrently track their own state in the `onRun` hook instead of relying on `mockState.prompts` or `calls`.
 
 For each task, the pipeline runs these steps:

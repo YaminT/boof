@@ -194,7 +194,7 @@ describe("migrateDataRoot", () => {
     const raw = JSON.parse(await readFile(join(root, "settings.json"), "utf8"));
     expect(raw.schemaVersion).toBe(2);
     expect(raw.defaultProject).toBe("default");
-    expect(raw.runner).toEqual({ enabled: true, concurrency: 1 });
+    expect(raw.runner).toEqual({ enabled: true, concurrency: 1, inheritMcpServers: false });
     expect(raw.worktree).toEqual({ onDone: "delete", onFailure: "keep" });
     for (const gone of ["workingDirectory", "selectedSubdirectory", "blockHours", "tokens"]) {
       expect(raw).not.toHaveProperty(gone);

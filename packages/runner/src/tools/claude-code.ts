@@ -79,6 +79,9 @@ export class ClaudeCodeTool implements Tool {
       "--append-system-prompt",
       opts.systemPrompt,
     ];
+    // Without --mcp-config, --strict-mcp-config means no MCP servers at all: the user's
+    // ~/.claude.json and the repository's .mcp.json are ignored.
+    if (!opts.inheritMcpServers) args.push("--strict-mcp-config");
     // Continue an earlier session (a steered step); the stdin prompt is the new message.
     if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
     if (opts.autoApprove) {

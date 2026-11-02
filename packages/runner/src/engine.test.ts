@@ -1129,6 +1129,22 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     for (const p of mockState.prompts) expect(p).not.toContain("## Project");
   });
 
+  it("passes runner.inheritMcpServers to every tool run (off unless switched on)", async () => {
+    const seen: (boolean | undefined)[] = [];
+    mockState.onRun = async (opts) => {
+      seen.push(opts.inheritMcpServers);
+    };
+    await run("First");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === false)).toBe(true);
+    seen.length = 0;
+    const s = await engine.settingsStore.load();
+    await engine.settingsStore.save({ ...s, runner: { ...s.runner, inheritMcpServers: true } });
+    await run("Second", { id: "t2" });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === true)).toBe(true);
+  });
+
   it("puts ## Hierarchy after ## Project and before ## Prompt", async () => {
     await new ProjectStore(dataRoot).update("default", { brief: "A shop for hats." });
     await store.create(newTask(fm({ id: "p", status: "draft", title: "Parent" }), "parent"));

@@ -908,3 +908,20 @@ describe("ClaudeCodeTool questions", () => {
     expect(res.report).toBe("Need input.");
   });
 });
+
+describe("user MCP servers", () => {
+  const claude = new ClaudeCodeTool();
+  const withRole = { ...baseOpts, role: "developer" as const };
+
+  it("claude ignores the user's MCP servers unless the run opts back in", () => {
+    const args = claude.buildArgs(withRole);
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).not.toContain("--mcp-config");
+    expect(claude.buildArgs({ ...withRole, inheritMcpServers: false })).toContain(
+      "--strict-mcp-config",
+    );
+    expect(claude.buildArgs({ ...withRole, inheritMcpServers: true })).not.toContain(
+      "--strict-mcp-config",
+    );
+  });
+});

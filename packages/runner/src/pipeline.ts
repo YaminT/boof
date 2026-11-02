@@ -343,6 +343,7 @@ export class Pipeline {
         try {
           const result = await tool.run({
             ...opts,
+            inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             prompt,
             resumeSessionId,
             idleTimeoutMs,

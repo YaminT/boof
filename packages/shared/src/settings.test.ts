@@ -183,7 +183,7 @@ describe("v2 settings store", () => {
     const s = await new SettingsStore(root).load();
     expect(s.schemaVersion).toBe(2);
     expect(s.defaultProject).toBeNull();
-    expect(s.runner).toEqual({ enabled: false, concurrency: 1 });
+    expect(s.runner).toEqual({ enabled: false, concurrency: 1, inheritMcpServers: false });
     expect(Object.keys(s)).not.toContain("workingDirectory");
   });
 
@@ -197,7 +197,7 @@ describe("v2 settings store", () => {
     const store = new SettingsStore(root);
     await store.update({ runner: { concurrency: 3 } });
     const s = await store.update({ runner: { enabled: true } });
-    expect(s.runner).toEqual({ enabled: true, concurrency: 3 });
+    expect(s.runner).toEqual({ enabled: true, concurrency: 3, inheritMcpServers: false });
   });
 
   it("update serializes concurrent patches so neither is lost", async () => {
@@ -207,7 +207,11 @@ describe("v2 settings store", () => {
       store.update({ runner: { enabled: true } }),
       store.update({ runner: { concurrency: 3 } }),
     ]);
-    expect((await store.load()).runner).toEqual({ enabled: true, concurrency: 3 });
+    expect((await store.load()).runner).toEqual({
+      enabled: true,
+      concurrency: 3,
+      inheritMcpServers: false,
+    });
   });
 
   it("SettingsPatchSchema rejects workingDirectory and accepts defaultProject", () => {
@@ -288,5 +292,14 @@ describe("effectiveSettings", () => {
     expect(resolveRole(e, newTask(fm()), "reviewer").model).toBe("p-rev");
     const task = newTask(fm({ tools: { reviewer: { tool: "mock", model: "t-rev" } } }));
     expect(resolveRole(e, task, "reviewer").model).toBe("t-rev");
+  });
+});
+
+describe("runner.inheritMcpServers", () => {
+  it("is off by default and can be switched on through a settings patch", async () => {
+    expect(defaultSettings().runner.inheritMcpServers).toBe(false);
+    expect(SettingsPatchSchema.parse({ runner: { inheritMcpServers: true } })).toEqual({
+      runner: { inheritMcpServers: true },
+    });
   });
 });
