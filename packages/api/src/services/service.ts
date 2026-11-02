@@ -1170,9 +1170,12 @@ export class TaskService {
     return next;
   }
 
-  /** Run the tools' health checks now (spawns processes) and remember the results. */
+  /**
+   * Run the tools' health checks (each sends a short, paid prompt) and remember the results.
+   * Concurrent calls share one check, and a check less than a minute old is returned as it is.
+   */
   health(): Promise<Record<string, HealthResult>> {
-    return this.registry.healthAll();
+    return this.registry.healthAll(HEALTH_COOLDOWN_MS);
   }
 
   /** The last health results of this process, without running a tool (empty until a check ran). */
@@ -1194,6 +1197,9 @@ export class TaskService {
 function projectNotFound(id: string): OpError {
   return new OpError(404, `Project not found: ${id}`, "project_not_found");
 }
+
+/** A health check younger than this is not repeated: each check is a paid model call per tool. */
+const HEALTH_COOLDOWN_MS = 60_000;
 
 const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
 

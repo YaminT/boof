@@ -3127,7 +3127,7 @@
     },
     "/health/check": {
       "post": {
-        "description": "Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Runs version probes (spawns processes).",
+        "description": "Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Spawns each tool and sends it a short prompt (a paid model call per tool). Concurrent calls share one check, and a check less than a minute old is not repeated. Needs settings:write.",
         "operationId": "settings.checkHealth",
         "parameters": [],
         "responses": {
@@ -3195,7 +3195,7 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:write"
       }
     },
     "/models": {
@@ -3386,7 +3386,7 @@
     },
     "/models/refresh": {
       "post": {
-        "description": "Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes).",
+        "description": "Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes); concurrent calls share one query.",
         "operationId": "settings.refreshModels",
         "parameters": [],
         "responses": {

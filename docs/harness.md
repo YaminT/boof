@@ -1795,9 +1795,9 @@ JSON body (unknown keys are rejected):
 #### `POST /api/v1/health/check` (Check tool health)
 
 - Operation: `settings.checkHealth`
-- Scope: `settings:read`
+- Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Runs version probes (spawns processes).
+- What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Spawns each tool and sends it a short prompt (a paid model call per tool). Concurrent calls share one check, and a check less than a minute old is not repeated. Needs settings:write.
 - Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
 - Errors: `403 forbidden_scope`
 
@@ -1815,7 +1815,7 @@ JSON body (unknown keys are rejected):
 - Operation: `settings.refreshModels`
 - Scope: `settings:read`
 - MCP tool: none (REST only)
-- What it does: Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes).
+- What it does: Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes); concurrent calls share one query.
 - Success: HTTP 200 with `{ models: { [key: string]: string[] } }`.
 - Errors: `403 forbidden_scope`
 

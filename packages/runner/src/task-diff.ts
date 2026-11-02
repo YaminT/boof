@@ -84,10 +84,19 @@ export function assertRepoRelativePath(p: string): string {
 }
 
 async function git(cwd: string, args: string[]) {
-  // Read-only plumbing; --literal-pathspecs keeps file names from acting as pathspec magic.
+  // Read-only plumbing; --literal-pathspecs keeps file names from acting as pathspec magic, and
+  // --no-optional-locks keeps status and diff from refreshing the index of a worktree an agent
+  // is committing in (that takes index.lock and can fail the agent's own git add or commit).
   const res = await execCommand(
     "git",
-    ["--no-pager", "--literal-pathspecs", "-c", "core.quotepath=off", ...args],
+    [
+      "--no-pager",
+      "--no-optional-locks",
+      "--literal-pathspecs",
+      "-c",
+      "core.quotepath=off",
+      ...args,
+    ],
     { cwd, timeoutMs: 30000 },
   );
   return { code: res.code, out: res.stdout, err: res.stderr.trim() };

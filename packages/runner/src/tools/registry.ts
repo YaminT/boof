@@ -42,8 +42,41 @@ export class ToolRegistry {
     return [...this.tools.values()];
   }
 
-  /** Run every tool's health check; returns id → result and caches each result with its time. */
-  async healthAll(): Promise<Record<string, HealthResult>> {
+  /** The check in progress, shared by every caller that arrives meanwhile. */
+  private healthInFlight: Promise<Record<string, HealthResult>> | undefined;
+  private liveInFlight: Promise<Record<string, string[]>> | undefined;
+
+  /**
+   * Run every tool's health check (each one sends a short, paid prompt) unless the last check is
+   * younger than `maxAgeMs`, and share one check between concurrent callers. Returns id → result.
+   */
+  healthAll(maxAgeMs = 0): Promise<Record<string, HealthResult>> {
+    if (this.healthInFlight) return this.healthInFlight;
+    const cached = this.lastHealth();
+    const ids = this.list().map((t) => t.id);
+    if (
+      maxAgeMs > 0 &&
+      ids.length > 0 &&
+      ids.every((id) => {
+        const c = cached[id];
+        return c !== undefined && Date.now() - Date.parse(c.checkedAt) < maxAgeMs;
+      })
+    ) {
+      return Promise.resolve(
+        Object.fromEntries(ids.map((id) => [id, withoutTime(cached[id])])) as Record<
+          string,
+          HealthResult
+        >,
+      );
+    }
+    const run = this.runHealth().finally(() => {
+      this.healthInFlight = undefined;
+    });
+    this.healthInFlight = run;
+    return run;
+  }
+
+  private async runHealth(): Promise<Record<string, HealthResult>> {
     const out: Record<string, HealthResult> = {};
     await Promise.all(
       this.list().map(async (t) => {
@@ -69,7 +102,16 @@ export class ToolRegistry {
    * Models each tool's listModels() returns now (runs the tools); empty for a tool whose listing
    * failed or was empty. Remembered for {@link cachedLiveModels}.
    */
-  async liveModels(): Promise<Record<string, string[]>> {
+  liveModels(): Promise<Record<string, string[]>> {
+    if (this.liveInFlight) return this.liveInFlight;
+    const run = this.runLiveModels().finally(() => {
+      this.liveInFlight = undefined;
+    });
+    this.liveInFlight = run;
+    return run;
+  }
+
+  private async runLiveModels(): Promise<Record<string, string[]>> {
     const out: Record<string, string[]> = {};
     await Promise.all(
       this.list().map(async (t) => {
@@ -113,4 +155,9 @@ export class ToolRegistry {
 
 export function defaultTools(): Tool[] {
   return [new ClaudeCodeTool(), new CodexTool(), new MockTool(), new OpencodeTool()];
+}
+
+function withoutTime(c: CachedHealth): HealthResult {
+  const { checkedAt: _checkedAt, ...rest } = c;
+  return rest;
 }

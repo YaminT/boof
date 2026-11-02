@@ -61,11 +61,9 @@ export class SettingsStore {
   }
 
   async load(): Promise<Settings> {
-    if (!(await exists(this.path))) {
-      const s = defaultSettings();
-      await this.save(s);
-      return s;
-    }
+    // A missing file reads as the defaults and is not created here: a read (a GET, /healthz) must
+    // not write. Startup and the first update create it.
+    if (!(await exists(this.path))) return defaultSettings();
     const raw: unknown = JSON.parse(await readText(this.path));
     if (raw && typeof raw === "object" && !("schemaVersion" in raw)) {
       throw new Error(

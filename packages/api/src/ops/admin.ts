@@ -91,8 +91,8 @@ export const settingsCheckHealth = defineOp({
   name: "settings.checkHealth",
   title: "Check tool health",
   description:
-    "Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Runs version probes (spawns processes).",
-  scope: "settings:read",
+    "Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Spawns each tool and sends it a short prompt (a paid model call per tool). Concurrent calls share one check, and a check less than a minute old is not repeated. Needs settings:write.",
+  scope: "settings:write",
   projectScoped: false,
   input: z.strictObject({}),
   output: z.object({ tools: z.record(z.string(), HealthResultSchema) }),
@@ -127,7 +127,7 @@ export const settingsRefreshModels = defineOp({
   name: "settings.refreshModels",
   title: "Refresh models",
   description:
-    "Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes).",
+    "Asks each tool for its current model list and remembers it for settings.models and models.details. No input. Queries the tools (spawns processes); concurrent calls share one query.",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({}),

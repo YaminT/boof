@@ -1,4 +1,13 @@
-import { mkdtemp, realpath, rm, writeFile, unlink, rename } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+  unlink,
+  rename,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -113,6 +122,20 @@ describe("GET /tasks/:id/diff", () => {
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe("branch_not_found");
     expect((await call(diffUrl("missing-task"))).status).toBe(404);
+  });
+
+  it("reading a diff does not rewrite the index of a live worktree (no optional locks)", async () => {
+    const { id, wt } = await committedTask();
+    await writeFile(join(wt, "loose.txt"), "untracked\n");
+    // A stat-only change: a plain `git status` would refresh and rewrite the index.
+    const future = new Date(Date.now() + 60_000);
+    await utimes(join(wt, "a.txt"), future, future);
+    const indexPath = (
+      await g(wt, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+    ).stdout.trim();
+    const before = await readFile(indexPath);
+    expect((await call(diffUrl(id))).status).toBe(200);
+    expect((await readFile(indexPath)).equals(before)).toBe(true);
   });
 
   it("includes and flags uncommitted changes of a kept worktree", async () => {

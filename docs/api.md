@@ -414,9 +414,9 @@ Goals in `plans.*` inputs take an optional `epicId` (omitted keeps the stored on
 plan sync copies it onto the goal's task.
 
 No `GET` changes state or runs anything: `GET /health` and `GET /models` (and `GET /models/details`) answer
-from the last probe of this server process, and `POST /health/check` and `POST /models/refresh` run the
+from the last probe of this server process, and `POST /health/check` (needs `settings:write`: it sends each tool a short, paid prompt; concurrent calls share one check and one under a minute old is not repeated) and `POST /models/refresh` run the
 tool probes and remember the results. (The audit log and a client's `lastUsedAt` are bookkeeping, not
-state a `GET` changes.) `get-no-side-effects.test.ts` calls every `GET` and checks the data root.
+state a `GET` changes. Reading settings does not create `settings.json` when it is missing: startup does.) `get-no-side-effects.test.ts` calls every `GET` and checks the data root. A task diff runs git with `--no-optional-locks`, so it never takes `index.lock` in a worktree an agent is committing in.
 
 ### Editing the contract
 

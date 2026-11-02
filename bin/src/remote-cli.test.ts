@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, SettingsStore } from "@boof-runner/shared";
 import { assertBindAllowed } from "@boof-runner/web";
 import { normaliseHostname, remoteCommand } from "./remote-cli.js";
+import { scaffoldDataRoot } from "./scaffold.js";
 
 let root: string;
 let out: string[];
@@ -41,7 +42,7 @@ describe("normaliseHostname", () => {
 
 describe("boof-runner remote setup", () => {
   it("writes settings, keeps other keys, creates a key, fixes permissions and prints next steps", async () => {
-    await new SettingsStore(root).load();
+    await scaffoldDataRoot(root);
     const before = await rawSettings();
     before.futureKey = { keep: "me" };
     before.security = { rateLimit: { perMinute: 7 }, allowedHosts: ["old.example.com"] };
