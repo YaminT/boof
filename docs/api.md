@@ -323,7 +323,10 @@ rules, input validation and error codes are identical, and every call is audited
   human approves, it cannot queue, retry, answer, activate a plan or switch the runner, it changes
   only its own work and only the name, labels and paused state of a project, and it creates no
   project. With `--admin` it is the local administrator and lists the administration tools too;
-  with `--client <id>` that client's scopes decide and `--admin` is refused. Give agent hosts
+  with `--client <id>` that client's scopes decide and `--admin` is refused. All keyless hosts share this one `local-mcp` identity; a client of that id left over from before
+  the id was reserved makes the keyless server refuse to start (and `serve` warns). It is a boundary
+  for MCP-only hosts only: a host whose model also has a shell can approve its own drafts through the
+  CLI or `curl` to the loopback API (goal `agent-containment`). Give agent hosts
   `--client` with a narrow client. `projects.archive`, `unarchive` and `delete` (purge) are
   refused to review-trust keys over REST and MCP alike. `POST /mcp` refuses JSON-RPC batches.
 

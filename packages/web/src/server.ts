@@ -3,7 +3,13 @@ import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { serve, type ServerType } from "@hono/node-server";
 import { ToolRegistry } from "@boof-runner/runner";
-import { AuthStore, migrateDataRoot, securitySettings, type Settings } from "@boof-runner/shared";
+import {
+  AuthStore,
+  LOCAL_MCP_ID,
+  migrateDataRoot,
+  securitySettings,
+  type Settings,
+} from "@boof-runner/shared";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
@@ -85,6 +91,11 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const authStore = new AuthStore(opts.root);
 
   await assertBindAllowed(host, settings, authStore);
+  if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
+    warn(
+      `auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID}: a keyless "boof-runner mcp" refuses to start until its entry is removed`,
+    );
+  }
 
   let tls: { cert: Buffer; key: Buffer } | undefined;
   if (opts.tlsCert || opts.tlsKey) {

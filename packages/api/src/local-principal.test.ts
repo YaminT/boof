@@ -134,4 +134,22 @@ describe("localPrincipal", () => {
       localPrincipal({ settings: settings("required"), authStore, withoutClient: "review" }),
     ).rejects.toThrow(LocalPrincipalError);
   });
+
+  it("refuses the keyless MCP default when clients.json already holds a client named local-mcp", async () => {
+    // A client of that id from before the reservation (written to the file directly).
+    const { client } = await authStore.create({ name: "old", scopes: ["tasks:read"] });
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const file = join(root, "auth", "clients.json");
+    const raw = JSON.parse(await readFile(file, "utf8"));
+    raw.clients[0].id = LOCAL_MCP_ID;
+    await writeFile(file, JSON.stringify(raw));
+    expect(client.id).not.toBe(LOCAL_MCP_ID);
+    await expect(
+      localPrincipal({ settings: settings(), authStore, withoutClient: "review" }),
+    ).rejects.toThrow(/local-mcp.*clients\.json/s);
+    // The administrator and a named client are not affected.
+    await expect(localPrincipal({ settings: settings(), authStore })).resolves.toBeTypeOf(
+      "function",
+    );
+  });
 });

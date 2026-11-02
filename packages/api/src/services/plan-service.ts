@@ -163,12 +163,24 @@ export class PlanService {
     return (task) => task.frontmatter.origin?.client === actor.id;
   }
 
-  /** A restricted client may not change a plan a human activated: its edits would reach the queue unreviewed. */
+  /**
+   * A restricted client edits the title and goals only of a plan it created, and never of an active
+   * one: a human's plan (draft or archived) could otherwise be rewritten before they activate it,
+   * and an activated plan's edits would reach the queue unreviewed.
+   */
   private async assertMayEdit(plan: Plan, actor?: Principal): Promise<void> {
-    if (plan.status === "active" && (await this.restricted(actor))) {
+    if (!(await this.restricted(actor))) return;
+    if (plan.status === "active") {
       throw new OpError(
         403,
         "This client has review trust and cannot change an active plan; ask a human",
+        "forbidden_trust",
+      );
+    }
+    if (plan.source.client !== actor?.id) {
+      throw new OpError(
+        403,
+        "This client has review trust and can only edit plans it created",
         "forbidden_trust",
       );
     }

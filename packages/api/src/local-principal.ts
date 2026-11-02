@@ -31,6 +31,11 @@ export const LOCAL_MCP_PRINCIPAL: Principal = {
   clientKind: "mcp",
 };
 
+/** Why a keyless MCP server refuses to start when clients.json holds the reserved id. */
+export const RESERVED_ID_MESSAGE =
+  `clients.json holds a client with the reserved id ${LOCAL_MCP_ID} (made before the id was reserved): ` +
+  "remove its entry from auth/clients.json, or start with --admin or --client <id>";
+
 /** A local surface cannot act: an unknown, revoked or expired client, or `required` mode without one. */
 export class LocalPrincipalError extends Error {}
 
@@ -79,6 +84,11 @@ export async function localPrincipal(opts: {
     throw new LocalPrincipalError(
       'security.auth.mode is "required": pass --client <id> (create one with "boof-runner auth add")',
     );
+  }
+  if (opts.withoutClient === "review" && (await opts.authStore.get(LOCAL_MCP_ID))) {
+    // A client of this id from before the id was reserved would be confused with the keyless MCP
+    // principal. It cannot be removed through the API (revoked clients stay in the file).
+    throw new LocalPrincipalError(RESERVED_ID_MESSAGE);
   }
   return async () => (opts.withoutClient === "review" ? LOCAL_MCP_PRINCIPAL : LOCAL_PRINCIPAL);
 }
