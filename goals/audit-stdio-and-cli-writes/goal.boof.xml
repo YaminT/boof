@@ -16,6 +16,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Found while planning the split&#x27;s M0 (2026-11-02): with every operation on MCP and in the CLI, the writes that do not pass the web server leave no audit line; not started. Scheduled with M3.</version>
+        <version number="2" status="plan">Done early, on Heart core after M1: packages/shared/src/audit-log.ts (appendAuditLine, auditOperation, pruneAudit) is the one writer; the web middleware, the stdio MCP server (stdioAudit, via: stdio-mcp) and the generated CLI (via: cli) use it, one line per operation with principal, kind, action, project, outcome, ms and no arguments, under the same security.audit settings. Not done: the hand-written CLI commands (auth add, task move, plan sync, run, scan, project, remote, service) write no audit line; they need a design decision (they bypass op.execute and write stores directly).</version>
       </versions>
     </status>
     <tests>

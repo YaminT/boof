@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +22,7 @@ import {
   handleMcpHttp,
   exposedOps,
   principalFromClient,
+  stdioAudit,
   stdioPrincipal,
   type BoofMcpOptions,
   type ToolCallInfo,
@@ -918,5 +919,81 @@ describe("handleMcpHttp", () => {
     await pending.catch(() => undefined); // the transport may reject once the request is aborted
     expect((await done).tool).toBe("boof_wait_task");
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  describe("stdio audit", () => {
+    const auditLines = async () => {
+      const dir = join(root, "audit");
+      const files = await readdir(dir).catch(() => []);
+      return (await Promise.all(files.map((f) => readFile(join(dir, f), "utf8"))))
+        .join("")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+    };
+
+    it("every tool call appends one audit line: who, tool, project, outcome; no arguments", async () => {
+      const auditor = stdioAudit(root);
+      const agent = await clientPrincipal(
+        ["tasks:read", "tasks:write", "projects:read"],
+        "trusted",
+      );
+      const c = await connect(agent, undefined, { onCall: auditor.onCall });
+      await call(c, "boof_create_project", {
+        path: { mode: "new", directory: join(base, "a") },
+        brief: "SECRET-BRIEF",
+      });
+      await call(c, "boof_create_task", { projectId: "nope", title: "T", prompt: "SECRET-PROMPT" });
+      await auditor.flush();
+      const lines = await auditLines();
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatchObject({
+        principal: agent.id,
+        kind: "client",
+        action: "mcp:boof_create_project",
+        via: "stdio-mcp",
+      });
+      expect(lines[1]).toMatchObject({
+        action: "mcp:boof_create_task",
+        project: "nope",
+        outcome: "error",
+      });
+      expect(typeof lines[1]!.error).toBe("string");
+      expect(typeof lines[1]!.ms).toBe("number");
+      expect(JSON.stringify(lines)).not.toMatch(/SECRET/);
+    });
+
+    it("a keyless local-mcp call is recorded as local-mcp, a refusal as an error", async () => {
+      const auditor = stdioAudit(root);
+      const { LOCAL_MCP_PRINCIPAL } = await import("@boof-runner/api");
+      const c = await connect(LOCAL_MCP_PRINCIPAL, undefined, {
+        onCall: auditor.onCall,
+        adminTools: false,
+      });
+      await call(c, "boof_set_runner", { enabled: true });
+      await auditor.flush();
+      expect(await auditLines()).toMatchObject([
+        {
+          principal: "local-mcp",
+          action: "mcp:boof_set_runner",
+          via: "stdio-mcp",
+          outcome: "error",
+          error: "forbidden_trust",
+        },
+      ]);
+    });
+
+    it("writes nothing when security.audit.enabled is false", async () => {
+      const settings = await services.loadSettings();
+      await new SettingsStore(root).save({
+        ...settings,
+        security: { ...settings.security, audit: { enabled: false, retentionDays: 90 } },
+      });
+      const auditor = stdioAudit(root);
+      const c = await connect(LOCAL_PRINCIPAL, undefined, { onCall: auditor.onCall });
+      await call(c, "boof_list_projects", {});
+      await auditor.flush();
+      expect(await auditLines()).toEqual([]);
+    });
   });
 });

@@ -17,7 +17,7 @@ import {
   type OpContext,
   type TaskService,
 } from "@boof-runner/api";
-import { AuthStore, isKebabId, scaffoldDataRoot } from "@boof-runner/shared";
+import { AuthStore, isKebabId, scaffoldDataRoot, auditOperation } from "@boof-runner/shared";
 import { CliUsageError, dataRootOf } from "./epic-cli.js";
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
@@ -476,7 +476,28 @@ export async function opsCommand(
       now: () => new Date().toISOString(),
       signal,
     };
-    const result = (await op.execute(ctx, input)) as unknown;
+    // One audit line per operation run, the same log and settings as the web server's: who, what,
+    // project, outcome, timing; never the arguments.
+    const startedAt = Date.now();
+    const audited = (ok: boolean, code?: string) =>
+      auditOperation(root, {
+        principal: ctx.principal,
+        action: `cli:${op.name}`,
+        via: "cli",
+        project: typeof input.projectId === "string" ? input.projectId : undefined,
+        ok,
+        code,
+        ms: Date.now() - startedAt,
+        at: startedAt,
+      });
+    let result: unknown;
+    try {
+      result = (await op.execute(ctx, input)) as unknown;
+    } catch (e) {
+      await audited(false, toOpError(e).code);
+      throw e;
+    }
+    await audited(true);
     if (signal.aborted) return 130;
 
     for (const w of warningsOf(result)) io.err(`warning (${w.code}): ${w.message}`);

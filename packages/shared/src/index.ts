@@ -48,3 +48,4 @@ export * from "./plan-sync.js";
 export * from "./plan-base.js";
 export * from "./tool-catalog.js";
 export * from "./project-resolve.js";
+export * from "./audit-log.js";

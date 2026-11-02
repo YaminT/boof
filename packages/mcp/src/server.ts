@@ -41,6 +41,9 @@ export interface ToolCallInfo {
   ok: boolean;
   /** Error code when `ok` is false. */
   code?: string;
+  /** When the call started (ms since the epoch) and how long it took. */
+  startedAt: number;
+  ms: number;
 }
 
 export interface BoofMcpOptions {
@@ -275,9 +278,17 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
         ? (raw as { projectId: string }).projectId
         : undefined;
     const principal = await resolve();
+    const startedAt = Date.now();
     try {
       const result = await run(op, raw, extra.signal);
-      options.onCall?.({ tool: op.mcp.name!, principal, projectId, ok: true });
+      options.onCall?.({
+        tool: op.mcp.name!,
+        principal,
+        projectId,
+        ok: true,
+        startedAt,
+        ms: Date.now() - startedAt,
+      });
       return successResult(op, result);
     } catch (err) {
       const opErr = toOpError(err);
@@ -287,6 +298,8 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
         projectId,
         ok: false,
         code: opErr.code,
+        startedAt,
+        ms: Date.now() - startedAt,
       });
       return errorResult(opErr);
     }

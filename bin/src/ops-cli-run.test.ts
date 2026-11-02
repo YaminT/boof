@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -330,5 +330,73 @@ describe("generated commands", () => {
     const elsewhere = join(base, "never-created");
     expect(await run(["--client", "nobody", "-d", elsewhere, "projects", "list"])).toBe(3);
     expect(existsSync(elsewhere)).toBe(false);
+  });
+
+  describe("audit", () => {
+    const auditLines = async () => {
+      const dir = join(root, "audit");
+      const files = await readdir(dir).catch(() => []);
+      return (await Promise.all(files.map((f) => readFile(join(dir, f), "utf8"))))
+        .join("")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+    };
+
+    it("every generated command that runs an operation appends one audit line, no values", async () => {
+      await seed();
+      const before = (await auditLines()).length;
+      expect(await run(["tasks", "create", "--title", "T", "--prompt", "SECRET-PROMPT"])).toBe(0);
+      expect(await run(["tasks", "get", "--task-id", "no-such-task"])).not.toBe(0);
+      const lines = (await auditLines()).slice(before);
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatchObject({
+        principal: "local",
+        kind: "local",
+        action: "cli:tasks.create",
+        via: "cli",
+        project: "shop",
+        outcome: "ok",
+      });
+      expect(lines[1]).toMatchObject({
+        action: "cli:tasks.get",
+        project: "shop",
+        outcome: "error",
+        error: "not_found",
+      });
+      expect(typeof lines[0]!.ms).toBe("number");
+      expect(JSON.stringify(lines)).not.toMatch(/SECRET/);
+    });
+
+    it("a --client call is recorded under that client", async () => {
+      await seed();
+      const { client } = await new AuthStore(root).create({
+        name: "reader",
+        scopes: ["tasks:read"],
+        trust: "review",
+      });
+      expect(await run(["--client", client.id, "tasks", "list"])).toBe(0);
+      const last = (await auditLines()).at(-1)!;
+      expect(last).toMatchObject({
+        principal: client.id,
+        kind: "client",
+        action: "cli:tasks.list",
+      });
+    });
+
+    it("writes nothing when security.audit.enabled is false", async () => {
+      await seed();
+      const settings = await new SettingsStore(root).load();
+      await new SettingsStore(root).save({
+        ...settings,
+        security: SecuritySettingsSchema.parse({
+          ...settings.security,
+          audit: { enabled: false, retentionDays: 90 },
+        }),
+      });
+      const before = (await auditLines()).length;
+      expect(await run(["tasks", "list"])).toBe(0);
+      expect((await auditLines()).length).toBe(before);
+    });
   });
 });

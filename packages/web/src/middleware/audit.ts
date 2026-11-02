@@ -1,10 +1,6 @@
-import { appendFile, mkdir, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
-import { dataRootPaths, type SecuritySettings } from "@boof-runner/shared";
+import { appendAuditLine, type SecuritySettings } from "@boof-runner/shared";
 import { clientAddress } from "./client-address.js";
-
-const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 /**
  * Append one JSON line per /api request to <data>/audit/<YYYY-MM-DD>.jsonl.
@@ -17,7 +13,6 @@ export function audit(opts: {
   now?: () => number;
 }): MiddlewareHandler {
   const now = opts.now ?? Date.now;
-  const dir = dataRootPaths(opts.root).audit;
   return async (c, next) => {
     const start = now();
     try {
@@ -47,12 +42,7 @@ export function audit(opts: {
             ...(addr.forwardedFor ? { forwardedFor: addr.forwardedFor } : {}),
             ...c.get("auditExtra"),
           };
-          await mkdir(dir, { recursive: true });
-          await appendFile(
-            join(dir, `${new Date(start).toISOString().slice(0, 10)}.jsonl`),
-            JSON.stringify(line) + "\n",
-            "utf8",
-          );
+          await appendAuditLine(opts.root, line);
         }
       } catch (err) {
         console.error("audit write failed", err);
@@ -61,27 +51,4 @@ export function audit(opts: {
   };
 }
 
-/** Delete daily audit files older than `retentionDays`. Returns the removed file names. */
-export async function pruneAudit(
-  root: string,
-  retentionDays: number,
-  nowMs: number = Date.now(),
-): Promise<string[]> {
-  const dir = dataRootPaths(root).audit;
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const cutoff = new Date(nowMs - retentionDays * 86_400_000).toISOString().slice(0, 10);
-  const removed: string[] = [];
-  for (const name of names) {
-    const m = DAY_FILE.exec(name);
-    if (m && m[1] < cutoff) {
-      await rm(join(dir, name), { force: true });
-      removed.push(name);
-    }
-  }
-  return removed;
-}
+export { pruneAudit } from "@boof-runner/shared";

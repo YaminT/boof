@@ -6,8 +6,43 @@ import {
   principalFromClient,
   TaskService,
 } from "@boof-runner/api";
-import { AuthStore, mcpSettings, type Principal, type ToolCatalog } from "@boof-runner/shared";
-import { createBoofMcpServer } from "./server.js";
+import {
+  AuthStore,
+  auditOperation,
+  mcpSettings,
+  type Principal,
+  type ToolCatalog,
+} from "@boof-runner/shared";
+import { createBoofMcpServer, type ToolCallInfo } from "./server.js";
+
+/**
+ * The audit hook of a stdio server: every tool call appends one line to the audit log, the same
+ * log and settings as the web server's (`via: stdio-mcp`; who, tool, project, outcome, timing; no
+ * arguments). `flush()` waits for the writes still in flight.
+ */
+export function stdioAudit(root: string) {
+  // One write after another, so the lines keep the order of the calls.
+  let tail: Promise<void> = Promise.resolve();
+  return {
+    onCall(info: ToolCallInfo): void {
+      tail = tail.then(() =>
+        auditOperation(root, {
+          principal: info.principal,
+          action: `mcp:${info.tool}`,
+          via: "stdio-mcp",
+          project: info.projectId,
+          ok: info.ok,
+          code: info.code,
+          ms: info.ms,
+          at: info.startedAt,
+        }),
+      );
+    },
+    async flush(): Promise<void> {
+      await tail;
+    },
+  };
+}
 
 export class McpStartError extends Error {}
 
@@ -109,7 +144,9 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
   const authStore = new AuthStore(opts.root);
   const principal = await stdioPrincipal(services, authStore, opts);
   if (opts.project !== undefined) await services.requireProject(opts.project);
+  const auditor = stdioAudit(opts.root);
   const server = createBoofMcpServer({
+    onCall: auditor.onCall,
     root: opts.root,
     principal,
     services,
@@ -129,4 +166,5 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
   );
   process.stdin.on("end", drain.stdinEnded);
   await closed;
+  await auditor.flush();
 }
