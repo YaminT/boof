@@ -62,3 +62,25 @@ export function usageText(u: TokenUsage | null): string {
   const cost = u.known ? `$${u.costUsd.toFixed(4)}` : "cost unknown";
   return `${u.inputTokens.toLocaleString("en-US")} input tokens, ${u.outputTokens.toLocaleString("en-US")} output tokens, ${cost}`;
 }
+
+/** When the day's budget resets, for people: "at midnight (UTC)" or "at 06:00 (Europe/Berlin)". */
+export function resetText(resetsAt: string, timezone: string): string {
+  const d = new Date(resetsAt);
+  if (Number.isNaN(d.getTime())) return "";
+  let hm: string;
+  try {
+    hm = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(d);
+  } catch {
+    hm = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(d);
+  }
+  return hm === "00:00" || hm === "24:00" ? `at midnight (${timezone})` : `at ${hm} (${timezone})`;
+}

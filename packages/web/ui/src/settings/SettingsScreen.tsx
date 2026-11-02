@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
-import { ClientsSection } from "../components/ClientsSection.js";
 import { CommandsTab } from "../components/CommandsTab.js";
 import type { SettingsPageId } from "../lib/route.js";
 import { projectPage } from "../lib/settings-project.js";
@@ -9,6 +8,7 @@ import { budgetsPage } from "../lib/settings-budgets.js";
 import type { AppData } from "../useAppData.js";
 import { AgentsPage } from "./AgentsPage.js";
 import { BudgetsPage } from "./BudgetsPage.js";
+import { KeysPage } from "./KeysPage.js";
 import { setLeaveGuard, staysInSettings } from "../lib/leave-guard.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { ProjectPage } from "./ProjectPage.js";
@@ -152,7 +152,7 @@ export function SettingsScreen({
           />
         </>
       )}
-      {page === "keys" && <ClientsSection />}
+      {page === "keys" && <KeysPage projects={projects} />}
       {page === "automation" && <CommandsTab onChange={data.refresh} />}
     </div>
   );

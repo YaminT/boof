@@ -14,6 +14,7 @@ import type {
   PublicClient,
   TaskDiff,
   ToolModelDetails,
+  Whoami,
 } from "./api-types.js";
 import type { TaskReview } from "@boof-runner/shared";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
@@ -269,6 +270,7 @@ export const api = {
     return URL.createObjectURL(await res.blob());
   },
 
+  whoami: () => http<Whoami>(`${V1}/whoami`),
   listClients: () => http<{ clients: PublicClient[] }>(`${V1}/auth/clients`).then((r) => r.clients),
   createClient: (input: {
     name: string;

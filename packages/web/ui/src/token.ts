@@ -2,7 +2,17 @@
 // (per tab, never localStorage) and is sent as an Authorization header, never in a URL.
 // The desktop app injects its own key through the preload bridge.
 
+import { createAuthHold } from "./lib/auth-hold.js";
+
 const KEY = "boofToken";
+const authHold = createAuthHold();
+
+/**
+ * Ignore 401s for a few seconds while this browser's own key is being rotated. The old stream may
+ * still report the old key as rejected after the new one is stored, so the hold simply runs out.
+ */
+export const holdUnauthorized = (ms?: number): void => authHold.hold(ms);
+export const releaseUnauthorized = (): void => authHold.release();
 
 function store(): Storage | undefined {
   try {
@@ -65,5 +75,6 @@ export function onUnauthorized(fn: () => void): () => void {
 }
 
 export function notifyUnauthorized(): void {
+  if (authHold.held()) return;
   for (const fn of [...listeners]) fn();
 }

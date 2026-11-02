@@ -5,7 +5,7 @@ import type { BudgetStatus } from "../api-types.js";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
-import { scopeLabel, todayScopes, usageText } from "../lib/spend.js";
+import { resetText, scopeLabel, todayScopes, usageText } from "../lib/spend.js";
 import type { BudgetsValues } from "../lib/settings-budgets.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
 
@@ -130,8 +130,7 @@ export function BudgetsPage({
         ) : (
           <>
             <p className="m-0 text-[length:var(--text-row)] text-ink-muted">
-              Today, {budget.date} ({budget.timezone}). Resets{" "}
-              {new Date(budget.resetsAt).toLocaleTimeString()}.
+              Today, {budget.date}. Resets {resetText(budget.resetsAt, budget.timezone)}.
             </p>
             <div className="flex max-w-[640px] flex-col">
               {todayScopes(budget, project.id).map((s) => (
@@ -268,7 +267,7 @@ export function BudgetsPage({
             <>
               <Input
                 aria-label="Time zone"
-                className="mt-0 font-mono font-normal"
+                className="mt-0 font-normal"
                 value={g.timezone}
                 placeholder="e.g. Europe/Berlin"
                 onChange={(e) => setG({ timezone: e.target.value })}

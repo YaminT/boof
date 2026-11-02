@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BudgetScope, BudgetStatus } from "../api-types.js";
-import { scopeLabel, spendFor, todayScopes, usageText } from "./spend.js";
+import { resetText, scopeLabel, spendFor, todayScopes, usageText } from "./spend.js";
 
 const scope = (
   s: string,
@@ -92,5 +92,14 @@ describe("usageText", () => {
     expect(usageText({ inputTokens: 5, outputTokens: 6, costUsd: 0, known: false } as never)).toBe(
       "5 input tokens, 6 output tokens, cost unknown",
     );
+  });
+});
+
+describe("resetText", () => {
+  it("says midnight in the zone, or the clock time, without seconds", () => {
+    expect(resetText("2026-11-03T00:00:00Z", "UTC")).toBe("at midnight (UTC)");
+    expect(resetText("2026-11-02T23:00:00Z", "Europe/Berlin")).toBe("at midnight (Europe/Berlin)");
+    expect(resetText("2026-11-03T06:30:00Z", "UTC")).toBe("at 06:30 (UTC)");
+    expect(resetText("nope", "UTC")).toBe("");
   });
 });

@@ -1,4 +1,5 @@
 // UI-only response shapes that have no counterpart in the shared schema.
+import type { Scope } from "@boof-runner/shared/schema";
 
 export interface CommandTemplate {
   id: string;
@@ -81,4 +82,17 @@ export interface PublicClient {
   lastUsedAt?: string;
   expiresAt?: string;
   revokedAt?: string;
+}
+
+/** GET /api/v1/whoami: the calling principal and basic facts of the server. */
+export interface Whoami {
+  principal: {
+    kind: "local" | "client";
+    id: string;
+    name: string;
+    trust: "trusted" | "review";
+    scopes: Scope[];
+    projects: "*" | string[];
+  };
+  server: { version: string; authMode: "local-trust" | "required"; mcpEnabled: boolean };
 }
