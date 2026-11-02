@@ -46,7 +46,7 @@ export const settingsGet = defineOp({
   input: z.strictObject({}),
   output: PublicSettingsSchema,
   rest: { method: "GET", path: "/settings" },
-  mcp: { expose: false, name: "boof_get_settings", annotations: READ },
+  mcp: { expose: true, name: "boof_get_settings", annotations: READ },
   summary: (s) =>
     `Runner ${s.runner.enabled ? "enabled" : "disabled"}, default project ${s.defaultProject ?? "none"}`,
   handler: async (ctx) => publicSettings(await ctx.services.loadSettings()),
@@ -62,7 +62,8 @@ export const settingsUpdate = defineOp({
   input: SettingsPatchSchema,
   output: PublicSettingsSchema,
   rest: { method: "PUT", path: "/settings" },
-  mcp: { expose: false, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
+  summary: () => "Settings updated",
   handler: async (ctx, input) => {
     assertMayWriteSettings(ctx);
     return publicSettings(await ctx.services.updateSettings(input, ctx.principal));
@@ -79,7 +80,7 @@ export const settingsHealth = defineOp({
   input: z.strictObject({}),
   output: z.object({ tools: z.record(z.string(), HealthResultSchema) }),
   rest: { method: "GET", path: "/health" },
-  mcp: { expose: false, name: "boof_get_health", annotations: READ },
+  mcp: { expose: true, name: "boof_get_health", annotations: READ },
   summary: (r) =>
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.status}`)
@@ -97,7 +98,7 @@ export const settingsCheckHealth = defineOp({
   input: z.strictObject({}),
   output: z.object({ tools: z.record(z.string(), HealthResultSchema) }),
   rest: { method: "POST", path: "/health/check" },
-  mcp: { expose: false, name: "boof_check_health", annotations: WRITE },
+  mcp: { expose: true, name: "boof_check_health", annotations: WRITE },
   summary: (r) =>
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.status}`)
@@ -118,7 +119,7 @@ export const settingsModels = defineOp({
   input: z.strictObject({}),
   output: z.object({ models: z.record(z.string(), z.array(z.string())) }),
   rest: { method: "GET", path: "/models" },
-  mcp: { expose: false, name: "boof_list_models", annotations: READ },
+  mcp: { expose: true, name: "boof_list_models", annotations: READ },
   summary: (r) => Object.keys(r.models).join(", "),
   handler: async (ctx) => ({ models: ctx.services.cachedModels() }),
 });
@@ -133,7 +134,7 @@ export const settingsRefreshModels = defineOp({
   input: z.strictObject({}),
   output: z.object({ models: z.record(z.string(), z.array(z.string())) }),
   rest: { method: "POST", path: "/models/refresh" },
-  mcp: { expose: false, name: "boof_refresh_models", annotations: WRITE },
+  mcp: { expose: true, name: "boof_refresh_models", annotations: WRITE },
   summary: (r) => Object.keys(r.models).join(", "),
   handler: async (ctx) => ({ models: await ctx.services.listModels() }),
 });
@@ -148,7 +149,7 @@ export const settingsModelDetails = defineOp({
   input: z.strictObject({}),
   output: ModelDetailsSchema,
   rest: { method: "GET", path: "/models/details" },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_get_model_details", annotations: READ },
   summary: (r) =>
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.models.length} model(s)`)
@@ -181,7 +182,7 @@ export const usageGlobal = defineOp({
   input: z.strictObject({}),
   output: TokenUsageSchema,
   rest: { method: "GET", path: "/usage" },
-  mcp: { expose: false, name: "boof_get_usage", annotations: READ },
+  mcp: { expose: true, name: "boof_get_usage", annotations: READ },
   summary: (u) => `${u.inputTokens} in / ${u.outputTokens} out tokens, $${u.costUsd.toFixed(2)}`,
   handler: (ctx) => ctx.services.totalUsage((pid) => authorizeProject(ctx.principal, pid)),
 });
@@ -196,7 +197,7 @@ export const usageBudget = defineOp({
   input: z.strictObject({}),
   output: BudgetStatusSchema,
   rest: { method: "GET", path: "/usage/budget" },
-  mcp: { expose: false, name: "boof_get_budget", annotations: READ },
+  mcp: { expose: true, name: "boof_get_budget", annotations: READ },
   summary: (b) =>
     b.exceeded.length > 0
       ? `Budget spent: ${b.exceeded.map((e) => e.scope).join(", ")}; resets ${b.resetsAt}`
@@ -219,7 +220,7 @@ export const runnerStatus = defineOp({
     budgetExceeded: BudgetExceededListSchema,
   }),
   rest: { method: "GET", path: "/runner" },
-  mcp: { expose: false, name: "boof_get_runner", annotations: READ },
+  mcp: { expose: true, name: "boof_get_runner", annotations: READ },
   summary: (r) => `Runner ${r.enabled ? "enabled" : "disabled"} (concurrency ${r.concurrency})`,
   handler: async (ctx) => {
     const { runner } = await ctx.services.loadSettings();
@@ -364,7 +365,8 @@ export const commandsList = defineOp({
   input: z.strictObject({}),
   output: z.object({ commands: z.array(CommandTemplateSchema) }),
   rest: { method: "GET", path: "/commands" },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_list_commands", annotations: READ },
+  summary: (r) => `${r.commands.length} command templates`,
   handler: async (ctx) => ({ commands: await ctx.services.listCommands() }),
 });
 
@@ -402,7 +404,8 @@ export const commandsUpsert = defineOp({
   input: z.strictObject(CommandBody.shape),
   output: CommandTemplateSchema,
   rest: { method: "POST", path: "/commands" },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_create_command", annotations: WRITE },
+  summary: (r) => `Saved command ${r.name}`,
   handler: (ctx, { name, body }) => {
     assertMayWriteCommands(ctx);
     return ctx.services.upsertCommand(name, body ?? "");
@@ -419,7 +422,8 @@ export const commandsUpdate = defineOp({
   input: z.strictObject({ commandId: commandIdParam, ...CommandBody.shape }),
   output: CommandTemplateSchema,
   rest: { method: "PUT", path: "/commands/{commandId}" },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_update_command", annotations: IDEMPOTENT_WRITE },
+  summary: (r) => `Saved command ${r.name}`,
   handler: (ctx, { commandId, name, body }) => {
     assertMayWriteCommands(ctx);
     return ctx.services.renameCommand(commandId, name, body ?? "");
@@ -436,7 +440,8 @@ export const commandsDelete = defineOp({
   input: z.strictObject({ commandId: commandIdParam }),
   output: z.object({ referencedBy: z.array(z.string()) }),
   rest: { method: "DELETE", path: "/commands/{commandId}" },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_delete_command", annotations: DESTRUCTIVE },
+  summary: (r) => `Deleted command; referenced by ${r.referencedBy.length} tasks`,
   handler: (ctx, input) => {
     assertMayWriteCommands(ctx);
     return ctx.services.deleteCommand(input.commandId);
@@ -509,7 +514,8 @@ export const clientsList = defineOp({
   input: z.strictObject({}),
   output: z.object({ clients: z.array(PublicClientSchema) }),
   rest: { method: "GET", path: "/auth/clients" },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_list_clients", annotations: READ },
+  summary: (r) => `${r.clients.length} clients`,
   handler: async (ctx) => ({
     clients: await visibleClients(ctx),
   }),
@@ -525,7 +531,9 @@ export const clientsCreate = defineOp({
   input: CreateClientBody,
   output: z.object({ client: PublicClientSchema, key: z.string() }),
   rest: { method: "POST", path: "/auth/clients", status: 201 },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_create_client", annotations: WRITE },
+  summary: (r) =>
+    `Created client ${r.client.id} (${r.client.scopes.join(", ")}; ${r.client.trust}); the key is in the result and is shown only once`,
   handler: async (ctx, body) => {
     const me = ctx.principal;
     // Never grant more than you hold.
@@ -614,7 +622,8 @@ export const clientsRevoke = defineOp({
   input: z.strictObject({ clientId: clientIdParam }),
   output: z.object({ client: PublicClientSchema }),
   rest: { method: "POST", path: "/auth/clients/{clientId}/revoke" },
-  mcp: { expose: false, annotations: DESTRUCTIVE },
+  mcp: { expose: true, name: "boof_revoke_client", annotations: DESTRUCTIVE },
+  summary: (r) => `Revoked client ${r.client.id}`,
   handler: async (ctx, input) => {
     const target = await ctx.authStore.get(input.clientId);
     if (!target) throw new OpError(404, "Client not found");
@@ -635,7 +644,9 @@ export const clientsRotate = defineOp({
   input: z.strictObject({ clientId: clientIdParam }),
   output: z.object({ client: PublicClientSchema, key: z.string() }),
   rest: { method: "POST", path: "/auth/clients/{clientId}/rotate" },
-  mcp: { expose: false, annotations: WRITE },
+  mcp: { expose: true, name: "boof_rotate_client", annotations: WRITE },
+  summary: (r) =>
+    `Rotated the key of ${r.client.id}; the new key is in the result and is shown only once`,
   handler: async (ctx, input) => {
     const target = await ctx.authStore.get(input.clientId);
     if (!target) throw new OpError(404, "Client not found or revoked");

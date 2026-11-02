@@ -98,11 +98,11 @@ const model = (
 };
 
 describe("models.details operation", () => {
-  it("is a settings read, REST GET /models/details, not exposed over MCP", () => {
+  it("is a settings read, REST GET /models/details, MCP boof_get_model_details", () => {
     const op = getOp("models.details");
     expect(op?.scopes).toEqual(["settings:read"]);
     expect(op?.rest).toMatchObject({ method: "GET", path: "/models/details" });
-    expect(op?.mcp.expose).toBe(false);
+    expect(op?.mcp).toMatchObject({ expose: true, name: "boof_get_model_details" });
   });
 
   it("labels each model by source and marks the tool's first default", async () => {

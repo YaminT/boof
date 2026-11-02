@@ -75,6 +75,43 @@ describe("boof-runner mcp over stdio", () => {
     expect(res.stderr).not.toContain('"jsonrpc"');
   }, 30000);
 
+  const toolNames = async (args: string[]) => {
+    const res = await runMcp(args, [
+      INIT,
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    ]);
+    return res.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))[1]
+      .result.tools.map((t: { name: string }) => t.name) as string[];
+  };
+
+  it("without --client the administration tools need --admin", async () => {
+    const adminOnly = [
+      "boof_create_client",
+      "boof_list_clients",
+      "boof_create_webhook",
+      "boof_update_settings",
+      "boof_create_command",
+      "boof_delete_project",
+    ];
+    const plain = await toolNames([]);
+    for (const n of adminOnly) expect(plain, n).not.toContain(n);
+    expect(plain).toContain("boof_create_plan");
+    expect(plain).toContain("boof_set_runner");
+    const admin = await toolNames(["--admin"]);
+    for (const n of adminOnly) expect(admin, n).toContain(n);
+  }, 60000);
+
+  it("with --client the client's scopes decide, with no --admin needed", async () => {
+    await new AuthStore(root).create({ name: "boss", scopes: ["admin"], trust: "trusted" });
+    const [client] = await new AuthStore(root).list();
+    const names = await toolNames(["--client", client.id]);
+    expect(names).toContain("boof_create_client");
+    expect(names).toContain("boof_update_settings");
+  }, 30000);
+
   it("acts as --client with that client's scopes", async () => {
     await new AuthStore(root).create({
       name: "reader",
@@ -122,6 +159,8 @@ describe("mcpCommand", () => {
     expect(errs.at(-1)).toContain("unknown client");
     expect(await run(["-d", root, "--project", "Bad Id"])).toBe(1);
     expect(errs.at(-1)).toContain("kebab-case");
+    expect(await run(["-d", root, "--client", "x", "--admin"])).toBe(1);
+    expect(errs.at(-1)).toContain("--admin");
 
     const { SettingsStore, defaultSettings } = await import("@boof-runner/shared");
     const settings = defaultSettings();

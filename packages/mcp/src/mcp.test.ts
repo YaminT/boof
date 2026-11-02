@@ -165,6 +165,12 @@ describe("tools generated from the registry", () => {
         "boof_create_project",
         "boof_get_project",
         "boof_update_project",
+        "boof_archive_project",
+        "boof_unarchive_project",
+        "boof_pause_project",
+        "boof_resume_project",
+        "boof_delete_project",
+        "boof_get_project_usage",
         "boof_list_plans",
         "boof_create_plan",
         "boof_get_plan",
@@ -185,23 +191,56 @@ describe("tools generated from the registry", () => {
         "boof_update_task",
         "boof_move_task",
         "boof_queue_task",
+        "boof_skip_task",
+        "boof_reorder_tasks",
         "boof_retry_task",
         "boof_archive_task",
+        "boof_unarchive_task",
+        "boof_delete_task",
         "boof_answer_task",
         "boof_stop_task",
         "boof_inject_prompt",
         "boof_get_task_log",
         "boof_wait_task",
+        "boof_remove_attachment",
         "boof_list_epics",
         "boof_get_epic",
         "boof_create_epic",
         "boof_update_epic",
+        "boof_delete_epic",
+        "boof_get_settings",
+        "boof_update_settings",
+        "boof_get_health",
+        "boof_check_health",
+        "boof_list_models",
+        "boof_refresh_models",
+        "boof_get_model_details",
+        "boof_get_usage",
+        "boof_get_budget",
+        "boof_get_runner",
         "boof_runner_status",
         "boof_set_runner",
         "boof_list_actions",
+        "boof_list_commands",
+        "boof_create_command",
+        "boof_update_command",
+        "boof_delete_command",
+        "boof_list_clients",
+        "boof_create_client",
+        "boof_revoke_client",
+        "boof_rotate_client",
+        "boof_list_webhooks",
+        "boof_create_webhook",
+        "boof_delete_webhook",
       ]
     `);
-    expect(names.length).toBeLessThanOrEqual(39);
+    // Every operation except file upload and download (the plan said 70 before the epic and
+    // health operations were added).
+    const jsonOps = (await import("@boof-runner/api")).registry.filter(
+      (o) => !o.rest.kind || o.rest.kind === "json",
+    );
+    expect(names).toHaveLength(jsonOps.length);
+    expect(names).toHaveLength(72);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("@boof-runner/api").then((m) => m.registry)).map((o) => [
         o.mcp.name,
@@ -215,6 +254,9 @@ describe("tools generated from the registry", () => {
       boof_wait_task: "tasks:read",
       boof_runner_status: "settings:read",
       boof_set_runner: "runner:control|settings:write",
+      boof_revoke_client: "auth:admin",
+      boof_create_webhook: "admin",
+      boof_update_settings: "settings:write",
     });
     for (const t of tools) {
       expect(t.inputSchema.type).toBe("object");
@@ -261,6 +303,124 @@ describe("tools generated from the registry", () => {
     const res = await call(client, "boof_list_tasks");
     expect(res.isError).toBeFalsy();
     expect(res.structuredContent?.items).toEqual([]);
+  });
+
+  it("the local principal lists the administration tools, but not the file transfer", async () => {
+    const names = (await (await connect(LOCAL_PRINCIPAL)).listTools()).tools.map((t) => t.name);
+    for (const n of [
+      "boof_create_client",
+      "boof_revoke_client",
+      "boof_rotate_client",
+      "boof_list_webhooks",
+      "boof_create_webhook",
+      "boof_update_settings",
+      "boof_create_command",
+      "boof_delete_project",
+    ]) {
+      expect(names, n).toContain(n);
+    }
+    expect(names.filter((n) => /attachment/.test(n))).toEqual(["boof_remove_attachment"]);
+  });
+
+  it("a tasks:read client sees no administration tool and is refused if it calls one", async () => {
+    const reader = await connect(await clientPrincipal(["tasks:read"], "trusted"));
+    const names = (await reader.listTools()).tools.map((t) => t.name);
+    for (const n of [
+      "boof_create_client",
+      "boof_list_clients",
+      "boof_list_webhooks",
+      "boof_update_settings",
+      "boof_create_command",
+    ]) {
+      expect(names, n).not.toContain(n);
+    }
+    const res = await call(reader, "boof_revoke_client", { clientId: "x" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text.startsWith("forbidden_scope:")).toBe(true);
+  });
+
+  it("a review client with auth:admin cannot mint a trusted or wider client over MCP", async () => {
+    const rev = await connect(await clientPrincipal(["auth:admin", "tasks:read"], "review"));
+    const trusted = await call(rev, "boof_create_client", {
+      name: "x",
+      scopes: ["tasks:read"],
+      trust: "trusted",
+    });
+    expect(trusted.content[0].text.startsWith("forbidden_trust:")).toBe(true);
+    const wide = await call(rev, "boof_create_client", { name: "y", scopes: ["admin"] });
+    expect(wide.content[0].text.startsWith("forbidden_scope:")).toBe(true);
+  });
+
+  it("boof_create_client returns the key in the result, not in the summary", async () => {
+    const admin = await connect(LOCAL_PRINCIPAL);
+    const res = await call(admin, "boof_create_client", { name: "bot", scopes: ["tasks:read"] });
+    expect(res.isError).toBeFalsy();
+    const key = res.structuredContent!.key as string;
+    expect(key).toMatch(/^boof_/);
+    expect(res.content[0].text).not.toContain(key);
+    expect(res.content[0].text).toContain("shown only once");
+  });
+
+  it("boof_create_webhook refuses a loopback target over MCP", async () => {
+    const admin = await connect(LOCAL_PRINCIPAL);
+    const res = await call(admin, "boof_create_webhook", { url: "http://127.0.0.1:9/hook" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("127.0.0.1");
+  });
+
+  it("a server fixed to one project hides server administration tools", async () => {
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const names = (await (await connect(LOCAL_PRINCIPAL, "shop")).listTools()).tools.map(
+      (t) => t.name,
+    );
+    for (const n of [
+      "boof_list_clients",
+      "boof_create_client",
+      "boof_revoke_client",
+      "boof_rotate_client",
+      "boof_list_webhooks",
+      "boof_create_webhook",
+      "boof_delete_webhook",
+    ]) {
+      expect(names, n).not.toContain(n);
+    }
+    for (const n of ["boof_whoami", "boof_update_settings", "boof_set_runner"]) {
+      expect(names, n).toContain(n);
+    }
+  });
+
+  it("a keyless stdio server hides the administration tools unless --admin is given", async () => {
+    const hidden = (
+      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false })).listTools()
+    ).tools.map((t) => t.name);
+    for (const n of [
+      "boof_create_client",
+      "boof_list_clients",
+      "boof_revoke_client",
+      "boof_create_webhook",
+      "boof_list_webhooks",
+      "boof_update_settings",
+      "boof_check_health",
+      "boof_create_command",
+      "boof_update_command",
+      "boof_delete_command",
+      "boof_delete_project",
+    ]) {
+      expect(hidden, n).not.toContain(n);
+    }
+    // Everything else stays: the project, plan and task tools, and the runner switch.
+    for (const n of ["boof_create_task", "boof_set_runner", "boof_list_projects", "boof_whoami"]) {
+      expect(hidden, n).toContain(n);
+    }
+    const shown = (
+      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: true })).listTools()
+    ).tools.map((t) => t.name);
+    expect(shown).toContain("boof_create_client");
+    // A hidden tool is not callable either.
+    const c = await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false });
+    await expect(
+      call(c, "boof_create_client", { name: "z", scopes: ["tasks:read"] }),
+    ).rejects.toThrow(/Unknown tool/);
   });
 
   it("boof_update_epic lets a review client change only its own epics", async () => {

@@ -68,13 +68,29 @@ describe("operations registry contract", () => {
     });
   });
 
-  it("does not expose admin-only operations, secrets or file transfer to MCP", () => {
+  it("exposes every operation on MCP except file upload and download", () => {
     for (const op of registry) {
-      if (op.scopes.includes("admin") || op.scopes.includes("auth:admin")) {
-        expect(op.mcp.expose, op.name).toBe(false);
-      }
-      if (op.rest.kind) expect(op.mcp.expose, op.name).toBe(false);
+      const json = !op.rest.kind || op.rest.kind === "json";
+      expect(op.mcp.expose, op.name).toBe(json);
     }
+  });
+
+  it("never names a key or secret in an MCP summary", () => {
+    const create = registry.find((o) => o.name === "auth.clients.create")!;
+    const text = create.summary!({
+      client: { id: "x", scopes: ["tasks:read"], trust: "review" } as never,
+      key: "boof_x_SECRET",
+    });
+    expect(text).not.toContain("SECRET");
+    expect(text).toContain("shown only once");
+    const rotate = registry.find((o) => o.name === "auth.clients.rotate")!;
+    expect(rotate.summary!({ client: { id: "x" } as never, key: "boof_x_SECRET" })).not.toContain(
+      "SECRET",
+    );
+    const hook = registry.find((o) => o.name === "webhooks.create")!;
+    expect(
+      hook.summary!({ webhook: { id: "wh-1", url: "http://h" } as never, secret: "whsec_SECRET" }),
+    ).not.toContain("SECRET");
   });
 
   it("uses only error codes from the table", () => {

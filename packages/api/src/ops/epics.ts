@@ -123,7 +123,7 @@ export const epicsDelete = defineOp({
   }),
   output: DeleteResultSchema,
   rest: { method: "DELETE", path: "/projects/{projectId}/epics/{epicId}" },
-  mcp: { expose: false, name: "boof_delete_epic", annotations: DESTRUCTIVE },
+  mcp: { expose: true, name: "boof_delete_epic", annotations: DESTRUCTIVE },
   summary: (r) =>
     `Epic deleted${r.detached.length > 0 ? `; ${r.detached.length} task(s) detached` : ""}`,
   handler: async (ctx, { projectId, epicId, detach }) =>

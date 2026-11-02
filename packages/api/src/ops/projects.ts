@@ -91,7 +91,7 @@ export const projectsArchive = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/archive" },
-  mcp: { expose: false, name: "boof_archive_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_archive_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Archived project ${p.id}`,
   handler: (ctx, input) => ctx.services.archiveProject(input.projectId),
 });
@@ -105,7 +105,7 @@ export const projectsUnarchive = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/unarchive" },
-  mcp: { expose: false, name: "boof_unarchive_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_unarchive_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Unarchived project ${p.id}`,
   handler: (ctx, input) => ctx.services.unarchiveProject(input.projectId),
 });
@@ -120,7 +120,7 @@ export const projectsPause = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/pause" },
-  mcp: { expose: false, name: "boof_pause_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_pause_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Paused project ${p.id}`,
   handler: (ctx, input) => ctx.services.pauseProject(input.projectId),
 });
@@ -135,7 +135,7 @@ export const projectsResume = defineOp({
   input: byProject,
   output: ProjectSchema,
   rest: { method: "POST", path: "/projects/{projectId}/resume" },
-  mcp: { expose: false, name: "boof_resume_project", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_resume_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Resumed project ${p.id}`,
   handler: (ctx, input) => ctx.services.resumeProject(input.projectId),
 });
@@ -150,7 +150,8 @@ export const projectsDelete = defineOp({
   input: z.strictObject({ projectId: projectIdParam, purge: z.boolean().optional() }),
   output: OkSchema,
   rest: { method: "DELETE", path: "/projects/{projectId}" },
-  mcp: { expose: false, name: "boof_delete_project", annotations: DESTRUCTIVE },
+  mcp: { expose: true, name: "boof_delete_project", annotations: DESTRUCTIVE },
+  summary: () => "Project deleted",
   handler: (ctx, input) =>
     ctx.services.removeProject(input.projectId, { purge: input.purge === true }),
 });
@@ -165,7 +166,7 @@ export const projectsUsage = defineOp({
   input: byProject,
   output: TokenUsageSchema,
   rest: { method: "GET", path: "/projects/{projectId}/usage" },
-  mcp: { expose: false, name: "boof_get_project_usage", annotations: READ },
+  mcp: { expose: true, name: "boof_get_project_usage", annotations: READ },
   summary: (u) => `${u.inputTokens} in / ${u.outputTokens} out tokens, $${u.costUsd.toFixed(2)}`,
   handler: (ctx, input) => ctx.services.projectUsage(input.projectId),
 });

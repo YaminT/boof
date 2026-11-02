@@ -387,7 +387,7 @@ export const tasksSkip = defineOp({
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...SkipBody.shape }),
   output: TaskViewSchema,
   rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/skip" },
-  mcp: { expose: false, name: "boof_skip_task", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_skip_task", annotations: IDEMPOTENT_WRITE },
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
@@ -405,7 +405,7 @@ export const tasksReorder = defineOp({
   input: z.strictObject({ projectId: projectIdParam, ...ReorderBody.shape }),
   output: z.object({ tasks: z.array(TaskViewSchema) }),
   rest: { method: "POST", path: "/projects/{projectId}/tasks/reorder" },
-  mcp: { expose: false, name: "boof_reorder_tasks", annotations: IDEMPOTENT_WRITE },
+  mcp: { expose: true, name: "boof_reorder_tasks", annotations: IDEMPOTENT_WRITE },
   summary: (r) => `Reordered ${r.tasks.length} task(s)`,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
@@ -461,7 +461,7 @@ export const tasksUnarchive = defineOp({
   input: byTask,
   output: TaskViewSchema,
   rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/unarchive" },
-  mcp: { expose: false, name: "boof_unarchive_task", annotations: WRITE },
+  mcp: { expose: true, name: "boof_unarchive_task", annotations: WRITE },
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
@@ -486,7 +486,7 @@ export const tasksDelete = defineOp({
   }),
   output: DeleteResultSchema,
   rest: { method: "DELETE", path: "/projects/{projectId}/tasks/{taskId}" },
-  mcp: { expose: false, name: "boof_delete_task", annotations: DESTRUCTIVE },
+  mcp: { expose: true, name: "boof_delete_task", annotations: DESTRUCTIVE },
   summary: (r) =>
     `Task deleted${r.detached.length > 0 ? `; ${r.detached.length} subtask(s) detached` : ""}`,
   handler: async (ctx, { projectId, taskId, detach }) =>
@@ -720,7 +720,8 @@ export const attachmentsRemove = defineOp({
     method: "DELETE",
     path: "/projects/{projectId}/tasks/{taskId}/attachments/{attachmentName}",
   },
-  mcp: { expose: false },
+  mcp: { expose: true, name: "boof_remove_attachment", annotations: DESTRUCTIVE },
+  summary: (t) => `Removed attachment from ${t.frontmatter.id}`,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
     return taskView(

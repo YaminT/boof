@@ -2486,7 +2486,8 @@
         "tags": [
           "auth"
         ],
-        "x-boof-scope": "auth:admin"
+        "x-boof-scope": "auth:admin",
+        "x-mcp-tool": "boof_list_clients"
       },
       "post": {
         "description": "Creates an API client and returns its key once. Inputs: name, scopes, optional kind, projects, trust, expiresIn. Cannot grant scopes, trust, projects or an expiry the caller lacks; a restricted caller's projects and expiry are inherited when omitted.",
@@ -2609,7 +2610,8 @@
         "tags": [
           "auth"
         ],
-        "x-boof-scope": "auth:admin"
+        "x-boof-scope": "auth:admin",
+        "x-mcp-tool": "boof_create_client"
       }
     },
     "/auth/clients/{clientId}/revoke": {
@@ -2664,7 +2666,8 @@
         "tags": [
           "auth"
         ],
-        "x-boof-scope": "auth:admin"
+        "x-boof-scope": "auth:admin",
+        "x-mcp-tool": "boof_revoke_client"
       }
     },
     "/auth/clients/{clientId}/rotate": {
@@ -2723,7 +2726,8 @@
         "tags": [
           "auth"
         ],
-        "x-boof-scope": "auth:admin"
+        "x-boof-scope": "auth:admin",
+        "x-mcp-tool": "boof_rotate_client"
       }
     },
     "/commands": {
@@ -2786,7 +2790,8 @@
         "tags": [
           "commands"
         ],
-        "x-boof-scope": "tasks:read"
+        "x-boof-scope": "tasks:read",
+        "x-mcp-tool": "boof_list_commands"
       },
       "post": {
         "description": "Creates or overwrites a command template named by `name`. Inputs: name, body. Writes a template file. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
@@ -2860,7 +2865,8 @@
         "tags": [
           "commands"
         ],
-        "x-boof-scope": "settings:write"
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_create_command"
       }
     },
     "/commands/{commandId}": {
@@ -2918,7 +2924,8 @@
         "tags": [
           "commands"
         ],
-        "x-boof-scope": "settings:write"
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_delete_command"
       },
       "put": {
         "description": "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
@@ -3004,7 +3011,8 @@
         "tags": [
           "commands"
         ],
-        "x-boof-scope": "settings:write"
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_update_command"
       }
     },
     "/events": {
@@ -3136,7 +3144,8 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_health"
       }
     },
     "/health/check": {
@@ -3209,7 +3218,8 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:write"
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_check_health"
       }
     },
     "/models": {
@@ -3261,7 +3271,8 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_list_models"
       }
     },
     "/models/details": {
@@ -3395,7 +3406,8 @@
         "tags": [
           "models"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_model_details"
       }
     },
     "/models/refresh": {
@@ -3447,7 +3459,8 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_refresh_models"
       }
     },
     "/projects": {
@@ -4161,7 +4174,8 @@
         "tags": [
           "projects"
         ],
-        "x-boof-scope": "projects:write"
+        "x-boof-scope": "projects:write",
+        "x-mcp-tool": "boof_delete_project"
       },
       "get": {
         "description": "Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.",
@@ -4836,7 +4850,8 @@
         "tags": [
           "projects"
         ],
-        "x-boof-scope": "projects:write"
+        "x-boof-scope": "projects:write",
+        "x-mcp-tool": "boof_archive_project"
       }
     },
     "/projects/{projectId}/epics": {
@@ -5260,7 +5275,8 @@
         "tags": [
           "epics"
         ],
-        "x-boof-scope": "tasks:write"
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_delete_epic"
       },
       "get": {
         "description": "Returns one epic with its progress. Inputs: projectId, epicId. No side effects.",
@@ -5662,7 +5678,8 @@
             "runner:control",
             "projects:write"
           ]
-        }
+        },
+        "x-mcp-tool": "boof_pause_project"
       }
     },
     "/projects/{projectId}/plans": {
@@ -7756,7 +7773,8 @@
             "runner:control",
             "projects:write"
           ]
-        }
+        },
+        "x-mcp-tool": "boof_resume_project"
       }
     },
     "/projects/{projectId}/tasks": {
@@ -8381,7 +8399,8 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write"
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_delete_task"
       },
       "get": {
         "description": "Returns one task with its prompt, questions, answers and reports. Inputs: projectId, taskId, and include=log to add the raw agent log (large). No side effects.",
@@ -9108,7 +9127,8 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write"
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_remove_attachment"
       },
       "get": {
         "description": "Returns an attachment's bytes with its content type. Inputs: projectId, taskId, attachmentName. No side effects.",
@@ -10180,7 +10200,8 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write"
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_skip_task"
       }
     },
     "/projects/{projectId}/tasks/{taskId}/stop": {
@@ -10305,7 +10326,8 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write"
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_unarchive_task"
       }
     },
     "/projects/{projectId}/tasks/{taskId}/wait": {
@@ -10515,7 +10537,8 @@
         "tags": [
           "tasks"
         ],
-        "x-boof-scope": "tasks:write"
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_reorder_tasks"
       }
     },
     "/projects/{projectId}/unarchive": {
@@ -10561,7 +10584,8 @@
         "tags": [
           "projects"
         ],
-        "x-boof-scope": "projects:write"
+        "x-boof-scope": "projects:write",
+        "x-mcp-tool": "boof_unarchive_project"
       }
     },
     "/projects/{projectId}/usage": {
@@ -10612,7 +10636,8 @@
             "projects:read",
             "tasks:read"
           ]
-        }
+        },
+        "x-mcp-tool": "boof_get_project_usage"
       }
     },
     "/runner": {
@@ -10699,7 +10724,8 @@
         "tags": [
           "runner"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_runner"
       },
       "put": {
         "description": "Turns the runner on or off for every project. Input: enabled. Writes settings.json and appends a runner.enabled event. A review-trust key is refused (403 forbidden_trust) and so is a project-restricted one (403 forbidden_project); it can pause its own projects.",
@@ -10932,7 +10958,8 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:read"
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_settings"
       },
       "put": {
         "description": "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
@@ -11231,7 +11258,8 @@
         "tags": [
           "settings"
         ],
-        "x-boof-scope": "settings:write"
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_update_settings"
       }
     },
     "/usage": {
@@ -11270,7 +11298,8 @@
             "projects:read",
             "tasks:read"
           ]
-        }
+        },
+        "x-mcp-tool": "boof_get_usage"
       }
     },
     "/usage/budget": {
@@ -11483,7 +11512,8 @@
             "settings:read",
             "tasks:read"
           ]
-        }
+        },
+        "x-mcp-tool": "boof_get_budget"
       }
     },
     "/webhooks": {
@@ -11586,7 +11616,8 @@
         "tags": [
           "webhooks"
         ],
-        "x-boof-scope": "admin"
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_list_webhooks"
       },
       "post": {
         "description": "Subscribes a URL to events and returns the signing secret once. Inputs: url (http or https; must resolve to a public address unless listed in security.allowedPrivateWebhookHosts), optional events (types or prefix.*), projects, enabled. Admin only; the secret is kept in <data>/webhooks/secrets.json (mode 0600), never in settings.json.",
@@ -11738,7 +11769,8 @@
         "tags": [
           "webhooks"
         ],
-        "x-boof-scope": "admin"
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_create_webhook"
       }
     },
     "/webhooks/{webhookId}": {
@@ -11794,7 +11826,8 @@
         "tags": [
           "webhooks"
         ],
-        "x-boof-scope": "admin"
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_delete_webhook"
       }
     },
     "/whoami": {

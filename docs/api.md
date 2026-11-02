@@ -302,13 +302,21 @@ rules, input validation and error codes are identical, and every call is audited
   `boof-runner mcp` refuse to start.
 - **Audit.** `action` is `mcp:<tool>` for a tool call and `mcp:<method>` otherwise.
 - `boof-runner mcp --project <id>` fills in `projectId` for every project-scoped tool, removes
-  it from the tool schemas and hides `boof_create_project` and other projects.
-- `tools/list` shows only the tools the client's scopes allow.
+  it from the tool schemas and hides `boof_create_project`, other projects and the API-client and
+  webhook tools (a server pinned to one project is a project tool).
+- `tools/list` shows only the tools the caller's scopes allow, and a call outside them answers
+  `forbidden_scope`.
+- **Administration tools.** Every operation is a tool except attachment upload and download (REST
+  only), including API clients, webhooks, settings, command templates and project deletion. Keys
+  and signing secrets appear once, in the result (never in the summary line). Over stdio,
+  `boof-runner mcp` without `--client` is the local administrator, so it lists the administration
+  tools (clients, webhooks, settings writes, command templates, the health check, project deletion)
+  only with `--admin`; with `--client <id>` that client's scopes decide and `--admin` is refused.
+  Give agent hosts `--client` with a narrow client.
 
 Tools (the names are stable). Plan tools take `expectedVersion`, task updates `expectedUpdated`
-(the ETag/If-Match values of the REST API). Attachments, settings writes, commands, clients
-and webhooks are REST only; archive/pause/usage and similar low-value operations are REST only
-to keep the tool list short.
+(the ETag/If-Match values of the REST API). The table lists the tools of the common flow; the
+full set is every operation of the OpenAPI document (its `x-mcp-tool` key names the tool).
 
 | Tool                   | Scope                                | Kind        | Does                                     |
 | ---------------------- | ------------------------------------ | ----------- | ---------------------------------------- |

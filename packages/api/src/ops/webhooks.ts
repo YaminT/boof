@@ -57,7 +57,8 @@ export const webhooksList = defineOp({
   input: z.strictObject({}),
   output: z.object({ webhooks: z.array(PublicWebhookSchema) }),
   rest: { method: "GET", path: "/webhooks" },
-  mcp: { expose: false, annotations: READ },
+  mcp: { expose: true, name: "boof_list_webhooks", annotations: READ },
+  summary: (r) => `${r.webhooks.length} webhooks`,
   handler: async (ctx) => ({
     webhooks: ((await ctx.services.loadSettings()).webhooks ?? []).filter((h) =>
       withinReach(ctx, h),
@@ -75,7 +76,9 @@ export const webhooksCreate = defineOp({
   input: CreateWebhookBody,
   output: z.object({ webhook: PublicWebhookSchema, secret: z.string() }),
   rest: { method: "POST", path: "/webhooks", status: 201 },
-  mcp: { expose: false, annotations: WRITE },
+  mcp: { expose: true, name: "boof_create_webhook", annotations: WRITE },
+  summary: (r) =>
+    `Subscribed webhook ${r.webhook.id} to ${r.webhook.url}; the signing secret is in the result and is shown only once`,
   handler: async (ctx, input) => {
     await assertWebhookTarget(input.url, {
       isSelf: ctx.isSelfUrl,
@@ -141,7 +144,8 @@ export const webhooksDelete = defineOp({
   input: z.strictObject({ webhookId: webhookIdParam }),
   output: OkSchema,
   rest: { method: "DELETE", path: "/webhooks/{webhookId}" },
-  mcp: { expose: false, annotations: DESTRUCTIVE },
+  mcp: { expose: true, name: "boof_delete_webhook", annotations: DESTRUCTIVE },
+  summary: () => "Deleted webhook",
   handler: async (ctx, input) => {
     await ctx.services.settingsStore.mutate((settings) => {
       const hooks = settings.webhooks ?? [];

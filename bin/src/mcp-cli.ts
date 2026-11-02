@@ -7,14 +7,19 @@ import { scaffoldDataRoot } from "./scaffold.js";
 export const MCP_HELP = `boof-runner mcp — serve boof over the Model Context Protocol on stdin/stdout
 
 Usage:
-  boof-runner mcp [-d <data>] [--client <id>] [--project <id>]
+  boof-runner mcp [-d <data>] [--client <id>] [--project <id>] [--admin]
 
   -d, --data <path>   Data root (default: ./data, or $BOOF_RUNNER_DATA_ROOT)
       --client <id>   Act as this API client (see "auth list"); its scopes, project
                       restriction and trust apply. No key is needed: the OS user owns the data root.
                       Without --client the local admin principal is used, and only when
                       security.auth.mode is "local-trust"; otherwise the command refuses.
-      --project <id>  Serve one project only: the projectId argument is hidden and filled in.
+      --project <id>  Serve one project only: the projectId argument is hidden and filled in; the
+                      API-client and webhook tools are hidden too.
+      --admin         Without --client: also list the administration tools (API clients, webhooks,
+                      settings writes, command templates, project deletion). They are hidden by
+                      default, because an agent host that registers this server would otherwise
+                      hold them. Not allowed with --client: the client's scopes decide.
 
 stdout carries the protocol only; logs go to stderr. Add it to Claude Code with:
   claude mcp add boof -- boof-runner mcp -d <data> --project <id>
@@ -36,6 +41,7 @@ export async function mcpCommand(
         data: { type: "string", short: "d" },
         client: { type: "string" },
         project: { type: "string" },
+        admin: { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -57,6 +63,10 @@ export async function mcpCommand(
       return 1;
     }
   }
+  if (v.admin && v.client !== undefined) {
+    err("mcp: --admin applies only without --client (with --client the client's scopes decide)");
+    return 1;
+  }
   const root = v.data
     ? isAbsolute(v.data)
       ? v.data
@@ -64,7 +74,7 @@ export async function mcpCommand(
     : defaultRoot();
   try {
     await scaffoldDataRoot(root);
-    await runStdio({ root, client: v.client, project: v.project });
+    await runStdio({ root, client: v.client, project: v.project, admin: v.admin });
     return 0;
   } catch (e) {
     if (

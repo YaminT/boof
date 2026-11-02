@@ -31,6 +31,11 @@ export interface StdioOptions {
   client?: string;
   /** Serve one project only and hide the `projectId` argument. */
   project?: string;
+  /**
+   * Without `client`: also list the administration tools (API clients, webhooks, settings writes,
+   * commands, project deletion). Default false. With `client` the client's scopes decide.
+   */
+  admin?: boolean;
 }
 
 /**
@@ -127,6 +132,8 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
     services,
     authStore,
     project: opts.project,
+    // The keyless stdio server is the local administrator: its default is the safe one.
+    ...(opts.client === undefined ? { adminTools: opts.admin === true } : {}),
   });
   const transport = new StdioServerTransport();
   const closed = new Promise<void>((resolve) => {

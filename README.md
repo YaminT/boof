@@ -15,7 +15,7 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 - **Desktop app** — Electron wrapper that runs server, runner and UI in one window.
 - **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, no web server needed.
 - **REST API** — versioned `/api/v1` generated from one operations registry, with an OpenAPI 3.1 document, ETags, idempotency keys and paging.
-- **MCP** — the same operations as 39 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
+- **MCP** — the same operations as 72 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
 - **Events and webhooks** — replayable server-sent events and HMAC-signed webhooks.
 - **Security** — loopback by default; API keys with scopes, project restrictions and trust levels; Host guard, rate limit and audit log.
 
@@ -332,13 +332,13 @@ Boof speaks the Model Context Protocol with the same scopes, trust and audit as 
 **Local agent (stdio).** The agent host starts `boof-runner mcp`; no server and no key are needed.
 
 ```bash
+# everything the data root serves, limited to an API client's scopes and projects (recommended)
+claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1
 # one repository: the projectId argument is filled in and hidden
 claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --project pim
-# everything the data root serves, limited to an API client's scopes and projects
-claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1
 ```
 
-Without `--client` the agent is the local admin principal, which only works while `security.auth.mode` is `local-trust`. The server writes logs to stderr only.
+Give agent hosts `--client` with a narrow client. Without it the agent is the local admin principal (it only works while `security.auth.mode` is `local-trust`), and the server hides the administration tools (API clients, webhooks, settings writes, command templates, project deletion) unless you add `--admin`. The server writes logs to stderr only.
 
 **Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback) and point the client at `/mcp`:
 
