@@ -170,9 +170,9 @@ export class AuthStore {
         await this.save(clients);
         return out;
       },
-      (holder) =>
+      (holder, path) =>
         new Error(
-          `Another boof process is updating the API clients (pid ${holder}); try again in a moment`,
+          `Another boof process is updating the API clients (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
         ),
     );
   }

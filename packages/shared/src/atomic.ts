@@ -40,6 +40,11 @@ export interface AtomicWriteOptions {
   mode?: number;
   /** Fail with EEXIST instead of replacing an existing `path`. */
   exclusive?: boolean;
+  /**
+   * fsync the file before publishing it and the directory after (default true). Turn it off only
+   * for data that is worthless after a crash, such as a lock file: it may come back empty.
+   */
+  sync?: boolean;
   /** Test hook: replaces link(2) for the exclusive publish. */
   linkFn?: typeof link;
   /** Test hook: replaces the in-place write of the "wx" fallback (used without hard links). */
@@ -69,6 +74,7 @@ export async function atomicWrite(
   const {
     mode,
     exclusive,
+    sync = true,
     linkFn = link,
     fallbackWrite = writeAndSync,
   } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
@@ -79,7 +85,7 @@ export async function atomicWrite(
     const fh = await open(tmp, "w", mode ?? 0o666);
     try {
       await fh.writeFile(contents, "utf8");
-      await fh.sync();
+      if (sync) await fh.sync();
     } finally {
       await fh.close();
     }
@@ -113,7 +119,7 @@ export async function atomicWrite(
     await rm(tmp, { force: true });
     throw err;
   }
-  await syncDir(dir);
+  if (sync) await syncDir(dir);
 }
 
 /**

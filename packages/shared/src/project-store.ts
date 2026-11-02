@@ -379,10 +379,10 @@ export class ProjectStore {
       join(dataRootPaths(this.root).projects, ".create.lock"),
       this.lockOpts,
       () => this.createLocked(input),
-      (holder) =>
+      (holder, path) =>
         new ProjectError(
           "busy",
-          `Another boof process is creating a project (pid ${holder}); try again in a moment`,
+          `Another boof process is creating a project (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
         ),
     );
   }

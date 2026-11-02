@@ -257,9 +257,9 @@ export function withMigrationLock<T>(
     join(root, MIGRATION_LOCK_FILE),
     opts,
     fn,
-    (holder) =>
+    (holder, path) =>
       new MigrationError(
-        `another boof-runner process is migrating ${root} (pid ${holder}); try again in a moment`,
+        `another boof-runner process is migrating ${root} (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
       ),
   );
 }

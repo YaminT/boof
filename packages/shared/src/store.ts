@@ -164,9 +164,9 @@ export class TaskStore {
       join(this.root, "tasks", ".locks", `${id}.lock`),
       this.opts.lock ?? {},
       fn,
-      (holder) =>
+      (holder, path) =>
         new Error(
-          `Task ${id} is being changed by another boof process (pid ${holder}); try again in a moment`,
+          `Task ${id} is being changed by another boof process (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
         ),
     );
   }
