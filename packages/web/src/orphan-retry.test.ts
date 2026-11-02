@@ -104,6 +104,17 @@ describe.skipIf(!bootIdentity())("Retry and a recorded agent that is still alive
     expect((await store.get(id))!.frontmatter.status).toBe("failed");
   });
 
+  it("refuses to delete a task whose recorded agent is still running (the id could be reused)", async () => {
+    const { id, child } = await failedTaskWithAgent("live");
+    const res = await call(`${V1}/projects/demo/tasks/${id}`, { method: "DELETE" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.message).toMatch(/still running/);
+    expect(await store.get(id)).toBeTruthy();
+    process.kill(-child.pid!, "SIGKILL");
+    await new Promise((r) => child.on("exit", r));
+    expect((await call(`${V1}/projects/demo/tasks/${id}`, { method: "DELETE" })).status).toBe(200);
+  });
+
   it("retries once the agent is gone, and clears the stored identity", async () => {
     const { id, child } = await failedTaskWithAgent("live");
     expect((await post(`${V1}/projects/demo/tasks/${id}/retry`)).status).toBe(409);

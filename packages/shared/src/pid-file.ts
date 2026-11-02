@@ -5,7 +5,11 @@ import {
   agentStatus,
   bootIdentity,
   probeProcess,
+  processTable,
+  runProbe,
   readProcStat,
+  sharesRunnerGroup,
+  verifiedDescendants,
   type IdentityDeps,
 } from "./process-identity.js";
 
@@ -147,7 +151,7 @@ export async function killGroup(
 export interface ReapDeps {
   /** Platform and probe commands (tests mock them). */
   identity?: IdentityDeps;
-  /** Stop the recorded agent (default: the process group on POSIX, `taskkill /T /F` on Windows). */
+  /** Stop the recorded agent (default: the process group on POSIX, a verified tree walk with `taskkill /F /PID` on Windows). */
   kill?: (record: PidRecord) => Promise<"exited" | "killed" | "survived">;
   isAlive?: (pid: number) => boolean;
 }
@@ -161,14 +165,24 @@ export interface ReapResult {
   stillRunning?: boolean;
 }
 
-/** Windows has no process groups: kill the process and its children, then check it is gone. */
+/**
+ * Windows has no process groups. The agent was verified by its creation time; its children are
+ * found by walking ONE process-table query downward, taking only processes created after their
+ * parent (Windows does not reparent orphans, so a stranger may list a reused pid as its parent).
+ * Each is stopped with `taskkill /F /PID`: never `/T`, which follows parent ids blindly. If the
+ * table cannot be read or does not show the agent as recorded, only the agent is stopped. A Job
+ * Object (kill-on-close) at spawn is the long-term fix; see goals/desktop-orphan-reaping-macos-windows.
+ */
 async function killTree(
   record: PidRecord,
   identity: IdentityDeps,
 ): Promise<"exited" | "killed" | "survived"> {
-  const run = identity.run;
-  if (!run) return "survived";
-  run("taskkill", ["/T", "/F", "/PID", String(record.pgid)]);
+  const run = identity.run ?? runProbe;
+  const rows = processTable(identity);
+  const root = rows?.find((r) => r.pid === record.pgid);
+  const children =
+    rows && root && root.created === record.startTime ? verifiedDescendants(record.pgid, rows) : [];
+  for (const pid of [...children, record.pgid]) run("taskkill", ["/F", "/PID", String(pid)]);
   for (let i = 0; i < 20; i += 1) {
     if (agentStatus(record, identity) !== "running") return "killed";
     await sleep(100);
@@ -233,9 +247,9 @@ async function reapOffLinux(
     remove?: boolean,
   ) => Promise<{ outcome: "dead" | "killed" | "skipped"; record: PidRecord }>,
 ): Promise<ReapResult> {
-  const identity: IdentityDeps = { ...deps.identity, platform };
   const alive =
     deps.isAlive ?? ((pid: number) => (platform === "win32" ? isAlive(pid) : groupAlive(pid)));
+  const identity: IdentityDeps = { alive, ...deps.identity, platform };
   if (!isSignalable(record.pgid)) {
     log(`refusing to signal this process (${record.pgid}); not killing`);
     return finish("skipped");
@@ -254,6 +268,16 @@ async function reapOffLinux(
   if (record.ownerPid && alive(record.ownerPid) && probe?.ppid === record.ownerPid) {
     log(`recording runner ${record.ownerPid} is still running (${record.pgid}); not killing`);
     return { outcome: "skipped", record, stillRunning: true };
+  }
+  // Never the runner's own group or session (a forged or damaged record); if `ps` cannot say, do not kill.
+  const own = sharesRunnerGroup(record.pgid, identity);
+  if (own === undefined) {
+    log(`cannot tell whether process group ${record.pgid} is the runner's own; not killing`);
+    return { outcome: "skipped", record, maybeRunning: true };
+  }
+  if (own) {
+    log(`refusing to signal the runner's own process group or session (${record.pgid})`);
+    return finish("skipped");
   }
   const result = deps.kill
     ? await deps.kill(record)

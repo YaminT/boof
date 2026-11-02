@@ -524,12 +524,12 @@ export class ProjectService {
    * A process that is gone, another process under a reused pid, or one that cannot be verified does
    * not block.
    */
-  private async assertNoLiveAgent(id: string): Promise<void> {
+  private async assertNoLiveAgent(id: string, action: "retry" | "delete" = "retry"): Promise<void> {
     const agent = (await this.tasks.get(id))?.frontmatter.agentProcess;
     if (agent && agentStatus(agent) === "running") {
       throw new OpError(
         409,
-        `The agent process of the interrupted run (pid ${agent.pgid}${agent.command ? `, ${agent.command}` : ""}) is still running; stop it before you retry, or a second agent will work in the same worktree`,
+        `The agent process of the interrupted run (pid ${agent.pgid}${agent.command ? `, ${agent.command}` : ""}) is still running; stop it before you ${action}, or a second agent will work in the same worktree`,
         "conflict",
       );
     }
@@ -583,6 +583,8 @@ export class ProjectService {
     if (task.frontmatter.status === "running") {
       throw new OpError(400, "Cannot delete a running task; wait for it to finish first");
     }
+    // A new task with this id would share the worktree an orphaned agent may still be working in.
+    await this.assertNoLiveAgent(id, "delete");
     const { detached } = await removeTask(this.root, id, {
       detach: opts.detach,
       by: actor?.id ?? "local",

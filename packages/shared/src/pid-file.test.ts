@@ -224,12 +224,20 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     return path;
   };
   /** A mac whose `ps` says `lstart` (null: no such process). */
-  const mac = (lstart: string | null, ppid = 1, boot: string | null = BOOT) => ({
+  const mac = (
+    lstart: string | null,
+    ppid = 1,
+    boot: string | null = BOOT,
+    /** The runner's own `pgid sess`, the agent group leader's `sess`. */
+    groups = { self: "777 0xself", leader: "0xagent" },
+  ) => ({
     platform: "darwin" as const,
-    run: (cmd: string) => {
+    run: (cmd: string, args: string[] = []) => {
       if (cmd === "sysctl") return boot;
-      if (cmd === "ps") return lstart === null ? null : `  ${ppid} ${lstart}\n`;
-      return null;
+      if (cmd !== "ps") return null;
+      if (args.includes("pgid=,sess=")) return `  ${groups.self}\n`;
+      if (args.includes("sess=")) return `  ${groups.leader}\n`;
+      return lstart === null ? null : `  ${ppid} ${lstart}\n`;
     },
   });
   const logs: string[] = [];
@@ -315,34 +323,137 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     expect(res).toMatchObject({ outcome: "skipped", stillRunning: true });
   });
 
-  it("Windows: kills the whole tree with taskkill /T /F when the creation time matches", async () => {
-    const calls: string[] = [];
-    let killed = false;
-    const identity = {
+  const WIN_BOOT = "2024-11-01T08:00:00.0000000Z";
+  const winBootSec = Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000);
+  const AGENT_START = "2026-11-02T17:30:07.1234567Z";
+  /**
+   * A Windows box: `table` is the CIM process table (`pid|ppid|created` lines), `taskkills` collects
+   * the commands, and the agent disappears once it has been told to stop.
+   */
+  const win = (table: string, taskkills: string[]) => {
+    let stopped = false;
+    return {
       platform: "win32" as const,
       run: (cmd: string, args: string[]) => {
-        calls.push([cmd, ...args].join(" "));
         if (cmd === "taskkill") {
-          killed = true;
+          taskkills.push(args.join(" "));
+          if (args.includes("4242")) stopped = true;
           return "SUCCESS";
         }
-        if (cmd === "powershell" && args.join(" ").includes("LastBootUpTime")) {
-          return "2024-11-01T08:00:00.0000000Z";
-        }
-        if (cmd === "powershell") {
-          return killed ? "" : "2026-11-02T17:30:07.1234567Z|1";
-        }
-        return null;
+        if (cmd !== "powershell") return null;
+        const text = args.join(" ");
+        if (text.includes("LastBootUpTime")) return WIN_BOOT;
+        if (text.includes("-Filter")) return stopped ? "" : `${AGENT_START}|1`;
+        return stopped ? "" : table;
       },
     };
-    const bootSec = Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000);
-    const path = await write(
-      rec({ bootId: `boottime:${bootSec}`, startTime: "2026-11-02T17:30:07.1234567Z" }),
-    );
+  };
+
+  it("Windows: stops the agent and its verified children one by one with taskkill /F /PID, never /T", async () => {
+    const taskkills: string[] = [];
+    const table = [
+      `4242|1|${AGENT_START}`,
+      `5000|4242|2026-11-02T17:30:09.0000000Z`, // child
+      `5001|5000|2026-11-02T17:30:10.0000000Z`, // grandchild
+      `9999|1|2026-11-02T17:00:00.0000000Z`,
+    ].join("\r\n");
+    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
+    const res = await reapOrphan(path, log, {
+      identity: win(table, taskkills),
+      isAlive: () => true,
+    });
+    expect(res.outcome).toBe("killed");
+    expect(taskkills).toEqual(["/F /PID 5001", "/F /PID 5000", "/F /PID 4242"]);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("Windows: an older unrelated process that lists the agent's pid as its parent is not killed", async () => {
+    const taskkills: string[] = [];
+    const table = [
+      `4242|1|${AGENT_START}`,
+      // Started before the agent, from a launcher that once had pid 4242; Windows keeps the dead
+      // parent's id, so it still says ppid 4242. It, and its own child, are strangers.
+      `6000|4242|2026-11-02T08:00:00.0000000Z`,
+      `6001|6000|2026-11-02T09:00:00.0000000Z`,
+      // Created in the very same instant as the agent: not provably after, so not a child.
+      `6002|4242|${AGENT_START}`,
+      `5000|4242|2026-11-02T17:30:09.0000000Z`, // the one real child
+    ].join("\n");
+    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
+    const res = await reapOrphan(path, log, {
+      identity: win(table, taskkills),
+      isAlive: () => true,
+    });
+    expect(res.outcome).toBe("killed");
+    expect(taskkills).toEqual(["/F /PID 5000", "/F /PID 4242"]);
+    expect(taskkills.join(" ")).not.toMatch(/6000|6001|6002|\/T/);
+  });
+
+  it("Windows: when the process table cannot be read only the verified agent is stopped", async () => {
+    const taskkills: string[] = [];
+    const base = win("", taskkills);
+    const identity = {
+      ...base,
+      run: (cmd: string, args: string[]) =>
+        cmd === "powershell" && !args.join(" ").match(/LastBootUpTime|-Filter/)
+          ? null
+          : base.run(cmd, args),
+    };
+    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: AGENT_START }));
     const res = await reapOrphan(path, log, { identity, isAlive: () => true });
     expect(res.outcome).toBe("killed");
-    expect(calls).toContain("taskkill /T /F /PID 4242");
-    expect(existsSync(path)).toBe(false);
+    expect(taskkills).toEqual(["/F /PID 4242"]);
+  });
+
+  it("macOS: a record naming the runner's own process group or session is never killed", async () => {
+    for (const groups of [
+      { self: "4242 0xself", leader: "0xagent" }, // the runner's own group
+      { self: "777 0xsame", leader: "0xsame" }, // the runner's session
+    ]) {
+      const path = await write(rec());
+      const killed: number[] = [];
+      const res = await reapOrphan(path, log, {
+        identity: mac(STARTED, 1, BOOT, groups),
+        kill: async (r) => (killed.push(r.pgid), "killed"),
+        isAlive: () => true,
+      });
+      expect(res.outcome, JSON.stringify(groups)).toBe("skipped");
+      expect(killed).toEqual([]);
+    }
+  });
+
+  it("macOS: when ps cannot say whose group it is, nothing is killed and the record stays", async () => {
+    const path = await write(rec());
+    const base = mac(STARTED);
+    const killed: number[] = [];
+    const res = await reapOrphan(path, log, {
+      identity: {
+        ...base,
+        run: (cmd: string, args: string[]) =>
+          cmd === "ps" && args.includes("sess=") ? null : base.run(cmd, args),
+      },
+      kill: async (r) => (killed.push(r.pgid), "killed"),
+      isAlive: () => true,
+    });
+    expect(res).toMatchObject({ outcome: "skipped", maybeRunning: true });
+    expect(killed).toEqual([]);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it("a failed probe of a pid that is still alive keeps the record (unknown), and of a dead pid drops it", async () => {
+    const failing = {
+      platform: "darwin" as const,
+      run: (cmd: string) => (cmd === "sysctl" ? BOOT : null), // `ps` fails
+    };
+    const path = await write(rec());
+    const killed: number[] = [];
+    const kill = async (r: PidRecord) => (killed.push(r.pgid), "killed" as const);
+    const alive = await reapOrphan(path, log, { identity: failing, kill, isAlive: () => true });
+    expect(alive).toMatchObject({ outcome: "skipped", maybeRunning: true });
+    expect(existsSync(path)).toBe(true);
+    const dead = await reapOrphan(path, log, { identity: failing, kill, isAlive: () => false });
+    expect(dead.outcome).toBe("dead");
+    expect(killed).toEqual([]);
   });
 
   it("Windows: a different creation time is another process and gets no taskkill", async () => {

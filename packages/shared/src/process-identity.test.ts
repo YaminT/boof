@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   agentStatus,
   bootIdentity,
+  probeEnv,
   probeProcess,
+  processTable,
+  resetBootCache,
   sameBoot,
+  verifiedDescendants,
   type AgentIdentity,
   type IdentityDeps,
 } from "./process-identity.js";
@@ -129,7 +136,15 @@ describe("agentStatus", () => {
         run: mac("  1 Mon Nov  2 17:30:07 2026", "{ sec = 1740000000, usec = 0 }").run,
       }),
     ).toBe("gone");
-    expect(agentStatus(id, { platform: "darwin", run: mac(null).run })).toBe("gone");
+    expect(agentStatus(id, { platform: "darwin", run: mac(null).run, alive: () => false })).toBe(
+      "gone",
+    );
+  });
+
+  it("a probe that fails while the pid is still alive is unknown, never gone", () => {
+    const failing = { platform: "darwin" as const, run: mac(null).run };
+    expect(agentStatus(id, { ...failing, alive: () => true })).toBe("unknown");
+    expect(agentStatus(id, { ...failing, alive: () => false })).toBe("gone");
   });
 
   it("without a stored start time, or when probing fails, the answer is unknown (never blocks)", () => {
@@ -143,5 +158,87 @@ describe("agentStatus", () => {
     expect(
       agentStatus(id, { platform: "darwin", run: mac("  1 Mon Nov  2 17:30:07 2026", null).run }),
     ).toBe("unknown");
+  });
+});
+
+describe("probe commands", () => {
+  const dirs: string[] = [];
+  const oldPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = oldPath;
+    resetBootCache();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  /** A fake command on PATH, so the default runner (execFile) is exercised. */
+  function shim(name: string, script: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "boof-shim-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(dir, name), 0o755);
+    process.env.PATH = `${dir}${delimiter}${oldPath}`;
+    return dir;
+  }
+
+  it("the environment forces the C locale, so month and day names are English", () => {
+    expect(probeEnv({ LC_ALL: "de_DE.UTF-8", LANG: "de_DE.UTF-8", KEEP: "1" })).toMatchObject({
+      LC_ALL: "C",
+      LANG: "C",
+      KEEP: "1",
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("the default runner runs ps with LC_ALL=C", () => {
+    shim("ps", 'echo "  1 lstart-$LC_ALL-$LANG"');
+    const saved = { LC_ALL: process.env.LC_ALL, LANG: process.env.LANG };
+    process.env.LC_ALL = "de_DE.UTF-8";
+    process.env.LANG = "de_DE.UTF-8";
+    try {
+      expect(probeProcess(4242, { platform: "darwin" })?.startTime).toBe("lstart-C-C");
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("the macOS boot time is read once per process", () => {
+    const dir = shim(
+      "sysctl",
+      'echo x >> "$(dirname "$0")/calls"; echo "{ sec = 1730000000, usec = 5 } Fri Nov  1 08:00:00 2026"',
+    );
+    expect(bootIdentity({ platform: "darwin" })).toBe("boottime:1730000000");
+    expect(bootIdentity({ platform: "darwin" })).toBe("boottime:1730000000");
+    expect(readFileSync(join(dir, "calls"), "utf8").trim().split("\n")).toHaveLength(1);
+  });
+});
+
+describe("Windows process table", () => {
+  const A = "2026-11-02T10:00:00.0000000Z";
+  const table = (out: string | null) => processTable({ platform: "win32", run: () => out });
+
+  it("parses pid|ppid|created lines and drops anything else", () => {
+    expect(
+      table(`10|1|${A}\r\nnot a row\r\n11|10|2026-11-02T10:00:01.0000000Z\r\n12|10|yesterday\r\n`),
+    ).toEqual([
+      { pid: 10, ppid: 1, created: A },
+      { pid: 11, ppid: 10, created: "2026-11-02T10:00:01.0000000Z" },
+    ]);
+    expect(table(null)).toBeNull();
+    expect(processTable({ platform: "linux", run: () => "10|1|" + A })).toBeNull();
+  });
+
+  it("descendants are the processes created after their parent, deepest first", () => {
+    const rows = [
+      { pid: 10, ppid: 1, created: "2026-11-02T10:00:00.0000000Z" },
+      { pid: 11, ppid: 10, created: "2026-11-02T10:00:01.0000000Z" },
+      { pid: 12, ppid: 11, created: "2026-11-02T10:00:02.0000000Z" },
+      { pid: 20, ppid: 10, created: "2026-11-02T09:00:00.0000000Z" }, // older: a stranger
+      { pid: 21, ppid: 20, created: "2026-11-02T09:30:00.0000000Z" }, // its child: also not ours
+      { pid: 30, ppid: 10, created: "2026-11-02T10:00:00.0000000Z" }, // same instant: not provably after
+      { pid: 40, ppid: 12, created: "2026-11-02T10:00:01.5000000Z" }, // before its parent (12)
+    ];
+    expect(verifiedDescendants(10, rows)).toEqual([12, 11]);
+    expect(verifiedDescendants(99, rows)).toEqual([]);
   });
 });
