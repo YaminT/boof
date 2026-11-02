@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">TypeScript 7.0.2 is published (npm dist-tags on 2026-11-02: latest 7.0.2, rc 7.0.1-rc, beta 7.1.0-beta, next 7.1.0-dev.20261102.1; @typescript/native-preview is the older preview package). Switched: package.json typescript ^7.0.2 (bun.lock updated, `bun install --frozen-lockfile` clean). TS 7 no longer loads @types by default, so tsconfig.base.json gets "types": ["node"], and the UI tsconfig loses the removed "baseUrl" (its "paths" resolve from the tsconfig). The vitest 5 `Assertion.not` typing error named in the goal did not appear with 7.0.2. `tsc -b` passes on all workspaces and `tsc -p packages/web/ui`; prettier, `npx vitest run` (135 files, 1883 passed, 1 skipped), `npm run build:server`, the UI vite build and the desktop tsup build are green. Nothing in the repo uses the TypeScript JS API (tsup and tsup-desktop run with dts: false), which TS 7's native compiler does not provide.</version>
       </versions>
     </status>
     <tests>

@@ -52,7 +52,7 @@
     <goal id="docs-consistency-pass" path="goals/docs-consistency-pass" order="49" status="done"></goal>
     <goal id="verify-steering-codex" path="goals/verify-steering-codex" order="50" status="done"></goal>
     <goal id="desktop-e2e" path="goals/desktop-e2e" order="51" status="plan"></goal>
-    <goal id="typescript-7" path="goals/typescript-7" order="52" status="plan"></goal>
+    <goal id="typescript-7" path="goals/typescript-7" order="52" status="done"></goal>
     <goal id="publish-runbook" path="goals/publish-runbook" order="53" status="plan"></goal>
     <goal id="release-0-3-0" path="goals/release-0-3-0" order="54" status="plan"><depends-on>desktop-e2e</depends-on><depends-on>verify-steering-codex</depends-on><depends-on>publish-runbook</depends-on></goal>
     <goal id="owlish-accounts" path="goals/owlish-accounts" order="55" status="plan"></goal>
