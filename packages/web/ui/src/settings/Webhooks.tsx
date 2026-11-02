@@ -28,7 +28,9 @@ import {
   parseEvents,
   webhookFormProblems,
 } from "../lib/automation.js";
+import { sameValue } from "../lib/settings-draft.js";
 import { relativeTime } from "../lib/time.js";
+import { TonePill } from "../shell/StatusPill.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { OneTimeSecretDialog } from "./OneTimeSecretDialog.js";
 
@@ -40,6 +42,8 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
   const [error, setError] = useState<"forbidden" | "failed" | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<PublicWebhook | null>(null);
+  // The webhook the dialog edits; null while it creates one.
+  const [editing, setEditing] = useState<PublicWebhook | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState("");
@@ -66,6 +70,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
   // The problems show after a first try to create; a server error clears when the URL changes.
   const [attempted, setAttempted] = useState(false);
   const open = () => {
+    setEditing(null);
     setUrl("");
     setEvents("");
     setScope(reach ? [...reach] : "*");
@@ -78,12 +83,46 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
       parseEvents(t).includes(h) && t.trim() ? t : [t.trim(), h].filter(Boolean).join(", "),
     );
 
+  const openEdit = (w: PublicWebhook) => {
+    setEditing(w);
+    setUrl(w.url);
+    setEvents(w.events.join(", "));
+    setScope(w.projects === "*" ? "*" : [...w.projects]);
+    setLines([]);
+    setAttempted(false);
+    setCreating(true);
+  };
+
+  const toggle = async (w: PublicWebhook) => {
+    const ok = await act(() => api.updateWebhook(w.id, { enabled: !w.enabled }), {
+      success: w.enabled ? "Webhook disabled" : "Webhook enabled",
+      failure: "Could not change the webhook",
+    });
+    if (ok) await load();
+  };
+
   const create = async () => {
     setAttempted(true);
     if (problems.length > 0 || busy) return;
     setBusy(true);
     setLines([]);
     try {
+      if (editing) {
+        // Only what changed is sent; an edit never shows or changes the signing secret.
+        const nextEvents = parseEvents(events);
+        const patch = {
+          ...(url.trim() !== editing.url ? { url: url.trim() } : {}),
+          ...(!sameValue(nextEvents, editing.events) ? { events: nextEvents } : {}),
+          ...(!sameValue(scope, editing.projects) ? { projects: scope } : {}),
+        };
+        if (Object.keys(patch).length > 0) {
+          await api.updateWebhook(editing.id, patch);
+          toast.success("Webhook saved");
+        }
+        setCreating(false);
+        await load();
+        return;
+      }
       const r = await api.createWebhook({
         url: url.trim(),
         events: parseEvents(events),
@@ -137,34 +176,41 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
               <span className="min-w-0 max-w-[28rem] truncate font-mono text-[13px]" title={w.url}>
                 {w.url}
               </span>
+              {!w.enabled && <TonePill tone="neutral">disabled</TonePill>}
               <span className="text-ink-muted">{w.events.join(", ")}</span>
               <span className="hidden text-ink-muted min-[720px]:inline">{names(w)}</span>
               <span className="hidden text-ink-muted min-[720px]:inline">
                 Created {relativeTime(w.created)}
               </span>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  aria-label={`More actions for the webhook to ${w.url}`}
-                  className="ml-auto inline-flex size-7 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  <EllipsisIcon className="size-4" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuItem
-                    onClick={() =>
-                      void navigator.clipboard?.writeText(w.id).then(
-                        () => toast.success("Copied"),
-                        () => toast.error("Could not copy."),
-                      )
-                    }
+              <span className="ml-auto flex items-center gap-1">
+                <Button size="sm" variant="outline" onClick={() => void toggle(w)}>
+                  {w.enabled ? "Disable" : "Enable"}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label={`More actions for the webhook to ${w.url}`}
+                    className="inline-flex size-7 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
-                    Copy id
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setDeleting(w)}>
-                    Delete webhook…
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <EllipsisIcon className="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem
+                      onClick={() =>
+                        void navigator.clipboard?.writeText(w.id).then(
+                          () => toast.success("Copied"),
+                          () => toast.error("Could not copy."),
+                        )
+                      }
+                    >
+                      Copy id
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openEdit(w)}>Edit webhook…</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setDeleting(w)}>
+                      Delete webhook…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </span>
             </li>
           ))}
         </ul>
@@ -173,8 +219,12 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent showCloseButton className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>New webhook</DialogTitle>
-            <DialogDescription>Boof sends the events you choose to this URL.</DialogDescription>
+            <DialogTitle>{editing ? "Edit webhook" : "New webhook"}</DialogTitle>
+            <DialogDescription>
+              {editing
+                ? "The signing secret does not change."
+                : "Boof sends the events you choose to this URL."}
+            </DialogDescription>
           </DialogHeader>
           <form
             className="flex flex-col gap-3"
@@ -283,7 +333,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 Cancel
               </Button>
               <Button type="submit" disabled={busy}>
-                Create webhook
+                {editing ? "Save webhook" : "Create webhook"}
               </Button>
             </DialogFooter>
           </form>

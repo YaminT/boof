@@ -287,6 +287,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  updateWebhook: (
+    id: string,
+    patch: Partial<{ url: string; events: string[]; projects: "*" | string[]; enabled: boolean }>,
+  ) =>
+    http<PublicWebhook>(`${V1}/webhooks/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
   deleteWebhook: (id: string) =>
     http<{ ok: true }>(`${V1}/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   whoami: () => http<Whoami>(`${V1}/whoami`),
