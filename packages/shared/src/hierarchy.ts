@@ -333,44 +333,59 @@ export async function removeTask(
   });
 }
 
+/** Members detached per hold of the hierarchy lock by `removeEpic`. */
+const DETACH_BATCH = 100;
+
+/**
+ * Remove an epic, with `detach` clearing the epic of its tasks first. The hierarchy lock is a pid
+ * lock that others wait 30 s for, and each detached task is one fsynced write, so a big epic is
+ * detached `batch` tasks per hold: other operations get in between. Every pass scans again, and
+ * the pass that finds `batch` tasks or fewer detaches them and removes the epic record under the
+ * same hold, so no task can join after the last scan and keep naming a removed epic.
+ */
 export async function removeEpic(
   projectDir: string,
   epicId: string,
-  opts: { detach?: boolean; by?: string } = {},
+  opts: { detach?: boolean; by?: string; batch?: number } = {},
 ): Promise<{ detached: string[] }> {
-  return withHierarchyLock(projectDir, async () => {
-    const { store, epics, tasks, all } = await load(projectDir, true);
-    if (!all.some((e) => e.id === epicId)) {
-      throw bad("epic_not_found", `Epic not found: ${epicId}`);
-    }
-    const members = tasks.filter((t) => t.frontmatter.epicId === epicId);
-    if (members.length > 0 && !opts.detach) {
-      throw bad(
-        "has_tasks",
-        `Epic ${epicId} has ${members.length} task(s); pass detach to clear them`,
-      );
-    }
-    const detached: string[] = [];
-    for (const m of members) {
-      const tid = m.frontmatter.id;
-      try {
-        await store.modify(tid, (t) => {
-          delete t.frontmatter.epicId;
-        });
-      } catch (err) {
-        if (err instanceof TaskNotFoundError) continue; // deleted since the scan
-        throw err;
+  const batch = Math.max(1, opts.batch ?? DETACH_BATCH);
+  const detached: string[] = [];
+  for (;;) {
+    const finished = await withHierarchyLock(projectDir, async () => {
+      const { store, epics, tasks, all } = await load(projectDir, true);
+      if (!all.some((e) => e.id === epicId)) {
+        throw bad("epic_not_found", `Epic not found: ${epicId}`);
       }
-      await moved(
-        projectDir,
-        tid,
-        { epicId, parentId: m.frontmatter.parentId },
-        { parentId: m.frontmatter.parentId },
-        opts.by,
-      );
-      detached.push(tid);
-    }
-    await epics.remove(epicId, { by: opts.by });
-    return { detached };
-  });
+      const members = tasks.filter((t) => t.frontmatter.epicId === epicId);
+      if (members.length > 0 && !opts.detach) {
+        throw bad(
+          "has_tasks",
+          `Epic ${epicId} has ${members.length} task(s); pass detach to clear them`,
+        );
+      }
+      for (const m of members.slice(0, batch)) {
+        const tid = m.frontmatter.id;
+        try {
+          await store.modify(tid, (t) => {
+            delete t.frontmatter.epicId;
+          });
+        } catch (err) {
+          if (err instanceof TaskNotFoundError) continue; // deleted since the scan
+          throw err;
+        }
+        await moved(
+          projectDir,
+          tid,
+          { epicId, parentId: m.frontmatter.parentId },
+          { parentId: m.frontmatter.parentId },
+          opts.by,
+        );
+        detached.push(tid);
+      }
+      if (members.length > batch) return false;
+      await epics.remove(epicId, { by: opts.by });
+      return true;
+    });
+    if (finished) return { detached };
+  }
 }

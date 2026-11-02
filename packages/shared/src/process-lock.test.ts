@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -212,5 +212,64 @@ describe("inspectProcessLock", () => {
     expect(await inspectProcessLock(lock, fast)).toEqual({ held: false });
     // inspecting never removes the file
     expect((await readFile(lock, "utf8")).trim()).toBe("99999999");
+  });
+});
+
+describe("round 3 minors", () => {
+  const THIS = "11111111-1111-4111-8111-111111111111";
+
+  it("m1: our own id must be a real uuid too, or it overrides nothing", async () => {
+    await writeFile(lock, `${process.ppid} ${THIS}\n`);
+    // Not a uuid (a clock-derived id): the holder is live, so we wait.
+    await expect(run({ ...fast, bootId: "t:1700000200" })).rejects.toThrow(/busy/);
+  });
+
+  it("m2: a stale lock replaced while we waited for the guard is not removed (same text, new file)", async () => {
+    await writeFile(lock, ""); // empty and old: stale
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    await expect(
+      run({
+        ...fast,
+        guardHeld: async () => {
+          // Another process took over and wrote its own lock, which is empty for an instant
+          // (a file system without hard links): same text, different file.
+          await rm(lock);
+          await writeFile(lock, "");
+        },
+      }),
+    ).rejects.toThrow(/busy/);
+    expect(await readFile(lock, "utf8")).toBe(""); // not removed from under its writer
+  });
+
+  it("m3: an empty lock only 10 s old is waited for (the window is 30 s)", async () => {
+    await writeFile(lock, "");
+    const recent = new Date(Date.now() - 10_000);
+    await utimes(lock, recent, recent);
+    await expect(run()).rejects.toThrow(/busy/);
+    const old = new Date(Date.now() - 31_000);
+    await utimes(lock, old, old);
+    expect(await run()).toBe("ran");
+  });
+
+  it("m7: two spellings of one lock path (a symlinked directory) do not run at once", async () => {
+    await mkdir(join(dir, "real"));
+    await symlink(join(dir, "real"), join(dir, "alias"));
+    let inside = 0;
+    let overlap = 0;
+    const section = async () => {
+      inside++;
+      if (inside > 1) overlap++;
+      await new Promise((r) => setTimeout(r, 30));
+      inside--;
+    };
+    const go = (p: string) => withProcessLock(p, fast, section, timeoutError);
+    await Promise.all([
+      go(join(dir, "real", "k.lock")),
+      go(join(dir, "alias", "k.lock")),
+      go(join(dir, "real", "k.lock")),
+      go(join(dir, "alias", "k.lock")),
+    ]);
+    expect(overlap).toBe(0);
   });
 });

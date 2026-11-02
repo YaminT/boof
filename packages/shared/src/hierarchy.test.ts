@@ -219,6 +219,36 @@ describe("hierarchy rules", () => {
     expect((await store.get("b"))!.frontmatter.epicId).toBeUndefined();
   });
 
+  it("removeEpic --detach lets other hierarchy operations in between its batches", async () => {
+    await epics.create({ title: "web" });
+    for (let i = 0; i < 7; i++) await createTaskInHierarchy(dir, mk(`m${i}`, { epicId: "web" }));
+    await createTaskInHierarchy(dir, mk("loose"));
+    const order: string[] = [];
+    const removing = removeEpic(dir, "web", { detach: true, batch: 2 }).then((r) => {
+      order.push("removed");
+      return r;
+    });
+    const moving = moveTask(dir, "loose", { epicId: null }).then(() => order.push("moved"));
+    const [res] = await Promise.all([removing, moving]);
+    // A long detach does not hold the lock for the whole epic (one pid lock, 30 s waits).
+    expect(order).toEqual(["moved", "removed"]);
+    expect(res.detached.sort()).toEqual(["m0", "m1", "m2", "m3", "m4", "m5", "m6"]);
+    expect(await epics.get("web")).toBeNull();
+    for (let i = 0; i < 7; i++)
+      expect((await store.get(`m${i}`))!.frontmatter.epicId).toBeUndefined();
+  });
+
+  it("removeEpic batches also take a task that joined the epic between batches", async () => {
+    await epics.create({ title: "web" });
+    for (let i = 0; i < 4; i++) await createTaskInHierarchy(dir, mk(`m${i}`, { epicId: "web" }));
+    const removing = removeEpic(dir, "web", { detach: true, batch: 2 });
+    const joining = createTaskInHierarchy(dir, mk("late", { epicId: "web" })).catch((e) => e);
+    const [res, late] = await Promise.all([removing, joining]);
+    const left = (await store.list()).filter((t) => t.frontmatter.epicId === "web");
+    expect(left).toEqual([]); // never a task naming the removed epic
+    if (!(late instanceof Error)) expect(res.detached).toContain("late");
+  });
+
   it("filters by epic and parent", async () => {
     await epics.create({ title: "web" });
     await createTaskInHierarchy(dir, mk("p", { epicId: "web" }));

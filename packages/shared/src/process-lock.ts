@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { atomicWrite } from "./atomic.js";
 
 export interface ProcessLockOptions {
@@ -48,6 +48,8 @@ export function currentBootId(): string | undefined {
   if (process.platform === "darwin") {
     try {
       const id = execFileSync("sysctl", ["-n", "kern.bootsessionuuid"], {
+        // Runs synchronously on a process's first lock: a hung sysctl must not block it for long.
+        timeout: 2000,
         encoding: "utf8",
       }).trim();
       if (BOOT_UUID.test(id)) return (bootId = id);
@@ -102,11 +104,12 @@ const INCOMPLETE_LOCK_STALE_MS = 30_000;
  * not supported.
  */
 export async function withProcessLock<T>(
-  lock: string,
+  lockPath: string,
   opts: ProcessLockOptions,
   fn: () => Promise<T>,
   timeoutError: (holder: string, lockPath: string) => Error,
 ): Promise<T> {
+  const lock = await canonicalLockPath(lockPath);
   const pid = opts.pid ?? process.pid;
   const key = `${lock}\0${pid}`;
   const previous = localQueues.get(key) ?? Promise.resolve();
@@ -126,6 +129,16 @@ export async function withProcessLock<T>(
     release();
     if (localQueues.get(key) === tail) localQueues.delete(key);
   }
+}
+
+/**
+ * The lock path with its directory resolved through symlinks (created if missing): one lock has
+ * one name, so two spellings of a project path cannot run two critical sections at once.
+ */
+async function canonicalLockPath(lock: string): Promise<string> {
+  const dir = dirname(lock);
+  await mkdir(dir, { recursive: true });
+  return join(await realpath(dir), basename(lock));
 }
 
 const LOCK_TEXT = /^(\d+)(?: (\S+))?(?: (\d+))?$/;
@@ -182,16 +195,12 @@ function lockContent(pid: number, opts: ProcessLockOptions): string {
  */
 function isStale(held: ParsedLock, pid: number, opts: ProcessLockOptions): boolean {
   const boot = ourBoot(opts);
-  const sameBootKnown =
-    boot !== undefined &&
-    held.boot !== undefined &&
-    BOOT_UUID.test(held.boot) &&
-    held.boot.toLowerCase() === boot.toLowerCase();
-  const otherBoot =
-    boot !== undefined &&
-    held.boot !== undefined &&
-    BOOT_UUID.test(held.boot) &&
-    held.boot.toLowerCase() !== boot.toLowerCase();
+  // Both ids must be real uuids: ours too, or a clock-derived one could override a live pid.
+  const ours = boot !== undefined && BOOT_UUID.test(boot) ? boot.toLowerCase() : undefined;
+  const theirs =
+    held.boot !== undefined && BOOT_UUID.test(held.boot) ? held.boot.toLowerCase() : undefined;
+  const sameBootKnown = ours !== undefined && theirs === ours;
+  const otherBoot = ours !== undefined && theirs !== undefined && theirs !== ours;
   if (otherBoot || held.pid === pid || !(opts.isProcessAlive ?? defaultAlive)(held.pid))
     return true;
   if (sameBootKnown && held.ticks !== undefined) {
@@ -226,9 +235,13 @@ async function attemptLock(lock: string, pid: number, opts: ProcessLockOptions):
       if ((err as NodeJS.ErrnoException).code === "ENOENT") continue; // just released
       throw err;
     }
+    const seen = await stat(lock).catch(() => null);
+    if (!seen) continue; // just released
     const held = parseLock(text);
-    const stale = held ? isStale(held, pid, opts) : await olderThan(lock, INCOMPLETE_LOCK_STALE_MS);
-    if (stale && (await takeOver(lock, guard, text, opts.guardHeld))) continue;
+    const stale = held
+      ? isStale(held, pid, opts)
+      : Date.now() - seen.mtimeMs > INCOMPLETE_LOCK_STALE_MS;
+    if (stale && (await takeOver(lock, guard, text, seen, opts.guardHeld))) continue;
     return { acquired: false, holder: held ? String(held.pid) : text };
   }
 }
@@ -263,9 +276,10 @@ const heldHere = new Set<string>();
  * lock is not queued like `withProcessLock`'s: do not use the same file with both.
  */
 export async function tryAcquireProcessLock(
-  lock: string,
+  lockPath: string,
   opts: ProcessLockOptions = {},
 ): Promise<HeldProcessLock | null> {
+  const lock = await canonicalLockPath(lockPath);
   const pid = opts.pid ?? process.pid;
   const key = `${lock}\0${pid}`;
   if (heldHere.has(key)) return null;
@@ -293,9 +307,13 @@ export async function tryAcquireProcessLock(
  * The holder may be this process (`pid` is then our own, held through {@link tryAcquireProcessLock}).
  */
 export async function inspectProcessLock(
-  lock: string,
+  lockPath: string,
   opts: ProcessLockOptions = {},
 ): Promise<{ held: false } | { held: true; pid: number }> {
+  const lock = await realpath(dirname(lockPath)).then(
+    (dir) => join(dir, basename(lockPath)),
+    () => lockPath,
+  );
   const pid = opts.pid ?? process.pid;
   const text = (await readFile(lock, "utf8").catch(() => "")).trim();
   const held = parseLock(text);
@@ -305,19 +323,12 @@ export async function inspectProcessLock(
   return isStale(held, pid, opts) ? { held: false } : { held: true, pid: held.pid };
 }
 
-async function olderThan(path: string, ms: number): Promise<boolean> {
-  const age = await stat(path).then(
-    (st) => Date.now() - st.mtimeMs,
-    () => 0,
-  );
-  return age > ms;
-}
-
-/** Remove the stale lock naming `text` while holding the takeover guard; false = guard busy. */
+/** Remove the stale lock we read as `text` (file `seen`) while holding the takeover guard; false = guard busy. */
 async function takeOver(
   lock: string,
   guard: string,
   text: string,
+  seen: { ino: number; mtimeMs: number },
   guardHeld?: () => Promise<void>,
 ): Promise<boolean> {
   try {
@@ -333,8 +344,18 @@ async function takeOver(
   }
   try {
     await guardHeld?.();
+    // The same file we judged stale, not another one with the same text: on a file system
+    // without hard links a new lock is empty for an instant, and an empty one looks like the old.
     const again = await readFile(lock, "utf8").catch(() => null);
-    if (again !== null && again.trim() === text) await rm(lock, { force: true });
+    const now = await stat(lock).catch(() => null);
+    if (
+      again !== null &&
+      again.trim() === text &&
+      now?.ino === seen.ino &&
+      now.mtimeMs === seen.mtimeMs
+    ) {
+      await rm(lock, { force: true });
+    }
   } finally {
     // Only our own guard: one older than the stale window may have been replaced by another
     // process's meanwhile.
