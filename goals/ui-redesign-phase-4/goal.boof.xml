@@ -17,6 +17,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Carried over from the UI redesign (phase 3 final review, 2026-10-29); not started.</version>
+        <version number="2" status="done">Shipped: Plans list and plan page with progress, status pills and overflow menus; goal reorder by drag, Alt+arrows and the row menu; goal side panel with history and linked task; goal editor on the plan version; global Inbox with inline answers; legacy plan and actions CSS removed.</version>
       </versions>
     </status>
     <tests>

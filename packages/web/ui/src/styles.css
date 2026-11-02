@@ -297,14 +297,6 @@ button.danger {
   color: var(--text);
 }
 
-/* ---------- Toolbar & task list ---------- */
-.toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 18px;
-}
-
 ul {
   list-style: none;
   padding: 0;
@@ -322,20 +314,6 @@ ul {
   cursor: pointer;
 }
 .task-title:hover {
-  color: var(--legacy-accent);
-}
-.retry-btn {
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.retry-btn:hover {
-  border-color: var(--legacy-accent);
   color: var(--legacy-accent);
 }
 .btn-secondary,
@@ -419,19 +397,6 @@ label small {
 .status-badge.archived {
   opacity: 0.7;
 }
-.archive-btn {
-  background: transparent;
-  border: 1px solid var(--legacy-border);
-  color: var(--legacy-muted);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.archive-btn:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
 .delete-btn {
   background: transparent;
   border: 1px solid var(--legacy-border);
@@ -505,16 +470,10 @@ input[type="number"] {
   width: 120px;
   max-width: 100%;
 }
-.toolbar select,
-.toolbar label {
-  width: auto;
-  margin: 0;
-}
 
 /* ---------- Panels / cards ---------- */
 .settings-page,
-.commands-tab,
-.actions-tab {
+.commands-tab {
   background: var(--panel);
   border: 1px solid var(--legacy-border);
   border-radius: var(--legacy-radius);
@@ -556,9 +515,7 @@ input[type="number"] {
   color: var(--green);
   font-weight: 500;
 }
-
-.reports pre,
-.questions pre {
+.reports pre {
   background: var(--inset);
   border: 1px solid var(--legacy-border);
   padding: 12px;
@@ -593,13 +550,6 @@ input[type="number"] {
 .commands-list code {
   font-size: 11px;
   color: var(--legacy-muted);
-}
-
-/* ---------- Actions ---------- */
-.action-card {
-  border-bottom: 1px solid var(--legacy-border);
-  padding-bottom: 20px;
-  margin-bottom: 20px;
 }
 
 /* ---------- Settings ---------- */
@@ -893,15 +843,6 @@ input[type="number"] {
   color: var(--legacy-muted);
   border: 1px solid var(--border-strong);
 }
-.project-tag {
-  margin-left: 6px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--legacy-accent);
-  background: var(--accent-weak);
-}
 .path-row {
   display: flex;
   gap: 8px;
@@ -951,126 +892,6 @@ textarea:focus-visible {
   .topbar-dir {
     max-width: 200px;
   }
-}
-
-/* ---------- Plans ---------- */
-.plan-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--panel);
-  border: 1px solid var(--legacy-border);
-  border-radius: var(--legacy-radius);
-}
-.plan-table th,
-.plan-table td {
-  text-align: left;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--legacy-border);
-  vertical-align: middle;
-  font-size: 14px;
-}
-.plan-table th {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--legacy-muted);
-}
-.plan-table select {
-  width: auto;
-  margin: 0;
-  padding: 3px 6px;
-}
-.plan-id,
-.plan-date {
-  color: var(--legacy-muted);
-  font-size: 12px;
-}
-.plan-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 14px 0 6px;
-}
-.plan-header h2 {
-  margin: 0;
-}
-.plan-desc {
-  color: var(--legacy-muted);
-  margin: 0 0 12px;
-}
-.plan-actions {
-  flex-wrap: wrap;
-}
-.plan-notice {
-  background: var(--accent-weak);
-  color: var(--legacy-accent);
-  padding: 8px 12px;
-  border-radius: 8px;
-}
-.status-badge.plan-active {
-  background: rgba(47, 128, 85, 0.12);
-  border-color: transparent;
-  color: var(--green);
-}
-.status-badge.plan-archived {
-  opacity: 0.7;
-}
-.goal-actions {
-  white-space: nowrap;
-  text-align: right;
-}
-.goal-actions button {
-  margin-left: 4px;
-  cursor: pointer;
-}
-.plan-task-link {
-  background: transparent;
-  border: none;
-  color: var(--text);
-  cursor: pointer;
-  padding: 0;
-  font-size: 13px;
-}
-.plan-task-link:hover {
-  color: var(--legacy-accent);
-}
-.spec-row td {
-  background: var(--inset);
-}
-.spec-view p {
-  margin: 4px 0;
-}
-.spec-cols {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-.spec-list {
-  margin: 4px 0;
-  padding-left: 18px;
-  list-style: disc;
-}
-.sync-section h4 {
-  margin: 10px 0 2px;
-}
-.goal-form-row {
-  display: flex;
-  gap: 12px;
-}
-.goal-form-row > label {
-  flex: 1;
-}
-.plan-actions label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.plan-actions input[type="checkbox"] {
-  width: auto;
-  margin: 0;
-}
-.plan-detail .plan-table {
-  margin-bottom: 12px;
 }
 
 /* Budget: banner while a day budget stops the runner, and spend bars. */

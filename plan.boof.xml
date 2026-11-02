@@ -43,10 +43,10 @@
     <goal id="ui-linkable-tabs" path="goals/ui-linkable-tabs" order="40" status="done"></goal>
     <goal id="ui-archived-projects" path="goals/ui-archived-projects" order="41" status="plan"></goal>
     <goal id="ui-project-overrides" path="goals/ui-project-overrides" order="42" status="done"></goal>
-    <goal id="ui-return-to-plan" path="goals/ui-return-to-plan" order="43" status="plan"><depends-on>ui-linkable-tabs</depends-on></goal>
+    <goal id="ui-return-to-plan" path="goals/ui-return-to-plan" order="43" status="done"><depends-on>ui-linkable-tabs</depends-on></goal>
     <goal id="ui-settings-form-keeps-edits" path="goals/ui-settings-form-keeps-edits" order="44" status="done"></goal>
-    <goal id="ui-optimistic-concurrency" path="goals/ui-optimistic-concurrency" order="45" status="plan"></goal>
-    <goal id="ui-surface-action-errors" path="goals/ui-surface-action-errors" order="46" status="plan"></goal>
+    <goal id="ui-optimistic-concurrency" path="goals/ui-optimistic-concurrency" order="45" status="done"></goal>
+    <goal id="ui-surface-action-errors" path="goals/ui-surface-action-errors" order="46" status="done"></goal>
     <goal id="ui-a11y-reorder-and-modals" path="goals/ui-a11y-reorder-and-modals" order="47" status="plan"><depends-on>ui-drag-reorder-goals</depends-on></goal>
     <goal id="ui-clients-rotate-and-scopes" path="goals/ui-clients-rotate-and-scopes" order="48" status="done"></goal>
     <goal id="docs-consistency-pass" path="goals/docs-consistency-pass" order="49" status="done"></goal>
@@ -62,7 +62,7 @@
     <goal id="chat-console" path="goals/chat-console" order="59" status="plan"><depends-on>owlish-accounts</depends-on></goal>
     <goal id="n8n-pipelines" path="goals/n8n-pipelines" order="60" status="plan"></goal>
     <goal id="ui-phase-3-residuals" path="goals/ui-phase-3-residuals" order="61" status="plan"></goal>
-    <goal id="ui-redesign-phase-4" path="goals/ui-redesign-phase-4" order="62" status="plan"></goal>
+    <goal id="ui-redesign-phase-4" path="goals/ui-redesign-phase-4" order="62" status="done"></goal>
     <goal id="ui-redesign-phase-5" path="goals/ui-redesign-phase-5" order="63" status="plan"><depends-on>ui-redesign-phase-4</depends-on></goal>
     <goal id="ui-redesign-phase-6" path="goals/ui-redesign-phase-6" order="64" status="plan"><depends-on>ui-redesign-phase-5</depends-on></goal>
     <goal id="step-closing-entry" path="goals/step-closing-entry" order="65" status="done"></goal>
