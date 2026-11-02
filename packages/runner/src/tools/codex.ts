@@ -88,6 +88,10 @@ export class CodexTool implements Tool {
     const args = opts.resumeSessionId
       ? ["exec", "resume", opts.resumeSessionId, "--json", "--model", opts.model]
       : ["exec", "--json", "--model", opts.model];
+    // $CODEX_HOME/config.toml is where Codex keeps the user's MCP servers; auth still comes from
+    // CODEX_HOME. The run needs nothing else from it: the model is passed above, and approval and
+    // sandbox below (a user's model_provider or base_url is lost: set inheritMcpServers for that).
+    if (!opts.inheritMcpServers) args.push("--ignore-user-config");
     if (opts.autoApprove) {
       // Full auto-approval, no sandbox — the runner's equivalent of claude's
       // --dangerously-skip-permissions. Mutually exclusive with --full-auto

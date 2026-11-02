@@ -755,6 +755,7 @@ describe("session resume", () => {
       "--json",
       "--model",
       "m",
+      "--ignore-user-config",
       "--dangerously-bypass-approvals-and-sandbox",
       "-o",
       "/tmp/l",
@@ -922,6 +923,22 @@ describe("user MCP servers", () => {
     );
     expect(claude.buildArgs({ ...withRole, inheritMcpServers: true })).not.toContain(
       "--strict-mcp-config",
+    );
+  });
+
+  it("codex ignores the user's config.toml (where its MCP servers live) unless the run opts back in", () => {
+    const codex = new CodexTool();
+    const off = codex.buildArgs(withRole, "/tmp/last");
+    expect(off).toContain("--ignore-user-config");
+    expect(off.indexOf("--ignore-user-config")).toBeLessThan(off.indexOf("-o"));
+    const resumed = codex.buildArgs({ ...withRole, resumeSessionId: "thread-1" }, "/tmp/last");
+    expect(resumed.slice(0, 3)).toEqual(["exec", "resume", "thread-1"]);
+    expect(resumed).toContain("--ignore-user-config");
+    // Everything the run needs is still passed explicitly: the model and the approval mode.
+    expect(off).toEqual(expect.arrayContaining(["--model", withRole.model]));
+    expect(off).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(codex.buildArgs({ ...withRole, inheritMcpServers: true }, "/tmp/last")).not.toContain(
+      "--ignore-user-config",
     );
   });
 });
