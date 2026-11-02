@@ -41,12 +41,6 @@ describe("runAction", () => {
     await runAction(() => Promise.reject("boom"), n);
     expect(n.error).toHaveBeenCalledExactlyOnceWith("boom");
   });
-});
-
-describe("errorMessage", () => {
-  it("uses the message of a plain Error", () => {
-    expect(errorMessage(new Error("nope"))).toBe("nope");
-  });
 
   it("onError that returns true suppresses the error toast", async () => {
     const n = notifier();
@@ -59,5 +53,11 @@ describe("errorMessage", () => {
     const n = notifier();
     await runAction(() => Promise.reject(new Error("x")), n, { onError: () => false });
     expect(n.error).toHaveBeenCalledExactlyOnceWith("x");
+  });
+});
+
+describe("errorMessage", () => {
+  it("uses the message of a plain Error", () => {
+    expect(errorMessage(new Error("nope"))).toBe("nope");
   });
 });

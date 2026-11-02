@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project } from "@boof-runner/shared/schema";
 import { api, ApiError } from "../api.js";
 import { desktop } from "../desktop.js";
 import { boofRunnerLogoUrl } from "../assets.js";
@@ -27,7 +27,6 @@ import {
   type ProjectPathMode,
 } from "../lib/project-form.js";
 import { FolderOpenIcon } from "./Icons.js";
-import { RunnerToggle } from "./RunnerToggle.js";
 
 /** Form body shared by the dialog and the first-run gate. */
 function AddProjectForm({
@@ -249,67 +248,5 @@ export function AddProjectGate({
         />
       </div>
     </div>
-  );
-}
-
-/**
- * Top bar: runner banner on the left; project switcher, working directory and
- * "Add project" on the right.
- */
-export function ProjectSwitcher({
-  settings,
-  projects,
-  selected,
-  runnerReport,
-  onSelect,
-  onAdded,
-  onChange,
-}: {
-  settings: Settings;
-  projects: Project[];
-  selected: Project;
-  runnerReport?: string;
-  onSelect: (id: string) => void;
-  onAdded: (project: Project) => void;
-  onChange: () => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const enabled = settings.runner.enabled;
-  return (
-    <header className={`topbar ${enabled ? "runner-on" : "runner-off"}`}>
-      <RunnerToggle settings={settings} report={runnerReport} onChange={onChange} />
-      <div className="topbar-right">
-        <label className="project-select">
-          <span className="topbar-dir-label">Project</span>
-          <select value={selected.id} onChange={(e) => onSelect(e.target.value)}>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.paused ? " (paused)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        {selected.paused && <span className="paused-badge">Paused</span>}
-        <div className="topbar-dir" title={selected.workingDirectory}>
-          <span className="topbar-dir-label">Working directory</span>
-          <span className="topbar-dir-path">
-            <bdi>{selected.workingDirectory}</bdi>
-          </span>
-        </div>
-        <button className="retry-btn" onClick={() => setAdding(true)}>
-          Add project
-        </button>
-      </div>
-      <AddProjectModal
-        open={adding}
-        onOpenChange={setAdding}
-        projectsRoot={settings.projectsRoot}
-        onAdded={(p) => {
-          setAdding(false);
-          onAdded(p);
-        }}
-      />
-    </header>
   );
 }

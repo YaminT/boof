@@ -84,6 +84,12 @@ export function TaskForm({
   // The `updated` the base values came from; sent with a save so a newer copy is refused.
   const baseUpdated = useRef<string | undefined>(task?.frontmatter.updated);
   const [conflict, setConflict] = useState(false);
+  // What a 409 told us: the `updated` now on the server, and the status the failed save carried
+  // (so Overwrite finishes the same action, for example Queue).
+  const conflictUpdated = useRef<string | undefined>(undefined);
+  const conflictStatus = useRef<"pending" | undefined>(undefined);
+  const [conflictTick, setConflictTick] = useState(0);
+  const noticeRef = useRef<HTMLDivElement>(null);
   // The prompt the user had typed when a run started, kept so it can be copied.
   const [lost, setLost] = useState<{ prompt: string | null } | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -105,7 +111,10 @@ export function TaskForm({
   useEffect(() => {
     if (!task) return;
     if (key(server) === key(base)) {
+      // The server copy matches what the form started from again: nothing to warn about.
       baseUpdated.current = task.frontmatter.updated;
+      setElsewhere(false);
+      setConflict(false);
       return;
     }
     if (dirty) setElsewhere(true);
@@ -151,26 +160,36 @@ export function TaskForm({
     try {
       const ok = await act(
         async () => {
-          // Overwrite: take the copy that is there now as the base, then write over it.
-          if (overwrite)
-            baseUpdated.current = (await api.getTask(pid, task.frontmatter.id)).frontmatter.updated;
+          // Overwrite: write over the copy that is there now. The base only moves once it worked.
+          let expected = baseUpdated.current;
+          if (overwrite) {
+            expected =
+              conflictUpdated.current ??
+              (await api.getTask(pid, task.frontmatter.id)).frontmatter.updated;
+          }
           return api.updateTask(pid, task.frontmatter.id, {
             ...payload(),
             ...(status ? { status } : {}),
-            ...(baseUpdated.current ? { expectedUpdated: baseUpdated.current } : {}),
+            ...(expected ? { expectedUpdated: expected } : {}),
           });
         },
         {
           failure: "Could not save",
           onError: (e) => {
             if (conflictOf(e) !== "task") return false;
+            const current = (e as { details?: { currentUpdated?: string } }).details
+              ?.currentUpdated;
+            conflictUpdated.current = current;
+            conflictStatus.current = status;
             setConflict(true);
+            setConflictTick((n) => n + 1);
             return true;
           },
         },
       );
       if (!ok) return false;
       baseUpdated.current = ok.frontmatter.updated;
+      conflictUpdated.current = undefined;
       setBase(form);
       setElsewhere(false);
       setConflict(false);
@@ -215,11 +234,17 @@ export function TaskForm({
     return made.frontmatter.id;
   };
 
+  // Each refused save moves focus to the notice, so the choice is announced and one key away.
+  useEffect(() => {
+    if (conflictTick > 0) noticeRef.current?.focus();
+  }, [conflictTick]);
+
   const discard = () => {
     setBase(server);
     setForm(server);
     setElsewhere(false);
     setConflict(false);
+    conflictUpdated.current = undefined;
     baseUpdated.current = task?.frontmatter.updated;
   };
 
@@ -262,25 +287,38 @@ export function TaskForm({
           </Button>
         </div>
       )}
-      {(elsewhere || conflict) && (
-        <div
-          role="status"
-          className="flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention"
-        >
-          <span>This task changed after you opened it.</span>
-          <Button type="button" variant="outline" size="xs" onClick={discard}>
-            Reload
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={() => void save(undefined, true)}
-          >
-            Overwrite
-          </Button>
-        </div>
-      )}
+      {/* Always mounted, so a change of its text is announced; focus lands here after a refused save. */}
+      <div
+        ref={noticeRef}
+        tabIndex={-1}
+        role={conflict ? "alert" : "status"}
+        className={
+          elsewhere || conflict
+            ? "flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            : "sr-only"
+        }
+      >
+        {(elsewhere || conflict) && (
+          <>
+            <span>
+              This task changed after you opened it.
+              {conflict && " Your changes were not saved."}
+            </span>
+            <Button type="button" variant="outline" size="xs" onClick={discard} disabled={isBusy}>
+              Reload
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={isBusy || !form.title.trim()}
+              onClick={() => void save(conflictStatus.current, true)}
+            >
+              Overwrite
+            </Button>
+          </>
+        )}
+      </div>
       <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
         <Field label="Title">
           <Input
