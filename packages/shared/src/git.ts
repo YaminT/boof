@@ -104,6 +104,11 @@ export async function currentBranch(dir: string): Promise<string | null> {
   }
 }
 
+/**
+ * True when `refs/heads/<branch>` exists in the repository of `workingDir`. Not `plan-base`'s
+ * `branchExists` (a different export: it takes a repo root, trims, and returns false on a failed
+ * git call), which is why this one has its own name.
+ */
 export async function localBranchExists(workingDir: string, branch: string): Promise<boolean> {
   const res = await git(workingDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
   return res.code === 0;
