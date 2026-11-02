@@ -2,15 +2,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  branchExists,
+  localBranchExists,
   git,
   isGitRepo,
   leftoversBranch,
   pathExists,
   registeredWorktreeBranch,
   canonical,
+  untrackedFiles,
+  untrackedPatch,
 } from "@boof-runner/shared";
-import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";
 
@@ -90,7 +91,7 @@ export async function createWorktree(
   const path = join(root, taskId);
   const meta = await readMeta(root, taskId);
   const hasPath = await pathExists(path);
-  const hasBranch = await branchExists(workingDir, branch);
+  const hasBranch = await localBranchExists(workingDir, branch);
   const baseIgnored = !!opts.base && (hasPath || hasBranch);
 
   if (hasPath) {
@@ -385,7 +386,7 @@ async function deleteWork(workingDir: string, wt: Worktree, why: string): Promis
     return [`Kept worktree ${wt.path}: git worktree remove failed: ${remove.err || remove.out}`];
   }
   const branches = [wt.branch];
-  if (await branchExists(workingDir, leftoversBranch(wt))) branches.push(leftoversBranch(wt));
+  if (await localBranchExists(workingDir, leftoversBranch(wt))) branches.push(leftoversBranch(wt));
   for (const b of branches) {
     const del = await git(workingDir, ["branch", "-D", b]);
     if (del.code !== 0) lines.push(`Could not delete branch ${b}: ${del.err || del.out}`);

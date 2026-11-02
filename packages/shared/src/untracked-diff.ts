@@ -1,4 +1,4 @@
-import { execCommand } from "@boof-runner/shared";
+import { execCommand } from "./process.js";
 
 /** Most untracked files listed or diffed for one review. */
 export const MAX_UNTRACKED = 200;

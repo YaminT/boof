@@ -13,15 +13,13 @@ import {
   SettingsStore,
   type Plan,
   scaffoldDataRoot,
-} from "@boof-runner/shared";
-import {
   importFromRepo,
   mergeImportedGoals,
   PlanNotActiveError,
   syncPlan,
   taskStatusForPlan,
   type SyncResult,
-} from "@boof-runner/runner";
+} from "@boof-runner/shared";
 import { ProjectResolutionError, resolveProject } from "./headless.js";
 
 export const PLAN_HELP = `boof-runner plan — import, sync and export a project's plans

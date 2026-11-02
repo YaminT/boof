@@ -26,17 +26,13 @@ import {
   isGitRepo,
   pruneStaleWorktrees,
   repoCommonDir,
-} from "@boof-runner/shared";
-import {
-  RunnerEngine,
-  ToolRegistry,
   importFromRepo,
   mergeImportedGoals,
   selectActionableUnits,
   syncPlan,
   type ScannedUnit,
-  type TickResult,
-} from "@boof-runner/runner";
+} from "@boof-runner/shared";
+import { RunnerEngine, ToolRegistry, type TickResult } from "@boof-runner/runner";
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";

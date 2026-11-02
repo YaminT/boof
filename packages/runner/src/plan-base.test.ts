@@ -10,10 +10,10 @@ import {
   TaskStore,
   testGoal,
   type Goal,
+  createIntegrationBranch,
 } from "@boof-runner/shared";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof-runner/shared";
-import { createIntegrationBranch } from "./plan-base.js";
 import { mockState, resetMock } from "./tools/mock.js";
 
 let dataRoot: string;

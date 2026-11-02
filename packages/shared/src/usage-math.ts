@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@boof-runner/shared";
+import type { TokenUsage } from "./schema.js";
 
 export const UNKNOWN_USAGE: TokenUsage = {
   inputTokens: 0,

@@ -22,8 +22,6 @@ import {
   type PlanSource,
   type PlanStatus,
   type Principal,
-} from "@boof-runner/shared";
-import {
   archiveRemovedGoalTasks,
   importFromRepo,
   mergeImportedGoals,
@@ -31,7 +29,7 @@ import {
   syncPlan,
   taskStatusForPlan,
   type SyncResult,
-} from "@boof-runner/runner";
+} from "@boof-runner/shared";
 import type { z } from "zod";
 import { formatIssues, OpError } from "../errors.js";
 import { sleepUnlessAborted } from "../abort.js";

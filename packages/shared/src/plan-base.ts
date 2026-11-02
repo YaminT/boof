@@ -7,7 +7,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execCommand } from "@boof-runner/shared";
+import { execCommand } from "./process.js";
 
 const GIT_TIMEOUT_MS = 60_000;
 

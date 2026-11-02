@@ -30,14 +30,14 @@ import {
   branchHead,
   currentBranch,
   isGitRepo,
+  sumUsage,
+  UsageStore,
 } from "@boof-runner/shared";
 import { ToolRunError, transientReason } from "./tools/errors.js";
-import { sumUsage } from "./tools/usage.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { announceBudgetExceeded } from "./budget.js";
-import { UsageStore } from "./usage-store.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 import {
   diffAgainstBase,

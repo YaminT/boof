@@ -3,21 +3,17 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  applyGoalInputs,
-  AuthStore,
-  defaultSettings,
-  PlanStore,
-  ProjectStore,
-  taskPromptInjectionsPath,
-  taskStopRequestPath,
-  TaskStore,
-  testGoal,
-  type Goal,
-  type Plan,
-  type Project,
-} from "@boof-runner/shared";
-import { execCommand } from "@boof-runner/shared";
+import { applyGoalInputs } from "./plan-ops.js";
+import { AuthStore } from "./auth-store.js";
+import { defaultSettings } from "./settings.js";
+import { PlanStore } from "./plan-store.js";
+import { ProjectStore } from "./project-store.js";
+import { taskPromptInjectionsPath, taskStopRequestPath } from "./paths.js";
+import { TaskStore } from "./store.js";
+import { testGoal } from "./plan-fixtures.js";
+import { type Goal, type Plan } from "./plan-schema.js";
+import { type Project } from "./schema.js";
+import { execCommand } from "./process.js";
 import { buildGoalPrompt, PlanNotActiveError, syncPlan, taskStatusForPlan } from "./plan-sync.js";
 
 let dataRoot: string;

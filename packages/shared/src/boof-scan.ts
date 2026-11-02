@@ -16,7 +16,7 @@ import {
   type BoofGoal,
   type BoofPlan,
   type BoofStatus,
-} from "@boof-runner/shared";
+} from "./boof-goal.js";
 
 /** Directories never worth walking into. */
 const IGNORED_DIRS = new Set([

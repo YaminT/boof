@@ -104,7 +104,7 @@ export async function currentBranch(dir: string): Promise<string | null> {
   }
 }
 
-export async function branchExists(workingDir: string, branch: string): Promise<boolean> {
+export async function localBranchExists(workingDir: string, branch: string): Promise<boolean> {
   const res = await git(workingDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
   return res.code === 0;
 }

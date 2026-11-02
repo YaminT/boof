@@ -1,8 +1,7 @@
 import type { Role } from "@boof-runner/shared";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
-import { execCommand } from "@boof-runner/shared";
+import { execCommand, parseUsage } from "@boof-runner/shared";
 import { ToolRunError } from "./errors.js";
-import { parseUsage } from "./usage.js";
 import { formatQuestions, withQuestions } from "./questions.js";
 
 /**

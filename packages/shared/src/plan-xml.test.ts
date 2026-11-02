@@ -2,20 +2,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { exportPlanXml, goalFilePath } from "./plan-xml.js";
 import {
-  exportPlanXml,
-  goalFilePath,
   GOAL_FILE,
   PLAN_FILE,
-  PlanSchema,
   parseGoal,
   serializeGoal,
   serializePlan,
-  testGoal,
-  validatePlan,
   type BoofGoal,
-  type Plan,
-} from "@boof-runner/shared";
+} from "./boof-goal.js";
+import { PlanSchema, type Plan } from "./plan-schema.js";
+import { testGoal } from "./plan-fixtures.js";
+import { validatePlan } from "./plan-validate.js";
 import { buildUnitPrompt, scanRepo } from "./boof-scan.js";
 import { goalsFromScan, mergeImportedGoals } from "./plan-import.js";
 import { buildGoalPrompt } from "./plan-sync.js";

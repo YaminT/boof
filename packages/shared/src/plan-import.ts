@@ -2,19 +2,12 @@
  * Import a repository's goal.boof.xml / plan.boof.xml files into plan goals (plan model, import).
  * Built on {@link scanRepo}; pure apart from reading the repository.
  */
-import {
-  historyFromBoofGoal,
-  normalizeGoalPath,
-  nowIso,
-  sameGoalContent,
-  specFromBoofGoal,
-  toKebabId,
-  uniqueKebabId,
-  reopenDoneGoal,
-  withGoalStatus,
-  type Goal,
-  type GoalStatus,
-} from "@boof-runner/shared";
+import { historyFromBoofGoal, specFromBoofGoal } from "./plan-xml.js";
+import { normalizeGoalPath, type Goal, type GoalStatus } from "./plan-schema.js";
+import { nowIso } from "./runtime.js";
+import { sameGoalContent } from "./plan-diff.js";
+import { toKebabId, uniqueKebabId } from "./ids.js";
+import { reopenDoneGoal, withGoalStatus } from "./plan-ops.js";
 import { scanRepo, type ScanResult } from "./boof-scan.js";
 
 export interface ImportedGoals {

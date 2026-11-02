@@ -5,41 +5,28 @@
  */
 import { appendFile, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { execCommand } from "@boof-runner/shared";
-import { createIntegrationBranch, isAncestor } from "./plan-base.js";
+import { execCommand } from "./process.js";
+import { appendEvent } from "./events.js";
+import { AuthStore } from "./auth-store.js";
+import { diffGoalContent, renderChanges, renderGoalContent, unifiedDiff } from "./plan-diff.js";
+import { isKebabId, taskPromptInjectionsPath, workingAreaDir } from "./paths.js";
+import { newTask, type Task } from "./task-file.js";
+import { nowIso } from "./runtime.js";
+import { PlanStore, PlanVersionConflict } from "./plan-store.js";
+import { securitySettings } from "./settings.js";
+import { TaskStore, TaskNotRunningError, appendInjectedEntry } from "./store.js";
+import { uniqueKebabId } from "./ids.js";
+import { withGoalStatus } from "./plan-ops.js";
+import { withFileLock, atomicWrite } from "./atomic.js";
+import { type Goal, type GoalSynced, type GoalTaskRef, type Plan } from "./plan-schema.js";
 import {
-  appendEvent,
-  AuthStore,
-  diffGoalContent,
-  isKebabId,
-  newTask,
-  nowIso,
-  PlanStore,
-  renderChanges,
-  renderGoalContent,
-  securitySettings,
-  TaskStore,
-  TaskNotRunningError,
-  appendInjectedEntry,
-  taskPromptInjectionsPath,
-  uniqueKebabId,
-  unifiedDiff,
-  withGoalStatus,
-  withFileLock,
-  workingAreaDir,
-  PlanVersionConflict,
-  type Goal,
-  type GoalSynced,
-  type GoalTaskRef,
-  type Plan,
   type Project,
   type Settings,
   type Status,
-  type Task,
   type TaskOrigin,
   type TaskTools,
-  atomicWrite,
-} from "@boof-runner/shared";
+} from "./schema.js";
+import { createIntegrationBranch, isAncestor } from "./plan-base.js";
 
 /** Sync was asked for a plan that is not `active`. */
 export class PlanNotActiveError extends Error {

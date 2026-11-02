@@ -12,8 +12,10 @@ import {
   TaskStore,
   type BoofGoal,
   execCommand,
+  buildUnitPrompt,
+  selectActionableUnits,
 } from "@boof-runner/shared";
-import { buildUnitPrompt, selectActionableUnits, ToolRegistry } from "@boof-runner/runner";
+import { ToolRegistry } from "@boof-runner/runner";
 import { drainQueue, scanRepoToTasks } from "./headless.js";
 import { planCommand } from "./plan-cli.js";
 
