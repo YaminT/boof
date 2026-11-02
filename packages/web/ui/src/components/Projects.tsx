@@ -1,87 +1,155 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
-import { api } from "../api.js";
+import { api, ApiError } from "../api.js";
 import { desktop } from "../desktop.js";
 import { boofRunnerLogoUrl } from "../assets.js";
-import { Modal } from "./Modal.js";
+import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
+import { NativeSelect } from "@/ui/native-select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/ui/dialog";
+import {
+  autoPathHint,
+  EMPTY_PROJECT_FORM,
+  needsConfirm,
+  projectFormIssues,
+  submitLabel,
+  toCreateProjectInput,
+  type ProjectFormState,
+  type ProjectPathMode,
+} from "../lib/project-form.js";
 import { FolderOpenIcon } from "./Icons.js";
 import { RunnerToggle } from "./RunnerToggle.js";
 
-/** Form body shared by the modal and the first-run gate. */
+/** Form body shared by the dialog and the first-run gate. */
 function AddProjectForm({
   showDefaultOption,
+  projectsRoot,
   onAdded,
-  onCancel,
+  footer,
 }: {
   /** Offer "make default"; the first project becomes the default automatically. */
   showDefaultOption: boolean;
+  projectsRoot?: string;
   onAdded: (project: Project) => void;
-  onCancel?: () => void;
+  /** Renders the action row; gets the submit button so the caller can place it. */
+  footer: (submit: ReactNode) => ReactNode;
 }) {
-  const [path, setPath] = useState("");
-  const [name, setName] = useState("");
+  const [form, setForm] = useState<ProjectFormState>(EMPTY_PROJECT_FORM);
   const [makeDefault, setMakeDefault] = useState(!showDefaultOption);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [askConfirm, setAskConfirm] = useState(false);
+  const patch = (p: Partial<ProjectFormState>) => setForm((f) => ({ ...f, ...p }));
 
   const browse = async () => {
     if (!desktop) return;
-    const picked = await desktop.pickDirectory(path || undefined);
-    if (picked) setPath(picked);
+    const title =
+      form.mode === "existing"
+        ? "Choose the repository folder"
+        : "Choose where to create the project";
+    const picked = await desktop.pickDirectory(form.directory || undefined, { title });
+    if (picked) patch({ directory: picked, confirm: false });
   };
 
+  const issues = projectFormIssues(form);
+  const blocked = issues.length > 0 || (askConfirm && !form.confirm);
+
   const submit = async () => {
-    const workingDirectory = path.trim();
-    if (!workingDirectory) return;
+    if (issues.length > 0) return;
     setBusy(true);
     setError(null);
     try {
-      const project = await api.createProject({
-        workingDirectory,
-        ...(name.trim() ? { name: name.trim() } : {}),
-      });
+      const project = await api.createProject(toCreateProjectInput(form));
       if (makeDefault) await api.updateSettings({ defaultProject: project.id });
       onAdded(project);
     } catch (err) {
+      if (err instanceof ApiError && needsConfirm(err.code)) setAskConfirm(true);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
 
+  const label = "flex flex-col gap-1.5 text-sm font-medium";
   return (
     <form
+      className="flex flex-col gap-4"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
-      <label>
-        Repository path (must be a git repository)
-        <span className="path-row">
-          <input
-            autoFocus
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder="/Users/you/project"
-          />
-          {desktop && (
-            <button type="button" className="btn-secondary" onClick={() => void browse()}>
-              <FolderOpenIcon size={16} /> Browse…
-            </button>
+      <label className={label}>
+        Name
+        <Input
+          autoFocus
+          value={form.name}
+          onChange={(e) => patch({ name: e.target.value })}
+          placeholder={form.mode === "auto" ? "My project" : "Defaults to the folder name"}
+        />
+      </label>
+      <label className={label}>
+        Location
+        <NativeSelect
+          className="w-full"
+          value={form.mode}
+          onChange={(e) => {
+            setAskConfirm(false);
+            patch({ mode: e.target.value as ProjectPathMode, confirm: false });
+          }}
+        >
+          <option value="auto">Create it for me under the projects root</option>
+          <option value="new">Create a new folder at a path</option>
+          <option value="existing">Use an existing git repository</option>
+        </NativeSelect>
+      </label>
+      {form.mode === "auto" ? (
+        <p className="text-sm text-muted-foreground">
+          <bdi>{autoPathHint(projectsRoot, form.name)}</bdi>
+        </p>
+      ) : (
+        <label className={label}>
+          Directory
+          <span className="flex gap-2">
+            <Input
+              value={form.directory}
+              onChange={(e) => {
+                setAskConfirm(false);
+                patch({ directory: e.target.value, confirm: false });
+              }}
+              placeholder="/Users/you/project"
+            />
+            {desktop && (
+              <Button type="button" variant="outline" onClick={() => void browse()}>
+                <FolderOpenIcon size={16} /> Browse…
+              </Button>
+            )}
+          </span>
+        </label>
+      )}
+      <label className={label}>
+        <span>
+          Brief
+          {form.mode === "existing" && (
+            <span className="font-normal text-muted-foreground"> (optional)</span>
           )}
         </span>
-      </label>
-      <label>
-        Name (optional)
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Defaults to the folder name"
+        <Textarea
+          value={form.brief}
+          onChange={(e) => patch({ brief: e.target.value })}
+          placeholder="What is this project and what should the agents know about it?"
         />
       </label>
       {showDefaultOption && (
-        <label className="check">
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={makeDefault}
@@ -91,50 +159,90 @@ function AddProjectForm({
         </label>
       )}
       {error && (
-        <p className="error" role="alert">
+        <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
-      <div className="editor-actions">
-        {onCancel && (
-          <button type="button" onClick={onCancel}>
-            Cancel
-          </button>
-        )}
-        <button type="submit" className="primary" disabled={busy || !path.trim()}>
-          {busy ? "Adding…" : "Add project"}
-        </button>
-      </div>
+      {askConfirm && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.confirm}
+            onChange={(e) => patch({ confirm: e.target.checked })}
+          />
+          The folder is not empty. Initialise it anyway.
+        </label>
+      )}
+      {footer(
+        <Button type="submit" disabled={busy || blocked}>
+          {submitLabel(form.mode, busy)}
+        </Button>,
+      )}
     </form>
   );
 }
 
 export function AddProjectModal({
-  onClose,
+  open,
+  onOpenChange,
   onAdded,
+  projectsRoot,
 }: {
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onAdded: (project: Project) => void;
+  projectsRoot?: string;
 }) {
   return (
-    <Modal title="Add project" onClose={onClose}>
-      <AddProjectForm showDefaultOption onAdded={onAdded} onCancel={onClose} />
-    </Modal>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent showCloseButton>
+        <DialogHeader>
+          <DialogTitle>New project</DialogTitle>
+          <DialogDescription>
+            Boof creates the folder and a git repository unless you point it at one.
+          </DialogDescription>
+        </DialogHeader>
+        <AddProjectForm
+          showDefaultOption
+          projectsRoot={projectsRoot}
+          onAdded={onAdded}
+          footer={(submit) => (
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              {submit}
+            </DialogFooter>
+          )}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }
 
 /** First-run gate: shown while there are zero projects. */
-export function AddProjectGate({ onAdded }: { onAdded: (project: Project) => void }) {
+export function AddProjectGate({
+  onAdded,
+  projectsRoot,
+}: {
+  onAdded: (project: Project) => void;
+  projectsRoot?: string;
+}) {
   return (
     <div className="gate">
       <div className="gate-card">
         <img className="gate-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
         <h1>Welcome to Boof Runner</h1>
         <p className="muted">
-          Add the first project: a git repository Boof Runner should run tasks in. You can add more
-          projects and switch between them from the header.
+          Add the first project: Boof Runner can create it for you or use a git repository you
+          already have. You can add more projects and switch between them from the header.
         </p>
-        <AddProjectForm showDefaultOption={false} onAdded={onAdded} />
+        <AddProjectForm
+          showDefaultOption={false}
+          projectsRoot={projectsRoot}
+          onAdded={onAdded}
+          footer={(submit) => <div className="flex justify-end">{submit}</div>}
+        />
       </div>
     </div>
   );
@@ -189,15 +297,15 @@ export function ProjectSwitcher({
           Add project
         </button>
       </div>
-      {adding && (
-        <AddProjectModal
-          onClose={() => setAdding(false)}
-          onAdded={(p) => {
-            setAdding(false);
-            onAdded(p);
-          }}
-        />
-      )}
+      <AddProjectModal
+        open={adding}
+        onOpenChange={setAdding}
+        projectsRoot={settings.projectsRoot}
+        onAdded={(p) => {
+          setAdding(false);
+          onAdded(p);
+        }}
+      />
     </header>
   );
 }

@@ -104,7 +104,12 @@ const json = (method: string, body: unknown, version?: number): RequestInit => (
 });
 
 export interface CreateProjectInput {
-  workingDirectory: string;
+  workingDirectory?: string;
+  path?:
+    | { mode: "existing"; directory: string }
+    | { mode: "new"; directory: string; confirm?: boolean }
+    | { mode: "auto" };
+  brief?: string;
   id?: string;
   name?: string;
   defaultBase?: string;

@@ -113,15 +113,18 @@ function createWindow(port: number): void {
   });
 }
 
-ipcMain.handle("boof-runner:pick-directory", async (_event, current?: string) => {
-  const result = await dialog.showOpenDialog({
-    title: "Choose working directory",
-    properties: ["openDirectory", "createDirectory"],
-    defaultPath: current && existsSync(current) ? current : undefined,
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
+ipcMain.handle(
+  "boof-runner:pick-directory",
+  async (_event, current?: string, opts?: { title?: string }) => {
+    const result = await dialog.showOpenDialog({
+      title: opts?.title ?? "Choose working directory",
+      properties: ["openDirectory", "createDirectory"],
+      defaultPath: current && existsSync(current) ? current : undefined,
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  },
+);
 
 async function boot(): Promise<void> {
   const root = await ensureDataRoot();

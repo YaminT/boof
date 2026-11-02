@@ -113,15 +113,15 @@ export function AppShell({
           open={searching}
           onOpenChange={setSearching}
         />
-        {adding && (
-          <AddProjectModal
-            onClose={() => setAdding(false)}
-            onAdded={(p) => {
-              setAdding(false);
-              onProjectAdded(p);
-            }}
-          />
-        )}
+        <AddProjectModal
+          open={adding}
+          onOpenChange={setAdding}
+          projectsRoot={data.settings?.projectsRoot}
+          onAdded={(p) => {
+            setAdding(false);
+            onProjectAdded(p);
+          }}
+        />
       </div>
     </TooltipProvider>
   );

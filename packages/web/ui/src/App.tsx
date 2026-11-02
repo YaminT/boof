@@ -86,6 +86,7 @@ export function App() {
   if (settings && projects && projects.length === 0) {
     return (
       <AddProjectGate
+        projectsRoot={settings.projectsRoot}
         onAdded={(p) => {
           openProject(p);
           void refresh().catch(() => {});
