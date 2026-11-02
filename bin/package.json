@@ -7,6 +7,9 @@
     "build": "tsup",
     "typecheck": "tsc -b"
   },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "~1.32.2"
+  },
   "dependencies": {
     "@boof-runner/api": "*",
     "@boof-runner/mcp": "*",
