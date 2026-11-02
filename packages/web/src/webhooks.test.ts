@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendEvent,
   AuthStore,
@@ -15,7 +15,14 @@ import {
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
+import { pinnedPost } from "./pinned-post.js";
 import { RETRY_DELAYS_MS, WebhookDispatcher } from "./webhooks.js";
+
+// Wraps the real pinnedPost so a test can see the default delivery call it.
+vi.mock("./pinned-post.js", async (orig) => {
+  const real = await orig<typeof import("./pinned-post.js")>();
+  return { ...real, pinnedPost: vi.fn(real.pinnedPost) };
+});
 
 let base: string;
 let root: string;
@@ -157,7 +164,7 @@ describe("webhooks of restricted keys", () => {
         root,
         service,
         authStore,
-        fetch: (async (url: string) => {
+        unpinnedFetchForTests: (async (url: string) => {
           hits.push(String(url));
           return new Response("", { status: 200 });
         }) as unknown as typeof fetch,
@@ -204,7 +211,7 @@ describe("webhooks of restricted keys", () => {
       root,
       service,
       authStore,
-      fetch: (async (url: string) => {
+      unpinnedFetchForTests: (async (url: string) => {
         hits.push(String(url));
         return new Response("", { status: 200 });
       }) as unknown as typeof fetch,
@@ -237,7 +244,7 @@ describe("webhooks of restricted keys", () => {
       root,
       service,
       authStore,
-      fetch: (async (url: string) => {
+      unpinnedFetchForTests: (async (url: string) => {
         hits.push(String(url));
         return new Response("", { status: 200 });
       }) as unknown as typeof fetch,
@@ -501,7 +508,7 @@ function harness(answers: (n: number) => number | Error = () => 200) {
   const dispatcher = new WebhookDispatcher({
     root,
     service,
-    fetch: doFetch,
+    unpinnedFetchForTests: doFetch,
     now: () => clock,
     resolveHost,
   });
@@ -585,6 +592,27 @@ describe("webhook delivery", () => {
     expect(body.id).toBe(hit.headers.get("x-boof-delivery"));
     await h.dispatcher.tick();
     expect(h.hits).toHaveLength(1); // the cursor moved on
+  });
+
+  it("by default delivers through pinnedPost with the checked addresses, never through global fetch", async () => {
+    await subscribe({ url: "http://hook.test/in" });
+    const pinned = vi.mocked(pinnedPost);
+    pinned.mockClear();
+    pinned.mockResolvedValueOnce({ status: 200 });
+    const globalFetch = vi.spyOn(globalThis, "fetch");
+    try {
+      // No send and no unpinnedFetchForTests: the production wiring.
+      const dispatcher = new WebhookDispatcher({ root, service, resolveHost });
+      await dispatcher.tick();
+      await appendEvent(join(root, "projects", "a"), status("a", "t"));
+      await dispatcher.tick();
+      expect(pinned).toHaveBeenCalledTimes(1);
+      expect(pinned.mock.calls[0][0]).toBe("http://hook.test/in");
+      expect(pinned.mock.calls[0][1]).toEqual(["93.184.216.34"]);
+      expect(globalFetch).not.toHaveBeenCalled();
+    } finally {
+      globalFetch.mockRestore();
+    }
   });
 
   it("hands the delivery the addresses the check approved, resolving the name once", async () => {

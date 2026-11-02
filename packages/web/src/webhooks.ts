@@ -57,8 +57,8 @@ export interface DispatcherOptions {
   send?: (req: PinnedPostInit & { url: string; addresses: readonly string[] }) => Promise<{
     status: number;
   }>;
-  /** Test seam: deliver with this `fetch` instead (it does not pin the connection). */
-  fetch?: typeof fetch;
+  /** Test seam: deliver with this `fetch` instead. It does NOT pin the connection: never set it outside tests. */
+  unpinnedFetchForTests?: typeof fetch;
   now?: () => number;
   /** DNS for the target check before each delivery; tests inject a fake. */
   resolveHost?: ResolveHost;
@@ -121,7 +121,7 @@ export class WebhookDispatcher {
 
   constructor(private readonly opts: DispatcherOptions) {
     this.dir = dataRootPaths(opts.root).webhooks;
-    const doFetch = opts.fetch;
+    const doFetch = opts.unpinnedFetchForTests;
     this.send =
       opts.send ??
       (doFetch

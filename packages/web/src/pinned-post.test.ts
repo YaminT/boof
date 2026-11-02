@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -92,4 +94,47 @@ describe("pinnedPost", () => {
     const res = await pinnedPost(`http://localhost:${port}/`, [], init());
     expect(res.status).toBe(204);
   });
+
+  // Node may one day honour HTTP_PROXY for node:http (NODE_USE_ENV_PROXY): delivery must still go
+  // straight to the pinned address, or the proxy would resolve the name itself.
+  it.each([{}, { NODE_USE_ENV_PROXY: "1" }])(
+    "ignores HTTP_PROXY in the environment (%j)",
+    async (extra) => {
+      const proxied: string[] = [];
+      const proxy = createServer((req, res) => {
+        proxied.push(String(req.url));
+        res.writeHead(502).end();
+      });
+      await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
+      const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+      try {
+        const child = fileURLToPath(
+          new URL("../test-support/pinned-post-child.mts", import.meta.url),
+        );
+        const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+        const out = await new Promise<{ ok: boolean; status?: number; message?: string }>(
+          (resolve, reject) =>
+            execFile(
+              process.execPath,
+              ["--import", "tsx", child, `http://never-resolves.test:${port}/in`, "127.0.0.1"],
+              {
+                cwd: repoRoot,
+                env: { ...process.env, HTTP_PROXY: proxyUrl, http_proxy: proxyUrl, ...extra },
+              },
+              (err, stdout, stderr) =>
+                err
+                  ? reject(new Error(`${err.message}\n${stderr}`))
+                  : resolve(JSON.parse(stdout.trim().split("\n").pop() as string)),
+            ),
+        );
+        expect(out).toEqual({ ok: true, status: 204 });
+        expect(proxied).toEqual([]);
+        expect(seen).toHaveLength(1);
+      } finally {
+        proxy.closeAllConnections();
+        await new Promise<void>((r) => proxy.close(() => r()));
+      }
+    },
+    30_000,
+  );
 });
