@@ -81,7 +81,7 @@ function AddProjectForm({
   const label = "flex flex-col gap-1.5 text-sm font-medium";
   return (
     <form
-      className="flex flex-col gap-4"
+      className="flex flex-col"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
@@ -149,7 +149,7 @@ function AddProjectForm({
         />
       </label>
       {showDefaultOption && (
-        <label className="flex items-center gap-2 text-sm">
+        <label className="check">
           <input
             type="checkbox"
             checked={makeDefault}
@@ -164,7 +164,7 @@ function AddProjectForm({
         </p>
       )}
       {askConfirm && (
-        <label className="flex items-center gap-2 text-sm">
+        <label className="check">
           <input
             type="checkbox"
             checked={form.confirm}
