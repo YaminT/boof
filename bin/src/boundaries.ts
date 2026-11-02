@@ -85,8 +85,6 @@ export function partOfFile(file: string): Part | undefined {
   if (p.startsWith("packages/shared/src/") && basename(p).startsWith("owlish")) return "owlish";
   const pkg = /^packages\/([^/]+)\/src\//.exec(p)?.[1];
   if (pkg) return PACKAGE_PART[pkg];
-  // scaffold.ts is the data-root helper every CLI command calls; M1 moves it into Heart core.
-  if (p === "bin/src/scaffold.ts") return "heart";
   if (p.startsWith("bin/src/")) {
     return dirname(p) === "bin/src" && CLI_COMMANDS.includes(basename(p)) ? "facedisk/cli" : "bin";
   }

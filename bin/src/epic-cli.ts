@@ -10,9 +10,9 @@ import {
   removeEpic,
   SettingsStore,
   TaskStore,
+  scaffoldDataRoot,
 } from "@boof-runner/shared";
 import { ZodError } from "zod";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 export const EPIC_HELP = `boof-runner epic — manage the epics (named groups of tasks) of a project
 

@@ -22,6 +22,7 @@ import {
   type Status,
   type TaskTools,
   withApproval,
+  scaffoldDataRoot,
 } from "@boof-runner/shared";
 import {
   isGitRepo,
@@ -36,7 +37,6 @@ import {
   type ScannedUnit,
   type TickResult,
 } from "@boof-runner/runner";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";

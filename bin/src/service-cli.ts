@@ -5,9 +5,8 @@ import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { AuthStore, SettingsStore } from "@boof-runner/shared";
+import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof-runner/shared";
 import { assertBindAllowed } from "@boof-runner/web";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 export const SERVICE_HELP = `boof-runner service — run boof-runner as a systemd user service (Linux)
 

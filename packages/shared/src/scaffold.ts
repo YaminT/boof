@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dataRootPaths, migrateDataRoot, type MigrationResult } from "@boof-runner/shared";
+import { dataRootPaths } from "./paths.js";
+import { migrateDataRoot, type MigrationResult } from "./migrate.js";
 
 /**
  * Ensure the data root exists in layout v2: migrate a v1 root first (before any store opens),

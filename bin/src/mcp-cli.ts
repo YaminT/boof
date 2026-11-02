@@ -1,8 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { McpStartError, runStdio } from "@boof-runner/mcp";
-import { InvalidIdError, isKebabId } from "@boof-runner/shared";
-import { scaffoldDataRoot } from "./scaffold.js";
+import { InvalidIdError, isKebabId, scaffoldDataRoot } from "@boof-runner/shared";
 
 export const MCP_HELP = `boof-runner mcp — serve boof over the Model Context Protocol on stdin/stdout
 

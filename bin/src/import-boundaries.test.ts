@@ -140,7 +140,7 @@ describe("import boundaries", () => {
   it("maps specifiers and ignores third-party ones", () => {
     expect(partOfSpecifier("@boof-runner/runner", "bin/src/x.ts")).toBe("runner");
     expect(partOfSpecifier("@boof-runner/shared/sub", "bin/src/x.ts")).toBe("heart");
-    expect(partOfSpecifier("./scaffold.js", "bin/src/project-cli.ts")).toBe("heart");
+    expect(partOfSpecifier("./scaffold.js", "packages/shared/src/index.ts")).toBe("heart");
     expect(partOfSpecifier("./headless.js", "bin/src/plan-cli.ts")).toBe("bin");
     expect(partOfSpecifier("../../../shared/src/x.js", "packages/api/src/ops/y.ts")).toBe("heart");
     expect(partOfSpecifier("node:fs", "bin/src/x.ts")).toBeUndefined();

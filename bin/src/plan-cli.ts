@@ -12,6 +12,7 @@ import {
   projectPaths,
   SettingsStore,
   type Plan,
+  scaffoldDataRoot,
 } from "@boof-runner/shared";
 import {
   importFromRepo,
@@ -22,7 +23,6 @@ import {
   type SyncResult,
 } from "@boof-runner/runner";
 import { ProjectResolutionError, resolveProject } from "./headless.js";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 export const PLAN_HELP = `boof-runner plan — import, sync and export a project's plans
 

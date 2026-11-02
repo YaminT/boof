@@ -2,10 +2,9 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore, SettingsStore } from "@boof-runner/shared";
+import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof-runner/shared";
 import { assertBindAllowed } from "@boof-runner/web";
 import { normaliseHostname, remoteCommand } from "./remote-cli.js";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 let root: string;
 let out: string[];

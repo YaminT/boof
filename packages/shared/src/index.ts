@@ -36,3 +36,4 @@ export * from "./events.js";
 export * from "./version.js";
 export * from "./task-reviews.js";
 export * from "./budget.js";
+export * from "./scaffold.js";

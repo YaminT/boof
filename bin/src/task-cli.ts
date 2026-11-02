@@ -9,10 +9,10 @@ import {
   StatusSchema,
   TaskStore,
   type Task,
+  scaffoldDataRoot,
 } from "@boof-runner/shared";
 import { ZodError } from "zod";
 import { CliUsageError, dataRootOf, isExpectedCliError, resolveProjectDir } from "./epic-cli.js";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 export const TASK_HELP = `boof-runner task — list tasks with their epics and subtasks, and move them
 

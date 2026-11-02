@@ -18,9 +18,9 @@ import {
   TrustSchema,
   type Scope,
   type Settings,
+  scaffoldDataRoot,
 } from "@boof-runner/shared";
 import { assertBindAllowed } from "@boof-runner/web";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 /** The "full harness" scope set from docs/harness.md: everything except settings writes, clients and webhooks. */
 export const FULL_HARNESS_SCOPES =

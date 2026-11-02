@@ -8,9 +8,9 @@ import {
   SettingsStore,
   resolveProjectsRoot,
   type Project,
+  scaffoldDataRoot,
 } from "@boof-runner/shared";
 import { initGitRepo, isGitRepo, pruneStaleWorktrees, repoCommonDir } from "@boof-runner/runner";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 export const PROJECT_HELP = `boof-runner project — manage the projects (git repositories) one data root serves
 

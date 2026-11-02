@@ -17,9 +17,8 @@ import {
   type OpContext,
   type TaskService,
 } from "@boof-runner/api";
-import { AuthStore, isKebabId } from "@boof-runner/shared";
+import { AuthStore, isKebabId, scaffoldDataRoot } from "@boof-runner/shared";
 import { CliUsageError, dataRootOf } from "./epic-cli.js";
-import { scaffoldDataRoot } from "./scaffold.js";
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 

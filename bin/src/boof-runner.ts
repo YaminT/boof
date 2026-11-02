@@ -4,7 +4,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
 import { startServer } from "@boof-runner/web";
-import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
 import { remoteCommand } from "./remote-cli.js";
@@ -17,7 +16,7 @@ import { taskCommand } from "./task-cli.js";
 import { planCommand } from "./plan-cli.js";
 import { mcpCommand } from "./mcp-cli.js";
 import { drainQueue, ProjectResolutionError, runTask, scanRepoToTasks } from "./headless.js";
-import { MigrationError } from "@boof-runner/shared";
+import { MigrationError, scaffoldDataRoot } from "@boof-runner/shared";
 
 interface ServeArgs {
   dataRoot: string;
