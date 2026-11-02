@@ -32,7 +32,8 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   project; grant `settings:write` to trusted clients only, because `PUT /settings` does not check
   trust yet. Renaming or deleting a template rewrites tasks in every project, so a `review`-trust
   or project-restricted client gets `403 forbidden_trust` on template writes even when it holds
-  the scope.
+  the scope. A rename repoints tasks under each task's lock and leaves running tasks alone (they keep
+  their copy of the instructions): `PUT /commands/{id}` then lists their ids in `skippedTasks`.
 - A client may be restricted to some projects. Touching another project is
   `403 forbidden_project`; project lists are filtered.
 - **Trust.** A client with `trust: review` (the default for new clients) creates `draft` tasks

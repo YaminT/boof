@@ -201,6 +201,51 @@ describe("commands API", () => {
     const task = await (await req("/api/tasks/ref")).json();
     expect(task.frontmatter.command).toBe("new-name");
   });
+
+  it("rename leaves a running task's file alone, repoints the rest and reports the skipped", async () => {
+    await (await req("/api/commands", json({ name: "Old Name", body: "x" }))).json();
+    await (
+      await req("/api/tasks", json({ title: "Busy", command: "old-name", status: "pending" }))
+    ).json();
+    await (await req("/api/tasks", json({ title: "Idle", command: "old-name" }))).json();
+    const tasks = service.forProject("default").tasks;
+    await tasks.transition("busy", "running");
+    const before = await readFile(
+      taskFilePath(service.forProject("default").root, "running", "busy"),
+      "utf8",
+    );
+    const res = await req("/api/commands/old-name", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "New Name", body: "y" }),
+    });
+    const renamed = await res.json();
+    expect(renamed.id).toBe("new-name");
+    expect(renamed.skippedTasks).toEqual(["busy"]);
+    expect(
+      await readFile(taskFilePath(service.forProject("default").root, "running", "busy"), "utf8"),
+    ).toBe(before);
+    expect((await (await req("/api/tasks/idle")).json()).frontmatter.command).toBe("new-name");
+  });
+
+  it("rename keeps a write the runner makes between the scan and the repoint", async () => {
+    await (await req("/api/commands", json({ name: "Old Name", body: "x" }))).json();
+    await (
+      await req("/api/tasks", json({ title: "Racer", command: "old-name", status: "pending" }))
+    ).json();
+    const tasks = service.forProject("default").tasks;
+    const realList = tasks.list.bind(tasks);
+    // The scan sees the task as pending; it then starts running before the repoint takes the lock.
+    vi.spyOn(tasks, "list").mockImplementation(async (...a) => {
+      const out = await realList(...a);
+      await tasks.transition("racer", "running");
+      return out;
+    });
+    const renamed = await service.renameCommand("old-name", "New Name", "y");
+    expect(renamed.skippedTasks).toEqual(["racer"]);
+    const t = (await tasks.get("racer"))!;
+    expect(t.frontmatter.command).toBe("old-name");
+  });
 });
 
 describe("settings & health API", () => {

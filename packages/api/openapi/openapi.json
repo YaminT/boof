@@ -2928,7 +2928,7 @@
         "x-mcp-tool": "boof_delete_command"
       },
       "put": {
-        "description": "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
+        "description": "Renames or rewrites a template and repoints the tasks that use it, except running ones (listed in `skippedTasks`; they keep their copy). Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
         "operationId": "commands.update",
         "parameters": [
           {
@@ -2983,6 +2983,12 @@
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "skippedTasks": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
                     }
                   },
                   "required": [

@@ -753,6 +753,9 @@ export class ProjectService {
  * Application facade: the project registry plus the global parts (commands, settings, tool
  * registry). Task operations live on {@link ProjectService}, one per project (cached).
  */
+/** Thrown inside a `modify` callback to leave a running task's file unwritten. */
+class RunningTaskSkipped extends Error {}
+
 export class TaskService {
   readonly projects: ProjectStore;
   readonly commands: CommandStore;
@@ -1182,20 +1185,31 @@ export class TaskService {
    */
   async renameCommand(oldId: string, name: string, body: string) {
     const tpl = await this.commands.upsert(name, body);
+    const skippedTasks: string[] = [];
     if (tpl.id !== oldId) {
       for (const p of await this.projects.list({ includeArchived: true })) {
         const store = this.forProject(p.id).tasks;
         for (const t of await store.list()) {
-          if (t.frontmatter.command === oldId) {
-            t.frontmatter.command = tpl.id;
-            t.body.command = body;
-            await store.save(t);
+          if (t.frontmatter.command !== oldId) continue;
+          // A running task keeps its own copy of the instructions and owns its file: leave it.
+          // The status is checked again under the task lock, since the task may have started
+          // since the scan; the throw leaves the file unwritten.
+          try {
+            await store.modify(t.frontmatter.id, (cur) => {
+              if (cur.frontmatter.status === "running") throw new RunningTaskSkipped();
+              if (cur.frontmatter.command !== oldId) return;
+              cur.frontmatter.command = tpl.id;
+              cur.body.command = body;
+            });
+          } catch (e) {
+            if (!(e instanceof RunningTaskSkipped)) throw e;
+            skippedTasks.push(t.frontmatter.id);
           }
         }
       }
       await this.commands.delete(oldId);
     }
-    return tpl;
+    return skippedTasks.length ? { ...tpl, skippedTasks } : tpl;
   }
 
   async deleteCommand(id: string): Promise<{ referencedBy: string[] }> {

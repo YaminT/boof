@@ -12,6 +12,7 @@ import { buildModelDetails } from "../services/model-details.js";
 import type { Client } from "@boof-runner/shared";
 import { CommandBody, CreateClientBody } from "../validation.js";
 import {
+  CommandRenameSchema,
   CommandTemplateSchema,
   HealthResultSchema,
   ModelDetailsSchema,
@@ -416,11 +417,11 @@ export const commandsUpdate = defineOp({
   name: "commands.update",
   title: "Update a command template",
   description:
-    "Renames or rewrites a template and repoints the tasks that use it. Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
+    "Renames or rewrites a template and repoints the tasks that use it, except running ones (listed in `skippedTasks`; they keep their copy). Inputs: commandId, name, body. Needs settings:write and a trusted, project-unrestricted client: templates are global, and a rename repoints tasks in every project.",
   scope: "settings:write",
   projectScoped: false,
   input: z.strictObject({ commandId: commandIdParam, ...CommandBody.shape }),
-  output: CommandTemplateSchema,
+  output: CommandRenameSchema,
   rest: { method: "PUT", path: "/commands/{commandId}" },
   mcp: { expose: true, name: "boof_update_command", annotations: IDEMPOTENT_WRITE },
   summary: (r) => `Saved command ${r.name}`,

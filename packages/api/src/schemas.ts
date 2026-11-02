@@ -236,6 +236,11 @@ export const CommandTemplateSchema = z.object({
   body: z.string(),
 });
 
+/** Result of a rename: `skippedTasks` lists running tasks left on the old template id. */
+export const CommandRenameSchema = CommandTemplateSchema.extend({
+  skippedTasks: z.array(z.string()).optional(),
+});
+
 export const BudgetScopeSchema = z.object({
   scope: z.string(),
   spentUsd: z.number(),
