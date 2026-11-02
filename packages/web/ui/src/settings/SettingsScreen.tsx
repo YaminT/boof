@@ -5,7 +5,9 @@ import { ClientsSection } from "../components/ClientsSection.js";
 import { CommandsTab } from "../components/CommandsTab.js";
 import type { SettingsPageId } from "../lib/route.js";
 import { projectPage } from "../lib/settings-project.js";
+import { agentsPage } from "../lib/settings-agents.js";
 import type { AppData } from "../useAppData.js";
+import { AgentsPage } from "./AgentsPage.js";
 import { ProjectPage } from "./ProjectPage.js";
 import { SettingsFooter } from "./SettingsFooter.js";
 import { SettingsNav } from "./SettingsNav.js";
@@ -37,12 +39,14 @@ export function SettingsScreen({
 }) {
   const onSaved = useMemo(() => () => data.refresh(), [data]);
   const proj = useSettingsPage(projectPage, settings, project, pid, onSaved);
+  const agents = useSettingsPage(agentsPage, settings, project, pid, onSaved);
 
   const unsaved = useMemo(() => {
     const s = new Set<SettingsPageId>();
     if (proj.dirty) s.add("project");
+    if (agents.dirty) s.add("agents");
     return s;
-  }, [proj.dirty]);
+  }, [proj.dirty, agents.dirty]);
 
   useEffect(() => {
     if (unsaved.size === 0) return;
@@ -82,7 +86,21 @@ export function SettingsScreen({
           />
         </>
       )}
-      {(page === "agents" || page === "budgets") && (
+      {page === "agents" && (
+        <>
+          <AgentsPage form={agents.form} set={agents.set} project={project} />
+          <SettingsFooter
+            dirty={agents.dirty}
+            elsewhere={agents.elsewhere}
+            busy={agents.busy}
+            problems={agents.problems}
+            savedAt={agents.savedAt}
+            onSave={() => void agents.save()}
+            onReload={agents.reload}
+          />
+        </>
+      )}
+      {page === "budgets" && (
         <SettingsPage
           settings={settings}
           projects={projects}

@@ -14,6 +14,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={resolved}
+      // Above the sticky save bar of the settings pages, and above the bottom bar on phones.
+      offset={{ bottom: 80, right: 16 }}
+      mobileOffset={{ bottom: 136, left: 16, right: 16 }}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
