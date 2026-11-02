@@ -4,7 +4,9 @@ import { TooltipProvider } from "@/ui/tooltip";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { AddProjectModal } from "../components/Projects.js";
+import { CommandConsole } from "./CommandConsole.js";
 import { CommandPalette, SearchButton } from "./CommandPalette.js";
+import { useCommandActions } from "./useCommandActions.js";
 import { BottomBar } from "./BottomBar.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { Rail } from "./Rail.js";
@@ -50,6 +52,22 @@ export function AppShell({
   const [adding, setAdding] = useState(false);
   const [searching, setSearching] = useState(false);
   const pid = selected?.id ?? null;
+  const palette = useCommandActions({
+    data,
+    projects,
+    pid,
+    navigate,
+    onSelectProject,
+    mode: "toast",
+  });
+  const consoleActions = useCommandActions({
+    data,
+    projects,
+    pid,
+    navigate,
+    onSelectProject,
+    mode: "throw",
+  });
   const counts: NavCounts = {
     tasks: data.tasks.filter((t) => OPEN_STATUSES.has(t.frontmatter.status)).length,
     plans: data.plans.length,
@@ -106,8 +124,11 @@ export function AppShell({
             </>
           }
         />
-        <div className="min-w-0 flex-1 px-4 pb-24 min-[720px]:px-8 min-[720px]:pb-12">
-          <main className="mx-auto w-full max-w-[1320px]">{children}</main>
+        <div className="flex min-w-0 flex-1 flex-col px-4 min-[720px]:px-8">
+          <main className="mx-auto w-full max-w-[1320px] flex-1 pb-8 min-[720px]:pb-12">
+            {children}
+          </main>
+          <CommandConsole actions={consoleActions.actions} />
         </div>
         <BottomBar
           active={navKey(route)}
@@ -127,15 +148,9 @@ export function AppShell({
             </>
           )}
         />
-        <CommandPalette
-          data={data}
-          projects={projects}
-          currentPid={pid}
-          navigate={navigate}
-          onSelectProject={onSelectProject}
-          open={searching}
-          onOpenChange={setSearching}
-        />
+        <CommandPalette actions={palette.actions} open={searching} onOpenChange={setSearching} />
+        {palette.stopDialog}
+        {consoleActions.stopDialog}
         <AddProjectModal
           open={adding}
           onOpenChange={(open) => {

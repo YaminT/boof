@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import type { Project } from "@boof-runner/shared/schema";
+import { useEffect } from "react";
 import {
   Command,
   CommandDialog,
@@ -10,20 +9,8 @@ import {
   CommandList,
 } from "@/ui/command";
 import { Kbd } from "@/ui/kbd";
-import { StopTaskDialog } from "./StopTaskDialog.js";
-import type { TaskView } from "../api.js";
-import type { AppData } from "../useAppData.js";
-import type { Route } from "../lib/route.js";
 import { isPaletteShortcut } from "../lib/palette-shortcut.js";
-import { act } from "../lib/act.js";
-import { api } from "../api.js";
-import {
-  createCommandActions,
-  type ActionGroup,
-  type CommandAction,
-} from "../lib/command-actions.js";
-import { useTheme } from "../lib/theme.js";
-import { toggleRunner } from "./RunnerSwitch.js";
+import type { ActionGroup, CommandAction } from "../lib/command-actions.js";
 
 const GROUP_ORDER: ActionGroup[] = ["Go to", "Projects", "Tasks", "Actions"];
 
@@ -58,63 +45,21 @@ export function usePaletteShortcut(open: boolean, onOpenChange: (open: boolean) 
 }
 
 export function CommandPalette({
-  data,
-  projects,
-  currentPid,
-  navigate,
-  onSelectProject,
+  actions,
   open,
   onOpenChange,
 }: {
-  data: AppData;
-  projects: Project[] | null;
-  /** The selected project, or null before one is chosen. */
-  currentPid: string | null;
-  navigate: (to: Route) => void;
-  /** Switch project to the equivalent screen (same as the project menu). */
-  onSelectProject: (id: string) => void;
+  /** The shared actions, wired in `useCommandActions`; the caller renders the stop dialog. */
+  actions: CommandAction[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { setPref } = useTheme();
-  const [stopping, setStopping] = useState<TaskView | null>(null);
   usePaletteShortcut(open, onOpenChange);
-
-  const pid = currentPid;
-  const mutate = (fn: () => Promise<unknown>, success: string, failure: string) =>
-    act(fn, { success, failure }).then(() => data.refresh());
-
-  const actions = createCommandActions({
-    pid,
-    projects: projects ?? [],
-    tasks: data.tasks,
-    plans: data.plans,
-    runnerEnabled: data.settings?.runner.enabled ?? false,
-    settingsLoaded: !!data.settings,
-    effects: {
-      navigate,
-      selectProject: onSelectProject,
-      setTheme: setPref,
-      requestStop: setStopping,
-      activatePlan: (id, plan) =>
-        mutate(
-          () => api.updatePlan(id, plan, { status: "active" }),
-          "Plan activated",
-          "Could not activate",
-        ),
-      queueTask: (id, taskId) =>
-        mutate(
-          () => api.updateTask(id, taskId, { status: "pending" }),
-          "Queued",
-          "Could not queue",
-        ),
-      setRunner: (enabled) => toggleRunner(enabled).then(() => data.refresh()),
-    },
-  });
 
   const select = (action: CommandAction) => () => {
     onOpenChange(false);
-    void action.run();
+    // Failures are already toasts; a dismissed stop confirmation is not an error here.
+    void Promise.resolve(action.run()).catch(() => undefined);
   };
   const groups = GROUP_ORDER.map((g) => ({
     g,
@@ -122,54 +67,39 @@ export function CommandPalette({
   })).filter((x) => x.items.length > 0);
 
   return (
-    <>
-      <CommandDialog
-        open={open}
-        onOpenChange={onOpenChange}
-        title="Search"
-        description="Go to a page, switch project, open a task or run an action."
-      >
-        <Command>
-          <CommandInput placeholder="Search pages, tasks and actions" />
-          <CommandList>
-            <CommandEmpty>Nothing matches.</CommandEmpty>
-            {groups.map(({ g, items }) => (
-              <CommandGroup key={g} heading={g}>
-                {items.map((a) => (
-                  <CommandItem
-                    key={a.id}
-                    value={a.searchValue}
-                    keywords={a.keywords}
-                    disabled={a.disabled}
-                    onSelect={select(a)}
-                  >
-                    <span className={a.meta ? "truncate" : undefined}>{a.label}</span>
-                    {a.meta && (
-                      <span className="ml-auto shrink-0 text-[length:var(--text-meta)] text-ink-muted">
-                        {a.meta}
-                      </span>
-                    )}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
-      </CommandDialog>
-      <StopTaskDialog
-        open={stopping !== null}
-        onOpenChange={(o) => !o && setStopping(null)}
-        onConfirm={() => {
-          const t = stopping;
-          setStopping(null);
-          if (!t || !pid) return;
-          void act(() => api.stopTask(pid, t.frontmatter.id), {
-            success: "Stop requested",
-            failure: "Could not stop",
-          }).then(() => data.refresh());
-        }}
-      />
-    </>
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Search"
+      description="Go to a page, switch project, open a task or run an action."
+    >
+      <Command>
+        <CommandInput placeholder="Search pages, tasks and actions" />
+        <CommandList>
+          <CommandEmpty>Nothing matches.</CommandEmpty>
+          {groups.map(({ g, items }) => (
+            <CommandGroup key={g} heading={g}>
+              {items.map((a) => (
+                <CommandItem
+                  key={a.id}
+                  value={a.searchValue}
+                  keywords={a.keywords}
+                  disabled={a.disabled}
+                  onSelect={select(a)}
+                >
+                  <span className={a.meta ? "truncate" : undefined}>{a.label}</span>
+                  {a.meta && (
+                    <span className="ml-auto shrink-0 text-[length:var(--text-meta)] text-ink-muted">
+                      {a.meta}
+                    </span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ))}
+        </CommandList>
+      </Command>
+    </CommandDialog>
   );
 }
 

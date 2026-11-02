@@ -30,7 +30,7 @@ export interface ActionEffects {
   selectProject(id: string): void;
   setTheme(pref: ThemePref): void;
   /** Ask before stopping a task; the confirmation belongs to the caller. */
-  requestStop(task: TaskView): void;
+  requestStop(task: TaskView): Promise<void> | void;
   activatePlan(pid: string, plan: PlanSummary): Promise<void> | void;
   queueTask(pid: string, taskId: string): Promise<void> | void;
   setRunner(enabled: boolean): Promise<void> | void;
