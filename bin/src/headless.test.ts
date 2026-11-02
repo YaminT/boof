@@ -11,7 +11,7 @@ import {
   SettingsStore,
   TaskStore,
 } from "@boof-runner/shared";
-import { ToolRegistry, execCommand, mockState, resetMock } from "@boof-runner/runner";
+import { MockTool, ToolRegistry, execCommand, mockState, resetMock } from "@boof-runner/runner";
 import {
   drainQueue,
   ProjectResolutionError,
@@ -280,20 +280,68 @@ describe("scanRepoToTasks (scan mode)", () => {
 });
 
 describe("toolOverride", () => {
-  it("overrides the observer only when one is configured", () => {
+  it("overrides the observer only when one is configured", async () => {
     const withObserver = defaultSettings();
     withObserver.roles.observer = { tool: "claude-code", model: "sonnet" };
     const a = { tool: "mock", model: "mock-default" };
-    expect(toolOverride(registry(), withObserver, "mock")).toEqual({
+    expect(await toolOverride(registry(), withObserver, "mock")).toEqual({
       planner: a,
       developer: a,
       reviewer: a,
       observer: a,
     });
-    const without = toolOverride(registry(), defaultSettings(), "mock");
+    const without = await toolOverride(registry(), defaultSettings(), "mock");
     expect(without).toEqual({ planner: a, developer: a, reviewer: a });
     expect(without).not.toHaveProperty("observer");
-    expect(toolOverride(registry(), withObserver)).toBeUndefined();
+    expect(await toolOverride(registry(), withObserver)).toBeUndefined();
+  });
+});
+
+describe("toolOverride model choice", () => {
+  // The static default list can name a model the account refuses (codex: gpt-5.5 on a ChatGPT
+  // login); the tool's own list is what it offers now.
+  class LiveListTool extends MockTool {
+    override readonly defaultModels = ["stale-default"];
+    override async listModels(): Promise<string[]> {
+      return ["live-first", "live-second"];
+    }
+  }
+  const a = (model: string) => ({ tool: "mock", model });
+
+  it("takes the first model the tool lists when --model is not given", async () => {
+    const tools = await toolOverride(
+      new ToolRegistry([new LiveListTool()]),
+      defaultSettings(),
+      "mock",
+    );
+    expect(tools?.developer).toEqual(a("live-first"));
+  });
+
+  it("uses --model as given", async () => {
+    const tools = await toolOverride(
+      new ToolRegistry([new LiveListTool()]),
+      defaultSettings(),
+      "mock",
+      "mine",
+    );
+    expect(tools?.developer).toEqual(a("mine"));
+  });
+
+  it("falls back to the default list when listing fails or is empty", async () => {
+    class Broken extends LiveListTool {
+      override async listModels(): Promise<string[]> {
+        throw new Error("no cli");
+      }
+    }
+    class Empty extends LiveListTool {
+      override async listModels(): Promise<string[]> {
+        return [];
+      }
+    }
+    for (const T of [Broken, Empty]) {
+      const tools = await toolOverride(new ToolRegistry([new T()]), defaultSettings(), "mock");
+      expect(tools?.developer).toEqual(a("stale-default"));
+    }
   });
 });
 

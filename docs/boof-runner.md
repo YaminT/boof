@@ -409,6 +409,8 @@ Injected prompts are also kept in the task file, in the body section `## Injecte
 
 When a task runs again (a retry of a stopped or failed task, or the next of several runs), the earlier injected prompts are not lost: the prompts of every step include them under `## Earlier injected instructions`, so the agent keeps following them. Prompts injected during the new run use the live mechanism above.
 
+Verified live with Codex (codex-cli 0.164.0, model `gpt-6-luna`, 2026-11-02, a scratch data root and a throwaway repository): a task told to run `sleep 45` and then create `a.txt` was steered with `inject --mode now` ("also create b.txt ...") while the sleep ran, once in the planner step and once in the developer step. In both runs the log shows `### Steered`, then the step continues in the same thread (`codex exec resume <thread id>`: the Codex session file holds the original prompt and the steer, and two `task_started` turns): the agent says its wait was interrupted, restarts the sleep and creates both files. The reviewer approved. Both files were left uncommitted by the agent, so the runner committed them to the `<branch>--leftovers` branch, as it does for any uncommitted work. The log carries a few `ERROR codex_core::util: Custom tool call output is missing for call id ...` lines after a steer: Codex notes that the killed command never returned; they are harmless. `run --tool codex` without `--model` takes the first model `codex debug models` lists, because the built-in default `gpt-5.5` is refused on some accounts (`model_not_found` with a ChatGPT login).
+
 This gives the user a practical way to steer a long-running task between steps without changing the whole tool architecture.
 
 ## Architecture of the API layer

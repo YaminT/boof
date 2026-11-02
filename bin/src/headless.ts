@@ -58,15 +58,18 @@ function sleep(ms: number): Promise<void> {
  * observer is overridden only when one is configured, so --tool never switches
  * a disabled observer on.
  */
-export function toolOverride(
+export async function toolOverride(
   registry: ToolRegistry,
   settings: Settings,
   tool?: string,
   model?: string,
-): TaskTools | undefined {
+): Promise<TaskTools | undefined> {
   if (!tool) return undefined;
   const t = registry.get(tool);
-  const m = model ?? t?.defaultModels[0] ?? "default";
+  // Without --model: the first model the tool offers now. The built-in default list is static and
+  // can name a model the account refuses.
+  const listed = model || !t ? undefined : await t.listModels().catch(() => undefined);
+  const m = model ?? listed?.[0] ?? t?.defaultModels[0] ?? "default";
   const a = { tool, model: m };
   return {
     planner: a,
@@ -232,7 +235,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
 
   const registry = opts.registry ?? new ToolRegistry();
   const title = opts.title ?? firstLine(opts.prompt);
-  const tools = toolOverride(registry, settings, opts.tool, opts.model);
+  const tools = await toolOverride(registry, settings, opts.tool, opts.model);
   let created;
   try {
     created = await createTaskInHierarchy(
@@ -386,7 +389,7 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
   const settings = await new SettingsStore(opts.root).load();
 
   const registry = opts.registry ?? new ToolRegistry();
-  const tools = toolOverride(registry, settings, opts.tool, opts.model);
+  const tools = await toolOverride(registry, settings, opts.tool, opts.model);
   const bumpTo = opts.bumpTo ?? "done";
 
   // scan = import the repo into the plan `repo` (merging into it on a re-scan), then sync it.

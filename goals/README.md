@@ -118,7 +118,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 ## Verification and release
 
-- [ ] [`verify-steering-codex`](verify-steering-codex/goal.boof.xml) — Verify live steering (inject mode now) with Codex
+- [x] [`verify-steering-codex`](verify-steering-codex/goal.boof.xml) — Verify live steering (inject mode now) with Codex
 - [ ] [`desktop-e2e`](desktop-e2e/goal.boof.xml) — Test the desktop app end to end
 - [ ] [`typescript-7`](typescript-7/goal.boof.xml) — Upgrade to TypeScript 7
 - [ ] [`publish-runbook`](publish-runbook/goal.boof.xml) — Publish the server runbook on nodets.com
