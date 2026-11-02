@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { act } from "../lib/act.js";
 import type { Settings } from "@boof-runner/shared/schema";
 
 export function RunnerToggle({
@@ -13,8 +14,10 @@ export function RunnerToggle({
 }) {
   const enabled = settings.runner.enabled;
   const toggle = async () => {
-    await api.updateSettings({ runner: { enabled: !enabled } });
-    onChange();
+    const ok = await act(() => api.updateSettings({ runner: { enabled: !enabled } }), {
+      failure: "Could not change the runner",
+    });
+    if (ok) onChange();
   };
   return (
     <button

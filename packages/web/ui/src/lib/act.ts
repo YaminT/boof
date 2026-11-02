@@ -9,6 +9,8 @@ export interface Notifier {
 export interface ActOptions {
   success?: string;
   failure?: string;
+  /** Handles an error itself; return true to suppress the error toast. */
+  onError?: (err: unknown) => boolean;
 }
 
 export function errorMessage(err: unknown): string {
@@ -30,6 +32,7 @@ export async function runAction<T>(
     if (opts.success) notify.success(opts.success);
     return value;
   } catch (err) {
+    if (opts.onError?.(err)) return undefined;
     notify.error(opts.failure ? `${opts.failure}: ${errorMessage(err)}` : errorMessage(err));
     return undefined;
   }

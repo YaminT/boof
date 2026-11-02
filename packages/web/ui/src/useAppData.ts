@@ -4,6 +4,7 @@ import { api, type PlanSummary, type TaskView } from "./api.js";
 import type { BudgetStatus } from "./api-types.js";
 import { onUnauthorized } from "./token.js";
 import { useLive } from "./useLive.js";
+import { latestGuard } from "./lib/latest.js";
 
 export interface AppData {
   settings: Settings | null;
@@ -58,17 +59,25 @@ export function useAppData(
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
 
+  // Overlapping loads can answer out of order: only the newest reply may land.
+  const taskGuard = useRef(latestGuard());
+  const planGuard = useRef(latestGuard());
+  const actionGuard = useRef(latestGuard());
+
   const loadTasks = useCallback(async (pid: string | null) => {
     if (!pid) return setTasks({ pid: null, items: [], loaded: false });
+    const seq = taskGuard.current.begin();
     const t = await api.listTasks(pid);
-    // Ignore a response for a project the user has already switched away from.
-    if (selectedRef.current === pid) setTasks({ pid, items: t, loaded: true });
+    // Ignore a stale reply, and one for a project the user has already switched away from.
+    if (taskGuard.current.accept(seq) && selectedRef.current === pid)
+      setTasks({ pid, items: t, loaded: true });
   }, []);
 
   const loadPlans = useCallback(async (pid: string | null) => {
     if (!pid) return setPlans({ pid: null, items: [] });
+    const seq = planGuard.current.begin();
     const p = await api.listPlans(pid);
-    if (selectedRef.current === pid) setPlans({ pid, items: p });
+    if (planGuard.current.accept(seq) && selectedRef.current === pid) setPlans({ pid, items: p });
   }, []);
 
   const refreshTasks = useCallback(
@@ -85,7 +94,11 @@ export function useAppData(
     },
     [loadPlans],
   );
-  const refreshActions = useCallback(() => api.actions().then(setActions), []);
+  const refreshActions = useCallback(async () => {
+    const seq = actionGuard.current.begin();
+    const list = await api.actions();
+    if (actionGuard.current.accept(seq)) setActions(list);
+  }, []);
   const refreshSettings = useCallback(() => api.getSettings().then(setSettings), []);
   const refreshBudget = useCallback(
     () =>

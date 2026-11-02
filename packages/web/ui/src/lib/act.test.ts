@@ -47,4 +47,17 @@ describe("errorMessage", () => {
   it("uses the message of a plain Error", () => {
     expect(errorMessage(new Error("nope"))).toBe("nope");
   });
+
+  it("onError that returns true suppresses the error toast", async () => {
+    const n = notifier();
+    const out = await runAction(() => Promise.reject(new Error("x")), n, { onError: () => true });
+    expect(out).toBeUndefined();
+    expect(n.error).not.toHaveBeenCalled();
+  });
+
+  it("onError that returns false keeps the toast", async () => {
+    const n = notifier();
+    await runAction(() => Promise.reject(new Error("x")), n, { onError: () => false });
+    expect(n.error).toHaveBeenCalledExactlyOnceWith("x");
+  });
 });

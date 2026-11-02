@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { act } from "../lib/act.js";
 import type { CommandTemplate } from "../api-types.js";
 
 export function CommandsTab({ onChange }: { onChange: () => void }) {
@@ -8,7 +9,10 @@ export function CommandsTab({ onChange }: { onChange: () => void }) {
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
 
-  const reload = async () => setCommands(await api.listCommands());
+  const reload = async () => {
+    const list = await act(() => api.listCommands(), { failure: "Could not load commands" });
+    if (list) setCommands(list);
+  };
   useEffect(() => {
     void reload();
   }, []);
@@ -25,15 +29,21 @@ export function CommandsTab({ onChange }: { onChange: () => void }) {
   };
 
   const save = async () => {
-    if (selected) await api.renameCommand(selected.id, name, body);
-    else await api.upsertCommand(name, body);
+    const ok = await act(
+      () => (selected ? api.renameCommand(selected.id, name, body) : api.upsertCommand(name, body)),
+      { failure: "Could not save the command" },
+    );
+    if (!ok) return;
     await reload();
     onChange();
     startNew();
   };
 
   const remove = async (c: CommandTemplate) => {
-    const res = await api.deleteCommand(c.id);
+    const res = await act(() => api.deleteCommand(c.id), {
+      failure: "Could not delete the command",
+    });
+    if (!res) return;
     if (res.referencedBy.length) {
       alert(`Deleted. Was referenced by: ${res.referencedBy.join(", ")}`);
     }

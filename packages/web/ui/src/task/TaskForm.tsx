@@ -5,6 +5,7 @@ import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
 import { api, type TaskView } from "../api.js";
 import type { CommandTemplate } from "../api-types.js";
+import { conflictOf } from "../lib/conflict.js";
 import { act } from "../lib/act.js";
 import { relativeTime } from "../lib/time.js";
 import { TaskAttachments } from "./TaskAttachments.js";
@@ -80,6 +81,9 @@ export function TaskForm({
   const [base, setBase] = useState(server);
   const [form, setForm] = useState(server);
   const [elsewhere, setElsewhere] = useState(false);
+  // The `updated` the base values came from; sent with a save so a newer copy is refused.
+  const baseUpdated = useRef<string | undefined>(task?.frontmatter.updated);
+  const [conflict, setConflict] = useState(false);
   // The prompt the user had typed when a run started, kept so it can be copied.
   const [lost, setLost] = useState<{ prompt: string | null } | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -99,11 +103,16 @@ export function TaskForm({
 
   // The server copy moved: follow it while the form is clean, otherwise keep the edits and say so.
   useEffect(() => {
-    if (!task || key(server) === key(base)) return;
+    if (!task) return;
+    if (key(server) === key(base)) {
+      baseUpdated.current = task.frontmatter.updated;
+      return;
+    }
     if (dirty) setElsewhere(true);
     else {
       setBase(server);
       setForm(server);
+      baseUpdated.current = task.frontmatter.updated;
     }
   }, [server]);
 
@@ -114,6 +123,8 @@ export function TaskForm({
     setBase(server);
     setForm(server);
     setElsewhere(false);
+    setConflict(false);
+    baseUpdated.current = task?.frontmatter.updated;
   }, [locked]);
 
   // Keep "Saved 2m ago" current.
@@ -133,19 +144,36 @@ export function TaskForm({
     command: form.command,
   });
 
-  const save = async (status?: "pending"): Promise<boolean> => {
+  const save = async (status?: "pending", overwrite = false): Promise<boolean> => {
     if (!task || busy.current) return false;
     busy.current = true;
     setBusy(true);
     try {
       const ok = await act(
-        () =>
-          api.updateTask(pid, task.frontmatter.id, { ...payload(), ...(status ? { status } : {}) }),
-        { failure: "Could not save" },
+        async () => {
+          // Overwrite: take the copy that is there now as the base, then write over it.
+          if (overwrite)
+            baseUpdated.current = (await api.getTask(pid, task.frontmatter.id)).frontmatter.updated;
+          return api.updateTask(pid, task.frontmatter.id, {
+            ...payload(),
+            ...(status ? { status } : {}),
+            ...(baseUpdated.current ? { expectedUpdated: baseUpdated.current } : {}),
+          });
+        },
+        {
+          failure: "Could not save",
+          onError: (e) => {
+            if (conflictOf(e) !== "task") return false;
+            setConflict(true);
+            return true;
+          },
+        },
       );
       if (!ok) return false;
+      baseUpdated.current = ok.frontmatter.updated;
       setBase(form);
       setElsewhere(false);
+      setConflict(false);
       setSavedAt(new Date().toISOString());
       await reload();
       return true;
@@ -191,6 +219,8 @@ export function TaskForm({
     setBase(server);
     setForm(server);
     setElsewhere(false);
+    setConflict(false);
+    baseUpdated.current = task?.frontmatter.updated;
   };
 
   return (
@@ -232,14 +262,22 @@ export function TaskForm({
           </Button>
         </div>
       )}
-      {elsewhere && (
+      {(elsewhere || conflict) && (
         <div
           role="status"
           className="flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention"
         >
-          <span>This task changed elsewhere.</span>
+          <span>This task changed after you opened it.</span>
           <Button type="button" variant="outline" size="xs" onClick={discard}>
             Reload
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => void save(undefined, true)}
+          >
+            Overwrite
           </Button>
         </div>
       )}

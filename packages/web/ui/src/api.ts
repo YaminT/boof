@@ -161,6 +161,8 @@ export const api = {
       skip: boolean;
       runs: number;
       status: Status;
+      /** The `updated` the form was based on; a newer task answers 409 task_modified. */
+      expectedUpdated: string;
     }>,
   ) => httpTask(T(pid, id), { method: "PUT", body: JSON.stringify(input) }),
   setSkip: (pid: string, id: string, skip: boolean) =>
