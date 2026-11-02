@@ -2,14 +2,16 @@ import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RunnerEngine } from "@boof-runner/runner";
+import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
 import { startServer } from "@boof-runner/web";
 import { scaffoldDataRoot } from "./scaffold.js";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "./auth-cli.js";
 import { remoteCommand } from "./remote-cli.js";
 import { serviceCommand } from "./service-cli.js";
+import { TaskService } from "@boof-runner/api";
 import { epicCommand } from "./epic-cli.js";
+import { HAND_WRITTEN_COMMANDS, isOpArea, matchOpCommand, opsCommand } from "./ops-cli.js";
 import { projectCommand } from "./project-cli.js";
 import { taskCommand } from "./task-cli.js";
 import { planCommand } from "./plan-cli.js";
@@ -66,6 +68,8 @@ Usage:
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
+  boof-runner ops                      List the operation commands (every REST/MCP operation)
+  boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
   boof-runner --help                   Show this help
   boof-runner --version                Print the version (also: -v)
 
@@ -101,7 +105,7 @@ scan options:
       --tool <id>     Force all roles to this tool for the created tasks
       --model <name>  Model for --tool
 
-Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage.`;
+Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage; operation commands: 2 not found, 3 not allowed (identity, scope, project, trust), 130 interrupted.`;
 
 /** Locate the built UI directory shipped alongside this CLI, if present. */
 function resolveUiDir(): string {
@@ -365,6 +369,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 const SERVE_FOREVER = -1;
 
 async function dispatch(cmd: string | undefined, rest: string[], argv: string[]): Promise<number> {
+  // Generated commands: every operation of the registry as `<area> <verb>`. The hand-written
+  // commands keep their words (`auth add|list|revoke|rotate`, `project`, `task`, ...).
+  if (
+    cmd !== undefined &&
+    (cmd === "ops" ||
+      matchOpCommand([cmd, ...rest]) !== undefined ||
+      (isOpArea(cmd) && !(cmd in HAND_WRITTEN_COMMANDS)))
+  ) {
+    return opsCommand([cmd, ...rest], defaultDataRoot, {
+      services: (root) => new TaskService(root, new ToolRegistry()),
+    });
+  }
   let code = 0;
   switch (cmd) {
     case "run":

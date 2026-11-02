@@ -80,4 +80,25 @@ describe("boof-runner top level", () => {
     expect(await readdir(dataRoot)).toEqual([]);
     expect(existsSync(join(process.cwd(), "data", "settings.json"))).toBe(false);
   });
+
+  it("ops lists the generated commands, and an operation command runs", async () => {
+    await main(["ops"]);
+    expect(logs.join("\n")).toContain("tasks create");
+    logs.length = 0;
+    await main(["auth", "clients", "list", "--json"]);
+    expect(JSON.parse(logs.join("\n"))).toHaveProperty("clients");
+  });
+
+  it("auth list still runs the hand-written command, and an area alone is not an unknown command", async () => {
+    logs.length = 0;
+    await main(["auth", "list"]);
+    expect(logs.join("\n")).not.toMatch(/^\s*\{/);
+    expect(process.exitCode ?? 0).toBe(0);
+    logs.length = 0;
+    errs.length = 0;
+    await main(["tasks"]);
+    expect(process.exitCode).toBe(1);
+    expect(logs.join("\n")).toContain("tasks create");
+    expect(errs.join("\n")).not.toContain("unknown command");
+  });
 });

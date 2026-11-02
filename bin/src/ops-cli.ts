@@ -3,10 +3,23 @@
  * pure: command paths and argument parsing. Execution is in the second half of the file.
  */
 import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
-import { registry, type AnyOperation } from "@boof-runner/api";
-import { CliUsageError } from "./epic-cli.js";
+import {
+  LocalPrincipalError,
+  localPrincipal,
+  OpError,
+  registry,
+  toOpError,
+  warningsOf,
+  type AnyOperation,
+  type OpContext,
+  type TaskService,
+} from "@boof-runner/api";
+import { AuthStore, isKebabId } from "@boof-runner/shared";
+import { CliUsageError, dataRootOf } from "./epic-cli.js";
+import { scaffoldDataRoot } from "./scaffold.js";
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 
@@ -271,4 +284,228 @@ export function parseOpArgs(
   }
   result.input = { ...base, ...given };
   return result;
+}
+
+// --- Running a command ---
+
+export interface OpsIo {
+  /** Default console.log. */
+  out: (line: string) => void;
+  /** Default console.error. */
+  err: (line: string) => void;
+  /** Default process.stdout.write (a binary result with `--out -`). */
+  write: (bytes: Uint8Array) => void;
+}
+
+export interface OpsDeps {
+  /** Built by the composition root (bin/src/boof-runner.ts); tests pass a MockTool registry. */
+  services: (root: string) => TaskService;
+  /** Default: aborted on SIGINT. */
+  signal?: AbortSignal;
+}
+
+/** Exit code for an operation error: 404 → 2; 401, 403 → 3; anything else → 1. */
+export function exitCodeFor(err: OpError): number {
+  if (err.status === 404) return 2;
+  if (err.status === 401 || err.status === 403) return 3;
+  return 1;
+}
+
+/** Top-level result fields shown once (client keys, webhook secrets); human mode prints them. */
+export const ONE_TIME_SECRET_FIELDS: readonly string[] = ["key", "secret"];
+
+const NO_PROJECT =
+  "no project: pass --project <id>, or set a default with `project add <dir> --default`.";
+
+const flagName = (key: string) => kebab(key);
+
+function kindLabel(node: JsonSchema): string {
+  const k = fieldKind(node).kind;
+  return k === "stringList" || k === "stringOrList" ? "list" : k;
+}
+
+function helpFor(op: AnyOperation): string[] {
+  const schema = z.toJSONSchema(op.input, { io: "input", unrepresentable: "any" }) as JsonSchema & {
+    required?: string[];
+  };
+  const required = new Set(schema.required ?? []);
+  const path = commandPath(op).join(" ");
+  const lines = [
+    op.title,
+    "",
+    op.description,
+    "",
+    `Usage: boof-runner ${path} [flags]`,
+    `Scope: ${op.scopes.length > 0 ? op.scopes.join(" or ") : "none"}`,
+    "",
+    "Flags:",
+  ];
+  for (const [key, node] of Object.entries(schema.properties ?? {})) {
+    const description = (node as { description?: string }).description ?? "";
+    lines.push(
+      `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}  ${description}`.trimEnd(),
+    );
+  }
+  lines.push(
+    "  --input <json|@file>  the whole input as JSON (flags override its keys)",
+    "  --json                print the result as JSON",
+    "  --client <id>         act as this API client (needed when auth.mode is required)",
+    "  -d, --data <path>     data root",
+  );
+  if (op.rest.kind === "binary")
+    lines.push("  --out <file|->        write the downloaded bytes here");
+  return lines;
+}
+
+function listCommands(ops: AnyOperation[], out: (l: string) => void): void {
+  const byArea = new Map<string, AnyOperation[]>();
+  for (const o of ops) {
+    const area = commandPath(o)[0]!;
+    byArea.set(area, [...(byArea.get(area) ?? []), o]);
+  }
+  for (const [area, list] of byArea) {
+    out(`${area}:`);
+    for (const o of list) out(`  ${commandPath(o).join(" ").padEnd(34)}${o.title}`);
+  }
+}
+
+/** `ops`, `<area>`, or `<area> <verb>...`. Returns a process exit code. */
+export async function opsCommand(
+  argv: string[],
+  defaultRoot: () => string,
+  deps: OpsDeps,
+  ioOverride: Partial<OpsIo> = {},
+): Promise<number> {
+  const io: OpsIo = {
+    out: ioOverride.out ?? console.log,
+    err: ioOverride.err ?? console.error,
+    write: ioOverride.write ?? ((b) => void process.stdout.write(b)),
+  };
+  // The CLI's own flags may stand before the command: `--client reader tasks list`.
+  const lead: string[] = [];
+  let at = 0;
+  while (at < argv.length && argv[at]!.startsWith("-")) {
+    const flag = argv[at]!;
+    const takesValue =
+      ["-d", "--data", "--client", "--out", "--input"].includes(flag) && at + 1 < argv.length;
+    lead.push(...argv.slice(at, at + (takesValue ? 2 : 1)));
+    at += takesValue ? 2 : 1;
+  }
+  argv = [...argv.slice(at), ...lead];
+  const helpAsked = argv.includes("--help") || argv.includes("-h");
+
+  if (argv[0] === "ops") {
+    listCommands(cliOps(), io.out);
+    io.out("");
+    io.out("Each command takes --json (print JSON), --input <json|@file> and --help.");
+    return 0;
+  }
+  const match = matchOpCommand(argv);
+  if (!match) {
+    const area = argv[0];
+    if (area !== undefined && isOpArea(area)) {
+      listCommands(
+        cliOps().filter((o) => commandPath(o)[0] === area),
+        io.out,
+      );
+      return helpAsked ? 0 : 1;
+    }
+    io.err(`unknown command "${argv.join(" ")}"`);
+    return 1;
+  }
+  const { op, rest } = match;
+  const path = commandPath(op).join(" ");
+
+  // A bare Ctrl-C ends the command; tests hand in their own signal.
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  if (!deps.signal) process.once("SIGINT", onSigint);
+  const signal = deps.signal ?? controller.signal;
+
+  let json = false;
+  try {
+    const parsed = parseOpArgs(op, rest);
+    json = parsed.json;
+    if (parsed.help) {
+      for (const l of helpFor(op)) io.out(l);
+      return 0;
+    }
+    if (parsed.client !== undefined && !isKebabId(parsed.client)) {
+      throw new CliUsageError("--client must be a kebab-case id");
+    }
+    if (op.rest.kind === "binary" && parsed.out === undefined) {
+      throw new CliUsageError("pass --out <file> (or - for stdout)");
+    }
+    const root = dataRootOf(parsed.data, defaultRoot);
+    await scaffoldDataRoot(root);
+    const services = deps.services(root);
+    const authStore = new AuthStore(root);
+    const settings = await services.loadSettings();
+    let resolvePrincipal;
+    try {
+      resolvePrincipal = await localPrincipal({ settings, authStore, client: parsed.client });
+    } catch (e) {
+      if (e instanceof LocalPrincipalError) {
+        io.err(`${path}: ${e.message}`);
+        return 3;
+      }
+      throw e;
+    }
+    const input = { ...parsed.input };
+    if (op.projectScoped && input.projectId === undefined) {
+      if (!settings.defaultProject) throw new CliUsageError(NO_PROJECT);
+      input.projectId = settings.defaultProject;
+    }
+    const ctx: OpContext = {
+      root,
+      principal: await resolvePrincipal(),
+      services,
+      authStore,
+      now: () => new Date().toISOString(),
+      signal,
+    };
+    const result = (await op.execute(ctx, input)) as unknown;
+    if (signal.aborted) return 130;
+
+    for (const w of warningsOf(result)) io.err(`warning (${w.code}): ${w.message}`);
+    if (op.rest.kind === "binary") {
+      const { bytes } = result as { bytes: Uint8Array };
+      if (parsed.out === "-") io.write(bytes);
+      else {
+        const target = isAbsolute(parsed.out!) ? parsed.out! : resolve(process.cwd(), parsed.out!);
+        await writeFile(target, bytes);
+        io.out(`Wrote ${bytes.byteLength} bytes to ${target}`);
+      }
+      return 0;
+    }
+    if (json) {
+      io.out(JSON.stringify(result, null, 2));
+      return 0;
+    }
+    const human =
+      (op.rest.text as ((r: unknown) => string) | undefined)?.(result) ??
+      (op.summary as ((r: unknown) => string) | undefined)?.(result) ??
+      JSON.stringify(result, null, 2);
+    io.out(human);
+    for (const field of ONE_TIME_SECRET_FIELDS) {
+      const v = (result as Record<string, unknown> | null)?.[field];
+      if (typeof v === "string") io.out(`${field}: ${v}`);
+    }
+    return 0;
+  } catch (e) {
+    if (signal.aborted) return 130;
+    if (e instanceof CliUsageError) {
+      io.err(`${path}: ${e.message}`);
+      return 1;
+    }
+    const err = toOpError(e);
+    if (json) io.err(JSON.stringify(err.toBody()));
+    else {
+      io.err(`${path}: ${err.code}: ${err.message}`);
+      if (err.details !== undefined) io.err(`  ${JSON.stringify(err.details)}`);
+    }
+    return exitCodeFor(err);
+  } finally {
+    if (!deps.signal) process.removeListener("SIGINT", onSigint);
+  }
 }
