@@ -1282,6 +1282,26 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(task?.body.questions).toContain("### planner answered");
   });
 
+  it("when the planner cannot answer a role's question the task parks, and the role gets the owner's answer on resume", async () => {
+    mockState.roleQuestions = { developer: ["Which db?"] };
+    mockState.answerQuestions = ["Is Postgres allowed?"];
+    const first = await run("Build it.");
+    expect(first.kind).toBe("parked");
+    const parked = (await store.get("t1"))!;
+    expect(parked.frontmatter.status).toBe("action");
+    expect(parked.frontmatter.questions).toBe("pending");
+    expect(parked.body.questions).toContain("(for the developer) Is Postgres allowed?");
+    await store.transition("t1", "pending", (t) => {
+      t.body.answers = "Yes, Postgres is fine.";
+      t.frontmatter.questions = "answered";
+    });
+    const from = mockState.prompts.length;
+    const second = await engine.tick();
+    expect(second.kind === "ran" ? second.outcome.kind : second.kind).toBe("done");
+    const devPrompts = mockState.prompts.slice(from).filter((p) => p.includes("## Plan"));
+    expect(devPrompts.some((p) => p.includes("Yes, Postgres is fine."))).toBe(true);
+  });
+
   it("carried findings survive iteration 2 parking and resuming", async () => {
     await configure({ observer: true });
     await run("Twice. [[mock-verdicts observer=APPROVE reviewer=APPROVE]]", { runs: 2 });

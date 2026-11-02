@@ -31,6 +31,8 @@ export interface MockState {
   refinementQuestions: string[];
   /** Questions a non-planner role raises on its FIRST run (routed to the planner). */
   roleQuestions: Partial<Record<Role, string[]>>;
+  /** Questions the planner raises once when it is asked to answer another role's questions. */
+  answerQuestions: string[];
   /** Internal: simulated transient failures already thrown, per role. */
   transientCounts: Map<Role, number>;
   /** Internal: simulated stalls already run, per role. */
@@ -53,6 +55,7 @@ export const mockState: MockState = {
   calls: [],
   systemPrompts: [],
   roleQuestions: {},
+  answerQuestions: [],
   refinementQuestions: [],
   transientCounts: new Map(),
   stallCounts: new Map(),
@@ -71,6 +74,7 @@ export function resetMock(): void {
   mockState.calls = [];
   mockState.systemPrompts = [];
   mockState.roleQuestions = {};
+  mockState.answerQuestions = [];
   mockState.refinementQuestions = [];
   mockState.transientCounts = new Map();
   mockState.stallCounts = new Map();
@@ -244,6 +248,23 @@ export class MockTool implements Tool {
     if (opts.role === "planner") {
       mockState.roundCounts.delete(`${opts.cwd}|observer`);
       mockState.roundCounts.delete(`${opts.cwd}|reviewer`);
+    }
+
+    // The planner, asked to answer another role, can need the owner itself (once).
+    if (
+      opts.role === "planner" &&
+      mockState.answerQuestions.length > 0 &&
+      opts.systemPrompt.includes("Answer the following questions from the")
+    ) {
+      const qs = [...mockState.answerQuestions];
+      mockState.answerQuestions = [];
+      const output = `MOCK planner needs the owner\n${usageLineFor(opts.prompt)}`;
+      return withQuestions({
+        output,
+        sessionId,
+        report: `I cannot answer this myself.\n\n${formatQuestions(qs)}`,
+        usage: parseUsage(output),
+      });
     }
 
     // The refinement pass asks its configured questions once.

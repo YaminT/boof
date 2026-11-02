@@ -189,6 +189,18 @@ class ReviewNotApprovedError extends Error {
 }
 
 /**
+ * Thrown when the planner, asked to answer another role's questions, needs the owner: the run
+ * stops and the task parks. On resume the whole pipeline runs again, so the role that asked
+ * (and every other step) gets the owner's answers under "Answers to earlier questions".
+ */
+class ParkForOwner extends Error {
+  constructor(readonly questions: string[]) {
+    super("planner needs the owner");
+    this.name = "ParkForOwner";
+  }
+}
+
+/**
  * Thrown before a step starts when a budget is spent. A step that is running is never
  * interrupted for budget: the check runs between steps, on the cost recorded so far.
  */
@@ -969,6 +981,10 @@ export class Pipeline {
       await this.closeSteps(id, "Finished");
       return { kind: "done", task };
     } catch (err) {
+      if (err instanceof ParkForOwner) {
+        await this.log(id, `Planner needs the owner to answer; parking the task.`).catch(() => {});
+        return this.park(task, usages, err.questions);
+      }
       const overBudget = err instanceof BudgetExceededError;
       const message =
         err instanceof ReviewNotApprovedError || overBudget
@@ -1065,6 +1081,13 @@ export class Pipeline {
       autoApprove: true,
     });
     if (answer.usage) usages.push(answer.usage);
+    if (answer.questions && answer.questions.length > 0) {
+      // The planner cannot answer: the owner must. Say which role asked what.
+      task.body.questions = task.body.questions.trim()
+        ? task.body.questions
+        : `### ${fromRole} asked\n${questions.join("\n")}`;
+      throw new ParkForOwner(answer.questions.map((q) => `(for the ${fromRole}) ${q}`));
+    }
     const dialogue = [
       `# ${fromRole} ↔ planner dialogue`,
       `## ${fromRole} asked`,

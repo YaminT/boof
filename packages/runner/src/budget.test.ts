@@ -132,6 +132,19 @@ describe("per-task limit", () => {
     expect(results.at(-1)).toEqual({ kind: "idle" });
   });
 
+  it("the planner's answer run and the rerun count, and the rerun does not start over the limit", async () => {
+    await useBudget({ perTaskUsd: 1.7, onExceed: "fail" });
+    mockState.roleQuestions = { developer: ["Which db?"] };
+    await addTask(main, "t1");
+    await engine.runUntilIdle();
+    const t = await tasksOf(main).get("t1");
+    // planner, refinement, developer (1.50), the planner's answer (2.00): the rerun is refused.
+    expect(mockState.calls).toEqual(["planner", "planner", "developer", "planner"]);
+    expect(t?.frontmatter.status).toBe("failed");
+    expect(t?.body.log).toContain("budget exceeded: task:t1 2.0000/1.7 USD");
+    expect(t?.frontmatter.tokens?.costUsd).toBeCloseTo(2);
+  });
+
   it("with onExceed fail follows worktree.onFailure", async () => {
     await settings.update({ worktree: { onDone: "keep-branch", onFailure: "delete" } });
     await useBudget({ perTaskUsd: 1.2, onExceed: "fail" });
