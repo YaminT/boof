@@ -24,6 +24,7 @@
       "name": "@boof-runner/cli",
       "version": "0.2.0",
       "dependencies": {
+        "@boof-runner/api": "*",
         "@boof-runner/mcp": "*",
         "@boof-runner/runner": "*",
         "@boof-runner/shared": "*",

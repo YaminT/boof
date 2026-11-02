@@ -75,6 +75,12 @@ export interface McpSpec {
   annotations?: McpAnnotations;
 }
 
+/** How the generated CLI (`boof-runner <area> <verb>`) treats an operation. */
+export interface CliSpec {
+  /** Leave the operation out of the generated CLI (the parity test then needs an exception). */
+  hidden?: boolean;
+}
+
 export const MCP_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export interface OperationSpec<I extends z.ZodObject, O extends z.ZodType> {
@@ -92,6 +98,8 @@ export interface OperationSpec<I extends z.ZodObject, O extends z.ZodType> {
   output: O;
   rest: RestSpec;
   mcp: McpSpec;
+  /** Generated CLI settings; omitted: the operation has a command. */
+  cli?: CliSpec;
   /** Error code for input that fails validation (`invalid_plan` for plan bodies). */
   invalidInputCode?: ErrorCode;
   /** Extra fields for the audit line (never bodies or secrets). */

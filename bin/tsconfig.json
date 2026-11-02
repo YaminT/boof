@@ -10,6 +10,7 @@
   },
   "references": [
     { "path": "../packages/shared" },
+    { "path": "../packages/api" },
     { "path": "../packages/runner" },
     { "path": "../packages/mcp" },
     { "path": "../packages/web" }

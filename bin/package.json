@@ -8,6 +8,7 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@boof-runner/api": "*",
     "@boof-runner/mcp": "*",
     "@boof-runner/runner": "*",
     "@boof-runner/shared": "*",

@@ -66,9 +66,17 @@ const PACKAGE_PART: Record<string, Part> = {
   desktop: "desktop",
 };
 
-const CLI_COMMANDS = ["auth", "epic", "plan", "project", "remote", "service", "task", "mcp"].map(
-  (c) => `${c}-cli.ts`,
-);
+const CLI_COMMANDS = [
+  "auth",
+  "epic",
+  "plan",
+  "project",
+  "remote",
+  "service",
+  "task",
+  "mcp",
+  "ops",
+].map((c) => `${c}-cli.ts`);
 
 /** The part a repo-relative file path (forward slashes) belongs to, or undefined outside the map. */
 export function partOfFile(file: string): Part | undefined {

@@ -131,6 +131,7 @@ describe("import boundaries", () => {
     }
     expect(partOfFile("packages/web/ui/src/App.tsx")).toBe("facedisk/ui");
     expect(partOfFile("bin/src/project-cli.ts")).toBe("facedisk/cli");
+    expect(partOfFile("bin/src/ops-cli.ts")).toBe("facedisk/cli");
     expect(partOfFile("bin/src/headless.ts")).toBe("bin");
     expect(partOfFile("packages/desktop/src/main.ts")).toBe("desktop");
     expect(partOfFile("scripts/x.ts")).toBeUndefined();
