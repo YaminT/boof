@@ -5,7 +5,7 @@ import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
 import { stepHeaders } from "../lib/log-tail.js";
-import { formatRoute, type Route, type TaskView as RouteView } from "../lib/route.js";
+import { backFor, formatRoute, type Route, type TaskView as RouteView } from "../lib/route.js";
 import { useElapsed } from "../overview/useElapsed.js";
 import { useTaskActions } from "../tasks/useTaskActions.js";
 import type { AppData } from "../useAppData.js";
@@ -27,8 +27,6 @@ const TABS: { view: RouteView; label: string }[] = [
   { view: "questions", label: "Questions" },
 ];
 
-const BACK = new Set(["tasks", "overview"]);
-
 /** The screen of one task, or of a new one (`taskId` is `__new__`). */
 export function TaskDetailPage({
   pid,
@@ -43,14 +41,11 @@ export function TaskDetailPage({
   view: RouteView;
   data: AppData;
   navigate: Navigate;
-  /** The route the user came from; "← Tasks" returns to it when it was Tasks or the Overview. */
+  /** The route the user came from; the back link returns to it (a plan, Tasks or the Overview). */
   previous: Route | null;
 }) {
-  const tasksHref = formatRoute({ name: "tasks", pid });
-  const backHref =
-    previous && BACK.has(previous.name) && "pid" in previous && previous.pid === pid
-      ? formatRoute(previous)
-      : tasksHref;
+  const back = backFor(previous, pid);
+  const backHref = formatRoute(back.route);
   const open = (id: string, opts?: { replace?: boolean }) =>
     navigate({ name: "task", pid, taskId: id, view: "edit" }, opts);
 
@@ -61,7 +56,7 @@ export function TaskDetailPage({
           href={backHref}
           className="w-fit text-[length:var(--text-row)] text-ink-muted no-underline hover:text-ink hover:underline"
         >
-          ← Tasks
+          {back.label}
         </a>
         <h1 className="m-0 text-[length:var(--text-section)] font-semibold">New task</h1>
         <TaskForm
@@ -85,6 +80,7 @@ export function TaskDetailPage({
       data={data}
       navigate={navigate}
       backHref={backHref}
+      backLabel={back.label}
     />
   );
 }
@@ -96,6 +92,7 @@ function ExistingTask({
   data,
   navigate,
   backHref,
+  backLabel,
 }: {
   pid: string;
   taskId: string;
@@ -103,6 +100,7 @@ function ExistingTask({
   data: AppData;
   navigate: Navigate;
   backHref: string;
+  backLabel: string;
 }) {
   const row = data.tasks.find((t) => t.frontmatter.id === taskId);
   const listKey = row
@@ -134,6 +132,7 @@ function ExistingTask({
       data={data}
       navigate={navigate}
       backHref={backHref}
+      backLabel={backLabel}
       reload={reload}
     />
   );
@@ -146,6 +145,7 @@ function Loaded({
   data,
   navigate,
   backHref,
+  backLabel,
   reload,
 }: {
   pid: string;
@@ -154,6 +154,7 @@ function Loaded({
   data: AppData;
   navigate: Navigate;
   backHref: string;
+  backLabel: string;
   reload: () => Promise<void>;
 }) {
   const id = task.frontmatter.id;
@@ -188,6 +189,7 @@ function Loaded({
       <TaskHeader
         task={task}
         backHref={backHref}
+        backLabel={backLabel}
         elapsed={elapsed}
         actions={actions}
         onQueue={() => void queue()}

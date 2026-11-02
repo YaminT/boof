@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
-import { api, ApiError, type Goal, type GoalInput, type SyncReport } from "../api.js";
+import { api, ApiError, type Goal, type SyncReport } from "../api.js";
 import { Button } from "@/ui/button";
-import { GoalForm } from "../components/GoalForm.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +16,7 @@ import { SortableList } from "../shell/SortableList.js";
 import { planErrorLines, sortGoals } from "../lib/plan-view.js";
 import { formatRoute, type Route } from "../lib/route.js";
 import type { AppData } from "../useAppData.js";
+import { GoalEditor } from "./GoalEditor.js";
 import { GoalPanel } from "./GoalPanel.js";
 import { GoalRow } from "./GoalRow.js";
 import { ArchivePlanDialog, DeleteGoalDialog, ExportDialog, SyncDialog } from "./PlanDialogs.js";
@@ -38,8 +38,8 @@ export function PlanPage({
   navigate: (to: Route, opts?: { replace?: boolean }) => void;
 }) {
   const { plan, missing, failed, reload, mutate } = usePlan(pid, planId, data.planTick);
-  const [editing, setEditing] = useState<Goal | "new" | null>(null);
-  const [formErrors, setFormErrors] = useState<string[]>([]);
+  // The panel shows the goal editor: "new" for a goal being added, else the id of the goal edited.
+  const [editing, setEditing] = useState<string | "new" | null>(null);
   const [deleting, setDeleting] = useState<{ goal: Goal; dependents: string[] | null } | null>(
     null,
   );
@@ -125,6 +125,12 @@ export function PlanPage({
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  // Leaving the goal being edited (another goal opened, panel closed) ends the edit.
+  useEffect(() => {
+    if (editing && editing !== "new" && editing !== goalId) setEditing(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalId]);
+
   if (missing) return null;
   if (!plan) {
     return failed ? (
@@ -163,17 +169,6 @@ export function PlanPage({
     void reload();
     changed();
   };
-  const saveGoal = async (g: GoalInput) => {
-    setFormErrors([]);
-    try {
-      await api.putGoal(pid, plan, g);
-      setEditing(null);
-      await reload();
-      changed();
-    } catch (e) {
-      setFormErrors(planErrorLines(e));
-    }
-  };
   const removeGoal = async (cascade: boolean) => {
     if (!deleting) return;
     const g = deleting.goal;
@@ -209,8 +204,8 @@ export function PlanPage({
         }
         onSync={() => void startSync()}
         onAddGoal={() => {
-          setFormErrors([]);
           setEditing("new");
+          if (goalId) closePanel();
         }}
         onAutoSync={(on) =>
           void mutate((p) => api.updatePlan(pid, p, { autoSync: on }), "Could not change auto-sync")
@@ -226,7 +221,7 @@ export function PlanPage({
         onArchive={() => setArchiving(true)}
       />
       <div className="flex flex-col gap-6 min-[1024px]:flex-row min-[1024px]:items-start">
-        <div className={`min-w-0 flex-1 ${goal ? "hidden min-[1024px]:block" : ""}`}>
+        <div className={`min-w-0 flex-1 ${goal || editing ? "hidden min-[1024px]:block" : ""}`}>
           {goals.length >= 2 && canReorder && (
             <p className="m-0 mb-1 text-[length:var(--text-meta)] text-ink-muted">
               Drag or press Alt+↑ ↓ to reorder
@@ -298,8 +293,8 @@ export function PlanPage({
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => {
-                              setFormErrors([]);
-                              setEditing(g);
+                              setEditing(g.id);
+                              if (g.id !== goalId) openGoal(g.id);
                             }}
                           >
                             Edit goal
@@ -354,19 +349,50 @@ export function PlanPage({
               }}
             </SortableList>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => {
+              setEditing("new");
+              if (goalId) closePanel();
+            }}
+          >
+            Add goal
+          </Button>
         </div>
-        {goal && <GoalPanel goal={goal} onClose={closePanel} />}
+        {editing ? (
+          <div className="w-full shrink-0 rounded-lg border border-line bg-surface p-4 min-[1024px]:w-[400px]">
+            <GoalEditor
+              key={editing}
+              pid={pid}
+              plan={plan}
+              goal={editing === "new" ? null : (plan.goals.find((g) => g.id === editing) ?? null)}
+              onCancel={() => setEditing(null)}
+              onSaved={async (id) => {
+                setEditing(null);
+                // The plan must hold the goal before its URL does, or the URL is "corrected" away.
+                await reload();
+                changed();
+                if (id !== goalId) openGoal(id);
+              }}
+            />
+          </div>
+        ) : (
+          goal && (
+            <GoalPanel
+              pid={pid}
+              plan={plan}
+              goal={goal}
+              tasks={taskById}
+              onEdit={() => setEditing(goal.id)}
+              onSync={() => void startSync()}
+              onClose={closePanel}
+            />
+          )
+        )}
       </div>
 
-      {editing && (
-        <GoalForm
-          goal={editing === "new" ? null : editing}
-          others={goals.filter((g) => editing === "new" || g.id !== editing.id).map((g) => g.id)}
-          error={formErrors}
-          onSave={(g) => void saveGoal(g)}
-          onClose={() => setEditing(null)}
-        />
-      )}
       <SyncDialog
         report={syncPreview}
         busy={syncing}

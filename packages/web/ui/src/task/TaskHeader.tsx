@@ -19,6 +19,7 @@ import { DeleteTaskDialog } from "./DeleteTaskDialog.js";
 export function TaskHeader({
   task,
   backHref,
+  backLabel,
   elapsed,
   actions,
   onQueue,
@@ -27,6 +28,7 @@ export function TaskHeader({
 }: {
   task: TaskView;
   backHref: string;
+  backLabel: string;
   elapsed: number | null;
   actions: TaskActions;
   onQueue: () => void;
@@ -44,7 +46,7 @@ export function TaskHeader({
         href={backHref}
         className="w-fit text-[length:var(--text-row)] text-ink-muted no-underline hover:text-ink hover:underline"
       >
-        ← Tasks
+        {backLabel}
       </a>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 className="m-0 min-w-0 flex-1 basis-60 text-[length:var(--text-section)] leading-snug font-semibold break-words">
