@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import type { Project } from "@boof-runner/shared/schema";
 import {
   Command,
@@ -13,28 +13,19 @@ import { Kbd } from "@/ui/kbd";
 import { StopTaskDialog } from "./StopTaskDialog.js";
 import type { TaskView } from "../api.js";
 import type { AppData } from "../useAppData.js";
-import type { Route, SettingsPageId } from "../lib/route.js";
+import type { Route } from "../lib/route.js";
 import { isPaletteShortcut } from "../lib/palette-shortcut.js";
 import { act } from "../lib/act.js";
 import { api } from "../api.js";
-import { groupTasks } from "../lib/task-groups.js";
-import { statusLabel } from "../lib/status.js";
-import { useTheme, type ThemePref } from "../lib/theme.js";
+import {
+  createCommandActions,
+  type ActionGroup,
+  type CommandAction,
+} from "../lib/command-actions.js";
+import { useTheme } from "../lib/theme.js";
 import { toggleRunner } from "./RunnerSwitch.js";
 
-const SETTINGS_PAGES: { page: SettingsPageId; label: string }[] = [
-  { page: "project", label: "Go to Settings › Project" },
-  { page: "agents", label: "Go to Settings › Agents" },
-  { page: "budgets", label: "Go to Settings › Budgets" },
-  { page: "keys", label: "Go to Settings › API keys" },
-  { page: "automation", label: "Go to Settings › Automation" },
-];
-
-const THEMES: { pref: ThemePref; label: string }[] = [
-  { pref: "light", label: "Use light theme" },
-  { pref: "dark", label: "Use dark theme" },
-  { pref: "system", label: "Use system theme" },
-];
+const GROUP_ORDER: ActionGroup[] = ["Go to", "Projects", "Tasks", "Actions"];
 
 export function isMac(): boolean {
   return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -89,32 +80,46 @@ export function CommandPalette({
   const [stopping, setStopping] = useState<TaskView | null>(null);
   usePaletteShortcut(open, onOpenChange);
 
-  const run = (fn: () => void) => () => {
-    onOpenChange(false);
-    fn();
-  };
-  const go = (to: Route) => run(() => navigate(to));
   const pid = currentPid;
-  const enabled = data.settings?.runner.enabled ?? false;
-  const otherProjects = (projects ?? []).filter((p) => !p.archived);
-
-  const groups = groupTasks(data.tasks, data.plans);
-  const proposedIds = new Set(
-    groups.needsYou.flatMap((n) => (n.kind === "proposed" ? [n.task.frontmatter.id] : [])),
-  );
-  const draftPlans = groups.needsYou.flatMap((n) => (n.kind === "draft-plan" ? [n.plan] : []));
-  const queueable = data.tasks.filter((t) => t.frontmatter.status === "draft");
   const mutate = (fn: () => Promise<unknown>, success: string, failure: string) =>
-    run(() => {
-      void act(fn, { success, failure }).then(() => data.refresh());
-    });
+    act(fn, { success, failure }).then(() => data.refresh());
 
-  const item = (key: string, label: string, onSelect: () => void, extra?: ReactNode) => (
-    <CommandItem key={key} value={label} onSelect={onSelect}>
-      {label}
-      {extra}
-    </CommandItem>
-  );
+  const actions = createCommandActions({
+    pid,
+    projects: projects ?? [],
+    tasks: data.tasks,
+    plans: data.plans,
+    runnerEnabled: data.settings?.runner.enabled ?? false,
+    settingsLoaded: !!data.settings,
+    effects: {
+      navigate,
+      selectProject: onSelectProject,
+      setTheme: setPref,
+      requestStop: setStopping,
+      activatePlan: (id, plan) =>
+        mutate(
+          () => api.updatePlan(id, plan, { status: "active" }),
+          "Plan activated",
+          "Could not activate",
+        ),
+      queueTask: (id, taskId) =>
+        mutate(
+          () => api.updateTask(id, taskId, { status: "pending" }),
+          "Queued",
+          "Could not queue",
+        ),
+      setRunner: (enabled) => toggleRunner(enabled).then(() => data.refresh()),
+    },
+  });
+
+  const select = (action: CommandAction) => () => {
+    onOpenChange(false);
+    void action.run();
+  };
+  const groups = GROUP_ORDER.map((g) => ({
+    g,
+    items: actions.filter((a) => a.group === g),
+  })).filter((x) => x.items.length > 0);
 
   return (
     <>
@@ -128,122 +133,26 @@ export function CommandPalette({
           <CommandInput placeholder="Search pages, tasks and actions" />
           <CommandList>
             <CommandEmpty>Nothing matches.</CommandEmpty>
-            <CommandGroup heading="Go to">
-              {item("inbox", "Go to Inbox", go({ name: "inbox" }))}
-              {pid && (
-                <>
-                  {item("overview", "Go to Overview", go({ name: "overview", pid }))}
-                  {item("tasks", "Go to Tasks", go({ name: "tasks", pid }))}
-                  {item("plans", "Go to Plans", go({ name: "plans", pid }))}
-                  {SETTINGS_PAGES.map(({ page, label }) =>
-                    item(`settings-${page}`, label, go({ name: "settings", pid, page })),
-                  )}
-                </>
-              )}
-            </CommandGroup>
-            {otherProjects.length > 0 && (
-              <CommandGroup heading="Projects">
-                {otherProjects.map((p) => (
+            {groups.map(({ g, items }) => (
+              <CommandGroup key={g} heading={g}>
+                {items.map((a) => (
                   <CommandItem
-                    key={p.id}
-                    value={`Switch to project ${p.name}`}
-                    onSelect={run(() => onSelectProject(p.id))}
+                    key={a.id}
+                    value={a.searchValue}
+                    keywords={a.keywords}
+                    disabled={a.disabled}
+                    onSelect={select(a)}
                   >
-                    Switch to {p.name}
-                    {p.id === pid && (
-                      <span className="ml-auto text-[length:var(--text-meta)] text-ink-muted">
-                        current
+                    <span className={a.meta ? "truncate" : undefined}>{a.label}</span>
+                    {a.meta && (
+                      <span className="ml-auto shrink-0 text-[length:var(--text-meta)] text-ink-muted">
+                        {a.meta}
                       </span>
                     )}
                   </CommandItem>
                 ))}
               </CommandGroup>
-            )}
-            {pid && data.tasks.length > 0 && (
-              <CommandGroup heading="Tasks">
-                {data.tasks.map((t) => (
-                  <CommandItem
-                    key={t.frontmatter.id}
-                    value={`Open task ${t.frontmatter.title} ${t.frontmatter.id}`}
-                    onSelect={go({ name: "task", pid, taskId: t.frontmatter.id, view: "edit" })}
-                  >
-                    <span className="truncate">{t.frontmatter.title}</span>
-                    <span className="ml-auto shrink-0 text-[length:var(--text-meta)] text-ink-muted">
-                      {statusLabel(t.frontmatter.status)}
-                    </span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
-            <CommandGroup heading="Actions">
-              {pid &&
-                item(
-                  "new-task",
-                  "New task",
-                  go({ name: "task", pid, taskId: "__new__", view: "edit" }),
-                )}
-              {pid &&
-                draftPlans.map((p) => (
-                  <CommandItem
-                    key={`activate-${p.id}`}
-                    value={`Activate plan: ${p.title} ${p.id}`}
-                    keywords={["activate", "plan"]}
-                    onSelect={mutate(
-                      () => api.updatePlan(pid, p, { status: "active" }),
-                      "Plan activated",
-                      "Could not activate",
-                    )}
-                  >
-                    Activate plan: {p.title}
-                  </CommandItem>
-                ))}
-              {pid &&
-                queueable.map((t) => {
-                  const proposed = proposedIds.has(t.frontmatter.id);
-                  const label = `${proposed ? "Queue proposed task" : "Queue"}: ${t.frontmatter.title}`;
-                  return (
-                    <CommandItem
-                      key={`queue-${t.frontmatter.id}`}
-                      value={`${label} ${t.frontmatter.id}`}
-                      keywords={["queue", "task"]}
-                      onSelect={mutate(
-                        () => api.updateTask(pid, t.frontmatter.id, { status: "pending" }),
-                        "Queued",
-                        "Could not queue",
-                      )}
-                    >
-                      {label}
-                    </CommandItem>
-                  );
-                })}
-              {pid &&
-                groups.running.map((t) => (
-                  <CommandItem
-                    key={`stop-${t.frontmatter.id}`}
-                    value={`Stop: ${t.frontmatter.title} ${t.frontmatter.id}`}
-                    keywords={["stop", "task"]}
-                    onSelect={run(() => setStopping(t))}
-                  >
-                    Stop: {t.frontmatter.title}
-                  </CommandItem>
-                ))}
-              <CommandItem
-                value={enabled ? "Pause the runner" : "Start the runner"}
-                disabled={!data.settings}
-                onSelect={run(() => {
-                  void toggleRunner(enabled).then(() => data.refresh());
-                })}
-              >
-                {enabled ? "Pause the runner" : "Start the runner"}
-              </CommandItem>
-              {THEMES.map(({ pref, label }) =>
-                item(
-                  `theme-${pref}`,
-                  label,
-                  run(() => setPref(pref)),
-                ),
-              )}
-            </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </CommandDialog>
