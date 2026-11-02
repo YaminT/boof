@@ -1,0 +1,89 @@
+// The import-boundary map read by import-boundaries.test.ts: which folder belongs to which part of
+// the planned split (Heart core, Heart server, Runner, Owlish, Facedisk, desktop, the composition
+// root), and which imports may cross. Files stay where they are; the map follows the design in
+// docs/superpowers/specs/2026-10-30-boof-split-design.md (§5.1, §7). Step 15 of the roadmap turns
+// the folder rules into one line per package.
+import { basename, dirname, join, normalize } from "node:path";
+
+export type Part =
+  | "heart"
+  | "owlish"
+  | "runner"
+  | "heart-server"
+  | "facedisk/ui"
+  | "facedisk/cli"
+  | "bin"
+  | "desktop";
+
+/** Which parts a part may import (parts the same file maps to are not checked). */
+export const ALLOWED: Record<Part, Part[]> = {
+  heart: [],
+  owlish: ["heart"],
+  runner: ["heart", "owlish"],
+  "heart-server": ["heart", "owlish"],
+  "facedisk/cli": ["heart", "heart-server"],
+  "facedisk/ui": ["heart", "heart-server"], // type-only, see TYPE_ONLY
+  bin: ["heart", "owlish", "runner", "heart-server", "facedisk/cli", "facedisk/ui"],
+  desktop: ["heart", "owlish", "runner", "heart-server", "facedisk/ui", "bin"],
+};
+
+/** Parts whose imports of other parts must all be `import type`/`export type`. */
+export const TYPE_ONLY: Part[] = ["facedisk/ui"];
+
+/** Known debts, each fixed by a named step of the split. An entry that matches no import fails. */
+export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [
+  { file: "packages/api/src/services/service.ts", to: "runner", fixedBy: "M1" },
+  { file: "packages/api/src/services/plan-service.ts", to: "runner", fixedBy: "M1" },
+  { file: "packages/api/src/ops/projects.ts", to: "runner", fixedBy: "M1" },
+  { file: "packages/api/src/services/model-details.ts", to: "runner", fixedBy: "M1" },
+  { file: "packages/web/src/server.ts", to: "runner", fixedBy: "M1" },
+  { file: "bin/src/plan-cli.ts", to: "runner", fixedBy: "M1" },
+  { file: "bin/src/project-cli.ts", to: "runner", fixedBy: "M1" },
+  // Not in the design's list of seven: plan-cli reaches the composition root's project resolver.
+  // `resolveProject` and `ProjectResolutionError` move into Heart core with the plan helpers.
+  { file: "bin/src/plan-cli.ts", to: "bin", fixedBy: "M1 (resolveProject re-homed)" },
+];
+
+/** Folders walked for production files. */
+export const SOURCE_ROOTS = ["packages/*/src", "packages/web/ui/src", "bin/src"];
+
+const PACKAGE_PART: Record<string, Part> = {
+  shared: "heart",
+  runner: "runner",
+  api: "heart-server",
+  mcp: "heart-server",
+  web: "heart-server",
+  desktop: "desktop",
+};
+
+const CLI_COMMANDS = ["auth", "plan", "project", "remote", "service", "mcp"].map(
+  (c) => `${c}-cli.ts`,
+);
+
+/** The part a repo-relative file path (forward slashes) belongs to, or undefined outside the map. */
+export function partOfFile(file: string): Part | undefined {
+  const p = normalize(file).split("\\").join("/");
+  if (p.startsWith("packages/web/ui/src/")) return "facedisk/ui";
+  if (p.startsWith("packages/shared/src/") && basename(p).startsWith("owlish")) return "owlish";
+  const pkg = /^packages\/([^/]+)\/src\//.exec(p)?.[1];
+  if (pkg) return PACKAGE_PART[pkg];
+  // scaffold.ts is the data-root helper every CLI command calls; M1 moves it into Heart core.
+  if (p === "bin/src/scaffold.ts") return "heart";
+  if (p.startsWith("bin/src/")) {
+    return dirname(p) === "bin/src" && CLI_COMMANDS.includes(basename(p)) ? "facedisk/cli" : "bin";
+  }
+  return undefined;
+}
+
+/**
+ * The part an import specifier reaches: `@boof-runner/<pkg>[/sub]` by package, a relative path by
+ * resolving it against the importing file. Third-party and `node:` specifiers give undefined.
+ */
+export function partOfSpecifier(spec: string, fromFile: string): Part | undefined {
+  const pkg = /^@boof-runner\/([^/]+)/.exec(spec)?.[1];
+  if (pkg) return PACKAGE_PART[pkg];
+  if (!spec.startsWith(".")) return undefined;
+  // A `.js` specifier names the `.ts` file.
+  const target = join(dirname(fromFile), spec.replace(/\.js$/, ".ts")).split("\\").join("/");
+  return partOfFile(target);
+}
