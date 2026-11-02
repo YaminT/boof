@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
 import { api, type TaskView } from "../api.js";
 import type { CommandTemplate } from "../api-types.js";
-import { conflictOf } from "../lib/conflict.js";
+import { conflictOf, overwriteStatus } from "../lib/conflict.js";
 import { act } from "../lib/act.js";
 import { relativeTime } from "../lib/time.js";
 import { TaskAttachments } from "./TaskAttachments.js";
@@ -90,6 +90,18 @@ export function TaskForm({
   const conflictStatus = useRef<"pending" | undefined>(undefined);
   const [conflictTick, setConflictTick] = useState(0);
   const noticeRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const noticeId = useId();
+
+  /** End the conflict: forget what the refused save carried, and keep focus out of the void. */
+  const clearConflict = () => {
+    setConflict(false);
+    conflictStatus.current = undefined;
+    conflictUpdated.current = undefined;
+    const a = document.activeElement;
+    if (noticeRef.current && a && noticeRef.current.contains(a)) titleRef.current?.focus();
+    else if (a === noticeRef.current) titleRef.current?.focus();
+  };
   // The prompt the user had typed when a run started, kept so it can be copied.
   const [lost, setLost] = useState<{ prompt: string | null } | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -114,7 +126,7 @@ export function TaskForm({
       // The server copy matches what the form started from again: nothing to warn about.
       baseUpdated.current = task.frontmatter.updated;
       setElsewhere(false);
-      setConflict(false);
+      clearConflict();
       return;
     }
     if (dirty) setElsewhere(true);
@@ -132,7 +144,7 @@ export function TaskForm({
     setBase(server);
     setForm(server);
     setElsewhere(false);
-    setConflict(false);
+    clearConflict();
     baseUpdated.current = task?.frontmatter.updated;
   }, [locked]);
 
@@ -189,10 +201,9 @@ export function TaskForm({
       );
       if (!ok) return false;
       baseUpdated.current = ok.frontmatter.updated;
-      conflictUpdated.current = undefined;
       setBase(form);
       setElsewhere(false);
-      setConflict(false);
+      clearConflict();
       setSavedAt(new Date().toISOString());
       await reload();
       return true;
@@ -243,8 +254,7 @@ export function TaskForm({
     setBase(server);
     setForm(server);
     setElsewhere(false);
-    setConflict(false);
-    conflictUpdated.current = undefined;
+    clearConflict();
     baseUpdated.current = task?.frontmatter.updated;
   };
 
@@ -292,6 +302,7 @@ export function TaskForm({
         ref={noticeRef}
         tabIndex={-1}
         role={conflict ? "alert" : "status"}
+        aria-labelledby={noticeId}
         className={
           elsewhere || conflict
             ? "flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -300,7 +311,7 @@ export function TaskForm({
       >
         {(elsewhere || conflict) && (
           <>
-            <span>
+            <span id={noticeId}>
               This task changed after you opened it.
               {conflict && " Your changes were not saved."}
             </span>
@@ -312,7 +323,7 @@ export function TaskForm({
               variant="ghost"
               size="xs"
               disabled={isBusy || !form.title.trim()}
-              onClick={() => void save(conflictStatus.current, true)}
+              onClick={() => void save(overwriteStatus(conflict, conflictStatus.current), true)}
             >
               Overwrite
             </Button>
@@ -322,6 +333,7 @@ export function TaskForm({
       <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
         <Field label="Title">
           <Input
+            ref={titleRef}
             className="mt-0 font-normal"
             value={form.title}
             onChange={(e) => set("title", e.target.value)}
