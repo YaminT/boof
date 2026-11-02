@@ -341,3 +341,18 @@ describe("pid namespaces", () => {
     expect(await run(here)).toBe("ran");
   });
 });
+
+describe("a lock with fields this version does not know", () => {
+  const THIS = "11111111-1111-4111-8111-111111111111";
+
+  it("ignores trailing extra fields, so a live holder's lock is still honoured", async () => {
+    await writeFile(lock, `${process.ppid} ${THIS} 5 pid:[4026531836] future-field another\n`);
+    // Parsed (not "incomplete, stale after 30 s"): the holder is live, so we wait.
+    await expect(
+      run({ ...fast, bootId: THIS, pidNamespace: "pid:[4026531836]", startTicks: () => 5 }),
+    ).rejects.toThrow(`busy ${process.ppid}`);
+    // And an old (dead) holder with extra fields is judged as usual.
+    await writeFile(lock, `99999999 ${THIS} 5 pid:[4026531836] future-field\n`);
+    expect(await run({ ...fast, bootId: THIS, pidNamespace: "pid:[4026531836]" })).toBe("ran");
+  });
+});

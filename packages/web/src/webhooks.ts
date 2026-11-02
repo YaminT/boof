@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -89,6 +89,19 @@ export function creatorLive(
   return creatorProblem(hook, clients, nowMs) === null;
 }
 
+/**
+ * The delivery id of `event` for webhook `hookId`: the same every time that pair is delivered, so
+ * the copy a crash or a handover between servers sends again carries the id of the first and a
+ * receiver can drop it. It is also the retry id (`X-Boof-Delivery`, the body `id`), documented as
+ * the receiver's idempotency key. A uuid-shaped hash of the hook id and the event.
+ */
+export function deliveryIdFor(hookId: string, event: BoofEvent): string {
+  const h = createHash("sha256")
+    .update(`${hookId}\n${JSON.stringify(event)}`)
+    .digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
 /** Sign `body` with the webhook secret: `sha256=<hex hmac>`. */
 export function sign(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
@@ -120,6 +133,8 @@ export class WebhookDispatcher {
   private state: State | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  /** The tick in progress, for {@link stop}. */
+  private current: Promise<void> | null = null;
 
   constructor(private readonly opts: DispatcherOptions) {
     this.dir = dataRootPaths(opts.root).webhooks;
@@ -153,9 +168,15 @@ export class WebhookDispatcher {
     this.timer.unref();
   }
 
-  stop(): void {
+  /**
+   * Stop the timer and wait for a tick already running (its posts have their own timeouts, and it
+   * saves the cursors at its end). Release the dispatcher lock only after this settles, or a
+   * second server could take over while this one is still posting the same events.
+   */
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    await this.current?.catch(() => {});
   }
 
   private get statePath(): string {
@@ -178,43 +199,48 @@ export class WebhookDispatcher {
   }
 
   /** One pass over all webhooks. Not re-entrant: an overlapping call returns at once. */
-  async tick(): Promise<void> {
-    if (this.running) return;
+  tick(): Promise<void> {
+    if (this.running) return Promise.resolve();
     this.running = true;
-    try {
-      const settings = await this.opts.service.loadSettings();
-      const hooks = settings.webhooks ?? [];
-      const allowed = securitySettings(settings).allowedPrivateWebhookHosts;
-      const state = await this.load();
-      let dirty = false;
-      for (const id of Object.keys(state)) {
-        if (!hooks.some((h) => h.id === id)) {
-          delete state[id];
-          dirty = true;
-        }
-      }
-      const scopes = await this.scopesFor();
-      const secrets = await this.secrets.all();
-      const clients = this.opts.authStore ? await this.opts.authStore.list() : undefined;
-      const results = await Promise.all(
-        hooks
-          .map((hook) =>
-            creatorLive(hook, clients, this.now()) ? hook : { ...hook, enabled: false },
-          )
-          .map((h) =>
-            this.pass(
-              h,
-              state,
-              scopes,
-              allowed,
-              Object.hasOwn(secrets, h.id) ? secrets[h.id] : undefined,
-            ),
-          ),
-      );
-      if (dirty || results.some(Boolean)) await this.save(state);
-    } finally {
+    const pass = this.tickOnce().finally(() => {
       this.running = false;
+      this.current = null;
+    });
+    this.current = pass;
+    return pass;
+  }
+
+  private async tickOnce(): Promise<void> {
+    const settings = await this.opts.service.loadSettings();
+    const hooks = settings.webhooks ?? [];
+    const allowed = securitySettings(settings).allowedPrivateWebhookHosts;
+    const state = await this.load();
+    let dirty = false;
+    for (const id of Object.keys(state)) {
+      if (!hooks.some((h) => h.id === id)) {
+        delete state[id];
+        dirty = true;
+      }
     }
+    const scopes = await this.scopesFor();
+    const secrets = await this.secrets.all();
+    const clients = this.opts.authStore ? await this.opts.authStore.list() : undefined;
+    const results = await Promise.all(
+      hooks
+        .map((hook) =>
+          creatorLive(hook, clients, this.now()) ? hook : { ...hook, enabled: false },
+        )
+        .map((h) =>
+          this.pass(
+            h,
+            state,
+            scopes,
+            allowed,
+            Object.hasOwn(secrets, h.id) ? secrets[h.id] : undefined,
+          ),
+        ),
+    );
+    if (dirty || results.some(Boolean)) await this.save(state);
   }
 
   private async scopesFor(): Promise<string[]> {
@@ -280,7 +306,7 @@ export class WebhookDispatcher {
               hook,
               {
                 url: hook.url,
-                deliveryId: randomUUID(),
+                deliveryId: deliveryIdFor(hook.id, event),
                 event,
                 attempts: 0,
                 nextAt: 0,
@@ -400,7 +426,7 @@ export interface DispatcherGate {
  * is deliberately not the runner guard: a lone `--no-runner` server must still deliver.
  */
 export function runDispatcherWhileHolding(
-  dispatcher: { start(): void; stop(): void },
+  dispatcher: { start(): void; stop(): void | Promise<void> },
   lockPath: string,
   opts: { retryMs?: number; lock?: ProcessLockOptions } = {},
 ): DispatcherGate {
@@ -443,7 +469,9 @@ export function runDispatcherWhileHolding(
       const lock = held;
       held = null;
       if (lock) {
-        dispatcher.stop();
+        // Wait for a delivery in flight before the lock goes: a graceful handover must not
+        // overlap the next holder's first tick.
+        await dispatcher.stop();
         await lock.release();
       }
     },

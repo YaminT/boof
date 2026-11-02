@@ -98,7 +98,7 @@ describe("RunnerGuard across processes", () => {
   interface Report {
     acquired: boolean;
     at: number;
-    released?: number;
+    releasing?: number;
   }
   const run = (mode: string, startAt: number, holdMs: number) =>
     new Promise<Report>((resolve, reject) => {
@@ -111,7 +111,7 @@ describe("RunnerGuard across processes", () => {
           const lines = stdout.trim().split("\n").filter(Boolean);
           if (lines.length === 0) return reject(new Error(`${err?.message}\n${stderr}`));
           const report: Report = JSON.parse(lines[0]);
-          if (lines[1]) report.released = JSON.parse(lines[1]).released;
+          if (lines[1]) report.releasing = JSON.parse(lines[1]).releasing;
           resolve(report);
         },
       );
@@ -125,11 +125,11 @@ describe("RunnerGuard across processes", () => {
     const results = await Promise.all([run("hold", startAt, 800), run("hold", startAt, 800)]);
     const held = results.filter((r) => r.acquired);
     expect(held.length).toBeGreaterThanOrEqual(1);
-    expect(held.every((r) => r.released !== undefined)).toBe(true);
+    expect(held.every((r) => r.releasing !== undefined)).toBe(true);
     if (held.length === 2) {
       const [first, second] = [...held].sort((a, b) => a.at - b.at);
-      // The second one got it only after the first had released it.
-      expect(second.at).toBeGreaterThanOrEqual(first.released!);
+      // The second one got it only after the first was releasing it.
+      expect(second.at).toBeGreaterThanOrEqual(first.releasing!);
     }
     // It was released at the end, so the next start can take it.
     expect(await new RunnerGuard(root).acquire()).toBe(true);

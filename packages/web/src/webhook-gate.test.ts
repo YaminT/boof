@@ -20,6 +20,19 @@ const fake = () => {
   const calls: string[] = [];
   return { calls, start: () => void calls.push("start"), stop: () => void calls.push("stop") };
 };
+/** A dispatcher whose stop() takes a while, like one waiting for a delivery in flight. */
+const slowStop = (ms: number) => {
+  const calls: string[] = [];
+  return {
+    calls,
+    start: () => void calls.push("start"),
+    stop: async () => {
+      calls.push("stop begins");
+      await new Promise((r) => setTimeout(r, ms));
+      calls.push("stop ends");
+    },
+  };
+};
 const until = async (cond: () => boolean, ms = 3000) => {
   const end = Date.now() + ms;
   while (!cond()) {
@@ -47,6 +60,21 @@ describe("runDispatcherWhileHolding", () => {
     await gateB.stop();
     expect(b.calls).toEqual(["start", "stop"]);
     await expect(stat(lock)).rejects.toThrow(); // released
+  });
+
+  it("releases the lock only after the dispatcher has stopped (a tick in flight finishes first)", async () => {
+    const a = slowStop(200);
+    const gateA = runDispatcherWhileHolding(a, lock, { retryMs: 20 });
+    await gateA.ready;
+    const b = fake();
+    const gateB = runDispatcherWhileHolding(b, lock, { retryMs: 20 });
+    const stopping = gateA.stop();
+    await new Promise((r) => setTimeout(r, 120)); // A is still stopping; B retried several times
+    expect(b.calls).toEqual([]); // it could not take over while A's delivery might still run
+    await stopping;
+    expect(a.calls).toEqual(["start", "stop begins", "stop ends"]);
+    await until(() => b.calls.includes("start"));
+    await gateB.stop();
   });
 
   it("a gate stopped before it ever got the lock never starts, and stop is idempotent", async () => {

@@ -159,7 +159,9 @@ async function canonicalLockPath(lock: string): Promise<string> {
   return join(await realpath(dir), basename(lock));
 }
 
-const LOCK_TEXT = /^(\d+)(?: (\S+))?(?: (\d+))?(?: (\S+))?$/;
+// `<pid> [<boot> [<ticks> [<ns> [...]]]]`: fields a later version adds are ignored, so an older
+// reader does not take a live holder's lock as incomplete.
+const LOCK_TEXT = /^(\d+)(?: (\S+))?(?: (\d+))?(?: (\S+))?(?: \S+)*$/;
 
 interface ParsedLock {
   pid: number;

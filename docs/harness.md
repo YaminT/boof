@@ -2407,7 +2407,7 @@ curl -sS -X POST "$BOOF_URL/api/v1/webhooks" \
 
 The answer holds `webhook.id` and `secret` (shown once; store it safely). `events` are types or patterns (`task.*`, `*`). `projects` is `"*"` or a list. The URL must be http or https and must not point at the boof server.
 
-Each delivery is `POST <url>` with a JSON body `{ "id", "ts", "type", ...event }` and the headers `X-Boof-Event`, `X-Boof-Delivery` and `X-Boof-Signature: sha256=<hex>`. The signature is the HMAC-SHA256 of the raw body with the secret. Verify it before you trust the body. Any 2xx answer is success. Failed deliveries retry after 5 s, 30 s, 2 min, 10 min and 1 h. Remove a webhook with `DELETE /api/v1/webhooks/<id>`.
+Each delivery is `POST <url>` with a JSON body `{ "id", "ts", "type", ...event }` and the headers `X-Boof-Event`, `X-Boof-Delivery` and `X-Boof-Signature: sha256=<hex>`. The signature is the HMAC-SHA256 of the raw body with the secret. Verify it before you trust the body. Any 2xx answer is success. Failed deliveries retry after 5 s, 30 s, 2 min, 10 min and 1 h. The body `id` and `X-Boof-Delivery` are the same for every delivery of one event to one webhook, retries and a re-send after a server crash included: delivery is at least once, so keep the ids you have handled and drop a repeat (the idempotency key). Remove a webhook with `DELETE /api/v1/webhooks/<id>`.
 
 ### Recipe 10. Run a whole plan to completion
 

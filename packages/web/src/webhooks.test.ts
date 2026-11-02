@@ -615,6 +615,88 @@ describe("webhook delivery", () => {
     }
   });
 
+  it("stop() waits for a delivery in flight", async () => {
+    await subscribe({ url: "http://hook.test/in" });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let started = false;
+    const dispatcher = new WebhookDispatcher({
+      root,
+      service,
+      send: async () => {
+        started = true;
+        await gate;
+        return { status: 200 };
+      },
+      resolveHost,
+    });
+    await dispatcher.tick(); // subscribes at "now"
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    const ticking = dispatcher.tick();
+    while (!started) await new Promise((r) => setTimeout(r, 5));
+    let stopped = false;
+    const stopping = Promise.resolve(dispatcher.stop()).then(() => (stopped = true));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(stopped).toBe(false); // the post is still running
+    release();
+    await ticking;
+    await stopping;
+    expect(stopped).toBe(true);
+    // The tick saved its cursor before stop() returned: nothing is posted again.
+    const state = JSON.parse(await readFile(join(root, "webhooks", "state.json"), "utf8"));
+    expect(Object.values(state)).toHaveLength(1);
+  });
+
+  it("gives an event the same delivery id every time it is delivered (the idempotency key)", async () => {
+    await subscribe({ url: "http://hook.test/in" });
+    const ids: string[] = [];
+    const mk = () =>
+      new WebhookDispatcher({
+        root,
+        service,
+        send: async (req) => {
+          ids.push(String(req.headers["X-Boof-Delivery"]));
+          return { status: 200 };
+        },
+        resolveHost,
+      });
+    await mk().tick();
+    const statePath = join(root, "webhooks", "state.json");
+    const before = await readFile(statePath, "utf8");
+    await appendEvent(join(root, "projects", "a"), status("a", "t"));
+    await mk().tick();
+    expect(ids).toHaveLength(1);
+    // The holder died before it saved its cursor: the next one posts the same event again.
+    await writeFile(statePath, before);
+    await mk().tick();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("gives different events, and different webhooks, different delivery ids", async () => {
+    await subscribe({ url: "http://hook.test/in" });
+    await subscribe({ url: "http://hook.test/other" });
+    const seen = new Map<string, string[]>();
+    const dispatcher = new WebhookDispatcher({
+      root,
+      service,
+      send: async (req) => {
+        const k = req.url;
+        seen.set(k, [...(seen.get(k) ?? []), String(req.headers["X-Boof-Delivery"])]);
+        return { status: 200 };
+      },
+      resolveHost,
+    });
+    await dispatcher.tick();
+    await appendEvent(join(root, "projects", "a"), status("a", "t1"));
+    await appendEvent(join(root, "projects", "a"), status("a", "t2"));
+    await dispatcher.tick();
+    const all = [...seen.values()].flat();
+    expect(all).toHaveLength(4);
+    expect(new Set(all).size).toBe(4);
+  });
+
   it("hands the delivery the addresses the check approved, resolving the name once", async () => {
     await subscribe({ url: "http://hook.test/in" });
     const sent: { url: string; addresses: readonly string[] }[] = [];
