@@ -305,6 +305,8 @@ claude mcp add boof -- boof-runner mcp -d <data-root> --client <client-id>
 
 A project is one git repository on the boof machine. It has its own task queue and its own plans. Its id is kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`). Every task, plan and goal id has the same format. The project field `workingDirectory` is the absolute path of the repository on the boof machine. Boof stores the resolved real path, not the string you sent: on macOS `/tmp/x` becomes `/private/tmp/x`, and a symlink is followed. Read `workingDirectory` from the `projects.create` result and use that value in every `git -C` command. The repository must have at least one commit. A project can be `paused` (the runner starts none of its tasks) or `archived`.
 
+To start a project from nothing, send `path: {mode: "auto"}` with `name` and `brief` (or `path: {mode: "new", directory}`); boof makes the directory and the first commit. Read `workingDirectory` from the result: `~` in `settings.projectsRoot` is the boof machine's home, not yours.
+
 ### Plan and goal
 
 A plan is a versioned graph of goals for one project. A goal is one unit of work that one task implements.
@@ -1852,6 +1854,7 @@ Rules for the path:
 - `workingDirectory` is an absolute path on the boof machine.
 - It must be a git work tree with at least one commit.
 - A key (not the local administrator) may register only a directory under `security.allowedProjectRoots`. It may not register `/`, the home directory or a directory inside the data root. Otherwise the answer is `403 project_root_not_allowed`. Ask the user to extend `allowedProjectRoots` in `settings.json`.
+- A key may create a new directory only under an allowed root, and may use `auto` only when the owner listed `settings.projectsRoot` (default `~/boof-projects`) in `allowedProjectRoots`.
 - `id` is optional. Without it boof uses the directory name.
 
 First check if the project exists: `GET /api/v1/projects`.

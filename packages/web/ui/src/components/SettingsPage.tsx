@@ -165,6 +165,7 @@ export function SettingsPage({
   );
   const [concurrency, setConcurrency] = useState(String(settings.runner.concurrency));
   const [defaultProject, setDefaultProject] = useState(settings.defaultProject ?? "");
+  const [projectsRoot, setProjectsRoot] = useState(settings.projectsRoot ?? "");
   const [gate, setGate] = useState(settings.review?.gate ?? true);
   const [maxFixRounds, setMaxFixRounds] = useState(String(settings.review?.maxFixRounds ?? 2));
   const [onDone, setOnDone] = useState(settings.worktree?.onDone ?? "keep-branch");
@@ -196,6 +197,7 @@ export function SettingsPage({
   const [workingDir, setWorkingDir] = useState(project.workingDirectory);
   const [paused, setPaused] = useState(project.paused);
   const [defaultBase, setDefaultBase] = useState(project.defaultBase ?? "");
+  const [brief, setBrief] = useState(project.brief ?? "");
   const [overrides, setOverrides] = useState<NonNullable<Project["roles"]>>(project.roles ?? {});
   const pb = project.budget;
   const [pbPerTask, setPbPerTask] = useState(String(pb?.perTaskUsd ?? ""));
@@ -210,6 +212,7 @@ export function SettingsPage({
     setRoles(settings.roles);
     setConcurrency(String(settings.runner.concurrency));
     setDefaultProject(settings.defaultProject ?? "");
+    setProjectsRoot(settings.projectsRoot ?? "");
     setModels((m) => withRoleModels(mergeModels(settings.models, m), settings.roles));
   }, [settings]);
 
@@ -218,6 +221,7 @@ export function SettingsPage({
     setWorkingDir(project.workingDirectory);
     setPaused(project.paused);
     setDefaultBase(project.defaultBase ?? "");
+    setBrief(project.brief ?? "");
     setOverrides(project.roles ?? {});
     setPbPerTask(String(project.budget?.perTaskUsd ?? ""));
     setPbPerDay(String(project.budget?.perProjectDayUsd ?? ""));
@@ -340,6 +344,7 @@ export function SettingsPage({
         models,
         runner: { concurrency: Math.max(1, Math.floor(Number(concurrency) || 1)) },
         defaultProject: defaultProject || null,
+        projectsRoot: projectsRoot.trim() || null,
         review: {
           ...settings.review,
           gate,
@@ -376,6 +381,7 @@ export function SettingsPage({
           : {}),
         paused,
         defaultBase: defaultBase.trim() || null,
+        brief: brief.trim() || null,
         roles: Object.keys(overrides).length > 0 ? overrides : null,
       });
       flash(setProjectSaved);
@@ -427,6 +433,18 @@ export function SettingsPage({
               </option>
             ))}
           </select>
+        </label>
+        <label>
+          Projects root
+          <input
+            value={projectsRoot}
+            onChange={(e) => setProjectsRoot(e.target.value)}
+            placeholder="~/boof-projects"
+          />
+          <span className="muted">
+            Where new projects are created when you do not choose a folder; <code>~</code> is the
+            server's home.
+          </span>
         </label>
       </section>
 
@@ -684,6 +702,10 @@ export function SettingsPage({
             onChange={(e) => setDefaultBase(e.target.value)}
             placeholder="e.g. main"
           />
+        </label>
+        <label>
+          Brief
+          <textarea rows={4} value={brief} onChange={(e) => setBrief(e.target.value)} />
         </label>
         <label className="check">
           <input type="checkbox" checked={paused} onChange={(e) => setPaused(e.target.checked)} />

@@ -58,7 +58,7 @@
     <goal id="owlish-accounts" path="goals/owlish-accounts" order="55" status="plan"></goal>
     <goal id="task-hierarchy" path="goals/task-hierarchy" order="56" status="plan"></goal>
     <goal id="ui-minimum-expandable-interface" path="goals/ui-minimum-expandable-interface" order="57" status="plan"></goal>
-    <goal id="project-create-with-path" path="goals/project-create-with-path" order="58" status="plan"><depends-on>chat-console</depends-on></goal>
+    <goal id="project-create-with-path" path="goals/project-create-with-path" order="58" status="done"><depends-on>chat-console</depends-on></goal>
     <goal id="chat-console" path="goals/chat-console" order="59" status="plan"><depends-on>owlish-accounts</depends-on></goal>
     <goal id="n8n-pipelines" path="goals/n8n-pipelines" order="60" status="plan"></goal>
     <goal id="ui-phase-3-residuals" path="goals/ui-phase-3-residuals" order="61" status="plan"></goal>

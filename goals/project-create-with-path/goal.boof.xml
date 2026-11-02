@@ -19,6 +19,7 @@
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
         <version number="2" status="plan">D6 (owner, 2026-10-29): approved — automatic paths at ~/boof-projects/&lt;id&gt; (a setting); a brief is required for new paths and optional for existing ones; the brief is passed to the planner.</version>
+        <version number="3" status="done">Shipped: projects.create path {existing|new|auto} + brief over REST/MCP, CLI --new/--auto/--brief, Dialog-based UI form, settings.projectsRoot, ## Project prompt section.</version>
       </versions>
     </status>
     <tests>

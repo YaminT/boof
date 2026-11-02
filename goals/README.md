@@ -94,7 +94,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`owlish-accounts`](owlish-accounts/goal.boof.xml) — Bring better-ccflare's main features into boof: Claude, ChatGPT and other accounts, a harness boof controls (research first)
 - [ ] [`task-hierarchy`](task-hierarchy/goal.boof.xml) — Project → epic (optional) → task → subtask (optional), every level with a priority
 - [ ] [`ui-minimum-expandable-interface`](ui-minimum-expandable-interface/goal.boof.xml) — A simple panel first, expandable to the complex one; complexity stays in the backend
-- [ ] [`project-create-with-path`](project-create-with-path/goal.boof.xml) — Create a project with a new, existing or automatic path, starting with a brief (after: chat-console)
+- [x] [`project-create-with-path`](project-create-with-path/goal.boof.xml) — Create a project with a new, existing or automatic path, starting with a brief (after: chat-console)
 - [ ] [`chat-console`](chat-console/goal.boof.xml) — A terminal-like chat box at the bottom of every page that talks to the page (after: owlish-accounts)
 - [ ] [`n8n-pipelines`](n8n-pipelines/goal.boof.xml) — Low priority: n8n can run boof's process; boof works with or without it; each workflow edit adds a check task
 
