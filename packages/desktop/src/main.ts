@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
 import { RunnerEngine } from "@boof-runner/runner";
 import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
@@ -204,6 +204,11 @@ if (!app.requestSingleInstanceLock()) {
     exit: (code) => app.exit(code),
     graceMs: shutdownGraceMs(),
     log: console.log,
+    notify: (message) => {
+      win?.setTitle(`Boof Runner — ${message}`);
+      if (Notification.isSupported())
+        new Notification({ title: "Boof Runner", body: message }).show();
+    },
   });
   app.on("before-quit", (event) => void quit(event));
 }

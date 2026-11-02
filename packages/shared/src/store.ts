@@ -309,6 +309,10 @@ export class TaskStore {
         task.body.injected = disk.body.injected;
         if (disk.frontmatter.startedAt) task.frontmatter.startedAt = disk.frontmatter.startedAt;
         if (disk.frontmatter.steps) task.frontmatter.steps = disk.frontmatter.steps;
+        // The recorded agent of an interrupted run is written by recovery and cleared on requeue.
+        if (disk.frontmatter.agentProcess) {
+          task.frontmatter.agentProcess = disk.frontmatter.agentProcess;
+        } else delete task.frontmatter.agentProcess;
         // Hierarchy keys are written only by hierarchy.ts through modify, so a copy read earlier
         // must not revert a move (and a key the disk lacks must not reappear from the copy).
         for (const key of ["epicId", "parentId"] as const) {

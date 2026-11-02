@@ -134,6 +134,19 @@ export const TaskFrontmatterSchema = z.object({
   promptSource: z.enum(["plan", "manual"]).optional(),
   // Set when the task was submitted by an external client (drives the prompt's Provenance section).
   origin: TaskOriginSchema.optional(),
+  // The agent process of an interrupted run that was still alive when the runner recovered the task.
+  // The working-area pid record goes with the move to failed; this survives it, so Retry can refuse
+  // while that process runs. Cleared when the task is queued again.
+  agentProcess: z
+    .object({
+      pgid: z.number().int().positive(),
+      command: z.string(),
+      bootId: z.string().nullable(),
+      startTicks: z.number().int().nullable(),
+      startTime: z.string().nullable(),
+      recordedAt: isoDatetime,
+    })
+    .optional(),
   // The task's epic (a record in the project's epics.json). A subtask has none of its own: its epic
   // is its parent's. Both keys resolve only inside the task's project; a missing target is dangling.
   epicId: kebab.optional(),

@@ -509,3 +509,32 @@ describe("hierarchy keys through modify", () => {
     expect((await store.get("child"))!.frontmatter.epicId).toBeUndefined();
   });
 });
+
+describe("TaskStore.save and agentProcess", () => {
+  const agent = {
+    pgid: 4242,
+    command: "claude",
+    bootId: "b",
+    startTicks: 7,
+    startTime: null,
+    recordedAt: "2026-11-02T10:00:00.000Z",
+  };
+
+  it("keeps the recorded agent identity against a stale copy, and lets modify clear it", async () => {
+    await store.create(newTask(fm(), "p"));
+    const stale = (await store.get("t1"))!;
+    await store.modify("t1", (t) => {
+      t.frontmatter.agentProcess = agent;
+    });
+    stale.frontmatter.title = "X";
+    await store.save(stale);
+    expect((await store.get("t1"))!.frontmatter).toMatchObject({ title: "X", agentProcess: agent });
+    await store.modify("t1", (t) => {
+      delete t.frontmatter.agentProcess;
+    });
+    const stale2 = (await store.get("t1"))!;
+    stale2.frontmatter.agentProcess = agent; // a stale copy must not bring it back
+    await store.save(stale2);
+    expect((await store.get("t1"))!.frontmatter.agentProcess).toBeUndefined();
+  });
+});

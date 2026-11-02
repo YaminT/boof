@@ -2303,6 +2303,47 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       },
     );
 
+    it.skipIf(!currentBootId())(
+      "keeps the identity of an agent that is still running in the failed task, so Retry can refuse",
+      async () => {
+        await crash();
+        // The recording runner (this process) is still the agent's parent: recovery must not kill it.
+        const live = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        try {
+          await writePidFile(taskPidPath(projectDir, "t1"), {
+            pgid: live.pid!,
+            command: "node",
+            ownerPid: process.pid,
+          });
+          expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+          const t = await store.get("t1");
+          expect(t?.frontmatter.status).toBe("failed");
+          expect(isAlive(live.pid!)).toBe(true);
+          expect(t?.frontmatter.agentProcess).toMatchObject({
+            pgid: live.pid,
+            command: "node",
+            bootId: currentBootId(),
+          });
+          expect(t?.frontmatter.agentProcess?.startTicks).toEqual(expect.any(Number));
+        } finally {
+          try {
+            process.kill(-live.pid!, "SIGKILL");
+          } catch {
+            /* gone */
+          }
+        }
+      },
+    );
+
+    it("does not store an identity for an agent that was killed or is gone", async () => {
+      await crash();
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      expect((await store.get("t1"))?.frontmatter.agentProcess).toBeUndefined();
+    });
+
     it("off Linux, warns in the Interrupted block that a live agent process may still be running", async () => {
       await crash();
       const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {

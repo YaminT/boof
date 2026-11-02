@@ -1,7 +1,13 @@
-import { readFileSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWrite } from "@boof-runner/shared";
+import {
+  agentStatus,
+  atomicWrite,
+  bootIdentity,
+  probeProcess,
+  readProcStat,
+  type IdentityDeps,
+} from "@boof-runner/shared";
 
 export interface PidRecord {
   pgid: number;
@@ -10,46 +16,15 @@ export interface PidRecord {
   bootId: string | null;
   /** Field 22 of /proc/<pgid>/stat (clock ticks since boot) when written; null off Linux. */
   startTicks: number | null;
+  /** macOS: `ps` lstart; Windows: the CIM creation time; null on Linux and when unreadable. */
+  startTime: string | null;
   /** Pid of the runner process that spawned the group; null when unknown. */
   ownerPid: number | null;
 }
 
-interface ProcStat {
-  ppid: number;
-  pgrp: number;
-  sid: number;
-  startTicks: number;
-}
-
-/** Linux only: parse /proc/<pid>/stat after the last ")" (the command may contain anything). */
-function readProcStat(pid: number | "self"): ProcStat | undefined {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    const r = {
-      ppid: Number(f[1]),
-      pgrp: Number(f[2]),
-      sid: Number(f[3]),
-      startTicks: Number(f[19]),
-    };
-    return Object.values(r).every(Number.isFinite) ? r : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-let bootIdCache: string | null | undefined;
-
-/** Linux boot id, read once; `null` on any error or off Linux. */
+/** The current boot (Linux boot id, or `boottime:<sec>` on macOS and Windows); null on any error. */
 export function currentBootId(): string | null {
-  if (bootIdCache === undefined) {
-    try {
-      bootIdCache = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
-    } catch {
-      bootIdCache = null;
-    }
-  }
-  return bootIdCache;
+  return bootIdentity();
 }
 
 export async function writePidFile(
@@ -59,9 +34,15 @@ export async function writePidFile(
     command: string;
     bootId?: string | null;
     startTicks?: number | null;
+    startTime?: string | null;
     ownerPid?: number | null;
   },
+  identity?: IdentityDeps,
 ): Promise<void> {
+  const probe =
+    rec.startTicks === undefined || rec.startTime === undefined
+      ? probeProcess(rec.pgid, identity)
+      : undefined;
   await mkdir(dirname(path), { recursive: true });
   await atomicWrite(
     path,
@@ -69,11 +50,9 @@ export async function writePidFile(
       pgid: rec.pgid,
       command: rec.command,
       startedAt: new Date().toISOString(),
-      bootId: rec.bootId === undefined ? currentBootId() : rec.bootId,
-      startTicks:
-        rec.startTicks === undefined
-          ? (readProcStat(rec.pgid)?.startTicks ?? null)
-          : rec.startTicks,
+      bootId: rec.bootId === undefined ? bootIdentity(identity) : rec.bootId,
+      startTicks: rec.startTicks === undefined ? (probe?.startTicks ?? null) : rec.startTicks,
+      startTime: rec.startTime === undefined ? (probe?.startTime ?? null) : rec.startTime,
       ownerPid: rec.ownerPid === undefined ? process.pid : rec.ownerPid,
     }),
   );
@@ -89,6 +68,7 @@ export async function readPidFile(path: string): Promise<PidRecord | undefined> 
       startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
       bootId: typeof raw.bootId === "string" ? raw.bootId : null,
       startTicks: Number.isInteger(raw.startTicks) ? (raw.startTicks as number) : null,
+      startTime: typeof raw.startTime === "string" ? raw.startTime : null,
       ownerPid: Number.isInteger(raw.ownerPid) ? (raw.ownerPid as number) : null,
     };
   } catch {
@@ -120,7 +100,7 @@ function isSignalable(pgid: number): boolean {
   if (!Number.isInteger(pgid) || pgid <= 1 || pgid === process.pid || pgid === process.ppid) {
     return false;
   }
-  const self = readProcStat("self");
+  const self = process.platform === "linux" ? readProcStat("self") : undefined;
   return !self || (pgid !== self.pgrp && pgid !== self.sid);
 }
 
@@ -164,31 +144,52 @@ export async function killGroup(
  * `maybeRunning` and its record is left in place (it goes with the task's working area when the
  * task fails); a dead one is removed.
  */
+export interface ReapDeps {
+  /** Platform and probe commands (tests mock them). */
+  identity?: IdentityDeps;
+  /** Stop the recorded agent (default: the process group on POSIX, `taskkill /T /F` on Windows). */
+  kill?: (record: PidRecord) => Promise<"exited" | "killed" | "survived">;
+  isAlive?: (pid: number) => boolean;
+}
+
+export interface ReapResult {
+  outcome: "none" | "dead" | "killed" | "skipped";
+  record?: PidRecord;
+  /** Off Linux: the recorded process is alive but could not be verified as the agent, so it was not killed; its record stays. */
+  maybeRunning?: boolean;
+  /** The recorded agent was verified and is still running (it survived, or its runner still owns it); its record stays. */
+  stillRunning?: boolean;
+}
+
+/** Windows has no process groups: kill the process and its children, then check it is gone. */
+async function killTree(
+  record: PidRecord,
+  identity: IdentityDeps,
+): Promise<"exited" | "killed" | "survived"> {
+  const run = identity.run;
+  if (!run) return "survived";
+  run("taskkill", ["/T", "/F", "/PID", String(record.pgid)]);
+  for (let i = 0; i < 20; i += 1) {
+    if (agentStatus(record, identity) !== "running") return "killed";
+    await sleep(100);
+  }
+  return "survived";
+}
+
 export async function reapOrphan(
   path: string,
   log: (line: string) => void,
-): Promise<{
-  outcome: "none" | "dead" | "killed" | "skipped";
-  record?: PidRecord;
-  /** Off Linux only: the recorded process is still alive and was not killed; its record is left in place. */
-  maybeRunning?: boolean;
-}> {
+  deps: ReapDeps = {},
+): Promise<ReapResult> {
   const record = await readPidFile(path);
   if (!record) return { outcome: "none" };
   const finish = async (outcome: "dead" | "killed" | "skipped", remove = true) => {
     if (remove) await rm(path, { force: true }).catch(() => {});
     return { outcome, record };
   };
-  if (process.platform !== "linux") {
-    // Reaping needs /proc (boot id and exact start time), so nothing is killed here. A process
-    // that is still alive is reported rather than silently forgotten; its record stays until the
-    // task's working area is removed.
-    const alive = process.platform === "win32" ? isAlive(record.pgid) : groupAlive(record.pgid);
-    if (!alive) return finish("dead");
-    log(
-      `orphan reaping is not supported on ${process.platform}; agent process ${record.pgid} (${record.command}) may still be running; not killing`,
-    );
-    return { outcome: "skipped", record, maybeRunning: true };
+  const platform = deps.identity?.platform ?? process.platform;
+  if (platform !== "linux") {
+    return reapOffLinux(record, log, platform, deps, finish);
   }
   const skip = (why: string, remove = true) => {
     log(`${why} (${record.pgid}); not killing`);
@@ -205,13 +206,64 @@ export async function reapOrphan(
     return skip("process is not the recorded agent group leader (pid reused?)");
   }
   if (record.ownerPid && isAlive(record.ownerPid) && leader.ppid === record.ownerPid) {
-    return skip(`recording runner ${record.ownerPid} is still running`, false);
+    log(`recording runner ${record.ownerPid} is still running (${record.pgid}); not killing`);
+    return { outcome: "skipped", record, stillRunning: true };
   }
   const result = await killGroup(record.pgid);
   if (result === "survived") {
     log(`could not kill orphaned agent process group ${record.pgid} (${record.command}): survived`);
-    return finish("skipped");
+    return { outcome: "skipped", record, stillRunning: true };
   }
   log(`killed orphaned agent process group ${record.pgid} (${record.command}): ${result}`);
+  return finish("killed");
+}
+
+/**
+ * macOS and Windows, with the same rule as Linux: nothing is signalled unless the recorded boot and
+ * the exact start time match. A record that cannot be verified is never killed; if its process is
+ * still alive it is reported (`maybeRunning`) and its record stays.
+ */
+async function reapOffLinux(
+  record: PidRecord,
+  log: (line: string) => void,
+  platform: NodeJS.Platform,
+  deps: ReapDeps,
+  finish: (
+    outcome: "dead" | "killed" | "skipped",
+    remove?: boolean,
+  ) => Promise<{ outcome: "dead" | "killed" | "skipped"; record: PidRecord }>,
+): Promise<ReapResult> {
+  const identity: IdentityDeps = { ...deps.identity, platform };
+  const alive =
+    deps.isAlive ?? ((pid: number) => (platform === "win32" ? isAlive(pid) : groupAlive(pid)));
+  if (!isSignalable(record.pgid)) {
+    log(`refusing to signal this process (${record.pgid}); not killing`);
+    return finish("skipped");
+  }
+  const status = agentStatus(record, identity);
+  if (status === "gone") return finish("dead");
+  if (status === "unknown") {
+    if (!alive(record.pgid)) return finish("dead");
+    log(
+      `agent process ${record.pgid} (${record.command}) may still be running, but its identity cannot be verified on ${platform}; not killing`,
+    );
+    return { outcome: "skipped", record, maybeRunning: true };
+  }
+  // Verified: the recorded boot, pid and start time. Is the recording runner still its parent?
+  const probe = probeProcess(record.pgid, identity);
+  if (record.ownerPid && alive(record.ownerPid) && probe?.ppid === record.ownerPid) {
+    log(`recording runner ${record.ownerPid} is still running (${record.pgid}); not killing`);
+    return { outcome: "skipped", record, stillRunning: true };
+  }
+  const result = deps.kill
+    ? await deps.kill(record)
+    : platform === "win32"
+      ? await killTree(record, identity)
+      : await killGroup(record.pgid);
+  if (result === "survived") {
+    log(`could not kill orphaned agent ${record.pgid} (${record.command}): survived`);
+    return { outcome: "skipped", record, stillRunning: true };
+  }
+  log(`killed orphaned agent ${record.pgid} (${record.command}): ${result}`);
   return finish("killed");
 }

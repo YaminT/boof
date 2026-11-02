@@ -46,7 +46,12 @@ export interface QuitDeps {
   exit: (code: number) => void;
   graceMs: number;
   log: (line: string) => void;
+  /** Shown to the user while the engine drains (a notification or the window title). */
+  notify?: (message: string) => void;
 }
+
+/** What the user sees while a quit waits for the running task to stop. */
+export const QUIT_DRAIN_NOTICE = "Stopping running task... (quit again to force)";
 
 export interface QuitEvent {
   preventDefault(): void;
@@ -67,6 +72,7 @@ export function createQuitHandler(deps: QuitDeps): (event: QuitEvent) => Promise
       try {
         const engine = deps.engine();
         if (engine) {
+          deps.notify?.(QUIT_DRAIN_NOTICE);
           const { stopped, timedOut } = await engine.shutdown(deps.graceMs);
           if (stopped.length > 0) deps.log(`Stopped running task(s): ${stopped.join(", ")}`);
           if (timedOut) deps.log(`Grace period of ${deps.graceMs} ms elapsed; quitting anyway`);

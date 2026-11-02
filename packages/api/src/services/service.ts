@@ -2,6 +2,7 @@ import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  agentStatus,
   appendEvent,
   AttachmentStore,
   evaluateBudget,
@@ -469,9 +470,17 @@ export class ProjectService {
       }
     });
     if (input.status && input.status !== from) {
-      const moved = await this.tasks.transition(id, input.status, undefined, {
-        by: actor?.id ?? "local",
-      });
+      if (input.status === "pending") await this.assertNoLiveAgent(id);
+      const moved = await this.tasks.transition(
+        id,
+        input.status,
+        input.status === "pending"
+          ? (t) => {
+              delete t.frontmatter.agentProcess;
+            }
+          : undefined,
+        { by: actor?.id ?? "local" },
+      );
       const warnings: Warning[] = [];
       let index: HierarchyIndex | undefined;
       if (input.status === "pending") {
@@ -513,11 +522,34 @@ export class ProjectService {
     return this.requeue(id, actor);
   }
 
+  /**
+   * Refuse to queue a task whose interrupted run left an agent process that is still alive (the
+   * identity recovery stored in `agentProcess`): a second agent would work in the same worktree.
+   * A process that is gone, another process under a reused pid, or one that cannot be verified does
+   * not block.
+   */
+  private async assertNoLiveAgent(id: string): Promise<void> {
+    const agent = (await this.tasks.get(id))?.frontmatter.agentProcess;
+    if (agent && agentStatus(agent) === "running") {
+      throw new OpError(
+        409,
+        `The agent process of the interrupted run (pid ${agent.pgid}${agent.command ? `, ${agent.command}` : ""}) is still running; stop it before you retry, or a second agent will work in the same worktree`,
+        "conflict",
+      );
+    }
+  }
+
   /** Move a task to pending; its command id is dropped when that template is gone. */
   private async requeue(id: string, actor?: Principal): Promise<Task> {
-    const task = await this.tasks.transition(id, "pending", undefined, {
-      by: actor?.id ?? "local",
-    });
+    await this.assertNoLiveAgent(id);
+    const task = await this.tasks.transition(
+      id,
+      "pending",
+      (t) => {
+        delete t.frontmatter.agentProcess; // gone or not ours: nothing to remember
+      },
+      { by: actor?.id ?? "local" },
+    );
     await clearMissingCommand(this.parent.commands, this.tasks, id);
     return (await this.tasks.get(id)) ?? task;
   }

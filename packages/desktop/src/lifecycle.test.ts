@@ -75,6 +75,25 @@ describe("desktop before-quit", () => {
     expect(s.log).toContain("Stopped running task(s): t1");
   });
 
+  it("tells the user while it drains that a second quit forces it", async () => {
+    const notices: string[] = [];
+    const s = setup();
+    const quit = createQuitHandler({
+      engine: () => s.engine,
+      server: () => s.server,
+      exit: s.exit,
+      graceMs: 5_000,
+      log: () => {},
+      notify: (m) => notices.push(m),
+    });
+    const first = quit({ preventDefault: vi.fn() });
+    expect(notices).toEqual(["Stopping running task... (quit again to force)"]);
+    quit({ preventDefault: vi.fn() }); // the forcing quit does not notify again
+    expect(notices).toHaveLength(1);
+    s.release();
+    await first;
+  });
+
   it("a second quit request while draining is not deferred", async () => {
     const s = setup();
     const first = s.quit({ preventDefault: vi.fn() });

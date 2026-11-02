@@ -528,6 +528,20 @@ export class RunnerEngine {
             "failed",
             (t) => {
               if (live.trim()) t.body.log = live;
+              // An agent that is still running (it survived, its runner still owns it, or it
+              // cannot be verified): remember who it is, because the pid record goes with the
+              // working area and Retry must refuse while it runs.
+              if ((reaped.stillRunning || reaped.maybeRunning) && reaped.record) {
+                const r = reaped.record;
+                t.frontmatter.agentProcess = {
+                  pgid: r.pgid,
+                  command: r.command,
+                  bootId: r.bootId,
+                  startTicks: r.startTicks,
+                  startTime: r.startTime,
+                  recordedAt: new Date().toISOString(),
+                };
+              }
               const block =
                 `### Interrupted\n${INTERRUPTED_NOTE}` +
                 (reaped.outcome === "killed"

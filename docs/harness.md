@@ -695,6 +695,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 
 #### `TaskFrontmatter`
 
+- `agentProcess`: `{ bootId: string | null, command: string, pgid: integer, recordedAt: ISO-8601 string, startTicks: integer | null, startTime: string | null }`, optional
 - `attachments`: `{ name: string, size: number >= 0, type: string }[]`, required; default `[]`
 - `base`: `string`, optional
 - `boofGoal`: `{ bumpTo: "review" | "done", path: string }`, optional
