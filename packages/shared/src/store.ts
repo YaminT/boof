@@ -1,5 +1,5 @@
 import { readdir, mkdir, rm, stat } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { atomicWrite, readText, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
 import { formatInjectedEntry, parseInjected, type InjectMode } from "./injected.js";
@@ -80,6 +80,22 @@ async function listSubdirs(dir: string): Promise<string[]> {
   }
 }
 
+const MAX_SCAN_ROUNDS = 5;
+
+/**
+ * Finished status moves per task root in this process. A scan that overlapped one is repeated:
+ * a task moving to an earlier directory can be missed by both reads, and the directory-name check
+ * alone cannot see a task that flips back and forth quickly.
+ */
+const moveCount = new Map<string, number>();
+const moveKey = (root: string) => resolve(root);
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
 function isNotFound(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 }
@@ -143,32 +159,64 @@ export class TaskStore {
    * mid-read are skipped. A task seen in two status directories (a transition
    * writes the destination before removing the source) is reported once, using
    * the copy with the later `updated`; on a tie the first copy found wins.
+   *
+   * A task that moves to an earlier directory while the scan runs (running → pending) could be
+   * missed by both reads, so the scan is repeated until a cheap listing of the directory names
+   * matches the names the scan saw (at most MAX_SCAN_ROUNDS). If it never settles, the union of
+   * all rounds is returned (the latest read of each id), so an id seen in any round is not lost.
    */
   async list(): Promise<Task[]> {
-    const byId = new Map<string, Task>();
-    for (const status of ALL_STATUSES) {
-      for (const task of await this.listStatus(status)) {
-        const id = task.frontmatter.id;
-        const prev = byId.get(id);
-        if (!prev || Date.parse(task.frontmatter.updated) > Date.parse(prev.frontmatter.updated)) {
-          byId.set(id, task);
+    const union = new Map<string, Task>();
+    for (let round = 1; ; round++) {
+      const moves = moveCount.get(moveKey(this.root)) ?? 0;
+      const names = new Set<string>();
+      const byId = new Map<string, Task>();
+      for (const status of ALL_STATUSES) {
+        for (const task of await this.listStatus(status, names)) {
+          const id = task.frontmatter.id;
+          const prev = byId.get(id);
+          if (
+            !prev ||
+            Date.parse(task.frontmatter.updated) > Date.parse(prev.frontmatter.updated)
+          ) {
+            byId.set(id, task);
+          }
         }
       }
+      for (const [id, task] of byId) union.set(id, task);
+      const settled =
+        moves === (moveCount.get(moveKey(this.root)) ?? 0) &&
+        sameSet(names, await this.listNames());
+      if (settled) return [...byId.values()];
+      if (round >= MAX_SCAN_ROUNDS) return [...union.values()];
     }
-    return [...byId.values()];
+  }
+
+  /** `status/name` of every task entry, without reading the files. */
+  private async listNames(into: Set<string> = new Set()): Promise<Set<string>> {
+    for (const status of ALL_STATUSES) await this.listStatusNames(status, into);
+    return into;
+  }
+
+  private async listStatusNames(status: Status, into: Set<string>): Promise<string[]> {
+    const dir = statusDir(this.root, status);
+    const names = status === "running" ? await listSubdirs(dir) : await listMdFiles(dir);
+    for (const n of names) into.add(`${status}/${n}`);
+    return names;
   }
 
   /** Read every task file in one status directory, skipping files that vanish. */
-  private async listStatus(status: Status): Promise<Task[]> {
+  private async listStatus(status: Status, names?: Set<string>): Promise<Task[]> {
     const dir = statusDir(this.root, status);
     const out: Task[] = [];
+    const listed = await this.listStatusNames(status, names ?? new Set());
     if (status === "running") {
-      for (const id of await listSubdirs(dir)) {
+      for (const id of listed) {
         const task = await readTaskIfExists(join(dir, id, "task.md"), status);
         if (task) out.push(task);
       }
     } else {
-      for (const name of await listMdFiles(dir)) {
+      for (const name of listed) {
         const task = await readTaskIfExists(join(dir, name), status);
         if (task) out.push(task);
       }
@@ -405,6 +453,7 @@ export class TaskStore {
           await rm(located.path, { force: true });
         }
       }
+      moveCount.set(moveKey(this.root), (moveCount.get(moveKey(this.root)) ?? 0) + 1);
       return { task, fromStatus: located.status };
     });
     const by = opts.by ?? "runner";

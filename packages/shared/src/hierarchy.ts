@@ -9,13 +9,18 @@
  * race a mutation; that is covered by dangling-reference tolerance (a missing parent or epic
  * loads fine and is flagged `parentMissing` / `epicMissing`), not by the lock.
  *
+ * The lock is not re-entrant: never call `createTaskInHierarchy`, `moveTask`, `removeTask` or
+ * `removeEpic` from inside `withHierarchyLock` (or from anything that holds it); it hangs with no
+ * error. A deleted task or epic leaves dangling references only after a cross-process race or a
+ * direct delete; a new item that happens to reuse that id adopts them.
+ *
  * Only this module writes `epicId` and `parentId`, always through `TaskStore.modify`, so
  * `TaskStore.save` can keep the disk values against a stale copy.
  */
 import { withFileLock } from "./atomic.js";
 import { EpicStore } from "./epic-store.js";
 import { appendEvent } from "./events.js";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import type { Epic } from "./schema.js";
 import { TaskNotFoundError, TaskStore } from "./store.js";
 import type { Task } from "./task-file.js";
@@ -37,7 +42,7 @@ export class HierarchyError extends Error {
 }
 
 export function withHierarchyLock<T>(projectDir: string, fn: () => Promise<T>): Promise<T> {
-  return withFileLock(`${projectDir}#hierarchy`, fn);
+  return withFileLock(`${resolve(projectDir)}#hierarchy`, fn);
 }
 
 /** Tasks: priority descending, then updated ascending, then id ascending (the scheduler's order). */
@@ -105,7 +110,7 @@ export function buildHierarchyIndex(tasks: Task[], epics: Epic[]): HierarchyInde
   return {
     effectiveEpicId,
     isTopLevel,
-    childrenOf: (id) => children.get(id) ?? [],
+    childrenOf: (id) => [...(children.get(id) ?? [])],
     epicProgress: (id) => ({ ...(progress.get(id) ?? { total: 0, done: 0 }) }),
     info(t) {
       const out: TaskHierarchyInfo = {};
@@ -276,6 +281,7 @@ export async function removeTask(
   return withHierarchyLock(projectDir, async () => {
     const { store, tasks, index } = await load(projectDir);
     const task = tasks.find((t) => t.frontmatter.id === id);
+    if (!task) throw new TaskNotFoundError(id);
     const kids = index.childrenOf(id);
     if (kids.length > 0 && !opts.detach) {
       throw bad(
@@ -284,14 +290,22 @@ export async function removeTask(
       );
     }
     const detached: string[] = [];
+    const epicId = task.frontmatter.epicId;
     for (const kid of kids) {
       const kidId = kid.frontmatter.id;
-      const epicId = task?.frontmatter.epicId;
-      await store.modify(kidId, (t) => {
-        delete t.frontmatter.parentId;
-        if (epicId !== undefined) t.frontmatter.epicId = epicId;
-      });
-      await moved(projectDir, kidId, { parentId: id }, { epicId }, opts.by);
+      // The child takes the parent's epic, or none: its own stale epicId must not resurface.
+      const from = { epicId: kid.frontmatter.epicId, parentId: id };
+      try {
+        await store.modify(kidId, (t) => {
+          delete t.frontmatter.parentId;
+          if (epicId !== undefined) t.frontmatter.epicId = epicId;
+          else delete t.frontmatter.epicId;
+        });
+      } catch (err) {
+        if (err instanceof TaskNotFoundError) continue; // deleted since the scan
+        throw err;
+      }
+      await moved(projectDir, kidId, from, { epicId }, opts.by);
       detached.push(kidId);
     }
     await store.delete(id);
@@ -319,9 +333,14 @@ export async function removeEpic(
     const detached: string[] = [];
     for (const m of members) {
       const tid = m.frontmatter.id;
-      await store.modify(tid, (t) => {
-        delete t.frontmatter.epicId;
-      });
+      try {
+        await store.modify(tid, (t) => {
+          delete t.frontmatter.epicId;
+        });
+      } catch (err) {
+        if (err instanceof TaskNotFoundError) continue; // deleted since the scan
+        throw err;
+      }
       await moved(
         projectDir,
         tid,

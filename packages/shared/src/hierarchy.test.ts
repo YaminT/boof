@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { atomicWrite } from "./atomic.js";
 import { EpicStore } from "./epic-store.js";
 import { readEvents } from "./events.js";
@@ -241,6 +241,61 @@ describe("hierarchy rules", () => {
   });
 });
 
+describe("hierarchy detach details", () => {
+  const raw = (t: ReturnType<typeof mk>) =>
+    atomicWrite(taskFilePath(dir, "pending", t.frontmatter.id), serializeTask(t));
+
+  it("detaching a child that stores both keys drops its stale epic and reports from/to", async () => {
+    await epics.create({ title: "old" });
+    await raw(mk("p"));
+    await raw(mk("c", { parentId: "p", epicId: "old" }));
+    await removeTask(dir, "p", { detach: true });
+    expect((await store.get("c"))!.frontmatter.epicId).toBeUndefined();
+    const ev = (await readEvents(dir, null))
+      .map((e) => e.event)
+      .find((e) => e.type === "task.moved");
+    expect(ev).toMatchObject({
+      task: "c",
+      from: { epicId: "old", parentId: "p" },
+      to: { epicId: null, parentId: null },
+    });
+  });
+
+  it("skips a child that vanished mid-detach", async () => {
+    await createTaskInHierarchy(dir, mk("p"));
+    await createTaskInHierarchy(dir, mk("c1", { parentId: "p" }));
+    await createTaskInHierarchy(dir, mk("c2", { parentId: "p" }));
+    const real = TaskStore.prototype.modify;
+    const spy = vi.spyOn(TaskStore.prototype, "modify").mockImplementation(async function (
+      this: TaskStore,
+      id,
+      fn,
+    ) {
+      if (id === "c1") await this.delete("c1");
+      return real.call(this, id, fn);
+    });
+    try {
+      const res = await removeTask(dir, "p", { detach: true });
+      expect(res.detached).toEqual(["c2"]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await store.get("p")).toBeNull();
+  });
+
+  it("removeTask on a missing id throws TaskNotFoundError", async () => {
+    await expect(removeTask(dir, "ghost")).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+
+  it("childrenOf returns a copy", async () => {
+    await createTaskInHierarchy(dir, mk("p"));
+    await createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
+    const idx = await index();
+    idx.childrenOf("p").length = 0;
+    expect(idx.childrenOf("p")).toHaveLength(1);
+  });
+});
+
 describe("hierarchy concurrency", () => {
   const stored = async () => (await store.list()).map((t) => t.frontmatter);
 
@@ -249,10 +304,11 @@ describe("hierarchy concurrency", () => {
       await rm(join(dir, "epics.json"), { force: true });
       for (const t of await store.list()) await store.delete(t.frontmatter.id);
       await epics.create({ title: "e" });
-      const [c, r] = await Promise.allSettled([
-        createTaskInHierarchy(dir, mk("t", { epicId: "e" })),
-        removeEpic(dir, "e"),
-      ]);
+      const create = () => createTaskInHierarchy(dir, mk("t", { epicId: "e" }));
+      const [c, r] =
+        i % 2 === 0
+          ? await Promise.allSettled([create(), removeEpic(dir, "e")])
+          : (await Promise.allSettled([removeEpic(dir, "e"), create()])).reverse();
       const createdOk = c.status === "fulfilled";
       const removedOk = r.status === "fulfilled";
       expect(createdOk !== removedOk).toBe(true);
@@ -267,10 +323,11 @@ describe("hierarchy concurrency", () => {
     for (let i = 0; i < 20; i++) {
       for (const t of await store.list()) await store.delete(t.frontmatter.id);
       await createTaskInHierarchy(dir, mk("p"));
-      const [c, r] = await Promise.allSettled([
-        createTaskInHierarchy(dir, mk("c", { parentId: "p" })),
-        removeTask(dir, "p"),
-      ]);
+      const create = () => createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
+      const [c, r] =
+        i % 2 === 0
+          ? await Promise.allSettled([create(), removeTask(dir, "p")])
+          : (await Promise.allSettled([removeTask(dir, "p"), create()])).reverse();
       const createdOk = c.status === "fulfilled";
       const removedOk = r.status === "fulfilled";
       expect(createdOk !== removedOk).toBe(true);
@@ -280,18 +337,46 @@ describe("hierarchy concurrency", () => {
   });
 
   it("two crossing moves never make a grandchild", async () => {
-    await createTaskInHierarchy(dir, mk("a"));
-    await createTaskInHierarchy(dir, mk("b"));
-    const res = await Promise.allSettled([
-      moveTask(dir, "a", { parentId: "b" }),
-      moveTask(dir, "b", { parentId: "a" }),
-    ]);
-    expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    const all = await stored();
-    for (const f of all) {
-      if (f.parentId) expect(all.find((x) => x.id === f.parentId)!.parentId).toBeUndefined();
+    for (let i = 0; i < 10; i++) {
+      for (const t of await store.list()) await store.delete(t.frontmatter.id);
+      await createTaskInHierarchy(dir, mk("a"));
+      await createTaskInHierarchy(dir, mk("b"));
+      const ab = () => moveTask(dir, "a", { parentId: "b" });
+      const ba = () => moveTask(dir, "b", { parentId: "a" });
+      const res = await Promise.allSettled(i % 2 === 0 ? [ab(), ba()] : [ba(), ab()]);
+      expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const all = await stored();
+      for (const f of all) {
+        if (f.parentId) expect(all.find((x) => x.id === f.parentId)!.parentId).toBeUndefined();
+      }
     }
   });
+
+  it("a child flipping between status directories never hides from the rules", async () => {
+    for (let i = 0; i < 60; i++) await store.create(mk(`filler-${i}`));
+    await createTaskInHierarchy(dir, mk("p"));
+    await createTaskInHierarchy(dir, mk("q"));
+    await createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
+    let stop = false;
+    const flipper = (async () => {
+      while (!stop) {
+        await store.transition("c", "running");
+        await store.transition("c", "pending");
+      }
+    })();
+    try {
+      for (let i = 0; i < 25; i++) {
+        expect(await code(removeTask(dir, "p"))).toBe("has_children");
+        expect(await code(moveTask(dir, "p", { parentId: "q" }))).toBe("has_children");
+      }
+    } finally {
+      stop = true;
+      await flipper;
+    }
+    const all = await stored();
+    expect(all.find((f) => f.id === "p")).toBeDefined();
+    expect(all.find((f) => f.id === "p")!.parentId).toBeUndefined();
+  }, 60_000);
 
   it("a move while the task runs survives save and transition", async () => {
     await epics.create({ title: "web" });
