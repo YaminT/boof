@@ -5,9 +5,7 @@ import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
 import { TaskDetailPage } from "./task/TaskDetailPage.js";
-import { CommandsTab } from "./components/CommandsTab.js";
 import { InboxPage } from "./inbox/InboxPage.js";
-import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
 import { PlansPage } from "./plans/PlansPage.js";
 import { PlanPage } from "./plans/PlanPage.js";
@@ -18,7 +16,7 @@ import { useRoute } from "./lib/useRoute.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
 import { OverviewPage } from "./overview/OverviewPage.js";
-import { SettingsNav } from "./shell/SettingsNav.js";
+import { SettingsScreen } from "./settings/SettingsScreen.js";
 import { NowStrip } from "./overview/NowStrip.js";
 
 export function App() {
@@ -150,23 +148,19 @@ export function App() {
           )}
         </>
       )}
-      {routeReady && route.name === "settings" && <SettingsNav pid={pid} active={route.page} />}
-      {routeReady && route.name === "settings" && route.page === "automation" && (
-        <CommandsTab onChange={refresh} />
+      {routeReady && route.name === "settings" && settings && selected && (
+        <SettingsScreen
+          key={selected.id}
+          pid={selected.id}
+          page={route.page}
+          settings={settings}
+          project={selected}
+          projects={projects ?? []}
+          data={data}
+          onProjectAdded={(p) => void addProject(p)}
+          reloadProjects={reload}
+        />
       )}
-      {routeReady &&
-        route.name === "settings" &&
-        route.page !== "automation" &&
-        settings &&
-        selected && (
-          <SettingsPage
-            key={selected.id}
-            settings={settings}
-            projects={projects ?? []}
-            project={selected}
-            onChange={refresh}
-          />
-        )}
       {route?.name === "inbox" && (
         <InboxPage
           selectedPid={selected?.id ?? null}

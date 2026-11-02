@@ -23,11 +23,11 @@ import { useTheme, type ThemePref } from "../lib/theme.js";
 import { toggleRunner } from "./RunnerSwitch.js";
 
 const SETTINGS_PAGES: { page: SettingsPageId; label: string }[] = [
-  { page: "project", label: "Project settings" },
-  { page: "agents", label: "Agent settings" },
-  { page: "budgets", label: "Budget settings" },
-  { page: "keys", label: "Key settings" },
-  { page: "automation", label: "Automation settings" },
+  { page: "project", label: "Go to Settings › Project" },
+  { page: "agents", label: "Go to Settings › Agents" },
+  { page: "budgets", label: "Go to Settings › Budgets" },
+  { page: "keys", label: "Go to Settings › API keys" },
+  { page: "automation", label: "Go to Settings › Automation" },
 ];
 
 const THEMES: { pref: ThemePref; label: string }[] = [
@@ -135,13 +135,8 @@ export function CommandPalette({
                   {item("overview", "Go to Overview", go({ name: "overview", pid }))}
                   {item("tasks", "Go to Tasks", go({ name: "tasks", pid }))}
                   {item("plans", "Go to Plans", go({ name: "plans", pid }))}
-                  {item(
-                    "settings",
-                    "Go to Settings",
-                    go({ name: "settings", pid, page: "project" }),
-                  )}
                   {SETTINGS_PAGES.map(({ page, label }) =>
-                    item(`settings-${page}`, `Go to ${label}`, go({ name: "settings", pid, page })),
+                    item(`settings-${page}`, label, go({ name: "settings", pid, page })),
                   )}
                 </>
               )}
