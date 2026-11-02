@@ -1,6 +1,6 @@
-import { lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, rm, rmdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { atomicWrite, readText, withFileLock } from "./atomic.js";
 import { toKebabId, uniqueKebabId } from "./ids.js";
 import { assertKebabId, dataRootPaths, projectPaths, statusDir } from "./paths.js";
@@ -53,6 +53,8 @@ export interface ProjectStoreOptions {
   repoCommonDir?: RepoCommonDir;
   /** Called on a new or auto directory after it is made; without it the directory is created but no repository is initialised. */
   initGitRepo?: (dir: string) => Promise<void>;
+  /** Test hook: runs just before `create` makes the final directory. */
+  beforeCreateDir?: (dir: string) => Promise<void>;
 }
 
 export interface CreateProjectInput {
@@ -88,11 +90,18 @@ async function isDirectory(p: string): Promise<boolean> {
   }
 }
 
+/** True when the directory holds nothing but (at most) `.git`; unreadable counts as occupied. */
+async function isEmptyDir(p: string): Promise<boolean> {
+  const entries = await readdir(p).catch(() => ["?"]);
+  return entries.every((e) => e === ".git");
+}
+
 /** File-backed registry of projects under <root>/projects/<id>/project.json. */
 export class ProjectStore {
   private readonly isGitRepo?: RepoValidator;
   private readonly repoCommonDir?: RepoCommonDir;
   private readonly initGitRepo?: (dir: string) => Promise<void>;
+  private readonly beforeCreateDir?: (dir: string) => Promise<void>;
 
   constructor(
     private readonly root: string,
@@ -101,6 +110,7 @@ export class ProjectStore {
     this.isGitRepo = opts.isGitRepo;
     this.repoCommonDir = opts.repoCommonDir;
     this.initGitRepo = opts.initGitRepo;
+    this.beforeCreateDir = opts.beforeCreateDir;
   }
 
   /** Directory to hand to TaskStore / AttachmentStore / UsageStore for project `id`. */
@@ -205,24 +215,30 @@ export class ProjectStore {
 
   /**
    * Make (or accept an empty) directory for a `new` or `auto` project. Refuses before creating
-   * anything when the path is the filesystem root, the home directory or inside the data root, or
-   * when an entry on the way (a dangling symlink, something unreadable) cannot be told apart from
-   * absence. `created` is true only when this call made the directory.
+   * anything when the path is relative, the filesystem root, the home directory or the data root,
+   * contains the home directory or the data root, is inside the data root, or when an entry on
+   * the way (a dangling symlink, something unreadable) cannot be told apart from absence.
+   * `undo` removes what this call made (the final directory and the parents it created, never
+   * anything that was already there); the caller runs it when a later step fails. The final
+   * directory is made with a non-recursive mkdir, so one that appeared meanwhile is never adopted.
    */
   private async prepareNewDirectory(
     target: string,
     opts: { confirm?: boolean },
-  ): Promise<{ real: string; created: boolean }> {
+  ): Promise<{ real: string; undo: () => Promise<void> }> {
+    if (!isAbsolute(target)) {
+      throw new ProjectError("directory_not_allowed", `Path must be absolute: ${target}`);
+    }
     const { real, exists } = await resolveUnbornPath(target);
     const dataRoot = await realpath(this.root).catch(() => this.root);
     if (isInsidePath(dataRoot, real)) {
       throw new ProjectError("inside_data_root", `Directory is inside the data root: ${real}`);
     }
     const home = await realpath(homedir()).catch(() => homedir());
-    if (real === dirname(real) || real === home) {
+    if (isInsidePath(real, home) || isInsidePath(real, dataRoot)) {
       throw new ProjectError(
         "directory_not_allowed",
-        "boof never initialises the filesystem root or the home directory as a project",
+        "boof never initialises the filesystem root, the home directory, the data root or a directory containing them as a project",
       );
     }
     if (exists) {
@@ -248,59 +264,109 @@ export class ProjectStore {
       // access() said "absent", but a dangling symlink or an unreadable entry says that too.
       // Walk up to the first entry that really exists; any entry lstat can see on the way is not absent.
       for (let p = real; !(await isDirectory(p)); p = dirname(p)) {
+        let info;
         try {
-          await lstat(p);
+          info = await lstat(p);
         } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT") continue;
+          if (code === "ENOTDIR") {
+            throw new ProjectError(
+              "not_a_directory",
+              `Cannot create ${real}: ${p} is below a file`,
+            );
+          }
           throw new ProjectError("directory_create_failed", `Cannot inspect ${p}: ${errCode(err)}`);
+        }
+        if (!info.isSymbolicLink()) {
+          throw new ProjectError(
+            "not_a_directory",
+            `Cannot create ${real}: ${p} is not a directory`,
+          );
         }
         throw new ProjectError(
           "directory_create_failed",
-          `Cannot create ${real}: ${p} exists but is not a usable directory (dangling symlink?)`,
+          `Cannot create ${real}: ${p} is a dangling symlink`,
         );
       }
     }
     let created = false;
+    let firstParent: string | undefined;
+    const undo = async (): Promise<void> => {
+      if (created) await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      // Remove only the parents this call made, deepest first, and only while they are empty.
+      if (firstParent !== undefined) {
+        for (let p = dirname(real); isInsidePath(firstParent, p); p = dirname(p)) {
+          if (
+            !(await rmdir(p).then(
+              () => true,
+              () => false,
+            ))
+          )
+            break;
+        }
+      }
+    };
     if (!exists) {
       try {
-        await mkdir(real, { recursive: true });
+        firstParent = await mkdir(dirname(real), { recursive: true });
+        await this.beforeCreateDir?.(real);
+        await mkdir(real);
+        created = true;
       } catch (err) {
+        await undo();
+        const code = errCode(err);
         throw new ProjectError(
           "directory_create_failed",
-          `Cannot create directory ${real}: ${errCode(err)}`,
+          code === "EEXIST"
+            ? `Cannot create directory ${real}: it appeared while being created`
+            : `Cannot create directory ${real}: ${code}`,
         );
       }
-      created = true;
     }
     try {
       await this.initGitRepo?.(real);
     } catch (err) {
-      if (created) await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      await undo();
       throw new ProjectError(
         "directory_create_failed",
         `Cannot initialise a repository in ${real}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return { real, created };
+    return { real, undo };
   }
 
-  async create(input: CreateProjectInput): Promise<Project> {
+  create(input: CreateProjectInput): Promise<Project> {
+    // One lock for the whole create: id choice, directory creation, vetting and the write.
+    return withFileLock(join(dataRootPaths(this.root).projects, ".create"), () =>
+      this.createLocked(input),
+    );
+  }
+
+  private async createLocked(input: CreateProjectInput): Promise<Project> {
     const spec: ProjectPathSpec = input.path ?? { mode: "existing" };
     const existingIds = (await this.list({ includeArchived: true })).map((p) => p.id);
     let id: string | undefined;
-    if (input.id !== undefined) {
-      id = assertKebabId(input.id);
-      if (existingIds.includes(id))
+    const checkId = (): void => {
+      if (id !== undefined && existingIds.includes(id))
         throw new ProjectError("id_taken", `Project id already exists: ${id}`);
-    }
+    };
+    if (input.id !== undefined) id = assertKebabId(input.id);
+    // For existing the directory is vetted first (as before); the others refuse before touching disk.
+    if (spec.mode !== "existing") checkId();
     let target: string;
     if (spec.mode === "auto") {
+      if (!isAbsolute(spec.projectsRoot)) {
+        throw new ProjectError(
+          "directory_not_allowed",
+          `projectsRoot must be absolute: ${spec.projectsRoot}`,
+        );
+      }
       if (id === undefined) {
         // A name is occupied when its entry holds something; a missing or empty directory is reusable.
         const occupied: string[] = [];
         for (const e of await readdir(spec.projectsRoot, { withFileTypes: true }).catch(() => [])) {
-          const full = join(spec.projectsRoot, e.name);
-          const empty = e.isDirectory() && (await readdir(full).catch(() => ["?"])).length === 0;
+          const empty = e.isDirectory() && (await isEmptyDir(join(spec.projectsRoot, e.name)));
           if (!empty) occupied.push(e.name);
         }
         id = uniqueKebabId(toKebabId(input.name ?? "") || "project", [...existingIds, ...occupied]);
@@ -314,14 +380,17 @@ export class ProjectStore {
     }
 
     let real: string;
-    let created = false;
+    let undo: () => Promise<void> = async () => undefined;
     if (spec.mode === "existing") {
       real = await this.vetDirectory(target);
+      checkId();
     } else {
-      ({ real, created } = await this.prepareNewDirectory(target, {
+      ({ real, undo } = await this.prepareNewDirectory(target, {
         confirm: spec.mode === "new" ? spec.confirm : undefined,
       }));
     }
+    let wrote = false;
+    let dataDirExisted = true;
     try {
       if (spec.mode !== "existing") real = await this.vetDirectory(real);
       id ??= uniqueKebabId(toKebabId(basename(real)) || "project", existingIds);
@@ -344,13 +413,20 @@ export class ProjectStore {
         created: now,
         updated: now,
       });
+      dataDirExisted = await isDirectory(this.dir(id));
+      wrote = true;
       await this.write(project);
       await this.ensureDirs(id);
       return project;
     } catch (err) {
-      if (created) {
-        await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      if (wrote && id !== undefined) {
+        // Unregister: a project pointing at a directory that is about to vanish must not remain.
+        await rm(projectPaths(this.root, id).json, { force: true }).catch(() => undefined);
+        if (!dataDirExisted) {
+          await rm(this.dir(id), { recursive: true, force: true }).catch(() => undefined);
+        }
       }
+      await undo();
       throw err;
     }
   }

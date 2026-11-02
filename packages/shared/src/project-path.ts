@@ -1,6 +1,6 @@
 import { access, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Settings } from "./schema.js";
 
 export const DEFAULT_PROJECTS_ROOT = "~/boof-projects";
@@ -21,7 +21,7 @@ export function resolveProjectsRoot(settings: Pick<Settings, "projectsRoot">): s
 /** True when `child` is `parent` itself or lies below it. */
 export function isInsidePath(parent: string, child: string): boolean {
   const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel));
 }
 
 async function exists(p: string): Promise<boolean> {

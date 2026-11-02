@@ -65,4 +65,10 @@ describe("isInsidePath", () => {
     expect(isInsidePath("/a/b", "/a/bc")).toBe(false);
     expect(isInsidePath("/a/b", "/a")).toBe(false);
   });
+  it("treats names that merely start with .. as inside, and real parent escapes as outside", () => {
+    expect(isInsidePath("/d", "/d/..x")).toBe(true);
+    expect(isInsidePath("/d", "/d/..evil/y")).toBe(true);
+    expect(isInsidePath("/d", "/d/../x")).toBe(false);
+    expect(isInsidePath("/d", "/")).toBe(false);
+  });
 });

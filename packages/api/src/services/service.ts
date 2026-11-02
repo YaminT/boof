@@ -1,6 +1,6 @@
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   appendEvent,
   AttachmentStore,
@@ -16,6 +16,7 @@ import {
   newTask,
   ProjectError,
   ProjectStore,
+  isInsidePath,
   SettingsStore,
   securitySettings,
   taskPromptInjectionsPath,
@@ -705,8 +706,7 @@ export class TaskService {
     );
     const inside = roots.some((r) => {
       if (!r) return false;
-      const rel = relative(r, real);
-      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+      return isInsidePath(r, real);
     });
     if (!inside) throw deny("outside the allowed project roots");
     // Git work tree and data-root checks happen in ProjectStore (mapped to the same code).

@@ -10,9 +10,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvalidIdError, projectPaths } from "./paths.js";
 import { ProjectPatchSchema, ProjectSchema } from "./schema.js";
 import { ProjectError, ProjectStore } from "./project-store.js";
@@ -336,13 +336,154 @@ describe("create with path modes", () => {
     expect(existsSync(f)).toBe(true);
   });
 
-  it("new: never initialises / or the home directory, even with confirm", async () => {
-    for (const dir of ["/", homedir()]) {
-      await expect(
-        pstore.create({ workingDirectory: dir, path: { mode: "new", confirm: true } }),
-      ).rejects.toMatchObject({ code: "directory_not_allowed" });
+  it("new: never initialises / , the home directory or a directory containing home or the data root, even with confirm", async () => {
+    const fakeHome = join(base, "fakehome");
+    await mkdir(join(fakeHome, "sub"), { recursive: true });
+    vi.stubEnv("HOME", fakeHome);
+    try {
+      for (const dir of ["/", fakeHome, base]) {
+        await expect(
+          pstore.create({ workingDirectory: dir, path: { mode: "new", confirm: true } }),
+        ).rejects.toMatchObject({ code: "directory_not_allowed" });
+      }
+      expect(inits).toEqual([]);
+      expect(existsSync(join(fakeHome, ".git"))).toBe(false);
+      // a project directory below home is fine
+      const ok = join(fakeHome, "sub", "proj");
+      expect(
+        (await pstore.create({ workingDirectory: ok, path: { mode: "new" } })).workingDirectory,
+      ).toBe(ok);
+    } finally {
+      vi.unstubAllEnvs();
     }
-    expect(inits).toEqual([]);
+  });
+
+  it("new: a relative path is a ProjectError, for new and for a relative auto projectsRoot", async () => {
+    await expect(
+      pstore.create({ workingDirectory: "rel/dir", path: { mode: "new" } }),
+    ).rejects.toMatchObject({ name: "ProjectError", code: "directory_not_allowed" });
+    await expect(
+      pstore.create({ path: { mode: "auto", projectsRoot: "relroot" }, name: "x" }),
+    ).rejects.toMatchObject({ name: "ProjectError", code: "directory_not_allowed" });
+  });
+
+  it("new: a target below a regular file is not_a_directory", async () => {
+    const f = join(base, "afile");
+    await writeFile(f, "x");
+    await expect(
+      pstore.create({ workingDirectory: join(f, "p"), path: { mode: "new" } }),
+    ).rejects.toMatchObject({ code: "not_a_directory" });
+  });
+
+  it("new: refuses ..evil inside the data root", async () => {
+    await expect(
+      pstore.create({ workingDirectory: join(root, "..evil"), path: { mode: "new" } }),
+    ).rejects.toMatchObject({ code: "inside_data_root" });
+    expect(existsSync(join(root, "..evil"))).toBe(false);
+  });
+
+  it("new: a directory that appears before the exclusive mkdir is never deleted", async () => {
+    const dir = join(base, "repos", "raced");
+    const s = new ProjectStore(root, {
+      isGitRepo: fakeGit,
+      beforeCreateDir: async (d) => {
+        await mkdir(d, { recursive: true });
+        await writeFile(join(d, "precious.txt"), "keep");
+      },
+    });
+    await expect(s.create({ workingDirectory: dir, path: { mode: "new" } })).rejects.toMatchObject({
+      code: "directory_create_failed",
+    });
+    expect(existsSync(join(dir, "precious.txt"))).toBe(true);
+  });
+
+  it("new: two concurrent creates on one path: one wins and its directory survives", async () => {
+    const slow = async (d: string) => {
+      await new Promise((r) => setTimeout(r, 30));
+      await fakeInit(d);
+    };
+    const s = new ProjectStore(root, { isGitRepo: fakeGit, initGitRepo: slow });
+    const dir = join(base, "repos", "dup");
+    const results = await Promise.allSettled([
+      s.create({ workingDirectory: dir, path: { mode: "new" } }),
+      s.create({ workingDirectory: dir, path: { mode: "new" } }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(existsSync(join(dir, ".git", "HEAD"))).toBe(true);
+    expect((await s.list()).map((p) => p.workingDirectory)).toEqual([dir]);
+  });
+
+  it("auto: concurrent creates with one name get different ids and directories", async () => {
+    const projectsRoot = join(base, "auto-root");
+    const [a, b] = await Promise.all([
+      pstore.create({ path: { mode: "auto", projectsRoot }, name: "Shop" }),
+      pstore.create({ path: { mode: "auto", projectsRoot }, name: "Shop" }),
+    ]);
+    expect(a.id).not.toBe(b.id);
+    expect(a.workingDirectory).not.toBe(b.workingDirectory);
+    expect(existsSync(a.workingDirectory)).toBe(true);
+    expect(existsSync(b.workingDirectory)).toBe(true);
+  });
+
+  it("auto and new agree: a directory holding only .git is empty for both", async () => {
+    const projectsRoot = join(base, "auto-root");
+    await mkdir(join(projectsRoot, "shop", ".git"), { recursive: true });
+    const p = await pstore.create({ path: { mode: "auto", projectsRoot }, name: "shop" });
+    expect(p.id).toBe("shop");
+  });
+
+  it("new: registration failing after the directory was made removes it (and the parents it made), keeps an existing one", async () => {
+    const noGit = new ProjectStore(root, { isGitRepo: fakeGit }); // no init: vetting says not_git_repo
+    const deep = join(base, "p1", "p2", "target");
+    await expect(
+      noGit.create({ workingDirectory: deep, path: { mode: "new" } }),
+    ).rejects.toMatchObject({ code: "not_git_repo" });
+    expect(existsSync(deep)).toBe(false);
+    expect(existsSync(join(base, "p1"))).toBe(false);
+    // a parent that already existed stays
+    const parent = join(base, "keepparent");
+    await mkdir(parent);
+    await expect(
+      noGit.create({ workingDirectory: join(parent, "t"), path: { mode: "new" } }),
+    ).rejects.toMatchObject({ code: "not_git_repo" });
+    expect(existsSync(join(parent, "t"))).toBe(false);
+    expect(existsSync(parent)).toBe(true);
+    // a pre-existing empty directory survives the same failure
+    const kept = join(base, "keptempty");
+    await mkdir(kept);
+    await expect(
+      noGit.create({ workingDirectory: kept, path: { mode: "new" } }),
+    ).rejects.toMatchObject({ code: "not_git_repo" });
+    expect(existsSync(kept)).toBe(true);
+  });
+
+  it("new: a duplicate found after the directory was made removes the new directory only", async () => {
+    const first = await pstore.create({
+      workingDirectory: join(base, "r", "one"),
+      path: { mode: "new" },
+    });
+    // same directory again via a symlink spelling: exists, so not created, must survive
+    const link = join(base, "lnk");
+    await symlink(first.workingDirectory, link);
+    await expect(
+      pstore.create({ workingDirectory: link, path: { mode: "new" } }),
+    ).rejects.toMatchObject({ code: "duplicate" });
+    expect(existsSync(join(first.workingDirectory, ".git"))).toBe(true);
+  });
+
+  it("new: a failing ensureDirs leaves no project.json and removes the created directory", async () => {
+    const spy = vi.spyOn(ProjectStore.prototype, "ensureDirs").mockRejectedValue(new Error("disk"));
+    try {
+      const dir = join(base, "repos", "ens");
+      await expect(pstore.create({ workingDirectory: dir, path: { mode: "new" } })).rejects.toThrow(
+        "disk",
+      );
+      expect(existsSync(dir)).toBe(false);
+      expect(await pstore.list({ includeArchived: true })).toEqual([]);
+      expect(existsSync(projectPaths(root, "ens").json)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("new: refuses a target inside the data root before creating anything", async () => {
