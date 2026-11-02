@@ -273,7 +273,7 @@ export const SecuritySettingsSchema = z.object({
   /** Peers (IP literals, or "loopback") whose X-Forwarded-For / Forwarded headers name the real client; nginx on the same host: ["loopback"]. */
   trustedProxies: z.array(z.string()).default(["loopback"]),
   auth: z.object({ mode: z.enum(["local-trust", "required"]).default("local-trust") }).prefault({}),
-  /** Roots under which non-local principals may register projects (e.g. ["~/codes"]). */
+  /** Roots under which non-local principals may register projects (e.g. ["~/codes"]). Absolute paths or `~/...`; a relative entry matches nothing. */
   allowedProjectRoots: z.array(z.string()).default([]),
   /** Webhook hosts (names or IP literals as written in the URL) allowed to resolve to loopback, link-local or private addresses; `"*"` disables the check. */
   allowedPrivateWebhookHosts: z.array(z.string()).default([]),

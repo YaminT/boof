@@ -400,6 +400,104 @@ describe("create with path modes", () => {
     expect(existsSync(join(dir, "precious.txt"))).toBe(true);
   });
 
+  describe("assertTarget (the caller's check on the path the store really uses)", () => {
+    const allowed = () => join(base, "allowed");
+    const guard = async (real: string) => {
+      const { realpath } = await import("node:fs/promises");
+      const root = await realpath(allowed());
+      if (!real.startsWith(root + "/")) throw new Error(`refused ${real}`);
+    };
+    beforeEach(async () => {
+      await mkdir(allowed(), { recursive: true });
+      await mkdir(join(base, "outside"), { recursive: true });
+      await writeFile(join(base, "outside", "precious.txt"), "keep");
+    });
+
+    it("new: a symlink planted after the caller's check is caught after the mkdir, and nothing outside is touched", async () => {
+      const s = new ProjectStore(root, {
+        isGitRepo: fakeGit,
+        initGitRepo: fakeInit,
+        // The parent is made first; swap it for a link just before the final mkdir.
+        beforeCreateDir: async () => {
+          await rm(join(allowed(), "parent"), { recursive: true });
+          await symlink(join(base, "outside"), join(allowed(), "parent"));
+        },
+      });
+      await expect(
+        s.create({
+          workingDirectory: join(allowed(), "parent", "child"),
+          path: { mode: "new" },
+          assertTarget: guard,
+        }),
+      ).rejects.toThrow(/refused/);
+      expect(existsSync(join(base, "outside", "child"))).toBe(false);
+      expect(await s.list()).toEqual([]);
+    });
+
+    it("new + confirm: a leaf symlink planted before resolution is refused with nothing initialised", async () => {
+      const dir = join(allowed(), "leaf");
+      // Stands for a link planted between the caller's check and the store.
+      const s = new ProjectStore(root, { isGitRepo: fakeGit, initGitRepo: fakeInit });
+      await symlink(join(base, "outside"), dir);
+      await expect(
+        s.create({
+          workingDirectory: dir,
+          path: { mode: "new", confirm: true },
+          assertTarget: guard,
+        }),
+      ).rejects.toThrow(/refused/);
+      expect(existsSync(join(base, "outside", ".git"))).toBe(false);
+      expect(existsSync(join(base, "outside", "precious.txt"))).toBe(true);
+    });
+
+    it("auto: the target under the projects root is checked (explicit id that is a symlink)", async () => {
+      const projectsRoot = join(allowed(), "pr");
+      await mkdir(projectsRoot);
+      await symlink(join(base, "outside"), join(projectsRoot, "trap"));
+      const s = new ProjectStore(root, { isGitRepo: fakeGit, initGitRepo: fakeInit });
+      await expect(
+        s.create({
+          path: { mode: "auto", projectsRoot },
+          id: "trap",
+          brief: "b",
+          assertTarget: guard,
+        }),
+      ).rejects.toThrow(/refused/);
+      expect(existsSync(join(base, "outside", ".git"))).toBe(false);
+    });
+
+    it("new: a refusal on the check after the mkdir rolls back what it made", async () => {
+      const parent = join(allowed(), "swap");
+      let calls = 0;
+      const s = new ProjectStore(root, { isGitRepo: fakeGit, initGitRepo: fakeInit });
+      await expect(
+        s.create({
+          workingDirectory: join(parent, "child"),
+          path: { mode: "new" },
+          assertTarget: async (real) => {
+            calls++;
+            if (calls === 2) throw new Error("refused on the second look");
+            await guard(real);
+          },
+        }),
+      ).rejects.toThrow(/second look/);
+      expect(calls).toBe(2);
+      expect(existsSync(join(parent, "child"))).toBe(false);
+      expect(existsSync(parent)).toBe(false);
+    });
+
+    it("existing: the real path of a work tree is checked too", async () => {
+      const outside = join(base, "outside");
+      await fakeInit(outside);
+      await symlink(outside, join(allowed(), "link"));
+      const s = new ProjectStore(root, { isGitRepo: fakeGit });
+      await expect(
+        s.create({ workingDirectory: join(allowed(), "link"), assertTarget: guard }),
+      ).rejects.toThrow(/refused/);
+      expect(await s.list()).toEqual([]);
+    });
+  });
+
   it("new: two concurrent creates on one path: one wins and its directory survives", async () => {
     const slow = async (d: string) => {
       await new Promise((r) => setTimeout(r, 30));

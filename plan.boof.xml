@@ -75,5 +75,6 @@
     <goal id="ui-url-no-hash" path="goals/ui-url-no-hash" order="72" status="plan"></goal>
     <goal id="ui-url-follows-state" path="goals/ui-url-follows-state" order="73" status="plan"></goal>
     <goal id="desktop-orphan-reaping-macos-windows" path="goals/desktop-orphan-reaping-macos-windows" order="74" status="plan"><depends-on>orphan-agent-processes</depends-on></goal>
+    <goal id="worktree-root-scope" path="goals/worktree-root-scope" order="75" status="plan"></goal>
   </goals>
 </plan>

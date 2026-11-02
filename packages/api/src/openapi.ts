@@ -150,7 +150,10 @@ function operationObject(op: AnyOperation): Json {
     const bodyProps = Object.fromEntries(others.map((k) => [k, props[k]]));
     const bodyRequired = others.filter((k) => required.has(k));
     out["requestBody"] = {
-      required: bodyRequired.length > 0,
+      // A body is also required when an empty one fails the input schema (a cross-field rule).
+      required:
+        bodyRequired.length > 0 ||
+        !op.input.safeParse(Object.fromEntries(op.pathParams.map((k) => [k, "x"]))).success,
       content: {
         "application/json": {
           schema: {

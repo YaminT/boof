@@ -675,6 +675,121 @@ describe("project registration by non-local principals (project_root_not_allowed
       expect((await res.json()).error.code).toBe("project_root_not_allowed");
     });
 
+    it("new + confirm on an allowed root itself is 403 and leaves no repository", async () => {
+      await setSecurity({ allowedProjectRoots: [allowedRoot] });
+      const res = await createPath({ mode: "new", directory: allowedRoot, confirm: true });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe("project_root_not_allowed");
+      expect(existsSync(join(allowedRoot, ".git"))).toBe(false);
+    });
+
+    it("the auto denial for a remote client does not show the server's projects root", async () => {
+      await setSecurity({ allowedProjectRoots: [allowedRoot] });
+      const denied = await createPath({ mode: "auto" }, writer, { name: "a" });
+      const msg = (await denied.json()).error.message as string;
+      expect(msg).toContain("settings.projectsRoot is not under an allowed project root");
+      expect(msg).not.toContain(projectsRoot);
+    });
+
+    it("a symlinked explicit id is blamed on the id, not on projectsRoot", async () => {
+      await mkdir(projectsRoot, { recursive: true });
+      await mkdir(join(base, "outside"), { recursive: true });
+      await symlink(join(base, "outside"), join(projectsRoot, "trap"));
+      await setSecurity({ allowedProjectRoots: [projectsRoot] });
+      const msg = (await (await createPath({ mode: "auto" }, writer, { id: "trap" })).json()).error
+        .message as string;
+      expect(msg).toContain("'trap'");
+      expect(msg).not.toContain("settings.projectsRoot is not under");
+    });
+
+    it("an allowed root that does not exist yet works; a relative one matches nothing", async () => {
+      const notYet = join(base, "not-yet", "deep");
+      await setSecurity({ allowedProjectRoots: [notYet] });
+      const ok = await createPath({ mode: "new", directory: join(notYet, "a") });
+      expect(ok.status).toBe(201);
+      const sibling = await createPath({ mode: "new", directory: join(base, "not-yet", "deeper") });
+      expect(sibling.status).toBe(403);
+      await setSecurity({ allowedProjectRoots: ["allowed"] });
+      const rel = await createPath({ mode: "new", directory: join(process.cwd(), "allowed", "x") });
+      expect(rel.status).toBe(403);
+      expect(existsSync(join(process.cwd(), "allowed"))).toBe(false);
+    });
+
+    describe("a link planted after the API check (the store re-checks)", () => {
+      const inits: string[] = [];
+      const swap = (hook: (dir: string) => Promise<void>) => {
+        inits.length = 0;
+        (service as unknown as { projects: ProjectStore }).projects = new ProjectStore(root, {
+          isGitRepo,
+          repoCommonDir,
+          initGitRepo: async (dir) => {
+            inits.push(dir);
+            await initGitRepo(dir);
+          },
+          beforeCreateDir: hook,
+        });
+      };
+      beforeEach(async () => {
+        await setSecurity({ allowedProjectRoots: [allowedRoot] });
+        await mkdir(join(base, "outside"), { recursive: true });
+      });
+
+      it("new: the parent becomes a link out of the root just before the mkdir", async () => {
+        swap(async () => {
+          await rm(join(allowedRoot, "p"), { recursive: true });
+          await symlink(join(base, "outside"), join(allowedRoot, "p"));
+        });
+        const res = await createPath({ mode: "new", directory: join(allowedRoot, "p", "child") });
+        expect(res.status).toBe(403);
+        expect((await res.json()).error.code).toBe("project_root_not_allowed");
+        expect(existsSync(join(base, "outside", "child"))).toBe(false);
+        expect(existsSync(join(base, "outside", ".git"))).toBe(false);
+        expect(inits).toEqual([]);
+      });
+
+      // The gap between the API check and the store resolving the path: plant before `create`.
+      const plantBeforeCreate = (plant: () => Promise<void>) => {
+        const real = new ProjectStore(root, {
+          isGitRepo,
+          repoCommonDir,
+          initGitRepo: async (dir) => {
+            inits.push(dir);
+            await initGitRepo(dir);
+          },
+        });
+        inits.length = 0;
+        (service as unknown as { projects: unknown }).projects = {
+          create: async (input: Parameters<ProjectStore["create"]>[0]) => {
+            await plant();
+            return real.create(input);
+          },
+        };
+      };
+
+      it("new + confirm: the directory becomes a link to an existing folder outside the root", async () => {
+        plantBeforeCreate(() => symlink(join(base, "outside"), join(allowedRoot, "leaf")));
+        const res = await createPath({
+          mode: "new",
+          directory: join(allowedRoot, "leaf"),
+          confirm: true,
+        });
+        expect(res.status).toBe(403);
+        expect(existsSync(join(base, "outside", ".git"))).toBe(false);
+        expect(inits).toEqual([]);
+      });
+
+      it("auto with an id: <projectsRoot>/<id> becomes a link out of the allowed root", async () => {
+        const pr = join(allowedRoot, "pr");
+        await mkdir(pr);
+        await new SettingsStore(root).update({ projectsRoot: pr });
+        plantBeforeCreate(() => symlink(join(base, "outside"), join(pr, "fresh")));
+        const res = await createPath({ mode: "auto" }, writer, { id: "fresh" });
+        expect(res.status).toBe(403);
+        expect(existsSync(join(base, "outside", ".git"))).toBe(false);
+        expect(inits).toEqual([]);
+      });
+    });
+
     it("the local principal may create new anywhere except /, home and the data root", async () => {
       peer = LOOPBACK;
       const ok = await createPath({ mode: "new", directory: join(base, "local-new") }, "");

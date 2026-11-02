@@ -597,28 +597,42 @@ export class TaskService {
     const mode = path?.mode ?? "existing";
     const directory = path?.mode === "auto" ? undefined : (path?.directory ?? workingDirectory);
     const projectsRoot = resolveProjectsRoot(await this.loadSettings());
+    let assertTarget: ((real: string) => Promise<void>) | undefined;
     if (actor && actor.kind !== "local") {
+      // Vet the path as given (fast path), then hand the store the same check to run on the
+      // directory it really uses, under the create lock and after the mkdir.
+      const why =
+        "settings.projectsRoot is not under an allowed project root (add it to security.allowedProjectRoots to let API clients create projects automatically)";
+      const strict = mode === "new";
+      const check = (dir: string, w?: string) =>
+        this.assertRegistrationAllowed(actor, dir, { mayNotExist: true, strict, why: w });
       if (mode === "auto") {
-        const why = `outside the allowed project roots (settings.projectsRoot is ${projectsRoot}; add it to security.allowedProjectRoots to let API clients create projects automatically)`;
-        await this.assertRegistrationAllowed(actor, projectsRoot, { mayNotExist: true, why });
+        await check(projectsRoot, why);
         // The final directory is <projectsRoot>/<id>; an id that is a symlink must not lead out.
         if (rest.id !== undefined) {
-          await this.assertRegistrationAllowed(actor, join(projectsRoot, rest.id), {
-            mayNotExist: true,
-            why,
-          });
+          await check(
+            join(projectsRoot, rest.id),
+            `the directory for id '${rest.id}' under settings.projectsRoot leads outside the allowed project roots`,
+          );
         }
       } else {
         await this.assertRegistrationAllowed(actor, directory ?? "", {
           mayNotExist: mode === "new",
+          strict,
         });
       }
+      assertTarget = (real) =>
+        check(
+          real,
+          mode === "auto" ? "the new directory is outside the allowed project roots" : undefined,
+        );
     }
     try {
       const project = await this.projects.create({
         ...rest,
         workingDirectory: directory,
         brief,
+        assertTarget,
         path:
           path?.mode === "auto"
             ? { mode: "auto", projectsRoot }
@@ -735,7 +749,7 @@ export class TaskService {
   private async assertRegistrationAllowed(
     actor: Principal,
     dir: string,
-    opts: { mayNotExist?: boolean; why?: string } = {},
+    opts: { mayNotExist?: boolean; strict?: boolean; why?: string } = {},
   ): Promise<void> {
     const { allowedProjectRoots } = securitySettings(await this.loadSettings());
     const deny = (why: string): OpError =>
@@ -775,9 +789,16 @@ export class TaskService {
     );
     const inside = roots.some((r) => {
       if (!r) return false;
-      return isInsidePath(r, real);
+      return isInsidePath(r, real) && !(opts.strict && real === r);
     });
-    if (!inside) throw deny(opts.why ?? "outside the allowed project roots");
+    if (!inside) {
+      throw deny(
+        opts.why ??
+          (opts.strict && roots.includes(real)
+            ? "a new project must be a folder inside an allowed root, not the root itself"
+            : "outside the allowed project roots"),
+      );
+    }
     // Git work tree and data-root checks happen in ProjectStore (mapped to the same code).
   }
 

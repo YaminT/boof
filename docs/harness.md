@@ -136,7 +136,7 @@ What the command does, if you need to explain or do it by hand: it sets `"securi
 
 - `auth.mode: "required"` turns off the trust given to loopback callers.
 - `allowedHosts` lists the host names clients use in the URL. Any other `Host` header answers `421 host_not_allowed`.
-- `allowedProjectRoots` lists the directories under which a key may register projects.
+- `allowedProjectRoots` lists the absolute directories (or `~/...`) under which a key may register projects.
 - The server refuses to bind a non-loopback address unless `auth.mode` is `"required"` and at least one active key exists. Use a specific IP instead of `0.0.0.0` to bind one interface.
 
 Without TLS the key travels in clear text. Warn the user if `BOOF_URL` starts with `http://` and the host is not `127.0.0.1`, `localhost` or `[::1]`.
@@ -849,7 +849,7 @@ Query parameters:
 - What it does: Registers or creates a project. Inputs: either workingDirectory (an existing git work tree; the original form) or path: {mode: "existing", directory}, {mode: "new", directory, confirm?} (boof creates the directory, runs git init and makes an empty first commit; a non-empty directory answers 409 directory_not_empty unless confirm is true) or {mode: "auto"} (boof creates <settings.projectsRoot>/<id>, default ~/boof-projects). brief is required for new and auto, optional for existing; it is stored on the project and given to every agent prompt as ## Project. Optional id, name and overrides. API clients: existing and new directories must lie under security.allowedProjectRoots, and so must the projects root for auto. Creates the project's data directory; read workingDirectory from the result.
 - Success: HTTP 201 with `Project`.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
-- Errors: `403 forbidden_scope`, `400 invalid_input`, `409 idempotency_conflict`, `400 not_a_git_repo`, `403 project_root_not_allowed`, `409 project_exists`, `409 conflict`
+- Errors: `403 forbidden_scope`, `400 invalid_input`, `409 idempotency_conflict`, `400 not_a_git_repo`, `403 project_root_not_allowed`, `409 project_exists`, `409 conflict`, `409 directory_not_empty`, `409 project_busy`
 
 JSON body (unknown keys are rejected):
 

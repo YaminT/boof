@@ -113,6 +113,8 @@ const EXTRA_ERRORS: Record<string, string[]> = {
     "403 project_root_not_allowed",
     "409 project_exists",
     "409 conflict",
+    "409 directory_not_empty",
+    "409 project_busy",
   ],
   "projects.update": ["400 not_a_git_repo", "403 project_root_not_allowed"],
   "projects.delete": ["409 project_busy"],

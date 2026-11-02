@@ -62,6 +62,13 @@ export interface ProjectStoreOptions {
 }
 
 export interface CreateProjectInput {
+  /**
+   * A caller's check on the real directory the store will use (it throws to refuse). Called under
+   * the create lock once the target is resolved, and for `new` and `auto` again on
+   * `realpath(target)` after the directory exists and before the repository is initialised, so a
+   * link planted after the caller's own earlier check cannot lead elsewhere.
+   */
+  assertTarget?: (real: string) => Promise<void>;
   /** Required unless `path.mode === "auto"`. */
   workingDirectory?: string;
   /** Default `{ mode: "existing" }`. */
@@ -230,12 +237,13 @@ export class ProjectStore {
    */
   private async prepareNewDirectory(
     target: string,
-    opts: { confirm?: boolean },
+    opts: { confirm?: boolean; auto?: boolean; assertTarget?: (real: string) => Promise<void> },
   ): Promise<{ real: string; undo: () => Promise<void> }> {
     if (!isAbsolute(target)) {
       throw new ProjectError("directory_not_allowed", `Path must be absolute: ${target}`);
     }
     const { real, exists } = await resolveUnbornPath(target);
+    await opts.assertTarget?.(real);
     const dataRoot = await realpath(this.root).catch(() => this.root);
     if (isInsidePath(dataRoot, real)) {
       throw new ProjectError("inside_data_root", `Directory is inside the data root: ${real}`);
@@ -263,7 +271,9 @@ export class ProjectStore {
       if (entries.some((e) => e !== ".git") && !opts.confirm) {
         throw new ProjectError(
           "directory_not_empty",
-          `Directory is not empty: ${real} (pass confirm to initialise it anyway)`,
+          opts.auto
+            ? `Directory is not empty: ${real} (choose another id or name)`
+            : `Directory is not empty: ${real} (pass confirm to initialise it anyway)`,
         );
       }
     } else {
@@ -333,6 +343,17 @@ export class ProjectStore {
       }
     }
     try {
+      // The directory exists now; make sure it is still where the caller vetted it.
+      const now = await realpath(real);
+      await opts.assertTarget?.(now);
+      if (now !== real) {
+        throw new ProjectError("directory_not_allowed", "The directory moved while being created");
+      }
+    } catch (err) {
+      await undo();
+      throw err;
+    }
+    try {
       await this.initGitRepo?.(real);
     } catch (err) {
       await undo();
@@ -400,10 +421,13 @@ export class ProjectStore {
     let undo: () => Promise<void> = async () => undefined;
     if (spec.mode === "existing") {
       real = await this.vetDirectory(target);
+      await input.assertTarget?.(real);
       checkId();
     } else {
       ({ real, undo } = await this.prepareNewDirectory(target, {
         confirm: spec.mode === "new" ? spec.confirm : undefined,
+        auto: spec.mode === "auto",
+        assertTarget: input.assertTarget,
       }));
     }
     let wrote = false;

@@ -49,7 +49,9 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   unrestricted, non-expiring trusted admin key manage every client.
 - Registering a project as an API client needs the directory (for `path.mode` `new`: the
   directory it will become) to be inside `security.allowedProjectRoots` (settings.json); `auto`
-  needs `settings.projectsRoot` itself inside an allowed root.
+  needs `settings.projectsRoot` itself inside an allowed root. Allowed roots must be absolute
+  (or start with `~/`); a relative entry matches nothing. A `new` project must be a folder
+  below an allowed root, never the root itself.
 - `GET /api/v1/openapi.json` needs any valid principal.
 - `GET /api/v1/whoami` (MCP `boof_whoami`) needs no scope: it returns `{ principal: { kind, id, name, trust, scopes[], projects }, server: { version, authMode, mcpEnabled } }`. Call it first to learn what a key may do.
 
