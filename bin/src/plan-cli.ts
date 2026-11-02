@@ -19,8 +19,9 @@ import {
   syncPlan,
   taskStatusForPlan,
   type SyncResult,
+  ProjectResolutionError,
+  resolveProject,
 } from "@boof-runner/shared";
-import { ProjectResolutionError, resolveProject } from "./headless.js";
 
 export const PLAN_HELP = `boof-runner plan — import, sync and export a project's plans
 

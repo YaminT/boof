@@ -11,15 +11,10 @@ import {
   SettingsStore,
   TaskStore,
   execCommand,
+  ProjectResolutionError,
 } from "@boof-runner/shared";
 import { MockTool, ToolRegistry, mockState, resetMock } from "@boof-runner/runner";
-import {
-  drainQueue,
-  ProjectResolutionError,
-  runTask,
-  scanRepoToTasks,
-  toolOverride,
-} from "./headless.js";
+import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
 import { firstPositional, runCommand } from "./boof-runner.js";
 
 let dataRoot: string;
