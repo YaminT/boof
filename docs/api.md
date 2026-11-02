@@ -400,8 +400,10 @@ subtasks. Webhooks subscribed to `task.*` or `*` now also receive `task.moved`.
 `PUT` with a partial body (the contract has no `PATCH`) and takes `If-Match` with the epic's ETag
 (`409 epic_modified` when stale). Every epic carries `progress: {total, done}` over its non-archived
 top-level tasks. `epics.delete` refuses an epic that tasks name (`409 has_tasks`) unless `?detach=true`,
-which clears their epic; archiving keeps the grouping. Review-trust clients may create and update epics
-but never delete one. Epics need the `tasks:read` / `tasks:write` scopes.
+which clears their epic; archiving keeps the grouping. Review-trust clients may create epics and update only the
+epics they created (`origin.client`; an epic without `origin` is a human's: `403 forbidden_trust`), and never delete one.
+`If-Match` takes a single ETag (a list is `400`; weak and strong forms both match) and wins over a body
+`expectedUpdated`. An empty `PUT` body changes nothing and keeps the ETag. Epics need the `tasks:read` / `tasks:write` scopes.
 
 ### Editing the contract
 

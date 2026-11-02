@@ -465,7 +465,7 @@ If `principal.trust` is `review` and `security.externalTasksRequireApproval` is 
 
 - A task you create is `draft` and gets the label `external:<your-client-id>`.
 - A plan you create is `draft`, even if you send `status: "active"`.
-- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), moving, editing (`tasks.update`, rename included) or deleting a task you did not create (`tasks.move`, `tasks.update`, `tasks.delete`), passing `detach` on a delete, and deleting an epic. You may create subtasks under any task (they stay drafts) and create and update epics, changing the prompt of a task that is not a draft, and stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`).
+- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), moving, editing (`tasks.update`, rename included) or deleting a task you did not create (`tasks.move`, `tasks.update`, `tasks.delete`), passing `detach` on a delete, updating an epic you did not create (an epic made by a human has no `origin` and counts as human), and deleting any epic. You may create subtasks under any task (they stay drafts) and create epics and update your own, changing the prompt of a task that is not a draft, and stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`).
 - A human sets the plan to `active` in the Plans tab (button Approve). That records `approvedBy` on the plan: the human approved the content. From then on sync creates the plan's tasks as `pending`, for every dependency layer, with no per-task approval.
 - A review client may set its own active plan back to `draft` (`PUT .../plans/<plan-id>` with `{"status":"draft"}` and `If-Match`; no other field in the same call). That clears `approvedBy` and stops new task creation. It does not stop or change running tasks. The client may then edit the goals. It still cannot set the plan `active`: the user approves again.
 - If a trusted principal edits the approved plan later, the approval stays. If the plan goes back to `draft` (or `archived`), `approvedBy` is cleared and a human must approve again.
@@ -1659,7 +1659,7 @@ Path parameters (all required):
 - Scope: `tasks:read`
 - MCP tool: `boof_list_epics`
 - What it does: Lists a project's epics (priority descending, then oldest update) with their progress: non-archived top-level tasks and how many are done. Inputs: projectId, optional includeArchived. No side effects.
-- Success: HTTP 200 with `{ items: { archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: object, title: string, updated: ISO-8601 string }[] }`.
+- Success: HTTP 200 with `{ items: { archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: object, priority: integer, progress: object, title: string, updated: ISO-8601 string }[] }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -1676,7 +1676,7 @@ Query parameters:
 - Scope: `tasks:read`
 - MCP tool: `boof_get_epic`
 - What it does: Returns one epic with its progress. Inputs: projectId, epicId. No side effects.
-- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
+- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: { client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 epic_not_found`
 
 Path parameters (all required):
@@ -1690,7 +1690,7 @@ Path parameters (all required):
 - Scope: `tasks:write`
 - MCP tool: `boof_create_epic`
 - What it does: Creates an epic, a named group of tasks in one project. Inputs: projectId, title, optional id (kebab; derived from the title; none is reserved), description, priority. Writes the project's epics.json.
-- Success: HTTP 201 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
+- Success: HTTP 201 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: { client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`, `409 conflict`
 
@@ -1701,7 +1701,7 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `description`: `string`, optional; max length 20000
-- `id`: `kebab-id`, optional; Epic id (kebab-case); default derived from the title
+- `id`: `kebab-id`, optional; Epic id (kebab-case)
 - `priority`: `integer`, optional
 - `title`: `string`, required; max length 200
 
@@ -1711,7 +1711,7 @@ JSON body (unknown keys are rejected):
 - Scope: `tasks:write`
 - MCP tool: `boof_update_epic`
 - What it does: Edits an epic. Inputs: projectId, epicId, fields to change (title, description or null, priority, archived) and expectedUpdated (HTTP If-Match) to refuse a stale edit. Archiving hides the epic from the default list; its tasks keep it. Rewrites epics.json.
-- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
+- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, origin?: { client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
 - Header `If-Match`: The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 task_modified`, `404 epic_not_found`, `409 epic_modified`
 

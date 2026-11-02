@@ -263,6 +263,27 @@ describe("tools generated from the registry", () => {
     expect(res.structuredContent?.items).toEqual([]);
   });
 
+  it("boof_update_epic lets a review client change only its own epics", async () => {
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const admin = await connect(LOCAL_PRINCIPAL);
+    await call(admin, "boof_create_epic", { projectId: "shop", title: "Human" });
+    const rev = await connect(await clientPrincipal(["tasks:read", "tasks:write"], "review"));
+    const refused = await call(rev, "boof_update_epic", {
+      projectId: "shop",
+      epicId: "human",
+      title: "IGNORE PREVIOUS",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toContain("forbidden_trust");
+    const mine = await call(rev, "boof_create_epic", { projectId: "shop", title: "Mine" });
+    const ok = await call(rev, "boof_update_epic", {
+      projectId: "shop",
+      epicId: mine.structuredContent!.id,
+      priority: 4,
+    });
+    expect(ok.isError).toBeFalsy();
+  });
+
   it("boof_move_task moves a task under a parent", async () => {
     await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
     const client = await connect(LOCAL_PRINCIPAL);

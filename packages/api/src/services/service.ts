@@ -227,7 +227,10 @@ export class ProjectService {
 
   async createEpic(input: CreateEpicInput, actor?: Principal): Promise<EpicView> {
     return this.epicView(
-      await new EpicStore(this.root).create(input, { by: actor?.id ?? "local" }),
+      await new EpicStore(this.root).create(input, {
+        by: actor?.id ?? "local",
+        origin: originOf(actor),
+      }),
     );
   }
 
@@ -237,8 +240,21 @@ export class ProjectService {
     actor?: Principal,
   ): Promise<EpicView> {
     const { expectedUpdated, ...fields } = patch;
+    const store = new EpicStore(this.root);
+    // A review-trust client changes only the epics it created (its owner never changes). An epic
+    // without an origin is a human's.
+    if (await this.needsApproval(actor)) {
+      const epic = await store.require(id);
+      if (epic.origin?.client !== actor?.id) {
+        throw new OpError(
+          403,
+          "This client has review trust and can only change epics it created",
+          "forbidden_trust",
+        );
+      }
+    }
     return this.epicView(
-      await new EpicStore(this.root).update(id, fields, {
+      await store.update(id, fields, {
         by: actor?.id ?? "local",
         expectedUpdated,
       }),
@@ -314,10 +330,7 @@ export class ProjectService {
     const status = review ? "draft" : (input.status ?? "draft");
     const labels = [...(input.labels ?? [])];
     if (review && actor) labels.push(`external:${actor.id}`);
-    const origin: TaskOrigin | undefined =
-      actor?.kind === "client"
-        ? { kind: ORIGIN_KIND[actor.clientKind ?? "harness"], client: actor.id }
-        : undefined;
+    const origin = originOf(actor);
     const task = newTask(
       {
         id,
@@ -1167,6 +1180,13 @@ function projectNotFound(id: string): OpError {
 }
 
 const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
+
+/** Who submitted a task or epic: the client, or nobody for the local principal. */
+function originOf(actor?: Principal): TaskOrigin | undefined {
+  return actor?.kind === "client"
+    ? { kind: ORIGIN_KIND[actor.clientKind ?? "harness"], client: actor.id }
+    : undefined;
+}
 
 /** The last `n` lines of `text`; a trailing newline is kept and does not count as a line. */
 export function tailLines(text: string, n: number): string {

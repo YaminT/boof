@@ -82,6 +82,9 @@ function parseIfMatch(header: string, field: "expectedVersion" | "expectedUpdate
       'If-Match must be a task ETag such as W/"2026-10-01T00:00:00.000Z"',
       "invalid_input",
     );
+  if (m[1].includes('"')) {
+    throw new OpError(400, "If-Match takes one ETag, not a list", "invalid_input");
+  }
   return m[1];
 }
 

@@ -147,6 +147,8 @@ export type TaskFrontmatter = z.infer<typeof TaskFrontmatterSchema>;
 /** A group of tasks in one project, stored in `projects/<id>/epics.json`. */
 export const EpicSchema = z.object({
   id: kebab,
+  // Who created it (set by the server; absent for a human's or an older epic). Not a patch field.
+  origin: TaskOriginSchema.optional(),
   title: z.string().min(1).max(200),
   description: z.string().max(20_000).optional(),
   priority: z.number().int().default(0),

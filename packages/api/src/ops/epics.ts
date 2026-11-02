@@ -15,7 +15,6 @@ import {
 const epicEtag = (e: { updated: string }) => `W/"${e.updated}"`;
 const epicResult = (e: z.output<typeof EpicViewSchema>) =>
   `Epic ${e.id}: ${e.progress.done}/${e.progress.total} done`;
-const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 
 export const epicsList = defineOp({
   name: "epics.list",
@@ -62,10 +61,7 @@ export const epicsCreate = defineOp({
   input: z.strictObject({
     projectId: projectIdParam,
     title: z.string().trim().min(1).max(200),
-    id: kebabId
-      .max(200)
-      .optional()
-      .meta({ description: "Epic id (kebab-case); default derived from the title." }),
+    id: epicIdParam.optional(),
     description: z.string().max(20_000).optional(),
     priority: z.number().int().optional(),
   }),

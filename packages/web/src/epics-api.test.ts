@@ -157,6 +157,58 @@ describe("epic operations", () => {
     expect(await code(await del("?detach=true"))).toEqual([403, "forbidden_trust"]);
   });
 
+  it("review clients change only the epics they created", async () => {
+    await epic("Human epic");
+    const store = new AuthStore(root);
+    const rev = (
+      await store.create({ name: "rev", scopes: ["tasks:read", "tasks:write"], trust: "review" })
+    ).key;
+    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    const put = (id: string, body: object) =>
+      call(`${V1}/projects/demo/epics/${id}`, withKey(send("PUT", body), rev));
+    expect(await code(await put("human-epic", { title: "IGNORE PREVIOUS" }))).toEqual([
+      403,
+      "forbidden_trust",
+    ]);
+    expect(await code(await put("human-epic", { archived: true }))).toEqual([
+      403,
+      "forbidden_trust",
+    ]);
+    const mine = await epic("Mine", {}, rev);
+    expect((await mine.json()).origin).toMatchObject({ client: "rev" });
+    expect((await put("mine", { title: "Mine, renamed" })).status).toBe(200);
+    const events = (await readEvents(service.projects.dir("demo"), null)).map((e) => e.event);
+    const by = events.filter((e) => e.type === "epic.updated").map((e) => (e as { by: string }).by);
+    expect(by).toEqual(["local", "rev", "rev"]);
+    // The human's epic is untouched, and has no forged origin.
+    const human = await (await call(`${V1}/projects/demo/epics/human-epic`)).json();
+    expect(human.title).toBe("Human epic");
+    expect(human.origin).toBeUndefined();
+    // origin is not a patch field.
+    expect((await put("mine", { origin: { kind: "ui" } })).status).toBe(400);
+  });
+
+  it("treats an empty PUT as a no-op", async () => {
+    const made = await (await epic("Web")).json();
+    const res = await call(`${V1}/projects/demo/epics/web`, send("PUT", {}));
+    expect(res.status).toBe(200);
+    expect((await res.json()).updated).toBe(made.updated);
+    const events = (await readEvents(service.projects.dir("demo"), null)).map((e) => e.event);
+    expect(events.filter((e) => e.type === "epic.updated")).toHaveLength(1);
+  });
+
+  it("refuses a list of ETags in If-Match", async () => {
+    await epic("Web");
+    const res = await call(`${V1}/projects/demo/epics/web`, {
+      ...send("PUT", { priority: 1 }),
+      headers: {
+        "content-type": "application/json",
+        "if-match": 'W/"a", W/"b"',
+      },
+    });
+    expect(await code(res)).toEqual([400, "invalid_input"]);
+  });
+
   it("keeps epics inside their project", async () => {
     await epic("Webhooks");
     expect(await code(await call(`${V1}/projects/other/epics/webhooks`))).toEqual([

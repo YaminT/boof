@@ -4,7 +4,13 @@ import { atomicWrite, withFileLock } from "./atomic.js";
 import { appendEvent } from "./events.js";
 import { assertKebabId } from "./paths.js";
 import { uniqueKebabId } from "./ids.js";
-import { EpicPatchSchema, EpicsFileSchema, type Epic, type EpicPatch } from "./schema.js";
+import {
+  EpicPatchSchema,
+  EpicsFileSchema,
+  type Epic,
+  type EpicPatch,
+  type TaskOrigin,
+} from "./schema.js";
 
 export type EpicErrorCode = "not_found" | "exists" | "modified";
 
@@ -116,7 +122,10 @@ export class EpicStore {
     return epic;
   }
 
-  async create(input: CreateEpicInput, opts: { by?: string } = {}): Promise<Epic> {
+  async create(
+    input: CreateEpicInput,
+    opts: { by?: string; origin?: TaskOrigin } = {},
+  ): Promise<Epic> {
     const explicit = input.id === undefined ? undefined : assertKebabId(input.id);
     const epic = await withFileLock(this.path, async () => {
       const { epics, ignored } = await this.load();
@@ -127,6 +136,7 @@ export class EpicStore {
       const now = nowIso();
       const created: Epic = {
         id: explicit ?? uniqueKebabId(input.title, [...taken, ...RESERVED_IDS]),
+        ...(opts.origin ? { origin: opts.origin } : {}),
         title: input.title.trim(),
         ...(input.description !== undefined ? { description: input.description } : {}),
         priority: input.priority ?? 0,
@@ -147,13 +157,16 @@ export class EpicStore {
     opts: { by?: string; expectedUpdated?: string } = {},
   ): Promise<Epic> {
     const clean = EpicPatchSchema.parse(patch);
-    const epic = await withFileLock(this.path, async () => {
+    const result = await withFileLock(this.path, async () => {
       const { epics, ignored } = await this.load();
       const current = epics.find((e) => e.id === id);
       if (!current) throw new EpicError("not_found", `Epic not found: ${id}`);
       if (opts.expectedUpdated !== undefined && opts.expectedUpdated !== current.updated) {
         throw new EpicError("modified", `Epic ${id} was changed since it was read`);
       }
+      // Nothing to change: no new stamp, no event (the epic's ETag stays valid).
+      if (Object.values(clean).every((v) => v === undefined))
+        return { epic: current, changed: false };
       const next: Epic = { ...current };
       for (const [key, value] of Object.entries(clean)) {
         if (value === undefined) continue;
@@ -165,10 +178,10 @@ export class EpicStore {
         epics.map((e) => (e.id === id ? next : e)),
         ignored,
       );
-      return next;
+      return { epic: next, changed: true };
     });
-    await this.announce(id, "updated", opts.by);
-    return epic;
+    if (result.changed) await this.announce(id, "updated", opts.by);
+    return result.epic;
   }
 
   /**

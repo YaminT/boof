@@ -4730,6 +4730,28 @@
                             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
                             "type": "string"
                           },
+                          "origin": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "client": {
+                                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                                "type": "string"
+                              },
+                              "kind": {
+                                "enum": [
+                                  "ui",
+                                  "cli",
+                                  "api",
+                                  "mcp"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "type": "object"
+                          },
                           "priority": {
                             "default": 0,
                             "maximum": 9007199254740991,
@@ -4845,7 +4867,7 @@
                     "type": "string"
                   },
                   "id": {
-                    "description": "Epic id (kebab-case); default derived from the title.",
+                    "description": "Epic id (kebab-case).",
                     "maxLength": 200,
                     "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
                     "type": "string"
@@ -4893,6 +4915,28 @@
                     "id": {
                       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
                       "type": "string"
+                    },
+                    "origin": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "cli",
+                            "api",
+                            "mcp"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
                     },
                     "priority": {
                       "default": 0,
@@ -5106,6 +5150,28 @@
                       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
                       "type": "string"
                     },
+                    "origin": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "cli",
+                            "api",
+                            "mcp"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
                     "priority": {
                       "default": 0,
                       "maximum": 9007199254740991,
@@ -5284,6 +5350,28 @@
                     "id": {
                       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
                       "type": "string"
+                    },
+                    "origin": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "cli",
+                            "api",
+                            "mcp"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
                     },
                     "priority": {
                       "default": 0,
