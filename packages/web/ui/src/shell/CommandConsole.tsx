@@ -104,7 +104,7 @@ export function CommandConsole({
           </button>
           <Input
             aria-label="Command"
-            placeholder="Type a command, e.g. /queue fix login"
+            placeholder="Command, e.g. /queue fix login"
             autoComplete="off"
             autoCapitalize="off"
             spellCheck={false}
