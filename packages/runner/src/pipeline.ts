@@ -138,6 +138,11 @@ export function isFinalIteration(task: Task): boolean {
  * run's work is present in the same worktree, so later runs are told to treat
  * it as another AI's solution and rigorously review/adjust it (runs feature).
  */
+/** The planner's answers, as the asking role reads them in its next run. */
+function answersSection(answers: string): string {
+  return `## Answers from the planner to your questions\n${answers}`;
+}
+
 function iterationFraming(task: Task): string | null {
   const iteration = currentIteration(task);
   if (iteration <= 1) return null;
@@ -756,14 +761,15 @@ export class Pipeline {
 
       // --- Step 3: Developer ---
       const developer = this.tool(task, "developer");
-      let devResult = await this.runStep(id, "Developer", developer.tool, {
-        role: "developer",
+      const devOpts = {
+        role: "developer" as const,
         model: developer.model,
         systemPrompt: SYSTEM_PROMPTS.developer,
         prompt: await this.buildPrompt(task, `## Plan\n${finalPlan}`),
         cwd: stepCwd,
         autoApprove: true,
-      });
+      };
+      let devResult = await this.runStep(id, "Developer", developer.tool, devOpts);
       record(devResult);
       recordBody(`### Developer\n${devResult.output}`);
 
@@ -777,6 +783,18 @@ export class Pipeline {
           stepCwd,
           finalPlan,
           usages,
+          async (answers) => {
+            const again = await this.runStep(id, "Developer (with answers)", developer.tool, {
+              ...devOpts,
+              prompt: await this.buildPrompt(
+                task,
+                `## Plan\n${finalPlan}\n\n${answersSection(answers)}`,
+              ),
+            });
+            record(again);
+            recordBody(`### Developer (with answers)\n${again.output}`);
+            return again;
+          },
         );
       }
       await this.writeReport(task, "developer", devResult.report);
@@ -789,7 +807,7 @@ export class Pipeline {
         const who = role === "observer" ? observer! : reviewer;
         const label = role === "observer" ? "Observer" : "Reviewer";
         const diff = await this.inlineDiff(id, worktree);
-        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, {
+        const checkOpts = {
           role,
           model: who.model,
           systemPrompt: SYSTEM_PROMPTS[role],
@@ -799,14 +817,15 @@ export class Pipeline {
           ),
           cwd: stepCwd,
           autoApprove: true,
-        });
+        };
+        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, checkOpts);
         record(result);
         recordBody(`### ${label} (round ${round})\n${result.output}`);
         // Parse before the planner dialogue is appended, so only the agent's own
         // final line counts.
-        const verdict = parseVerdict(result.report);
+        let verdict = parseVerdict(result.report);
         if (result.questions && result.questions.length > 0) {
-          result = await this.answerViaPlanner(
+          const answered = await this.answerViaPlanner(
             task,
             planner,
             role,
@@ -814,7 +833,27 @@ export class Pipeline {
             stepCwd,
             finalPlan,
             usages,
+            async (answers) => {
+              const again = await this.runStep(
+                id,
+                `${label} (round ${round}, with answers)`,
+                who.tool,
+                {
+                  ...checkOpts,
+                  prompt: await this.buildPrompt(
+                    task,
+                    `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
+                  ),
+                },
+              );
+              record(again);
+              recordBody(`### ${label} (round ${round}, with answers)\n${again.output}`);
+              return again;
+            },
           );
+          // The verdict that counts is the one the role gave after it got its answers.
+          result = answered;
+          verdict = parseVerdict(answered.ownReport ?? answered.report);
         }
         await this.appendRoundReport(task, role, round, verdict, result.report);
         await appendLog(`${label} verdict (round ${round}): ${verdict ?? "INVALID"}`);
@@ -827,23 +866,23 @@ export class Pipeline {
         findings: string,
       ) => {
         const diff = await this.inlineDiff(id, worktree);
+        const fixBase =
+          `## Plan\n${finalPlan}\n\n## Findings (${role} round ${sourceRound})\n${findings}\n\n` +
+          `## Instructions\nFix each real finding with a test, or rebut it with evidence.\n\n` +
+          `## Current diff\n${diff}`;
+        const fixOpts = {
+          role: "developer" as const,
+          model: developer.model,
+          systemPrompt: SYSTEM_PROMPTS.developerFix,
+          prompt: await this.buildPrompt(task, fixBase),
+          cwd: stepCwd,
+          autoApprove: true,
+        };
         let fixResult = await this.runStep(
           id,
           `Developer (fix round ${fixRound}, ${role})`,
           developer.tool,
-          {
-            role: "developer",
-            model: developer.model,
-            systemPrompt: SYSTEM_PROMPTS.developerFix,
-            prompt: await this.buildPrompt(
-              task,
-              `## Plan\n${finalPlan}\n\n## Findings (${role} round ${sourceRound})\n${findings}\n\n` +
-                `## Instructions\nFix each real finding with a test, or rebut it with evidence.\n\n` +
-                `## Current diff\n${diff}`,
-            ),
-            cwd: stepCwd,
-            autoApprove: true,
-          },
+          fixOpts,
         );
         record(fixResult);
         recordBody(`### Developer (fix round ${fixRound}, ${role})\n${fixResult.output}`);
@@ -856,6 +895,22 @@ export class Pipeline {
             stepCwd,
             finalPlan,
             usages,
+            async (answers) => {
+              const again = await this.runStep(
+                id,
+                `Developer (fix round ${fixRound}, ${role}, with answers)`,
+                developer.tool,
+                {
+                  ...fixOpts,
+                  prompt: await this.buildPrompt(task, `${fixBase}\n\n${answersSection(answers)}`),
+                },
+              );
+              record(again);
+              recordBody(
+                `### Developer (fix round ${fixRound}, ${role}, with answers)\n${again.output}`,
+              );
+              return again;
+            },
           );
         }
         await this.writeReport(
@@ -990,7 +1045,9 @@ export class Pipeline {
     cwd: string,
     plan: string,
     usages: TokenUsage[],
-  ): Promise<RunResult> {
+    /** Runs the asking role again with the planner's answers in its prompt. */
+    rerun: (answers: string) => Promise<RunResult>,
+  ): Promise<RunResult & { ownReport?: string }> {
     const id = task.frontmatter.id;
     const questions = result.questions ?? [];
     const answer = await this.runStep(id, `Planner (answering ${fromRole})`, planner.tool, {
@@ -1017,7 +1074,15 @@ export class Pipeline {
     ].join("\n\n");
     await writeFile(join(this.areaDir(id), `dialogue-${fromRole}.md`), dialogue + "\n", "utf8");
     await this.log(id, `Routed ${fromRole} questions to planner (resolved via file).`);
-    return { ...result, questions: undefined, report: `${result.report}\n\n${dialogue}` };
+    // The exchange belongs in the task's Questions section, next to any the planner parked on.
+    const exchange = `### ${fromRole} asked\n${questions.join("\n")}\n\n### planner answered\n${answer.report}`;
+    task.body.questions = task.body.questions.trim()
+      ? `${task.body.questions}\n\n${exchange}`
+      : exchange;
+    // The role gets its answers and works on: its next run is what the pipeline continues with.
+    const again = await rerun(answer.report);
+    const own = again.report;
+    return { ...again, questions: undefined, report: `${own}\n\n${dialogue}`, ownReport: own };
   }
 
   /**
@@ -1078,6 +1143,7 @@ export class Pipeline {
       t.frontmatter.tokens = total;
       t.body.log = task.body.log;
       t.body.reports = task.body.reports;
+      t.body.questions = task.body.questions;
     });
     task.frontmatter = saved.frontmatter;
     await this.usageStore.add(total);

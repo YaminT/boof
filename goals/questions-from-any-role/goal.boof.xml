@@ -16,6 +16,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Raised by the group 2 review on 2026-10-29; not started.</version>
+        <version number="2" status="done">Shipped: a developer, observer or reviewer question is answered by the planner, the role runs again with the answers in its prompt (its verdict comes from that run), and the exchange is recorded in the task's Questions section.</version>
       </versions>
     </status>
     <tests>

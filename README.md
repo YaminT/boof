@@ -368,7 +368,7 @@ drafts/ → pending/ → ongoing/ → done/
                   ↘ actions/ (awaiting your answers)  ↘ failed/ or stopped/
 ```
 
-The runner polls the `pending/` directory of every active, non-paused project, picks the highest-priority task (ties: oldest `updated`, then project id), and runs **planner → planner-refinement → developer → observer (optional) → reviewer**, writing a report at every step. If the planner raises clarifying questions (a fenced ` ```questions ` block at the end of its report), the task parks in `actions/` and the runner moves on; you answer in the **Actions** tab and it resumes. Developer and reviewer questions are routed back to the planner via file and never reach you.
+The runner polls the `pending/` directory of every active, non-paused project, picks the highest-priority task (ties: oldest `updated`, then project id), and runs **planner → planner-refinement → developer → observer (optional) → reviewer**, writing a report at every step. If the planner raises clarifying questions (a fenced ` ```questions ` block at the end of its report), the task parks in `actions/` and the runner moves on; you answer in the **Actions** tab and it resumes. Developer, observer and reviewer questions are answered by the planner, the role then runs again with the answers, and the exchange is recorded in the task's Questions section; they never reach you.
 
 Plans add a layer above tasks: a plan's goals become tasks when you sync, and a later sync brings those tasks in line with changed goals (pending prompts are rewritten, running tasks get an instruction, finished goals get a follow-up task). When a plan task finishes, the goal's status is recorded in the plan.
 

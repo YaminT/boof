@@ -1262,6 +1262,26 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
   });
 
+  it("a role's questions are answered by the planner and the role runs again with the answers", async () => {
+    await configure({ observer: true });
+    mockState.roleQuestions = { developer: ["Which db?"], reviewer: ["Which schema?"] };
+    const from = mockState.prompts.length;
+    const outcome = await run("Build it. [[mock-verdicts observer=APPROVE reviewer=APPROVE]]");
+    expect(outcome.kind).toBe("done");
+    const prompts = mockState.prompts.slice(from);
+    const withAnswers = prompts.filter((p) =>
+      p.includes("## Answers from the planner to your questions"),
+    );
+    // The developer and the reviewer each ran again with their answers.
+    expect(withAnswers.length).toBeGreaterThanOrEqual(2);
+    expect(withAnswers.some((p) => p.includes("## Diff under review"))).toBe(true);
+    const task = await store.get("t1");
+    expect(task?.body.questions).toContain("### developer asked");
+    expect(task?.body.questions).toContain("Which db?");
+    expect(task?.body.questions).toContain("### reviewer asked");
+    expect(task?.body.questions).toContain("### planner answered");
+  });
+
   it("carried findings survive iteration 2 parking and resuming", async () => {
     await configure({ observer: true });
     await run("Twice. [[mock-verdicts observer=APPROVE reviewer=APPROVE]]", { runs: 2 });

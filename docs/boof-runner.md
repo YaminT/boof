@@ -193,7 +193,7 @@ For each task, the pipeline runs these steps:
 5. Reviewer
    Gives the final review of the diff and ends its report with a verdict.
 
-Developer, observer or reviewer questions are routed back to the planner internally. They ask with the same block. Only planner questions that block the original task are surfaced to the user.
+Developer, observer or reviewer questions are routed back to the planner internally. They ask with the same block. The planner answers, the asking role runs again with the answers in its prompt (`## Answers from the planner to your questions`; one extra run, it cannot ask twice in a row), and the exchange is added to the task's Questions section. A reviewer's or observer's verdict is the one from that second run. Only planner questions that block the original task are surfaced to the user.
 
 ### Observer Role
 
