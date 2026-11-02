@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   atomicWrite,
+  AuthStore,
+  readEvents,
   defaultSettings,
   EpicStore,
   newTask,
@@ -190,5 +192,97 @@ describe("task hierarchy over the API", () => {
     } finally {
       err.mockRestore();
     }
+  });
+
+  const move = (id: string, body: unknown, key?: string) =>
+    call(`${V1}/projects/demo/tasks/${id}/move`, send("POST", body), key);
+  const code = async (r: Response) => [r.status, (await r.json()).error?.code];
+
+  it("moves a task under a parent and back", async () => {
+    await epics().create({ title: "Web" });
+    await mk("P");
+    await mk("T", { epicId: "web" });
+    const under = await move("t", { parentId: "p" });
+    expect(under.status).toBe(200);
+    const view = await under.json();
+    expect(view.frontmatter.parentId).toBe("p");
+    expect(view.frontmatter.epicId).toBeUndefined();
+    const back = await (await move("t", { parentId: null })).json();
+    expect(back.frontmatter.parentId).toBeUndefined();
+    const events = (await readEvents(service.projects.dir("demo"), null)).map((e) => e.event);
+    expect(events.filter((e) => e.type === "task.moved").length).toBe(2);
+  });
+
+  it("refuses bad moves", async () => {
+    await epics().create({ title: "Web" });
+    await mk("P");
+    await mk("Q");
+    await mk("C", { parentId: "p" });
+    expect((await move("q", { parentId: "p", epicId: "web" })).status).toBe(400);
+    expect((await move("q", {})).status).toBe(400);
+    expect(await code(await move("q", { parentId: "q" }))).toEqual([409, "invalid_hierarchy"]);
+    expect(await code(await move("p", { parentId: "q" }))).toEqual([409, "has_children"]);
+    expect(await code(await move("c", { epicId: "web" }))).toEqual([409, "invalid_hierarchy"]);
+    expect(await code(await move("ghost", { epicId: null }))).toEqual([404, "not_found"]);
+  });
+
+  it("refuses to delete a parent unless detach, which keeps the epic", async () => {
+    await epics().create({ title: "Web" });
+    await mk("P", { epicId: "web" });
+    await mk("C", { parentId: "p" });
+    const del = (qs = "") => call(`${V1}/projects/demo/tasks/p${qs}`, { method: "DELETE" });
+    expect(await code(await del())).toEqual([409, "has_children"]);
+    const ok = await del("?detach=true");
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, detached: ["c"] });
+    const c = await (await call(`${V1}/projects/demo/tasks/c`)).json();
+    expect(c.frontmatter.parentId).toBeUndefined();
+    expect(c.frontmatter.epicId).toBe("web");
+  });
+
+  it("warns when queuing a parent with open subtasks", async () => {
+    await mk("P");
+    await mk("C", { parentId: "p" });
+    const res = await call(`${V1}/projects/demo/tasks/p/queue`, send("POST"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Boof-Warning")).toContain("subtasks_open");
+    expect((await res.json()).warnings[0].code).toBe("subtasks_open");
+    await mk("P2");
+    await mk("C2", { parentId: "p2" });
+    await call(`${V1}/projects/demo/tasks/c2`, send("PUT", { status: "archived" }));
+    const quiet = await call(`${V1}/projects/demo/tasks/p2/queue`, send("POST"));
+    expect(quiet.status).toBe(200);
+    expect(quiet.headers.get("Boof-Warning")).toBeNull();
+  });
+
+  it("review clients move only their own tasks and never detach", async () => {
+    const store = new AuthStore(root);
+    const rev = (
+      await store.create({ name: "rev", scopes: ["tasks:read", "tasks:write"], trust: "review" })
+    ).key;
+    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    const authed = (path: string, init: RequestInit) =>
+      call(path, {
+        ...init,
+        headers: { ...(init.headers as object), authorization: `Bearer ${rev}` },
+      });
+    await mk("Human");
+    const sub = await authed(
+      `${V1}/projects/demo/tasks`,
+      send("POST", { title: "Sub", prompt: "p", parentId: "human", status: "pending" }),
+    );
+    expect(sub.status).toBe(201);
+    expect((await sub.json()).frontmatter.status).toBe("draft");
+    expect(
+      await code(
+        await authed(`${V1}/projects/demo/tasks/human/move`, send("POST", { epicId: null })),
+      ),
+    ).toEqual([403, "forbidden_trust"]);
+    expect(
+      (await authed(`${V1}/projects/demo/tasks/sub/move`, send("POST", { parentId: null }))).status,
+    ).toBe(200);
+    expect(
+      await code(await authed(`${V1}/projects/demo/tasks/human?detach=true`, { method: "DELETE" })),
+    ).toEqual([403, "forbidden_trust"]);
   });
 });

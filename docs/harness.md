@@ -490,7 +490,7 @@ POST tasks (ad-hoc), status "pending"
 
 A `trusted` client skips the approval steps: a plan it creates with `status: "active"` is approved at once, its ad-hoc tasks may be `pending`.
 
-Warnings. When the server changes a value you asked for because of your trust, the answer says so. The body of the create has `warnings: [{ "code": "status_downgraded", "message", "field": "status", "requested": "active", "applied": "draft" }]` and the response has the header `Boof-Warning: status_downgraded`. MCP tools return the same array in `structuredContent.warnings` and add the message to the text content. A plan create is downgraded `active` to `draft`. A task create is downgraded `pending` to `draft`. Read `warnings` after every create. Tell the user what waits for approval and where to click.
+Warnings. When the server changes a value you asked for because of your trust, the answer says so. The body of the create has `warnings: [{ "code": "status_downgraded", "message", "field": "status", "requested": "active", "applied": "draft" }]` and the response has the header `Boof-Warning: status_downgraded`. MCP tools return the same array in `structuredContent.warnings` and add the message to the text content. A plan create is downgraded `active` to `draft`. A task create is downgraded `pending` to `draft`. Read `warnings` after every create. Tell the user what waits for approval and where to click. A second warning, `subtasks_open`, is informational: `tasks.queue` (or `tasks.update` to `pending`) on a parent that still has subtasks that are not done succeeds, and nothing waits for the subtasks.
 
 ### Parked tasks with questions
 
@@ -640,7 +640,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 66 operations. Every path below starts with `/api/v1`.
+There are 67 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -1025,7 +1025,7 @@ Path parameters (all required):
 - Scope: `plans:write`
 - MCP tool: `boof_create_plan`
 - What it does: Creates a plan with optional goals (a dependency graph). Inputs: projectId, title, optional id, description, status, autoSync, bumpTo, goals. Review-trust clients always get a draft plan; the result then has warnings (status_downgraded) and the HTTP header Boof-Warning. A human approves the plan (sets it active); its tasks are then created pending.
-- Success: HTTP 201 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, goals: Goal[], id: kebab-id, source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1, warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
+- Success: HTTP 201 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, goals: Goal[], id: kebab-id, source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_plan`, `409 idempotency_conflict`, `409 plan_exists`
 
@@ -1339,7 +1339,7 @@ Query parameters:
 - Scope: `tasks:write`
 - MCP tool: `boof_create_task`
 - What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs, optional epicId or parentId (one level of subtasks; a subtask takes its parent's epic). Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.
-- Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
+- Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`, `404 epic_not_found`, `404 parent_not_found`, `409 invalid_hierarchy`
 
@@ -1365,7 +1365,7 @@ JSON body (unknown keys are rejected):
 - Scope: `tasks:write`
 - MCP tool: `boof_update_task`
 - What it does: Edits task fields; a changed status is a transition. Inputs: projectId, taskId, fields to change, and expectedUpdated (HTTP If-Match) to refuse a stale edit. Rewrites the task file.
-- Success: HTTP 200 with `Task`. The response has an `ETag` header.
+- Success: HTTP 200 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `If-Match`: The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 task_modified`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
 
@@ -1386,13 +1386,32 @@ JSON body (unknown keys are rejected):
 - `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, optional
 - `title`: `string`, optional; max length 200
 
+#### `POST /api/v1/projects/{projectId}/tasks/{taskId}/move` (Move a task to an epic or under a parent)
+
+- Operation: `tasks.move`
+- Scope: `tasks:write`
+- MCP tool: `boof_move_task`
+- What it does: Changes a task's epic or parent. Inputs: projectId, taskId, and epicId or parentId (not both; null clears). One level of subtasks: a parent has no parent, a task with subtasks cannot become a subtask, and setting a parent clears the task's own epic (a subtask takes its parent's). Appends a task.moved event. Review-trust clients may move only tasks they created (403 forbidden_trust).
+- Success: HTTP 200 with `Task`. The response has an `ETag` header.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `404 epic_not_found`, `404 parent_not_found`, `409 invalid_hierarchy`, `409 has_children`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `taskId`: `kebab-id`, required; Task id (kebab-case)
+
+JSON body (unknown keys are rejected):
+
+- `epicId`: `kebab-id | null`, optional; New epic, or null to clear it
+- `parentId`: `kebab-id | null`, optional; New parent task, or null to make it top-level
+
 #### `POST /api/v1/projects/{projectId}/tasks/{taskId}/queue` (Queue a task)
 
 - Operation: `tasks.queue`
 - Scope: `tasks:write`
 - MCP tool: `boof_queue_task`
-- What it does: Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. Review-trust clients are refused (403 forbidden_trust).
-- Success: HTTP 200 with `Task`. The response has an `ETag` header.
+- What it does: Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. A parent queued while some subtasks are not done succeeds with a subtasks_open warning (header Boof-Warning). Review-trust clients are refused (403 forbidden_trust).
+- Success: HTTP 200 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded" | "subtasks_open", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 not_found`, `409 invalid_transition`
 
 Path parameters (all required):
@@ -1482,14 +1501,18 @@ Path parameters (all required):
 - Operation: `tasks.delete`
 - Scope: `tasks:write`
 - MCP tool: none (REST only)
-- What it does: Permanently deletes a task and its attachments; a running task must finish first. Inputs: projectId, taskId. Removes files.
-- Success: HTTP 200 with `{ ok: true }`.
-- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is running)`
+- What it does: Permanently deletes a task and its attachments; a running task must finish first. A task with subtasks is refused (409 has_children) unless detach=true, which makes the subtasks top-level tasks in the parent's epic. Inputs: projectId, taskId, optional detach (?detach=true). Review-trust clients may not detach. Removes files.
+- Success: HTTP 200 with `{ detached: string[], ok: true }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is running)`, `403 forbidden_trust`, `409 has_children`
 
 Path parameters (all required):
 
 - `projectId`: `kebab-id`, required; Project id (kebab-case)
 - `taskId`: `kebab-id`, required; Task id (kebab-case)
+
+Query parameters:
+
+- `detach`: `boolean`, optional; Make the task's subtasks top-level tasks instead of refusing (409 has_children)
 
 #### `POST /api/v1/projects/{projectId}/tasks/{taskId}/answers` (Answer a task's questions)
 

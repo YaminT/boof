@@ -111,6 +111,14 @@ export const ProjectViewSchema = ProjectSchema.extend({
 
 export const OkSchema = z.object({ ok: z.literal(true) });
 
+/** The result of deleting a task: the ids of the subtasks that were made top-level tasks. */
+export const DeleteResultSchema = z.object({
+  ok: z.literal(true),
+  detached: z
+    .array(z.string())
+    .meta({ description: "Subtasks that became top-level tasks (detach)." }),
+});
+
 export const InjectResultSchema = z.object({
   ok: z.literal(true),
   mode: z.enum(["next-step", "now"]),

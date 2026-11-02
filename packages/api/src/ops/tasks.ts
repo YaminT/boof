@@ -19,6 +19,7 @@ import {
   UpdateTaskBody,
 } from "../validation.js";
 import {
+  DeleteResultSchema,
   InjectResultSchema,
   OkSchema,
   TaskCreateResultSchema,
@@ -303,7 +304,7 @@ export const tasksUpdate = defineOp({
       description: "The task's `updated` stamp you last saw (HTTP: If-Match with the ETag).",
     }),
   }),
-  output: TaskViewSchema,
+  output: TaskCreateResultSchema,
   rest: {
     method: "PUT",
     path: "/projects/{projectId}/tasks/{taskId}",
@@ -314,7 +315,38 @@ export const tasksUpdate = defineOp({
   summary: taskResult,
   handler: async (ctx, { projectId, taskId, ...patch }) => {
     const svc = await requireProject(ctx, projectId);
-    return taskView(ctx, projectId, await svc.update(taskId, patch, ctx.principal));
+    const { task, warnings } = await svc.updateWithWarnings(taskId, patch, ctx.principal);
+    return { ...taskView(ctx, projectId, task), ...(warnings.length > 0 ? { warnings } : {}) };
+  },
+});
+
+export const tasksMove = defineOp({
+  name: "tasks.move",
+  title: "Move a task to an epic or under a parent",
+  description:
+    "Changes a task's epic or parent. Inputs: projectId, taskId, and epicId or parentId (not both; null clears). One level of subtasks: a parent has no parent, a task with subtasks cannot become a subtask, and setting a parent clears the task's own epic (a subtask takes its parent's). Appends a task.moved event. Review-trust clients may move only tasks they created (403 forbidden_trust).",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    taskId: taskIdParam,
+    parentId: taskIdParam
+      .nullable()
+      .optional()
+      .meta({ description: "New parent task, or null to make it top-level." }),
+    epicId: epicIdParam
+      .nullable()
+      .optional()
+      .meta({ description: "New epic, or null to clear it." }),
+  }),
+  output: TaskViewSchema,
+  rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/move", etag: taskEtag },
+  mcp: { expose: true, name: "boof_move_task", annotations: IDEMPOTENT_WRITE },
+  summary: (t) => `Task ${t.frontmatter.id} moved`,
+  handler: async (ctx, { projectId, taskId, ...move }) => {
+    const svc = await requireProject(ctx, projectId);
+    const task = await svc.moveTask(taskId, move, ctx.principal);
+    return taskView(ctx, projectId, task, false, await svc.hierarchy());
   },
 });
 
@@ -322,21 +354,25 @@ export const tasksQueue = defineOp({
   name: "tasks.queue",
   title: "Queue a task",
   description:
-    "Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. Review-trust clients are refused (403 forbidden_trust).",
+    "Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. A parent queued while some subtasks are not done succeeds with a subtasks_open warning (header Boof-Warning). Review-trust clients are refused (403 forbidden_trust).",
   scope: "tasks:write",
   projectScoped: true,
   input: byTask,
-  output: TaskViewSchema,
+  output: TaskCreateResultSchema,
   rest: { method: "POST", path: "/projects/{projectId}/tasks/{taskId}/queue", etag: taskEtag },
   mcp: { expose: true, name: "boof_queue_task", annotations: IDEMPOTENT_WRITE },
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
-    return taskView(
-      ctx,
-      input.projectId,
-      await svc.update(input.taskId, { status: "pending" }, ctx.principal),
+    const { task, warnings } = await svc.updateWithWarnings(
+      input.taskId,
+      { status: "pending" },
+      ctx.principal,
     );
+    return {
+      ...taskView(ctx, input.projectId, task, false, await svc.hierarchy()),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   },
 });
 
@@ -436,16 +472,24 @@ export const tasksDelete = defineOp({
   name: "tasks.delete",
   title: "Delete a task",
   description:
-    "Permanently deletes a task and its attachments; a running task must finish first. Inputs: projectId, taskId. Removes files.",
+    "Permanently deletes a task and its attachments; a running task must finish first. A task with subtasks is refused (409 has_children) unless detach=true, which makes the subtasks top-level tasks in the parent's epic. Inputs: projectId, taskId, optional detach (?detach=true). Review-trust clients may not detach. Removes files.",
   scope: "tasks:write",
   projectScoped: true,
-  input: byTask,
-  output: OkSchema,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    taskId: taskIdParam,
+    detach: z.boolean().optional().meta({
+      description:
+        "Make the task's subtasks top-level tasks instead of refusing (409 has_children).",
+    }),
+  }),
+  output: DeleteResultSchema,
   rest: { method: "DELETE", path: "/projects/{projectId}/tasks/{taskId}" },
   mcp: { expose: false, name: "boof_delete_task", annotations: DESTRUCTIVE },
-  summary: () => "Task deleted",
-  handler: async (ctx, input) =>
-    (await requireProject(ctx, input.projectId)).deleteTask(input.taskId),
+  summary: (r) =>
+    `Task deleted${r.detached.length > 0 ? `; ${r.detached.length} subtask(s) detached` : ""}`,
+  handler: async (ctx, { projectId, taskId, detach }) =>
+    (await requireProject(ctx, projectId)).deleteTask(taskId, { detach }, ctx.principal),
 });
 
 export const tasksAnswers = defineOp({
@@ -713,6 +757,7 @@ export const taskOps = [
   tasksDiff,
   tasksCreate,
   tasksUpdate,
+  tasksMove,
   tasksQueue,
   tasksSkip,
   tasksReorder,

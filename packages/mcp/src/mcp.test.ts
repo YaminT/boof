@@ -183,6 +183,7 @@ describe("tools generated from the registry", () => {
         "boof_get_task_diff",
         "boof_create_task",
         "boof_update_task",
+        "boof_move_task",
         "boof_queue_task",
         "boof_retry_task",
         "boof_archive_task",
@@ -196,7 +197,7 @@ describe("tools generated from the registry", () => {
         "boof_list_actions",
       ]
     `);
-    expect(names.length).toBeLessThanOrEqual(34);
+    expect(names.length).toBeLessThanOrEqual(39);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("@boof-runner/api").then((m) => m.registry)).map((o) => [
         o.mcp.name,
@@ -256,6 +257,20 @@ describe("tools generated from the registry", () => {
     const res = await call(client, "boof_list_tasks");
     expect(res.isError).toBeFalsy();
     expect(res.structuredContent?.items).toEqual([]);
+  });
+
+  it("boof_move_task moves a task under a parent", async () => {
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const client = await connect(LOCAL_PRINCIPAL);
+    const p = await call(client, "boof_create_task", { projectId: "shop", title: "Parent" });
+    const c = await call(client, "boof_create_task", { projectId: "shop", title: "Child" });
+    const moved = await call(client, "boof_move_task", {
+      projectId: "shop",
+      taskId: c.structuredContent!.frontmatter.id,
+      parentId: p.structuredContent!.frontmatter.id,
+    });
+    expect(moved.isError).toBeFalsy();
+    expect(moved.structuredContent?.frontmatter.parentId).toBe("parent");
   });
 
   it("runs the whole flow: project, plan, sync, tasks, run, wait, review draft, conflict, log", async () => {

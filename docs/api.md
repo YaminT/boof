@@ -388,6 +388,14 @@ no epic, or top-level; an epic filter also matches subtasks through their parent
 `parentMissing` / `epicMissing` for a hand-edited dangling reference. These appear on `tasks.list`,
 `tasks.get` and `tasks.create` (and `tasks.move` and `tasks.queue`), not on the other task operations.
 
+`tasks.move` (`POST /projects/{id}/tasks/{taskId}/move`) sets a task's `epicId` or `parentId` (not both,
+`null` clears); setting a parent clears the task's own epic, and a review-trust client may move only
+tasks it created. `tasks.delete` refuses a task with subtasks (`409 has_children`) unless `?detach=true`:
+the subtasks become top-level tasks in the parent's epic, and the result lists them in `detached`
+(review-trust clients may not detach). Queuing a parent whose subtasks are not all done succeeds with
+the warning `subtasks_open` (header `Boof-Warning`, next to `status_downgraded`); nothing waits for the
+subtasks. Webhooks subscribed to `task.*` or `*` now also receive `task.moved`.
+
 ### Editing the contract
 
 Operations are defined once with `defineOp()` in `packages/api/src/ops/`. After a change run

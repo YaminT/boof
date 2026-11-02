@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /** A non-fatal notice in an operation result: the server changed a value you asked for. */
 export const WarningSchema = z.object({
-  code: z.literal("status_downgraded"),
+  code: z.enum(["status_downgraded", "subtasks_open"]),
   message: z.string(),
   /** The input field that was changed. */
   field: z.string(),
@@ -33,5 +33,16 @@ export function statusDowngraded(
     field: "status",
     requested,
     applied,
+  };
+}
+
+/** A parent was queued while some of its subtasks are not done. Informational: nothing waits for them. */
+export function subtasksOpen(taskId: string, open: number, total: number): Warning {
+  return {
+    code: "subtasks_open",
+    message: `Task ${taskId} was queued while ${open} of its ${total} subtasks are not done; nothing waits for them.`,
+    field: "status",
+    requested: "pending",
+    applied: "pending",
   };
 }

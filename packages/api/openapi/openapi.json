@@ -5109,7 +5109,10 @@
                             "type": "string"
                           },
                           "code": {
-                            "const": "status_downgraded",
+                            "enum": [
+                              "status_downgraded",
+                              "subtasks_open"
+                            ],
                             "type": "string"
                           },
                           "field": {
@@ -7279,7 +7282,10 @@
                             "type": "string"
                           },
                           "code": {
-                            "const": "status_downgraded",
+                            "enum": [
+                              "status_downgraded",
+                              "subtasks_open"
+                            ],
                             "type": "string"
                           },
                           "field": {
@@ -7345,7 +7351,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}": {
       "delete": {
-        "description": "Permanently deletes a task and its attachments; a running task must finish first. Inputs: projectId, taskId. Removes files.",
+        "description": "Permanently deletes a task and its attachments; a running task must finish first. A task with subtasks is refused (409 has_children) unless detach=true, which makes the subtasks top-level tasks in the parent's epic. Inputs: projectId, taskId, optional detach (?detach=true). Review-trust clients may not detach. Removes files.",
         "operationId": "tasks.delete",
         "parameters": [
           {
@@ -7369,6 +7375,15 @@
               "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "detach",
+            "required": false,
+            "schema": {
+              "description": "Make the task's subtasks top-level tasks instead of refusing (409 has_children).",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7378,13 +7393,21 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "detached": {
+                      "description": "Subtasks that became top-level tasks (detach).",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
                     "ok": {
                       "const": true,
                       "type": "boolean"
                     }
                   },
                   "required": [
-                    "ok"
+                    "ok",
+                    "detached"
                   ],
                   "type": "object"
                 }
@@ -7592,7 +7615,240 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Task"
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseReason": {
+                      "enum": [
+                        "dependency",
+                        "dependencies-merged",
+                        "dependency-conflict",
+                        "follow-up",
+                        "project-default",
+                        "head"
+                      ],
+                      "type": "string"
+                    },
+                    "baseRef": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "answers": {
+                          "type": "string"
+                        },
+                        "command": {
+                          "type": "string"
+                        },
+                        "injected": {
+                          "description": "Prompts injected while the task ran, as `### <iso time> — <who>` entries; kept after the run.",
+                          "type": "string"
+                        },
+                        "log": {
+                          "type": "string"
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "questions": {
+                          "type": "string"
+                        },
+                        "reports": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "developer": {
+                              "type": "string"
+                            },
+                            "observer": {
+                              "type": "string"
+                            },
+                            "planner": {
+                              "type": "string"
+                            },
+                            "reviewer": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "planner",
+                            "developer",
+                            "observer",
+                            "reviewer"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "prompt",
+                        "command",
+                        "questions",
+                        "answers",
+                        "reports",
+                        "injected"
+                      ],
+                      "type": "object"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "epicId": {
+                      "description": "Effective epic (a subtask's is its parent's).",
+                      "type": "string"
+                    },
+                    "epicMissing": {
+                      "const": true,
+                      "description": "The task's effective epic does not exist in this project.",
+                      "type": "boolean"
+                    },
+                    "finalVerdict": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "observer": {
+                          "enum": [
+                            "APPROVE",
+                            "CHANGES_REQUESTED",
+                            "REJECT",
+                            "INVALID"
+                          ],
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "enum": [
+                            "APPROVE",
+                            "CHANGES_REQUESTED",
+                            "REJECT",
+                            "INVALID"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "frontmatter": {
+                      "$ref": "#/components/schemas/TaskFrontmatter"
+                    },
+                    "parentMissing": {
+                      "const": true,
+                      "description": "The task names a parent that does not exist; it is listed as a top-level task.",
+                      "type": "boolean"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "reviews": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "iteration": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "role": {
+                            "enum": [
+                              "observer",
+                              "reviewer"
+                            ],
+                            "type": "string"
+                          },
+                          "round": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "summary": {
+                            "description": "First non-empty, non-heading line of the report.",
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "enum": [
+                              "APPROVE",
+                              "CHANGES_REQUESTED",
+                              "REJECT",
+                              "INVALID"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "round",
+                          "iteration",
+                          "verdict",
+                          "summary"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "subtasks": {
+                      "additionalProperties": false,
+                      "description": "Non-archived subtasks and how many are done; present when there are any.",
+                      "properties": {
+                        "done": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "total": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "done"
+                      ],
+                      "type": "object"
+                    },
+                    "warnings": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "applied": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "enum": [
+                              "status_downgraded",
+                              "subtasks_open"
+                            ],
+                            "type": "string"
+                          },
+                          "field": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "requested": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "field",
+                          "requested",
+                          "applied"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "frontmatter",
+                    "body",
+                    "projectId",
+                    "reviews",
+                    "finalVerdict"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -8438,9 +8694,115 @@
         "x-mcp-tool": "boof_get_task_log"
       }
     },
+    "/projects/{projectId}/tasks/{taskId}/move": {
+      "post": {
+        "description": "Changes a task's epic or parent. Inputs: projectId, taskId, and epicId or parentId (not both; null clears). One level of subtasks: a parent has no parent, a task with subtasks cannot become a subtask, and setting a parent clears the task's own epic (a subtask takes its parent's). Appends a task.moved event. Review-trust clients may move only tasks they created (403 forbidden_trust).",
+        "operationId": "tasks.move",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "description": "Task id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "epicId": {
+                    "anyOf": [
+                      {
+                        "description": "Epic id (kebab-case).",
+                        "maxLength": 200,
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "New epic, or null to clear it."
+                  },
+                  "parentId": {
+                    "anyOf": [
+                      {
+                        "description": "Task id (kebab-case).",
+                        "maxLength": 200,
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "New parent task, or null to make it top-level."
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Move a task to an epic or under a parent",
+        "tags": [
+          "tasks"
+        ],
+        "x-boof-scope": "tasks:write",
+        "x-mcp-tool": "boof_move_task"
+      }
+    },
     "/projects/{projectId}/tasks/{taskId}/queue": {
       "post": {
-        "description": "Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. Review-trust clients are refused (403 forbidden_trust).",
+        "description": "Moves a draft task to pending so the runner picks it up. Inputs: projectId, taskId. A parent queued while some subtasks are not done succeeds with a subtasks_open warning (header Boof-Warning). Review-trust clients are refused (403 forbidden_trust).",
         "operationId": "tasks.queue",
         "parameters": [
           {
@@ -8471,7 +8833,240 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Task"
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseReason": {
+                      "enum": [
+                        "dependency",
+                        "dependencies-merged",
+                        "dependency-conflict",
+                        "follow-up",
+                        "project-default",
+                        "head"
+                      ],
+                      "type": "string"
+                    },
+                    "baseRef": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "answers": {
+                          "type": "string"
+                        },
+                        "command": {
+                          "type": "string"
+                        },
+                        "injected": {
+                          "description": "Prompts injected while the task ran, as `### <iso time> — <who>` entries; kept after the run.",
+                          "type": "string"
+                        },
+                        "log": {
+                          "type": "string"
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "questions": {
+                          "type": "string"
+                        },
+                        "reports": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "developer": {
+                              "type": "string"
+                            },
+                            "observer": {
+                              "type": "string"
+                            },
+                            "planner": {
+                              "type": "string"
+                            },
+                            "reviewer": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "planner",
+                            "developer",
+                            "observer",
+                            "reviewer"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "prompt",
+                        "command",
+                        "questions",
+                        "answers",
+                        "reports",
+                        "injected"
+                      ],
+                      "type": "object"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "epicId": {
+                      "description": "Effective epic (a subtask's is its parent's).",
+                      "type": "string"
+                    },
+                    "epicMissing": {
+                      "const": true,
+                      "description": "The task's effective epic does not exist in this project.",
+                      "type": "boolean"
+                    },
+                    "finalVerdict": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "observer": {
+                          "enum": [
+                            "APPROVE",
+                            "CHANGES_REQUESTED",
+                            "REJECT",
+                            "INVALID"
+                          ],
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "enum": [
+                            "APPROVE",
+                            "CHANGES_REQUESTED",
+                            "REJECT",
+                            "INVALID"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "frontmatter": {
+                      "$ref": "#/components/schemas/TaskFrontmatter"
+                    },
+                    "parentMissing": {
+                      "const": true,
+                      "description": "The task names a parent that does not exist; it is listed as a top-level task.",
+                      "type": "boolean"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "reviews": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "iteration": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "role": {
+                            "enum": [
+                              "observer",
+                              "reviewer"
+                            ],
+                            "type": "string"
+                          },
+                          "round": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "summary": {
+                            "description": "First non-empty, non-heading line of the report.",
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "enum": [
+                              "APPROVE",
+                              "CHANGES_REQUESTED",
+                              "REJECT",
+                              "INVALID"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "round",
+                          "iteration",
+                          "verdict",
+                          "summary"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "subtasks": {
+                      "additionalProperties": false,
+                      "description": "Non-archived subtasks and how many are done; present when there are any.",
+                      "properties": {
+                        "done": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "total": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "done"
+                      ],
+                      "type": "object"
+                    },
+                    "warnings": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "applied": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "enum": [
+                              "status_downgraded",
+                              "subtasks_open"
+                            ],
+                            "type": "string"
+                          },
+                          "field": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "requested": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "field",
+                          "requested",
+                          "applied"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "frontmatter",
+                    "body",
+                    "projectId",
+                    "reviews",
+                    "finalVerdict"
+                  ],
+                  "type": "object"
                 }
               }
             },

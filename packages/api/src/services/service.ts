@@ -10,6 +10,9 @@ import {
   buildHierarchyIndex,
   CommandStore,
   createTaskInHierarchy,
+  moveTask as moveTaskInHierarchy,
+  removeTask,
+  type MoveInput,
   EpicStore,
   type HierarchyIndex,
   injectCommand,
@@ -55,7 +58,7 @@ import {
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
-import { statusDowngraded, type Warning } from "../warnings.js";
+import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import {
   initGitRepo,
@@ -196,6 +199,37 @@ export class ProjectService {
     );
   }
 
+  /** A review-trust client may move only the tasks it created. */
+  private async assertMayMove(task: Task, actor?: Principal): Promise<void> {
+    if (!(await this.needsApproval(actor))) return;
+    if (actor && task.frontmatter.origin?.client === actor.id) return;
+    throw new OpError(
+      403,
+      "This client has review trust and can only move tasks it created",
+      "forbidden_trust",
+    );
+  }
+
+  /** Change a task's epic or parent (null clears). One level of subtasks; a parent clears the epic. */
+  async moveTask(id: string, input: MoveInput, actor?: Principal): Promise<Task> {
+    const given = [input.epicId, input.parentId].filter((v) => v !== undefined);
+    if (
+      given.length === 0 ||
+      (typeof input.epicId === "string" && typeof input.parentId === "string")
+    ) {
+      throw new OpError(400, "Invalid input", "invalid_input", [
+        {
+          path: "parentId",
+          message: "give epicId or parentId (a subtask takes its parent's epic), null clears",
+        },
+      ]);
+    }
+    const task = await this.tasks.get(id);
+    if (!task) throw new OpError(404, `Task not found: ${id}`);
+    await this.assertMayMove(task, actor);
+    return moveTaskInHierarchy(this.root, id, input, { by: actor?.id ?? "local" });
+  }
+
   async create(input: CreateTaskInput, actor?: Principal): Promise<Task> {
     return (await this.createWithWarnings(input, actor)).task;
   }
@@ -265,6 +299,15 @@ export class ProjectService {
 
   /** Update task fields in place; transition if `status` changes. */
   async update(id: string, input: UpdateTaskInput, actor?: Principal): Promise<Task> {
+    return (await this.updateWithWarnings(id, input, actor)).task;
+  }
+
+  /** Like {@link update}, plus a `subtasks_open` warning when a parent is queued with open subtasks. */
+  async updateWithWarnings(
+    id: string,
+    input: UpdateTaskInput,
+    actor?: Principal,
+  ): Promise<{ task: Task; warnings: Warning[] }> {
     if (input.status === "pending") await this.assertMayQueue(actor);
     const review = await this.needsApproval(actor);
     const tpl = input.command ? await this.parent.commands.get(input.command) : null;
@@ -318,9 +361,19 @@ export class ProjectService {
       }
     });
     if (input.status && input.status !== from) {
-      return this.tasks.transition(id, input.status, undefined, { by: actor?.id ?? "local" });
+      const moved = await this.tasks.transition(id, input.status, undefined, {
+        by: actor?.id ?? "local",
+      });
+      const warnings: Warning[] = [];
+      if (input.status === "pending") {
+        const sub = (await this.hierarchy()).info(moved).subtasks;
+        if (sub && sub.done < sub.total) {
+          warnings.push(subtasksOpen(id, sub.total - sub.done, sub.total));
+        }
+      }
+      return { task: moved, warnings };
     }
-    return task;
+    return { task, warnings: [] };
   }
 
   setSkip(id: string, skip: boolean): Promise<Task> {
@@ -363,15 +416,29 @@ export class ProjectService {
    * Permanently delete a task and its attachments. A running task must finish
    * (or be archived) first — deleting mid-run would orphan the agent process.
    */
-  async deleteTask(id: string): Promise<{ ok: true }> {
+  async deleteTask(
+    id: string,
+    opts: { detach?: boolean } = {},
+    actor?: Principal,
+  ): Promise<{ ok: true; detached: string[] }> {
+    if (opts.detach && (await this.needsApproval(actor))) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot detach subtasks; a human must approve this",
+        "forbidden_trust",
+      );
+    }
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
     if (task.frontmatter.status === "running") {
       throw new OpError(400, "Cannot delete a running task; wait for it to finish first");
     }
-    await this.tasks.delete(id);
+    const { detached } = await removeTask(this.root, id, {
+      detach: opts.detach,
+      by: actor?.id ?? "local",
+    });
     await rm(taskAssetsDir(this.root, id), { recursive: true, force: true }).catch(() => {});
-    return { ok: true };
+    return { ok: true, detached };
   }
 
   /**
