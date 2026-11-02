@@ -10,6 +10,7 @@ import {
   discardWorktree,
   ensureWorktree as ensure,
   finalizeWorktree,
+  initGitRepo,
   isGitRepo,
   NotAGitRepoError,
   pruneStaleWorktrees,
@@ -585,5 +586,87 @@ describe("worktree add timeout and cleanup", () => {
     expect((await g(["worktree", "list", "--porcelain"])).stdout).toContain(
       join(rootOf(), "other"),
     );
+  });
+});
+
+describe("initGitRepo", () => {
+  let base: string;
+  let env: NodeJS.ProcessEnv;
+  const gitIn = (dir: string, args: string[]) =>
+    execCommand("git", args, { cwd: dir, timeoutMs: 15000, env: { ...process.env, ...env } });
+  const count = async (dir: string) =>
+    (await gitIn(dir, ["rev-list", "--count", "HEAD"])).stdout.trim();
+
+  beforeEach(async () => {
+    base = await mkdtemp(join(tmpdir(), "boof-runner-init-"));
+    // No user.name/user.email anywhere, and signing forced on: initGitRepo must not depend on them.
+    await writeFile(join(base, "gitconfig"), "[commit]\n\tgpgsign = true\n");
+    env = {
+      HOME: base,
+      GIT_CONFIG_GLOBAL: join(base, "gitconfig"),
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "",
+      GIT_AUTHOR_EMAIL: "",
+    };
+    delete env.GIT_AUTHOR_NAME;
+    delete env.GIT_AUTHOR_EMAIL;
+  });
+  afterEach(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+
+  it("makes a repository with one commit, and a worktree can be added", async () => {
+    const dir = join(base, "fresh");
+    await mkdir(dir, { recursive: true });
+    await initGitRepo(dir, { env });
+    expect(await isGitRepo(dir)).toBe(true);
+    expect(await count(dir)).toBe("1");
+    const wt = await create(dir, "t1", { root: join(base, "wts") });
+    expect(await exists(wt.worktree.path)).toBe(true);
+  });
+
+  it("on a repository with commits changes nothing", async () => {
+    const dir = join(base, "old");
+    await mkdir(dir, { recursive: true });
+    await gitIn(dir, ["init", "-q"]);
+    await gitIn(dir, [
+      "-c",
+      "user.name=A",
+      "-c",
+      "user.email=a@b.c",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-q",
+      "-m",
+      "x",
+    ]);
+    const head = (await gitIn(dir, ["rev-parse", "HEAD"])).stdout;
+    await initGitRepo(dir, { env });
+    expect(await count(dir)).toBe("1");
+    expect((await gitIn(dir, ["rev-parse", "HEAD"])).stdout).toBe(head);
+  });
+
+  it("on a repository without commits adds the empty commit only", async () => {
+    const dir = join(base, "unborn");
+    await mkdir(dir, { recursive: true });
+    await gitIn(dir, ["init", "-q"]);
+    await initGitRepo(dir, { env });
+    expect(await count(dir)).toBe("1");
+  });
+
+  it("kills a hung git on timeout and fails with a clear error", async () => {
+    const bin = join(base, "bin");
+    await mkdir(bin);
+    await writeFile(join(bin, "git"), "#!/bin/sh\nexec sleep 30\n");
+    await chmod(join(bin, "git"), 0o755);
+    const dir = join(base, "hung");
+    await mkdir(dir, { recursive: true });
+    const started = Date.now();
+    await expect(
+      initGitRepo(dir, { timeoutMs: 300, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }),
+    ).rejects.toThrow(/timed out after 300 ms/);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 });

@@ -69,6 +69,49 @@ export async function repoCommonDir(dir: string): Promise<string | null> {
   return realpath(abs).catch(() => abs);
 }
 
+export interface InitGitRepoOptions {
+  /** Per git call; a hung git must not hold the project-create lock. Defaults to GIT_TIMEOUT_MS. */
+  timeoutMs?: number;
+  /** Extra environment for the git calls (tests isolate HOME / GIT_CONFIG_GLOBAL, or fake git). */
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Make `dir` a git repository with at least one commit, so worktree isolation works: `git init`
+ * when it is not a repository, then an empty "Initial commit" when HEAD is unborn. The commit
+ * carries its own identity and no signing (per invocation; the user's git config is not touched).
+ * Throws when a git call fails or times out (the process is killed).
+ */
+export async function initGitRepo(dir: string, opts: InitGitRepoOptions = {}): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? GIT_TIMEOUT_MS;
+  const run = async (args: string[]) => {
+    const res = await git(dir, args, { GIT_TERMINAL_PROMPT: "0", ...opts.env }, timeoutMs);
+    if (res.timedOut) {
+      throw new Error(`git ${args[0]} timed out after ${timeoutMs} ms in ${dir}`);
+    }
+    return res;
+  };
+  if (!(await run(["rev-parse", "--is-inside-work-tree"])).out.startsWith("true")) {
+    const init = await run(["init", "-q"]);
+    if (init.code !== 0) throw new Error(`git init failed in ${dir}: ${init.err}`);
+  }
+  if ((await run(["rev-parse", "--verify", "--quiet", "HEAD"])).code === 0) return;
+  const commit = await run([
+    "-c",
+    "user.name=Boof Runner",
+    "-c",
+    "user.email=boof-runner@localhost",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--allow-empty",
+    "-q",
+    "-m",
+    "Initial commit",
+  ]);
+  if (commit.code !== 0) throw new Error(`git init failed in ${dir}: ${commit.err}`);
+}
+
 /** Branch checked out in `dir` (git symbolic-ref); null when detached, not a repo or git fails. */
 export async function currentBranch(dir: string): Promise<string | null> {
   try {

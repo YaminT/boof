@@ -40,7 +40,7 @@ import { RunnerEngine } from "./engine.js";
 import { execCommand } from "./exec.js";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
 import { currentBootId, isAlive, writePidFile } from "./pid-file.js";
-import { ensureWorktree } from "./worktree.js";
+import { ensureWorktree, initGitRepo, isGitRepo, repoCommonDir } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";
 import { CodexTool } from "./tools/codex.js";
@@ -1113,6 +1113,21 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
   };
   const devCalls = () => mockState.calls.filter((c) => c === "developer").length;
 
+  it("every prompt of a task in a project with a brief carries ## Project, and none without", async () => {
+    await new ProjectStore(dataRoot).update("default", { brief: "A shop for hats.\nStack: Hono." });
+    await run("Add a cart");
+    expect(mockState.prompts.length).toBeGreaterThan(0);
+    for (const p of mockState.prompts) {
+      expect(p).toContain("## Project\nA shop for hats.\nStack: Hono.");
+      expect(p.indexOf("## Project")).toBeLessThan(p.indexOf("## Prompt"));
+    }
+    resetMock();
+    await new ProjectStore(dataRoot).update("default", { brief: null });
+    await run("Add a hat", { id: "t2" });
+    expect(mockState.prompts.length).toBeGreaterThan(0);
+    for (const p of mockState.prompts) expect(p).not.toContain("## Project");
+  });
+
   it("one transient failure, then success: done, same worktree, retry logged, prompt amended", async () => {
     await configure({ retries: {} });
     const cwds: string[] = [];
@@ -1549,6 +1564,25 @@ describe("steering a running step (mock tool)", () => {
 });
 
 describe("multi-project engine (mock tool)", () => {
+  it("a task in a project created with path.mode auto runs with isolation and sees the brief", async () => {
+    const projectsRoot = await mkdtemp(join(tmpdir(), "boof-runner-auto-"));
+    extraRepos.push(projectsRoot);
+    const projects = new ProjectStore(dataRoot, { isGitRepo, repoCommonDir, initGitRepo });
+    await projects.create({
+      path: { mode: "auto", projectsRoot },
+      name: "Fresh",
+      brief: "Fresh project.",
+      id: "fresh",
+    });
+    const fresh = new TaskStore(projects.dir("fresh"));
+    await fresh.create(newTask(fm({ id: "f1", priority: 90 }), "fresh task"));
+    expect(order(await engine.runUntilIdle())).toEqual(["fresh/f1"]);
+    const done = await fresh.get("f1");
+    expect(done?.frontmatter.status).toBe("done");
+    expect(done?.body.log).toContain("worktree at");
+    expect(mockState.prompts.some((p) => p.includes("## Project\nFresh project."))).toBe(true);
+  });
+
   it("serves projects in global priority order, interleaved", async () => {
     const b = await addProject("b");
     await store.create(newTask(fm({ id: "a-low", priority: 10 }), "a low"));

@@ -568,7 +568,10 @@ export class Pipeline {
   }
 
   private async buildPrompt(task: Task, extra: string): Promise<string> {
-    const parts = [`# Task: ${task.frontmatter.title}`, `## Prompt\n${task.body.prompt}`];
+    const parts = [`# Task: ${task.frontmatter.title}`];
+    const brief = this.deps.project?.brief?.trim();
+    if (brief) parts.push(`## Project\n${brief}`);
+    parts.push(`## Prompt\n${task.body.prompt}`);
     if (task.body.command.trim()) parts.push(`## Command\n${task.body.command}`);
     const origin = task.frontmatter.origin;
     if (origin?.client) {
