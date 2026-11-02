@@ -8,6 +8,7 @@ import {
   type BudgetStatus,
   assertKebabId,
   buildHierarchyIndex,
+  clearMissingCommand,
   CommandStore,
   createTaskInHierarchy,
   moveTask as moveTaskInHierarchy,
@@ -496,7 +497,16 @@ export class ProjectService {
 
   async retry(id: string, actor?: Principal): Promise<Task> {
     await this.assertMayQueue(actor);
-    return this.tasks.transition(id, "pending", undefined, { by: actor?.id ?? "local" });
+    return this.requeue(id, actor);
+  }
+
+  /** Move a task to pending; its command id is dropped when that template is gone. */
+  private async requeue(id: string, actor?: Principal): Promise<Task> {
+    const task = await this.tasks.transition(id, "pending", undefined, {
+      by: actor?.id ?? "local",
+    });
+    await clearMissingCommand(this.parent.commands, this.tasks, id);
+    return (await this.tasks.get(id)) ?? task;
   }
 
   /** Archive a task (any non-running status → archived). */
@@ -507,7 +517,7 @@ export class ProjectService {
   /** Unarchive a task back into the pending queue. */
   async unarchive(id: string, actor?: Principal): Promise<Task> {
     await this.assertMayQueue(actor);
-    return this.tasks.transition(id, "pending", undefined, { by: actor?.id ?? "local" });
+    return this.requeue(id, actor);
   }
 
   /**
@@ -754,6 +764,16 @@ export class ProjectService {
  * Application facade: the project registry plus the global parts (commands, settings, tool
  * registry). Task operations live on {@link ProjectService}, one per project (cached).
  */
+/** Statuses of tasks a template rename repoints: those that can still run (or be queued again). */
+const REPOINTABLE: readonly Status[] = [
+  "draft",
+  "pending",
+  "running",
+  "action",
+  "stopped",
+  "failed",
+];
+
 /** Thrown inside a `modify` callback to leave a running task's file unwritten. */
 class RunningTaskSkipped extends Error {}
 
@@ -1192,6 +1212,8 @@ export class TaskService {
         const store = this.forProject(p.id).tasks;
         for (const t of await store.list()) {
           if (t.frontmatter.command !== oldId) continue;
+          // Finished and archived tasks record what they ran with: leave them as they are.
+          if (!REPOINTABLE.includes(t.frontmatter.status)) continue;
           // A running task keeps its own copy of the instructions and owns its file: leave it.
           // The status is checked again under the task lock, since the task may have started
           // since the scan; the throw leaves the file unwritten.

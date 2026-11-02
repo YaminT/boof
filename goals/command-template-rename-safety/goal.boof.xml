@@ -16,6 +16,7 @@
       <versions>
         <version number="1" status="plan">Filed from the phase 5 Task 6 review (2026-11-02); not started.</version>
         <version number="2" status="done">renameCommand repoints each task through TaskStore.modify under the task lock; a running task (checked again under the lock, so one that starts mid-rename is caught) is left unwritten and listed in the new optional skippedTasks of the PUT /commands/{id} result. Tests: running and racing tasks.</version>
+        <version number="3" status="done">Review follow-ups (M1, M4): a rename repoints only tasks that can still run (draft, pending, action, stopped, failed) and leaves done and archived tasks as they are; a task that leaves running, or is retried or unarchived, drops a command id whose template no longer exists and keeps its copied instructions (clearMissingCommand).</version>
       </versions>
     </status>
     <tests>

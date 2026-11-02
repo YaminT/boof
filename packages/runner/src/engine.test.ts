@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CommandStore,
   currentStatus,
   defaultSettings,
   effectiveSettings,
@@ -392,6 +393,26 @@ describe("RunnerEngine integration (mock tool)", () => {
     const end = await store.get("t1");
     expect(end?.frontmatter.status).toBe("done");
     expect(end?.frontmatter.completedRuns).toBe(2);
+  });
+
+  it("clears a command id whose template is gone when the task leaves running, keeping its copy", async () => {
+    const task = newTask(fm({ command: "gone" }), "p");
+    task.body.command = "copied instructions";
+    await store.create(task);
+    await engine.tick();
+    const done = await store.get("t1");
+    expect(done?.frontmatter.status).toBe("done");
+    expect(done?.frontmatter.command).toBeNull();
+    expect(done?.body.command).toBe("copied instructions");
+  });
+
+  it("keeps a command id whose template still exists", async () => {
+    await new CommandStore(dataRoot).upsert("Kept", "kept body");
+    const task = newTask(fm({ command: "kept" }), "p");
+    task.body.command = "kept body";
+    await store.create(task);
+    await engine.tick();
+    expect((await store.get("t1"))?.frontmatter.command).toBe("kept");
   });
 
   it("fails the task and captures diagnostics on tool error", async () => {

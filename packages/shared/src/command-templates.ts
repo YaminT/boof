@@ -4,6 +4,7 @@ import { lockedAtomicWrite, readText } from "./atomic.js";
 import { toKebabId } from "./ids.js";
 import { commandFilePath, dataRootPaths } from "./paths.js";
 import { CommandTemplateFrontmatterSchema } from "./schema.js";
+import type { TaskStore } from "./store.js";
 import type { Task } from "./task-file.js";
 
 export interface CommandTemplate {
@@ -83,4 +84,23 @@ export class CommandStore {
   async delete(id: string): Promise<void> {
     await rm(commandFilePath(this.root, id), { force: true });
   }
+}
+
+/**
+ * Drop the command id of task `id` when no template of that id exists any more, keeping the
+ * instructions the task copied (`body.command`). A template rename leaves running tasks on the
+ * old id; without this, a template later created under that name would look like theirs and a
+ * rename of it would overwrite their copy. Runs under the task lock (`modify`).
+ */
+export async function clearMissingCommand(
+  commands: CommandStore,
+  tasks: TaskStore,
+  id: string,
+): Promise<void> {
+  const current = await tasks.get(id);
+  const commandId = current?.frontmatter.command;
+  if (!commandId || (await commands.get(commandId))) return;
+  await tasks.modify(id, (t) => {
+    if (t.frontmatter.command === commandId) t.frontmatter.command = null;
+  });
 }

@@ -21,6 +21,8 @@ import {
   TaskNotRunningError,
   type Task,
   atomicWrite,
+  clearMissingCommand,
+  CommandStore,
 } from "@boof-runner/shared";
 import { announceBudgetExceeded } from "./budget.js";
 import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
@@ -243,6 +245,10 @@ export class RunnerEngine {
       });
       await this.noteGoalTaskStatus(project, outcome.task, "action");
     }
+    // A template renamed or deleted during the run leaves the id dangling; the copy stays.
+    await clearMissingCommand(new CommandStore(this.root), store, id).catch((err) =>
+      console.error(`could not clear the missing command of ${id}:`, err),
+    );
   }
 
   /**

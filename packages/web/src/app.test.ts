@@ -228,6 +228,68 @@ describe("commands API", () => {
     expect((await (await req("/api/tasks/idle")).json()).frontmatter.command).toBe("new-name");
   });
 
+  it("rename repoints only tasks that can still run and leaves finished and archived ones as they were", async () => {
+    await (await req("/api/commands", json({ name: "Old Name", body: "x" }))).json();
+    const make = (title: string, status?: string) =>
+      req("/api/tasks", json({ title, command: "old-name", ...(status ? { status } : {}) }));
+    for (const [t, s] of [
+      ["Draft"],
+      ["Pending", "pending"],
+      ["Failed", "pending"],
+      ["Stopped", "pending"],
+      ["Done", "pending"],
+      ["Gone", "pending"],
+    ] as const)
+      await make(t, s);
+    const tasks = service.forProject("default").tasks;
+    for (const [id, to] of [
+      ["failed", "failed"],
+      ["stopped", "stopped"],
+      ["done", "done"],
+    ] as const) {
+      await tasks.transition(id, "running");
+      await tasks.transition(id, to);
+    }
+    await tasks.transition("gone", "archived");
+    const root = service.forProject("default").root;
+    const file = (id: string, st: string) => readFile(taskFilePath(root, st as never, id), "utf8");
+    const done = await file("done", "done");
+    const gone = await file("gone", "archived");
+    const res = await req("/api/commands/old-name", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "New Name", body: "y" }),
+    });
+    expect((await res.json()).skippedTasks).toBeUndefined();
+    for (const id of ["draft", "pending", "failed", "stopped"]) {
+      expect((await tasks.get(id))?.frontmatter.command, id).toBe("new-name");
+    }
+    expect(await file("done", "done")).toBe(done);
+    expect(await file("gone", "archived")).toBe(gone);
+  });
+
+  it("retry and unarchive clear a command id whose template is gone and keep the copied instructions", async () => {
+    await (await req("/api/commands", json({ name: "Old Name", body: "x" }))).json();
+    for (const title of ["Retried", "Unarchived"]) {
+      await (
+        await req("/api/tasks", json({ title, command: "old-name", status: "pending" }))
+      ).json();
+    }
+    const tasks = service.forProject("default").tasks;
+    await tasks.transition("retried", "running");
+    await tasks.transition("retried", "failed");
+    await tasks.transition("unarchived", "archived");
+    await service.deleteCommand("old-name");
+    await service.forProject("default").retry("retried");
+    await service.forProject("default").unarchive("unarchived");
+    for (const id of ["retried", "unarchived"]) {
+      const t = (await tasks.get(id))!;
+      expect(t.frontmatter.status, id).toBe("pending");
+      expect(t.frontmatter.command, id).toBeNull();
+      expect(t.body.command, id).toContain("x");
+    }
+  });
+
   it("rename keeps a write the runner makes between the scan and the repoint", async () => {
     await (await req("/api/commands", json({ name: "Old Name", body: "x" }))).json();
     await (
