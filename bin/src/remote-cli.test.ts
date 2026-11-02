@@ -67,6 +67,7 @@ describe("boof-runner remote setup", () => {
     expect(s.security.allowedHosts).toEqual(["old.example.com", "boof.example.com"]);
     expect(s.security.allowedProjectRoots).toContain("~/codes");
     expect(s.security.allowedProjectRoots).toContain("/tmp/x");
+    expect(out.join("\n")).toContain("settings.projectsRoot");
 
     const text = out.join("\n");
     const key = out.map((l) => l.trim()).find((l) => l.startsWith("boof_harness_"))!;

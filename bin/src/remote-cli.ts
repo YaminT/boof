@@ -5,8 +5,11 @@ import { parseArgs } from "node:util";
 import {
   AuthStore,
   dataRootPaths,
+  expandHome,
+  isInsidePath,
   lockedAtomicWrite,
   parseDuration,
+  resolveProjectsRoot,
   ScopeSchema,
   SCOPES,
   SettingsSchema,
@@ -286,6 +289,15 @@ async function setup(
   if (next.allowedProjectRoots.length === 0) {
     out(
       "  (no allowed roots: the harness cannot register projects; add some with --allowed-root <dir>)",
+    );
+  }
+
+  const projectsRoot = resolveProjectsRoot({
+    projectsRoot: typeof raw.projectsRoot === "string" ? raw.projectsRoot : undefined,
+  });
+  if (!next.allowedProjectRoots.some((r) => isInsidePath(expandHome(r), projectsRoot))) {
+    out(
+      "  (to let the key create projects automatically, add settings.projectsRoot too: --allowed-root ~/boof-projects)",
     );
   }
 

@@ -75,7 +75,9 @@ boof-runner                      # after `npm install -g .`
 The runner can be driven entirely from the command line — no web UI required. All commands share `-d, --data <path>` (data root, or `$BOOF_RUNNER_DATA_ROOT`).
 
 ```bash
-boof-runner project add /path/to/repo [--id <kebab>] [--name <text>] [--default]
+boof-runner project add /path/to/repo [--id <kebab>] [--name <text>] [--default] [--brief <text>|--brief-file <file>]
+boof-runner project add /path/to/new-dir --new [--confirm] --brief <text>   # mkdir + git init + first commit
+boof-runner project add --auto --brief <text> [--name <text>]               # creates <settings.projectsRoot>/<id>
 boof-runner project list [--json]
 boof-runner project remove <id> [--purge]   # archive; --purge deletes the project's data, never the repo
 
@@ -182,7 +184,7 @@ boof-runner run <prompt> [options]     Enqueue a prompt and drive it to completi
 boof-runner run --file <path> [...]    Same, reading the prompt from a file
 boof-runner run --all [options]        Drive the pending queue of every project to completion
 boof-runner scan <repo> [options]      Turn a repo's not-done goal.boof.xml units into tasks
-boof-runner project <add|list|remove>  Manage projects (git repositories) of this data root
+boof-runner project <add|list|remove>  Manage projects of this data root; `add --new|--auto --brief …` creates the repository
 boof-runner plan <import|sync|export>  Import goal files into a plan, sync it to tasks, export XML
 boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access
 boof-runner service <install|uninstall|status|logs>  Run as a systemd user service (Linux)

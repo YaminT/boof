@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProjectStore, SettingsStore } from "@boof-runner/shared";
 import { execCommand } from "@boof-runner/runner";
 import { projectCommand } from "./project-cli.js";
+import { scaffoldDataRoot } from "./scaffold.js";
 import { main } from "./boof-runner.js";
 
 let base: string;
@@ -39,6 +41,77 @@ afterEach(async () => {
 });
 
 describe("boof-runner project", () => {
+  it("add --new creates the directory, initialises a repository with one commit and stores the brief", async () => {
+    const dir = join(base, "Made Here");
+    expect(await run("add", dir, "--new", "--brief", "A thing", "-d", root)).toBe(0);
+    expect(out.join("\n")).toContain(`Created project 'made-here' (${dir})`);
+    const g = (a: string[]) => execCommand("git", a, { cwd: dir });
+    expect((await g(["rev-list", "--count", "HEAD"])).stdout.trim()).toBe("1");
+    expect((await new ProjectStore(root).get("made-here"))?.brief).toBe("A thing");
+  });
+
+  it("add --new refuses a non-empty directory until --confirm, and refuses without a brief", async () => {
+    const dir = join(base, "full");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "keep.txt"), "x");
+    expect(await run("add", dir, "--new", "--brief", "b", "-d", root)).toBe(1);
+    expect(errs.join("\n")).toContain("(re-run with --confirm)");
+    errs.length = 0;
+    expect(await run("add", dir, "--new", "--confirm", "-d", root)).toBe(1);
+    expect(errs.join("\n")).toContain("project add: --brief or --brief-file is required");
+    expect(await run("add", dir, "--new", "--confirm", "--brief", "b", "-d", root)).toBe(0);
+    expect(await readFile(join(dir, "keep.txt"), "utf8")).toBe("x");
+  });
+
+  it("add --auto creates <projectsRoot>/<id> from --name and reads --brief-file", async () => {
+    const projectsRoot = join(base, "auto");
+    await scaffoldDataRoot(root);
+    await new SettingsStore(root).update({ projectsRoot });
+    await writeFile(join(base, "brief.md"), "From a file\n");
+    expect(
+      await run(
+        "add",
+        "--auto",
+        "--name",
+        "Shop Front",
+        "--brief-file",
+        join(base, "brief.md"),
+        "-d",
+        root,
+      ),
+    ).toBe(0);
+    const p = await new ProjectStore(root).get("shop-front");
+    expect(p).toMatchObject({
+      workingDirectory: join(projectsRoot, "shop-front"),
+      brief: "From a file",
+    });
+  });
+
+  it("add rejects --new with --auto, --auto with a directory, and a missing --brief-file", async () => {
+    const d = join(base, "x");
+    expect(await run("add", "--new", "--auto", "--brief", "b", "-d", root)).toBe(1);
+    expect(errs.pop()).toBe("project add: --new and --auto exclude each other");
+    expect(await run("add", d, "--auto", "--brief", "b", "-d", root)).toBe(1);
+    expect(errs.pop()).toBe("project add: --auto takes no directory");
+    expect(await run("add", d, "--new", "--brief-file", join(base, "nope.md"), "-d", root)).toBe(1);
+    expect(errs.pop()).toContain("ENOENT");
+    expect(await run("add", "--auto", "-d", root)).toBe(1);
+    expect(errs.pop()).toBe(
+      "project add: --brief or --brief-file is required with --new and --auto",
+    );
+    expect(existsSync(d)).toBe(false);
+  });
+
+  it("add without flags still registers an existing repository and never runs git init", async () => {
+    const plain = await repo("plain", false);
+    expect(await run("add", plain, "-d", root)).toBe(1);
+    expect(errs.join("\n")).toContain("Not a git repository");
+    expect(existsSync(join(plain, ".git"))).toBe(false);
+    const dir = await repo("existing");
+    expect(await run("add", dir, "-d", root)).toBe(0);
+    expect(out.join("\n")).toContain(`Added project 'existing' (${dir})`);
+  });
+
   it("add prunes a stale worktree registration of the repository", async () => {
     const dir = await repo("Pruned");
     const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
