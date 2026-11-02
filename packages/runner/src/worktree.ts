@@ -79,7 +79,7 @@ export interface InitGitRepoOptions {
 /**
  * Make `dir` a git repository with at least one commit, so worktree isolation works: `git init`
  * when it is not a repository, then an empty "Initial commit" when HEAD is unborn. The commit
- * carries its own identity and no signing (per invocation; the user's git config is not touched).
+ * falls back to its own identity where git has none, and never signs (per invocation; the user's git config is not touched).
  * Throws when a git call fails or times out (the process is killed).
  */
 export async function initGitRepo(dir: string, opts: InitGitRepoOptions = {}): Promise<void> {
@@ -91,16 +91,20 @@ export async function initGitRepo(dir: string, opts: InitGitRepoOptions = {}): P
     }
     return res;
   };
-  if (!(await run(["rev-parse", "--is-inside-work-tree"])).out.startsWith("true")) {
+  // `dir` itself must be a repository: inside a parent's work tree, git would use the parent.
+  if (!(await pathExists(join(dir, ".git")))) {
     const init = await run(["init", "-q"]);
     if (init.code !== 0) throw new Error(`git init failed in ${dir}: ${init.err}`);
   }
   if ((await run(["rev-parse", "--verify", "--quiet", "HEAD"])).code === 0) return;
+  // The boof identity is only a fallback for what the owner's git config lacks.
+  const identity: string[] = [];
+  if (!(await run(["config", "user.name"])).out) identity.push("-c", "user.name=Boof Runner");
+  if (!(await run(["config", "user.email"])).out) {
+    identity.push("-c", "user.email=boof-runner@localhost");
+  }
   const commit = await run([
-    "-c",
-    "user.name=Boof Runner",
-    "-c",
-    "user.email=boof-runner@localhost",
+    ...identity,
     "-c",
     "commit.gpgsign=false",
     "commit",

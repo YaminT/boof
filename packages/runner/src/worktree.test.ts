@@ -656,6 +656,52 @@ describe("initGitRepo", () => {
     expect(await count(dir)).toBe("1");
   });
 
+  it("inside a parent repository it makes its own repository and leaves the parent alone", async () => {
+    const outer = join(base, "outer");
+    await mkdir(outer, { recursive: true });
+    await gitIn(outer, ["init", "-q"]);
+    await gitIn(outer, [
+      "-c",
+      "user.name=A",
+      "-c",
+      "user.email=a@b.c",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-q",
+      "-m",
+      "outer",
+    ]);
+    const head = (await gitIn(outer, ["rev-parse", "HEAD"])).stdout;
+    const sub = join(outer, "sub");
+    await mkdir(sub);
+    await initGitRepo(sub, { env });
+    expect(await exists(join(sub, ".git"))).toBe(true);
+    expect(await count(sub)).toBe("1");
+    expect((await gitIn(sub, ["log", "-1", "--format=%s"])).stdout.trim()).toBe("Initial commit");
+    expect((await gitIn(outer, ["rev-parse", "HEAD"])).stdout).toBe(head);
+    expect((await gitIn(outer, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe("");
+  });
+
+  it("uses the configured identity, and Boof Runner only when there is none", async () => {
+    const author = async (dir: string) =>
+      (await gitIn(dir, ["log", "-1", "--format=%an <%ae>"])).stdout.trim();
+    const none = join(base, "none");
+    await mkdir(none);
+    await initGitRepo(none, { env });
+    expect(await author(none)).toBe("Boof Runner <boof-runner@localhost>");
+
+    await writeFile(
+      join(base, "gitconfig"),
+      "[commit]\n\tgpgsign = true\n[user]\n\tname = Owner\n\temail = owner@example.com\n",
+    );
+    const owned = join(base, "owned");
+    await mkdir(owned);
+    await initGitRepo(owned, { env });
+    expect(await author(owned)).toBe("Owner <owner@example.com>");
+  });
+
   it("kills a hung git on timeout and fails with a clear error", async () => {
     const bin = join(base, "bin");
     await mkdir(bin);
