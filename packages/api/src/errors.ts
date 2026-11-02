@@ -2,6 +2,7 @@ import { ZodError } from "zod";
 import {
   InvalidIdError,
   InvalidTransitionError,
+  HierarchyError,
   TaskExistsError,
   TaskNotFoundError,
   TaskNotRunningError,
@@ -39,10 +40,21 @@ export const ERROR_CODES = {
     404,
     "The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).",
   ],
+  epic_not_found: [404, "The epic does not exist in this project."],
+  parent_not_found: [404, "The parent task does not exist in this project."],
   plan_not_found: [404, "The plan does not exist."],
   goal_not_found: [404, "The goal does not exist in the plan."],
   conflict: [409, "The change conflicts with the current state."],
   invalid_transition: [409, "The task status transition is not allowed."],
+  invalid_hierarchy: [
+    409,
+    "The move or create breaks the hierarchy rules (one level of subtasks; a subtask has no epic of its own).",
+  ],
+  has_children: [409, "The task has subtasks; pass detach to make them top-level tasks."],
+  has_tasks: [
+    409,
+    "The epic has tasks; pass detach to clear their epic, or archive the epic instead.",
+  ],
   plan_version_conflict: [409, "The plan changed since the version in If-Match / expectedVersion."],
   task_modified: [409, "The task changed since the ETag in If-Match."],
   plan_exists: [409, "A plan with this id already exists."],
@@ -109,6 +121,10 @@ export function formatIssues(err: ZodError): { path: string; message: string }[]
 /** Map any thrown value to an {@link OpError}. Never leaks internals (unknown errors are `internal`). */
 export function toOpError(err: unknown): OpError {
   if (err instanceof OpError) return err;
+  if (err instanceof HierarchyError) {
+    const status = err.code === "epic_not_found" || err.code === "parent_not_found" ? 404 : 409;
+    return new OpError(status, err.message, err.code);
+  }
   if (err instanceof TaskNotFoundError) return new OpError(404, err.message, "not_found");
   if (err instanceof InvalidTransitionError) {
     return new OpError(409, err.message, "invalid_transition");

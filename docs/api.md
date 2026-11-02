@@ -68,40 +68,45 @@ creates answer 200). Use `/api/v1` for new code.
 Every error is `{ "error": { "code", "message", "details"? } }` with the status below. Never zod
 internals; validation errors list `details: [{ path, message }]`.
 
-| Code                       | Status | Meaning                                                                                                 |
-| -------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
-| `invalid_input`            | 400    | The input does not match the operation's schema, or an id is malformed.                                 |
-| `invalid_plan`             | 400    | A plan or goal in the input is invalid (schema, dangling dependency, cycle).                            |
-| `not_a_git_repo`           | 400    | The project directory is not a git work tree.                                                           |
-| `nothing_to_import`        | 400    | The repository has no goal.boof.xml files to import.                                                    |
-| `no_default_project`       | 404    | The unversioned task routes need settings.defaultProject, which is unset.                               |
-| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key.                                              |
-| `forbidden_scope`          | 403    | The client lacks the scope the operation needs.                                                         |
-| `forbidden_project`        | 403    | The client may not access this project.                                                                 |
-| `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.                                          |
-| `project_root_not_allowed` | 403    | The directory is outside security.allowedProjectRoots.                                                  |
-| `origin_not_allowed`       | 403    | The Origin header names a site that is not this server (a cross-site browser request).                  |
-| `not_found`                | 404    | The task, command, client or webhook does not exist.                                                    |
-| `project_not_found`        | 404    | The project does not exist.                                                                             |
-| `branch_not_found`         | 404    | The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete). |
-| `plan_not_found`           | 404    | The plan does not exist.                                                                                |
-| `goal_not_found`           | 404    | The goal does not exist in the plan.                                                                    |
-| `conflict`                 | 409    | The change conflicts with the current state.                                                            |
-| `invalid_transition`       | 409    | The task status transition is not allowed.                                                              |
-| `plan_version_conflict`    | 409    | The plan changed since the version in If-Match / expectedVersion.                                       |
-| `task_modified`            | 409    | The task changed since the ETag in If-Match.                                                            |
-| `plan_exists`              | 409    | A plan with this id already exists.                                                                     |
-| `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                                                     |
-| `goal_has_dependents`      | 409    | Other goals depend on this one; pass cascade to remove them too.                                        |
-| `project_exists`           | 409    | A project for this directory already exists.                                                            |
-| `project_busy`             | 409    | A task of the project is running, or another project is being created right now; retry shortly.         |
-| `directory_not_empty`      | 409    | The directory exists and is not empty; send path.confirm: true to initialise it anyway.                 |
-| `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.                                          |
-| `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                              |
-| `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                |
-| `unsupported_media_type`   | 415    | A JSON operation needs Content-Type: application/json.                                                  |
-| `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                                                  |
-| `internal`                 | 500    | Unexpected server error; details are in the server log.                                                 |
+| Code                       | Status | Meaning                                                                                                  |
+| -------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
+| `invalid_input`            | 400    | The input does not match the operation's schema, or an id is malformed.                                  |
+| `invalid_plan`             | 400    | A plan or goal in the input is invalid (schema, dangling dependency, cycle).                             |
+| `not_a_git_repo`           | 400    | The project directory is not a git work tree.                                                            |
+| `nothing_to_import`        | 400    | The repository has no goal.boof.xml files to import.                                                     |
+| `no_default_project`       | 404    | The unversioned task routes need settings.defaultProject, which is unset.                                |
+| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key.                                               |
+| `forbidden_scope`          | 403    | The client lacks the scope the operation needs.                                                          |
+| `forbidden_project`        | 403    | The client may not access this project.                                                                  |
+| `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.                                           |
+| `project_root_not_allowed` | 403    | The directory is outside security.allowedProjectRoots.                                                   |
+| `origin_not_allowed`       | 403    | The Origin header names a site that is not this server (a cross-site browser request).                   |
+| `not_found`                | 404    | The task, command, client or webhook does not exist.                                                     |
+| `project_not_found`        | 404    | The project does not exist.                                                                              |
+| `branch_not_found`         | 404    | The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).  |
+| `epic_not_found`           | 404    | The epic does not exist in this project.                                                                 |
+| `parent_not_found`         | 404    | The parent task does not exist in this project.                                                          |
+| `plan_not_found`           | 404    | The plan does not exist.                                                                                 |
+| `goal_not_found`           | 404    | The goal does not exist in the plan.                                                                     |
+| `conflict`                 | 409    | The change conflicts with the current state.                                                             |
+| `invalid_transition`       | 409    | The task status transition is not allowed.                                                               |
+| `invalid_hierarchy`        | 409    | The move or create breaks the hierarchy rules (one level of subtasks; a subtask has no epic of its own). |
+| `has_children`             | 409    | The task has subtasks; pass detach to make them top-level tasks.                                         |
+| `has_tasks`                | 409    | The epic has tasks; pass detach to clear their epic, or archive the epic instead.                        |
+| `plan_version_conflict`    | 409    | The plan changed since the version in If-Match / expectedVersion.                                        |
+| `task_modified`            | 409    | The task changed since the ETag in If-Match.                                                             |
+| `plan_exists`              | 409    | A plan with this id already exists.                                                                      |
+| `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                                                      |
+| `goal_has_dependents`      | 409    | Other goals depend on this one; pass cascade to remove them too.                                         |
+| `project_exists`           | 409    | A project for this directory already exists.                                                             |
+| `project_busy`             | 409    | A task of the project is running, or another project is being created right now; retry shortly.          |
+| `directory_not_empty`      | 409    | The directory exists and is not empty; send path.confirm: true to initialise it anyway.                  |
+| `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.                                           |
+| `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                               |
+| `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                 |
+| `unsupported_media_type`   | 415    | A JSON operation needs Content-Type: application/json.                                                   |
+| `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                                                   |
+| `internal`                 | 500    | Unexpected server error; details are in the server log.                                                  |
 
 ## Concurrency (ETag / If-Match)
 
@@ -374,6 +379,14 @@ fields; everything else is the JSON body. Bodies are limited to 1 MB (attachment
 
 `projects.create` takes `workingDirectory` (an existing work tree) or `path` (`{mode: "existing"|"new", directory}`
 or `{mode: "auto"}`) plus `brief` (required for `new` and `auto`); see the OpenAPI document for the shapes.
+
+`tasks.create` takes an optional `epicId` or `parentId` (not both: a subtask takes its parent's epic;
+one level of subtasks only). `tasks.list` filters by `epic` and `parent` (the value `none` is reserved:
+no epic, or top-level; an epic filter also matches subtasks through their parent) and takes
+`order=priority` for scheduler order, with its own cursor (a cursor from the other order is
+`400`). Tasks show derived fields: the effective `epicId`, `subtasks: {total, done}` and the flags
+`parentMissing` / `epicMissing` for a hand-edited dangling reference. These appear on `tasks.list`,
+`tasks.get` and `tasks.create` (and `tasks.move` and `tasks.queue`), not on the other task operations.
 
 ### Editing the contract
 

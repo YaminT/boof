@@ -15,6 +15,7 @@ import {
   TrustSchema,
 } from "@boof-runner/shared";
 
+const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 const labels = z.array(z.string().max(100)).max(50);
 const commandRef = z.string().nullable();
 
@@ -27,6 +28,11 @@ export const CreateTaskBody = z
     command: commandRef.optional(),
     status: z.enum(["draft", "pending"]).optional(),
     runs: z.number().int().min(1).max(100).optional(),
+    epicId: kebabId.max(200).optional().meta({ description: "The task's epic (this project)." }),
+    parentId: kebabId
+      .max(200)
+      .optional()
+      .meta({ description: "Make this a subtask of that task (one level; takes its epic)." }),
   })
   .strict();
 
@@ -124,8 +130,6 @@ export const CreateProjectBody = z
   });
 
 export type CreateProjectBodyInput = z.output<typeof CreateProjectBody>;
-
-const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 
 // --- Plans (a body-level `expectedVersion` is the alternative to the If-Match header) ---
 

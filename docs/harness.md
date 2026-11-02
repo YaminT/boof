@@ -568,10 +568,15 @@ Every error has this shape:
 | `not_found`                | 404    | The task, command, client or webhook id is wrong. List the items and check the id.                                                                              |
 | `project_not_found`        | 404    | Check the project id with `projects.list`.                                                                                                                      |
 | `branch_not_found`         | 404    | The task branch `boof-runner/<task-id>` does not exist (deleted by `onDone: "delete"`, or the task never ran in a worktree). Read the task and its log instead. |
+| `epic_not_found`           | 404    | Check the epic id (epics are per project).                                                                                                                      |
+| `parent_not_found`         | 404    | Check the parent task id with `tasks.list` in the same project.                                                                                                 |
 | `plan_not_found`           | 404    | Check the plan id with `plans.list`.                                                                                                                            |
 | `goal_not_found`           | 404    | Check the goal id with `plans.get`.                                                                                                                             |
 | `conflict`                 | 409    | The change conflicts with the current state (for example a project id is taken). Read the message. Change the input.                                            |
 | `invalid_transition`       | 409    | The task is in a status that does not allow this move. Read the task and check its status.                                                                      |
+| `invalid_hierarchy`        | 409    | One level of subtasks only, and a subtask has no epic of its own. Pass `parentId` or `epicId`, not both, and do not nest.                                       |
+| `has_children`             | 409    | The task has subtasks. Detach them first, or pass `detach`.                                                                                                     |
+| `has_tasks`                | 409    | The epic has tasks. Pass `detach`, or archive the epic.                                                                                                         |
 | `plan_version_conflict`    | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                   |
 | `task_modified`            | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
 | `plan_exists`              | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                              |
@@ -670,10 +675,14 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `baseSha`: `string`, optional
 - `body`: `{ answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: { developer: string, observer: string, planner: string, reviewer: string } }`, required
 - `branch`: `string`, optional
+- `epicId`: `string`, optional; Effective epic (a subtask's is its parent's)
+- `epicMissing`: `true`, optional; The task's effective epic does not exist in this project
 - `finalVerdict`: `{ observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }`, required
 - `frontmatter`: `TaskFrontmatter`, required
+- `parentMissing`: `true`, optional; The task names a parent that does not exist; it is listed as a top-level task
 - `projectId`: `string`, required
 - `reviews`: `{ iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[]`, required
+- `subtasks`: `{ done: integer, total: integer }`, optional; Non-archived subtasks and how many are done; present when there are any
 
 #### `TaskFrontmatter`
 
@@ -1267,7 +1276,7 @@ Query parameters:
 - Operation: `tasks.list`
 - Scope: `tasks:read`
 - MCP tool: `boof_list_tasks`
-- What it does: Lists a project's tasks, newest update first, without their logs. Inputs: projectId, optional status, plan, label filters and limit/cursor paging. No side effects.
+- What it does: Lists a project's tasks, newest update first (order=priority: scheduler order), without their logs. Inputs: projectId, optional status, plan, label, epic and parent filters (the value none means no epic / top-level; an epic filter matches subtasks through their parent), order and limit/cursor paging. Each task shows its effective epicId, subtask progress and parentMissing/epicMissing flags. No side effects.
 - Success: HTTP 200 with `{ items: Task[], nextCursor: string | null }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
@@ -1280,6 +1289,9 @@ Query parameters:
 - `status`: `"draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived"`, optional
 - `plan`: `kebab-id`, optional; Plan id (kebab-case)
 - `label`: `string`, optional; max length 100
+- `epic`: `kebab-id | "none"`, optional; Epic id, or none for tasks without an epic. Subtasks match through their parent
+- `parent`: `kebab-id | "none"`, optional; Parent task id (its subtasks), or none for top-level tasks
+- `order`: `"updated" | "priority"`, optional; updated (default): newest update first. priority: scheduler order (priority desc, oldest update first, id)
 - `limit`: `integer 1..500`, optional; Page size, default 100, max 500
 - `cursor`: `string`, optional; nextCursor of the previous page; max length 500
 
@@ -1326,10 +1338,10 @@ Query parameters:
 - Operation: `tasks.create`
 - Scope: `tasks:write`
 - MCP tool: `boof_create_task`
-- What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.
-- Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
+- What it does: Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs, optional epicId or parentId (one level of subtasks; a subtask takes its parent's epic). Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.
+- Success: HTTP 201 with `{ baseReason?: "dependency" | "dependencies-merged" | "dependency-conflict" | "follow-up" | "project-default" | "head", baseRef?: string, baseSha?: string, body: { answers: string, command: string, injected: string, log?: string, prompt: string, questions: string, reports: object }, branch?: string, epicId?: string, epicMissing?: true, finalVerdict: { observer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID", reviewer?: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }, frontmatter: TaskFrontmatter, parentMissing?: true, projectId: string, reviews: { iteration: integer, role: "observer" | "reviewer", round: integer, summary: string, verdict: "APPROVE" | "CHANGES_REQUESTED" | "REJECT" | "INVALID" }[], subtasks?: { done: integer, total: integer }, warnings?: { applied: string, code: "status_downgraded", field: string, message: string, requested: string }[] }`. The response has an `ETag` header.
 - Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
-- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`, `404 epic_not_found`, `404 parent_not_found`, `409 invalid_hierarchy`
 
 Path parameters (all required):
 
@@ -1338,7 +1350,9 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `command`: `string | null`, optional
+- `epicId`: `kebab-id`, optional; The task's epic (this project)
 - `labels`: `string[]`, optional; max 50 item(s)
+- `parentId`: `kebab-id`, optional; Make this a subtask of that task (one level; takes its epic)
 - `priority`: `integer`, optional
 - `prompt`: `string`, optional; max length 500000
 - `runs`: `integer 1..100`, optional

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Task } from "@boof-runner/shared";
+import type { HierarchyIndex, Task } from "@boof-runner/shared";
 import type { McpAnnotations, OpContext } from "../define-op.js";
 import { toTaskView, type ProjectService, type TaskView } from "../services/service.js";
 
@@ -10,6 +10,7 @@ const idParam = (what: string, description: string) =>
   z.string().max(200).regex(KEBAB, `Invalid ${what}`).meta({ description });
 
 export const projectIdParam = idParam("project id", "Project id (kebab-case).");
+export const epicIdParam = idParam("epic id", "Epic id (kebab-case).");
 export const taskIdParam = idParam("id", "Task id (kebab-case).");
 export const planIdParam = idParam("plan id", "Plan id (kebab-case).");
 export const goalIdParam = idParam("goal id", "Goal id (kebab-case).");
@@ -43,7 +44,11 @@ export const taskView = (
   projectId: string,
   task: Task,
   withLog = false,
-): TaskView => toTaskView(projectId, task, { log: ctx.legacy === true || withLog });
+  index?: HierarchyIndex,
+): TaskView => ({
+  ...toTaskView(projectId, task, { log: ctx.legacy === true || withLog }),
+  ...index?.info(task),
+});
 
 /** Weak ETag of a task: its `updated` stamp. */
 export const taskEtag = (out: { frontmatter: { updated: string } }): string =>

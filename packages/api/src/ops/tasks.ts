@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { StatusSchema } from "@boof-runner/shared";
+import {
+  compareTasks,
+  HIERARCHY_NONE,
+  matchesHierarchy,
+  StatusSchema,
+  type Task,
+} from "@boof-runner/shared";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { sleepUnlessAborted } from "../abort.js";
@@ -21,6 +27,7 @@ import {
 } from "../schemas.js";
 import {
   DESTRUCTIVE,
+  epicIdParam,
   IDEMPOTENT_WRITE,
   planIdParam,
   projectIdParam,
@@ -43,25 +50,53 @@ function encodeCursor(updated: string, id: string): string {
   return Buffer.from(JSON.stringify([updated, id])).toString("base64url");
 }
 
-function decodeCursor(cursor: string): [string, string] {
-  try {
-    const v: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    if (Array.isArray(v) && typeof v[0] === "string" && typeof v[1] === "string") {
-      return [v[0], v[1]];
-    }
-  } catch {
-    /* fall through */
-  }
-  throw new OpError(400, "Invalid cursor", "invalid_input", [
+/** Cursor of `order=priority`: `["p", priority, updated, id]`. */
+function encodePriorityCursor(t: Task): string {
+  const f = t.frontmatter;
+  return Buffer.from(JSON.stringify(["p", f.priority, f.updated, f.id])).toString("base64url");
+}
+
+const invalidCursor = () =>
+  new OpError(400, "Invalid cursor", "invalid_input", [
     { path: "cursor", message: "Invalid cursor" },
   ]);
+
+function parseCursor(cursor: string): unknown {
+  try {
+    return JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    throw invalidCursor();
+  }
+}
+
+function decodeCursor(cursor: string): [string, string] {
+  const v = parseCursor(cursor);
+  if (Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && typeof v[1] === "string") {
+    return [v[0], v[1]];
+  }
+  throw invalidCursor();
+}
+
+function decodePriorityCursor(cursor: string): [number, string, string] {
+  const v = parseCursor(cursor);
+  if (
+    Array.isArray(v) &&
+    v.length === 4 &&
+    v[0] === "p" &&
+    typeof v[1] === "number" &&
+    typeof v[2] === "string" &&
+    typeof v[3] === "string"
+  ) {
+    return [v[1], v[2], v[3]];
+  }
+  throw invalidCursor();
 }
 
 export const tasksList = defineOp({
   name: "tasks.list",
   title: "List tasks",
   description:
-    "Lists a project's tasks, newest update first, without their logs. Inputs: projectId, optional status, plan, label filters and limit/cursor paging. No side effects.",
+    "Lists a project's tasks, newest update first (order=priority: scheduler order), without their logs. Inputs: projectId, optional status, plan, label, epic and parent filters (the value none means no epic / top-level; an epic filter matches subtasks through their parent), order and limit/cursor paging. Each task shows its effective epicId, subtask progress and parentMissing/epicMissing flags. No side effects.",
   scope: "tasks:read",
   projectScoped: true,
   input: z.strictObject({
@@ -69,6 +104,21 @@ export const tasksList = defineOp({
     status: StatusSchema.optional(),
     plan: planIdParam.optional(),
     label: z.string().max(100).optional(),
+    epic: z
+      .union([epicIdParam, z.literal(HIERARCHY_NONE)])
+      .optional()
+      .meta({
+        description:
+          "Epic id, or none for tasks without an epic. Subtasks match through their parent.",
+      }),
+    parent: z
+      .union([taskIdParam, z.literal(HIERARCHY_NONE)])
+      .optional()
+      .meta({ description: "Parent task id (its subtasks), or none for top-level tasks." }),
+    order: z.enum(["updated", "priority"]).optional().meta({
+      description:
+        "updated (default): newest update first. priority: scheduler order (priority desc, oldest update first, id).",
+    }),
     limit: z
       .number()
       .int()
@@ -99,30 +149,53 @@ export const tasksList = defineOp({
     if (input.status) tasks = tasks.filter((t) => t.frontmatter.status === input.status);
     if (input.plan) tasks = tasks.filter((t) => t.frontmatter.planRef?.planId === input.plan);
     if (input.label) tasks = tasks.filter((t) => t.frontmatter.labels.includes(input.label!));
-    if (ctx.legacy) {
-      return { items: tasks.map((t) => taskView(ctx, svc.projectId, t)), nextCursor: null };
-    }
-    tasks.sort(
-      (a, b) =>
-        b.frontmatter.updated.localeCompare(a.frontmatter.updated) ||
-        a.frontmatter.id.localeCompare(b.frontmatter.id),
-    );
-    if (input.cursor) {
-      const [updated, id] = decodeCursor(input.cursor);
-      tasks = tasks.filter(
-        (t) =>
-          t.frontmatter.updated < updated ||
-          (t.frontmatter.updated === updated && t.frontmatter.id > id),
+    // The index is built from all tasks, so a filtered list still shows true progress.
+    const index = await svc.hierarchy();
+    if (input.epic !== undefined || input.parent !== undefined) {
+      tasks = tasks.filter((t) =>
+        matchesHierarchy(t, index, { epic: input.epic, parent: input.parent }),
       );
+    }
+    const view = (t: Task) => taskView(ctx, svc.projectId, t, false, index);
+    if (ctx.legacy) return { items: tasks.map(view), nextCursor: null };
+    const byPriority = input.order === "priority";
+    if (byPriority) {
+      tasks.sort(compareTasks);
+      if (input.cursor) {
+        const [priority, updated, id] = decodePriorityCursor(input.cursor);
+        tasks = tasks.filter(
+          (t) =>
+            compareTasks(t, {
+              ...t,
+              frontmatter: { ...t.frontmatter, priority, updated, id },
+            }) > 0,
+        );
+      }
+    } else {
+      tasks.sort(
+        (a, b) =>
+          b.frontmatter.updated.localeCompare(a.frontmatter.updated) ||
+          a.frontmatter.id.localeCompare(b.frontmatter.id),
+      );
+      if (input.cursor) {
+        const [updated, id] = decodeCursor(input.cursor);
+        tasks = tasks.filter(
+          (t) =>
+            t.frontmatter.updated < updated ||
+            (t.frontmatter.updated === updated && t.frontmatter.id > id),
+        );
+      }
     }
     const limit = input.limit ?? DEFAULT_PAGE;
     const page = tasks.slice(0, limit);
     const last = page[page.length - 1];
     return {
-      items: page.map((t) => taskView(ctx, svc.projectId, t)),
+      items: page.map(view),
       nextCursor:
         tasks.length > limit && last
-          ? encodeCursor(last.frontmatter.updated, last.frontmatter.id)
+          ? byPriority
+            ? encodePriorityCursor(last)
+            : encodeCursor(last.frontmatter.updated, last.frontmatter.id)
           : null,
     };
   },
@@ -151,7 +224,7 @@ export const tasksGet = defineOp({
     const svc = await requireProject(ctx, input.projectId);
     const t = await svc.get(input.taskId);
     if (!t) throw new OpError(404, "Task not found");
-    return taskView(ctx, svc.projectId, t, input.include === "log");
+    return taskView(ctx, svc.projectId, t, input.include === "log", await svc.hierarchy());
   },
 });
 
@@ -190,7 +263,7 @@ export const tasksCreate = defineOp({
   name: "tasks.create",
   title: "Create a task",
   description:
-    "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.",
+    "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs, optional epicId or parentId (one level of subtasks; a subtask takes its parent's epic). Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.",
   scope: "tasks:write",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, ...CreateTaskBody.shape }),
@@ -208,7 +281,10 @@ export const tasksCreate = defineOp({
   handler: async (ctx, { projectId, ...body }) => {
     const svc = await requireProject(ctx, projectId);
     const { task, warnings } = await svc.createWithWarnings(body, ctx.principal);
-    return { ...taskView(ctx, projectId, task), ...(warnings.length > 0 ? { warnings } : {}) };
+    return {
+      ...taskView(ctx, projectId, task, false, await svc.hierarchy()),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   },
 });
 

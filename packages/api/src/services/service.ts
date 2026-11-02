@@ -7,7 +7,11 @@ import {
   evaluateBudget,
   type BudgetStatus,
   assertKebabId,
+  buildHierarchyIndex,
   CommandStore,
+  createTaskInHierarchy,
+  EpicStore,
+  type HierarchyIndex,
   injectCommand,
   isUserTransition,
   isAllowedAttachmentType,
@@ -78,6 +82,9 @@ export interface CreateTaskInput {
   status?: "draft" | "pending";
   /** How many times to run the pipeline for this task (default 1). */
   runs?: number;
+  /** The task's epic, or (parentId) its parent task. Not both. */
+  epicId?: string;
+  parentId?: string;
 }
 
 export interface UpdateTaskInput {
@@ -147,6 +154,15 @@ export class ProjectService {
     return this.tasks.get(id);
   }
 
+  /** The hierarchy of the project's tasks and epics (archived epics included), for the derived task fields. */
+  async hierarchy(): Promise<HierarchyIndex> {
+    const [tasks, epics] = await Promise.all([
+      this.tasks.list(),
+      new EpicStore(this.root).list({ includeArchived: true }),
+    ]);
+    return buildHierarchyIndex(tasks, epics);
+  }
+
   /** True when `actor` is a review-trust client and approval is required (the default). */
   private async needsApproval(actor?: Principal): Promise<boolean> {
     if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
@@ -207,6 +223,8 @@ export class ProjectService {
         runs: Math.max(1, Math.floor(input.runs ?? 1)),
         completedRuns: 0,
         ...(origin ? { origin } : {}),
+        ...(input.epicId ? { epicId: input.epicId } : {}),
+        ...(input.parentId ? { parentId: input.parentId } : {}),
         created: "",
         updated: "",
       },
@@ -217,7 +235,18 @@ export class ProjectService {
       review && input.status && input.status !== status
         ? [statusDowngraded("task", input.status, status)]
         : [];
-    return { task: await this.tasks.createUnique(task, { by: actor?.id ?? "local" }), warnings };
+    if (input.epicId && input.parentId) {
+      throw new OpError(400, "Invalid input", "invalid_input", [
+        {
+          path: "parentId",
+          message: "give epicId or parentId, not both: a subtask takes its parent's epic",
+        },
+      ]);
+    }
+    return {
+      task: await createTaskInHierarchy(this.root, task, { by: actor?.id ?? "local" }),
+      warnings,
+    };
   }
 
   private async applyCommand(task: Task, commandId: string | null): Promise<void> {

@@ -33,6 +33,20 @@ export const TaskViewSchema = z.object({
     log: z.string().optional(),
   }),
   projectId: z.string(),
+  /** The effective epic: the task's own, or its parent's for a subtask. Only on list, get, create, move and queue. */
+  epicId: z
+    .string()
+    .optional()
+    .meta({ description: "Effective epic (a subtask's is its parent's)." }),
+  subtasks: z.object({ total: z.number().int(), done: z.number().int() }).optional().meta({
+    description: "Non-archived subtasks and how many are done; present when there are any.",
+  }),
+  parentMissing: z.literal(true).optional().meta({
+    description: "The task names a parent that does not exist; it is listed as a top-level task.",
+  }),
+  epicMissing: z.literal(true).optional().meta({
+    description: "The task's effective epic does not exist in this project.",
+  }),
   /** Observer and reviewer rounds parsed from the reports, oldest first. */
   reviews: z.array(
     z.object({

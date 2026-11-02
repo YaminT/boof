@@ -110,10 +110,15 @@
                   "not_found",
                   "project_not_found",
                   "branch_not_found",
+                  "epic_not_found",
+                  "parent_not_found",
                   "plan_not_found",
                   "goal_not_found",
                   "conflict",
                   "invalid_transition",
+                  "invalid_hierarchy",
+                  "has_children",
+                  "has_tasks",
                   "plan_version_conflict",
                   "task_modified",
                   "plan_exists",
@@ -1866,6 +1871,15 @@
           "branch": {
             "type": "string"
           },
+          "epicId": {
+            "description": "Effective epic (a subtask's is its parent's).",
+            "type": "string"
+          },
+          "epicMissing": {
+            "const": true,
+            "description": "The task's effective epic does not exist in this project.",
+            "type": "boolean"
+          },
           "finalVerdict": {
             "additionalProperties": false,
             "properties": {
@@ -1892,6 +1906,11 @@
           },
           "frontmatter": {
             "$ref": "#/components/schemas/TaskFrontmatter"
+          },
+          "parentMissing": {
+            "const": true,
+            "description": "The task names a parent that does not exist; it is listed as a top-level task.",
+            "type": "boolean"
           },
           "projectId": {
             "type": "string"
@@ -1941,6 +1960,27 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "subtasks": {
+            "additionalProperties": false,
+            "description": "Non-archived subtasks and how many are done; present when there are any.",
+            "properties": {
+              "done": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "done"
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -6767,7 +6807,7 @@
     },
     "/projects/{projectId}/tasks": {
       "get": {
-        "description": "Lists a project's tasks, newest update first, without their logs. Inputs: projectId, optional status, plan, label filters and limit/cursor paging. No side effects.",
+        "description": "Lists a project's tasks, newest update first (order=priority: scheduler order), without their logs. Inputs: projectId, optional status, plan, label, epic and parent filters (the value none means no epic / top-level; an epic filter matches subtasks through their parent), order and limit/cursor paging. Each task shows its effective epicId, subtask progress and parentMissing/epicMissing flags. No side effects.",
         "operationId": "tasks.list",
         "parameters": [
           {
@@ -6816,6 +6856,59 @@
             "required": false,
             "schema": {
               "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "epic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Epic id (kebab-case).",
+                  "maxLength": 200,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                }
+              ],
+              "description": "Epic id, or none for tasks without an epic. Subtasks match through their parent."
+            }
+          },
+          {
+            "in": "query",
+            "name": "parent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Task id (kebab-case).",
+                  "maxLength": 200,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                }
+              ],
+              "description": "Parent task id (its subtasks), or none for top-level tasks."
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "description": "updated (default): newest update first. priority: scheduler order (priority desc, oldest update first, id).",
+              "enum": [
+                "updated",
+                "priority"
+              ],
               "type": "string"
             }
           },
@@ -6890,7 +6983,7 @@
         "x-mcp-tool": "boof_list_tasks"
       },
       "post": {
-        "description": "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs. Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.",
+        "description": "Creates a task in a project. Inputs: projectId, title, optional prompt, priority, labels, command, status (draft or pending), runs, optional epicId or parentId (one level of subtasks; a subtask takes its parent's epic). Review-trust clients always get a draft and a warnings entry (status_downgraded, header Boof-Warning); a human queues it.",
         "operationId": "tasks.create",
         "parameters": [
           {
@@ -6927,6 +7020,12 @@
                       "null"
                     ]
                   },
+                  "epicId": {
+                    "description": "The task's epic (this project).",
+                    "maxLength": 200,
+                    "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
                   "labels": {
                     "items": {
                       "maxLength": 100,
@@ -6934,6 +7033,12 @@
                     },
                     "maxItems": 50,
                     "type": "array"
+                  },
+                  "parentId": {
+                    "description": "Make this a subtask of that task (one level; takes its epic).",
+                    "maxLength": 200,
+                    "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                    "type": "string"
                   },
                   "priority": {
                     "maximum": 9007199254740991,
@@ -7055,6 +7160,15 @@
                     "branch": {
                       "type": "string"
                     },
+                    "epicId": {
+                      "description": "Effective epic (a subtask's is its parent's).",
+                      "type": "string"
+                    },
+                    "epicMissing": {
+                      "const": true,
+                      "description": "The task's effective epic does not exist in this project.",
+                      "type": "boolean"
+                    },
                     "finalVerdict": {
                       "additionalProperties": false,
                       "properties": {
@@ -7081,6 +7195,11 @@
                     },
                     "frontmatter": {
                       "$ref": "#/components/schemas/TaskFrontmatter"
+                    },
+                    "parentMissing": {
+                      "const": true,
+                      "description": "The task names a parent that does not exist; it is listed as a top-level task.",
+                      "type": "boolean"
                     },
                     "projectId": {
                       "type": "string"
@@ -7130,6 +7249,27 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "subtasks": {
+                      "additionalProperties": false,
+                      "description": "Non-archived subtasks and how many are done; present when there are any.",
+                      "properties": {
+                        "done": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "total": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "done"
+                      ],
+                      "type": "object"
                     },
                     "warnings": {
                       "items": {
@@ -10250,6 +10390,10 @@
       "description": "The directory exists and is not empty; send path.confirm: true to initialise it anyway.",
       "status": 409
     },
+    "epic_not_found": {
+      "description": "The epic does not exist in this project.",
+      "status": 404
+    },
     "forbidden_project": {
       "description": "The client may not access this project.",
       "status": 403
@@ -10270,6 +10414,14 @@
       "description": "The goal does not exist in the plan.",
       "status": 404
     },
+    "has_children": {
+      "description": "The task has subtasks; pass detach to make them top-level tasks.",
+      "status": 409
+    },
+    "has_tasks": {
+      "description": "The epic has tasks; pass detach to clear their epic, or archive the epic instead.",
+      "status": 409
+    },
     "host_not_allowed": {
       "description": "The Host header is not a loopback name or an allowed host.",
       "status": 421
@@ -10281,6 +10433,10 @@
     "internal": {
       "description": "Unexpected server error; details are in the server log.",
       "status": 500
+    },
+    "invalid_hierarchy": {
+      "description": "The move or create breaks the hierarchy rules (one level of subtasks; a subtask has no epic of its own).",
+      "status": 409
     },
     "invalid_input": {
       "description": "The input does not match the operation's schema, or an id is malformed.",
@@ -10313,6 +10469,10 @@
     "origin_not_allowed": {
       "description": "The Origin header names a site that is not this server: a cross-site browser request.",
       "status": 403
+    },
+    "parent_not_found": {
+      "description": "The parent task does not exist in this project.",
+      "status": 404
     },
     "payload_too_large": {
       "description": "The request body exceeds the size limit.",

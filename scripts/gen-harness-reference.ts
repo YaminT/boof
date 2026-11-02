@@ -118,6 +118,7 @@ const EXTRA_ERRORS: Record<string, string[]> = {
   ],
   "projects.update": ["400 not_a_git_repo", "403 project_root_not_allowed"],
   "projects.delete": ["409 project_busy"],
+  "tasks.create": ["404 epic_not_found", "404 parent_not_found", "409 invalid_hierarchy"],
   "plans.create": ["409 plan_exists"],
   "plans.update": ["403 forbidden_trust"],
   "plans.replaceGoals": ["403 forbidden_trust"],
