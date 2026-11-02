@@ -7,7 +7,7 @@
 # its own use deploy/nginx-boof.conf.example instead.
 #
 # The trailing slash on proxy_pass strips /boof, so boof itself still lives at /. The web UI uses
-# relative URLs and hash routes, so it works unchanged behind the prefix; the API is at
+# relative URLs (the server adds a relative `<base>` to the page), so it works unchanged behind the prefix; the API is at
 # /boof/api/v1, MCP at /boof/mcp, the harness guide at /boof/harness.txt.
 #
 # Boof listens on 127.0.0.1:4319 only; nginx terminates TLS and forwards the original Host header,

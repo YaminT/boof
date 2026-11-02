@@ -23,7 +23,7 @@ function persist(id: string): void {
 /**
  * Loads the active projects and tracks which one is selected. The route's project wins, then the
  * last one used (localStorage), then `settings.defaultProject`, then the first project. It only
- * persists the selection to localStorage; the URL hash belongs to the router.
+ * persists the selection to localStorage; the URL belongs to the router.
  */
 export function useProjects(settings: Settings | null, routePid: string | null) {
   const [projects, setProjects] = useState<Project[] | null>(null);

@@ -16,9 +16,9 @@ const SETTINGS_PAGES: readonly SettingsPageId[] = [
   "automation",
 ];
 
-export function parseRoute(hash: string): Route | null {
-  const path = hash.replace(/^#/, "");
-  if (!path.startsWith("/")) return null;
+/** Parses an app-relative path such as "p/boof/tasks"; one leading "/" is ignored. */
+export function parseRoute(path: string): Route | null {
+  if (path.startsWith("#")) return null;
   let segs: string[];
   try {
     segs = path
@@ -28,6 +28,7 @@ export function parseRoute(hash: string): Route | null {
   } catch {
     return null;
   }
+  if (segs.length === 0) return null;
   if (segs[0] === "inbox") return { name: "inbox" };
   if (segs[0] !== "p" || !segs[1]) return null;
   const pid = segs[1];
@@ -56,10 +57,11 @@ export function parseRoute(hash: string): Route | null {
   }
 }
 
+/** App-relative (never starts with "/" or "#"); resolved against the pinned document base. */
 export function formatRoute(route: Route): string {
-  if (route.name === "inbox") return "#/inbox";
+  if (route.name === "inbox") return "inbox";
   const e = encodeURIComponent;
-  const base = `#/p/${e(route.pid)}`;
+  const base = `p/${e(route.pid)}`;
   switch (route.name) {
     case "overview":
       return base;

@@ -10,7 +10,17 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 // which the Hono server serves in production.
 export default defineConfig({
   root: rootDir,
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    {
+      // The server injects <base> in production; the dev server needs one so /p/x/tasks still
+      // reaches the /api proxy.
+      name: "boof-dev-base",
+      apply: "serve",
+      transformIndexHtml: (html: string) => html.replace("<head>", '<head>\n    <base href="/" />'),
+    },
+  ],
   resolve: {
     alias: { "@": join(rootDir, "src") },
   },

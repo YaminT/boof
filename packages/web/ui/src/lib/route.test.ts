@@ -3,25 +3,25 @@ import { formatRoute, parseRoute, routePid, type Route } from "./route";
 
 describe("parseRoute", () => {
   it("parses a project overview", () => {
-    expect(parseRoute("#/p/boof")).toEqual({ name: "overview", pid: "boof" });
-    expect(parseRoute("#/p/boof/")).toEqual({ name: "overview", pid: "boof" });
+    expect(parseRoute("p/boof")).toEqual({ name: "overview", pid: "boof" });
+    expect(parseRoute("p/boof/")).toEqual({ name: "overview", pid: "boof" });
   });
 
   it("parses tasks and task views", () => {
-    expect(parseRoute("#/p/boof/tasks")).toEqual({ name: "tasks", pid: "boof" });
-    expect(parseRoute("#/p/boof/tasks/fix-login")).toEqual({
+    expect(parseRoute("p/boof/tasks")).toEqual({ name: "tasks", pid: "boof" });
+    expect(parseRoute("p/boof/tasks/fix-login")).toEqual({
       name: "task",
       pid: "boof",
       taskId: "fix-login",
       view: "edit",
     });
-    expect(parseRoute("#/p/boof/tasks/fix-login/changes")).toEqual({
+    expect(parseRoute("p/boof/tasks/fix-login/changes")).toEqual({
       name: "task",
       pid: "boof",
       taskId: "fix-login",
       view: "changes",
     });
-    expect(parseRoute("#/p/boof/tasks/fix-login/questions")).toEqual({
+    expect(parseRoute("p/boof/tasks/fix-login/questions")).toEqual({
       name: "task",
       pid: "boof",
       taskId: "fix-login",
@@ -30,15 +30,15 @@ describe("parseRoute", () => {
   });
 
   it("parses plans and goals without undefined keys", () => {
-    const bare = parseRoute("#/p/boof/plans");
+    const bare = parseRoute("p/boof/plans");
     expect(bare).toEqual({ name: "plans", pid: "boof" });
     expect(bare && "planId" in bare).toBe(false);
-    expect(parseRoute("#/p/boof/plans/repo")).toEqual({
+    expect(parseRoute("p/boof/plans/repo")).toEqual({
       name: "plans",
       pid: "boof",
       planId: "repo",
     });
-    expect(parseRoute("#/p/boof/plans/repo/migration-lock")).toEqual({
+    expect(parseRoute("p/boof/plans/repo/migration-lock")).toEqual({
       name: "plans",
       pid: "boof",
       planId: "repo",
@@ -47,17 +47,17 @@ describe("parseRoute", () => {
   });
 
   it("parses settings pages with a fallback", () => {
-    expect(parseRoute("#/p/boof/settings")).toEqual({
+    expect(parseRoute("p/boof/settings")).toEqual({
       name: "settings",
       pid: "boof",
       page: "project",
     });
-    expect(parseRoute("#/p/boof/settings/keys")).toEqual({
+    expect(parseRoute("p/boof/settings/keys")).toEqual({
       name: "settings",
       pid: "boof",
       page: "keys",
     });
-    expect(parseRoute("#/p/boof/settings/nope")).toEqual({
+    expect(parseRoute("p/boof/settings/nope")).toEqual({
       name: "settings",
       pid: "boof",
       page: "project",
@@ -65,19 +65,23 @@ describe("parseRoute", () => {
   });
 
   it("parses the inbox", () => {
-    expect(parseRoute("#/inbox")).toEqual({ name: "inbox" });
+    expect(parseRoute("inbox")).toEqual({ name: "inbox" });
   });
 
-  it("returns null for unknown or empty hashes", () => {
-    for (const h of ["", "#", "#/", "#/elsewhere"]) expect(parseRoute(h)).toBeNull();
+  it("returns null for empty, unknown and hash input", () => {
+    for (const h of ["", "/", "elsewhere", "#/p/boof"]) expect(parseRoute(h)).toBeNull();
+  });
+
+  it("ignores one leading slash", () => {
+    expect(parseRoute("/p/boof/")).toEqual({ name: "overview", pid: "boof" });
   });
 
   it("falls back to overview for unknown project sections", () => {
-    expect(parseRoute("#/p/boof/bogus")).toEqual({ name: "overview", pid: "boof" });
+    expect(parseRoute("p/boof/bogus")).toEqual({ name: "overview", pid: "boof" });
   });
 
   it("decodes segments", () => {
-    expect(parseRoute("#/p/my%20proj/tasks/a%2Fb")).toEqual({
+    expect(parseRoute("p/my%20proj/tasks/a%2Fb")).toEqual({
       name: "task",
       pid: "my proj",
       taskId: "a/b",
@@ -86,7 +90,7 @@ describe("parseRoute", () => {
   });
 
   it("returns null on malformed encoding", () => {
-    expect(parseRoute("#/p/%E0%A4%A")).toBeNull();
+    expect(parseRoute("p/%E0%A4%A")).toBeNull();
   });
 });
 
@@ -98,6 +102,7 @@ describe("formatRoute", () => {
     { name: "task", pid: "boof", taskId: "fix-login", view: "changes" },
     { name: "task", pid: "boof", taskId: "fix-login", view: "questions" },
     { name: "task", pid: "my proj", taskId: "a/b", view: "edit" },
+    { name: "task", pid: "boof", taskId: "a?b#c%d", view: "edit" },
     { name: "plans", pid: "boof" },
     { name: "plans", pid: "boof", planId: "repo" },
     { name: "plans", pid: "boof", planId: "repo", goalId: "migration-lock" },
@@ -110,14 +115,16 @@ describe("formatRoute", () => {
     for (const r of routes) expect(parseRoute(formatRoute(r))).toEqual(r);
   });
 
+  it("never starts with / or #", () => {
+    for (const r of routes) expect(formatRoute(r)).not.toMatch(/^[/#]/);
+  });
+
   it("formats specific shapes", () => {
-    expect(formatRoute({ name: "overview", pid: "my proj" })).toBe("#/p/my%20proj");
-    expect(formatRoute({ name: "inbox" })).toBe("#/inbox");
-    expect(formatRoute({ name: "settings", pid: "boof", page: "project" })).toBe(
-      "#/p/boof/settings",
-    );
+    expect(formatRoute({ name: "overview", pid: "my proj" })).toBe("p/my%20proj");
+    expect(formatRoute({ name: "inbox" })).toBe("inbox");
+    expect(formatRoute({ name: "settings", pid: "boof", page: "project" })).toBe("p/boof/settings");
     expect(formatRoute({ name: "task", pid: "boof", taskId: "t", view: "edit" })).toBe(
-      "#/p/boof/tasks/t",
+      "p/boof/tasks/t",
     );
   });
 });

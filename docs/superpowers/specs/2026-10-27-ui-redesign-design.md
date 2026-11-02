@@ -25,7 +25,7 @@ Goals
 Non-goals
 
 - No change to the server, the REST API or the task file format. Where the UI needs something the API lacks, the gap is listed in section 9 and goes to the backlog.
-- No new framework. React 19 and Vite stay. The hash router stays (structured, see section 6).
+- No new framework. React 19 and Vite stay. The router stays in-house (structured, see section 6); since 2026-11-02 it uses paths, not hashes (owner).
 - No multi-user features (presence, comments, roles beyond API keys).
 
 Anti-goals (what would make this a failure even if it ships)
@@ -188,7 +188,7 @@ Recommended working method: skip pixel mockups for most screens. Do a one-day co
 
 ## 6. Architecture notes for the builder
 
-- Routing: keep the hash router but make it a small table: `#/p/<pid>` (overview), `#/p/<pid>/tasks[/<id>[/changes|/questions]]`, `#/p/<pid>/plans[/<planId>[/<goalId>]]`, `#/p/<pid>/settings/<page>`, `#/inbox`. This absorbs backlog `ui-linkable-tabs` and `ui-return-to-plan` (the back link is the previous hash).
+- Routing: keep the in-house router but make it a small table, relative to the mount point: `/p/<pid>` (overview), `/p/<pid>/tasks[/<id>[/changes|/questions]]`, `/p/<pid>/plans[/<planId>[/<goalId>]]`, `/p/<pid>/settings/<page>`, `/inbox`. The server answers `index.html` with a relative `<base>` for these paths; old `#/` links redirect on load. This absorbs backlog `ui-linkable-tabs` and `ui-return-to-plan` (the back link is the previous hash).
 - State: one `useProjectData` hook holding tasks, plans and runner state fed by `useLive`; forms keep local dirty state and compare against the last-loaded server value (backlog `ui-settings-form-keeps-edits`); every mutation goes through one `act()` helper that shows a toast on `ApiError` (backlog `ui-surface-action-errors`).
 - Live log: a virtualised log view that follows the tail and pauses when the user scrolls up; the steer box posts to `tasks.inject` with the mode toggle kept.
 - Relative URLs and the token gate behaviour are unchanged (the UI runs under `/boof/` behind nginx).
@@ -196,7 +196,7 @@ Recommended working method: skip pixel mockups for most screens. Do a one-day co
 
 ## 7. Phases (plan only, no dates)
 
-1. Foundation: Tailwind v4 and shadcn init, tokens light and dark, self-hosted Plex, app shell with rail, bottom bar and command palette, structured hash router. Old screens render inside the new shell.
+1. Foundation: Tailwind v4 and shadcn init, tokens light and dark, self-hosted Plex, app shell with rail, bottom bar and command palette, structured router. Old screens render inside the new shell.
 2. Overview and the Now lane; live log component; steering moves into it.
 3. Tasks list (grouped, keyboard, overflow menus) and task detail (two-pane, step strip, run/changes/questions).
 4. Plans (progress header, goal rows, side panel) and the inbox/needs-you group.
