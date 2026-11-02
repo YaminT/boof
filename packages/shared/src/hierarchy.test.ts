@@ -18,7 +18,7 @@ import {
 import type { TaskFrontmatter } from "./schema.js";
 import { TaskNotFoundError, TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
-import { taskFilePath } from "./paths.js";
+import { taskFilePath, workingAreaDir } from "./paths.js";
 
 let dir: string;
 let other: string;
@@ -352,31 +352,152 @@ describe("hierarchy concurrency", () => {
     }
   });
 
-  it("a child flipping between status directories never hides from the rules", async () => {
-    for (let i = 0; i < 60; i++) await store.create(mk(`filler-${i}`));
+  // The three tests below act between the directory reads of TaskStore.list() with a spy on its
+  // private methods, so each guard of the settling scan fails on its own, deterministically.
+  const priv = TaskStore.prototype as unknown as Record<
+    string,
+    (...a: unknown[]) => Promise<unknown>
+  >;
+
+  it("a child that moves to an earlier directory mid-scan is still seen by the rules", async () => {
     await createTaskInHierarchy(dir, mk("p"));
     await createTaskInHierarchy(dir, mk("q"));
     await createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
-    let stop = false;
-    const flipper = (async () => {
-      while (!stop) {
-        await store.transition("c", "running");
-        await store.transition("c", "pending");
+    await store.transition("c", "running");
+    const real = priv.listStatus;
+    let armed = true;
+    const spy = vi.spyOn(priv, "listStatus").mockImplementation(async function (
+      this: TaskStore,
+      status: unknown,
+      names: unknown,
+    ) {
+      if (status === "running" && armed) {
+        armed = false;
+        await store.transition("c", "pending"); // pending was already read without c
       }
-    })();
+      return real.call(this, status, names);
+    });
     try {
-      for (let i = 0; i < 25; i++) {
-        expect(await code(removeTask(dir, "p"))).toBe("has_children");
-        expect(await code(moveTask(dir, "p", { parentId: "q" }))).toBe("has_children");
-      }
+      expect(await code(removeTask(dir, "p"))).toBe("has_children");
+      await store.transition("c", "running");
+      armed = true;
+      expect(await code(moveTask(dir, "p", { parentId: "q" }))).toBe("has_children");
     } finally {
-      stop = true;
-      await flipper;
+      spy.mockRestore();
     }
-    const all = await stored();
-    expect(all.find((f) => f.id === "p")).toBeDefined();
-    expect(all.find((f) => f.id === "p")!.parentId).toBeUndefined();
-  }, 60_000);
+    const all = await store.list();
+    expect(all.find((t) => t.frontmatter.id === "p")).toBeDefined();
+    expect(all.find((t) => t.frontmatter.id === "p")!.frontmatter.parentId).toBeUndefined();
+  });
+
+  it("list() repeats a scan that overlapped a status move in this process", async () => {
+    await createTaskInHierarchy(dir, mk("c"));
+    await store.transition("c", "running");
+    const real = priv.listStatusNames;
+    let step = 0;
+    const spy = vi.spyOn(priv, "listStatusNames").mockImplementation(async function (
+      this: TaskStore,
+      status: unknown,
+      into: unknown,
+    ) {
+      const out = await real.call(this, status, into);
+      if (step === 0 && status === "running") {
+        step = 1; // the name was read; the file read will find nothing
+        await store.transition("c", "pending");
+      } else if (step === 1 && status === "action") {
+        step = 2; // back before the fresh name listing, which now matches the scan's names
+        await store.transition("c", "running");
+      }
+      return out;
+    });
+    try {
+      expect((await store.list()).map((t) => t.frontmatter.id)).toEqual(["c"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("list() repeats a scan when another process moved a file (names differ, no counter)", async () => {
+    await createTaskInHierarchy(dir, mk("c"));
+    await store.transition("c", "running");
+    const real = priv.listStatus;
+    let armed = true;
+    const spy = vi.spyOn(priv, "listStatus").mockImplementation(async function (
+      this: TaskStore,
+      status: unknown,
+      names: unknown,
+    ) {
+      if (status === "running" && armed) {
+        armed = false;
+        // As the CLI would: write the destination, remove the source, bypass TaskStore.
+        const task = (await store.get("c"))!;
+        task.frontmatter.status = "pending";
+        await atomicWrite(taskFilePath(dir, "pending", "c"), serializeTask(task));
+        await rm(workingAreaDir(dir, "c"), { recursive: true, force: true });
+      }
+      return real.call(this, status, names);
+    });
+    try {
+      expect((await store.list()).map((t) => t.frontmatter.id)).toEqual(["c"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("an unsettled list() drops a task deleted meanwhile and reports true statuses", async () => {
+    await createTaskInHierarchy(dir, mk("c"));
+    await createTaskInHierarchy(dir, mk("d"));
+    await createTaskInHierarchy(dir, mk("e"));
+    const real = priv.listNames;
+    let calls = 0;
+    const spy = vi.spyOn(priv, "listNames").mockImplementation(async function (this: TaskStore) {
+      calls++;
+      if (calls === 2) await store.delete("d");
+      if (calls === 3) await store.transition("e", "running");
+      const out = (await real.call(this)) as Set<string>;
+      out.add(`bogus/${calls}`); // never matches: every round is unsettled
+      return out;
+    });
+    try {
+      const got = await store.list();
+      expect(got.map((t) => `${t.frontmatter.id}:${t.frontmatter.status}`).sort()).toEqual([
+        "c:pending",
+        "e:running",
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.skipIf(!process.env.BOOF_SOAK)(
+    "soak: a child flipping between status directories never hides from the rules",
+    async () => {
+      for (let i = 0; i < 60; i++) await store.create(mk(`filler-${i}`));
+      await createTaskInHierarchy(dir, mk("p"));
+      await createTaskInHierarchy(dir, mk("q"));
+      await createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
+      let stop = false;
+      const flipper = (async () => {
+        while (!stop) {
+          await store.transition("c", "running");
+          await store.transition("c", "pending");
+        }
+      })();
+      try {
+        for (let i = 0; i < 25; i++) {
+          expect(await code(removeTask(dir, "p"))).toBe("has_children");
+          expect(await code(moveTask(dir, "p", { parentId: "q" }))).toBe("has_children");
+        }
+      } finally {
+        stop = true;
+        await flipper;
+      }
+      const all = await stored();
+      expect(all.find((f) => f.id === "p")).toBeDefined();
+      expect(all.find((f) => f.id === "p")!.parentId).toBeUndefined();
+    },
+    60_000,
+  );
 
   it("a move while the task runs survives save and transition", async () => {
     await epics.create({ title: "web" });

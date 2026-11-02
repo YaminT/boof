@@ -144,7 +144,7 @@ export class TaskStore {
    * it. Other processes are not excluded (see atomic.ts).
    */
   private lockTask<T>(id: string, fn: () => Promise<T>): Promise<T> {
-    return withFileLock(`${this.root}#task:${id}`, fn);
+    return withFileLock(`${resolve(this.root)}#task:${id}`, fn);
   }
 
   /** Ensure all status directories exist (under the handed root: a project directory in v2). */
@@ -162,8 +162,9 @@ export class TaskStore {
    *
    * A task that moves to an earlier directory while the scan runs (running → pending) could be
    * missed by both reads, so the scan is repeated until a cheap listing of the directory names
-   * matches the names the scan saw (at most MAX_SCAN_ROUNDS). If it never settles, the union of
-   * all rounds is returned (the latest read of each id), so an id seen in any round is not lost.
+   * matches the names the scan saw (at most MAX_SCAN_ROUNDS). If it never settles, the last round
+   * is returned plus every id seen in an earlier round and read again now (a task deleted
+   * meanwhile drops out), so an id seen in any round is not lost.
    */
   async list(): Promise<Task[]> {
     const union = new Map<string, Task>();
@@ -188,7 +189,16 @@ export class TaskStore {
         moves === (moveCount.get(moveKey(this.root)) ?? 0) &&
         sameSet(names, await this.listNames());
       if (settled) return [...byId.values()];
-      if (round >= MAX_SCAN_ROUNDS) return [...union.values()];
+      if (round >= MAX_SCAN_ROUNDS) {
+        // Ids seen in an earlier round but not the last: read them again, so a deleted task drops
+        // out and a moved one has its true status.
+        for (const id of union.keys()) {
+          if (byId.has(id)) continue;
+          const now = await this.get(id);
+          if (now) byId.set(id, now);
+        }
+        return [...byId.values()];
+      }
     }
   }
 
