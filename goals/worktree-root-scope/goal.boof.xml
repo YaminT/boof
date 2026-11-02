@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Filed from the Task 4 review of project-create-with-path (2026-11-02): out of scope there, pre-existing.</version>
+        <version number="2" status="done">Shipped: for non-local principals worktree.root (global settings, project create and update) must resolve under security.allowedProjectRoots (real path; not /, home or the data root; relative roots resolve against the project, and are refused in global settings); 403 project_root_not_allowed. Not done: the re-check at worktree creation, because the runner cannot tell who set the value.</version>
       </versions>
     </status>
     <tests>

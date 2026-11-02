@@ -1,6 +1,6 @@
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
   appendEvent,
   AttachmentStore,
@@ -599,6 +599,7 @@ export class TaskService {
     const projectsRoot = resolveProjectsRoot(await this.loadSettings());
     let assertTarget: ((real: string) => Promise<void>) | undefined;
     if (actor && !this.actsAsLocal(actor)) {
+      await this.assertWorktreeRootAllowed(actor, rest.worktree?.root, directory);
       // Vet the path as given (fast path), then hand the store the same check to run on the
       // directory it really uses, under the create lock and after the mkdir.
       const why =
@@ -654,6 +655,10 @@ export class TaskService {
   }
 
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
+    if (patch.worktree?.root !== undefined && actor && !this.actsAsLocal(actor)) {
+      const dir = patch.workingDirectory ?? (await this.getProject(id)).workingDirectory;
+      await this.assertWorktreeRootAllowed(actor, patch.worktree.root, dir);
+    }
     let assertTarget: ((real: string) => Promise<void>) | undefined;
     if (patch.workingDirectory !== undefined && actor && !this.actsAsLocal(actor)) {
       await this.assertRegistrationAllowed(actor, patch.workingDirectory);
@@ -752,6 +757,45 @@ export class TaskService {
         console.error(`unmapped project error code: ${String(unmapped)}`);
         return new OpError(500, "Internal error", "internal");
       }
+    }
+  }
+
+  /**
+   * A non-local principal may set `worktree.root` only to a place under
+   * `security.allowedProjectRoots` (real path, symlinks and `..` resolved), never `/`, the home
+   * directory or the data root. A relative root resolves against `base` (the project's directory);
+   * with no project to resolve it against it is refused.
+   */
+  private async assertWorktreeRootAllowed(
+    actor: Principal,
+    root: string | undefined,
+    base: string | undefined,
+  ): Promise<void> {
+    if (root === undefined) return;
+    const expanded = expandHome(root);
+    let abs = expanded;
+    if (!isAbsolute(expanded)) {
+      if (!base) {
+        throw new OpError(
+          403,
+          "Project root not allowed: worktree.root must be an absolute path here",
+          "project_root_not_allowed",
+        );
+      }
+      abs = resolve(base, expanded);
+    }
+    await this.assertRegistrationAllowed(actor, abs, {
+      mayNotExist: true,
+      why: "worktree.root is outside the allowed project roots",
+    });
+    const real = (await resolveUnbornPath(abs)).real;
+    const dataRoot = await realpath(this.root).catch(() => resolve(this.root));
+    if (isInsidePath(dataRoot, real)) {
+      throw new OpError(
+        403,
+        "Project root not allowed: worktree.root cannot be inside the data root",
+        "project_root_not_allowed",
+      );
     }
   }
 
@@ -899,6 +943,9 @@ export class TaskService {
 
   /** Apply a settings patch; a change of `runner.enabled` appends a global `runner.enabled` event. */
   async updateSettings(patch: SettingsPatch, actor?: Principal): Promise<Settings> {
+    if (actor && !this.actsAsLocal(actor)) {
+      await this.assertWorktreeRootAllowed(actor, patch.worktree?.root, undefined);
+    }
     if (patch.defaultProject) await this.getProject(patch.defaultProject);
     const before =
       patch.runner?.enabled !== undefined ? (await this.loadSettings()).runner.enabled : undefined;

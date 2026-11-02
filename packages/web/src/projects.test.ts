@@ -1201,3 +1201,94 @@ describe("the desktop operator key", () => {
     expect((await register(await repo("r6"), op.key)).status).toBe(201);
   });
 });
+
+describe("worktree.root for non-local principals (project_root_not_allowed)", () => {
+  let allowedRoot: string;
+  let key: string;
+  beforeEach(async () => {
+    allowedRoot = join(base, "allowed");
+    await mkdir(allowedRoot, { recursive: true });
+    await setSecurity({ allowedProjectRoots: [allowedRoot] });
+    peer = REMOTE;
+    key = await mint(["projects:write", "projects:read", "settings:write"]);
+  });
+  const setGlobal = (rootValue: string, k = key) =>
+    call("/api/settings", put({ worktree: { root: rootValue } }), k);
+  const setProject = (id: string, rootValue: string, k = key) =>
+    call(`/api/projects/${id}`, put({ worktree: { root: rootValue } }), k);
+  const code = async (res: Response) => (await res.json()).error?.code;
+
+  it("accepts a root under an allowed root, existing or not yet created", async () => {
+    expect((await setGlobal(join(allowedRoot, "wt"))).status).toBe(200);
+    expect((await setGlobal(join(allowedRoot, "a", "b", "c"))).status).toBe(200);
+  });
+
+  it("refuses roots outside the allowed roots, with `..`, and `/`, home and the data root", async () => {
+    for (const bad of [
+      join(base, "elsewhere"),
+      join(allowedRoot, "..", "elsewhere"),
+      "/",
+      homedir(),
+      join(root, "wt"),
+    ]) {
+      const res = await setGlobal(bad);
+      expect(res.status, bad).toBe(403);
+      expect(await code(res)).toBe("project_root_not_allowed");
+    }
+  });
+
+  it("refuses a symlink inside an allowed root that leads out", async () => {
+    const outside = join(base, "outside");
+    await mkdir(outside, { recursive: true });
+    await symlink(outside, join(allowedRoot, "link"));
+    expect((await setGlobal(join(allowedRoot, "link"))).status).toBe(403);
+    expect((await setGlobal(join(allowedRoot, "link", "deeper"))).status).toBe(403);
+  });
+
+  it("expands ~ and refuses a relative root in the global settings", async () => {
+    const home = process.env.HOME;
+    const fakeHome = join(base, "home");
+    await mkdir(join(fakeHome, "codes"), { recursive: true });
+    process.env.HOME = fakeHome;
+    try {
+      await setSecurity({ allowedProjectRoots: ["~/codes"] });
+      expect((await setGlobal("~/codes/wt")).status).toBe(200);
+      expect((await setGlobal("~/other")).status).toBe(403);
+      expect((await setGlobal("relative/wt")).status).toBe(403);
+    } finally {
+      process.env.HOME = home;
+    }
+  });
+
+  it("checks a per-project override: relative roots resolve against the project", async () => {
+    const dir = await repo("app", { parent: allowedRoot });
+    await new ProjectStore(root).create({ workingDirectory: dir, id: "app" });
+    expect((await setProject("app", join(allowedRoot, "wt"))).status).toBe(200);
+    expect((await setProject("app", ".wt")).status).toBe(200);
+    expect((await setProject("app", "../../../escape")).status).toBe(403);
+    expect((await setProject("app", join(base, "elsewhere"))).status).toBe(403);
+  });
+
+  it("checks the override at project create too", async () => {
+    const dir = await repo("new-app", { parent: allowedRoot });
+    const bad = await call(
+      "/api/projects",
+      post({ workingDirectory: dir, worktree: { root: join(base, "elsewhere") } }),
+      key,
+    );
+    expect(bad.status).toBe(403);
+    const ok = await call(
+      "/api/projects",
+      post({ workingDirectory: dir, worktree: { root: join(allowedRoot, "wt") } }),
+      key,
+    );
+    expect(ok.status).toBe(200);
+  });
+
+  it("leaves the local principal unchanged", async () => {
+    peer = LOOPBACK;
+    expect(
+      (await call("/api/settings", put({ worktree: { root: join(base, "free") } }))).status,
+    ).toBe(200);
+  });
+});
