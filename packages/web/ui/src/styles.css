@@ -497,6 +497,9 @@ textarea {
   resize: vertical;
   line-height: 1.5;
 }
+textarea.plain-font {
+  font-family: inherit;
+}
 /* Small numeric fields (priority, runs) shouldn't stretch the full line. */
 input[type="number"] {
   width: 120px;

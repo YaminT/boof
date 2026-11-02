@@ -3,6 +3,7 @@ import {
   autoPathHint,
   EMPTY_PROJECT_FORM,
   needsConfirm,
+  NOT_EMPTY_NOTICE,
   projectFormIssues,
   submitLabel,
   toCreateProjectInput,
@@ -43,6 +44,7 @@ describe("project form", () => {
     ).toEqual({ path: { mode: "existing", directory: "/r" } });
   });
   it("recognises the confirm error, labels the button and previews the auto path", () => {
+    expect(NOT_EMPTY_NOTICE).not.toMatch(/confirm/i);
     expect(needsConfirm("directory_not_empty")).toBe(true);
     expect(needsConfirm("invalid_input")).toBe(false);
     expect(needsConfirm(undefined)).toBe(false);

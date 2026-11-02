@@ -705,7 +705,12 @@ export function SettingsPage({
         </label>
         <label>
           Brief
-          <textarea rows={4} value={brief} onChange={(e) => setBrief(e.target.value)} />
+          <textarea
+            className="plain-font"
+            rows={4}
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+          />
         </label>
         <label className="check">
           <input type="checkbox" checked={paused} onChange={(e) => setPaused(e.target.checked)} />

@@ -14,6 +14,18 @@ import { navKey, type NavCounts, type NavKey } from "./nav.js";
 
 const OPEN_STATUSES = new Set(["draft", "pending", "running", "action"]);
 
+/**
+ * On narrow screens the project menu lives in the "More" sheet, which closes when the dialog
+ * opens, so the dialog has nothing to return focus to: hand it to the More button instead.
+ */
+function restoreMoreFocus() {
+  window.setTimeout(() => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const more = document.querySelector<HTMLElement>("[data-more-trigger]");
+    if (more && more.offsetParent !== null) more.focus();
+  }, 100);
+}
+
 export function AppShell({
   data,
   projects,
@@ -115,7 +127,10 @@ export function AppShell({
         />
         <AddProjectModal
           open={adding}
-          onOpenChange={setAdding}
+          onOpenChange={(open) => {
+            setAdding(open);
+            if (!open) restoreMoreFocus();
+          }}
           projectsRoot={data.settings?.projectsRoot}
           onAdded={(p) => {
             setAdding(false);

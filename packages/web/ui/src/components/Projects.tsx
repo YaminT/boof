@@ -19,6 +19,7 @@ import {
   autoPathHint,
   EMPTY_PROJECT_FORM,
   needsConfirm,
+  NOT_EMPTY_NOTICE,
   projectFormIssues,
   submitLabel,
   toCreateProjectInput,
@@ -71,8 +72,10 @@ function AddProjectForm({
       if (makeDefault) await api.updateSettings({ defaultProject: project.id });
       onAdded(project);
     } catch (err) {
-      if (err instanceof ApiError && needsConfirm(err.code)) setAskConfirm(true);
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && needsConfirm(err.code)) {
+        setAskConfirm(true);
+        setError(NOT_EMPTY_NOTICE);
+      } else setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -112,7 +115,7 @@ function AddProjectForm({
         </NativeSelect>
       </label>
       {form.mode === "auto" ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="muted" style={{ marginBottom: 14 }}>
           <bdi>{autoPathHint(projectsRoot, form.name)}</bdi>
         </p>
       ) : (
@@ -143,6 +146,7 @@ function AddProjectForm({
           )}
         </span>
         <Textarea
+          className="plain-font"
           value={form.brief}
           onChange={(e) => patch({ brief: e.target.value })}
           placeholder="What is this project and what should the agents know about it?"

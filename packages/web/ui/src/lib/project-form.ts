@@ -43,6 +43,9 @@ export function toCreateProjectInput(s: ProjectFormState): CreateProjectInput {
   return { ...(name ? { name } : {}), path, ...(brief ? { brief } : {}) };
 }
 
+/** Shown in place of the API wording once the confirm checkbox is offered. */
+export const NOT_EMPTY_NOTICE = "This folder already has files in it.";
+
 /** True for the API error code that asks for confirmation. */
 export function needsConfirm(code: string | undefined): boolean {
   return code === "directory_not_empty";

@@ -46,7 +46,12 @@ export function BottomBar({
             {t.key === "tasks" && counts.tasks > 0 ? `${t.label} (${counts.tasks})` : t.label}
           </button>
         ))}
-        <button type="button" className={tabClass(moreActive)} onClick={() => setOpen(true)}>
+        <button
+          type="button"
+          data-more-trigger
+          className={tabClass(moreActive)}
+          onClick={() => setOpen(true)}
+        >
           More
           {counts.inbox > 0 && (
             <span className="font-medium text-attention">{counts.inbox} in inbox</span>
