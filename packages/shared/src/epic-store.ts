@@ -182,7 +182,8 @@ export class EpicStore {
         throw new EpicError("not_found", `Epic not found: ${id}`);
       await this.write(
         epics.filter((e) => e.id !== id),
-        ignored,
+        // A hand-edited duplicate of the removed epic goes with it, or the epic would live on.
+        ignored.filter((e) => e.id !== id),
       );
     });
     await this.announce(id, "deleted", opts.by);

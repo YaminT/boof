@@ -109,7 +109,7 @@ Each task is a markdown document with structured frontmatter and named body sect
 - `startedAt` (optional): when the task last entered `running`; kept after the run ends
 - `steps` (optional): the current run's pipeline step headers, each `{ label, at }`, in order; reset when the task enters `running`. The run's last entry is `Finished`, `Failed` or `Stopped` with the time the run ended (the UI uses it as the last step's end); a parked run has none
 - `epicId` (optional): the task's epic, a record in the project's `epics.json`. A subtask has no `epicId` of its own; its epic is its parent's
-- `parentId` (optional): the parent task. One level only: a parent has no parent, and a task with subtasks cannot get one. Both keys resolve inside the task's own project; a missing target loads fine and the task is treated as top-level. A file without either key is a top-level task without an epic
+- `parentId` (optional): the parent task. One level only: a parent has no parent, and a task with subtasks cannot get one. Both keys resolve inside the task's own project; a missing target loads fine and the task is treated as top-level. A file without either key is a top-level task without an epic. Hand edits are read leniently: an emptied key, a list or a non-kebab value counts as absent (it is gone on the next write), `epicId: none` is ignored (`none` is the "no epic" filter value) and an integer reads as its string
 - per-task tool overrides
 - token usage
 - timestamps

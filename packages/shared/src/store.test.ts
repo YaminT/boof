@@ -492,3 +492,20 @@ describe("TaskStore.save and the hierarchy keys", () => {
     expect(now.frontmatter.epicId).toBeUndefined();
   });
 });
+
+describe("hierarchy keys through modify", () => {
+  it("persists a parent literally named none and refuses an empty epicId", async () => {
+    await store.create(newTask(fm({ id: "none", title: "None" }), "p"));
+    await store.create(newTask(fm({ id: "child", title: "Child" }), "p"));
+    await store.modify("child", (t) => {
+      t.frontmatter.parentId = "none";
+    });
+    expect((await store.get("child"))!.frontmatter.parentId).toBe("none");
+    await expect(
+      store.modify("child", (t) => {
+        t.frontmatter.epicId = "";
+      }),
+    ).rejects.toThrow();
+    expect((await store.get("child"))!.frontmatter.epicId).toBeUndefined();
+  });
+});

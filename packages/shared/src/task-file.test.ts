@@ -339,11 +339,10 @@ hi
     ["parentId:", undefined],
     ["parentId: ''", undefined],
     ["parentId: null", undefined],
-    ["parentId: 123", undefined],
-    ["parentId: none", undefined],
+    ["parentId: true", undefined],
     ["epicId: none", undefined],
     ["epicId:", undefined],
-    ["epicId: 7", undefined],
+    ["epicId: [a, b]", undefined],
   ])("treats a hand-cleared or invalid key (%s) as absent", (line) => {
     const raw = old.replace(
       "updated: 2026-06-04T10:00:00.000Z\n",
@@ -353,6 +352,28 @@ hi
     expect(task.frontmatter.parentId).toBeUndefined();
     expect(task.frontmatter.epicId).toBeUndefined();
     expect(serializeTask(task)).not.toMatch(/parentId|epicId/);
+  });
+
+  it("reads a hand-written integer key as its string and keeps a parent literally named none", () => {
+    const raw = old.replace(
+      "updated: 2026-06-04T10:00:00.000Z\n",
+      "updated: 2026-06-04T10:00:00.000Z\nparentId: 123\n",
+    );
+    expect(parseTask(raw).frontmatter.parentId).toBe("123");
+    const none = old.replace(
+      "updated: 2026-06-04T10:00:00.000Z\n",
+      "updated: 2026-06-04T10:00:00.000Z\nparentId: none\n",
+    );
+    expect(parseTask(none).frontmatter.parentId).toBe("none");
+  });
+
+  it("serializeTask refuses a value that would disappear", () => {
+    const t = parseTask(old);
+    t.frontmatter.epicId = "";
+    expect(() => serializeTask(t)).toThrow();
+    t.frontmatter.epicId = undefined;
+    t.frontmatter.parentId = "Not Kebab";
+    expect(() => serializeTask(t)).toThrow();
   });
 
   it("round-trips epicId and parentId", () => {

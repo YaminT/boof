@@ -64,7 +64,8 @@ function splitSections(
 /** Parse a task file's raw markdown into a structured Task. Validates frontmatter. */
 export function parseTask(raw: string): Task {
   const parsed = matter(raw);
-  const frontmatter = withoutEmptyHierarchyKeys(TaskFrontmatterSchema.parse(parsed.data));
+  readHierarchyKeys(parsed.data);
+  const frontmatter = TaskFrontmatterSchema.parse(parsed.data);
   const body = emptyBody();
 
   const sections = splitSections(parsed.content, 2, TOP_SECTIONS, "first");
@@ -114,18 +115,31 @@ function reportBlock(title: string, content: string): string {
   return trimmed ? `### ${title}\n\n${trimmed}\n` : `### ${title}\n`;
 }
 
-/** A hand-cleared hierarchy key parses to `undefined`; drop the key so it is never written. */
-function withoutEmptyHierarchyKeys(fm: TaskFrontmatter): TaskFrontmatter {
+/**
+ * Hierarchy keys are the ones people are told to hand-edit, so reading is lenient: an emptied
+ * value (`key:`, `''`), an unusable one (a list, a bool, a non-kebab string) and `epicId: none`
+ * (the filter value, never an epic) count as absent, and an integer reads as its string. The
+ * discarded value is gone on the next write. Writing is strict: `serializeTask` throws on a value
+ * that would not be kept, so a code bug is never dropped silently.
+ */
+function readHierarchyKeys(data: Record<string, unknown>): void {
   for (const key of ["epicId", "parentId"] as const) {
-    if (fm[key] === undefined) delete fm[key];
+    let v = data[key];
+    if (v === undefined) continue;
+    if (typeof v === "number" && Number.isInteger(v) && v >= 0) v = String(v);
+    const ok =
+      typeof v === "string" &&
+      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(v) &&
+      !(key === "epicId" && v === "none");
+    if (ok) data[key] = v;
+    else delete data[key];
   }
-  return fm;
 }
 
 /** Serialize a Task back to canonical markdown (frontmatter + fixed sections). */
 export function serializeTask(task: Task): string {
   // Validate on the way out too, so we never persist an invalid frontmatter.
-  const fm = withoutEmptyHierarchyKeys(TaskFrontmatterSchema.parse(task.frontmatter));
+  const fm = TaskFrontmatterSchema.parse(task.frontmatter);
   const reports = [
     "## Reports",
     "",

@@ -131,6 +131,40 @@ describe("EpicStore validation, locking and hand edits", () => {
     }
   });
 
+  it("serializes a remove with updates and a create", async () => {
+    const made = [];
+    for (let i = 0; i < 6; i++) made.push(await store.create({ title: `e${i}` }));
+    await Promise.all([
+      store.remove(made[0].id),
+      ...made.slice(1).map((e) => store.update(e.id, { priority: 7 })),
+      store.create({ title: "extra" }),
+    ]);
+    const all = await store.list();
+    expect(all.map((e) => e.id)).not.toContain(made[0].id);
+    expect(all).toHaveLength(6);
+    expect(all.filter((e) => e.priority === 7)).toHaveLength(5);
+  });
+
+  it("remove drops every record with that id, including hand-edited duplicates", async () => {
+    const rec = (title: string) => ({
+      id: "a",
+      title,
+      priority: 0,
+      archived: false,
+      created: "2026-06-04T10:00:00.000Z",
+      updated: "2026-06-04T10:00:00.000Z",
+    });
+    await writeFile(join(dir, "epics.json"), JSON.stringify({ epics: [rec("one"), rec("two")] }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await store.remove("a");
+      expect(await store.get("a")).toBeNull();
+      expect(JSON.parse(await readFile(join(dir, "epics.json"), "utf8")).epics).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("two stores with differently spelled directories share one lock", async () => {
     const a = new EpicStore(dir);
     const b = new EpicStore(dir + "/");
