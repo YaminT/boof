@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import type { SettingsPageId } from "../lib/route.js";
-import { NEEDS_SETTINGS_READ, settingsPageAccess } from "../lib/settings-access.js";
+import {
+  NEEDS_PROJECTS_READ,
+  NEEDS_SETTINGS_READ,
+  settingsPageAccess,
+} from "../lib/settings-access.js";
 import { projectPage } from "../lib/settings-project.js";
 import { agentsPage } from "../lib/settings-agents.js";
 import { budgetsPage } from "../lib/settings-budgets.js";
@@ -168,23 +172,25 @@ export function SettingsScreen(props: {
   pid: string;
   page: SettingsPageId;
   settings: Settings | null;
-  project: Project;
+  project: Project | null;
   projects: Project[];
   data: AppData;
   onProjectAdded: (p: Project) => void;
   reloadProjects: () => Promise<void>;
 }) {
-  const { settings, ...rest } = props;
-  if (settings) return <SettingsForms settings={settings} {...rest} />;
-  const access = settingsPageAccess(props.page, false);
+  const { settings, project, ...rest } = props;
+  if (settings && project) return <SettingsForms settings={settings} project={project} {...rest} />;
+  const access = settingsPageAccess(props.page, { settings: !!settings, project: !!project });
   return (
     <div className="flex max-w-[1320px] flex-col">
       <h1 className="m-0 mb-4 text-[length:var(--text-page)] leading-tight font-semibold">
         Settings
       </h1>
       <SettingsNav pid={props.pid} active={props.page} unsaved={new Set()} />
-      {access === "needs-settings-read" ? (
-        <p className="m-0 text-[length:var(--text-body)] text-attention">{NEEDS_SETTINGS_READ}</p>
+      {access === "needs-projects-read" || access === "needs-settings-read" ? (
+        <p className="m-0 text-[length:var(--text-body)] text-attention">
+          {access === "needs-projects-read" ? NEEDS_PROJECTS_READ : NEEDS_SETTINGS_READ}
+        </p>
       ) : props.page === "keys" ? (
         <KeysPage projects={props.projects} />
       ) : (

@@ -28,7 +28,10 @@ export function App() {
   const reloadProjects = useCallback(() => reloadRef.current(), []);
   const data = useAppData(selectedId, reloadProjects);
   const { settings, budget, refresh, needsToken, clearNeedsToken } = data;
-  const { projects, selected, select, reload } = useProjects(settings, routePid(route));
+  const { projects, projectsDenied, selected, select, reload } = useProjects(
+    settings,
+    routePid(route),
+  );
   reloadRef.current = reload;
   // The route before this one, for "← Tasks"; switching tabs of one task keeps the origin.
   const current = useRef<Route | null>(route);
@@ -156,6 +159,19 @@ export function App() {
           settings={settings}
           project={selected}
           projects={projects ?? []}
+          data={data}
+          onProjectAdded={(p) => void addProject(p)}
+          reloadProjects={reload}
+        />
+      )}
+      {route?.name === "settings" && projectsDenied && !selected && (
+        <SettingsScreen
+          key={route.pid}
+          pid={route.pid}
+          page={route.page}
+          settings={settings}
+          project={null}
+          projects={[]}
           data={data}
           onProjectAdded={(p) => void addProject(p)}
           reloadProjects={reload}

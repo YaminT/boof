@@ -32,6 +32,8 @@ export async function runAction<T>(
     if (opts.success) notify.success(opts.success);
     return value;
   } catch (err) {
+    // A request refused because the key was replaced or is being rotated: nothing to report.
+    if (err instanceof ApiError && err.quiet) return undefined;
     if (opts.onError?.(err)) return undefined;
     notify.error(opts.failure ? `${opts.failure}: ${errorMessage(err)}` : errorMessage(err));
     return undefined;

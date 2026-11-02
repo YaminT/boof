@@ -42,6 +42,16 @@ describe("runAction", () => {
     expect(n.error).toHaveBeenCalledExactlyOnceWith("boom");
   });
 
+  it("a quiet refusal (key replaced or rotating) shows no toast", async () => {
+    const n = notifier();
+    const out = await runAction(
+      () => Promise.reject(new ApiError("Unauthorized", 401, undefined, undefined, true)),
+      n,
+    );
+    expect(out).toBeUndefined();
+    expect(n.error).not.toHaveBeenCalled();
+  });
+
   it("onError that returns true suppresses the error toast", async () => {
     const n = notifier();
     const out = await runAction(() => Promise.reject(new Error("x")), n, { onError: () => true });

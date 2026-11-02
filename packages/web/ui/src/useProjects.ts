@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
-import { api } from "./api.js";
+import { api, ApiError } from "./api.js";
 
 const STORAGE_KEY = "boof-runner.project";
 
@@ -29,8 +29,16 @@ export function useProjects(settings: Settings | null, routePid: string | null) 
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [stored, setStored] = useState<string | null>(readStored);
 
+  // A key without projects:read cannot list projects; the Settings area still opens for it.
+  const [projectsDenied, setProjectsDenied] = useState(false);
   const reload = useCallback(async () => {
-    setProjects(await api.listProjects());
+    try {
+      setProjects(await api.listProjects());
+      setProjectsDenied(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) setProjectsDenied(true);
+      else throw err;
+    }
   }, []);
 
   const selected = useMemo(() => {
@@ -46,5 +54,5 @@ export function useProjects(settings: Settings | null, routePid: string | null) 
 
   const select = useCallback((id: string) => setStored(id), []);
 
-  return { projects, selected, selectedId, select, reload };
+  return { projects, projectsDenied, selected, selectedId, select, reload };
 }

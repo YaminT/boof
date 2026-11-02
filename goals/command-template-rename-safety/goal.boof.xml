@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Renaming a command template repoints every task that uses it (in every project, running ones included) by saving the task files directly, without the task lock. A running task can lose its own writes, or the repoint can be overwritten by the runner. Do the repoint through the task store's modify under the lock, and skip or defer running tasks (a running task keeps its own copy of the instructions anyway). Found in the phase 5 review of the Automation page (2026-11-02).</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), vitest</stack>
+    <rules>
+      <do>Read docs/boof-runner.md (command templates) and the rename code in packages/api/src/ops/admin.ts before changing code.</do>
+      <do>Write a failing test first: a rename while a task using the template is running must not touch that task's file, and the other tasks must still be repointed.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Filed from the phase 5 Task 6 review (2026-11-02); not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Service test with the mock tool: rename a template used by a pending and a running task; the pending one is repointed under the lock, the running one is left alone.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/api packages/web</run>
+    </tests>
+  </progress>
+</boof>

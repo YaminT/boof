@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Project, PublicWebhook } from "@boof-runner/shared/schema";
 import { api, ApiError } from "../api.js";
+import type { Whoami } from "../api-types.js";
+import { callerProjects } from "../lib/clients.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import {
@@ -33,7 +35,7 @@ import { OneTimeSecretDialog } from "./OneTimeSecretDialog.js";
 const label = "flex flex-col gap-1.5 text-sm font-medium";
 
 /** Settings › Automation: webhooks. The signing secret is shown once, in its own dialog. */
-export function Webhooks({ projects }: { projects: Project[] }) {
+export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects: Project[] }) {
   const [list, setList] = useState<PublicWebhook[] | null>(null);
   const [error, setError] = useState<"forbidden" | "failed" | null>(null);
   const [creating, setCreating] = useState(false);
@@ -57,12 +59,18 @@ export function Webhooks({ projects }: { projects: Project[] }) {
     void load();
   }, [load]);
 
-  const problems = webhookFormProblems({ url, events, projects: scope });
+  const newButton = useRef<HTMLButtonElement>(null);
+  const reach = callerProjects(whoami);
+  const selectable = reach ? projects.filter((p) => reach.includes(p.id)) : projects;
+  const problems = webhookFormProblems({ url, events, projects: scope }, reach);
+  // The problems show after a first try to create; a server error clears when the URL changes.
+  const [attempted, setAttempted] = useState(false);
   const open = () => {
     setUrl("");
     setEvents("");
-    setScope("*");
+    setScope(reach ? [...reach] : "*");
     setLines([]);
+    setAttempted(false);
     setCreating(true);
   };
   const addHint = (h: string) =>
@@ -71,6 +79,7 @@ export function Webhooks({ projects }: { projects: Project[] }) {
     );
 
   const create = async () => {
+    setAttempted(true);
     if (problems.length > 0 || busy) return;
     setBusy(true);
     setLines([]);
@@ -99,7 +108,7 @@ export function Webhooks({ projects }: { projects: Project[] }) {
     <section className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Webhooks</h2>
-        <Button className="ml-auto" onClick={open} disabled={error === "forbidden"}>
+        <Button ref={newButton} className="ml-auto" onClick={open} disabled={error === "forbidden"}>
           New webhook
         </Button>
       </div>
@@ -181,7 +190,10 @@ export function Webhooks({ projects }: { projects: Project[] }) {
                 className="mt-0 font-mono font-normal"
                 value={url}
                 placeholder="https://example.com/hook"
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setLines([]);
+                }}
               />
             </label>
             <label className={label}>
@@ -189,6 +201,7 @@ export function Webhooks({ projects }: { projects: Project[] }) {
               <Input
                 className="mt-0 font-normal"
                 value={events}
+                aria-label="Events"
                 placeholder="task.*, plan.*"
                 onChange={(e) => setEvents(e.target.value)}
               />
@@ -216,6 +229,7 @@ export function Webhooks({ projects }: { projects: Project[] }) {
                   name="wh-projects"
                   className="m-0 size-4 w-4"
                   checked={scope === "*"}
+                  disabled={reach !== null}
                   onChange={() => setScope("*")}
                 />
                 Every project
@@ -232,7 +246,7 @@ export function Webhooks({ projects }: { projects: Project[] }) {
               </label>
               {scope !== "*" && (
                 <div className="ml-6 flex max-h-40 flex-col gap-1 overflow-auto">
-                  {projects.map((p) => (
+                  {selectable.map((p) => (
                     <label
                       key={p.id}
                       className="check m-0 text-[length:var(--text-row)] font-normal"
@@ -253,7 +267,7 @@ export function Webhooks({ projects }: { projects: Project[] }) {
                 </div>
               )}
             </fieldset>
-            {(problems.length > 0 || lines.length > 0) && (
+            {((attempted && problems.length > 0) || lines.length > 0) && (
               <div
                 role="alert"
                 className="flex flex-col gap-0.5 text-[length:var(--text-row)] text-failed"
@@ -261,16 +275,14 @@ export function Webhooks({ projects }: { projects: Project[] }) {
                 {lines.map((l) => (
                   <span key={l}>{l}</span>
                 ))}
-                {problems.map((p) => (
-                  <span key={p}>{p}</span>
-                ))}
+                {attempted && problems.map((p) => <span key={p}>{p}</span>)}
               </div>
             )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreating(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={problems.length > 0 || busy}>
+              <Button type="submit" disabled={busy}>
                 Create webhook
               </Button>
             </DialogFooter>
@@ -291,7 +303,10 @@ export function Webhooks({ projects }: { projects: Project[] }) {
             success: "Webhook deleted",
             failure: "Could not delete the webhook",
           });
-          if (ok) await load();
+          if (ok) {
+            await load();
+            window.setTimeout(() => newButton.current?.focus(), 80);
+          }
         }}
       />
       <OneTimeSecretDialog

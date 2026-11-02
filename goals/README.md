@@ -43,6 +43,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`worktree-root-scope`](worktree-root-scope/goal.boof.xml) — Limit worktree.root to the allowed project roots for remote clients
 - [ ] [`webhook-update-and-event-names`](webhook-update-and-event-names/goal.boof.xml) — Webhook update (enable, disable, edit) and underscores in event names
 - [ ] [`settings-version-check`](settings-version-check/goal.boof.xml) — Optimistic concurrency for PUT /settings (low priority)
+- [ ] [`command-template-rename-safety`](command-template-rename-safety/goal.boof.xml) — Repoint tasks on a template rename under the task lock, skipping running tasks
 
 ## Correctness and robustness
 

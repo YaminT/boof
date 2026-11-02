@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import type { Project } from "@boof-runner/shared/schema";
+import { api } from "../api.js";
+import type { Whoami } from "../api-types.js";
 import { CommandTemplates } from "./CommandTemplates.js";
 import { Webhooks } from "./Webhooks.js";
 
@@ -10,10 +13,17 @@ export function AutomationPage({
   projects: Project[];
   onChange: () => void;
 }) {
+  const [whoami, setWhoami] = useState<Whoami | null>(null);
+  useEffect(() => {
+    void api
+      .whoami()
+      .then(setWhoami)
+      .catch(() => {});
+  }, []);
   return (
     <div className="flex max-w-[1000px] flex-col gap-10">
-      <CommandTemplates onChange={onChange} />
-      <Webhooks projects={projects} />
+      <CommandTemplates whoami={whoami} onChange={onChange} />
+      <Webhooks whoami={whoami} projects={projects} />
     </div>
   );
 }

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../api.js";
-import type { CommandTemplate } from "../api-types.js";
+import { api, ApiError } from "../api.js";
+import type { CommandTemplate, Whoami } from "../api-types.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Textarea } from "@/ui/textarea";
@@ -21,15 +21,30 @@ import {
   DropdownMenuTrigger,
 } from "@/ui/dropdown-menu";
 import { act } from "../lib/act.js";
-import { commandIdFor } from "../lib/automation.js";
+import {
+  canChangeTemplates,
+  commandIdFor,
+  TEMPLATE_RULE,
+  templateFormProblems,
+} from "../lib/automation.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 
 const label = "flex flex-col gap-1.5 text-sm font-medium";
 
 /** Settings › Automation: the command templates tasks can reuse. */
-export function CommandTemplates({ onChange }: { onChange: () => void }) {
+export function CommandTemplates({
+  whoami,
+  onChange,
+}: {
+  whoami: Whoami | null;
+  onChange: () => void;
+}) {
   const [list, setList] = useState<CommandTemplate[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<"forbidden" | "failed" | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const allowed = canChangeTemplates(whoami);
+  // The row a menu action acted on may be gone, so focus goes back to the page's main button.
+  const newButton = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState<CommandTemplate | "new" | null>(null);
   const [deleting, setDeleting] = useState<CommandTemplate | null>(null);
   const [name, setName] = useState("");
@@ -39,9 +54,9 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
   const load = useCallback(async () => {
     try {
       setList(await api.listCommands());
-      setFailed(false);
-    } catch {
-      setFailed(true);
+      setFailed(null);
+    } catch (e) {
+      setFailed(e instanceof ApiError && e.status === 403 ? "forbidden" : "failed");
     }
   }, []);
   useEffect(() => {
@@ -50,12 +65,23 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
 
   const open = (t: CommandTemplate | "new") => {
     setEditing(t);
+    setAttempted(false);
     setName(t === "new" ? "" : t.name);
     setBody(t === "new" ? "" : t.body);
   };
 
+  const problems = templateFormProblems(
+    name,
+    (list ?? []).map((t) => t.id),
+    editing && editing !== "new" ? editing.id : null,
+  );
+  const newId = commandIdFor(name);
+  const renamed = editing !== null && editing !== "new" && !!name.trim() && newId !== editing.id;
+
   const save = async () => {
-    if (!editing || !name.trim() || busy) return;
+    if (!editing || busy) return;
+    setAttempted(true);
+    if (problems.length > 0) return;
     setBusy(true);
     const ok = await act(
       () =>
@@ -76,11 +102,18 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
     <section className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Command templates</h2>
-        <Button className="ml-auto" onClick={() => open("new")}>
+        <Button ref={newButton} className="ml-auto" onClick={() => open("new")} disabled={!allowed}>
           New template
         </Button>
       </div>
-      {failed ? (
+      {!allowed && (
+        <p className="m-0 text-[length:var(--text-row)] text-ink-muted">{TEMPLATE_RULE}</p>
+      )}
+      {failed === "forbidden" ? (
+        <p className="m-0 text-[length:var(--text-body)] text-attention">
+          This browser&apos;s key cannot read command templates. It needs the tasks:read scope.
+        </p>
+      ) : failed === "failed" ? (
         <div className="flex items-center gap-2 text-[length:var(--text-row)] text-ink-muted">
           Could not load the templates.
           <Button variant="outline" size="xs" onClick={() => void load()}>
@@ -110,8 +143,10 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
                   <EllipsisIcon className="size-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuItem onClick={() => open(t)}>Edit template</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setDeleting(t)}>
+                  <DropdownMenuItem disabled={!allowed} onClick={() => open(t)}>
+                    Edit template
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={!allowed} onClick={() => setDeleting(t)}>
                     Delete template…
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -149,8 +184,13 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
               <Input
                 readOnly
                 className="mt-0 font-mono font-normal"
-                value={editing && editing !== "new" ? editing.id : commandIdFor(name)}
+                value={name.trim() ? newId : editing && editing !== "new" ? editing.id : ""}
               />
+              {renamed && (
+                <span className="text-[length:var(--text-row)] font-normal text-ink-muted">
+                  The id changes. Tasks that use this template are updated.
+                </span>
+              )}
             </label>
             <label className={label}>
               Instructions
@@ -161,11 +201,21 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
                 onChange={(e) => setBody(e.target.value)}
               />
             </label>
+            {attempted && problems.length > 0 && (
+              <div
+                role="alert"
+                className="flex flex-col gap-0.5 text-[length:var(--text-row)] text-failed"
+              >
+                {problems.map((p) => (
+                  <span key={p}>{p}</span>
+                ))}
+              </div>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditing(null)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!name.trim() || busy}>
+              <Button type="submit" disabled={busy}>
                 {editing === "new" ? "Create template" : "Save template"}
               </Button>
             </DialogFooter>
@@ -177,7 +227,11 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Delete template"
-        body={deleting ? `Delete the template “${deleting.name}”? Tasks that use it lose it.` : ""}
+        body={
+          deleting
+            ? `Delete the template “${deleting.name}”? Tasks that use it keep their own copy of the instructions.`
+            : ""
+        }
         confirmLabel="Delete template"
         destructive
         onConfirm={async () => {
@@ -193,6 +247,7 @@ export function CommandTemplates({ onChange }: { onChange: () => void }) {
           );
           await load();
           onChange();
+          window.setTimeout(() => newButton.current?.focus(), 80);
         }}
       />
     </section>

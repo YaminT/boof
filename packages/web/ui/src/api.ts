@@ -28,6 +28,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code?: string,
     readonly details?: unknown,
+    /** A refusal that needs no message: the key was replaced or is being rotated. */
+    readonly quiet = false,
   ) {
     super(message);
   }
@@ -35,7 +37,9 @@ export class ApiError extends Error {
 
 /** Throw a readable error for a failed response; a 401 also opens the token gate. */
 async function failure(res: Response, data: unknown, sent?: string): Promise<never> {
-  if (res.status === 401) notifyUnauthorized(sent);
+  // A 401 for a key that was replaced or is being rotated is not worth a message.
+  const verdict = res.status === 401 ? notifyUnauthorized(sent) : undefined;
+  const quiet = verdict === "stale" || verdict === "held";
   const err = (data as { error?: { message?: string; code?: string; details?: unknown } | string })
     .error;
   const message = typeof err === "string" ? err : err?.message;
@@ -44,17 +48,22 @@ async function failure(res: Response, data: unknown, sent?: string): Promise<nev
     res.status,
     typeof err === "object" ? err?.code : undefined,
     typeof err === "object" ? err?.details : undefined,
+    quiet,
   );
 }
 
-async function http<T>(path: string, init?: RequestInit): Promise<T> {
+async function http<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const sent = getToken();
   const res = await fetch(path, {
     ...init,
     headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return failure(res, data, sent);
+  if (!res.ok) {
+    // The key changed while this request was in flight (a rotation): try once with the new one.
+    if (res.status === 401 && !retried && sent !== getToken()) return http<T>(path, init, true);
+    return failure(res, data, sent);
+  }
   return data as T;
 }
 

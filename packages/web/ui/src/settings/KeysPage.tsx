@@ -322,7 +322,10 @@ export function KeysPage({ projects }: { projects: Project[] }) {
             success: "Key revoked",
             failure: "Could not revoke the key",
           });
-          if (r) await load();
+          if (r) {
+            await load();
+            window.setTimeout(() => newKeyButton.current?.focus(), 80);
+          }
         }}
       />
       <OneTimeSecretDialog
