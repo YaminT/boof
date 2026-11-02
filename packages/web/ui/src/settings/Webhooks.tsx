@@ -104,14 +104,13 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
   const toggle = async (w: Listed) => {
     // Decide from the webhook as it is now, not as the list last showed it.
     const fresh = (await api.listWebhooks().catch(() => [w])).find((x) => x.id === w.id) ?? w;
-    const ok = await act(() => api.updateWebhook(w.id, { enabled: !fresh.enabled }), {
+    await act(() => api.updateWebhook(w.id, { enabled: !fresh.enabled }), {
       success: fresh.enabled
         ? "Webhook disabled. Its events are skipped until you enable it again."
         : "Webhook enabled. It sends events from now on.",
       failure: "Could not change the webhook",
     });
     await load();
-    void ok;
   };
 
   const create = async () => {
@@ -191,6 +190,9 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
               <span className="min-w-0 max-w-[28rem] truncate font-mono text-[13px]" title={w.url}>
                 {w.url}
               </span>
+              <span className="font-mono text-[length:var(--text-meta)] text-ink-muted">
+                {w.id}
+              </span>
               {!w.enabled && <TonePill tone="neutral">disabled</TonePill>}
               {w.enabled && w.notDelivering && (
                 <TonePill tone="attention">not delivering: {w.notDelivering}</TonePill>
@@ -204,14 +206,14 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 <Button
                   size="sm"
                   variant="outline"
-                  aria-label={`${w.enabled ? "Disable" : "Enable"} the webhook to ${w.url}`}
+                  aria-label={`${w.enabled ? "Disable" : "Enable"} the webhook ${w.id} to ${w.url}`}
                   onClick={() => void toggle(w)}
                 >
                   {w.enabled ? "Disable" : "Enable"}
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger
-                    aria-label={`More actions for the webhook to ${w.url}`}
+                    aria-label={`More actions for the webhook ${w.id} to ${w.url}`}
                     className="inline-flex size-7 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     <EllipsisIcon className="size-4" />
@@ -372,7 +374,11 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Delete webhook"
-        body={deleting ? `Delete the webhook to ${deleting.url}? Deliveries stop at once.` : ""}
+        body={
+          deleting
+            ? `Delete the webhook ${deleting.id} to ${deleting.url}? Deliveries stop at once.`
+            : ""
+        }
         confirmLabel="Delete webhook"
         destructive
         onConfirm={async () => {
