@@ -43,9 +43,13 @@ export async function stdioPrincipal(
   const asStartError = (err: unknown): never => {
     throw err instanceof LocalPrincipalError ? new McpStartError(err.message) : err;
   };
-  const resolve = await localPrincipal({ settings, authStore, client: opts.client }).catch(
-    asStartError,
-  );
+  // Without a client and without --admin the host acts like a review-trust client.
+  const resolve = await localPrincipal({
+    settings,
+    authStore,
+    client: opts.client,
+    withoutClient: opts.admin ? "admin" : "review",
+  }).catch(asStartError);
   return () => resolve().catch(asStartError);
 }
 

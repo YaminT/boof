@@ -389,6 +389,43 @@ describe("tools generated from the registry", () => {
     }
   });
 
+  it("a server fixed to one project narrows the principal, not only the tool list", async () => {
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const other = join(repo, "..", "boof-mcp-other");
+    await mkdir(other, { recursive: true });
+    await execCommand("git", ["init", "-q"], { cwd: other });
+    await services.createProject({ workingDirectory: other, id: "other" }, LOCAL_PRINCIPAL);
+    try {
+      const pinned = await connect(LOCAL_PRINCIPAL, "shop");
+      const list = await call(pinned, "boof_list_projects");
+      expect(list.structuredContent?.projects.map((p: { id: string }) => p.id)).toEqual(["shop"]);
+      const whoami = await call(pinned, "boof_whoami");
+      expect(JSON.stringify(whoami.structuredContent)).not.toContain("other");
+      // Resources cannot reach the other project either.
+      const all = await connect(LOCAL_PRINCIPAL);
+      expect(
+        (await call(all, "boof_list_projects")).structuredContent?.projects.length,
+      ).toBeGreaterThan(1);
+    } finally {
+      await rm(other, { recursive: true, force: true });
+    }
+  });
+
+  it("a review-trust client cannot archive, unarchive or purge a project over MCP", async () => {
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const rev = await connect(await clientPrincipal(["projects:write", "projects:read"], "review"));
+    for (const [tool, args] of [
+      ["boof_archive_project", { projectId: "shop" }],
+      ["boof_unarchive_project", { projectId: "shop" }],
+      ["boof_delete_project", { projectId: "shop", purge: true }],
+    ] as const) {
+      const res = await call(rev, tool, args);
+      expect(res.isError, tool).toBe(true);
+      expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
+    }
+    expect((await services.getProject("shop")).archived).toBe(false);
+  });
+
   it("a keyless stdio server hides the administration tools unless --admin is given", async () => {
     const hidden = (
       await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false })).listTools()
@@ -676,7 +713,15 @@ describe("prompts", () => {
 
 describe("stdio principal", () => {
   it("uses the local principal only in local-trust mode", async () => {
-    expect((await (await stdioPrincipal(services, authStore, { root }))()).kind).toBe("local");
+    // Keyless: the review-trust local-mcp principal, or the local administrator with --admin.
+    expect(await (await stdioPrincipal(services, authStore, { root }))()).toMatchObject({
+      kind: "client",
+      id: "local-mcp",
+      trust: "review",
+    });
+    expect((await (await stdioPrincipal(services, authStore, { root, admin: true }))()).kind).toBe(
+      "local",
+    );
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({
       ...settings,

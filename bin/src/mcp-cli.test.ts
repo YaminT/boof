@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,6 +103,81 @@ describe("boof-runner mcp over stdio", () => {
     const admin = await toolNames(["--admin"]);
     for (const n of adminOnly) expect(admin, n).toContain(n);
   }, 60000);
+
+  /** One tools/call per line, after initialize; returns the results by id. */
+  const callTools = async (args: string[], calls: [string, Record<string, unknown>][]) => {
+    const lines = [
+      INIT,
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      ...calls.map(([name, a], i) => ({
+        jsonrpc: "2.0",
+        id: i + 2,
+        method: "tools/call",
+        params: { name, arguments: a },
+      })),
+    ];
+    const res = await runMcp(args, lines);
+    const msgs = res.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    return calls.map((_, i) => {
+      const m = msgs.find((x) => x.id === i + 2);
+      return (m?.result ?? m?.error) as {
+        isError?: boolean;
+        content?: { text: string }[];
+        structuredContent?: Record<string, any>;
+        message?: string;
+      };
+    });
+  };
+
+  it("without --admin the host acts as a review-trust client: the unattended-agent chain fails at every step", async () => {
+    const { ProjectStore } = await import("@boof-runner/shared");
+    const { execCommand } = await import("@boof-runner/runner");
+    const base = await mkdtemp(join(tmpdir(), "boof-mcp-repos-"));
+    const repoDir = join(base, "repo");
+    const elsewhere = join(base, "elsewhere");
+    for (const d of [repoDir, elsewhere]) {
+      await mkdir(d, { recursive: true });
+      await execCommand("git", ["init", "-q"], { cwd: d });
+    }
+    await new ProjectStore(root).create({ workingDirectory: repoDir, id: "shop" });
+    const chain: [string, Record<string, unknown>][] = [
+      ["boof_create_project", { workingDirectory: elsewhere }],
+      ["boof_create_task", { projectId: "shop", title: "Do", prompt: "p", status: "pending" }],
+      [
+        "boof_update_project",
+        { projectId: "shop", worktree: { root: "/tmp" }, budget: { perTaskUsd: 999 } },
+      ],
+      ["boof_set_runner", { enabled: true }],
+      ["boof_list_projects", {}],
+    ];
+    const plain = await callTools([], chain);
+    const text = (r: (typeof plain)[number]) => r?.content?.[0]?.text ?? r?.message ?? "";
+    expect(text(plain[0]!)).toMatch(/^forbidden_trust:/);
+    // A drafted task still works, as a draft awaiting a human.
+    expect(plain[1]!.isError).toBeFalsy();
+    expect(plain[1]!.structuredContent?.frontmatter.status).toBe("draft");
+    expect(text(plain[2]!)).toMatch(/^forbidden_trust:/);
+    expect(text(plain[3]!)).toMatch(/^forbidden_trust:/);
+    expect(plain[4]!.structuredContent?.projects).toHaveLength(1);
+    const queue = await callTools([], [["boof_queue_task", { projectId: "shop", taskId: "do" }]]);
+    expect(text(queue[0]!)).toMatch(/^forbidden_trust:/);
+    // With --admin the same chain works.
+    const admin = await callTools(
+      ["--admin"],
+      [
+        ["boof_create_project", { workingDirectory: elsewhere }],
+        ["boof_create_task", { projectId: "shop", title: "Do 2", prompt: "p", status: "pending" }],
+        ["boof_set_runner", { enabled: true }],
+      ],
+    );
+    expect(admin[0]!.isError).toBeFalsy();
+    expect(admin[1]!.structuredContent?.frontmatter.status).toBe("pending");
+    expect(admin[2]!.isError).toBeFalsy();
+    await rm(base, { recursive: true, force: true });
+  }, 90000);
 
   it("with --client the client's scopes decide, with no --admin needed", async () => {
     await new AuthStore(root).create({ name: "boss", scopes: ["admin"], trust: "trusted" });

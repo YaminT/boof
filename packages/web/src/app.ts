@@ -490,7 +490,10 @@ export function createApp(deps: AppDeps): Hono {
     });
   });
 
-  app.all("/mcp", mcpRoute({ service, authStore }));
+  app.all(
+    "/mcp",
+    mcpRoute({ service, authStore, isSelfUrl: deps.isSelfUrl, resolveHost: deps.resolveHost }),
+  );
 
   app.route("/api", api);
   app.all("/api/*", (c) =>

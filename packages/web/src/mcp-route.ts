@@ -1,12 +1,15 @@
 import type { Context } from "hono";
 import { handleMcpHttp } from "@boof-runner/mcp";
 import { mcpSettings, type AuthStore } from "@boof-runner/shared";
-import type { TaskService } from "@boof-runner/api";
+import type { ResolveHost, TaskService } from "@boof-runner/api";
 
 export interface McpRouteDeps {
   service: TaskService;
   /** The same client registry the authenticator uses, so revocations apply at once. */
   authStore: AuthStore;
+  /** The same self-host and DNS checks the REST routes give operations (webhook targets). */
+  isSelfUrl?: (url: URL) => boolean;
+  resolveHost?: ResolveHost;
 }
 
 const rpcError = (c: Context, status: 400 | 404 | 405, code: number, message: string) =>
@@ -38,6 +41,14 @@ export function mcpRoute(deps: McpRouteDeps) {
     } catch {
       return rpcError(c, 400, -32700, "Parse error: invalid JSON");
     }
+    if (Array.isArray(parsedBody)) {
+      return rpcError(
+        c,
+        400,
+        -32600,
+        "JSON-RPC batches are not supported on this endpoint: send one request per POST",
+      );
+    }
     const method = (parsedBody as { method?: unknown } | null)?.method;
     if (typeof method === "string" && method !== "tools/call") {
       c.set("auditExtra", { action: `mcp:${method}` });
@@ -48,6 +59,8 @@ export function mcpRoute(deps: McpRouteDeps) {
       principal: c.get("principal"),
       services: deps.service,
       authStore: deps.authStore,
+      isSelfUrl: deps.isSelfUrl,
+      resolveHost: deps.resolveHost,
       parsedBody,
       onCall: (info) =>
         c.set("auditExtra", {

@@ -61,8 +61,11 @@ export interface CreateClientInput {
   randomSuffix?: boolean;
 }
 
-/** `local` names the local principal, so no client may hold that id. */
-const RESERVED_CLIENT_IDS = ["local"];
+/** The principal of a keyless stdio MCP server without `--admin`. It is not stored: see `localPrincipal`. */
+export const LOCAL_MCP_ID = "local-mcp";
+
+/** `local` names the local principal and `local-mcp` the keyless MCP one, so no client may hold either id. */
+const RESERVED_CLIENT_IDS = ["local", LOCAL_MCP_ID];
 
 /** Tighten an existing `auth/` directory (an older data root may have it looser) to mode 0700. */
 export async function tightenAuthDir(root: string): Promise<void> {

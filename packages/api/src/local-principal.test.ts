@@ -9,7 +9,7 @@ import {
   SecuritySettingsSchema,
   type Settings,
 } from "@boof-runner/shared";
-import { LocalPrincipalError, localPrincipal } from "./local-principal.js";
+import { LOCAL_MCP_ID, LocalPrincipalError, localPrincipal } from "./local-principal.js";
 
 let root: string;
 let authStore: AuthStore;
@@ -97,5 +97,41 @@ describe("localPrincipal", () => {
   it("ignores settings.mcp.enabled", async () => {
     const resolve = await localPrincipal({ settings: settings("local-trust", false), authStore });
     expect(await resolve()).toEqual(LOCAL_PRINCIPAL);
+  });
+
+  it("without a client and as the MCP default, it is the reserved review-trust local-mcp principal", async () => {
+    const resolve = await localPrincipal({
+      settings: settings(),
+      authStore,
+      withoutClient: "review",
+    });
+    const p = await resolve();
+    expect(p).toMatchObject({ kind: "client", id: LOCAL_MCP_ID, trust: "review", projects: "*" });
+    expect(p.scopes.has("tasks:write")).toBe(true);
+    expect(p.scopes.has("plans:write")).toBe(true);
+    for (const s of ["admin", "auth:admin", "settings:write"] as const) {
+      expect(p.scopes.has(s), s).toBe(false);
+    }
+    // It is not stored: no client of that id exists, and none can be created.
+    expect(await authStore.get(LOCAL_MCP_ID)).toBeNull();
+    const made = await authStore.create({ name: "local-mcp", scopes: ["tasks:read"] });
+    expect(made.client.id).not.toBe(LOCAL_MCP_ID);
+    // The generated CLI keeps the local admin.
+    expect(await (await localPrincipal({ settings: settings(), authStore }))()).toEqual(
+      LOCAL_PRINCIPAL,
+    );
+    // A named client is that client, whatever the default.
+    const { client } = await authStore.create({ name: "x", scopes: ["tasks:read"] });
+    const named = await localPrincipal({
+      settings: settings(),
+      authStore,
+      client: client.id,
+      withoutClient: "review",
+    });
+    expect((await named()).id).toBe(client.id);
+    // required mode still refuses without a client.
+    await expect(
+      localPrincipal({ settings: settings("required"), authStore, withoutClient: "review" }),
+    ).rejects.toThrow(LocalPrincipalError);
   });
 });

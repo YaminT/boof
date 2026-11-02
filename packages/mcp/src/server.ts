@@ -16,6 +16,7 @@ import {
   type AnyOperation,
   type OpContext,
   type OpError,
+  type ResolveHost,
 } from "@boof-runner/api";
 import {
   authorize,
@@ -63,6 +64,9 @@ export interface BoofMcpOptions {
   ops?: readonly AnyOperation[];
   version?: string;
   now?: () => string;
+  /** Passed to every operation like the REST routes do: webhook targets may not be this server. */
+  isSelfUrl?: (url: URL) => boolean;
+  resolveHost?: ResolveHost;
   /** The HTTP request's signal (stateless HTTP); stdio leaves it unset. */
   signal?: AbortSignal;
 }
@@ -75,6 +79,13 @@ export interface McpRuntime {
   /** Run an operation as the current principal. */
   run(op: AnyOperation, raw: unknown, signal?: AbortSignal): Promise<unknown>;
   op(name: string): AnyOperation;
+}
+
+/** The principal restricted to one project: a server pinned to it must not reach any other. */
+function narrowToProject(principal: Principal, project: string): Principal {
+  const reach = principal.projects;
+  const projects = reach === "*" || reach.has(project) ? new Set([project]) : new Set<string>();
+  return { ...principal, projects };
 }
 
 /** Scopes that only the server's administrator holds: API clients and webhooks need one of them. */
@@ -189,8 +200,11 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
   const allOps = options.ops ?? registry;
   const byTool = new Map(ops.map((o) => [o.mcp.name!, o]));
   const byName = new Map(allOps.map((o) => [o.name, o]));
-  const resolve = async (): Promise<Principal> =>
-    typeof options.principal === "function" ? options.principal() : options.principal;
+  const resolve = async (): Promise<Principal> => {
+    const principal =
+      typeof options.principal === "function" ? await options.principal() : options.principal;
+    return options.project === undefined ? principal : narrowToProject(principal, options.project);
+  };
 
   const run = async (op: AnyOperation, raw: unknown, signal?: AbortSignal): Promise<unknown> => {
     const principal = await resolve();
@@ -199,6 +213,8 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
       principal,
       services: options.services,
       authStore: options.authStore,
+      isSelfUrl: options.isSelfUrl,
+      resolveHost: options.resolveHost,
       signal:
         options.signal && signal
           ? AbortSignal.any([options.signal, signal])

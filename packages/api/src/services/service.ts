@@ -939,28 +939,35 @@ export class TaskService {
     }
   }
 
-  archiveProject(id: string): Promise<Project> {
-    return this.updateProject(id, { archived: true });
+  /** Archiving hides a project from the queue: a review-trust client may not (see `assertMayChangeProject`). */
+  archiveProject(id: string, actor?: Principal): Promise<Project> {
+    return this.updateProject(id, { archived: true }, actor);
   }
 
-  async unarchiveProject(id: string): Promise<Project> {
-    const project = await this.updateProject(id, { archived: false });
+  async unarchiveProject(id: string, actor?: Principal): Promise<Project> {
+    const project = await this.updateProject(id, { archived: false }, actor);
     await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
       console.error(`could not prune worktrees of project ${project.id}:`, err),
     );
     return project;
   }
 
-  pauseProject(id: string): Promise<Project> {
-    return this.updateProject(id, { paused: true });
+  pauseProject(id: string, actor?: Principal): Promise<Project> {
+    return this.updateProject(id, { paused: true }, actor);
   }
 
-  resumeProject(id: string): Promise<Project> {
-    return this.updateProject(id, { paused: false });
+  resumeProject(id: string, actor?: Principal): Promise<Project> {
+    return this.updateProject(id, { paused: false }, actor);
   }
 
   /** Archive (default) or purge a project; refused while one of its tasks runs. */
-  async removeProject(id: string, opts: { purge?: boolean } = {}): Promise<{ ok: true }> {
+  async removeProject(
+    id: string,
+    opts: { purge?: boolean } = {},
+    actor?: Principal,
+  ): Promise<{ ok: true }> {
+    // Archiving and purging a project are operator actions, not a review-trust client's.
+    await this.assertMayChangeProject({ archived: true }, actor, false);
     try {
       await this.projects.remove(id, opts);
     } catch (err) {

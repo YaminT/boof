@@ -297,7 +297,7 @@ If you run on the same machine as boof, the host starts boof as a child process.
 claude mcp add boof -- boof-runner mcp -d <data-root> --client <client-id>
 ```
 
-- `--client <id>`: act as this API client. Its scopes, projects and trust apply. Without it you are the local administrator, and only when `security.auth.mode` is `local-trust`.
+- `--client <id>`: act as this API client. Its scopes, projects and trust apply. Without it (and only when `security.auth.mode` is `local-trust`) you act like a review-trust client: your tasks and plans are drafts a human approves in the UI, you cannot queue, retry, answer, activate a plan, switch the runner or create a project, and you have no administration tools. `--admin` makes you the local administrator.
 - `--project <id>`: serve one project. The `projectId` argument is filled in and hidden from the tool schemas.
 - `-d <data-root>`: the data root (default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
 
@@ -1958,7 +1958,7 @@ Path parameters (all required):
 - Operation: `webhooks.list`
 - Scope: `admin`
 - MCP tool: `boof_list_webhooks`
-- What it does: Lists the webhook subscriptions without their secrets. No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.
+- What it does: Lists the webhook subscriptions without their secrets; each URL is shown as scheme://host/… (the full address is shown once, at create). No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.
 - Success: HTTP 200 with `{ webhooks: { created: string, createdBy: string, createdByClient?: boolean, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string }[] }`.
 - Errors: `403 forbidden_scope`
 

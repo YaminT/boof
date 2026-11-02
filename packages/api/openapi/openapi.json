@@ -11518,7 +11518,7 @@
     },
     "/webhooks": {
       "get": {
-        "description": "Lists the webhook subscriptions without their secrets. No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.",
+        "description": "Lists the webhook subscriptions without their secrets; each URL is shown as scheme://host/… (the full address is shown once, at create). No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.",
         "operationId": "webhooks.list",
         "parameters": [],
         "responses": {

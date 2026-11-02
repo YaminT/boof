@@ -309,10 +309,15 @@ rules, input validation and error codes are identical, and every call is audited
 - **Administration tools.** Every operation is a tool except attachment upload and download (REST
   only), including API clients, webhooks, settings, command templates and project deletion. Keys
   and signing secrets appear once, in the result (never in the summary line). Over stdio,
-  `boof-runner mcp` without `--client` is the local administrator, so it lists the administration
-  tools (clients, webhooks, settings writes, command templates, the health check, project deletion)
-  only with `--admin`; with `--client <id>` that client's scopes decide and `--admin` is refused.
-  Give agent hosts `--client` with a narrow client.
+  `boof-runner mcp` without `--client` acts as the reserved review-trust principal `local-mcp`
+  (every scope except `admin`, `auth:admin` and `settings:write`; not stored in `clients.json`), so
+  everything a review-trust client may not do is refused: tasks and plans it creates are drafts a
+  human approves, it cannot queue, retry, answer, activate a plan or switch the runner, it changes
+  only its own work and only the name, labels and paused state of a project, and it creates no
+  project. With `--admin` it is the local administrator and lists the administration tools too;
+  with `--client <id>` that client's scopes decide and `--admin` is refused. Give agent hosts
+  `--client` with a narrow client. `projects.archive`, `unarchive` and `delete` (purge) are
+  refused to review-trust keys over REST and MCP alike. `POST /mcp` refuses JSON-RPC batches.
 
 Tools (the names are stable). Plan tools take `expectedVersion`, task updates `expectedUpdated`
 (the ETag/If-Match values of the REST API). The table lists the tools of the common flow; the

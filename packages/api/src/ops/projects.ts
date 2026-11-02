@@ -93,7 +93,7 @@ export const projectsArchive = defineOp({
   rest: { method: "POST", path: "/projects/{projectId}/archive" },
   mcp: { expose: true, name: "boof_archive_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Archived project ${p.id}`,
-  handler: (ctx, input) => ctx.services.archiveProject(input.projectId),
+  handler: (ctx, input) => ctx.services.archiveProject(input.projectId, ctx.principal),
 });
 
 export const projectsUnarchive = defineOp({
@@ -107,7 +107,7 @@ export const projectsUnarchive = defineOp({
   rest: { method: "POST", path: "/projects/{projectId}/unarchive" },
   mcp: { expose: true, name: "boof_unarchive_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Unarchived project ${p.id}`,
-  handler: (ctx, input) => ctx.services.unarchiveProject(input.projectId),
+  handler: (ctx, input) => ctx.services.unarchiveProject(input.projectId, ctx.principal),
 });
 
 export const projectsPause = defineOp({
@@ -122,7 +122,7 @@ export const projectsPause = defineOp({
   rest: { method: "POST", path: "/projects/{projectId}/pause" },
   mcp: { expose: true, name: "boof_pause_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Paused project ${p.id}`,
-  handler: (ctx, input) => ctx.services.pauseProject(input.projectId),
+  handler: (ctx, input) => ctx.services.pauseProject(input.projectId, ctx.principal),
 });
 
 export const projectsResume = defineOp({
@@ -137,7 +137,7 @@ export const projectsResume = defineOp({
   rest: { method: "POST", path: "/projects/{projectId}/resume" },
   mcp: { expose: true, name: "boof_resume_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Resumed project ${p.id}`,
-  handler: (ctx, input) => ctx.services.resumeProject(input.projectId),
+  handler: (ctx, input) => ctx.services.resumeProject(input.projectId, ctx.principal),
 });
 
 export const projectsDelete = defineOp({
@@ -153,7 +153,7 @@ export const projectsDelete = defineOp({
   mcp: { expose: true, name: "boof_delete_project", annotations: DESTRUCTIVE },
   summary: () => "Project deleted",
   handler: (ctx, input) =>
-    ctx.services.removeProject(input.projectId, { purge: input.purge === true }),
+    ctx.services.removeProject(input.projectId, { purge: input.purge === true }, ctx.principal),
 });
 
 export const projectsUsage = defineOp({

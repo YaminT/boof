@@ -443,6 +443,29 @@ describe("authorize (scopes)", () => {
     expect(existsSync(fresh)).toBe(false);
   });
 
+  it("a review-trust key cannot archive, unarchive or purge a project", async () => {
+    peer = REMOTE;
+    const review = await mint("rev", ["projects:read", "projects:write"], {
+      projects: ["default"],
+    });
+    const app = build();
+    const send = (method: string, path: string) =>
+      call(app, `/api/v1/projects/default${path}`, { ...post({}), method }, review);
+    for (const [method, path] of [
+      ["POST", "/archive"],
+      ["POST", "/unarchive"],
+      ["DELETE", ""],
+      ["DELETE", "?purge=true"],
+    ] as const) {
+      const res = await send(method, path);
+      expect(res.status, `${method} ${path}`).toBe(403);
+      expect((await res.json()).error.code).toBe("forbidden_trust");
+    }
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(root, "projects", "default", "project.json"))).toBe(true);
+    expect((await service.projects.get("default"))?.archived).toBe(false);
+  });
+
   it("the runner switch needs a trusted client", async () => {
     peer = REMOTE;
     const review = await mint("rev", ["runner:control"]);

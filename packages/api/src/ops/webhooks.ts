@@ -40,6 +40,20 @@ export function assertWebhookUrl(raw: string, isSelf?: (url: URL) => boolean): U
   return url;
 }
 
+/**
+ * `scheme://host/…`: Slack, Discord and similar webhook URLs carry a secret in the path or query,
+ * so only the full address given at create time (and used for delivery) holds it. Lists and
+ * summaries show the host.
+ */
+export function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}/…`;
+  } catch {
+    return "(invalid URL)";
+  }
+}
+
 /** True when the caller's projects cover everything the webhook reaches (same rule as client management). */
 function withinReach(ctx: OpContext, hook: Webhook): boolean {
   const mine = ctx.principal.projects;
@@ -51,7 +65,7 @@ export const webhooksList = defineOp({
   name: "webhooks.list",
   title: "List webhooks",
   description:
-    "Lists the webhook subscriptions without their secrets. No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.",
+    "Lists the webhook subscriptions without their secrets; each URL is shown as scheme://host/… (the full address is shown once, at create). No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.",
   scope: "admin",
   projectScoped: false,
   input: z.strictObject({}),
@@ -60,9 +74,9 @@ export const webhooksList = defineOp({
   mcp: { expose: true, name: "boof_list_webhooks", annotations: READ },
   summary: (r) => `${r.webhooks.length} webhooks`,
   handler: async (ctx) => ({
-    webhooks: ((await ctx.services.loadSettings()).webhooks ?? []).filter((h) =>
-      withinReach(ctx, h),
-    ),
+    webhooks: ((await ctx.services.loadSettings()).webhooks ?? [])
+      .filter((h) => withinReach(ctx, h))
+      .map((h) => ({ ...h, url: redactUrl(h.url) })),
   }),
 });
 
@@ -78,7 +92,7 @@ export const webhooksCreate = defineOp({
   rest: { method: "POST", path: "/webhooks", status: 201 },
   mcp: { expose: true, name: "boof_create_webhook", annotations: WRITE },
   summary: (r) =>
-    `Subscribed webhook ${r.webhook.id} to ${r.webhook.url}; the signing secret is in the result and is shown only once`,
+    `Subscribed webhook ${r.webhook.id} to ${redactUrl(r.webhook.url)}; the signing secret is in the result and is shown only once`,
   handler: async (ctx, input) => {
     await assertWebhookTarget(input.url, {
       isSelf: ctx.isSelfUrl,

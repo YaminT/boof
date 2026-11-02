@@ -338,7 +338,7 @@ claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --clie
 claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --project pim
 ```
 
-Give agent hosts `--client` with a narrow client. Without it the agent is the local admin principal (it only works while `security.auth.mode` is `local-trust`), and the server hides the administration tools (API clients, webhooks, settings writes, command templates, project deletion) unless you add `--admin`. The server writes logs to stderr only.
+Give agent hosts `--client` with a narrow client. Without `--client` (and it only works while `security.auth.mode` is `local-trust`), **an MCP host acts like a review-trust client unless you add `--admin`**: its tasks and plans are drafts a human approves in the UI, it cannot queue, retry, answer, activate a plan or switch the runner, it cannot create a project or change a project beyond its name, labels and paused state, and it has no administration tools. `--admin` makes it the local administrator, with every tool. The server writes logs to stderr only.
 
 **Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback) and point the client at `/mcp`:
 

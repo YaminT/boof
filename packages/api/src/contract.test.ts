@@ -88,6 +88,15 @@ describe("operations registry contract", () => {
       "SECRET",
     );
     const hook = registry.find((o) => o.name === "webhooks.create")!;
+    const text2 = hook.summary!({
+      webhook: {
+        id: "wh-1",
+        url: "https://hooks.slack.com/services/T000/B000/SECRETPATH?x=1",
+      } as never,
+      secret: "whsec_SECRET",
+    });
+    expect(text2).not.toContain("SECRETPATH");
+    expect(text2).toContain("https://hooks.slack.com/…");
     expect(
       hook.summary!({ webhook: { id: "wh-1", url: "http://h" } as never, secret: "whsec_SECRET" }),
     ).not.toContain("SECRET");

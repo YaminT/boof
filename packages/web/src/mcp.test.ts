@@ -197,4 +197,44 @@ describe("/mcp under local-trust", () => {
     expect(res.status).toBe(200);
     expect((await post(INIT, {}, null)).status).toBe(401);
   });
+
+  it("refuses a JSON-RPC batch with a clear error", async () => {
+    const batch = JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    ]);
+    const res = await post(batch);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/batch/i);
+  });
+
+  it("applies the self-host webhook check on the MCP path as REST does", async () => {
+    const admin = (await authStore.create({ name: "adm", scopes: ["admin"], trust: "trusted" }))
+      .key;
+    const withSelf = createApp({
+      service: new TaskService(root),
+      authStore,
+      peerAddress: () => "10.0.0.7",
+      isSelfUrl: (u) => u.hostname === "self.test",
+      resolveHost: async () => ["93.184.216.34"],
+    });
+    const call = async (url: string) => {
+      const res = await withSelf.request("http://localhost/mcp", {
+        method: "POST",
+        body: rpc("tools/call", { name: "boof_create_webhook", arguments: { url } }),
+        headers: {
+          "content-type": "application/json",
+          accept: ACCEPT,
+          authorization: `Bearer ${admin}`,
+        },
+      });
+      return (await res.json()).result;
+    };
+    const self = await call("http://self.test/hook");
+    expect(self.isError).toBe(true);
+    expect(self.content[0].text).toContain("boof server itself");
+    const ok = await call("http://hook.test/in");
+    expect(ok.isError).toBeFalsy();
+  });
 });

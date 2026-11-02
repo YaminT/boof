@@ -126,6 +126,20 @@ describe("webhooks and a restricted admin key", () => {
   });
 });
 
+describe("webhook URLs after create", () => {
+  it("the list shows scheme and host only (Slack and Discord URLs carry secrets in the path)", async () => {
+    const made = await (
+      await create({ url: "http://hook.test/services/T000/B000/SECRETPATH?token=abc" })
+    ).json();
+    expect(made.webhook.url).toContain("SECRETPATH"); // echoed once, to the creator
+    const list = await (await call("/api/v1/webhooks")).json();
+    expect(JSON.stringify(list)).not.toContain("SECRETPATH");
+    expect(list.webhooks[0].url).toBe("http://hook.test/…");
+    // Delivery still uses the full address.
+    expect((await service.loadSettings()).webhooks?.[0]?.url).toContain("SECRETPATH");
+  });
+});
+
 describe("webhooks of restricted keys", () => {
   it("a webhook is not delivered after its creator is revoked or expired, or no longer covers it", async () => {
     peer = "10.1.2.3";
