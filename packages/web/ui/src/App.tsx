@@ -12,7 +12,8 @@ import { TokenGate } from "./components/TokenGate.js";
 import { PlansTab } from "./components/PlansTab.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
-import { routePid, type Route } from "./lib/route.js";
+import { toast } from "sonner";
+import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
@@ -55,20 +56,28 @@ export function App() {
   }, [currentId, data.tasksLoaded, runningKey]);
   useEffect(() => setSelectedId(currentId), [currentId]);
 
-  // A missing route, or one naming a project that does not exist, goes to the Overview of the
-  // selected project once the projects have loaded.
+  // A missing route, or one naming a project that does not exist, is replaced by the nearest valid
+  // one once the projects have loaded; the replace keeps Back from returning to it.
+  const projectIds = useMemo(() => projects?.map((p) => p.id) ?? null, [projects]);
   const routeUnknownProject =
     !!route && route.name !== "inbox" && !!projects && !projects.some((p) => p.id === route.pid);
   useEffect(() => {
-    if (!currentId) return;
-    if (!route || routeUnknownProject)
-      navigate({ name: "overview", pid: currentId }, { replace: true });
-  }, [route, routeUnknownProject, currentId, navigate]);
+    const fix = correctedRoute(route, projectIds, currentId);
+    if (fix) navigate(fix, { replace: true });
+  }, [route, projectIds, currentId, navigate]);
 
-  const openProject = (p: Project | string) => {
-    const id = typeof p === "string" ? p : p.id;
+  /** Switch project: the equivalent screen there, pushed so Back returns to the old project. */
+  const openProject = (id: string) => {
     select(id);
-    navigate({ name: "overview", pid: id });
+    navigate(routeForProject(route, id));
+  };
+
+  /** A project was added: reload the list first, so the URL is not corrected back to the old one. */
+  const addProject = async (p: Project) => {
+    await reload().catch(() => {});
+    select(p.id);
+    navigate({ name: "overview", pid: p.id });
+    void refresh().catch(() => {});
   };
 
   if (needsToken) {
@@ -85,13 +94,7 @@ export function App() {
   // First-run gate: block the app until the first project is added.
   if (settings && projects && projects.length === 0) {
     return (
-      <AddProjectGate
-        projectsRoot={settings.projectsRoot}
-        onAdded={(p) => {
-          openProject(p);
-          void refresh().catch(() => {});
-        }}
-      />
+      <AddProjectGate projectsRoot={settings.projectsRoot} onAdded={(p) => void addProject(p)} />
     );
   }
 
@@ -107,10 +110,7 @@ export function App() {
       route={route}
       navigate={navigate}
       onSelectProject={openProject}
-      onProjectAdded={(p) => {
-        openProject(p);
-        void refresh().catch(() => {});
-      }}
+      onProjectAdded={(p) => void addProject(p)}
     >
       {budget && <BudgetBanner budget={budget} />}
       {routeReady && route.name === "overview" && (
@@ -143,6 +143,10 @@ export function App() {
             tick={planTick}
             planId={route.planId ?? null}
             onSelectPlan={(id) => navigate({ name: "plans", pid, ...(id ? { planId: id } : {}) })}
+            onPlanMissing={() => {
+              toast("This plan no longer exists.");
+              navigate({ name: "plans", pid }, { replace: true });
+            }}
             onOpenTask={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
             onReviewTask={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
             onChange={refresh}

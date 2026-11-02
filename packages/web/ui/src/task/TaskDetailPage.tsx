@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
@@ -27,17 +28,6 @@ const TABS: { view: RouteView; label: string }[] = [
 ];
 
 const BACK = new Set(["tasks", "overview"]);
-
-function MissingTask({ href }: { href: string }) {
-  return (
-    <div className="py-8">
-      <p className="mt-0 mb-3 text-ink-muted">This task no longer exists.</p>
-      <a href={href} className="text-accent-brand hover:underline">
-        Back to tasks
-      </a>
-    </div>
-  );
-}
 
 /** The screen of one task, or of a new one (`taskId` is `__new__`). */
 export function TaskDetailPage({
@@ -95,7 +85,6 @@ export function TaskDetailPage({
       data={data}
       navigate={navigate}
       backHref={backHref}
-      tasksHref={tasksHref}
     />
   );
 }
@@ -107,7 +96,6 @@ function ExistingTask({
   data,
   navigate,
   backHref,
-  tasksHref,
 }: {
   pid: string;
   taskId: string;
@@ -115,14 +103,19 @@ function ExistingTask({
   data: AppData;
   navigate: Navigate;
   backHref: string;
-  tasksHref: string;
 }) {
   const row = data.tasks.find((t) => t.frontmatter.id === taskId);
   const listKey = row
     ? `${row.frontmatter.updated}|${row.frontmatter.steps?.length ?? 0}|${row.frontmatter.status}`
     : null;
   const { task, missing, failed, reload } = useTask(pid, taskId, listKey);
-  if (missing) return <MissingTask href={tasksHref} />;
+  // A deleted or unknown task: leave its dead URL for the list, replacing it so Back skips it.
+  useEffect(() => {
+    if (!missing) return;
+    toast("This task no longer exists.");
+    navigate({ name: "tasks", pid }, { replace: true });
+  }, [missing, navigate, pid]);
+  if (missing) return null;
   if (!task) {
     return failed ? (
       <div className="py-8">
@@ -187,7 +180,7 @@ function Loaded({
     });
     if (!ok) return;
     void data.refresh();
-    navigate({ name: "tasks", pid });
+    navigate({ name: "tasks", pid }, { replace: true });
   };
 
   return (

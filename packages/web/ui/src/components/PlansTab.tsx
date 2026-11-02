@@ -17,6 +17,7 @@ export function PlansTab({
   tick,
   planId,
   onSelectPlan,
+  onPlanMissing,
   onOpenTask,
   onReviewTask,
   onChange,
@@ -27,6 +28,7 @@ export function PlansTab({
   tick: number;
   planId: string | null;
   onSelectPlan: (id: string | null) => void;
+  onPlanMissing: () => void;
   onOpenTask: (taskId: string) => void;
   onReviewTask: (taskId: string) => void;
   onChange: () => void;
@@ -82,6 +84,7 @@ export function PlansTab({
           onSelectPlan(null);
           void load();
         }}
+        onMissing={onPlanMissing}
         onOpenTask={onOpenTask}
         onReviewTask={onReviewTask}
         onChange={() => {

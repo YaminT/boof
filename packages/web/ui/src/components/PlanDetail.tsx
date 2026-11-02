@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -73,6 +73,7 @@ export function PlanDetail({
   tasks,
   tick,
   onBack,
+  onMissing,
   onOpenTask,
   onReviewTask,
   onChange,
@@ -82,6 +83,8 @@ export function PlanDetail({
   tasks: TaskView[];
   tick: number;
   onBack: () => void;
+  /** The plan does not exist (any more): the caller leaves its URL. */
+  onMissing: () => void;
   onOpenTask: (taskId: string) => void;
   onReviewTask: (taskId: string) => void;
   onChange: () => void;
@@ -97,11 +100,16 @@ export function PlanDetail({
   const [syncDone, setSyncDone] = useState<SyncReport | null>(null);
   const [exported, setExported] = useState<Record<string, string> | null>(null);
 
+  // The caller passes a fresh closure each render; a ref keeps `load` (and its effect) stable.
+  const onMissingRef = useRef(onMissing);
+  onMissingRef.current = onMissing;
+
   const load = useCallback(async () => {
     try {
       setPlan(await api.getPlan(projectId, planId));
     } catch (e) {
-      setErrors(messages(e));
+      if (e instanceof ApiError && e.status === 404) onMissingRef.current();
+      else setErrors(messages(e));
     }
   }, [projectId, planId]);
 

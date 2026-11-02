@@ -122,6 +122,7 @@ export function AppShell({
           projects={projects}
           currentPid={pid}
           navigate={navigate}
+          onSelectProject={onSelectProject}
           open={searching}
           onOpenChange={setSearching}
         />

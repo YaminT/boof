@@ -71,6 +71,7 @@ export function CommandPalette({
   projects,
   currentPid,
   navigate,
+  onSelectProject,
   open,
   onOpenChange,
 }: {
@@ -79,6 +80,8 @@ export function CommandPalette({
   /** The selected project, or null before one is chosen. */
   currentPid: string | null;
   navigate: (to: Route) => void;
+  /** Switch project to the equivalent screen (same as the project menu). */
+  onSelectProject: (id: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -149,7 +152,7 @@ export function CommandPalette({
                   <CommandItem
                     key={p.id}
                     value={`Switch to project ${p.name}`}
-                    onSelect={go({ name: "overview", pid: p.id })}
+                    onSelect={run(() => onSelectProject(p.id))}
                   >
                     Switch to {p.name}
                     {p.id === pid && (

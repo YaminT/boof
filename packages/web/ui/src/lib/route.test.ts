@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { formatRoute, parseRoute, routePid, type Route } from "./route";
+import {
+  correctedRoute,
+  formatRoute,
+  listRouteFor,
+  parseRoute,
+  routeForProject,
+  routePid,
+  type Route,
+} from "./route";
 
 describe("parseRoute", () => {
   it("parses a project overview", () => {
@@ -134,5 +142,80 @@ describe("routePid", () => {
     expect(routePid({ name: "inbox" })).toBeNull();
     expect(routePid(null)).toBeNull();
     expect(routePid({ name: "tasks", pid: "boof" })).toBe("boof");
+  });
+});
+
+describe("routeForProject", () => {
+  it("drops the plan and goal ids when switching from a plan", () => {
+    const r = routeForProject({ name: "plans", pid: "a", planId: "p1", goalId: "g1" }, "b");
+    expect(r).toEqual({ name: "plans", pid: "b" });
+    expect("planId" in r).toBe(false);
+  });
+  it("drops the task id when switching from a task", () => {
+    expect(routeForProject({ name: "task", pid: "a", taskId: "t1", view: "changes" }, "b")).toEqual(
+      {
+        name: "tasks",
+        pid: "b",
+      },
+    );
+  });
+  it("keeps the settings page", () => {
+    expect(routeForProject({ name: "settings", pid: "a", page: "keys" }, "b")).toEqual({
+      name: "settings",
+      pid: "b",
+      page: "keys",
+    });
+  });
+  it("maps the rest to the equivalent screen", () => {
+    expect(routeForProject({ name: "overview", pid: "a" }, "b")).toEqual({
+      name: "overview",
+      pid: "b",
+    });
+    expect(routeForProject({ name: "tasks", pid: "a" }, "b")).toEqual({ name: "tasks", pid: "b" });
+    expect(routeForProject({ name: "inbox" }, "b")).toEqual({ name: "overview", pid: "b" });
+    expect(routeForProject(null, "b")).toEqual({ name: "overview", pid: "b" });
+  });
+});
+
+describe("listRouteFor", () => {
+  it("goes from a task or plan to its list", () => {
+    expect(listRouteFor({ name: "task", pid: "a", taskId: "t", view: "edit" })).toEqual({
+      name: "tasks",
+      pid: "a",
+    });
+    expect(listRouteFor({ name: "plans", pid: "a", planId: "p" })).toEqual({
+      name: "plans",
+      pid: "a",
+    });
+  });
+  it("returns other routes as they are", () => {
+    for (const r of [
+      { name: "overview", pid: "a" },
+      { name: "tasks", pid: "a" },
+      { name: "settings", pid: "a", page: "keys" },
+    ] as Route[])
+      expect(listRouteFor(r)).toBe(r);
+  });
+});
+
+describe("correctedRoute", () => {
+  it("waits for the facts", () => {
+    expect(correctedRoute({ name: "tasks", pid: "x" }, null, "sel")).toBeNull();
+    expect(correctedRoute({ name: "tasks", pid: "x" }, ["sel"], null)).toBeNull();
+  });
+  it("sends no route to the selected project's overview", () => {
+    expect(correctedRoute(null, ["sel"], "sel")).toEqual({ name: "overview", pid: "sel" });
+  });
+  it("leaves the inbox and known projects alone", () => {
+    expect(correctedRoute({ name: "inbox" }, ["sel"], "sel")).toBeNull();
+    expect(correctedRoute({ name: "tasks", pid: "sel" }, ["sel"], "sel")).toBeNull();
+  });
+  it("replaces an unknown project with the selected one's list", () => {
+    expect(
+      correctedRoute({ name: "task", pid: "gone", taskId: "t1", view: "edit" }, ["sel"], "sel"),
+    ).toEqual({
+      name: "tasks",
+      pid: "sel",
+    });
   });
 });

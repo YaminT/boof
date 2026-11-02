@@ -87,3 +87,41 @@ export function formatRoute(route: Route): string {
 export function routePid(route: Route | null): string | null {
   return route && route.name !== "inbox" ? route.pid : null;
 }
+
+/** The equivalent screen in project `pid`; ids that belong to the old project are dropped. */
+export function routeForProject(route: Route | null, pid: string): Route {
+  switch (route?.name) {
+    case "tasks":
+    case "task":
+      return { name: "tasks", pid };
+    case "plans":
+      return { name: "plans", pid };
+    case "settings":
+      return { name: "settings", pid, page: route.page };
+    default:
+      return { name: "overview", pid };
+  }
+}
+
+/** The list a task or plan page belongs to; other routes are returned as they are. */
+export function listRouteFor(route: Route): Route {
+  if (route.name === "task") return { name: "tasks", pid: route.pid };
+  if (route.name === "plans" && route.planId) return { name: "plans", pid: route.pid };
+  return route;
+}
+
+/**
+ * The route that should replace the current one, or null when it is valid or the facts are not
+ * loaded yet: no route means the selected project's Overview; an unknown project falls back to the
+ * list of the selected project.
+ */
+export function correctedRoute(
+  route: Route | null,
+  projectIds: readonly string[] | null,
+  selectedId: string | null,
+): Route | null {
+  if (!projectIds || !selectedId) return null;
+  if (!route) return { name: "overview", pid: selectedId };
+  if (route.name === "inbox" || projectIds.includes(route.pid)) return null;
+  return routeForProject(route, selectedId);
+}
