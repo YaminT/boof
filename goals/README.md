@@ -40,7 +40,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`webhook-dns-pinning`](webhook-dns-pinning/goal.boof.xml) — Pin webhook connections to the address the SSRF guard checked
 - [x] [`restricted-admin-scope-gaps`](restricted-admin-scope-gaps/goal.boof.xml) — Webhooks, settings and archived plans respect restricted keys; hidden clients look unknown
 - [x] [`auth-store-cross-process`](auth-store-cross-process/goal.boof.xml) — Revocation and key writes are safe across processes
-- [ ] [`task-lock-cross-process`](task-lock-cross-process/goal.boof.xml) — Make the per-task lock work across processes (withProcessLock), so the CLI and MCP stdio cannot race the runner
+- [x] [`task-lock-cross-process`](task-lock-cross-process/goal.boof.xml) — Make the per-task lock work across processes (withProcessLock), so the CLI and MCP stdio cannot race the runner
 - [x] [`worktree-root-scope`](worktree-root-scope/goal.boof.xml) — Limit worktree.root to the allowed project roots for remote clients
 - [ ] [`webhook-update-and-event-names`](webhook-update-and-event-names/goal.boof.xml) — Webhook update (enable, disable, edit) and underscores in event names
 - [x] [`settings-version-check`](settings-version-check/goal.boof.xml) — Optimistic concurrency for PUT /settings (low priority)

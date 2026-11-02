@@ -1,11 +1,12 @@
 import { readdir, mkdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { atomicWrite, readText, withFileLock } from "./atomic.js";
+import { atomicWrite, readText } from "./atomic.js";
 import { appendEvent } from "./events.js";
 import { formatInjectedEntry, parseInjected, type InjectMode } from "./injected.js";
 import { uniqueKebabId } from "./ids.js";
 import { assertTransition } from "./lifecycle.js";
 import { ALL_STATUSES, statusDir, taskControlDir, taskFilePath, workingAreaDir } from "./paths.js";
+import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { nowIso } from "./runtime.js";
 import type { Status } from "./schema.js";
 import { parseTask, serializeTask, type Task } from "./task-file.js";
@@ -145,14 +146,29 @@ function assertSyncMutate(result: unknown, op: string): void {
  * location (task-lifecycle spec). All writes are atomic + locked.
  */
 export class TaskStore {
-  constructor(private readonly root: string) {}
+  constructor(
+    private readonly root: string,
+    /** Test hook: timeouts, polling and liveness of the cross-process task lock. */
+    private readonly opts: { lock?: ProcessLockOptions } = {},
+  ) {}
 
   /**
-   * Serialize every operation on one task id in this process: locate, check and write happen under
-   * it. Other processes are not excluded (see atomic.ts).
+   * Serialize every operation on one task id across processes (the server's runner, the CLI, MCP
+   * stdio): locate, check and write happen under it. The lock is the file
+   * `<root>/tasks/.locks/<id>.lock` (`withProcessLock`, which also queues callers in this process).
+   * It is not in a status directory, because the task file moves between them and readers list
+   * them; it is removed on release.
    */
   private lockTask<T>(id: string, fn: () => Promise<T>): Promise<T> {
-    return withFileLock(`${resolve(this.root)}#task:${id}`, fn);
+    return withProcessLock(
+      join(this.root, "tasks", ".locks", `${id}.lock`),
+      this.opts.lock ?? {},
+      fn,
+      (holder) =>
+        new Error(
+          `Task ${id} is being changed by another boof process (pid ${holder}); try again in a moment`,
+        ),
+    );
   }
 
   /** Ensure all status directories exist (under the handed root: a project directory in v2). */

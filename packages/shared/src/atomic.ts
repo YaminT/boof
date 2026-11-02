@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
  * In-process per-path mutex. Both the web server and the runner import shared,
  * but each runs in its own process; within a process this serializes writers to
  * the same file. Cross-process safety comes from the atomic temp+rename below
- * (a rename is atomic on POSIX, so readers never observe a partial file).
+ * (a rename is atomic on POSIX, so readers never observe a partial file). Tasks add a pid lock
+ * across processes (`TaskStore.lockTask`, `process-lock.ts`).
  */
 const locks = new Map<string, Promise<void>>();
 
