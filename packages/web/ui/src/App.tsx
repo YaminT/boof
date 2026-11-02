@@ -148,7 +148,7 @@ export function App() {
           )}
         </>
       )}
-      {routeReady && route.name === "settings" && settings && selected && (
+      {routeReady && route.name === "settings" && (settings || data.settingsDenied) && selected && (
         <SettingsScreen
           key={selected.id}
           pid={selected.id}

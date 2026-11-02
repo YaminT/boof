@@ -91,12 +91,21 @@ export function heldScopes(w: Whoami | null): ReadonlySet<Scope> | "all" {
 export function clientFormProblems(
   v: ClientFormValues,
   held: ReadonlySet<Scope> | "all",
+  /** The projects the caller is limited to, or null when it reaches every project. */
+  reach: string[] | null = null,
 ): string[] {
   const out: string[] = [];
   if (!v.name.trim()) out.push("Name the key.");
   if (v.scopes.length === 0) out.push("Choose at least one scope.");
   if (v.projects !== "*" && v.projects.length === 0)
     out.push("Choose at least one project, or allow every project.");
+  if (reach) {
+    if (v.projects === "*") out.push("Your own key cannot grant every project.");
+    else {
+      const outside = v.projects.filter((p) => !reach.includes(p));
+      if (outside.length > 0) out.push(`Your own key cannot reach: ${outside.join(", ")}.`);
+    }
+  }
   if (held !== "all") {
     const missing = v.scopes.filter((s) => !held.has(s));
     if (missing.length > 0) out.push(`Your own key cannot grant: ${missing.join(", ")}.`);
@@ -118,4 +127,61 @@ export function toCreateClientInput(v: ClientFormValues) {
 /** True when `c` is the key the calling browser uses. */
 export function isOwnKey(c: PublicClient, w: Whoami | null): boolean {
   return !!w && w.principal.kind === "client" && w.principal.id === c.id;
+}
+
+const DAY = 86_400_000;
+const durationMs = (v: string): number => (/^\d+d$/.test(v) ? Number(v.slice(0, -1)) * DAY : 0);
+
+export interface ExpiryChoice {
+  value: string;
+  label: string;
+  disabled: boolean;
+  note?: string;
+}
+
+/**
+ * The expiry choices this caller may use. A key cannot outlive the key that creates it, so for a
+ * caller whose key expires, the choices beyond that are disabled and "Never" means "when your key
+ * expires".
+ */
+export function expiryChoices(w: Whoami | null, now: number): ExpiryChoice[] {
+  const cap = w?.principal.kind === "client" ? w.principal.expiresAt : undefined;
+  const capMs = cap ? Date.parse(cap) - now : null;
+  return EXPIRY_CHOICES.map((c) => {
+    if (capMs === null) return { value: c.value, label: c.label, disabled: false };
+    if (c.value === "") {
+      return {
+        value: "",
+        label: `When your key expires (${new Date(cap!).toLocaleDateString()})`,
+        disabled: false,
+      };
+    }
+    const over = durationMs(c.value) > capMs;
+    return {
+      value: c.value,
+      label: c.label,
+      disabled: over,
+      ...(over ? { note: "Longer than your own key lasts." } : {}),
+    };
+  });
+}
+
+/** The projects the caller is limited to, or null when it may reach every project. */
+export function callerProjects(w: Whoami | null): string[] | null {
+  return w && w.principal.kind === "client" && w.principal.projects !== "*"
+    ? w.principal.projects
+    : null;
+}
+
+/** A new-key form that starts on choices this caller can actually make. */
+export function initialClient(w: Whoami | null, now: number): ClientFormValues {
+  const projects = callerProjects(w);
+  const firstOpen = expiryChoices(w, now).find((c) => !c.disabled && c.value !== "");
+  const keep = expiryChoices(w, now).find((c) => c.value === NEW_CLIENT.expiresIn && !c.disabled);
+  return {
+    ...NEW_CLIENT,
+    ...(projects ? { projects: [...projects] } : {}),
+    expiresIn: keep ? keep.value : (firstOpen?.value ?? ""),
+    trust: w?.principal.trust === "review" ? "review" : NEW_CLIENT.trust,
+  };
 }

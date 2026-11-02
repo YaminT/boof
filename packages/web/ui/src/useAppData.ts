@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@boof-runner/shared/schema";
-import { api, type PlanSummary, type TaskView } from "./api.js";
+import { api, ApiError, type PlanSummary, type TaskView } from "./api.js";
 import type { BudgetStatus } from "./api-types.js";
 import { onUnauthorized } from "./token.js";
 import { useLive } from "./useLive.js";
@@ -8,6 +8,8 @@ import { latestGuard } from "./lib/latest.js";
 
 export interface AppData {
   settings: Settings | null;
+  /** The key may not read settings (403): the Settings area still opens, with what it can reach. */
+  settingsDenied: boolean;
   tasks: TaskView[];
   /** True once the selected project's task list has loaded (false right after a switch). */
   tasksLoaded: boolean;
@@ -31,6 +33,7 @@ export function useAppData(
   reloadProjects: () => Promise<void>,
 ): AppData {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingsDenied, setSettingsDenied] = useState(false);
   // Lists are tagged with the project they belong to, so a render right after a project switch
   // never shows the previous project's tasks or plans.
   const [taskState, setTasks] = useState<{
@@ -99,7 +102,20 @@ export function useAppData(
     const list = await api.actions();
     if (actionGuard.current.accept(seq)) setActions(list);
   }, []);
-  const refreshSettings = useCallback(() => api.getSettings().then(setSettings), []);
+  const refreshSettings = useCallback(
+    () =>
+      api.getSettings().then(
+        (s) => {
+          setSettings(s);
+          setSettingsDenied(false);
+        },
+        (err) => {
+          if (err instanceof ApiError && err.status === 403) setSettingsDenied(true);
+          else throw err;
+        },
+      ),
+    [],
+  );
   const refreshBudget = useCallback(
     () =>
       api
@@ -173,6 +189,7 @@ export function useAppData(
 
   return {
     settings,
+    settingsDenied,
     tasks,
     tasksLoaded,
     actions,

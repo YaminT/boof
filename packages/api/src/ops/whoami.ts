@@ -17,6 +17,8 @@ export const WhoamiSchema = z.object({
     trust: TrustSchema,
     scopes: z.array(ScopeSchema),
     projects: z.union([z.literal("*"), z.array(z.string())]),
+    /** When the calling key expires; absent for a key that never does and for the local principal. */
+    expiresAt: z.string().optional(),
   }),
   server: z.object({
     version: z.string(),
@@ -41,6 +43,8 @@ export const whoami = defineOp({
   handler: async (ctx) => {
     const settings = await ctx.services.loadSettings();
     const p = ctx.principal;
+    // A key cannot create one that outlives it, so a client needs to know its own expiry.
+    const expiresAt = p.kind === "client" ? (await ctx.authStore?.get(p.id))?.expiresAt : undefined;
     return {
       principal: {
         kind: p.kind,
@@ -49,6 +53,7 @@ export const whoami = defineOp({
         trust: p.trust,
         scopes: [...p.scopes].sort(),
         projects: p.projects === "*" ? ("*" as const) : [...p.projects].sort(),
+        ...(expiresAt ? { expiresAt } : {}),
       },
       server: {
         version: BOOF_VERSION,

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PublicClient, Whoami } from "../api-types.js";
 import {
+  callerProjects,
   clientFormProblems,
+  expiryChoices,
+  initialClient,
   clientState,
   heldScopes,
   isOwnKey,
@@ -107,5 +110,59 @@ describe("isOwnKey", () => {
     expect(isOwnKey(client({ id: "me" }), who("client", "other", []))).toBe(false);
     expect(isOwnKey(client({ id: "local" }), who("local", "local", []))).toBe(false);
     expect(isOwnKey(client(), null)).toBe(false);
+  });
+});
+
+describe("honest create form", () => {
+  const now = Date.parse("2026-06-01T00:00:00Z");
+  const caller = (extra: Record<string, unknown>) =>
+    ({
+      principal: {
+        kind: "client",
+        id: "a",
+        name: "a",
+        trust: "trusted",
+        scopes: ["auth:admin"],
+        projects: "*",
+        ...extra,
+      },
+      server: { version: "1", authMode: "required", mcpEnabled: true },
+    }) as unknown as Whoami;
+
+  it("offers every expiry to a caller whose key never expires, and to the local principal", () => {
+    expect(expiryChoices(caller({}), now).every((c) => !c.disabled)).toBe(true);
+    expect(expiryChoices(null, now).map((c) => c.label)).toContain("Never");
+    expect(expiryChoices(who("local", "local", []), now).every((c) => !c.disabled)).toBe(true);
+  });
+
+  it("disables expiries beyond the caller's own and renames Never", () => {
+    const w = caller({ expiresAt: "2026-06-20T00:00:00Z" }); // 19 days left
+    const byValue = Object.fromEntries(expiryChoices(w, now).map((c) => [c.value, c]));
+    expect(byValue["7d"].disabled).toBe(false);
+    expect(byValue["30d"].disabled).toBe(true);
+    expect(byValue["30d"].note).toBe("Longer than your own key lasts.");
+    expect(byValue["365d"].disabled).toBe(true);
+    expect(byValue[""].disabled).toBe(false);
+    expect(byValue[""].label).toMatch(/^When your key expires \(/);
+  });
+
+  it("a restricted caller starts on its own projects, and an expiry it can use", () => {
+    const w = caller({ projects: ["alpha"], expiresAt: "2026-06-05T00:00:00Z" }); // 4 days left
+    expect(callerProjects(w)).toEqual(["alpha"]);
+    const v = initialClient(w, now);
+    expect(v.projects).toEqual(["alpha"]);
+    expect(v.expiresIn).toBe("");
+    expect(initialClient(caller({}), now)).toMatchObject({ projects: "*", expiresIn: "30d" });
+  });
+
+  it("refuses 'every project' and projects outside the caller's reach", () => {
+    const ok = { ...NEW_CLIENT, name: "n" };
+    expect(clientFormProblems({ ...ok, projects: "*" }, "all", ["alpha"])).toEqual([
+      "Your own key cannot grant every project.",
+    ]);
+    expect(clientFormProblems({ ...ok, projects: ["alpha", "beta"] }, "all", ["alpha"])).toEqual([
+      "Your own key cannot reach: beta.",
+    ]);
+    expect(clientFormProblems({ ...ok, projects: ["alpha"] }, "all", ["alpha"])).toEqual([]);
   });
 });

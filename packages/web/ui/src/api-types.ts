@@ -93,6 +93,8 @@ export interface Whoami {
     trust: "trusted" | "review";
     scopes: Scope[];
     projects: "*" | string[];
+    /** When the calling key expires; absent when it never does. */
+    expiresAt?: string;
   };
   server: { version: string; authMode: "local-trust" | "required"; mcpEnabled: boolean };
 }

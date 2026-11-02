@@ -788,7 +788,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - Scope: none (any authenticated caller)
 - MCP tool: `boof_whoami`
 - What it does: Returns the calling principal (kind, id, name, trust, scopes, projects) and basic server facts (version, auth mode, whether MCP is enabled). No input. Needs no scope; any authenticated caller may use it. No side effects.
-- Success: HTTP 200 with `{ principal: { id: string, kind: "local" | "client", name: string, projects: "*" | string[], scopes: Scope[], trust: "trusted" | "review" }, server: { authMode: "local-trust" | "required", mcpEnabled: boolean, version: string } }`.
+- Success: HTTP 200 with `{ principal: { expiresAt?: string, id: string, kind: "local" | "client", name: string, projects: "*" | string[], scopes: Scope[], trust: "trusted" | "review" }, server: { authMode: "local-trust" | "required", mcpEnabled: boolean, version: string } }`.
 - Errors: none beyond the generic ones
 
 #### `GET /api/v1/auth/clients` (List API clients)

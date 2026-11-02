@@ -2,17 +2,9 @@
 // (per tab, never localStorage) and is sent as an Authorization header, never in a URL.
 // The desktop app injects its own key through the preload bridge.
 
-import { createAuthHold } from "./lib/auth-hold.js";
+import { createUnauthorizedGate, type UnauthorizedVerdict } from "./lib/unauthorized-gate.js";
 
 const KEY = "boofToken";
-const authHold = createAuthHold();
-
-/**
- * Ignore 401s for a few seconds while this browser's own key is being rotated. The old stream may
- * still report the old key as rejected after the new one is stored, so the hold simply runs out.
- */
-export const holdUnauthorized = (ms?: number): void => authHold.hold(ms);
-export const releaseUnauthorized = (): void => authHold.release();
 
 function store(): Storage | undefined {
   try {
@@ -74,7 +66,23 @@ export function onUnauthorized(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
-export function notifyUnauthorized(): void {
-  if (authHold.held()) return;
-  for (const fn of [...listeners]) fn();
+const gate = createUnauthorizedGate(
+  () => getToken(),
+  () => {
+    for (const fn of [...listeners]) fn();
+  },
+);
+
+/**
+ * A request or the event stream was refused. `sent` is the key it carried (the current one when
+ * left out). A stale key's 401 is ignored, and the verdict tells the caller so it can retry with
+ * the current key.
+ */
+export function notifyUnauthorized(sent?: string): UnauthorizedVerdict {
+  return gate.unauthorized(sent);
 }
+
+/** This browser's own key is being rotated: its 401s wait for the outcome. */
+export const beginKeyRotation = (): void => gate.begin(getToken());
+export const keyRotationSucceeded = (): void => gate.succeeded();
+export const keyRotationFailed = (): void => gate.failed();

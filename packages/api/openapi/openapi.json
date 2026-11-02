@@ -11812,6 +11812,9 @@
                     "principal": {
                       "additionalProperties": false,
                       "properties": {
+                        "expiresAt": {
+                          "type": "string"
+                        },
                         "id": {
                           "type": "string"
                         },

@@ -270,6 +270,37 @@ describe("v1 conventions", () => {
     expect(local.principal).toMatchObject({ kind: "local", scopes: ["admin"], projects: "*" });
   });
 
+  it("GET /whoami reports the expiry of the calling key, and none for a key that never expires", async () => {
+    const authStore = new AuthStore(root);
+    const remote = createApp({
+      service: new TaskService(root, new ToolRegistry([new MockTool()])),
+      authStore,
+      peerAddress: () => "10.1.2.3",
+    });
+    const url = "http://localhost/api/v1/whoami";
+    const expiring = await authStore.create({
+      name: "short",
+      scopes: ["plans:read"],
+      trust: "review",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const forever = await authStore.create({
+      name: "long",
+      scopes: ["plans:read"],
+      trust: "review",
+    });
+    const a = await (
+      await remote.request(url, { headers: { authorization: `Bearer ${expiring.key}` } })
+    ).json();
+    expect(a.principal.expiresAt).toBe("2099-01-01T00:00:00.000Z");
+    const b = await (
+      await remote.request(url, { headers: { authorization: `Bearer ${forever.key}` } })
+    ).json();
+    expect("expiresAt" in b.principal).toBe(false);
+    const local = await (await call(`${V1}/whoami`)).json();
+    expect("expiresAt" in local.principal).toBe(false);
+  });
+
   it("keeps BOOF_VERSION equal to the root package.json version", async () => {
     const pkg = JSON.parse(
       await readFile(join(import.meta.dirname, "..", "..", "..", "package.json"), "utf8"),

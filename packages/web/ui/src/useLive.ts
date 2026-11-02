@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { connectEventStream } from "./sse.js";
-import { authHeaders, notifyUnauthorized, onTokenChange } from "./token.js";
+import { authHeaders, getToken, notifyUnauthorized, onTokenChange } from "./token.js";
 
 const EVENTS_URL = "api/v1/events"; // relative: works at / and behind a path prefix
 
@@ -40,12 +40,17 @@ export function useLive(handlers: LiveHandlers): void {
   ref.current = handlers;
   useEffect(() => {
     let opened = false;
+    // The key the running stream was opened with: its "unauthorized" event is about that key.
+    let streamKey: string | undefined;
     return connectEventStream({
       url: EVENTS_URL,
-      headers: authHeaders,
+      headers: () => {
+        streamKey = getToken();
+        return authHeaders();
+      },
       onMessage: (m) => {
         if (m.event === "unauthorized") {
-          notifyUnauthorized(); // the key stopped working: open the gate, as a 401 does
+          notifyUnauthorized(streamKey); // the key stopped working: open the gate, as a 401 does
           return;
         }
         if (m.event === "ready" || m.event === "ping") return;
@@ -60,7 +65,7 @@ export function useLive(handlers: LiveHandlers): void {
         if (opened) ref.current.onReconnect?.();
         opened = true;
       },
-      onUnauthorized: notifyUnauthorized,
+      onUnauthorized: (sent) => notifyUnauthorized(sent),
       waitForCredentials: (signal) =>
         new Promise((resolve) => {
           const done = () => {

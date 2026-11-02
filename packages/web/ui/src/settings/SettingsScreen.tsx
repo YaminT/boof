@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import type { SettingsPageId } from "../lib/route.js";
+import { NEEDS_SETTINGS_READ, settingsPageAccess } from "../lib/settings-access.js";
 import { projectPage } from "../lib/settings-project.js";
 import { agentsPage } from "../lib/settings-agents.js";
 import { budgetsPage } from "../lib/settings-budgets.js";
@@ -20,7 +21,7 @@ import { useSettingsPage } from "./useSettingsPage.js";
  * Every settings route of one project. It holds each form page's draft, so moving between pages
  * keeps unsaved edits, and it warns before the browser tab is left with edits pending.
  */
-export function SettingsScreen({
+function SettingsForms({
   pid,
   page,
   settings,
@@ -154,6 +155,41 @@ export function SettingsScreen({
       )}
       {page === "keys" && <KeysPage projects={projects} />}
       {page === "automation" && <AutomationPage projects={projects} onChange={data.refresh} />}
+    </div>
+  );
+}
+
+/**
+ * The settings area of one project. With the settings loaded it holds the form drafts; without
+ * them (a key lacking `settings:read`) it still shows the frame and the pages that load their own
+ * data, and says what the others need.
+ */
+export function SettingsScreen(props: {
+  pid: string;
+  page: SettingsPageId;
+  settings: Settings | null;
+  project: Project;
+  projects: Project[];
+  data: AppData;
+  onProjectAdded: (p: Project) => void;
+  reloadProjects: () => Promise<void>;
+}) {
+  const { settings, ...rest } = props;
+  if (settings) return <SettingsForms settings={settings} {...rest} />;
+  const access = settingsPageAccess(props.page, false);
+  return (
+    <div className="flex max-w-[1320px] flex-col">
+      <h1 className="m-0 mb-4 text-[length:var(--text-page)] leading-tight font-semibold">
+        Settings
+      </h1>
+      <SettingsNav pid={props.pid} active={props.page} unsaved={new Set()} />
+      {access === "needs-settings-read" ? (
+        <p className="m-0 text-[length:var(--text-body)] text-attention">{NEEDS_SETTINGS_READ}</p>
+      ) : props.page === "keys" ? (
+        <KeysPage projects={props.projects} />
+      ) : (
+        <AutomationPage projects={props.projects} onChange={props.data.refresh} />
+      )}
     </div>
   );
 }

@@ -71,7 +71,7 @@ export interface EventStreamOptions {
   /** Called after each (re)connection becomes ready, e.g. to refetch. */
   onOpen?: () => void;
   /** Called on a 401 so the UI can ask for a key; reconnects stop until the next start(). */
-  onUnauthorized?: () => void;
+  onUnauthorized?: (sentToken?: string) => "stale" | "held" | "notified" | void;
   /**
    * Resolves when new credentials are available (or `signal` aborts). When set, a 401 pauses the
    * stream instead of ending it, so live updates resume after the user enters a key.
@@ -112,12 +112,18 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
     let attempt = 0;
     while (!ctrl.signal.aborted) {
       try {
+        const headers = opts.headers();
         const res = await doFetch(opts.url, {
-          headers: { accept: "text/event-stream", ...opts.headers() },
+          headers: { accept: "text/event-stream", ...headers },
           signal: ctrl.signal,
         });
         if (res.status === 401) {
-          opts.onUnauthorized?.();
+          const verdict = opts.onUnauthorized?.(headers.authorization?.replace(/^Bearer\s+/i, ""));
+          // The key it carried is no longer the current one: just reconnect with the current key.
+          if (verdict === "stale") {
+            attempt = 0;
+            continue;
+          }
           // Without a way to wait for a new key, stop; otherwise pause until one is stored.
           if (!opts.waitForCredentials) return;
           await opts.waitForCredentials(ctrl.signal);

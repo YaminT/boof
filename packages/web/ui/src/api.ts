@@ -19,7 +19,7 @@ import type {
 } from "./api-types.js";
 import type { TaskReview } from "@boof-runner/shared";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
-import { authHeaders, notifyUnauthorized } from "./token.js";
+import { authHeaders, getToken, notifyUnauthorized } from "./token.js";
 
 /** An error response of the v1 API, with its machine-readable code and details. */
 export class ApiError extends Error {
@@ -34,8 +34,8 @@ export class ApiError extends Error {
 }
 
 /** Throw a readable error for a failed response; a 401 also opens the token gate. */
-async function failure(res: Response, data: unknown): Promise<never> {
-  if (res.status === 401) notifyUnauthorized();
+async function failure(res: Response, data: unknown, sent?: string): Promise<never> {
+  if (res.status === 401) notifyUnauthorized(sent);
   const err = (data as { error?: { message?: string; code?: string; details?: unknown } | string })
     .error;
   const message = typeof err === "string" ? err : err?.message;
@@ -48,12 +48,13 @@ async function failure(res: Response, data: unknown): Promise<never> {
 }
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
+  const sent = getToken();
   const res = await fetch(path, {
     ...init,
     headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return failure(res, data);
+  if (!res.ok) return failure(res, data, sent);
   return data as T;
 }
 

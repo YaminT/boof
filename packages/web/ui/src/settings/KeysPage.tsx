@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Project } from "@boof-runner/shared/schema";
@@ -21,7 +21,7 @@ import {
   type ClientFormValues,
 } from "../lib/clients.js";
 import { relativeTime } from "../lib/time.js";
-import { holdUnauthorized, releaseUnauthorized, setToken } from "../token.js";
+import { beginKeyRotation, keyRotationFailed, keyRotationSucceeded, setToken } from "../token.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { CreateKeyDialog } from "./CreateKeyDialog.js";
@@ -53,7 +53,8 @@ function Row({
   const sc = scopesText(c);
   const own = isOwnKey(c, whoami);
   // The desktop app keeps its own key in the OS keychain; changing it here would lock the app out.
-  const locked = own && !!desktop;
+  // Without a whoami answer we cannot tell which key is ours, so on the desktop fail closed.
+  const locked = !!desktop && (own || whoami === null);
   const names =
     c.projects === "*"
       ? "All projects"
@@ -125,9 +126,14 @@ export function KeysPage({ projects }: { projects: Project[] }) {
   const [createBusy, setCreateBusy] = useState(false);
   const [rotating, setRotating] = useState<PublicClient | null>(null);
   const [revoking, setRevoking] = useState<PublicClient | null>(null);
-  const [issued, setIssued] = useState<{ title: string; intro: string; secret: string } | null>(
-    null,
-  );
+  const [issued, setIssued] = useState<{
+    title: string;
+    intro: string;
+    secret: string;
+    /** A new key: focus goes back to "New key" when the dialog closes. */
+    created?: boolean;
+  } | null>(null);
+  const newKeyButton = useRef<HTMLButtonElement>(null);
   const [showOld, setShowOld] = useState(false);
 
   const load = useCallback(async () => {
@@ -160,6 +166,7 @@ export function KeysPage({ projects }: { projects: Project[] }) {
         title: "Copy this key now",
         intro: "It is shown once and cannot be recovered.",
         secret: r.key,
+        created: true,
       });
       await load();
     } catch (e) {
@@ -186,6 +193,7 @@ export function KeysPage({ projects }: { projects: Project[] }) {
       )}
       <div>
         <Button
+          ref={newKeyButton}
           onClick={() => {
             setCreateError(null);
             setCreating(true);
@@ -274,24 +282,27 @@ export function KeysPage({ projects }: { projects: Project[] }) {
         onConfirm={async () => {
           if (!rotating) return;
           const own = isOwnKey(rotating, whoami);
-          // The server drops this browser's stream the moment the key changes; that 401 must not
-          // raise the token gate before the new key is stored.
-          if (own) holdUnauthorized();
+          // The server drops this browser's stream the moment the key changes. That 401 is for the
+          // key under rotation, so it waits for the outcome instead of opening the token gate.
+          if (own) beginKeyRotation();
           const r = await act(() => api.rotateClient(rotating.id), {
             failure: "Could not rotate the key",
           });
           if (!r) {
-            if (own) releaseUnauthorized();
+            if (own) keyRotationFailed();
             return;
           }
           // This browser's own key just stopped working: carry on with the new one.
-          if (own) setToken(r.key);
+          if (own) {
+            setToken(r.key);
+            keyRotationSucceeded();
+          }
           setIssued({
             title: "Copy the new key now",
             intro: "It is shown once and cannot be recovered.",
             secret: r.key,
           });
-          await load();
+          void load();
         }}
       />
       <ConfirmDialog
@@ -307,8 +318,6 @@ export function KeysPage({ projects }: { projects: Project[] }) {
         destructive
         onConfirm={async () => {
           if (!revoking) return;
-          // Revoking this browser's own key must open the token gate, so lift any rotation hold.
-          if (isOwnKey(revoking, whoami)) releaseUnauthorized();
           const r = await act(() => api.revokeClient(revoking.id), {
             success: "Key revoked",
             failure: "Could not revoke the key",
@@ -321,7 +330,11 @@ export function KeysPage({ projects }: { projects: Project[] }) {
         title={issued?.title ?? ""}
         intro={issued?.intro ?? ""}
         secret={issued?.secret ?? ""}
-        onDone={() => setIssued(null)}
+        onDone={() => {
+          const created = issued?.created;
+          setIssued(null);
+          if (created) window.setTimeout(() => newKeyButton.current?.focus(), 60);
+        }}
       />
     </div>
   );

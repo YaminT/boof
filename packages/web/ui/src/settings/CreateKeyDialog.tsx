@@ -14,10 +14,11 @@ import {
 import type { Whoami } from "../api-types.js";
 import {
   clientFormProblems,
-  EXPIRY_CHOICES,
+  callerProjects,
+  expiryChoices,
+  initialClient,
   HARNESS_SCOPES,
   heldScopes,
-  NEW_CLIENT,
   SCOPE_ORDER,
   SCOPE_TEXT,
   type ClientFormValues,
@@ -44,14 +45,23 @@ export function CreateKeyDialog({
   busy: boolean;
   onCreate: (v: ClientFormValues) => void;
 }) {
-  const [v, setV] = useState<ClientFormValues>(NEW_CLIENT);
+  const [v, setV] = useState<ClientFormValues>(() => initialClient(whoami, Date.now()));
+  // The problems show after a first try to create, not the moment the dialog opens.
+  const [attempted, setAttempted] = useState(false);
   useEffect(() => {
-    if (open) setV(NEW_CLIENT);
+    if (open) {
+      setV(initialClient(whoami, Date.now()));
+      setAttempted(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const held = heldScopes(whoami);
-  const problems = clientFormProblems(v, held);
+  const reach = callerProjects(whoami);
+  const problems = clientFormProblems(v, held, reach);
+  const expiry = expiryChoices(whoami, Date.now());
+  const selectable = reach ? projects.filter((p) => reach.includes(p.id)) : projects;
   const isAdmin = v.scopes.includes("admin");
-  const restricted = whoami?.principal.projects !== undefined && whoami.principal.projects !== "*";
+  const restricted = reach !== null;
   const reviewOnly = whoami?.principal.trust === "review";
   const toggle = (s: Scope, on: boolean) =>
     setV((x) => ({ ...x, scopes: on ? [...x.scopes, s] : x.scopes.filter((y) => y !== s) }));
@@ -68,6 +78,7 @@ export function CreateKeyDialog({
           className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
+            setAttempted(true);
             if (problems.length === 0 && !busy) onCreate(v);
           }}
         >
@@ -161,7 +172,7 @@ export function CreateKeyDialog({
             </label>
             {v.projects !== "*" && (
               <div className="ml-6 flex max-h-40 flex-col gap-1 overflow-auto">
-                {projects.map((p) => (
+                {selectable.map((p) => (
                   <label key={p.id} className="check m-0 text-[length:var(--text-row)] font-normal">
                     <input
                       type="checkbox"
@@ -215,30 +226,29 @@ export function CreateKeyDialog({
               value={v.expiresIn}
               onChange={(e) => setV({ ...v, expiresIn: e.target.value })}
             >
-              {EXPIRY_CHOICES.map((c) => (
-                <option key={c.value} value={c.value}>
+              {expiry.map((c) => (
+                <option key={c.value} value={c.value} disabled={c.disabled}>
                   {c.label}
+                  {c.note ? ` (${c.note})` : ""}
                 </option>
               ))}
             </NativeSelect>
           </label>
 
-          {(problems.length > 0 || error) && (
+          {((attempted && problems.length > 0) || error) && (
             <div
               role="alert"
               className="flex flex-col gap-0.5 text-[length:var(--text-row)] text-failed"
             >
               {error && <span>{error}</span>}
-              {problems.map((p) => (
-                <span key={p}>{p}</span>
-              ))}
+              {attempted && problems.map((p) => <span key={p}>{p}</span>)}
             </div>
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={problems.length > 0 || busy}>
+            <Button type="submit" disabled={busy}>
               Create key
             </Button>
           </DialogFooter>

@@ -53,7 +53,7 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
   (or start with `~/`); a relative entry matches nothing. A `new` project must be a folder
   below an allowed root, never the root itself.
 - `GET /api/v1/openapi.json` needs any valid principal.
-- `GET /api/v1/whoami` (MCP `boof_whoami`) needs no scope: it returns `{ principal: { kind, id, name, trust, scopes[], projects }, server: { version, authMode, mcpEnabled } }`. Call it first to learn what a key may do.
+- `GET /api/v1/whoami` (MCP `boof_whoami`) needs no scope: it returns `{ principal: { kind, id, name, trust, scopes[], projects, expiresAt? }, server: { version, authMode, mcpEnabled } }`. Call it first to learn what a key may do.
 
 ## Versioning
 
