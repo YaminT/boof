@@ -6,27 +6,31 @@
  */
 export const OP_COVERAGE: Record<string, { where: string } | { none: string }> = {
   "auth.whoami": {
-    none: "no identity screen; the UI acts as the local principal or its stored token",
+    where:
+      "whoami \u2014 AutomationPage, KeysPage, CommandConsole (who the key is, what it may do)",
   },
-  "projects.list": { where: "listProjects \u2014 useProjects (the project switcher)" },
+  "projects.list": {
+    where:
+      "listProjects \u2014 useProjects, ArchivedProjects (the project switcher, archived list)",
+  },
   "projects.create": { where: "createProject \u2014 Projects (the new-project dialog)" },
   "projects.get": { where: "getProject \u2014 ChangesPanel (the current branch)" },
-  "projects.update": { where: "updateProject \u2014 SettingsPage (project settings, name, pause)" },
-  "projects.archive": { where: "archiveProject \u2014 SettingsPage (archive the project)" },
+  "projects.update": {
+    where: "updateProject \u2014 useSettingsPage (project settings, name, pause)",
+  },
+  "projects.archive": { where: "archiveProject \u2014 ProjectPage (archive the project)" },
   "projects.unarchive": {
-    none: "no control restores an archived project; use REST, MCP or the CLI",
+    where: "unarchiveProject \u2014 ArchivedProjects (restore an archived project)",
   },
   "projects.pause": { none: "the project settings page sets `paused` through projects.update" },
   "projects.resume": { none: "the project settings page sets `paused` through projects.update" },
-  "projects.delete": {
-    none: "the UI archives a project (projects.archive); purge is REST, MCP or CLI only",
-  },
-  "projects.usage": { where: "projectUsage \u2014 SettingsPage (project usage)" },
+  "projects.delete": { where: "deleteProject \u2014 ArchivedProjects (purge an archived project)" },
+  "projects.usage": { where: "projectUsage \u2014 BudgetsPage (project usage)" },
   "plans.list": { where: "listPlans \u2014 useAppData (the Plans list)" },
   "plans.create": { where: "createPlan \u2014 PlansPage (new plan)" },
   "plans.get": { where: "getPlan \u2014 usePlan, GoalEditor (the plan screen)" },
   "plans.update": {
-    where: "updatePlan \u2014 PlanPage, InboxPage, CommandPalette (approve, draft, archive)",
+    where: "updatePlan \u2014 PlanPage, InboxPage, useCommandActions (approve, draft, archive)",
   },
   "plans.replaceGoals": {
     none: "goals are edited one at a time (plans.upsertGoal, plans.removeGoal)",
@@ -44,12 +48,12 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "tasks.diff": { where: "getTaskDiff \u2014 ChangesPanel (what a task changed)" },
   "tasks.create": { where: "createTask \u2014 TaskForm, useTaskActions (new task)" },
   "tasks.update": {
-    where: "updateTask \u2014 TaskForm, NeedsYouList, CommandPalette (edit a task)",
+    where: "updateTask \u2014 TaskForm, NeedsYouList, useCommandActions, InboxPage (edit a task)",
   },
   "tasks.move": { where: "moveTask \u2014 TaskRowMenu (detach from a missing parent or epic)" },
   "tasks.queue": {
     where:
-      "updateTask {status: pending} \u2014 Queue buttons (useTaskActions, NeedsYouList, InboxPage, CommandPalette)",
+      "updateTask {status: pending} \u2014 useTaskActions, NeedsYouList, InboxPage, useCommandActions (queue buttons)",
   },
   "tasks.skip": { where: "setSkip \u2014 TaskRowMenu, useTaskActions (skip or unskip)" },
   "tasks.reorder": { where: "reorder \u2014 TasksPage (drag a task)" },
@@ -63,7 +67,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "tasks.delete": { where: "deleteTask \u2014 TaskDetailPage (delete a task)" },
   "tasks.answers": { where: "submitAnswers \u2014 AnswerBox (answer the planner's questions)" },
   "tasks.stop": {
-    where: "stopTask \u2014 RunningCard, CommandPalette, useTaskActions (stop a running task)",
+    where: "stopTask \u2014 RunningCard, useCommandActions, useTaskActions (stop a running task)",
   },
   "tasks.inject": { where: "injectPrompt \u2014 SteerBox (steer a running task)" },
   "tasks.liveLog": { where: "liveLog \u2014 NowStrip, useLiveLog (the live output)" },
@@ -79,43 +83,44 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "epics.update": { none: "the hierarchy UI is not built yet" },
   "epics.delete": { none: "the hierarchy UI is not built yet" },
   "settings.get": { where: "getSettings \u2014 useAppData (global settings)" },
-  "settings.update": { where: "updateSettings \u2014 SettingsPage, Projects (change settings)" },
+  "settings.update": {
+    where:
+      "updateSettings \u2014 useSettingsPage, Projects, RunnerSwitch, useCommandActions (change settings)",
+  },
   "settings.health": {
     none: "the UI runs the check itself (settings.checkHealth) and shows its result",
   },
-  "settings.checkHealth": {
-    where: "health (POST) \u2014 SettingsPage (tool health check on open)",
-  },
+  "settings.checkHealth": { where: "health \u2014 AgentsPage (tool health check on open)" },
   "settings.models": {
     none: "the UI refreshes the lists itself (settings.refreshModels) and reads the details",
   },
-  "settings.refreshModels": { where: "models (POST) \u2014 SettingsPage (model lists on open)" },
+  "settings.refreshModels": { where: "models \u2014 AgentsPage (model lists on open)" },
   "models.details": {
-    where: "modelDetails \u2014 SettingsPage (models with their source and health)",
+    where: "modelDetails \u2014 AgentsPage (models with their source and health)",
   },
-  "usage.global": { where: "usage \u2014 SettingsPage (token usage)" },
-  "usage.budget": { where: "budget \u2014 SettingsPage, useAppData (budget status)" },
+  "usage.global": { where: "usage \u2014 BudgetsPage (token usage)" },
+  "usage.budget": {
+    where: "budget \u2014 useAppData (budget status for the banner and spend bar)",
+  },
   "runner.status": { none: "the shell reads the runner state from settings.get and usage.budget" },
   "runner.overview": {
     none: "the shell reads the runner state from settings.get and usage.budget",
   },
   "runner.setEnabled": {
-    where: "updateSettings {runner.enabled} \u2014 RunnerSwitch, RunnerToggle",
+    where: "updateSettings {runner.enabled} \u2014 RunnerSwitch (the runner switch)",
   },
   "actions.list": { where: "actions \u2014 useAppData (tasks that need an answer)" },
-  "commands.list": { where: "listCommands \u2014 CommandsTab, TaskForm (command templates)" },
-  "commands.create": { where: "upsertCommand \u2014 CommandsTab (create a template)" },
-  "commands.update": { where: "renameCommand \u2014 CommandsTab (rename or edit a template)" },
-  "commands.delete": { where: "deleteCommand \u2014 CommandsTab (delete a template)" },
-  "auth.clients.list": { where: "listClients \u2014 ClientsSection (API clients)" },
-  "auth.clients.create": { where: "createClient \u2014 ClientsSection (new API client)" },
-  "auth.clients.revoke": { where: "revokeClient \u2014 ClientsSection (revoke a client)" },
-  "auth.clients.rotate": {
-    none: "the clients screen can create and revoke, not rotate; use REST, MCP or the CLI",
-  },
-  "webhooks.list": { where: "listWebhooks \u2014 Webhooks (the Automation page)" },
+  "commands.list": { where: "listCommands \u2014 CommandTemplates, TaskForm (command templates)" },
+  "commands.create": { where: "upsertCommand \u2014 CommandTemplates (create a template)" },
+  "commands.update": { where: "renameCommand \u2014 CommandTemplates (rename or edit a template)" },
+  "commands.delete": { where: "deleteCommand \u2014 CommandTemplates (delete a template)" },
+  "auth.clients.list": { where: "listClients \u2014 KeysPage (API clients)" },
+  "auth.clients.create": { where: "createClient \u2014 KeysPage (new API client)" },
+  "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
+  "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
+  "webhooks.list": { where: "listWebhooks \u2014 Webhooks (the webhook list)" },
   "webhooks.create": {
-    where: "createWebhook \u2014 Webhooks (add a webhook; the secret is shown once)",
+    where: "createWebhook \u2014 Webhooks (new webhook; the secret is shown once)",
   },
   "webhooks.update": { where: "updateWebhook \u2014 Webhooks (enable, disable, edit)" },
   "webhooks.delete": { where: "deleteWebhook \u2014 Webhooks (delete a webhook)" },

@@ -95,7 +95,9 @@ export const SERVER_ADMIN_SCOPES: readonly Scope[] = ["admin", "auth:admin"];
  * Operations that change or reveal the server's own configuration, beyond the API-client and
  * webhook operations (which {@link SERVER_ADMIN_SCOPES} select by scope): settings writes, the
  * paid health check, command templates and project deletion. A keyless stdio server hides all of
- * them unless started with `--admin`.
+ * them unless started with `--admin`. Load-bearing: `settings.checkHealth` makes paid calls and
+ * `projects.delete` destroys data, so do not "clean up" this list. `settings.refreshModels` and
+ * `models.details` are deliberately absent: they cost nothing and stay visible.
  */
 const ADMIN_FLAG_OPS: readonly string[] = [
   "settings.update",

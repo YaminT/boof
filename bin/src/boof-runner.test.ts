@@ -81,6 +81,12 @@ describe("boof-runner top level", () => {
     expect(existsSync(join(process.cwd(), "data", "settings.json"))).toBe(false);
   });
 
+  it("serve with stray words names the words, not the flag values", async () => {
+    await main(["serve", "tasks", "list", "-d", "/x"]);
+    expect(process.exitCode).toBe(1);
+    expect(errs).toEqual(['boof-runner: unknown command: tasks list (see "boof-runner --help")']);
+  });
+
   it("ops lists the generated commands, and an operation command runs", async () => {
     await main(["ops"]);
     expect(logs.join("\n")).toContain("tasks create");

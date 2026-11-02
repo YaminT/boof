@@ -12,14 +12,16 @@ Usage:
   -d, --data <path>   Data root (default: ./data, or $BOOF_RUNNER_DATA_ROOT)
       --client <id>   Act as this API client (see "auth list"); its scopes, project
                       restriction and trust apply. No key is needed: the OS user owns the data root.
-                      Without --client the local admin principal is used, and only when
+                      Without --client the server is the review-trust "local-mcp"
+                      principal (drafts a human approves, own work only), and only when
                       security.auth.mode is "local-trust"; otherwise the command refuses.
       --project <id>  Serve one project only: the projectId argument is hidden and filled in; the
                       API-client and webhook tools are hidden too.
-      --admin         Without --client: also list the administration tools (API clients, webhooks,
-                      settings writes, command templates, project deletion). They are hidden by
-                      default, because an agent host that registers this server would otherwise
-                      hold them. Not allowed with --client: the client's scopes decide.
+      --admin         Without --client: act as the local administrator and list the administration
+                      tools (API clients, webhooks, settings writes, command templates, project
+                      deletion). Without it they are hidden and the review-trust rules apply,
+                      because an agent host that registers this server would otherwise hold
+                      them. Not allowed with --client: the client's scopes decide.
 
 stdout carries the protocol only; logs go to stderr. Add it to Claude Code with:
   claude mcp add boof -- boof-runner mcp -d <data> --project <id>

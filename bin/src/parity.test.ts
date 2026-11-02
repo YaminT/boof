@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registry, TaskService, type AnyOperation } from "@boof-runner/api";
+import { LOCAL_MCP_PRINCIPAL, registry, TaskService, type AnyOperation } from "@boof-runner/api";
 import { createBoofMcpServer, exposedOps } from "@boof-runner/mcp";
 import {
   AuthStore,
@@ -189,6 +189,34 @@ describe("read-only operations answer on both local surfaces", () => {
     } else {
       expect(res.isError, res.content[0]?.text).toBeFalsy();
     }
+  });
+
+  describe("the keyless default (local-mcp, no administration tools)", () => {
+    it("still reaches every read-only tool it lists", async () => {
+      const server = createBoofMcpServer({
+        root,
+        principal: LOCAL_MCP_PRINCIPAL,
+        services,
+        authStore,
+        adminTools: false,
+      });
+      const client = new Client({ name: "parity", version: "1" });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(a), client.connect(b)]);
+      open.push(client);
+      const listed = new Set((await client.listTools()).tools.map((t) => t.name));
+      const reachable = READ_ONLY.filter((o) => listed.has(o.mcp.name!));
+      expect(reachable.length).toBeGreaterThan(10);
+      for (const op of reachable) {
+        const res = (await client.callTool({ name: op.mcp.name!, arguments: inputFor(op) })) as {
+          isError?: boolean;
+          content: { text: string }[];
+        };
+        const expected = EXPECTED_FAILURE[op.name];
+        if (expected) expect(res.content[0]!.text.startsWith(expected), op.name).toBe(true);
+        else expect(res.isError, `${op.name}: ${res.content[0]?.text}`).toBeFalsy();
+      }
+    });
   });
 
   describe("scopes", () => {

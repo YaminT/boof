@@ -27,8 +27,9 @@ export interface StdioOptions {
 }
 
 /**
- * Check the options and return the principal resolver for a stdio server. Without `--client` the
- * local (admin) principal is used, and only when `security.auth.mode` is `local-trust`.
+ * Check the options and return the principal for a stdio server. Without `--client` it is the
+ * review-trust `local-mcp` principal (the local administrator with `--admin`), and only when
+ * `security.auth.mode` is `local-trust`.
  */
 export async function stdioPrincipal(
   services: TaskService,
@@ -112,7 +113,7 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
     services,
     authStore,
     project: opts.project,
-    // The keyless stdio server is the local administrator: its default is the safe one.
+    // The keyless stdio server is `local-mcp` unless `--admin`: its default hides the administration tools.
     ...(opts.client === undefined ? { adminTools: opts.admin === true } : {}),
   });
   const transport = new StdioServerTransport();

@@ -410,8 +410,9 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   if (code !== 0) process.exitCode = code;
 }
 
-/** A word in serve's arguments that is not a flag or a flag's value: serve takes none. */
-function strayWord(args: string[]): string | undefined {
+/** The words in serve's arguments that are not a flag or a flag's value: serve takes none. */
+function strayWords(args: string[]): string[] {
+  const words: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i]!;
     const flag = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
@@ -419,15 +420,15 @@ function strayWord(args: string[]): string | undefined {
       if (GLOBAL_VALUE_FLAGS.has(flag) && !a.includes("=")) i += 1;
       continue;
     }
-    return a;
+    words.push(a);
   }
-  return undefined;
+  return words;
 }
 
 /** `boof-runner serve tasks list` must not start a server and ignore the words. */
 function refuseServe(args: string[]): number {
   console.error(
-    `boof-runner: unknown command: ${args.filter((a) => !a.startsWith("-")).join(" ")} (see "boof-runner --help")`,
+    `boof-runner: unknown command: ${strayWords(args).join(" ")} (see "boof-runner --help")`,
   );
   return 1;
 }
@@ -487,7 +488,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       console.log(readVersion());
       break;
     case "serve":
-      if (strayWord(rest) !== undefined) return refuseServe(rest);
+      if (strayWords(rest).length > 0) return refuseServe(rest);
       await serve(rest);
       return SERVE_FOREVER; // serve runs forever
     case undefined:
@@ -497,7 +498,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       // Only serve's own flags may stand first (the legacy `boof-runner -d ... -p ...`
       // form); any other token is an unknown command, never a silent server start.
       if (isServeFlag(cmd)) {
-        if (strayWord(argv) !== undefined) return refuseServe(argv);
+        if (strayWords(argv).length > 0) return refuseServe(argv);
         await serve(argv);
         return SERVE_FOREVER;
       }
