@@ -170,7 +170,7 @@ When a plan task reaches its final `done`, the engine appends a history entry `{
 
 ## Runner Pipeline
 
-The runner polls `tasks/pending/` of every active, non-paused project that has a working directory and chooses across all of them: highest `priority`, then oldest `updated`, then project id (then task id) so the order is deterministic. It transitions the chosen task to `projects/<id>/tasks/ongoing/<task-id>/` and builds the pipeline with the project's effective settings.
+The runner polls `tasks/pending/` of every active, non-paused project that has a working directory and chooses across all of them: highest `priority`, then oldest `updated`, then project id (then task id) so the order is deterministic. It transitions the chosen task to `projects/<id>/tasks/ongoing/<task-id>/` and builds the pipeline with the project's effective settings. Epics and subtasks play no part in the choice. Every prompt of a task that has an epic, a parent or subtasks carries a `## Hierarchy` section right after `## Project`: the epic title, and the parent with its other subtasks (or the task's own subtasks), as titles and statuses only. Drafts and archived tasks are left out, so text no human approved never reaches an agent through a human's task; the list stops at 50 entries.
 
 ### Concurrency
 

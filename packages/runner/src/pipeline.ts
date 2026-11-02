@@ -19,6 +19,7 @@ import {
   taskSteerRequestPath,
   taskStopRequestPath,
   TaskStore,
+  EpicStore,
   workingAreaDir,
   worktreeSettings,
   type EffectiveSettings,
@@ -34,6 +35,7 @@ import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { announceBudgetExceeded } from "./budget.js";
 import { UsageStore } from "./usage-store.js";
+import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 import {
   branchHead,
   currentBranch,
@@ -567,10 +569,25 @@ export class Pipeline {
     );
   }
 
+  /** The `## Hierarchy` section; any failure reading the hierarchy leaves it out of the prompt. */
+  private async hierarchySection(task: Task): Promise<string | null> {
+    try {
+      const [tasks, epics] = await Promise.all([
+        this.deps.store.list(),
+        new EpicStore(this.deps.root).list({ includeArchived: true }),
+      ]);
+      return hierarchyPromptSection(task, tasks, epics);
+    } catch {
+      return null;
+    }
+  }
+
   private async buildPrompt(task: Task, extra: string): Promise<string> {
     const parts = [`# Task: ${task.frontmatter.title}`];
     const brief = this.deps.project?.brief?.trim();
     if (brief) parts.push(`## Project\n${brief}`);
+    const hierarchy = await this.hierarchySection(task);
+    if (hierarchy) parts.push(hierarchy);
     parts.push(`## Prompt\n${task.body.prompt}`);
     if (task.body.command.trim()) parts.push(`## Command\n${task.body.command}`);
     const origin = task.frontmatter.origin;

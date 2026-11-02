@@ -19,6 +19,7 @@ import {
   defaultSettings,
   effectiveSettings,
   newTask,
+  EpicStore,
   ProjectStore,
   parseGoal,
   serializeTask,
@@ -1126,6 +1127,35 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     await run("Add a hat", { id: "t2" });
     expect(mockState.prompts.length).toBeGreaterThan(0);
     for (const p of mockState.prompts) expect(p).not.toContain("## Project");
+  });
+
+  it("puts ## Hierarchy after ## Project and before ## Prompt", async () => {
+    await new ProjectStore(dataRoot).update("default", { brief: "A shop for hats." });
+    await store.create(newTask(fm({ id: "p", status: "draft", title: "Parent" }), "parent"));
+    await store.transition("p", "pending");
+    await store.transition("p", "running");
+    await store.transition("p", "done");
+    await run("Add a cart", { id: "c", parentId: "p" });
+    expect(mockState.prompts.length).toBeGreaterThan(0);
+    for (const p of mockState.prompts) {
+      expect(p.indexOf("## Project")).toBeGreaterThanOrEqual(0);
+      expect(p.indexOf("## Project")).toBeLessThan(p.indexOf("## Hierarchy"));
+      expect(p.indexOf("## Hierarchy")).toBeLessThan(p.indexOf("## Prompt"));
+      expect(p).toContain('subtask of `p` "Parent" (done)');
+    }
+  });
+
+  it("epic priority does not change which task runs first", async () => {
+    const epics = new EpicStore(new ProjectStore(dataRoot).dir("default"));
+    await epics.create({ title: "Low", priority: 0 });
+    await epics.create({ title: "High", priority: 100 });
+    await store.create(newTask(fm({ id: "older", epicId: "low" }), "older"));
+    await new Promise((r) => setTimeout(r, 15));
+    await store.create(newTask(fm({ id: "newer", epicId: "high" }), "newer"));
+    const r = await engine.tick();
+    if (r.kind !== "ran") throw new Error(`expected ran, got ${r.kind}`);
+    expect((await store.get("older"))!.frontmatter.status).toBe("done");
+    expect((await store.get("newer"))!.frontmatter.status).toBe("pending");
   });
 
   it("one transient failure, then success: done, same worktree, retry logged, prompt amended", async () => {
