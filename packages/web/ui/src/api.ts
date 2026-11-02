@@ -228,7 +228,11 @@ export const api = {
       `${P(pid)}/epics/${encodeURIComponent(epicId)}${detach ? "?detach=true" : ""}`,
       { method: "DELETE" },
     ),
-  deleteTask: (pid: string, id: string) => http<{ ok: true }>(T(pid, id), { method: "DELETE" }),
+  /** Refused with 409 `has_children` while the task has subtasks, unless `detach` frees them. */
+  deleteTask: (pid: string, id: string, detach = false) =>
+    http<{ ok: true; detached: string[] }>(`${T(pid, id)}${detach ? "?detach=true" : ""}`, {
+      method: "DELETE",
+    }),
   liveLog: (pid: string, id: string) =>
     http<{ log: string; running: boolean }>(`${T(pid, id)}/live-log`),
   stopTask: (pid: string, id: string) =>

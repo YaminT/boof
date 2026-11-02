@@ -18,7 +18,7 @@ import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
-import { epicFromSearch } from "./lib/task-links.js";
+import { epicFromSearch, manageEpicsFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
 import { NowStrip } from "./overview/NowStrip.js";
@@ -148,6 +148,7 @@ export function App() {
               data={data}
               navigate={navigate}
               epic={epicFromSearch(window.location.search)}
+              manageEpics={manageEpicsFromSearch(window.location.search)}
             />
           </>
         )}

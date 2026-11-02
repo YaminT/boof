@@ -13,7 +13,7 @@ import { Input } from "@/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/ui/sheet";
 import { api, type EpicView, type TaskView } from "../api.js";
 import { act } from "../lib/act.js";
-import { epicTaskCount, needsDetach, parseEpicForm } from "../lib/epics-manage.js";
+import { epicDetachNote, epicUsage, needsDetach, parseEpicForm } from "../lib/epics-manage.js";
 import { progressLabel } from "../lib/task-hierarchy.js";
 import { ConfirmDialog } from "../settings/ConfirmDialog.js";
 import { TonePill } from "../shell/StatusPill.js";
@@ -120,7 +120,7 @@ export function ManageEpicsSheet({
     const p = parseEpicForm(draft);
     return p.ok ? [] : p.problems;
   })();
-  const detachCount = detaching ? epicTaskCount(tasks, detaching.id) : 0;
+  const usage = detaching ? epicUsage(tasks, detaching.id) : null;
 
   return (
     <>
@@ -277,11 +277,10 @@ export function ManageEpicsSheet({
           <DialogHeader>
             <DialogTitle>This epic still has tasks</DialogTitle>
             <DialogDescription>
-              {detaching &&
-                `${detachCount} ${detachCount === 1 ? "task names" : "tasks name"} “${detaching.title}”. Archive it to keep the grouping, or delete it and clear the epic on ${detachCount === 1 ? "that task" : "those tasks"} (nothing else changes).`}
+              {detaching && usage && epicDetachNote(detaching.title, usage)}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="sm:flex-wrap">
             <Button variant="outline" onClick={() => setDetaching(null)}>
               Cancel
             </Button>

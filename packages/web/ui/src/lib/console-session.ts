@@ -61,7 +61,7 @@ export async function submitConsole(
     outcome = resolved;
   } else {
     try {
-      await resolved.action.run();
+      await resolved.action.run(resolved.args);
       outcome = { kind: "ok", action: resolved.action };
     } catch (err) {
       outcome = { kind: "error", action: resolved.action, message: errorMessage(err) };

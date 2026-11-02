@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Project, Scope } from "@boof-runner/shared/schema";
-import type { PlanSummary, TaskView } from "../api.js";
+import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import {
   availableActions,
   formatConsoleResult,
@@ -26,6 +26,9 @@ function setup(over: { runnerEnabled?: boolean } = {}) {
     activatePlan: vi.fn(),
     queueTask: vi.fn(),
     setRunner: vi.fn(),
+    createEpic: vi.fn(),
+    openNewEpic: vi.fn(),
+    moveTask: vi.fn(),
   };
   const actions = createCommandActions({
     pid: "alpha",
@@ -43,11 +46,54 @@ function setup(over: { runnerEnabled?: boolean } = {}) {
         created: "2026-01-01",
       } as unknown as PlanSummary,
     ],
+    epics: [
+      { id: "checkout", title: "Checkout rework", archived: false },
+      { id: "search", title: "Search", archived: false },
+    ] as unknown as EpicView[],
+    currentTask: task("t1", "draft", "Fix login"),
     runnerEnabled: over.runnerEnabled ?? false,
     settingsLoaded: true,
     effects,
   });
   return { actions, effects };
+}
+function setupWith(o: { ownEpic?: string; parent?: string }) {
+  const effects = {
+    navigate: vi.fn(),
+    selectProject: vi.fn(),
+    setTheme: vi.fn(),
+    requestStop: vi.fn(),
+    activatePlan: vi.fn(),
+    queueTask: vi.fn(),
+    setRunner: vi.fn(),
+    createEpic: vi.fn(),
+    openNewEpic: vi.fn(),
+    moveTask: vi.fn(),
+  };
+  const cur = {
+    projectId: "alpha",
+    frontmatter: {
+      id: "t1",
+      title: "Fix login",
+      status: "draft",
+      epicId: o.ownEpic,
+      parentId: o.parent,
+    },
+    body: {},
+    epicId: o.ownEpic,
+  } as unknown as TaskView;
+  const actions = createCommandActions({
+    pid: "alpha",
+    projects: [],
+    tasks: [cur, task("t2", "draft", "Fix logout")],
+    plans: [],
+    epics: [{ id: "checkout", title: "Checkout rework", archived: false }] as unknown as EpicView[],
+    currentTask: cur,
+    runnerEnabled: false,
+    settingsLoaded: true,
+    effects,
+  });
+  return { actions };
 }
 const idOf = (r: ConsoleResolution) => (r.kind === "run" ? r.action.id : r);
 
@@ -89,6 +135,28 @@ describe("resolveConsoleCommand", () => {
     expect(idOf(resolveConsoleCommand("/go plans", actions))).toBe("go-plans");
     expect(idOf(resolveConsoleCommand("/go settings keys", actions))).toBe("go-settings-keys");
     expect(idOf(resolveConsoleCommand("/theme light", actions))).toBe("theme-light");
+  });
+
+  it("resolves the hierarchy verbs", () => {
+    expect(resolveConsoleCommand("/epic Payments", actions)).toMatchObject({
+      kind: "run",
+      args: "Payments",
+    });
+    expect(idOf(resolveConsoleCommand("/epic Payments", actions))).toBe("new-epic");
+    expect(idOf(resolveConsoleCommand("/epic", actions))).toBe("new-epic");
+    expect(idOf(resolveConsoleCommand("/move checkout", actions))).toBe("move-epic-checkout");
+    expect(idOf(resolveConsoleCommand("/move search", actions))).toBe("move-epic-search");
+    expect(idOf(resolveConsoleCommand("/subtask fix logout", actions))).toBe("make-subtask-t2");
+    expect(resolveConsoleCommand("/move none", actions).kind).toBe("unknown"); // nothing to detach: own epic is unset
+    expect(resolveConsoleCommand("/detach parent", actions).kind).toBe("unknown"); // it has no parent
+    expect(resolveConsoleCommand("/detach nonsense", actions).kind).toBe("unknown");
+  });
+
+  it("resolves /detach and /move none when there is something to detach", () => {
+    const { actions: a } = setupWith({ ownEpic: "checkout", parent: "t2" });
+    expect(idOf(resolveConsoleCommand("/detach epic", a))).toBe("detach-epic");
+    expect(idOf(resolveConsoleCommand("/move none", a))).toBe("detach-epic");
+    expect(idOf(resolveConsoleCommand("/detach parent", a))).toBe("detach-parent");
   });
 
   it("refuses ambiguous or missing targets and says why", () => {
@@ -158,7 +226,7 @@ describe("formatConsoleResult", () => {
     expect(
       formatConsoleResult({ kind: "unknown", input: "/nope", reason: "no such command" }),
     ).toBe(
-      'unknown: "/nope" (no such command). Try a palette label or /task, /queue, /stop, /open, /go.',
+      'unknown: "/nope" (no such command). Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach.',
     );
   });
 });

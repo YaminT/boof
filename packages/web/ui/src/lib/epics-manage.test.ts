@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, type TaskView } from "../api.js";
-import { epicTaskCount, needsDetach, parseEpicForm } from "./epics-manage.js";
+import { epicDetachNote, epicUsage, needsDetach, parseEpicForm } from "./epics-manage.js";
 
 describe("parseEpicForm", () => {
   it("trims the title and reads the priority (default 0, negatives allowed)", () => {
@@ -34,12 +34,39 @@ describe("needsDetach", () => {
   });
 });
 
-describe("epicTaskCount", () => {
-  it("counts the tasks that name the epic themselves (what detach would clear)", () => {
-    const t = (id: string, epicId?: string, effective?: string) =>
-      ({ frontmatter: { id, epicId }, epicId: effective ?? epicId }) as unknown as TaskView;
-    expect(
-      epicTaskCount([t("a", "e"), t("b", "e"), t("c", undefined, "e"), t("d", "f")], "e"),
-    ).toBe(2);
+describe("epicUsage", () => {
+  const t = (id: string, o: { own?: string; effective?: string; parent?: string }) =>
+    ({
+      frontmatter: { id, epicId: o.own, parentId: o.parent },
+      epicId: o.effective ?? o.own,
+    }) as unknown as TaskView;
+  it("counts the tasks that name the epic and, apart, the subtasks that take it from a parent", () => {
+    const tasks = [
+      t("a", { own: "e" }),
+      t("b", { own: "e" }),
+      t("kid1", { effective: "e", parent: "a" }),
+      t("kid2", { effective: "e", parent: "a" }),
+      t("kid3", { effective: "e", parent: "b" }),
+      t("other", { own: "f" }),
+      t("kid4", { effective: "f", parent: "other" }),
+    ];
+    expect(epicUsage(tasks, "e")).toEqual({ tasks: 2, subtasks: 3 });
+    expect(epicUsage(tasks, "none")).toEqual({ tasks: 0, subtasks: 0 });
+  });
+});
+
+describe("epicDetachNote", () => {
+  it("names the tasks and their subtasks", () => {
+    expect(epicDetachNote("Checkout rework", { tasks: 1, subtasks: 3 })).toBe(
+      "1 task and its 3 subtasks use \u201cCheckout rework\u201d. Archive it to keep the grouping, or delete it: that clears the epic on them, and nothing else changes.",
+    );
+    expect(epicDetachNote("X", { tasks: 2, subtasks: 1 })).toContain(
+      "2 tasks and their 1 subtask use",
+    );
+  });
+  it("is plain for tasks without subtasks", () => {
+    expect(epicDetachNote("X", { tasks: 1, subtasks: 0 })).toContain("1 task uses \u201cX\u201d");
+    expect(epicDetachNote("X", { tasks: 1, subtasks: 0 })).toContain("on that task");
+    expect(epicDetachNote("X", { tasks: 3, subtasks: 0 })).toContain("3 tasks use");
   });
 });

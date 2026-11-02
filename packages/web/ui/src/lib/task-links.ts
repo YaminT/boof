@@ -73,11 +73,24 @@ export function hierarchyLine(
   return { epic, parent };
 }
 
-/** The current path and query with `epic` set (or removed when null); other query keys stay. */
-export function withEpicQuery(pathname: string, search: string, epic: string | null): string {
+/** The current path and query with `key` set (or removed when null); other query keys stay. */
+export function withQuery(
+  pathname: string,
+  search: string,
+  key: string,
+  value: string | null,
+): string {
   const q = new URLSearchParams(search);
-  if (epic === null) q.delete("epic");
-  else q.set("epic", epic);
+  if (value === null) q.delete(key);
+  else q.set(key, value);
   const text = q.toString();
   return text ? `${pathname}?${text}` : pathname;
 }
+
+/** The current path and query with `epic` set (or removed when null). */
+export const withEpicQuery = (pathname: string, search: string, epic: string | null) =>
+  withQuery(pathname, search, "epic", epic);
+
+/** `?manage=epics` on the Tasks URL opens the Manage epics sheet (the palette's "New epic"). */
+export const manageEpicsFromSearch = (search: string): boolean =>
+  new URLSearchParams(search).get("manage") === "epics";

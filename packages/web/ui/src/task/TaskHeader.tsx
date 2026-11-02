@@ -24,6 +24,7 @@ export function TaskHeader({
   actions,
   onQueue,
   onRetry,
+  subtasks,
   onDelete,
 }: {
   task: TaskView;
@@ -33,11 +34,15 @@ export function TaskHeader({
   actions: TaskActions;
   onQueue: () => void;
   onRetry: () => void;
-  onDelete: () => void;
+  /** Subtasks of this task, which a delete would have to detach. */
+  subtasks: number;
+  /** Deletes the task; "needs-detach" when the server found subtasks the page did not know of. */
+  onDelete: (detach: boolean) => Promise<"deleted" | "needs-detach" | "failed">;
 }) {
   const f = task.frontmatter;
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [refused, setRefused] = useState(false);
   const running = f.status === "running";
 
   return (
@@ -101,10 +106,20 @@ export function TaskHeader({
       />
       <DeleteTaskDialog
         open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        onConfirm={() => {
+        onOpenChange={(o) => {
+          setConfirmDelete(o);
+          if (!o) setRefused(false);
+        }}
+        subtasks={subtasks}
+        refused={refused}
+        onConfirm={(detach) => {
           setConfirmDelete(false);
-          onDelete();
+          void onDelete(detach).then((r) => {
+            if (r !== "needs-detach") return;
+            // The list was out of date: ask again, this time with the detach choice.
+            setRefused(true);
+            setConfirmDelete(true);
+          });
         }}
       />
     </header>

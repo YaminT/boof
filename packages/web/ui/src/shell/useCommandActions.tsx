@@ -7,6 +7,8 @@ import { act } from "../lib/act.js";
 import { createCommandActions, type CommandAction } from "../lib/command-actions.js";
 import { useTheme } from "../lib/theme.js";
 import { toggleRunner } from "./RunnerSwitch.js";
+import type { Epics } from "../tasks/useEpics.js";
+import { withQuery } from "../lib/task-links.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
 
 interface PendingStop {
@@ -26,6 +28,8 @@ export function useCommandActions({
   pid,
   navigate,
   onSelectProject,
+  epics,
+  currentTask,
   mode,
 }: {
   data: AppData;
@@ -33,6 +37,9 @@ export function useCommandActions({
   pid: string | null;
   navigate: (to: Route) => void;
   onSelectProject: (id: string) => void;
+  epics: Epics;
+  /** The task open on screen, which the hierarchy actions apply to. */
+  currentTask: TaskView | null;
   mode: "toast" | "throw";
 }): { actions: CommandAction[]; stopDialog: ReactNode } {
   const { setPref } = useTheme();
@@ -45,7 +52,7 @@ export function useCommandActions({
   ): Promise<void> => {
     if (mode === "throw") await fn();
     else await act(fn, { success, failure });
-    await data.refresh();
+    await Promise.all([data.refresh(), epics.reload()]);
   };
 
   const actions = createCommandActions({
@@ -53,6 +60,8 @@ export function useCommandActions({
     projects: projects ?? [],
     tasks: data.tasks,
     plans: data.plans,
+    epics: epics.list,
+    currentTask,
     runnerEnabled: data.settings?.runner.enabled ?? false,
     settingsLoaded: !!data.settings,
     effects: {
@@ -73,6 +82,20 @@ export function useCommandActions({
           "Queued",
           "Could not queue",
         ),
+      createEpic: (id, title) =>
+        mutate(() => api.createEpic(id, { title }), "Epic added", "Could not add the epic"),
+      openNewEpic: (id) => {
+        // The Tasks screen opens the sheet when it sees ?manage=epics, then drops the query.
+        navigate({ name: "tasks", pid: id });
+        history.replaceState(
+          null,
+          "",
+          withQuery(window.location.pathname, window.location.search, "manage", "epics"),
+        );
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      },
+      moveTask: (id, taskId, move) =>
+        mutate(() => api.moveTask(id, taskId, move), "Moved", "Could not move the task"),
       setRunner: (enabled) =>
         mode === "throw"
           ? api.updateSettings({ runner: { enabled: !enabled } }).then(() => data.refresh())

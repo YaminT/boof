@@ -5,7 +5,8 @@ import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
 import { stepHeaders } from "../lib/log-tail.js";
-import { parentFromSearch } from "../lib/task-links.js";
+import { hasChildrenConflict } from "../lib/task-delete.js";
+import { childTasks, parentFromSearch } from "../lib/task-links.js";
 import { backFor, formatRoute, type Route, type TaskView as RouteView } from "../lib/route.js";
 import { useElapsed } from "../overview/useElapsed.js";
 import { useTaskActions } from "../tasks/useTaskActions.js";
@@ -194,14 +195,23 @@ function Loaded({
     actions.retry(id);
   };
 
-  const remove = async () => {
-    const ok = await act(() => api.deleteTask(pid, id), {
+  const remove = async (detach: boolean): Promise<"deleted" | "needs-detach" | "failed"> => {
+    let refused = false;
+    const ok = await act(() => api.deleteTask(pid, id, detach), {
       success: "Deleted",
       failure: "Could not delete",
+      // Subtasks the list did not show yet: not an error, but a second question for the user.
+      onError: (err) => {
+        if (detach || !hasChildrenConflict(err)) return false;
+        refused = true;
+        return true;
+      },
     });
-    if (!ok) return;
+    if (refused) return "needs-detach";
+    if (!ok) return "failed";
     void data.refresh();
     navigate({ name: "tasks", pid }, { replace: true });
+    return "deleted";
   };
 
   return (
@@ -214,7 +224,8 @@ function Loaded({
         actions={actions}
         onQueue={() => void queue()}
         onRetry={() => void retry()}
-        onDelete={() => void remove()}
+        subtasks={childTasks(data.tasks, id).items.length}
+        onDelete={remove}
       />
       <TaskHierarchy pid={pid} task={task} tasks={data.tasks} actions={actions} />
       <StepStrip task={task} now={Date.now()} logHeaders={stepHeaders(task.body.log)} />

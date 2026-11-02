@@ -28,7 +28,7 @@ import {
   type PrefStore,
 } from "../lib/epic-grouping.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
-import { withEpicQuery } from "../lib/task-links.js";
+import { withEpicQuery, withQuery } from "../lib/task-links.js";
 import { groupSubtasks } from "../lib/task-hierarchy.js";
 import { TaskRow, type RowContext, type RowEntry } from "./TaskRow.js";
 import { useEpics } from "./useEpics.js";
@@ -68,12 +68,15 @@ export function TasksPage({
   data,
   navigate,
   epic,
+  manageEpics,
 }: {
   pid: string;
   data: AppData;
   navigate: (to: Route, opts?: { replace?: boolean }) => void;
   /** The epic in the URL (`?epic=<id>`, or `none`), which the filter follows. */
   epic: string | null;
+  /** `?manage=epics` is in the URL: open the Manage epics sheet. */
+  manageEpics: boolean;
 }) {
   const actions = useTaskActions(pid, data, navigate);
   const [filter, setFilter] = useState<TaskFilter>({ ...NO_FILTER, epic });
@@ -81,7 +84,21 @@ export function TasksPage({
   const store = useMemo(safeStorage, []);
   const [grouping, setGrouping] = useState(() => readGrouping(store, pid));
   const [collapsed, setCollapsed] = useState(() => readCollapsed(store, pid));
-  const [managing, setManaging] = useState(false);
+  const [managing, setManaging] = useState(manageEpics);
+  useEffect(() => {
+    if (manageEpics) setManaging(true);
+  }, [manageEpics]);
+  const setManagingSheet = (open: boolean) => {
+    setManaging(open);
+    if (!open && manageEpics) {
+      history.replaceState(
+        null,
+        "",
+        withQuery(window.location.pathname, window.location.search, "manage", null),
+      );
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+  };
   const held = useHeldScopes();
   useEffect(() => {
     setGrouping(readGrouping(store, pid));
@@ -453,7 +470,7 @@ export function TasksPage({
       )}
       <ManageEpicsSheet
         open={managing}
-        onOpenChange={setManaging}
+        onOpenChange={setManagingSheet}
         pid={pid}
         epics={epicState}
         tasks={tasks}

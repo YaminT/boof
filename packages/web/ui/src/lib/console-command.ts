@@ -38,6 +38,8 @@ const TARGETED: Record<string, string> = {
   open: "open-task-",
   activate: "activate-plan-",
   project: "switch-project-",
+  move: "move-epic-",
+  subtask: "make-subtask-",
 };
 
 function pickTarget(
@@ -71,6 +73,22 @@ function slash(raw: string, actions: CommandAction[]): ConsoleResolution {
     a ? { kind: "run", action: a, args } : unknown(raw, `${what} is not available here`);
 
   if (verb === "task") return run(byId("new-task"), "/task");
+  if (verb === "epic") return run(byId("new-epic"), "/epic");
+  if (verb === "detach") {
+    const what = norm(args);
+    const a = what === "parent" || what === "epic" ? byId(`detach-${what}`) : undefined;
+    if (a) return { kind: "run", action: a, args };
+    return unknown(
+      raw,
+      what === "parent" || what === "epic"
+        ? `nothing to detach: this task has no ${what}`
+        : "/detach needs parent or epic",
+    );
+  }
+  if (verb === "move" && norm(args) === "none") {
+    const a = byId("detach-epic");
+    return a ? { kind: "run", action: a, args } : unknown(raw, "this task has no epic of its own");
+  }
   if (verb in TARGETED) return pickTarget(raw, verb, args, actions);
   if (verb === "go") {
     const want = norm(args);
@@ -128,5 +146,5 @@ export function resolveConsoleCommand(input: string, actions: CommandAction[]): 
 export function formatConsoleResult(o: ConsoleOutcome): string {
   if (o.kind === "ok") return `ok: ${o.action.label}`;
   if (o.kind === "error") return `error: ${o.action.label}: ${o.message}`;
-  return `unknown: "${o.input}"${o.reason ? ` (${o.reason})` : ""}. Try a palette label or /task, /queue, /stop, /open, /go.`;
+  return `unknown: "${o.input}"${o.reason ? ` (${o.reason})` : ""}. Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach.`;
 }

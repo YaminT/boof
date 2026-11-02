@@ -20,7 +20,21 @@ export function needsDetach(err: unknown): boolean {
   return err instanceof ApiError && err.status === 409 && err.code === "has_tasks";
 }
 
-/** How many tasks name the epic themselves, which is what "delete and detach" would clear. */
-export function epicTaskCount(tasks: TaskView[], epicId: string): number {
-  return tasks.filter((t) => t.frontmatter.epicId === epicId).length;
+/** Who uses an epic: the tasks that name it, and the subtasks that take it from their parent. */
+export function epicUsage(tasks: TaskView[], epicId: string): { tasks: number; subtasks: number } {
+  const direct = tasks.filter((t) => t.frontmatter.epicId === epicId).length;
+  const inherited = tasks.filter((t) => t.epicId === epicId && t.frontmatter.parentId).length;
+  return { tasks: direct, subtasks: inherited };
+}
+
+const n = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** The sentence the delete-with-detach choice opens with: everyone who would lose the epic. */
+export function epicDetachNote(title: string, u: { tasks: number; subtasks: number }): string {
+  const single = u.tasks === 1 && u.subtasks === 0;
+  const who =
+    u.subtasks > 0
+      ? `${n(u.tasks, "task")} and ${u.tasks === 1 ? "its" : "their"} ${n(u.subtasks, "subtask")}`
+      : n(u.tasks, "task");
+  return `${who} ${single ? "uses" : "use"} \u201c${title}\u201d. Archive it to keep the grouping, or delete it: that clears the epic on ${single ? "that task" : "them"}, and nothing else changes.`;
 }

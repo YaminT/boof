@@ -8,7 +8,9 @@ import {
   newSubtaskHref,
   parentFromSearch,
   tasksForEpicHref,
+  manageEpicsFromSearch,
   withEpicQuery,
+  withQuery,
 } from "./task-links.js";
 
 const task = (id: string, o: Partial<TaskView> = {}, f: Record<string, unknown> = {}) =>
@@ -107,5 +109,17 @@ describe("withEpicQuery", () => {
     expect(withEpicQuery("/p/a/tasks", "?epic=old", null)).toBe("/p/a/tasks");
     expect(withEpicQuery("/p/a/tasks", "?q=1", null)).toBe("/p/a/tasks?q=1");
     expect(withEpicQuery("/p/a/tasks", "", "none")).toBe("/p/a/tasks?epic=none");
+  });
+});
+
+describe("manage epics query", () => {
+  it("reads and writes ?manage=epics", () => {
+    expect(manageEpicsFromSearch("?manage=epics")).toBe(true);
+    expect(manageEpicsFromSearch("?manage=other")).toBe(false);
+    expect(manageEpicsFromSearch("")).toBe(false);
+    expect(withQuery("/p/a/tasks", "?epic=x", "manage", "epics")).toBe(
+      "/p/a/tasks?epic=x&manage=epics",
+    );
+    expect(withQuery("/p/a/tasks", "?manage=epics", "manage", null)).toBe("/p/a/tasks");
   });
 });

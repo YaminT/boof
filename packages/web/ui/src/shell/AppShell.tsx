@@ -7,6 +7,7 @@ import { AddProjectModal } from "../components/Projects.js";
 import { CommandConsole } from "./CommandConsole.js";
 import { CommandPalette, SearchButton } from "./CommandPalette.js";
 import { useCommandActions } from "./useCommandActions.js";
+import { useEpics } from "../tasks/useEpics.js";
 import { BottomBar } from "./BottomBar.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { Rail } from "./Rail.js";
@@ -52,12 +53,20 @@ export function AppShell({
   const [adding, setAdding] = useState(false);
   const [searching, setSearching] = useState(false);
   const pid = selected?.id ?? null;
+  const epics = useEpics(pid, data.tasks);
+  // The hierarchy actions apply to the task on screen (not to a new, unsaved one).
+  const currentTask =
+    route?.name === "task"
+      ? (data.tasks.find((t) => t.frontmatter.id === route.taskId) ?? null)
+      : null;
   const palette = useCommandActions({
     data,
     projects,
     pid,
     navigate,
     onSelectProject,
+    epics,
+    currentTask,
     mode: "toast",
   });
   const consoleActions = useCommandActions({
@@ -66,6 +75,8 @@ export function AppShell({
     pid,
     navigate,
     onSelectProject,
+    epics,
+    currentTask,
     mode: "throw",
   });
   const counts: NavCounts = {

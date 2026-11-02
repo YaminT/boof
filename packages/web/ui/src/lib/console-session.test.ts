@@ -60,6 +60,12 @@ describe("submitConsole", () => {
     expect(r.line).toBe("ok: go-x");
   });
 
+  it("hands the typed arguments to the action", async () => {
+    const run = vi.fn();
+    await submitConsole("/epic Payments", [action("new-epic", run)], "all");
+    expect(run).toHaveBeenCalledExactlyOnceWith("Payments");
+  });
+
   it("reports a refusal as an error line, never ok", async () => {
     const run = vi.fn().mockRejectedValue(new ApiError("not allowed", 403, "forbidden"));
     const r = await submitConsole("go-x", [action("go-x", run)], "all");

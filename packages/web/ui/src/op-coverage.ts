@@ -51,7 +51,8 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where: "updateTask \u2014 TaskForm, NeedsYouList, useCommandActions, InboxPage (edit a task)",
   },
   "tasks.move": {
-    where: "moveTask \u2014 useTaskActions (detach from a missing parent or epic)",
+    where:
+      "moveTask \u2014 useTaskActions, useCommandActions (detach, move to an epic, make a subtask)",
   },
   "tasks.queue": {
     where:
@@ -81,7 +82,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "epics.list": { where: "listEpics \u2014 useEpics (epic names on task rows and task pages)" },
   "epics.get": { none: "the hierarchy UI is not built yet" },
-  "epics.create": { where: "createEpic \u2014 ManageEpicsSheet (add an epic)" },
+  "epics.create": { where: "createEpic \u2014 ManageEpicsSheet, useCommandActions (add an epic)" },
   "epics.update": {
     where: "updateEpic \u2014 ManageEpicsSheet (rename, priority, archive, restore)",
   },

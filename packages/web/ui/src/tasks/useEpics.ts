@@ -13,21 +13,27 @@ export interface Epics {
  * The project's epics, for naming epic chips and for the epic menus. They reload when the project
  * changes or when the set of epics the tasks name changes. A failed load leaves ids unresolved.
  */
-export function useEpics(pid: string, tasks: TaskView[]): Epics {
-  const [loaded, setLoaded] = useState<{ pid: string; items: EpicView[] }>({ pid, items: [] });
+export function useEpics(pid: string | null, tasks: TaskView[]): Epics {
+  const [loaded, setLoaded] = useState<{ pid: string | null; items: EpicView[] }>({
+    pid,
+    items: [],
+  });
   const signature = useMemo(
     () => [...new Set(tasks.flatMap((t) => (t.epicId ? [t.epicId] : [])))].sort().join(","),
     [tasks],
   );
   const reload = useCallback(
     () =>
-      api.listEpics(pid, true).then(
-        (items) => setLoaded({ pid, items }),
-        () => undefined,
-      ),
+      pid === null
+        ? Promise.resolve()
+        : api.listEpics(pid, true).then(
+            (items) => setLoaded({ pid, items }),
+            () => undefined,
+          ),
     [pid],
   );
   useEffect(() => {
+    if (pid === null) return;
     let live = true;
     api.listEpics(pid, true).then(
       (items) => live && setLoaded({ pid, items }),

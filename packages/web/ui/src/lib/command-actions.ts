@@ -1,5 +1,5 @@
 import type { Project, Scope } from "@boof-runner/shared/schema";
-import type { PlanSummary, TaskView } from "../api.js";
+import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import type { Route, SettingsPageId } from "./route.js";
 import type { ThemePref } from "./theme.js";
 import { statusLabel } from "./status.js";
@@ -21,7 +21,8 @@ export interface CommandAction {
   disabled?: boolean;
   /** A short note beside the label ("current", a task's status). */
   meta?: string;
-  run(): Promise<void> | void;
+  /** `args` is what the console user typed after the verb; the palette passes none. */
+  run(args?: string): Promise<void> | void;
 }
 
 /** The effects an action can have, supplied by the screen (toasts, refresh and dialogs live there). */
@@ -34,6 +35,16 @@ export interface ActionEffects {
   activatePlan(pid: string, plan: PlanSummary): Promise<void> | void;
   queueTask(pid: string, taskId: string): Promise<void> | void;
   setRunner(enabled: boolean): Promise<void> | void;
+  /** Create an epic with this name and refresh. */
+  createEpic(pid: string, title: string): Promise<void> | void;
+  /** Take the user to where an epic is named (the Manage epics sheet). */
+  openNewEpic(pid: string): void;
+  /** Change a task's epic or parent; null clears it. */
+  moveTask(
+    pid: string,
+    taskId: string,
+    move: { epicId: string | null } | { parentId: string | null },
+  ): Promise<void> | void;
 }
 
 export interface ActionContext {
@@ -42,6 +53,10 @@ export interface ActionContext {
   projects: Project[];
   tasks: TaskView[];
   plans: PlanSummary[];
+  /** The project's epics, archived ones too. */
+  epics: EpicView[];
+  /** The task open on screen, which the hierarchy actions apply to; null elsewhere. */
+  currentTask: TaskView | null;
   runnerEnabled: boolean;
   settingsLoaded: boolean;
   effects: ActionEffects;
@@ -150,6 +165,19 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
         run: () => fx.requestStop(t),
       });
     }
+
+    add({
+      id: "new-epic",
+      label: "New epic",
+      group: "Actions",
+      keywords: ["create", "epic", "group"],
+      requiredScope: "tasks:write",
+      run: (args) => {
+        const title = args?.trim();
+        return title ? fx.createEpic(pid, title) : fx.openNewEpic(pid);
+      },
+    });
+    if (ctx.currentTask) hierarchyActions(pid, ctx, ctx.currentTask, add);
   }
 
   add({
@@ -171,4 +199,70 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     });
   }
   return out;
+}
+
+type Add = (a: Omit<CommandAction, "searchValue" | "keywords"> & Partial<CommandAction>) => void;
+
+/** Move the open task to an epic, under a parent, or out of either. One level of subtasks only. */
+function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: Add) {
+  const fx = ctx.effects;
+  const f = task.frontmatter;
+  const title = f.title;
+  const topLevel = !f.parentId;
+  const move = (m: { epicId: string | null } | { parentId: string | null }) => () =>
+    fx.moveTask(pid, f.id, m);
+
+  if (f.parentId) {
+    add({
+      id: "detach-parent",
+      label: "Detach from parent",
+      group: "Actions",
+      searchValue: `Detach from parent ${title}`,
+      keywords: ["detach", "parent", "subtask", f.id],
+      requiredScope: "tasks:write",
+      run: move({ parentId: null }),
+    });
+  }
+  if (f.epicId) {
+    add({
+      id: "detach-epic",
+      label: "Detach from epic",
+      group: "Actions",
+      searchValue: `Detach from epic ${title}`,
+      keywords: ["detach", "epic", f.id],
+      requiredScope: "tasks:write",
+      run: move({ epicId: null }),
+    });
+  }
+  // A subtask's epic is its parent's, so only a top-level task moves between epics.
+  if (topLevel) {
+    for (const e of ctx.epics) {
+      if (e.archived || e.id === f.epicId) continue;
+      add({
+        id: `move-epic-${e.id}`,
+        label: `Move to epic: ${e.title}`,
+        group: "Actions",
+        searchValue: `Move to epic: ${e.title} ${e.id} (${title})`,
+        keywords: ["move", "epic", e.id],
+        requiredScope: "tasks:write",
+        run: move({ epicId: e.id }),
+      });
+    }
+  }
+  // A task with subtasks cannot become one itself.
+  if (topLevel && !(task.subtasks && task.subtasks.total > 0)) {
+    for (const p of ctx.tasks) {
+      const pf = p.frontmatter;
+      if (pf.id === f.id || pf.parentId || pf.status === "archived") continue;
+      add({
+        id: `make-subtask-${pf.id}`,
+        label: `Make subtask of: ${pf.title}`,
+        group: "Actions",
+        searchValue: `Make subtask of: ${pf.title} ${pf.id} (${title})`,
+        keywords: ["subtask", "parent", "move", pf.id],
+        requiredScope: "tasks:write",
+        run: move({ parentId: pf.id }),
+      });
+    }
+  }
 }
