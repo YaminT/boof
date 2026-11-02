@@ -5,8 +5,23 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { XIcon } from "lucide-react";
 
+/** The element that had focus when the dialog opened; focus goes back to it on close. */
+const OpenerContext = React.createContext<React.RefObject<Element | null>>({ current: null });
+
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+  const opener = React.useRef<Element | null>(null);
+  // A dialog opened from state (a button's onClick) has no trigger for Base UI to return to, so
+  // remember the focused element at the moment it opens.
+  const wasOpen = React.useRef(false);
+  if (props.open && !wasOpen.current && typeof document !== "undefined") {
+    opener.current = document.activeElement;
+  }
+  wasOpen.current = !!props.open;
+  return (
+    <OpenerContext.Provider value={opener}>
+      <DialogPrimitive.Root data-slot="dialog" {...props} />
+    </OpenerContext.Provider>
+  );
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
@@ -42,11 +57,16 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
 }) {
+  const opener = React.useContext(OpenerContext);
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        finalFocus={() => {
+          const el = opener.current;
+          return el instanceof HTMLElement && el.isConnected && el !== document.body ? el : true;
+        }}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,

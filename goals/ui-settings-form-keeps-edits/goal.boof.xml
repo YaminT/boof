@@ -16,6 +16,7 @@
       <versions>
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
         <version number="2" status="done">Closed without its own change on 2026-10-29: merged into ui-redesign-phase-5, which must meet this goal's text (goals/ui-settings-form-keeps-edits/goal.boof.xml).</version>
+        <version number="3" status="done">Met by ui-redesign-phase-5: settings drafts compare by value, keep edits through live refreshes and show the changed-elsewhere notice.</version>
       </versions>
     </status>
     <tests>

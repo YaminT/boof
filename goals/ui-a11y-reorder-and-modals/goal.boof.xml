@@ -17,6 +17,7 @@
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
         <version number="2" status="plan">Projects modal rebuilt on the Dialog primitive (focus trap, focus return) in project-create-with-path; task reorder and the other modals remain.</version>
         <version number="3" status="plan">Phase 4: goal and task reorder work from the keyboard (KeyboardSensor, Alt+arrows, row menu); the plan dialogs use the Dialog primitive. components/Modal.tsx is still used by SettingsPage and ClientsSection, so the goal closes in phase 5.</version>
+        <version number="4" status="done">Closed by ui-redesign-phase-5: every dialog uses the Dialog primitive (focus trap, focus back to the opener) and components/Modal.tsx is gone; keyboard reorder came in phase 4.</version>
       </versions>
     </status>
     <tests>

@@ -20,6 +20,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Carried over from the UI redesign (phase 3 final review, 2026-10-29); not started.</version>
+        <version number="2" status="done">Shipped: Settings in five pages (Project, Agents, Budgets, API keys, Automation) with field-level saves, a changed-elsewhere notice and a sticky save bar; per-project overrides; API keys with rotate, revoke and every scope; command templates and webhooks; archived projects; Modal.tsx and the old settings CSS removed.</version>
       </versions>
     </status>
     <tests>

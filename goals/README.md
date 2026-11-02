@@ -78,13 +78,13 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 
 - [x] [`ui-drag-reorder-goals`](ui-drag-reorder-goals/goal.boof.xml) — Drag-and-drop reorder of plan goals (merged into ui-redesign-phase-4)
 - [x] [`ui-linkable-tabs`](ui-linkable-tabs/goal.boof.xml) — Linkable Settings, Commands and Actions tabs (merged into ui-redesign-phase-5)
-- [ ] [`ui-archived-projects`](ui-archived-projects/goal.boof.xml) — List archived projects and allow unarchive or delete
+- [x] [`ui-archived-projects`](ui-archived-projects/goal.boof.xml) — List archived projects and allow unarchive or delete
 - [x] [`ui-project-overrides`](ui-project-overrides/goal.boof.xml) — Project overrides for review, worktree, retries and budget in the UI (merged into ui-redesign-phase-5)
 - [x] [`ui-return-to-plan`](ui-return-to-plan/goal.boof.xml) — Return to the plan after opening a task from it (after: ui-linkable-tabs)
 - [x] [`ui-settings-form-keeps-edits`](ui-settings-form-keeps-edits/goal.boof.xml) — Settings page keeps unsaved edits across live refreshes (merged into ui-redesign-phase-5)
 - [x] [`ui-optimistic-concurrency`](ui-optimistic-concurrency/goal.boof.xml) — UI honours optimistic concurrency for goals and tasks
 - [x] [`ui-surface-action-errors`](ui-surface-action-errors/goal.boof.xml) — Task-row and command actions surface failures
-- [ ] [`ui-a11y-reorder-and-modals`](ui-a11y-reorder-and-modals/goal.boof.xml) — Keyboard task reorder and focus-managed modals (after: ui-drag-reorder-goals)
+- [x] [`ui-a11y-reorder-and-modals`](ui-a11y-reorder-and-modals/goal.boof.xml) — Keyboard task reorder and focus-managed modals (after: ui-drag-reorder-goals)
 - [x] [`ui-clients-rotate-and-scopes`](ui-clients-rotate-and-scopes/goal.boof.xml) — Clients UI can rotate keys and grant every scope (merged into ui-redesign-phase-5)
 
 ## Docs
@@ -106,7 +106,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`ui-url-follows-state`](ui-url-follows-state/goal.boof.xml) — The URL follows state changes (project switch, deleted task) so no invalid URL or error screen is shown
 - [x] [`ui-phase-3-residuals`](ui-phase-3-residuals/goal.boof.xml) — Three small regressions left by the phase 3 fix wave
 - [x] [`ui-redesign-phase-4`](ui-redesign-phase-4/goal.boof.xml) — Plans screen and the Inbox / Needs-you group
-- [ ] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
+- [x] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
 - [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
 - [x] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
 - [ ] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)

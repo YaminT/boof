@@ -49,18 +49,6 @@ h4 {
   padding: 0 24px 56px;
 }
 
-.sidebar {
-  position: sticky;
-  top: 0;
-  flex: 0 0 216px;
-  width: 216px;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 24px 0 20px;
-}
-
 .brand {
   display: flex;
   align-items: center;
@@ -69,82 +57,11 @@ h4 {
   margin-bottom: 6px;
   border-bottom: 1px solid var(--legacy-border);
 }
-.brand-logo {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--panel);
-  border: 1px solid var(--legacy-border);
-  box-shadow: var(--shadow-sm);
-}
-.brand-text {
-  display: flex;
-  flex-direction: column;
-}
-.brand-name {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-}
-.brand-sub {
-  font-size: 11px;
-  color: var(--legacy-muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.sidebar nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.sidebar nav button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  border: none;
-  color: var(--legacy-muted);
-  text-align: left;
-  padding: 10px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
-}
-.sidebar nav button:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.55);
-}
-.sidebar nav button.active {
-  color: var(--text);
-  background: var(--panel);
-  box-shadow: var(--shadow-sm);
-}
-.sidebar-foot {
-  margin-top: auto;
-  padding: 0 6px;
-}
 
 main {
   flex: 1;
   min-width: 0;
   padding-top: 24px;
-}
-
-.badge {
-  background: var(--legacy-accent);
-  color: #fff;
-  border-radius: 10px;
-  padding: 0 7px;
-  font-size: 11px;
-  font-weight: 600;
-  margin-left: 6px;
 }
 
 /* ---------- Buttons ---------- */
@@ -168,66 +85,6 @@ button.primary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-button.danger {
-  background: transparent;
-  color: var(--red);
-  border: none;
-  cursor: pointer;
-}
-
-.runner-toggle {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  background: var(--inset);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 0 16px;
-  min-height: 40px;
-  cursor: pointer;
-  text-align: left;
-  box-shadow: var(--shadow-sm);
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
-    color 0.16s ease;
-}
-.runner-dot {
-  flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.runner-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.2;
-}
-.runner-state {
-  font-size: 13px;
-  font-weight: 600;
-}
-.runner-report {
-  font-size: 11px;
-  font-weight: 500;
-  opacity: 0.85;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.runner-toggle.on {
-  background: rgba(47, 128, 85, 0.14);
-  color: var(--green);
-  border-color: rgba(47, 128, 85, 0.45);
-}
-.runner-toggle.on .runner-dot {
-  animation: runner-pulse 1.8s ease-out infinite;
-}
-.runner-toggle.off {
-  color: var(--legacy-muted);
-}
 @keyframes runner-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(47, 128, 85, 0.5);
@@ -240,84 +97,12 @@ button.danger {
   }
 }
 
-/* In the top bar the runner toggle anchors at the far left and the bar itself
-   carries the state colour, so the button is transparent and stretches. */
-.topbar .runner-toggle {
-  flex: 1 1 auto;
-  min-width: 0;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 4px 8px 4px 4px;
-}
-.topbar .runner-toggle:hover {
-  background: rgba(29, 39, 51, 0.04);
-}
-
-/* ---------- Modal ---------- */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(29, 39, 51, 0.45);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.modal {
-  background: var(--panel);
-  border: 1px solid var(--legacy-border);
-  border-radius: var(--legacy-radius);
-  padding: 22px;
-  width: 380px;
-  max-width: calc(100vw - 32px);
-  box-shadow: 0 18px 50px rgba(28, 39, 51, 0.25);
-}
-.modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-.modal-head h3 {
-  margin: 0;
-  font-size: 16px;
-}
-.modal-close {
-  background: transparent;
-  border: none;
-  color: var(--legacy-muted);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 4px;
-}
-.modal-close:hover {
-  color: var(--text);
-}
-
 ul {
   list-style: none;
   padding: 0;
   margin: 0;
 }
-
-.task-title {
-  flex: 1;
-  text-align: left;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.task-title:hover {
-  color: var(--legacy-accent);
-}
-.btn-secondary,
-.btn-icon {
+.btn-secondary {
   background: transparent;
   border: 1px solid var(--border-strong);
   color: var(--text);
@@ -327,28 +112,17 @@ ul {
   font-weight: 600;
   cursor: pointer;
 }
-.btn-secondary:hover,
-.btn-icon:hover {
+.btn-secondary:hover {
   border-color: var(--legacy-accent);
   color: var(--legacy-accent);
 }
-.btn-secondary:disabled,
-.btn-icon:disabled {
+.btn-secondary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.btn-secondary:focus-visible,
-.btn-icon:focus-visible {
+.btn-secondary:focus-visible {
   outline: 2px solid var(--legacy-accent);
   outline-offset: 2px;
-}
-.btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
 }
 
 label small {
@@ -356,59 +130,6 @@ label small {
   margin-top: 4px;
   font-size: 11px;
   line-height: 1.4;
-}
-
-.status-badge {
-  font-size: 10px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding: 3px 9px;
-  border-radius: 5px;
-  font-weight: 600;
-  background: var(--inset);
-  border: 1px solid var(--legacy-border);
-  color: var(--legacy-muted);
-}
-.status-badge.running {
-  background: var(--accent-weak);
-  border-color: transparent;
-  color: var(--legacy-accent);
-}
-.status-badge.done {
-  background: rgba(47, 128, 85, 0.12);
-  border-color: transparent;
-  color: var(--green);
-}
-.status-badge.failed {
-  background: rgba(194, 59, 52, 0.12);
-  border-color: transparent;
-  color: var(--red);
-}
-.status-badge.stopped {
-  background: rgba(169, 121, 31, 0.14);
-  border-color: transparent;
-  color: var(--amber);
-}
-.status-badge.action {
-  background: rgba(169, 121, 31, 0.14);
-  border-color: transparent;
-  color: var(--amber);
-}
-.status-badge.archived {
-  opacity: 0.7;
-}
-.delete-btn {
-  background: transparent;
-  border: 1px solid var(--legacy-border);
-  color: var(--legacy-muted);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.delete-btn:hover {
-  border-color: var(--red);
-  color: var(--red);
 }
 
 .group h3 {
@@ -470,16 +191,6 @@ input[type="number"] {
   width: 120px;
   max-width: 100%;
 }
-
-/* ---------- Panels / cards ---------- */
-.settings-page,
-.commands-tab {
-  background: var(--panel);
-  border: 1px solid var(--legacy-border);
-  border-radius: var(--legacy-radius);
-  padding: 24px;
-  box-shadow: var(--shadow-md);
-}
 .editor-actions {
   display: flex;
   gap: 12px;
@@ -511,10 +222,6 @@ input[type="number"] {
 .error {
   color: var(--red);
 }
-.saved {
-  color: var(--green);
-  font-weight: 500;
-}
 .reports pre {
   background: var(--inset);
   border: 1px solid var(--legacy-border);
@@ -523,204 +230,8 @@ input[type="number"] {
   overflow-x: auto;
   white-space: pre-wrap;
 }
-
-/* ---------- Commands ---------- */
-.commands-tab {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 28px;
-}
-.commands-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 0;
-}
-.commands-list li button:first-child {
-  flex: 1;
-  text-align: left;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  cursor: pointer;
-}
-.commands-list li.active {
-  font-weight: 600;
-}
-.commands-list code {
-  font-size: 11px;
-  color: var(--legacy-muted);
-}
-
-/* ---------- Settings ---------- */
-.settings-page section {
-  margin-bottom: 28px;
-  padding-bottom: 22px;
-  border-bottom: 1px solid var(--legacy-border);
-}
-.settings-page section:last-of-type {
-  border-bottom: none;
-}
-.settings-page h3 {
-  margin-top: 0;
-  font-size: 15px;
-}
-.health {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.health li {
-  padding: 5px 0;
-}
-.health li.available strong {
-  color: var(--green);
-}
-.health li.unavailable strong {
-  color: var(--red);
-}
 .muted {
   color: var(--legacy-muted);
-}
-.model-list {
-  display: grid;
-  gap: 14px;
-}
-.model-group {
-  display: grid;
-  gap: 8px;
-}
-.model-group strong {
-  font-size: 13px;
-}
-.model-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.model-group-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.model-chips .model-chip {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--legacy-border);
-  border-radius: 8px;
-  padding: 5px 8px;
-  background: var(--panel);
-  font-size: 12px;
-  color: var(--legacy-muted);
-}
-.model-chip .badge {
-  margin-left: 0;
-}
-.role-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.role-row .role-name {
-  width: 90px;
-  text-transform: capitalize;
-  font-weight: 500;
-}
-.role-row select {
-  width: auto;
-  margin: 0;
-}
-.role-row button {
-  background: var(--panel);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 7px 12px;
-  cursor: pointer;
-}
-.role-row button:hover {
-  background: var(--inset);
-}
-.placeholder-card {
-  opacity: 0.75;
-}
-
-/* ---------- Desktop top bar ---------- */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 8px 14px;
-  margin-bottom: 20px;
-  background: var(--panel);
-  border: 1px solid var(--legacy-border);
-  border-radius: var(--legacy-radius);
-  box-shadow: var(--shadow-sm);
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease;
-}
-/* The whole bar reads as the runner banner: green while running, neutral when paused. */
-.topbar.runner-on {
-  background: rgba(47, 128, 85, 0.12);
-  border-color: rgba(47, 128, 85, 0.4);
-}
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-.topbar-dir {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 0 1 auto;
-  max-width: 340px;
-}
-.topbar-dir-label {
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--legacy-muted);
-}
-.topbar-dir-path {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 13px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl; /* keep the meaningful tail of long paths visible */
-  text-align: left;
-}
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
-  background: var(--panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  color: var(--legacy-accent);
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease,
-    color 0.12s ease;
-}
-.icon-btn:hover {
-  background: var(--accent-weak);
-  border-color: var(--legacy-accent);
 }
 
 /* ---------- First-run gate ---------- */
@@ -757,24 +268,6 @@ input[type="number"] {
   margin: 0 0 24px;
   font-size: 14px;
 }
-.gate-choose {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  padding: 11px 20px;
-}
-.gate-form {
-  display: flex;
-  gap: 8px;
-}
-.gate-form input {
-  margin: 0;
-}
-.gate-form button {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
 
 /* --- API key gate and client list --- */
 .token-gate {
@@ -789,75 +282,6 @@ input[type="number"] {
 .token-gate input {
   width: 100%;
 }
-.client-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 12px;
-}
-.client-list .client {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--legacy-border);
-}
-.client-state {
-  font-size: 12px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--accent-weak);
-}
-.client-state.active {
-  color: var(--green);
-}
-.client-state.revoked,
-.client-state.expired {
-  color: var(--red);
-}
-.scope-choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 12px;
-}
-
-/* ---------- Multi-project ---------- */
-.topbar {
-  flex-wrap: wrap;
-}
-.project-select {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.project-select select {
-  max-width: 200px;
-}
-.paused-badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--legacy-muted);
-  border: 1px solid var(--border-strong);
-}
-.path-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.path-row input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.path-row button {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 label.check {
   display: flex;
   flex-direction: row;
@@ -868,16 +292,6 @@ label.check input {
   width: auto;
   flex: 0 0 auto;
 }
-.role-row label.inherit {
-  white-space: nowrap;
-}
-.settings-heading {
-  margin: 24px 0 8px;
-  font-size: 18px;
-}
-.settings-heading:first-child {
-  margin-top: 0;
-}
 .gate-card form label {
   text-align: left;
 }
@@ -887,48 +301,6 @@ input:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--legacy-accent);
   outline-offset: 2px;
-}
-@media (max-width: 1100px) {
-  .topbar-dir {
-    max-width: 200px;
-  }
-}
-
-/* Budget: banner while a day budget stops the runner, and spend bars. */
-.budget-banner {
-  margin: 0 0 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--red);
-  border-radius: 8px;
-  background: var(--inset);
-  color: var(--text);
-}
-.spend {
-  margin: 8px 0;
-}
-.spend-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.9em;
-}
-.spend-bar {
-  height: 6px;
-  margin-top: 4px;
-  border-radius: 3px;
-  background: var(--inset);
-  border: 1px solid var(--legacy-border);
-  overflow: hidden;
-}
-.spend-fill {
-  height: 100%;
-  background: var(--green);
-}
-.spend.over .spend-fill {
-  background: var(--red);
-}
-.spend.over .spend-row {
-  color: var(--red);
 }
 
 /* ---------- Task changes (branch review) ---------- */
