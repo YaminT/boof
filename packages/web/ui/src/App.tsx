@@ -9,10 +9,10 @@ import { CommandsTab } from "./components/CommandsTab.js";
 import { ActionsTab } from "./components/ActionsTab.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { TokenGate } from "./components/TokenGate.js";
-import { PlansTab } from "./components/PlansTab.js";
+import { PlansPage } from "./plans/PlansPage.js";
+import { PlanPage } from "./plans/PlanPage.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
-import { toast } from "sonner";
 import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
 import { groupTasks } from "./lib/task-groups.js";
@@ -29,7 +29,7 @@ export function App() {
   const reloadRef = useRef<() => Promise<void>>(async () => {});
   const reloadProjects = useCallback(() => reloadRef.current(), []);
   const data = useAppData(selectedId, reloadProjects);
-  const { settings, tasks, actions, budget, planTick, refresh, needsToken, clearNeedsToken } = data;
+  const { settings, actions, budget, refresh, needsToken, clearNeedsToken } = data;
   const { projects, selected, select, reload } = useProjects(settings, routePid(route));
   reloadRef.current = reload;
   // The route before this one, for "← Tasks"; switching tabs of one task keeps the origin.
@@ -136,21 +136,18 @@ export function App() {
       {routeReady && route.name === "plans" && (
         <>
           <NowStrip pid={pid} groups={groups} />
-          <PlansTab
-            key={`${pid}/plans`}
-            projectId={pid}
-            tasks={tasks}
-            tick={planTick}
-            planId={route.planId ?? null}
-            onSelectPlan={(id) => navigate({ name: "plans", pid, ...(id ? { planId: id } : {}) })}
-            onPlanMissing={() => {
-              toast("This plan no longer exists.");
-              navigate({ name: "plans", pid }, { replace: true });
-            }}
-            onOpenTask={(id) => navigate({ name: "task", pid, taskId: id, view: "edit" })}
-            onReviewTask={(id) => navigate({ name: "task", pid, taskId: id, view: "changes" })}
-            onChange={refresh}
-          />
+          {route.planId ? (
+            <PlanPage
+              key={`${pid}/${route.planId}`}
+              pid={pid}
+              planId={route.planId}
+              goalId={route.goalId}
+              data={data}
+              navigate={navigate}
+            />
+          ) : (
+            <PlansPage pid={pid} data={data} navigate={navigate} />
+          )}
         </>
       )}
       {routeReady && route.name === "settings" && <SettingsNav pid={pid} active={route.page} />}

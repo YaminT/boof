@@ -14,6 +14,8 @@ package-lock.json
 
 # Local planning notes (never committed)
 plans/
+# ...but the UI's Plans screen lives in src/plans
+!packages/web/ui/src/plans/
 
 # Agent tooling and spec documents (local only)
 .claude/
