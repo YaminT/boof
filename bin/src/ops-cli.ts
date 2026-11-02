@@ -295,6 +295,8 @@ export interface OpsIo {
   err: (line: string) => void;
   /** Default process.stdout.write (a binary result with `--out -`). */
   write: (bytes: Uint8Array) => void;
+  /** Whether stdout is a terminal (default `process.stdout.isTTY`); binary output is refused there. */
+  stdoutIsTty?: boolean;
 }
 
 export interface OpsDeps {
@@ -347,7 +349,9 @@ function helpFor(op: AnyOperation): string[] {
     );
   }
   lines.push(
-    "  --input <json|@file>  the whole input as JSON (flags override its keys)",
+    "  --input <json|@file>  the whole input as JSON (flags override its keys). Put a secret (a",
+    "                        webhook URL) in a file and pass --input @file.json: a command line",
+    "                        shows in shell history and in `ps`.",
     "  --json                print the result as JSON",
     "  --client <id>         act as this API client (needed when auth.mode is required)",
     "  -d, --data <path>     data root",
@@ -380,6 +384,7 @@ export async function opsCommand(
     out: ioOverride.out ?? console.log,
     err: ioOverride.err ?? console.error,
     write: ioOverride.write ?? ((b) => void process.stdout.write(b)),
+    stdoutIsTty: ioOverride.stdoutIsTty,
   };
   // The CLI's own flags may stand before the command: `--client reader tasks list`.
   const lead: string[] = [];
@@ -436,11 +441,18 @@ export async function opsCommand(
     if (op.rest.kind === "binary" && parsed.out === undefined) {
       throw new CliUsageError("pass --out <file> (or - for stdout)");
     }
+    if (parsed.out === "-" && (io.stdoutIsTty ?? process.stdout.isTTY === true)) {
+      throw new CliUsageError("binary output to a terminal: pass a file with --out or pipe it");
+    }
     const root = dataRootOf(parsed.data, defaultRoot);
-    await scaffoldDataRoot(root);
     const services = deps.services(root);
     const authStore = new AuthStore(root);
-    const settings = await services.loadSettings();
+    // Identity first: a refused call must not create or migrate a data root. Reading settings
+    // writes nothing; a v1 settings file is the one case that needs the migration first.
+    const settings = await services.loadSettings().catch(async () => {
+      await scaffoldDataRoot(root);
+      return services.loadSettings();
+    });
     let resolvePrincipal;
     try {
       resolvePrincipal = await localPrincipal({ settings, authStore, client: parsed.client });
@@ -451,6 +463,7 @@ export async function opsCommand(
       }
       throw e;
     }
+    await scaffoldDataRoot(root);
     const input = { ...parsed.input };
     if (op.projectScoped && input.projectId === undefined) {
       if (!settings.defaultProject) throw new CliUsageError(NO_PROJECT);

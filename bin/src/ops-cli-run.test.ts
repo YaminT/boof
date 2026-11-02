@@ -275,4 +275,60 @@ describe("generated commands", () => {
     ).toBe(0);
     expect(written).toHaveLength(1);
   });
+
+  it("refuses binary output to a terminal", async () => {
+    await seed();
+    const id = await makeTask();
+    await writeFile(join(base, "a.png"), png);
+    await run([
+      "tasks",
+      "attachments",
+      "add",
+      "--task-id",
+      id,
+      "--file",
+      join(base, "a.png"),
+      "--json",
+    ]);
+    const stored = JSON.parse(text()).frontmatter.attachments[0].name as string;
+    errs.length = 0;
+    const code = await opsCommand(
+      ["tasks", "attachments", "get", "--task-id", id, "--attachment-name", stored, "--out", "-"],
+      () => root,
+      { services },
+      { out: () => {}, err: (l) => errs.push(l), write: (b) => written.push(b), stdoutIsTty: true },
+    );
+    expect(code).toBe(1);
+    expect(errs.join("\n")).toContain("binary output to a terminal");
+    expect(written).toHaveLength(0);
+  });
+
+  it("the help points secret-bearing input to --input @file", async () => {
+    expect(await run(["webhooks", "create", "--help"])).toBe(0);
+    expect(text()).toMatch(/--input @file/);
+    expect(text()).toMatch(/shell history/);
+  });
+
+  it("refuses --kind ui like auth add does", async () => {
+    expect(
+      await run([
+        "auth",
+        "clients",
+        "create",
+        "--name",
+        "x",
+        "--scopes",
+        "tasks:read",
+        "--kind",
+        "ui",
+      ]),
+    ).toBe(1);
+    expect(errs.join("\n")).toContain("ui");
+  });
+
+  it("checks the identity before it creates or migrates a data root", async () => {
+    const elsewhere = join(base, "never-created");
+    expect(await run(["--client", "nobody", "-d", elsewhere, "projects", "list"])).toBe(3);
+    expect(existsSync(elsewhere)).toBe(false);
+  });
 });

@@ -545,6 +545,12 @@ export const clientsCreate = defineOp({
     `Created client ${r.client.id} (${r.client.scopes.join(", ")}; ${r.client.trust}); the key is in the result and is shown only once`,
   handler: async (ctx, body) => {
     const me = ctx.principal;
+    // `ui` marks the desktop app's own key, which it makes itself; `auth add` refuses it too.
+    if (body.kind === "ui") {
+      throw new OpError(400, "Invalid input", "invalid_input", [
+        { path: "kind", message: "kind ui is reserved for the desktop app's own key" },
+      ]);
+    }
     // Never grant more than you hold.
     const missing = body.scopes.filter((sc) => !hasScope(me, sc));
     if (missing.length > 0) {

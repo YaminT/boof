@@ -137,6 +137,50 @@ export const SERVE_FLAGS = [
   "--tls-key",
 ] as const;
 
+/** Flags that take a value, among the global ones that may stand before the command words. */
+const GLOBAL_VALUE_FLAGS = new Set([
+  "-d",
+  "--data",
+  "--client",
+  "--out",
+  "--input",
+  "-p",
+  "--port",
+  "--host",
+  "--tls-cert",
+  "--tls-key",
+]);
+const GLOBAL_BOOLEAN_FLAGS = new Set(["--json", "--no-runner", "--help", "-h", "--version", "-v"]);
+
+/**
+ * Global flags may come before the command words (`boof-runner -d ./data tasks list`,
+ * `boof-runner --client reader tasks list`). Move the leading flags behind the first word that is
+ * not a flag, so the command is routed exactly as without them. With no such word (`-d x`, `-p 4000`)
+ * the arguments stay as they are: the legacy flags-only form of `serve`.
+ */
+export function routeArgv(argv: string[]): string[] {
+  const lead: string[] = [];
+  let at = 0;
+  while (at < argv.length) {
+    const token = argv[at]!;
+    if (!token.startsWith("-")) break;
+    const flag = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+    if (GLOBAL_VALUE_FLAGS.has(flag)) {
+      const inline = token.includes("=");
+      if (!inline && at + 1 >= argv.length) return argv;
+      lead.push(...argv.slice(at, at + (inline ? 1 : 2)));
+      at += inline ? 1 : 2;
+    } else if (GLOBAL_BOOLEAN_FLAGS.has(flag)) {
+      lead.push(token);
+      at += 1;
+    } else {
+      return argv; // not one of ours: leave it to the command
+    }
+  }
+  if (at === 0 || at >= argv.length) return argv;
+  return [...argv.slice(at), ...lead];
+}
+
 export function isServeFlag(token: string): boolean {
   return (
     SERVE_FLAGS.includes(token as (typeof SERVE_FLAGS)[number]) ||
@@ -329,7 +373,8 @@ export function firstPositional(argv: string[]): string | undefined {
   return undefined;
 }
 
-export async function main(argv = process.argv.slice(2)): Promise<void> {
+export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
+  const argv = routeArgv(rawArgv);
   const [cmd, ...rest] = argv;
   // --version also works after serve's own flags (`boof-runner -d x --version`).
   if ((cmd === "serve" || isServeFlag(cmd ?? "")) && hasFlag(argv, ["--version", "-v"])) {
@@ -363,6 +408,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   if (code === SERVE_FOREVER) return;
   if (code !== 0) process.exitCode = code;
+}
+
+/** A word in serve's arguments that is not a flag or a flag's value: serve takes none. */
+function strayWord(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    const flag = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
+    if (a.startsWith("-")) {
+      if (GLOBAL_VALUE_FLAGS.has(flag) && !a.includes("=")) i += 1;
+      continue;
+    }
+    return a;
+  }
+  return undefined;
+}
+
+/** `boof-runner serve tasks list` must not start a server and ignore the words. */
+function refuseServe(args: string[]): number {
+  console.error(
+    `boof-runner: unknown command: ${args.filter((a) => !a.startsWith("-")).join(" ")} (see "boof-runner --help")`,
+  );
+  return 1;
 }
 
 /** Sentinel: the command (serve) keeps the process alive; main must not set an exit code. */
@@ -420,6 +487,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       console.log(readVersion());
       break;
     case "serve":
+      if (strayWord(rest) !== undefined) return refuseServe(rest);
       await serve(rest);
       return SERVE_FOREVER; // serve runs forever
     case undefined:
@@ -429,6 +497,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       // Only serve's own flags may stand first (the legacy `boof-runner -d ... -p ...`
       // form); any other token is an unknown command, never a silent server start.
       if (isServeFlag(cmd)) {
+        if (strayWord(argv) !== undefined) return refuseServe(argv);
         await serve(argv);
         return SERVE_FOREVER;
       }

@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isServeFlag, main } from "./boof-runner.js";
+import { isServeFlag, main, routeArgv } from "./boof-runner.js";
 
 describe("boof-runner top level", () => {
   let logs: string[];
@@ -100,5 +100,47 @@ describe("boof-runner top level", () => {
     expect(process.exitCode).toBe(1);
     expect(logs.join("\n")).toContain("tasks create");
     expect(errs.join("\n")).not.toContain("unknown command");
+  });
+
+  it("routes the global flags that stand before the command words", () => {
+    expect(routeArgv(["-d", "x", "tasks", "list"])).toEqual(["tasks", "list", "-d", "x"]);
+    expect(routeArgv(["--client", "c", "tasks", "list"])).toEqual([
+      "tasks",
+      "list",
+      "--client",
+      "c",
+    ]);
+    expect(routeArgv(["--data=x", "run", "p"])).toEqual(["run", "p", "--data=x"]);
+    expect(routeArgv(["--json", "-d", "x", "ops"])).toEqual(["ops", "--json", "-d", "x"]);
+    // No command word: the legacy flags-only form of serve, and the help and version flags.
+    expect(routeArgv(["-d", "x"])).toEqual(["-d", "x"]);
+    expect(routeArgv(["-p", "4000", "--no-runner"])).toEqual(["-p", "4000", "--no-runner"]);
+    expect(routeArgv(["-d", "x", "--version"])).toEqual(["-d", "x", "--version"]);
+    expect(routeArgv(["tasks", "list", "-d", "x"])).toEqual(["tasks", "list", "-d", "x"]);
+    expect(routeArgv([])).toEqual([]);
+  });
+
+  it("an operation after -d runs and starts no server", async () => {
+    await main(["-d", dataRoot, "projects", "list", "--json"]);
+    expect(JSON.parse(logs.join("\n"))).toEqual({ projects: [] });
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("--client before the command works, and a bad client is refused with exit 3", async () => {
+    await main(["--client", "nobody", "projects", "list"]);
+    expect(process.exitCode).toBe(3);
+    expect(errs.join("\n")).toContain("unknown client: nobody");
+    expect(errs.join("\n")).not.toContain("unknown command");
+  });
+
+  it("an unknown word after -d is an unknown command, and serve refuses stray words", async () => {
+    await main(["-d", dataRoot, "bogus"]);
+    expect(process.exitCode).toBe(1);
+    expect(errs.join("\n")).toContain('unknown command "bogus"');
+    process.exitCode = undefined;
+    errs.length = 0;
+    await main(["serve", "tasks", "queue"]);
+    expect(process.exitCode).toBe(1);
+    expect(errs.join("\n")).toMatch(/unknown command.*tasks/);
   });
 });
