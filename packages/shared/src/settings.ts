@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -79,9 +80,13 @@ export class SettingsStore {
     return validated;
   }
 
-  /** Partial update merged over the current settings; `runner` merges per key. */
-  update(patch: SettingsUpdate): Promise<Settings> {
+  /**
+   * Partial update merged over the current settings; `runner` merges per key. `guard` runs on the
+   * current settings under the same lock, before the merge: it throws to refuse the write.
+   */
+  update(patch: SettingsUpdate, guard?: (current: Settings) => void): Promise<Settings> {
     return this.mutate((current) => {
+      guard?.(current);
       const { runner, projectsRoot, ...rest } = patch;
       const next = {
         ...current,
@@ -103,6 +108,15 @@ export class SettingsStore {
   mutate(fn: (current: Settings) => Settings | Promise<Settings>): Promise<Settings> {
     return withFileLock(`${this.path}#mutate`, async () => this.save(await fn(await this.load())));
   }
+}
+
+/**
+ * A short token of the settings a client can read (everything but the webhook list, which has its
+ * own operations): it changes whenever one of them does. The ETag of GET/PUT /settings.
+ */
+export function settingsVersion(settings: { webhooks?: unknown }): string {
+  const { webhooks: _w, ...visible } = settings;
+  return createHash("sha256").update(JSON.stringify(visible)).digest("hex").slice(0, 16);
 }
 
 /** What {@link SettingsStore.update} accepts: any settings key, `runner` partial, `projectsRoot` nullable. */

@@ -259,6 +259,51 @@ describe("settings & health API", () => {
     expect(s.runner.enabled).toBe(true);
   });
 
+  describe("version check (If-Match)", () => {
+    const put = (body: unknown, headers: Record<string, string> = {}) =>
+      req("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+
+    it("sends an ETag that changes with the settings and is the same on GET and PUT", async () => {
+      const got = await req("/api/settings");
+      const etag = got.headers.get("ETag");
+      expect(etag).toMatch(/^W\/"[0-9a-f]{16}"$/);
+      expect((await req("/api/settings")).headers.get("ETag")).toBe(etag);
+      const put1 = await put({ runner: { concurrency: 3 } }, { "If-Match": etag! });
+      expect(put1.status).toBe(200);
+      const next = put1.headers.get("ETag");
+      expect(next).not.toBe(etag);
+      expect((await req("/api/settings")).headers.get("ETag")).toBe(next);
+    });
+
+    it("refuses a stale If-Match with 409 settings_modified and changes nothing", async () => {
+      const stale = (await req("/api/settings")).headers.get("ETag")!;
+      expect((await put({ runner: { concurrency: 2 } })).status).toBe(200);
+      const res = await put({ runner: { concurrency: 5 } }, { "If-Match": stale });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe("settings_modified");
+      expect((await (await req("/api/settings")).json()).runner.concurrency).toBe(2);
+    });
+
+    it("two writes with the same ETag: exactly one wins", async () => {
+      const etag = (await req("/api/settings")).headers.get("ETag")!;
+      const results = await Promise.all([
+        put({ runner: { concurrency: 2 } }, { "If-Match": etag }),
+        put({ runner: { concurrency: 3 } }, { "If-Match": etag }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    });
+
+    it("without If-Match (or with *) the write is unconditional, as before", async () => {
+      expect((await put({ runner: { concurrency: 2 } })).status).toBe(200);
+      expect((await put({ runner: { concurrency: 3 } }, { "If-Match": "*" })).status).toBe(200);
+      expect((await (await req("/api/settings")).json()).runner.concurrency).toBe(3);
+    });
+  });
+
   it("accepts, shows and unsets the observer assignment", async () => {
     const put = (body: unknown) =>
       req("/api/settings", {

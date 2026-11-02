@@ -103,7 +103,9 @@ function operationObject(op: AnyOperation): Json {
       description:
         rest.ifMatch === "expectedVersion"
           ? 'The plan version you last saw, e.g. "3". A newer stored version answers 409 plan_version_conflict.'
-          : 'The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.',
+          : rest.path === "/settings"
+            ? 'The ETag of GET /settings you last saw, e.g. W/"3fa9c1d2e4b5a687". Settings that changed since answer 409 settings_modified. Omit it (or send *) for an unconditional write.'
+            : 'The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.',
       schema: { type: "string" },
     });
   }

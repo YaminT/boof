@@ -581,6 +581,7 @@ Every error has this shape:
 | `has_tasks`                | 409    | The epic has tasks. Pass `detach`, or archive the epic.                                                                                                         |
 | `plan_version_conflict`    | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                   |
 | `epic_modified`            | 409    | The epic changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
+| `settings_modified`        | 409    | The settings changed. Read them again, re-apply your change, send the new ETag.                                                                                 |
 | `task_modified`            | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
 | `plan_exists`              | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                              |
 | `plan_not_active`          | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                       |
@@ -1759,7 +1760,7 @@ Query parameters:
 - Scope: `settings:read`
 - MCP tool: `boof_get_settings`
 - What it does: Returns the global settings (runner, roles, review, security, models). No side effects.
-- Success: HTTP 200 with `Settings`.
+- Success: HTTP 200 with `Settings`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`
 
 #### `PUT /api/v1/settings` (Update settings)
@@ -1768,13 +1769,15 @@ Query parameters:
 - Scope: `settings:write`
 - MCP tool: `boof_update_settings`
 - What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.
-- Success: HTTP 200 with `Settings`.
-- Errors: `403 forbidden_scope`, `400 invalid_input`
+- Success: HTTP 200 with `Settings`. The response has an `ETag` header.
+- Header `If-Match`: The ETag of GET /settings you last saw, e.g. W/"3fa9c1d2e4b5a687". Settings that changed since answer 409 settings_modified. Omit it (or send *) for an unconditional write.
+- Errors: `403 forbidden_scope`, `400 invalid_input`, `409 settings_modified`
 
 JSON body (unknown keys are rejected):
 
 - `budget`: `{ onExceed?: "pause" | "fail", perDayUsd?: number, perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number }, timezone?: string }`, optional
 - `defaultProject`: `kebab-id | null`, optional
+- `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
 - `models`: `{ [key: string]: string[] }`, optional
 - `projectsRoot`: `string | null`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }`, optional

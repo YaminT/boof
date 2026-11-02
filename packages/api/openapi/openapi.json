@@ -121,6 +121,7 @@
                   "has_tasks",
                   "epic_modified",
                   "plan_version_conflict",
+                  "settings_modified",
                   "task_modified",
                   "plan_exists",
                   "plan_not_active",
@@ -10947,7 +10948,14 @@
                 }
               }
             },
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -10970,7 +10978,17 @@
       "put": {
         "description": "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
         "operationId": "settings.update",
-        "parameters": [],
+        "parameters": [
+          {
+            "description": "The ETag of GET /settings you last saw, e.g. W/\"3fa9c1d2e4b5a687\". Settings that changed since answer 409 settings_modified. Omit it (or send *) for an unconditional write.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11026,6 +11044,11 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "expectedUpdated": {
+                    "description": "The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write.",
+                    "maxLength": 100,
+                    "type": "string"
                   },
                   "models": {
                     "additionalProperties": {
@@ -11247,7 +11270,14 @@
                 }
               }
             },
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -12124,6 +12154,10 @@
     "rate_limited": {
       "description": "Too many requests; retry after the Retry-After header.",
       "status": 429
+    },
+    "settings_modified": {
+      "description": "The settings changed since the ETag in If-Match.",
+      "status": 409
     },
     "task_modified": {
       "description": "The task changed since the ETag in If-Match.",

@@ -59,6 +59,7 @@ export const ERROR_CODES = {
   ],
   epic_modified: [409, "The epic changed since the ETag in If-Match."],
   plan_version_conflict: [409, "The plan changed since the version in If-Match / expectedVersion."],
+  settings_modified: [409, "The settings changed since the ETag in If-Match."],
   task_modified: [409, "The task changed since the ETag in If-Match."],
   plan_exists: [409, "A plan with this id already exists."],
   plan_not_active: [409, "The plan is not active; activate it before syncing."],

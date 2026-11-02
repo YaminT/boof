@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Filed with phase 5 of the UI redesign (2026-11-02), low priority; not started.</version>
+        <version number="2" status="done">GET and PUT /settings answer a weak ETag (a hash of the public settings); PUT with If-Match / expectedUpdated is refused with 409 settings_modified when stale, checked under the settings lock via a SettingsStore.update guard; no If-Match (or *) stays unconditional. The Settings UI is unchanged (it keeps its field-level patches and changed-elsewhere notice).</version>
       </versions>
     </status>
     <tests>

@@ -4,6 +4,7 @@ import {
   hasScope,
   parseDuration,
   SettingsPatchSchema,
+  settingsVersion,
   TokenUsageSchema,
 } from "@boof-runner/shared";
 import { defineOp, type OpContext } from "../define-op.js";
@@ -37,6 +38,8 @@ export function publicSettings<T extends { webhooks?: unknown }>(s: T): Omit<T, 
   return rest;
 }
 
+const settingsEtag = (s: { webhooks?: unknown }) => `W/"${settingsVersion(s)}"`;
+
 export const settingsGet = defineOp({
   name: "settings.get",
   title: "Get settings",
@@ -46,7 +49,7 @@ export const settingsGet = defineOp({
   projectScoped: false,
   input: z.strictObject({}),
   output: PublicSettingsSchema,
-  rest: { method: "GET", path: "/settings" },
+  rest: { method: "GET", path: "/settings", etag: settingsEtag },
   mcp: { expose: true, name: "boof_get_settings", annotations: READ },
   summary: (s) =>
     `Runner ${s.runner.enabled ? "enabled" : "disabled"}, default project ${s.defaultProject ?? "none"}`,
@@ -60,14 +63,19 @@ export const settingsUpdate = defineOp({
     "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
   scope: "settings:write",
   projectScoped: false,
-  input: SettingsPatchSchema,
+  input: SettingsPatchSchema.extend({
+    expectedUpdated: z.string().max(100).optional().meta({
+      description:
+        "The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write.",
+    }),
+  }),
   output: PublicSettingsSchema,
-  rest: { method: "PUT", path: "/settings" },
+  rest: { method: "PUT", path: "/settings", ifMatch: "expectedUpdated", etag: settingsEtag },
   mcp: { expose: true, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
   summary: () => "Settings updated",
-  handler: async (ctx, input) => {
+  handler: async (ctx, { expectedUpdated, ...patch }) => {
     assertMayWriteSettings(ctx);
-    return publicSettings(await ctx.services.updateSettings(input, ctx.principal));
+    return publicSettings(await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated));
   },
 });
 

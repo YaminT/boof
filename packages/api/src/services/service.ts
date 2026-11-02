@@ -59,6 +59,7 @@ import {
   appendAnswerRound,
   WebhookSecretStore,
   atomicWrite,
+  settingsVersion,
 } from "@boof-runner/shared";
 import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
@@ -1230,14 +1231,26 @@ export class TaskService {
   }
 
   /** Apply a settings patch; a change of `runner.enabled` appends a global `runner.enabled` event. */
-  async updateSettings(patch: SettingsPatch, actor?: Principal): Promise<Settings> {
+  async updateSettings(
+    patch: SettingsPatch,
+    actor?: Principal,
+    expectedVersion?: string,
+  ): Promise<Settings> {
     if (actor && !this.actsAsLocal(actor)) {
       await this.assertWorktreeRootAllowed(actor, patch.worktree?.root, undefined);
     }
     if (patch.defaultProject) await this.getProject(patch.defaultProject);
     const before =
       patch.runner?.enabled !== undefined ? (await this.loadSettings()).runner.enabled : undefined;
-    const next = await this.settingsStore.update(patch);
+    const next = await this.settingsStore.update(patch, (current) => {
+      if (expectedVersion !== undefined && expectedVersion !== settingsVersion(current)) {
+        throw new OpError(
+          409,
+          "The settings changed since the version you last read; reload and retry.",
+          "settings_modified",
+        );
+      }
+    });
     if (before !== undefined && before !== next.runner.enabled) {
       await appendEvent(this.root, {
         type: "runner.enabled",

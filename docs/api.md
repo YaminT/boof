@@ -95,6 +95,7 @@ internals; validation errors list `details: [{ path, message }]`.
 | `has_children`             | 409    | The task has subtasks; pass detach to make them top-level tasks.                                         |
 | `has_tasks`                | 409    | The epic has tasks; pass detach to clear their epic, or archive the epic instead.                        |
 | `plan_version_conflict`    | 409    | The plan changed since the version in If-Match / expectedVersion.                                        |
+| `settings_modified`        | 409    | The settings changed since the ETag in If-Match.                                                         |
 | `task_modified`            | 409    | The task changed since the ETag in If-Match.                                                             |
 | `plan_exists`              | 409    | A plan with this id already exists.                                                                      |
 | `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                                                      |
@@ -119,6 +120,11 @@ internals; validation errors list `details: [{ path, message }]`.
   `If-Match: W/"<updated>"` (or `expectedUpdated` in the body) is `409 task_modified` when the
   task changed since. The check and the write happen under the task's lock: of two writes carrying
   the same ETag exactly one succeeds.
+- **Settings**: `GET /settings` and `PUT /settings` answer a weak `ETag: W/"<hash>"` of the settings
+  a client can read (the webhook list is not part of it). `PUT /settings` with `If-Match` (or
+  `expectedUpdated` in the body) is `409 settings_modified` when the settings changed since, and
+  writes nothing. The check and the write happen under the settings lock. Without `If-Match` (or
+  with `*`) the write is unconditional, as before.
 
 ## Idempotency
 
