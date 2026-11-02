@@ -313,4 +313,38 @@ describe("task hierarchy over the API", () => {
       await code(await authed(`${V1}/projects/demo/tasks/human?detach=true`, { method: "DELETE" })),
     ).toEqual([403, "forbidden_trust"]);
   });
+
+  it("review clients update and delete only the tasks they created", async () => {
+    const store = new AuthStore(root);
+    const rev = (
+      await store.create({ name: "rev", scopes: ["tasks:read", "tasks:write"], trust: "review" })
+    ).key;
+    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    const as = (path: string, init: RequestInit) =>
+      call(path, {
+        ...init,
+        headers: { ...(init.headers as object), authorization: `Bearer ${rev}` },
+      });
+    await mk("Human");
+    await mk("Human leaf");
+    const mine = await as(
+      `${V1}/projects/demo/tasks`,
+      send("POST", { title: "Mine", prompt: "p" }),
+    );
+    expect(mine.status).toBe(201);
+    const url = (id: string) => `${V1}/projects/demo/tasks/${id}`;
+    expect(await code(await as(url("human"), send("PUT", { title: "Renamed" })))).toEqual([
+      403,
+      "forbidden_trust",
+    ]);
+    expect((await (await call(url("human"))).json()).frontmatter.title).toBe("Human");
+    expect((await as(url("mine"), send("PUT", { title: "Mine, renamed" }))).status).toBe(200);
+    expect(await code(await as(url("human-leaf"), { method: "DELETE" }))).toEqual([
+      403,
+      "forbidden_trust",
+    ]);
+    expect((await call(url("human-leaf"))).status).toBe(200);
+    expect((await as(url("mine"), { method: "DELETE" })).status).toBe(200);
+    expect((await call(url("mine"))).status).toBe(404);
+  });
 });

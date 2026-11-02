@@ -265,13 +265,17 @@ export class ProjectService {
     return { ok: true, detached };
   }
 
-  /** A review-trust client may move only the tasks it created. */
-  private async assertMayMove(task: Task, actor?: Principal): Promise<void> {
+  /** A review-trust client may move, edit and delete only the tasks it created. */
+  private async assertMayChange(
+    task: Task,
+    verb: "move" | "edit" | "delete",
+    actor?: Principal,
+  ): Promise<void> {
     if (!(await this.needsApproval(actor))) return;
     if (actor && task.frontmatter.origin?.client === actor.id) return;
     throw new OpError(
       403,
-      "This client has review trust and can only move tasks it created",
+      `This client has review trust and can only ${verb} tasks it created`,
       "forbidden_trust",
     );
   }
@@ -292,7 +296,7 @@ export class ProjectService {
     }
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
-    await this.assertMayMove(task, actor);
+    await this.assertMayChange(task, "move", actor);
     return moveTaskInHierarchy(this.root, id, input, { by: actor?.id ?? "local" });
   }
 
@@ -390,7 +394,15 @@ export class ProjectService {
         });
       }
 
-      // A review client may shape its own drafts, but not rewrite work a human already released.
+      // A review client may change only the tasks it created ...
+      if (review && task.frontmatter.origin?.client !== actor?.id) {
+        throw new OpError(
+          403,
+          "This client has review trust and can only edit tasks it created",
+          "forbidden_trust",
+        );
+      }
+      // ... and shape its own drafts, but not rewrite work a human already released.
       if (
         task.frontmatter.status !== "draft" &&
         (input.prompt !== undefined || input.command !== undefined || input.runs !== undefined) &&
@@ -498,6 +510,7 @@ export class ProjectService {
     }
     const task = await this.tasks.get(id);
     if (!task) throw new OpError(404, `Task not found: ${id}`);
+    await this.assertMayChange(task, "delete", actor);
     if (task.frontmatter.status === "running") {
       throw new OpError(400, "Cannot delete a running task; wait for it to finish first");
     }
