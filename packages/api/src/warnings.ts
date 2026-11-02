@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** A non-fatal notice in an operation result: the server changed a value you asked for. */
+/** A non-fatal notice in an operation result: the server changed a value you asked for, or something worth knowing about the change. */
 export const WarningSchema = z.object({
   code: z.enum(["status_downgraded", "subtasks_open"]),
   message: z.string(),

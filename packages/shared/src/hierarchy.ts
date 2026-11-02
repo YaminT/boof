@@ -289,6 +289,10 @@ export async function removeTask(
         `Task ${id} has ${kids.length} subtask(s); pass detach to keep them`,
       );
     }
+    // Delete first, refusing a running task under its task lock: if the delete is refused nothing
+    // has changed. The children then lose a parent that no longer exists, which is tolerated
+    // (`parentMissing`) until the loop below detaches them.
+    await store.delete(id, { refuseRunning: true });
     const detached: string[] = [];
     const epicId = task.frontmatter.epicId;
     for (const kid of kids) {
@@ -308,7 +312,7 @@ export async function removeTask(
       await moved(projectDir, kidId, from, { epicId }, opts.by);
       detached.push(kidId);
     }
-    await store.delete(id);
+
     return { detached };
   });
 }

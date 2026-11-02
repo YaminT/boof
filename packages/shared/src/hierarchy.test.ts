@@ -16,7 +16,7 @@ import {
   type HierarchyErrorCode,
 } from "./hierarchy.js";
 import type { TaskFrontmatter } from "./schema.js";
-import { TaskNotFoundError, TaskStore } from "./store.js";
+import { TaskNotFoundError, TaskRunningError, TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
 import { taskFilePath, workingAreaDir } from "./paths.js";
 
@@ -285,6 +285,37 @@ describe("hierarchy detach details", () => {
 
   it("removeTask on a missing id throws TaskNotFoundError", async () => {
     await expect(removeTask(dir, "ghost")).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+
+  it("removeTask refuses a running task and leaves its children alone", async () => {
+    await createTaskInHierarchy(dir, mk("p"));
+    await createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
+    await store.transition("p", "running");
+    await expect(removeTask(dir, "p", { detach: true })).rejects.toBeInstanceOf(TaskRunningError);
+    expect((await store.get("c"))!.frontmatter.parentId).toBe("p");
+    expect(await store.get("p")).not.toBeNull();
+  });
+
+  it("removeTask re-checks under the task lock: a task started after the scan is not deleted", async () => {
+    await createTaskInHierarchy(dir, mk("p"));
+    const real = TaskStore.prototype.list;
+    let armed = true;
+    const spy = vi.spyOn(TaskStore.prototype, "list").mockImplementation(async function (
+      this: TaskStore,
+    ) {
+      const out = await real.call(this);
+      if (armed) {
+        armed = false;
+        await store.transition("p", "running"); // the scheduler starts it after the scan
+      }
+      return out;
+    });
+    try {
+      await expect(removeTask(dir, "p")).rejects.toBeInstanceOf(TaskRunningError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await store.get("p"))!.frontmatter.status).toBe("running");
   });
 
   it("childrenOf returns a copy", async () => {

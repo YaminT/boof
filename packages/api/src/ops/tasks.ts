@@ -364,13 +364,13 @@ export const tasksQueue = defineOp({
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
-    const { task, warnings } = await svc.updateWithWarnings(
+    const { task, warnings, index } = await svc.updateWithWarnings(
       input.taskId,
       { status: "pending" },
       ctx.principal,
     );
     return {
-      ...taskView(ctx, input.projectId, task, false, await svc.hierarchy()),
+      ...taskView(ctx, input.projectId, task, false, index ?? (await svc.hierarchy())),
       ...(warnings.length > 0 ? { warnings } : {}),
     };
   },

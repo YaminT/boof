@@ -11,6 +11,7 @@ import {
   newTask,
   serializeTask,
   SettingsStore,
+  TaskStore,
   taskFilePath,
 } from "@boof-runner/shared";
 import { execCommand, MockTool, ToolRegistry } from "@boof-runner/runner";
@@ -194,8 +195,8 @@ describe("task hierarchy over the API", () => {
     }
   });
 
-  const move = (id: string, body: unknown, key?: string) =>
-    call(`${V1}/projects/demo/tasks/${id}/move`, send("POST", body), key);
+  const move = (id: string, body: unknown) =>
+    call(`${V1}/projects/demo/tasks/${id}/move`, send("POST", body));
   const code = async (r: Response) => [r.status, (await r.json()).error?.code];
 
   it("moves a task under a parent and back", async () => {
@@ -210,7 +211,18 @@ describe("task hierarchy over the API", () => {
     const back = await (await move("t", { parentId: null })).json();
     expect(back.frontmatter.parentId).toBeUndefined();
     const events = (await readEvents(service.projects.dir("demo"), null)).map((e) => e.event);
-    expect(events.filter((e) => e.type === "task.moved").length).toBe(2);
+    const moved = events.filter((e) => e.type === "task.moved");
+    expect(moved).toHaveLength(2);
+    expect(moved[0]).toMatchObject({
+      task: "t",
+      from: { epicId: "web", parentId: null },
+      to: { epicId: null, parentId: "p" },
+      by: "local",
+    });
+    expect(moved[1]).toMatchObject({
+      from: { epicId: null, parentId: "p" },
+      to: { epicId: null, parentId: null },
+    });
   });
 
   it("refuses bad moves", async () => {
@@ -253,6 +265,22 @@ describe("task hierarchy over the API", () => {
     const quiet = await call(`${V1}/projects/demo/tasks/p2/queue`, send("POST"));
     expect(quiet.status).toBe(200);
     expect(quiet.headers.get("Boof-Warning")).toBeNull();
+  });
+
+  it("does not warn when the only subtask is done, and builds the hierarchy once per queue", async () => {
+    await mk("P");
+    await mk("C", { parentId: "p" });
+    const tasks = new TaskStore(service.projects.dir("demo"));
+    for (const st of ["pending", "running", "done"] as const) await tasks.transition("c", st);
+    const spy = vi.spyOn(Object.getPrototypeOf(service.forProject("demo")), "hierarchy");
+    try {
+      const res = await call(`${V1}/projects/demo/tasks/p/queue`, send("POST"));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Boof-Warning")).toBeNull();
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("review clients move only their own tasks and never detach", async () => {

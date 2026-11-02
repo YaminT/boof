@@ -24,6 +24,17 @@ describe("operations registry contract", () => {
     }
   });
 
+  it("scopes every operation with a projectId input to its project, except the listed globals", () => {
+    // Operations that take a projectId but act on the whole server; none today.
+    const GLOBAL_WITH_PROJECT_ID: string[] = [];
+    for (const op of registry) {
+      const shape = Object.keys((op.input as { shape: object }).shape);
+      if (shape.includes("projectId") && !GLOBAL_WITH_PROJECT_ID.includes(op.name)) {
+        expect(op.projectScoped, `${op.name} takes projectId but is not projectScoped`).toBe(true);
+      }
+    }
+  });
+
   it("gives every exposed operation a stable MCP-safe name, annotations and a summary", () => {
     const names: string[] = [];
     for (const op of registry.filter((o) => o.mcp.expose)) {

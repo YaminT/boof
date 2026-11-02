@@ -373,7 +373,7 @@ export class ProjectService {
     id: string,
     input: UpdateTaskInput,
     actor?: Principal,
-  ): Promise<{ task: Task; warnings: Warning[] }> {
+  ): Promise<{ task: Task; warnings: Warning[]; index?: HierarchyIndex }> {
     if (input.status === "pending") await this.assertMayQueue(actor);
     const review = await this.needsApproval(actor);
     const tpl = input.command ? await this.parent.commands.get(input.command) : null;
@@ -431,13 +431,15 @@ export class ProjectService {
         by: actor?.id ?? "local",
       });
       const warnings: Warning[] = [];
+      let index: HierarchyIndex | undefined;
       if (input.status === "pending") {
-        const sub = (await this.hierarchy()).info(moved).subtasks;
+        index = await this.hierarchy();
+        const sub = index.info(moved).subtasks;
         if (sub && sub.done < sub.total) {
           warnings.push(subtasksOpen(id, sub.total - sub.done, sub.total));
         }
       }
-      return { task: moved, warnings };
+      return { task: moved, warnings, index };
     }
     return { task, warnings: [] };
   }

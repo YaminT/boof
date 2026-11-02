@@ -18,6 +18,14 @@ export class TaskNotFoundError extends Error {
   }
 }
 
+/** Thrown by {@link TaskStore.delete} with `refuseRunning` when the task is running. */
+export class TaskRunningError extends Error {
+  constructor(public readonly id: string) {
+    super(`Cannot delete a running task: ${id}; wait for it to finish first`);
+    this.name = "TaskRunningError";
+  }
+}
+
 /** Thrown by {@link TaskStore.whileRunning} when the task is not in the `running` status. */
 export class TaskNotRunningError extends Error {
   constructor(
@@ -489,10 +497,12 @@ export class TaskStore {
    * directory (ongoing/<id>/) is removed; every other status is a flat file.
    * No-op if the task is already gone.
    */
-  async delete(id: string): Promise<void> {
+  async delete(id: string, opts: { refuseRunning?: boolean } = {}): Promise<void> {
     await this.lockTask(id, async () => {
       const located = await this.locate(id);
       if (!located) return;
+      // Checked under the task lock, so a task the scheduler started a moment ago is not removed.
+      if (opts.refuseRunning && located.status === "running") throw new TaskRunningError(id);
       if (located.status === "running") {
         await rmWorkingArea(workingAreaDir(this.root, id));
       } else {

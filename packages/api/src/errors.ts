@@ -7,6 +7,7 @@ import {
   TaskExistsError,
   TaskNotFoundError,
   TaskNotRunningError,
+  TaskRunningError,
 } from "@boof-runner/shared";
 
 /**
@@ -135,6 +136,9 @@ export function toOpError(err: unknown): OpError {
   if (err instanceof TaskNotFoundError) return new OpError(404, err.message, "not_found");
   if (err instanceof InvalidTransitionError) {
     return new OpError(409, err.message, "invalid_transition");
+  }
+  if (err instanceof TaskRunningError) {
+    return new OpError(400, "Cannot delete a running task; wait for it to finish first");
   }
   if (err instanceof TaskNotRunningError) return new OpError(400, "Task is not running");
   if (err instanceof TaskExistsError) return new OpError(409, err.message, "conflict");
