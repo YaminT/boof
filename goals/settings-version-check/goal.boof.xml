@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>PUT /settings has no optimistic concurrency: two writers that each read the settings and then save lose each other's unrelated changes only through the field-level patches the UI sends, and a same-field race is last write wins. Add an expected-version check (an If-Match on a settings version, like plans and tasks have) so a stale write is refused with 409. LOW PRIORITY: the Settings UI already sends field-level patches and shows a changed-elsewhere notice.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono, zod, vitest</stack>
+    <rules>
+      <do>Read README.md, docs/boof-runner.md and docs/api.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Filed with phase 5 of the UI redesign (2026-11-02), low priority; not started.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>API tests: PUT /settings with a stale If-Match answers 409 and changes nothing; without If-Match it behaves as before; the UI sends the version.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/api packages/web</run>
+    </tests>
+  </progress>
+</boof>

@@ -41,6 +41,8 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`restricted-admin-scope-gaps`](restricted-admin-scope-gaps/goal.boof.xml) — Webhooks, settings and archived plans respect restricted keys; hidden clients look unknown
 - [x] [`auth-store-cross-process`](auth-store-cross-process/goal.boof.xml) — Revocation and key writes are safe across processes
 - [x] [`worktree-root-scope`](worktree-root-scope/goal.boof.xml) — Limit worktree.root to the allowed project roots for remote clients
+- [ ] [`webhook-update-and-event-names`](webhook-update-and-event-names/goal.boof.xml) — Webhook update (enable, disable, edit) and underscores in event names
+- [ ] [`settings-version-check`](settings-version-check/goal.boof.xml) — Optimistic concurrency for PUT /settings (low priority)
 
 ## Correctness and robustness
 
