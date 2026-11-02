@@ -106,7 +106,7 @@ function ExistingTask({
 }) {
   const row = data.tasks.find((t) => t.frontmatter.id === taskId);
   const listKey = row
-    ? `${row.frontmatter.updated}|${row.frontmatter.steps?.length ?? 0}|${row.frontmatter.status}`
+    ? `${row.frontmatter.updated}|${row.frontmatter.steps?.length ?? 0}|${row.frontmatter.status}|${row.body.injected.length}`
     : null;
   const { task, missing, failed, reload } = useTask(pid, taskId, listKey);
   // A deleted or unknown task: leave its dead URL for the list, replacing it so Back skips it.

@@ -121,7 +121,6 @@ export function TaskRow({
       onClick={() => onSelect(entry.key)}
       className={cn(
         "flex h-10 items-center gap-2 border-b border-line px-1 text-[length:var(--text-row)] last:border-b-0",
-        "outline-none",
         selected && "bg-accent outline-2 -outline-offset-2 outline-accent-brand",
       )}
     >
