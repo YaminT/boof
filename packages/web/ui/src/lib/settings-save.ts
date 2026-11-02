@@ -1,6 +1,7 @@
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import {
   rebase,
+  sameValue,
   savedDraft,
   type Draft,
   type PageModel,
@@ -16,6 +17,8 @@ export interface SaveWrites {
 
 export interface SaveResult<V> {
   draft: Draft<V>;
+  /** Which halves had a write that failed. */
+  failed: { global: boolean; project: boolean };
   /** Nothing was sent: the form had no changes. */
   nothing: boolean;
   /** Every write that was needed went through. */
@@ -38,7 +41,13 @@ export async function performSave<V extends PageValues<unknown, unknown>>(
 ): Promise<SaveResult<V>> {
   const patches = model.patches(draft.form, draft.base, latest);
   if (!patches.settings && !patches.project) {
-    return { draft, nothing: true, allOk: true, anyOk: false };
+    return {
+      draft,
+      failed: { global: false, project: false },
+      nothing: true,
+      allOk: true,
+      anyOk: false,
+    };
   }
   const sent = draft.form;
   const newSettings = patches.settings ? await writes.settings(patches.settings) : undefined;
@@ -62,6 +71,7 @@ export async function performSave<V extends PageValues<unknown, unknown>>(
   };
   return {
     draft: next,
+    failed: { global: settingsFailed, project: projectFailed },
     nothing: false,
     allOk: !settingsFailed && !projectFailed,
     anyOk: !!newSettings || !!newProject,
@@ -77,4 +87,19 @@ export function afterSaveEdits<V extends PageValues<unknown, unknown>>(
   const global = rebase(result.form.global, sent.global, current.form.global);
   const project = rebase(result.form.project, sent.project, current.form.project);
   return { ...result, form: { global, project } as V };
+}
+
+/**
+ * A live refresh may land while a save runs. When a half then fails, its base stays old, so if the
+ * server's value for it is different, say so: the edits and the server have diverged.
+ */
+export function raiseNotice<V extends PageValues<unknown, unknown>>(
+  d: Draft<V>,
+  server: V,
+  failed: { global: boolean; project: boolean },
+): Draft<V> {
+  const diverged =
+    (failed.global && !sameValue(server.global, d.base.global)) ||
+    (failed.project && !sameValue(server.project, d.base.project));
+  return diverged ? { ...d, elsewhere: true } : d;
 }

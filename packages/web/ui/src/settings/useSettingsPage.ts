@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import { api } from "../api.js";
 import { act } from "../lib/act.js";
-import { afterSaveEdits, performSave } from "../lib/settings-save.js";
+import { afterSaveEdits, performSave, raiseNotice } from "../lib/settings-save.js";
 import {
   editDraft,
   isDirty,
@@ -68,7 +68,9 @@ export function useSettingsPage<V extends PageValues<unknown, unknown>>(
       );
       if (result.nothing) return;
       // Edits typed while the write ran stay, on top of what the server returned.
-      setDraft((cur) => afterSaveEdits(result.draft, sent, cur));
+      setDraft((cur) =>
+        raiseNotice(afterSaveEdits(result.draft, sent, cur), latest.current.server, result.failed),
+      );
       if (result.allOk) {
         setSavedAt(Date.now());
         toast.success("Settings saved");

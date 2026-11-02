@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project } from "@boof-runner/shared/schema";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
 import { act } from "../lib/act.js";
+import { latestGuard } from "../lib/latest.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 
 /** Archived projects, with Unarchive and a confirmed Delete. */
@@ -11,13 +12,17 @@ export function ArchivedProjects({ reloadProjects }: { reloadProjects: () => Pro
   const [failed, setFailed] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
 
+  // Overlapping loads (after an unarchive, a delete, a reload) may answer out of order.
+  const guard = useRef(latestGuard());
   const load = useCallback(async () => {
+    const seq = guard.current.begin();
     try {
       const all = await api.listProjects(true);
+      if (!guard.current.accept(seq)) return;
       setList(all.filter((p) => p.archived));
       setFailed(false);
     } catch {
-      setFailed(true);
+      if (guard.current.accept(seq)) setFailed(true);
     }
   }, []);
   useEffect(() => {
@@ -91,6 +96,7 @@ export function ArchivedProjects({ reloadProjects }: { reloadProjects: () => Pro
         onConfirm={async () => {
           if (!deleting) return;
           const ok = await act(() => api.deleteProject(deleting.id, true), {
+            success: "Project deleted",
             failure: "Could not delete the project",
           });
           if (ok) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { appPathOf, basePath, isPlainLeftClick, locationKey, routeFromLocation } from "./location";
+import { blockedByGuard, routeOfPath } from "./leave-guard";
 import { formatRoute, type Route } from "./route";
 
 const readRoute = (): Route | null =>
@@ -35,8 +36,11 @@ export function useRoute(): {
         locationKey(path, document.baseURI) !==
         window.location.pathname + window.location.search
       ) {
-        history.pushState(null, "", path);
-        notify();
+        const go = () => {
+          history.pushState(null, "", path);
+          notify();
+        };
+        if (!blockedByGuard(routeOfPath(path), go)) go();
       }
     };
     document.addEventListener("click", onClick);
@@ -45,14 +49,19 @@ export function useRoute(): {
 
   const navigate = useCallback((to: Route, opts?: { replace?: boolean }) => {
     const path = formatRoute(to);
-    if (opts?.replace) history.replaceState(null, "", path);
-    else if (
-      locationKey(path, document.baseURI) ===
-      window.location.pathname + window.location.search
-    )
+    if (opts?.replace) {
+      history.replaceState(null, "", path);
+      notify();
       return;
-    else history.pushState(null, "", path);
-    notify();
+    }
+    if (locationKey(path, document.baseURI) === window.location.pathname + window.location.search)
+      return;
+    const go = () => {
+      history.pushState(null, "", path);
+      notify();
+    };
+    // A screen with unsaved work may ask first; corrections (replace) never wait.
+    if (!blockedByGuard(to, go)) go();
   }, []);
 
   return { route, navigate };

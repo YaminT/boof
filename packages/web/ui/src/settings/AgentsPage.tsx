@@ -14,7 +14,7 @@ import {
 } from "../lib/settings-agents.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { AddModelDialog } from "./AddModelDialog.js";
-import { OverrideRow } from "./OverrideRow.js";
+import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
 
 const h2 = "m-0 text-[length:var(--text-section)] font-semibold";
 const SOURCE: Record<string, { label: string; title: string }> = {
@@ -187,6 +187,7 @@ export function AgentsPage({
 
       <section className="flex flex-col">
         <h2 className={h2}>Roles</h2>
+        <OverrideHeader projectName={project.name} />
         {ROLES.map((role) => (
           <OverrideRow
             key={role}
@@ -229,28 +230,33 @@ export function AgentsPage({
 
       <section className="flex flex-col">
         <h2 className={h2}>Review</h2>
+        <OverrideHeader projectName={project.name} />
         <OverrideRow
           label="Only a reviewer approval finishes a task as done"
           inherit={o.gate === null}
           onInherit={(inh) => setO({ gate: inh ? null : g.gate })}
           inheritedText={g.gate ? "yes" : "no"}
           global={
-            <input
-              className="m-0 size-4 w-4 self-start"
-              type="checkbox"
-              aria-label="Only a reviewer approval finishes a task as done"
-              checked={g.gate}
-              onChange={(e) => setG({ gate: e.target.checked })}
-            />
+            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+              <input
+                className="m-0 size-4 w-4"
+                type="checkbox"
+                checked={g.gate}
+                onChange={(e) => setG({ gate: e.target.checked })}
+              />
+              Only a reviewer approval finishes a task as done
+            </label>
           }
           override={
-            <input
-              className="m-0 size-4 w-4 self-start"
-              type="checkbox"
-              aria-label="Reviewer approval required, this project"
-              checked={o.gate ?? g.gate}
-              onChange={(e) => setO({ gate: e.target.checked })}
-            />
+            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+              <input
+                className="m-0 size-4 w-4"
+                type="checkbox"
+                checked={o.gate ?? g.gate}
+                onChange={(e) => setO({ gate: e.target.checked })}
+              />
+              Only a reviewer approval finishes a task as done (this project)
+            </label>
           }
         />
         <OverrideRow
@@ -270,6 +276,7 @@ export function AgentsPage({
 
       <section className="flex flex-col">
         <h2 className={h2}>Retries</h2>
+        <OverrideHeader projectName={project.name} />
         <OverrideRow
           label="Retries per step after a transient failure"
           inherit={o.transient === null}
@@ -287,6 +294,7 @@ export function AgentsPage({
 
       <section className="flex flex-col">
         <h2 className={h2}>Worktree</h2>
+        <OverrideHeader projectName={project.name} />
         <OverrideRow
           label="When a task is done"
           inherit={o.onDone === null}
@@ -445,7 +453,6 @@ export function AgentsPage({
           })
         }
       />
-      <span hidden>{project.id}</span>
     </div>
   );
 }

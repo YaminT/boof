@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "@boof-runner/shared/schema";
-import { BudgetBanner } from "./components/Budget.js";
+import { BudgetBanner } from "./shell/BudgetBanner.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";

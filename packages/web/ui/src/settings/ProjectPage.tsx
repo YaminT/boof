@@ -19,6 +19,7 @@ const h2 = "m-0 text-[length:var(--text-section)] font-semibold";
 
 /** Settings › Project: this project, the settings about all projects, and archived projects. */
 export function ProjectPage({
+  dirty,
   form,
   set,
   project,
@@ -27,6 +28,8 @@ export function ProjectPage({
   onProjectAdded,
   reloadProjects,
 }: {
+  /** The page has unsaved edits. */
+  dirty: boolean;
   form: ProjectPageValues;
   set: (update: (v: ProjectPageValues) => ProjectPageValues) => void;
   project: Project;
@@ -163,7 +166,7 @@ export function ProjectPage({
         open={archiving}
         onOpenChange={setArchiving}
         title="Archive project"
-        body={`Archive “${project.name}”? It leaves the project list and the runner stops picking up its tasks. Its tasks and files are kept.`}
+        body={`Archive “${project.name}”? It leaves the project list and the runner stops picking up its tasks. Its tasks and files are kept.${dirty ? " Your unsaved changes on this page are lost." : ""}`}
         confirmLabel="Archive project"
         destructive
         onConfirm={async () => {

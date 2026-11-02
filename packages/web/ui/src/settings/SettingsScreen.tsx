@@ -1,13 +1,16 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
-import { SettingsPage } from "../components/SettingsPage.js";
 import { ClientsSection } from "../components/ClientsSection.js";
 import { CommandsTab } from "../components/CommandsTab.js";
 import type { SettingsPageId } from "../lib/route.js";
 import { projectPage } from "../lib/settings-project.js";
 import { agentsPage } from "../lib/settings-agents.js";
+import { budgetsPage } from "../lib/settings-budgets.js";
 import type { AppData } from "../useAppData.js";
 import { AgentsPage } from "./AgentsPage.js";
+import { BudgetsPage } from "./BudgetsPage.js";
+import { setLeaveGuard, staysInSettings } from "../lib/leave-guard.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { ProjectPage } from "./ProjectPage.js";
 import { SettingsFooter } from "./SettingsFooter.js";
 import { SettingsNav } from "./SettingsNav.js";
@@ -40,13 +43,28 @@ export function SettingsScreen({
   const onSaved = useMemo(() => () => data.refresh(), [data]);
   const proj = useSettingsPage(projectPage, settings, project, pid, onSaved);
   const agents = useSettingsPage(agentsPage, settings, project, pid, onSaved);
+  const budgets = useSettingsPage(budgetsPage, settings, project, pid, onSaved);
 
   const unsaved = useMemo(() => {
     const s = new Set<SettingsPageId>();
     if (proj.dirty) s.add("project");
     if (agents.dirty) s.add("agents");
+    if (budgets.dirty) s.add("budgets");
     return s;
-  }, [proj.dirty, agents.dirty]);
+  }, [proj.dirty, agents.dirty, budgets.dirty]);
+
+  // In-app navigation away from the settings (another screen, another project) asks first.
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const dirtyRef = useRef(false);
+  dirtyRef.current = unsaved.size > 0;
+  useEffect(() => {
+    setLeaveGuard((to, proceed) => {
+      if (!dirtyRef.current || staysInSettings(to, pid)) return false;
+      setLeaving(() => proceed);
+      return true;
+    });
+    return () => setLeaveGuard(null);
+  }, [pid]);
 
   useEffect(() => {
     if (unsaved.size === 0) return;
@@ -60,6 +78,20 @@ export function SettingsScreen({
 
   return (
     <div className="flex max-w-[1320px] flex-col">
+      <ConfirmDialog
+        open={leaving !== null}
+        onOpenChange={(o) => !o && setLeaving(null)}
+        title="Discard unsaved changes?"
+        body="You have unsaved changes on these settings pages. Leaving now discards them."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          const go = leaving;
+          setLeaving(null);
+          go?.();
+        }}
+      />
       <h1 className="m-0 mb-4 text-[length:var(--text-page)] leading-tight font-semibold">
         Settings
       </h1>
@@ -67,6 +99,7 @@ export function SettingsScreen({
       {page === "project" && (
         <>
           <ProjectPage
+            dirty={proj.dirty}
             form={proj.form}
             set={proj.set}
             project={project}
@@ -101,12 +134,23 @@ export function SettingsScreen({
         </>
       )}
       {page === "budgets" && (
-        <SettingsPage
-          settings={settings}
-          projects={projects}
-          project={project}
-          onChange={data.refresh}
-        />
+        <>
+          <BudgetsPage
+            form={budgets.form}
+            set={budgets.set}
+            project={project}
+            budget={data.budget}
+          />
+          <SettingsFooter
+            dirty={budgets.dirty}
+            elsewhere={budgets.elsewhere}
+            busy={budgets.busy}
+            problems={budgets.problems}
+            savedAt={budgets.savedAt}
+            onSave={() => void budgets.save()}
+            onReload={budgets.reload}
+          />
+        </>
       )}
       {page === "keys" && <ClientsSection />}
       {page === "automation" && <CommandsTab onChange={data.refresh} />}

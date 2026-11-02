@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import { isDirty, startDraft, type PageModel, type PageValues } from "./settings-draft.js";
-import { afterSaveEdits, performSave, type SaveWrites } from "./settings-save.js";
+import { afterSaveEdits, performSave, raiseNotice, type SaveWrites } from "./settings-save.js";
 
 type V = PageValues<{ root: string }, { name: string }>;
 // A tiny model: one global field and one project field, patched when they changed.
@@ -121,5 +121,30 @@ describe("afterSaveEdits", () => {
     const result = startDraft<V>({ global: { root: "typed" }, project: { name: "theirs" } });
     const out = afterSaveEdits(result, sent, { ...result, form: sent });
     expect(out.form.project.name).toBe("theirs");
+  });
+});
+
+describe("a failed half when the server also moved", () => {
+  it("keeps its old base, so a retry cannot write the server's newer value back", async () => {
+    const { d } = edited();
+    const moved = { settings: { root: "theirs" } as unknown as Settings, project };
+    const r = await performSave(model, d, moved, { ...ok(), settings: async () => undefined });
+    expect(r.draft.base.global.root).toBe("a");
+    expect(r.draft.form.global.root).toBe("typed");
+    // The retry patch is only what the user typed, never the server's "theirs".
+    expect(model.patches(r.draft.form, r.draft.base, moved)).toEqual({
+      settings: { projectsRoot: "typed" },
+    });
+  });
+
+  it("raises the notice when the failed half's server value differs from its base", async () => {
+    const { d } = edited();
+    const r = await performSave(model, d, latest, { ...ok(), settings: async () => undefined });
+    const server: V = { global: { root: "theirs" }, project: { name: "typed" } };
+    expect(raiseNotice(r.draft, server, r.failed).elsewhere).toBe(true);
+    const same: V = { global: { root: "a" }, project: { name: "typed" } };
+    expect(raiseNotice(r.draft, same, r.failed).elsewhere).toBe(false);
+    // A half that went through never raises it.
+    expect(raiseNotice(r.draft, server, { global: false, project: false }).elsewhere).toBe(false);
   });
 });
