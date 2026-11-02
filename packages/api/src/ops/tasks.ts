@@ -146,12 +146,13 @@ export const tasksList = defineOp({
       .join(", ")}`,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
-    let tasks = await svc.list();
+    const all = await svc.list();
+    let tasks = all;
     if (input.status) tasks = tasks.filter((t) => t.frontmatter.status === input.status);
     if (input.plan) tasks = tasks.filter((t) => t.frontmatter.planRef?.planId === input.plan);
     if (input.label) tasks = tasks.filter((t) => t.frontmatter.labels.includes(input.label!));
     // The index is built from all tasks, so a filtered list still shows true progress.
-    const index = await svc.hierarchy();
+    const index = await svc.hierarchy(all);
     if (input.epic !== undefined || input.parent !== undefined) {
       tasks = tasks.filter((t) =>
         matchesHierarchy(t, index, { epic: input.epic, parent: input.parent }),

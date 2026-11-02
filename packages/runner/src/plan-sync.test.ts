@@ -273,6 +273,21 @@ describe("syncPlan: epics and the hierarchy", () => {
     expect(f.epicId).toBeUndefined();
   });
 
+  it("re-applies the goal's epic only when the goal's epic changed", async () => {
+    await makePlan([testGoal("a", 1, [], { epicId: "web" })]);
+    await sync();
+    // A human moves the task; an unchanged goal epic does not undo it.
+    await tasks.modify("boof-a", (t) => {
+      t.frontmatter.epicId = "ops";
+    });
+    await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("ops");
+    // The goal changes its epic: now it wins.
+    await withEpic("docs");
+    await sync();
+    expect((await tasks.get("boof-a"))!.frontmatter.epicId).toBe("docs");
+  });
+
   it("dry run writes no epicId", async () => {
     await makePlan([testGoal("a", 1)]);
     await sync();

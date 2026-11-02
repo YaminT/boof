@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -238,6 +238,23 @@ describe("hierarchy rules", () => {
     expect(await ids({ epic: "none" })).toEqual(["free", "x"]);
     expect(await ids({ parent: "p" })).toEqual(["c"]);
     expect(await ids({ parent: "none" })).toEqual(["free", "p", "x"]);
+  });
+});
+
+describe("hierarchy and a corrupt epics.json", () => {
+  it("reads epics only for the operations that need them", async () => {
+    await createTaskInHierarchy(dir, mk("p"));
+    await createTaskInHierarchy(dir, mk("a"));
+    await createTaskInHierarchy(dir, mk("b"));
+    await writeFile(join(dir, "epics.json"), "{ not json");
+    await moveTask(dir, "a", { parentId: "p" });
+    await createTaskInHierarchy(dir, mk("c", { parentId: "p" }));
+    await removeTask(dir, "b");
+    expect(await store.get("b")).toBeNull();
+    // The epic paths fail loudly: the file is never read as empty.
+    await expect(createTaskInHierarchy(dir, mk("d", { epicId: "web" }))).rejects.toThrow();
+    await expect(moveTask(dir, "c", { epicId: "web" })).rejects.toThrow();
+    await expect(removeEpic(dir, "web")).rejects.toThrow();
   });
 });
 

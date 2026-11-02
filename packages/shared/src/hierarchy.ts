@@ -158,11 +158,16 @@ export function matchesHierarchy(
 
 const bad = (code: HierarchyErrorCode, message: string) => new HierarchyError(code, message);
 
-async function load(projectDir: string) {
+/**
+ * The tasks and, when `withEpics`, the epics. Epics are read only by the operations that look an
+ * epic up: `EpicStore.list` throws on an unreadable `epics.json` by design, and a plain delete, a
+ * move to a parent or a subtask create must not fail because of it.
+ */
+async function load(projectDir: string, withEpics: boolean) {
   const store = new TaskStore(projectDir);
   const epics = new EpicStore(projectDir);
   const tasks = await store.list();
-  const all = await epics.list({ includeArchived: true });
+  const all = withEpics ? await epics.list({ includeArchived: true }) : [];
   return { store, epics, tasks, all, index: buildHierarchyIndex(tasks, all) };
 }
 
@@ -192,7 +197,7 @@ export async function createTaskInHierarchy(
     return new TaskStore(projectDir).createUnique(task, opts);
   }
   return withHierarchyLock(projectDir, async () => {
-    const { store, all, tasks } = await load(projectDir);
+    const { store, all, tasks } = await load(projectDir, epicId !== undefined);
     if (epicId !== undefined && parentId !== undefined) {
       throw bad("invalid_hierarchy", "a subtask has no epic of its own");
     }
@@ -223,7 +228,7 @@ export async function moveTask(
   opts: { by?: string } = {},
 ): Promise<Task> {
   return withHierarchyLock(projectDir, async () => {
-    const { store, all, tasks, index } = await load(projectDir);
+    const { store, all, tasks, index } = await load(projectDir, typeof input.epicId === "string");
     const current = tasks.find((t) => t.frontmatter.id === id);
     if (!current) throw new TaskNotFoundError(id);
     const from = { epicId: current.frontmatter.epicId, parentId: current.frontmatter.parentId };
@@ -279,7 +284,7 @@ export async function removeTask(
   opts: { detach?: boolean; by?: string } = {},
 ): Promise<{ detached: string[] }> {
   return withHierarchyLock(projectDir, async () => {
-    const { store, tasks, index } = await load(projectDir);
+    const { store, tasks, index } = await load(projectDir, false);
     const task = tasks.find((t) => t.frontmatter.id === id);
     if (!task) throw new TaskNotFoundError(id);
     const kids = index.childrenOf(id);
@@ -323,7 +328,7 @@ export async function removeEpic(
   opts: { detach?: boolean; by?: string } = {},
 ): Promise<{ detached: string[] }> {
   return withHierarchyLock(projectDir, async () => {
-    const { store, epics, tasks, all } = await load(projectDir);
+    const { store, epics, tasks, all } = await load(projectDir, true);
     if (!all.some((e) => e.id === epicId)) {
       throw bad("epic_not_found", `Epic not found: ${epicId}`);
     }

@@ -334,6 +334,7 @@ to keep the tool list short.
 | `boof_get_task_diff`   | `tasks:read`                         | read-only   | Get what a task changed                  |
 | `boof_create_task`     | `tasks:write`                        | write       | Create a task                            |
 | `boof_update_task`     | `tasks:write`                        | idempotent  | Update a task                            |
+| `boof_move_task`       | `tasks:write`                        | idempotent  | Move a task to an epic or under a parent |
 | `boof_queue_task`      | `tasks:write`                        | idempotent  | Queue a task                             |
 | `boof_retry_task`      | `tasks:write`                        | write       | Retry a task                             |
 | `boof_archive_task`    | `tasks:write`                        | idempotent  | Archive a task                           |
@@ -342,6 +343,10 @@ to keep the tool list short.
 | `boof_inject_prompt`   | `tasks:control`                      | write       | Inject a prompt (next-step or now)       |
 | `boof_get_task_log`    | `tasks:read`                         | read-only   | Read a task's live log (optional `tail`) |
 | `boof_wait_task`       | `tasks:read`                         | read-only   | Wait for a task status change            |
+| `boof_list_epics`      | `tasks:read`                         | read-only   | List a project's epics                   |
+| `boof_get_epic`        | `tasks:read`                         | read-only   | Get an epic                              |
+| `boof_create_epic`     | `tasks:write`                        | write       | Create an epic                           |
+| `boof_update_epic`     | `tasks:write`                        | idempotent  | Update an epic                           |
 | `boof_runner_status`   | `settings:read`                      | read-only   | Runner and queue status                  |
 | `boof_set_runner`      | `runner:control` or `settings:write` | idempotent  | Start or pause the runner                |
 | `boof_list_actions`    | `tasks:read`                         | read-only   | List tasks needing an answer             |

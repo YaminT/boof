@@ -28,7 +28,9 @@ export function hierarchyPromptSection(task: Task, tasks: Task[], epics: Epic[])
 
   const epicId = index.info(task).epicId;
   const epic = epicId === undefined ? undefined : epics.find((e) => e.id === epicId);
-  if (epic) lines.push(`Epic: ${oneLine(epic.title)}`);
+  // The title of an epic a client created is client text no human approved (it can be renamed after
+  // the work was approved), so only its id, which is kebab-case, is printed.
+  if (epic) lines.push(`Epic: ${epic.origin?.client ? epic.id : oneLine(epic.title)}`);
 
   const parentId = task.frontmatter.parentId;
   const parent =

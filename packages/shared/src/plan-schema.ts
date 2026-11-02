@@ -83,6 +83,8 @@ export const GoalSyncedSchema = z.object({
   spec: GoalSpecSchema,
   dependsOn: z.array(kebab).default([]),
   model: z.string().optional(),
+  /** The goal epic sync last applied to the task; a changed one is applied again. */
+  epicId: kebab.optional(),
 });
 export type GoalSynced = z.infer<typeof GoalSyncedSchema>;
 

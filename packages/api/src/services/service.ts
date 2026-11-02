@@ -165,10 +165,10 @@ export class ProjectService {
     return this.tasks.get(id);
   }
 
-  /** The hierarchy of the project's tasks and epics (archived epics included), for the derived task fields. */
-  async hierarchy(): Promise<HierarchyIndex> {
+  /** The hierarchy of the project's tasks (pass the list you already read to avoid a second scan) and epics (archived epics included), for the derived task fields. */
+  async hierarchy(known?: Task[]): Promise<HierarchyIndex> {
     const [tasks, epics] = await Promise.all([
-      this.tasks.list(),
+      known ?? this.tasks.list(),
       // A broken epics.json must not take every task read down (the epic operations still fail
       // loudly): without epics, tasks that name one show `epicMissing`.
       new EpicStore(this.root).list({ includeArchived: true }).catch((err) => {
@@ -419,12 +419,15 @@ export class ProjectService {
       // ... and shape its own drafts, but not rewrite work a human already released.
       if (
         task.frontmatter.status !== "draft" &&
-        (input.prompt !== undefined || input.command !== undefined || input.runs !== undefined) &&
+        (input.title !== undefined ||
+          input.prompt !== undefined ||
+          input.command !== undefined ||
+          input.runs !== undefined) &&
         review
       ) {
         throw new OpError(
           403,
-          "This client has review trust and cannot change the prompt of a task that is not a draft",
+          "This client has review trust and cannot change the title or prompt of a task that is not a draft",
           "forbidden_trust",
         );
       }

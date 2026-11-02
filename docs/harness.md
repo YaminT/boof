@@ -201,7 +201,7 @@ Fix errors this way:
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 34 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Operations without a tool (attachments, settings writes, commands, clients, webhooks, project archive and delete, task delete and skip) are REST only.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 39 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Operations without a tool (attachments, settings writes, commands, clients, webhooks, project archive and delete, task delete and skip, epic delete) are REST only.
 
 ### MCP over HTTP (remote)
 
@@ -272,18 +272,19 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (34). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (39). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
-| Area         | Tools                                                                                                                                                                        |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity     | `boof_whoami`                                                                                                                                                                |
-| Projects     | `boof_list_projects`, `boof_create_project`, `boof_get_project`, `boof_update_project`                                                                                       |
-| Plans        | `boof_list_plans`, `boof_create_plan`, `boof_get_plan`, `boof_update_plan`, `boof_export_plan`, `boof_import_plan`                                                           |
-| Goals        | `boof_replace_goals`, `boof_upsert_goal`, `boof_remove_goal`, `boof_reorder_goals`, `boof_set_goal_status`                                                                   |
-| Plan to task | `boof_sync_plan`, `boof_wait_plan`                                                                                                                                           |
-| Tasks        | `boof_list_tasks`, `boof_get_task`, `boof_create_task`, `boof_update_task`, `boof_queue_task`, `boof_retry_task`, `boof_archive_task`, `boof_get_task_log`, `boof_wait_task` |
-| Control      | `boof_answer_task`, `boof_list_actions`, `boof_stop_task`, `boof_inject_prompt`                                                                                              |
-| Runner       | `boof_runner_status`, `boof_set_runner`                                                                                                                                      |
+| Area         | Tools                                                                                                                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity     | `boof_whoami`                                                                                                                                                                                  |
+| Projects     | `boof_list_projects`, `boof_create_project`, `boof_get_project`, `boof_update_project`                                                                                                         |
+| Plans        | `boof_list_plans`, `boof_create_plan`, `boof_get_plan`, `boof_update_plan`, `boof_export_plan`, `boof_import_plan`                                                                             |
+| Goals        | `boof_replace_goals`, `boof_upsert_goal`, `boof_remove_goal`, `boof_reorder_goals`, `boof_set_goal_status`                                                                                     |
+| Plan to task | `boof_sync_plan`, `boof_wait_plan`                                                                                                                                                             |
+| Tasks        | `boof_list_tasks`, `boof_get_task`, `boof_create_task`, `boof_update_task`, `boof_move_task`, `boof_queue_task`, `boof_retry_task`, `boof_archive_task`, `boof_get_task_log`, `boof_wait_task` |
+| Epics        | `boof_list_epics`, `boof_get_epic`, `boof_create_epic`, `boof_update_epic`                                                                                                                     |
+| Control      | `boof_answer_task`, `boof_list_actions`, `boof_stop_task`, `boof_inject_prompt`                                                                                                                |
+| Runner       | `boof_runner_status`, `boof_set_runner`                                                                                                                                                        |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
 
@@ -465,7 +466,8 @@ If `principal.trust` is `review` and `security.externalTasksRequireApproval` is 
 
 - A task you create is `draft` and gets the label `external:<your-client-id>`.
 - A plan you create is `draft`, even if you send `status: "active"`.
-- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), moving, editing (`tasks.update`, rename included) or deleting a task you did not create (`tasks.move`, `tasks.update`, `tasks.delete`), passing `detach` on a delete, updating an epic you did not create (an epic made by a human has no `origin` and counts as human), and deleting any epic. You may create subtasks under any task (they stay drafts) and create epics and update your own, changing the prompt of a task that is not a draft, and stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`).
+- These answer `403 forbidden_trust`: queue (`tasks.queue`), retry, unarchive, answer questions, setting a task status to `pending`, setting a plan `active`, editing an active plan (goals, order, import merge, or any field except setting the status to `draft`), changing the title or prompt of a task that is not a draft, stopping or steering a running task you did not create (`tasks.stop`, `tasks.inject`), moving, editing (`tasks.update`, rename included) or deleting a task you did not create (`tasks.move`, `tasks.update`, `tasks.delete`), passing `detach` on a delete, updating an epic you did not create (an epic made by a human has no `origin` and counts as human), and deleting any epic.
+- You may create subtasks under any task (they stay drafts), create epics, and update your own epics. A prompt only names the title of an epic a human created; for an epic you created it names the id.
 - A human sets the plan to `active` in the Plans tab (button Approve). That records `approvedBy` on the plan: the human approved the content. From then on sync creates the plan's tasks as `pending`, for every dependency layer, with no per-task approval.
 - A review client may set its own active plan back to `draft` (`PUT .../plans/<plan-id>` with `{"status":"draft"}` and `If-Match`; no other field in the same call). That clears `approvedBy` and stops new task creation. It does not stop or change running tasks. The client may then edit the goals. It still cannot set the plan `active`: the user approves again.
 - If a trusted principal edits the approved plan later, the approval stays. If the plan goes back to `draft` (or `archived`), `approvedBy` is cleared and a human must approve again.
@@ -739,7 +741,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `revision`: `integer >= 1`, required; default `1`
 - `spec`: `{ goal: string, rules: { do: string[], dont: string[] }, stack: string, tests: { coverage?: string, run: string, strategy: string, technology: string } }`, required
 - `status`: `"plan" | "develop" | "review" | "done"`, required; default `"plan"`
-- `synced`: `{ dependsOn: kebab-id[], model?: string, revision: integer >= 1, spec: { goal: string, rules: object, stack: string, tests: object } }`, optional
+- `synced`: `{ dependsOn: kebab-id[], epicId?: kebab-id, model?: string, revision: integer >= 1, spec: { goal: string, rules: object, stack: string, tests: object } }`, optional
 - `taskId`: `kebab-id | null`, required; default `null`
 - `tasks`: `{ branch: string, revision: integer >= 1, status: "draft" | "pending" | "running" | "action" | "done" | "failed" | "stopped" | "archived", taskId: kebab-id }[]`, required; default `[]`
 - `title`: `string`, required

@@ -204,6 +204,7 @@ function snapshotOf(g: Goal): GoalSynced {
     spec: g.spec,
     dependsOn: g.dependsOn,
     ...(g.model ? { model: g.model } : {}),
+    ...(g.epicId ? { epicId: g.epicId } : {}),
   };
 }
 
@@ -742,16 +743,17 @@ async function syncOnce(
       // The goal's epic follows to the live task unless a human made it a subtask (a subtask has
       // its parent's epic). A goal without an epic never touches the task's epic or parent. Not
       // reported in the result, and an epic that does not exist is the tolerated dangling case.
-      if (
-        !dry &&
-        g.epicId &&
-        !current.frontmatter.parentId &&
-        current.frontmatter.epicId !== g.epicId
-      ) {
+      // It is applied when the goal's epic changed since it was last applied (`synced.epicId`), so
+      // a human's later move of the task is not undone by every sync.
+      if (!dry && (g.epicId ?? undefined) !== g.synced?.epicId) {
         const epicId = g.epicId;
-        await store.modify(current.frontmatter.id, (t) => {
-          if (!t.frontmatter.parentId) t.frontmatter.epicId = epicId;
-        });
+        if (epicId && !current.frontmatter.parentId && current.frontmatter.epicId !== epicId) {
+          await store.modify(current.frontmatter.id, (t) => {
+            if (!t.frontmatter.parentId) t.frontmatter.epicId = epicId;
+          });
+        }
+        g.synced = { ...(g.synced ?? snapshotOf(g)), epicId };
+        if (!epicId) delete g.synced.epicId;
       }
       g.taskId = current.frontmatter.id;
       continue;
