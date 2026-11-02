@@ -128,3 +128,14 @@ export function correctedRoute(
   if (route.name === "inbox" || projectIds.includes(route.pid)) return null;
   return routeForProject(route, selectedId);
 }
+
+/** Where a task's "← …" link goes, and what it says, given the route the user came from. */
+export function backFor(previous: Route | null, pid: string): { route: Route; label: string } {
+  if (previous && previous.name !== "inbox" && previous.pid === pid) {
+    if (previous.name === "plans")
+      return { route: previous, label: previous.planId ? "← Plan" : "← Plans" };
+    if (previous.name === "tasks") return { route: previous, label: "← Tasks" };
+    if (previous.name === "overview") return { route: previous, label: "← Overview" };
+  }
+  return { route: { name: "tasks", pid }, label: "← Tasks" };
+}

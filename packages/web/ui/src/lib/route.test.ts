@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  backFor,
   correctedRoute,
   formatRoute,
   listRouteFor,
@@ -237,5 +238,28 @@ describe("correctedRoute", () => {
       name: "tasks",
       pid: "sel",
     });
+  });
+});
+
+describe("backFor", () => {
+  const tasks: Route = { name: "tasks", pid: "a" };
+  it("returns to a plan, the plans list, tasks or the overview of the same project", () => {
+    const plan: Route = { name: "plans", pid: "a", planId: "p", goalId: "g" };
+    expect(backFor(plan, "a")).toEqual({ route: plan, label: "← Plan" });
+    const plans: Route = { name: "plans", pid: "a" };
+    expect(backFor(plans, "a")).toEqual({ route: plans, label: "← Plans" });
+    expect(backFor(tasks, "a").label).toBe("← Tasks");
+    const ov: Route = { name: "overview", pid: "a" };
+    expect(backFor(ov, "a")).toEqual({ route: ov, label: "← Overview" });
+  });
+  it("falls back to the task list", () => {
+    for (const prev of [
+      { name: "plans", pid: "b", planId: "p" },
+      { name: "inbox" },
+      { name: "settings", pid: "a", page: "keys" },
+      { name: "task", pid: "a", taskId: "t", view: "edit" },
+      null,
+    ] as (Route | null)[])
+      expect(backFor(prev, "a")).toEqual({ route: tasks, label: "← Tasks" });
   });
 });
