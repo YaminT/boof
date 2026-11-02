@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 import type { Goal, GoalStatus, TaskView } from "../api.js";
 import { cn } from "@/lib/utils";
 import { dependsOnTitles } from "../lib/plan-view.js";
@@ -16,6 +16,8 @@ export function GoalRow({
   onStatus,
   menu,
   handle,
+  rowRef,
+  style,
 }: {
   goal: Goal;
   goals: Goal[];
@@ -26,10 +28,14 @@ export function GoalRow({
   onStatus(s: GoalStatus): void;
   menu: ReactNode;
   handle?: ReactNode;
+  rowRef?: Ref<HTMLLIElement>;
+  style?: CSSProperties;
 }) {
   const deps = dependsOnTitles(goal, goals);
   return (
     <li
+      ref={rowRef}
+      style={style}
       data-goal-id={goal.id}
       aria-current={selected || undefined}
       className={cn(

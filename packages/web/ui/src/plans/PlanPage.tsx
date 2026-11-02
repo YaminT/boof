@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type Goal, type GoalInput, type SyncReport } from "../api.js";
@@ -12,6 +12,8 @@ import {
   DropdownMenuTrigger,
 } from "@/ui/dropdown-menu";
 import { act } from "../lib/act.js";
+import { listKeyAction, moveQueued } from "../lib/task-list.js";
+import { SortableList } from "../shell/SortableList.js";
 import { planErrorLines, sortGoals } from "../lib/plan-view.js";
 import { formatRoute, type Route } from "../lib/route.js";
 import type { AppData } from "../useAppData.js";
@@ -46,7 +48,17 @@ export function PlanPage({
   const [exported, setExported] = useState<Record<string, string> | null>(null);
   const [archiving, setArchiving] = useState(false);
 
-  const goals = useMemo(() => (plan ? sortGoals(plan.goals) : []), [plan]);
+  // The order while a reorder is in flight; null shows the server's order.
+  const [localOrder, setLocalOrder] = useState<string[] | null>(null);
+  const [reorderErrors, setReorderErrors] = useState<string[]>([]);
+  const reordering = useRef(false);
+  const serverGoals = useMemo(() => (plan ? sortGoals(plan.goals) : []), [plan]);
+  const goals = useMemo(() => {
+    if (!localOrder) return serverGoals;
+    const byId = new Map(serverGoals.map((g) => [g.id, g]));
+    const ordered = localOrder.flatMap((id) => byId.get(id) ?? []);
+    return ordered.length === serverGoals.length ? ordered : serverGoals;
+  }, [serverGoals, localOrder]);
   const goal = goalId ? goals.find((g) => g.id === goalId) : undefined;
   const taskById = useMemo(
     () => new Map(data.tasks.map((t) => [t.frontmatter.id, t])),
@@ -64,6 +76,54 @@ export function PlanPage({
     toast("This goal no longer exists.");
     navigate({ name: "plans", pid, planId }, { replace: true });
   }, [plan, goalId, goal, navigate, pid, planId]);
+
+  const canReorder = !!plan && plan.status !== "archived";
+  const reorder = async (order: string[]) => {
+    if (!plan || !canReorder || reordering.current) return;
+    reordering.current = true;
+    setLocalOrder(order);
+    const next = await mutate(
+      (p) => api.reorderGoals(pid, p, order),
+      "Could not reorder",
+      undefined,
+      (e) => {
+        if (!(e instanceof ApiError) || e.code !== "invalid_plan") return false;
+        setReorderErrors(planErrorLines(e));
+        return true;
+      },
+    );
+    if (next) setReorderErrors([]);
+    setLocalOrder(null);
+    reordering.current = false;
+  };
+  // Alt+↑ / Alt+↓ inside a goal row moves it one place; the row keeps focus.
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKey.current = (e) => {
+    const target = e.target as HTMLElement | null;
+    const row = target?.closest<HTMLElement>("li[data-goal-id]");
+    if (!row || !canReorder) return;
+    const typing = target!.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target!.tagName);
+    const dialogOpen = !!document.querySelector("[role=dialog], [role=menu]");
+    const action = listKeyAction(e, typing, dialogOpen);
+    if (action !== "move-up" && action !== "move-down") return;
+    e.preventDefault();
+    if (e.repeat) return;
+    const next = moveQueued(
+      goals.map((g) => g.id),
+      row.dataset.goalId!,
+      action === "move-up" ? -1 : 1,
+    );
+    if (!next) return;
+    void reorder(next);
+    requestAnimationFrame(() => {
+      if (target?.isConnected && document.activeElement !== target) target.focus();
+    });
+  };
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => onKey.current(e);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
 
   if (missing) return null;
   if (!plan) {
@@ -167,13 +227,45 @@ export function PlanPage({
       />
       <div className="flex flex-col gap-6 min-[1024px]:flex-row min-[1024px]:items-start">
         <div className={`min-w-0 flex-1 ${goal ? "hidden min-[1024px]:block" : ""}`}>
+          {goals.length >= 2 && canReorder && (
+            <p className="m-0 mb-1 text-[length:var(--text-meta)] text-ink-muted">
+              Drag or press Alt+↑ ↓ to reorder
+            </p>
+          )}
+          {reorderErrors.length > 0 && (
+            <div
+              role="alert"
+              className="mb-2 flex flex-col gap-1 rounded-md border border-failed/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-failed"
+            >
+              {reorderErrors.map((m, i) => (
+                <span key={i}>{m}</span>
+              ))}
+              <Button
+                variant="ghost"
+                size="xs"
+                className="self-start"
+                onClick={() => setReorderErrors([])}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
           {goals.length === 0 ? (
             <p className="m-0 py-6 text-ink-muted">This plan has no goals yet. Add one.</p>
           ) : (
-            <ul className="m-0 list-none p-0">
-              {goals.map((g) => {
+            <SortableList
+              ids={goals.map((g) => g.id)}
+              disabled={!canReorder}
+              labelFor={(id) => goals.find((g) => g.id === id)?.title ?? id}
+              onReorder={(order) => void reorder(order)}
+            >
+              {(id, handle, row) => {
+                const g = goals.find((x) => x.id === id);
+                if (!g) return null;
+                const index = goals.indexOf(g);
                 const task = g.taskId ? taskById.get(g.taskId) : undefined;
                 const tf = task?.frontmatter;
+                const ids = goals.map((x) => x.id);
                 return (
                   <GoalRow
                     key={g.id}
@@ -182,6 +274,9 @@ export function PlanPage({
                     task={task}
                     taskHref={task ? formatRoute(taskRoute(task.frontmatter.id)) : null}
                     selected={g.id === goalId}
+                    handle={handle}
+                    rowRef={row.rowRef}
+                    style={row.style}
                     onOpen={() => openGoal(g.id)}
                     onStatus={(s) =>
                       void mutate(
@@ -209,6 +304,28 @@ export function PlanPage({
                           >
                             Edit goal
                           </DropdownMenuItem>
+                          {canReorder && (
+                            <>
+                              <DropdownMenuItem
+                                disabled={index === 0}
+                                onClick={() => {
+                                  const n = moveQueued(ids, g.id, -1);
+                                  if (n) void reorder(n);
+                                }}
+                              >
+                                Move up
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={index === goals.length - 1}
+                                onClick={() => {
+                                  const n = moveQueued(ids, g.id, 1);
+                                  if (n) void reorder(n);
+                                }}
+                              >
+                                Move down
+                              </DropdownMenuItem>
+                            </>
+                          )}
                           {task && (
                             <DropdownMenuItem
                               onClick={() => navigate(taskRoute(task.frontmatter.id))}
@@ -234,8 +351,8 @@ export function PlanPage({
                     }
                   />
                 );
-              })}
-            </ul>
+              }}
+            </SortableList>
           )}
         </div>
         {goal && <GoalPanel goal={goal} onClose={closePanel} />}
