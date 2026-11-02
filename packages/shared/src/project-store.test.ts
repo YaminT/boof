@@ -10,6 +10,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { atomicWrite } from "./atomic.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -631,6 +634,147 @@ describe("create with path modes", () => {
     await expect(pstore.create({})).rejects.toMatchObject({ code: "directory_missing" });
     await expect(pstore.create({ path: { mode: "new" } })).rejects.toMatchObject({
       code: "directory_missing",
+    });
+  });
+
+  it("new: a project.json another writer publishes first is id_taken and is never removed", async () => {
+    const s = new ProjectStore(root, {
+      isGitRepo: fakeGit,
+      initGitRepo: fakeInit,
+      beforeCreateDir: async () => {
+        await atomicWrite(projectPaths(root, "x").json, "winner");
+      },
+    });
+    const dir = join(base, "repos", "one");
+    await expect(
+      s.create({ workingDirectory: dir, path: { mode: "new" }, id: "x" }),
+    ).rejects.toMatchObject({ code: "id_taken" });
+    expect(await readFile(projectPaths(root, "x").json, "utf8")).toBe("winner");
+    expect(existsSync(dir)).toBe(false); // this call made it, so it is rolled back
+  });
+
+  it("new: the rollback never deletes a directory another project was registered on meanwhile", async () => {
+    const dir = join(base, "repos", "shared");
+    const s = new ProjectStore(root, {
+      isGitRepo: fakeGit,
+      initGitRepo: async (d) => {
+        await fakeInit(d);
+        const now = new Date().toISOString();
+        const other = ProjectSchema.parse({
+          id: "other",
+          name: "other",
+          workingDirectory: d,
+          origin: { kind: "api" },
+          created: now,
+          updated: now,
+        });
+        await atomicWrite(projectPaths(root, "other").json, JSON.stringify(other));
+      },
+    });
+    await expect(
+      s.create({ workingDirectory: dir, path: { mode: "new" }, id: "mine" }),
+    ).rejects.toMatchObject({ code: "duplicate" });
+    expect(existsSync(join(dir, ".git", "HEAD"))).toBe(true);
+  });
+
+  it("new: a failing ensureDirs removes project.json even when the data directory already existed", async () => {
+    await mkdir(projectPaths(root, "zz").dir, { recursive: true });
+    await writeFile(join(projectPaths(root, "zz").dir, "keep.txt"), "x");
+    const spy = vi.spyOn(ProjectStore.prototype, "ensureDirs").mockRejectedValue(new Error("disk"));
+    try {
+      await expect(
+        pstore.create({
+          workingDirectory: join(base, "repos", "zz"),
+          path: { mode: "new" },
+          id: "zz",
+        }),
+      ).rejects.toThrow("disk");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(existsSync(projectPaths(root, "zz").json)).toBe(false);
+    expect(existsSync(join(projectPaths(root, "zz").dir, "keep.txt"))).toBe(true);
+  });
+
+  describe("across processes", () => {
+    const child = fileURLToPath(new URL("../test-support/create-child.mts", import.meta.url));
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const run = (startAt: number, input: object) =>
+      new Promise<{ ok: boolean; id?: string; code?: string }>((resolve, reject) => {
+        execFile(
+          process.execPath,
+          ["--import", "tsx", child, root, String(startAt), JSON.stringify(input)],
+          { cwd: repoRoot },
+          (err, stdout, stderr) => {
+            if (err) return reject(new Error(`${err.message}\n${stderr}`));
+            resolve(JSON.parse(stdout.trim().split("\n").pop() as string));
+          },
+        );
+      });
+
+    it("two processes creating one id at different paths: exactly one wins and its project.json is intact", async () => {
+      const startAt = Date.now() + 1500;
+      const one = join(base, "repos", "one");
+      const two = join(base, "repos", "two");
+      const res = await Promise.all([
+        run(startAt, { workingDirectory: one, path: { mode: "new" }, id: "x" }),
+        run(startAt, { workingDirectory: two, path: { mode: "new" }, id: "x" }),
+      ]);
+      expect(res.map((r) => r.ok).sort()).toEqual([false, true]);
+      expect(res.find((r) => !r.ok)?.code).toBe("id_taken");
+      const projects = await pstore.list({ includeArchived: true });
+      expect(projects).toHaveLength(1);
+      expect(existsSync(join(projects[0].workingDirectory, ".git", "HEAD"))).toBe(true);
+    }, 30000);
+
+    it("two processes creating ids a and b on one empty directory: one wins, the directory stays", async () => {
+      const dir = join(base, "repos", "empty");
+      await mkdir(dir, { recursive: true });
+      const startAt = Date.now() + 1500;
+      const res = await Promise.all([
+        run(startAt, { workingDirectory: dir, path: { mode: "new" }, id: "a" }),
+        run(startAt, { workingDirectory: dir, path: { mode: "new" }, id: "b" }),
+      ]);
+      expect(res.map((r) => r.ok).sort()).toEqual([false, true]);
+      expect((await pstore.list({ includeArchived: true })).map((p) => p.workingDirectory)).toEqual(
+        [dir],
+      );
+      expect(existsSync(dir)).toBe(true);
+    }, 30000);
+
+    it("a slow creator in one process and a later one in another never delete a registered directory", async () => {
+      const dir = join(base, "repos", "d");
+      const t = Date.now() + 1500;
+      const res = await Promise.all([
+        run(t, { workingDirectory: dir, path: { mode: "new" }, id: "slow" }),
+        run(t + 100, { workingDirectory: dir, path: { mode: "new" }, id: "fast" }),
+      ]);
+      expect(res.filter((r) => r.ok)).toHaveLength(1);
+      const [p] = await pstore.list({ includeArchived: true });
+      expect(existsSync(p.workingDirectory)).toBe(true);
+    }, 30000);
+
+    it("takes over a create lock left by a dead process", async () => {
+      await atomicWrite(join(root, "projects", ".create.lock"), "99999999\n");
+      const p = await pstore.create({
+        workingDirectory: join(base, "repos", "after"),
+        path: { mode: "new" },
+      });
+      expect(p.id).toBe("after");
+      expect(existsSync(join(root, "projects", ".create.lock"))).toBe(false);
+    });
+
+    it("waits for a live holder and then gives up with a busy error", async () => {
+      await atomicWrite(join(root, "projects", ".create.lock"), `${process.ppid}\n`);
+      const s = new ProjectStore(root, {
+        isGitRepo: fakeGit,
+        initGitRepo: fakeInit,
+        lock: { lockTimeoutMs: 200, lockPollMs: 20 },
+      });
+      await expect(
+        s.create({ workingDirectory: join(base, "repos", "w"), path: { mode: "new" } }),
+      ).rejects.toMatchObject({ code: "busy" });
+      expect(existsSync(join(base, "repos", "w"))).toBe(false);
     });
   });
 

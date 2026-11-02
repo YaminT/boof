@@ -2,6 +2,7 @@ import { lstat, mkdir, readdir, realpath, rm, rmdir, stat } from "node:fs/promis
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { atomicWrite, readText, withFileLock } from "./atomic.js";
+import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { toKebabId, uniqueKebabId } from "./ids.js";
 import { assertKebabId, dataRootPaths, projectPaths, statusDir } from "./paths.js";
 import { isInsidePath, resolveUnbornPath } from "./project-path.js";
@@ -21,7 +22,8 @@ export type ProjectErrorCode =
   | "not_a_directory"
   | "directory_not_empty"
   | "directory_create_failed"
-  | "directory_not_allowed";
+  | "directory_not_allowed"
+  | "busy";
 
 /** A project operation was refused; `code` is stable for API mapping. */
 export class ProjectError extends Error {
@@ -55,6 +57,8 @@ export interface ProjectStoreOptions {
   initGitRepo?: (dir: string) => Promise<void>;
   /** Test hook: runs just before `create` makes the final directory. */
   beforeCreateDir?: (dir: string) => Promise<void>;
+  /** Test hook: timeouts, polling and liveness of the cross-process create lock. */
+  lock?: ProcessLockOptions;
 }
 
 export interface CreateProjectInput {
@@ -102,6 +106,7 @@ export class ProjectStore {
   private readonly repoCommonDir?: RepoCommonDir;
   private readonly initGitRepo?: (dir: string) => Promise<void>;
   private readonly beforeCreateDir?: (dir: string) => Promise<void>;
+  private readonly lockOpts: ProcessLockOptions;
 
   constructor(
     private readonly root: string,
@@ -111,6 +116,7 @@ export class ProjectStore {
     this.repoCommonDir = opts.repoCommonDir;
     this.initGitRepo = opts.initGitRepo;
     this.beforeCreateDir = opts.beforeCreateDir;
+    this.lockOpts = opts.lock ?? {};
   }
 
   /** Directory to hand to TaskStore / AttachmentStore / UsageStore for project `id`. */
@@ -293,7 +299,9 @@ export class ProjectStore {
     let created = false;
     let firstParent: string | undefined;
     const undo = async (): Promise<void> => {
-      if (created) await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      if (created && !(await this.isRegisteredDirectory(real))) {
+        await rm(real, { recursive: true, force: true }).catch(() => undefined);
+      }
       // Remove only the parents this call made, deepest first, and only while they are empty.
       if (firstParent !== undefined) {
         for (let p = dirname(real); isInsidePath(firstParent, p); p = dirname(p)) {
@@ -338,8 +346,17 @@ export class ProjectStore {
 
   create(input: CreateProjectInput): Promise<Project> {
     // One lock for the whole create: id choice, directory creation, vetting and the write.
-    return withFileLock(join(dataRootPaths(this.root).projects, ".create"), () =>
-      this.createLocked(input),
+    // `.create.lock` serialises processes (CLI, server, runner); withProcessLock also queues the
+    // callers inside this process, so no separate in-process lock is needed.
+    return withProcessLock(
+      join(dataRootPaths(this.root).projects, ".create.lock"),
+      this.lockOpts,
+      () => this.createLocked(input),
+      (holder) =>
+        new ProjectError(
+          "busy",
+          `Another boof process is creating a project (pid ${holder}); try again in a moment`,
+        ),
     );
   }
 
@@ -414,8 +431,15 @@ export class ProjectStore {
         updated: now,
       });
       dataDirExisted = await isDirectory(this.dir(id));
-      wrote = true;
-      await this.write(project);
+      try {
+        await this.write(project, { exclusive: true });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new ProjectError("id_taken", `Project id already exists: ${id}`);
+        }
+        throw err;
+      }
+      wrote = true; // only now is project.json ours to remove
       await this.ensureDirs(id);
       return project;
     } catch (err) {
@@ -486,14 +510,21 @@ export class ProjectStore {
     else await this.archive(id);
   }
 
+  /** True when a registered project (archived too) works in `dir`; its directory must not be deleted. */
+  private async isRegisteredDirectory(dir: string): Promise<boolean> {
+    return (await this.list({ includeArchived: true })).some((p) => p.workingDirectory === dir);
+  }
+
   /** Create the project's task status directories. */
   async ensureDirs(id: string): Promise<void> {
     await mkdir(this.dir(id), { recursive: true });
     await new TaskStore(this.dir(id)).ensureDirs();
   }
 
-  private async write(project: Project): Promise<void> {
+  private async write(project: Project, opts: { exclusive?: boolean } = {}): Promise<void> {
     const path = projectPaths(this.root, project.id).json;
-    await withFileLock(path, () => atomicWrite(path, JSON.stringify(project, null, 2) + "\n"));
+    await withFileLock(path, () =>
+      atomicWrite(path, JSON.stringify(project, null, 2) + "\n", opts),
+    );
   }
 }
