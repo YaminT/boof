@@ -76,6 +76,56 @@ const call = (path: string, init: RequestInit = {}, key?: string) =>
 const create = async (body: object, key?: string) =>
   call("/api/v1/webhooks", { method: "POST", body: JSON.stringify(body) }, key);
 
+describe("webhooks and a restricted admin key", () => {
+  let limited: string;
+  beforeEach(async () => {
+    peer = "10.1.2.3";
+    limited = (
+      await authStore.create({ name: "lim", scopes: ["admin"], projects: ["a"], trust: "trusted" })
+    ).key;
+  });
+
+  it("caps a new webhook to the caller's projects and refuses wider ones", async () => {
+    const own = await (await create({ url: "http://hook.test/x" }, limited)).json();
+    expect(own.webhook.projects).toEqual(["a"]);
+    const star = await create({ url: "http://hook.test/x", projects: "*" }, limited);
+    expect(star.status).toBe(403);
+    expect((await star.json()).error.code).toBe("forbidden_project");
+    const wider = await create({ url: "http://hook.test/x", projects: ["a", "b"] }, limited);
+    expect(wider.status).toBe(403);
+    expect((await create({ url: "http://hook.test/x", projects: ["a"] }, limited)).status).toBe(
+      201,
+    );
+  });
+
+  it("lists and deletes only the webhooks within the caller's reach; others answer like unknown ones", async () => {
+    peer = "127.0.0.1";
+    const wide = await (await create({ url: "http://hook.test/wide" })).json();
+    const mine = await (await create({ url: "http://hook.test/mine", projects: ["a"] })).json();
+    const other = await (await create({ url: "http://hook.test/other", projects: ["b"] })).json();
+    peer = "10.1.2.3";
+    const list = await (await call("/api/v1/webhooks", {}, limited)).json();
+    expect(list.webhooks.map((w: { id: string }) => w.id)).toEqual([mine.webhook.id]);
+    for (const hidden of [wide, other]) {
+      const res = await call(
+        `/api/v1/webhooks/${hidden.webhook.id}`,
+        { method: "DELETE" },
+        limited,
+      );
+      expect(res.status).toBe(404);
+    }
+    expect((await call("/api/v1/webhooks/wh-nope", { method: "DELETE" }, limited)).status).toBe(
+      404,
+    );
+    peer = "127.0.0.1";
+    expect(((await (await call("/api/v1/webhooks")).json()).webhooks as unknown[]).length).toBe(3);
+    peer = "10.1.2.3";
+    expect(
+      (await call(`/api/v1/webhooks/${mine.webhook.id}`, { method: "DELETE" }, limited)).status,
+    ).toBe(200);
+  });
+});
+
 describe("webhook operations", () => {
   it("returns the secret once and never lists it", async () => {
     const res = await create({

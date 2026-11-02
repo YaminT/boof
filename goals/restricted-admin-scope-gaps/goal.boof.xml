@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Raised by the group 3 security review on 2026-10-29; not started.</version>
+        <version number="2" status="done">Webhooks are capped to the caller's projects (create, list, delete); PUT /settings needs a trusted, project-unrestricted client; a review client re-drafts only plans it created (active or archived); a hidden client answers rotate and revoke with the same 404 as an unknown id.</version>
       </versions>
     </status>
     <tests>

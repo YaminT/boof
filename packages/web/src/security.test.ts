@@ -319,6 +319,31 @@ describe("authorize (scopes)", () => {
     }
   });
 
+  it("settings writes are refused to review-trust and project-restricted clients", async () => {
+    peer = REMOTE;
+    const review = await mint("rev", ["settings:write"]);
+    const limited = await mint("lim", ["settings:write"], {
+      trust: "trusted",
+      projects: ["default"],
+    });
+    const full = await mint("full", ["settings:write"], { trust: "trusted" });
+    const app = build();
+    const put = (key: string) =>
+      call(
+        app,
+        "/api/v1/settings",
+        { ...post({ runner: { concurrency: 2 } }), method: "PUT" },
+        key,
+      );
+    for (const key of [review, limited]) {
+      const res = await put(key);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe("forbidden_trust");
+    }
+    expect((await put(full)).status).toBe(200);
+    expect((await service.loadSettings()).runner.concurrency).toBe(2);
+  });
+
   it("maps health/models to settings:read and usage/events to tasks:read", async () => {
     peer = REMOTE;
     const reader = await mint("reader", ["tasks:read"]);
@@ -924,6 +949,30 @@ describe("trust levels", () => {
       }
     });
 
+    it("a review client cannot set a human's archived plan back to draft, but may its own", async () => {
+      peer = REMOTE;
+      const bot = await mint("bot", ["plans:read", "plans:write"]);
+      const app = build();
+      const plans = service.forProject("default").plans;
+      await plans.createPlan({ id: "human", title: "Human", status: "draft", goals: [goal("a")] });
+      await plans.updatePlan("human", { status: "archived" }, undefined);
+      const put = (id: string) =>
+        call(app, `${V1}/plans/${id}`, { ...post({ status: "draft" }), method: "PUT" }, bot);
+      const refused = await put("human");
+      expect(refused.status).toBe(403);
+      expect((await refused.json()).error.code).toBe("forbidden_trust");
+      expect((await plans.get("human")).status).toBe("archived");
+      const created = await call(
+        app,
+        `${V1}/plans`,
+        post({ id: "mine", title: "Mine", goals: [goal("b")] }),
+        bot,
+      );
+      expect(created.status).toBe(201);
+      await plans.updatePlan("mine", { status: "archived" }, undefined);
+      expect((await put("mine")).status).toBe(200);
+    });
+
     it("removeGoal and sync stop a human plan's task only for a human, own plan's task for the client", async () => {
       peer = REMOTE;
       const bot = await mint("bot", ["plans:read", "plans:write", "tasks:control"]);
@@ -1146,9 +1195,9 @@ describe("client management is capped by the caller", () => {
     });
     const app = build();
     const rot = await call(app, `/api/auth/clients/${boss.client.id}/rotate`, post({}), lim.key);
-    expect(rot.status).toBe(403);
+    expect(rot.status).toBe(404);
     const rev = await call(app, `/api/auth/clients/${boss.client.id}/revoke`, post({}), lim.key);
-    expect(rev.status).toBe(403);
+    expect(rev.status).toBe(404);
     expect((await call(app, "/api/webhooks", {}, boss.key)).status).toBe(200);
     const list = await (await call(app, "/api/auth/clients", {}, lim.key)).json();
     const ids = list.clients.map((c: { id: string }) => c.id).sort();
@@ -1161,7 +1210,7 @@ describe("client management is capped by the caller", () => {
     ).toBe(200);
   });
 
-  it("refuses per failing dimension", async () => {
+  it("answers a client the caller may not manage exactly like an unknown one", async () => {
     peer = REMOTE;
     const lim = await store.create({
       name: "lim",
@@ -1175,12 +1224,17 @@ describe("client management is capped by the caller", () => {
     const trustWide = await mk("trust-wide", { trust: "trusted", projects: ["demo"] });
     const projWide = await mk("proj-wide", { projects: ["demo", "other"] });
     const app = build();
-    const code = async (id: string) =>
-      (await (await call(app, `/api/auth/clients/${id}/revoke`, post({}), lim.key)).json()).error
-        .code;
-    expect(await code(scopeWide.client.id)).toBe("forbidden_scope");
-    expect(await code(trustWide.client.id)).toBe("forbidden_trust");
-    expect(await code(projWide.client.id)).toBe("forbidden_project");
+    const answer = async (id: string, action: "revoke" | "rotate") => {
+      const res = await call(app, `/api/auth/clients/${id}/${action}`, post({}), lim.key);
+      return { status: res.status, body: await res.json() };
+    };
+    for (const action of ["revoke", "rotate"] as const) {
+      const unknown = await answer("no-such-client", action);
+      expect(unknown.status).toBe(404);
+      for (const hidden of [scopeWide, trustWide, projWide]) {
+        expect(await answer(hidden.client.id, action)).toEqual(unknown);
+      }
+    }
   });
 });
 

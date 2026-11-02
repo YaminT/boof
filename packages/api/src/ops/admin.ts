@@ -56,15 +56,17 @@ export const settingsUpdate = defineOp({
   name: "settings.update",
   title: "Update settings",
   description:
-    "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json.",
+    "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
   scope: "settings:write",
   projectScoped: false,
   input: SettingsPatchSchema,
   output: PublicSettingsSchema,
   rest: { method: "PUT", path: "/settings" },
   mcp: { expose: false, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
-  handler: async (ctx, input) =>
-    publicSettings(await ctx.services.updateSettings(input, ctx.principal)),
+  handler: async (ctx, input) => {
+    assertMayWriteSettings(ctx);
+    return publicSettings(await ctx.services.updateSettings(input, ctx.principal));
+  },
 });
 
 export const settingsHealth = defineOp({
@@ -362,6 +364,18 @@ function assertMayWriteCommands(ctx: OpContext): void {
   }
 }
 
+/** Settings are global (roles, budgets, worktree, security): trusted, unrestricted callers only. */
+function assertMayWriteSettings(ctx: OpContext): void {
+  const me = ctx.principal;
+  if (me.trust !== "trusted" || me.projects !== "*") {
+    throw new OpError(
+      403,
+      "Settings are global: only trusted clients without a project restriction may change them",
+      "forbidden_trust",
+    );
+  }
+}
+
 export const commandsUpsert = defineOp({
   name: "commands.create",
   title: "Create a command template",
@@ -453,10 +467,12 @@ async function manageRefusal(ctx: OpContext, target: Client): Promise<OpError | 
   return null;
 }
 
-/** Refuses (403) managing a client with more reach than the caller; a principal may manage itself. */
-async function assertMayManage(ctx: OpContext, target: Client): Promise<void> {
-  const err = await manageRefusal(ctx, target);
-  if (err) throw err;
+/**
+ * A client the caller may not manage answers exactly like an unknown id (404), so the answer does
+ * not reveal that the client exists or what it may do.
+ */
+async function assertMayManage(ctx: OpContext, target: Client, notFound: string): Promise<void> {
+  if (await manageRefusal(ctx, target)) throw new OpError(404, notFound);
 }
 
 async function visibleClients(ctx: OpContext) {
@@ -575,7 +591,7 @@ export const clientsRevoke = defineOp({
   name: "auth.clients.revoke",
   title: "Revoke an API client",
   description:
-    "Revokes a client's key for good. Input: clientId. Marks the client revoked. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.",
+    "Revokes a client's key for good. Input: clientId. Marks the client revoked. A client with more scopes, trust, projects or expiry than the caller answers 404, like an unknown id.",
   scope: "auth:admin",
   projectScoped: false,
   input: z.strictObject({ clientId: clientIdParam }),
@@ -585,7 +601,7 @@ export const clientsRevoke = defineOp({
   handler: async (ctx, input) => {
     const target = await ctx.authStore.get(input.clientId);
     if (!target) throw new OpError(404, "Client not found");
-    await assertMayManage(ctx, target);
+    await assertMayManage(ctx, target, "Client not found");
     const client = await ctx.authStore.revoke(input.clientId);
     if (!client) throw new OpError(404, "Client not found");
     return { client };
@@ -596,7 +612,7 @@ export const clientsRotate = defineOp({
   name: "auth.clients.rotate",
   title: "Rotate an API client's key",
   description:
-    "Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.",
+    "Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. A client with more scopes, trust, projects or expiry than the caller answers 404, like an unknown id.",
   scope: "auth:admin",
   projectScoped: false,
   input: z.strictObject({ clientId: clientIdParam }),
@@ -606,7 +622,7 @@ export const clientsRotate = defineOp({
   handler: async (ctx, input) => {
     const target = await ctx.authStore.get(input.clientId);
     if (!target) throw new OpError(404, "Client not found or revoked");
-    await assertMayManage(ctx, target);
+    await assertMayManage(ctx, target, "Client not found or revoked");
     const out = await ctx.authStore.rotate(input.clientId);
     if (!out) throw new OpError(404, "Client not found or revoked");
     return out;

@@ -344,7 +344,7 @@ export class PlanService {
       this.store.modify(
         planId,
         async (plan) => {
-          if (selfDraft && plan.status === "active" && plan.source.client !== actor?.id) {
+          if (selfDraft && plan.status !== "draft" && plan.source.client !== actor?.id) {
             throw new OpError(
               403,
               "This client has review trust and may set back to draft only a plan it created",

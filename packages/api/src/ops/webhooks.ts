@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { EVENT_TYPES, securitySettings, type Webhook } from "@boof-runner/shared";
-import { defineOp } from "../define-op.js";
+import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { assertWebhookTarget } from "../net-guard.js";
 import { PublicWebhookSchema, OkSchema } from "../schemas.js";
@@ -40,10 +40,18 @@ export function assertWebhookUrl(raw: string, isSelf?: (url: URL) => boolean): U
   return url;
 }
 
+/** True when the caller's projects cover everything the webhook reaches (same rule as client management). */
+function withinReach(ctx: OpContext, hook: Webhook): boolean {
+  const mine = ctx.principal.projects;
+  if (mine === "*") return true;
+  return hook.projects !== "*" && hook.projects.every((p) => mine.has(p));
+}
+
 export const webhooksList = defineOp({
   name: "webhooks.list",
   title: "List webhooks",
-  description: "Lists the webhook subscriptions without their secrets. No input. Admin only.",
+  description:
+    "Lists the webhook subscriptions without their secrets. No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.",
   scope: "admin",
   projectScoped: false,
   input: z.strictObject({}),
@@ -51,7 +59,9 @@ export const webhooksList = defineOp({
   rest: { method: "GET", path: "/webhooks" },
   mcp: { expose: false, annotations: READ },
   handler: async (ctx) => ({
-    webhooks: (await ctx.services.loadSettings()).webhooks ?? [],
+    webhooks: ((await ctx.services.loadSettings()).webhooks ?? []).filter((h) =>
+      withinReach(ctx, h),
+    ),
   }),
 });
 
@@ -81,11 +91,31 @@ export const webhooksCreate = defineOp({
         ]);
       }
     }
+    // A project-restricted key cannot subscribe to events of projects it may not access: the
+    // default is its own projects, and a wider list is refused.
+    const mine = ctx.principal.projects;
+    let projects: "*" | string[] = input.projects ?? "*";
+    if (mine !== "*") {
+      if (input.projects === undefined) projects = [...mine];
+      else {
+        const outside = input.projects === "*" ? ["*"] : input.projects.filter((p) => !mine.has(p));
+        if (outside.length > 0) {
+          throw new OpError(
+            403,
+            "Webhook reaches projects you may not access",
+            "forbidden_project",
+            {
+              projects: outside,
+            },
+          );
+        }
+      }
+    }
     const webhook: Webhook = {
       id: `wh-${randomBytes(4).toString("hex")}`,
       url: input.url,
       events,
-      projects: input.projects ?? "*",
+      projects,
       enabled: input.enabled ?? true,
       createdBy: ctx.principal.id,
       created: ctx.now(),
@@ -104,7 +134,7 @@ export const webhooksDelete = defineOp({
   name: "webhooks.delete",
   title: "Delete a webhook",
   description:
-    "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped.",
+    "Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404).",
   scope: "admin",
   projectScoped: false,
   input: z.strictObject({ webhookId: webhookIdParam }),
@@ -114,7 +144,9 @@ export const webhooksDelete = defineOp({
   handler: async (ctx, input) => {
     await ctx.services.settingsStore.mutate((settings) => {
       const hooks = settings.webhooks ?? [];
-      if (!hooks.some((h) => h.id === input.webhookId)) throw new OpError(404, "Webhook not found");
+      // A webhook beyond the caller's reach answers like an unknown one.
+      const hook = hooks.find((h) => h.id === input.webhookId);
+      if (!hook || !withinReach(ctx, hook)) throw new OpError(404, "Webhook not found");
       return { ...settings, webhooks: hooks.filter((h) => h.id !== input.webhookId) };
     });
     await ctx.services.webhookSecrets.delete(input.webhookId);

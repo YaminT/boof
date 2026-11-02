@@ -821,7 +821,7 @@ JSON body (unknown keys are rejected):
 - Operation: `auth.clients.revoke`
 - Scope: `auth:admin`
 - MCP tool: none (REST only)
-- What it does: Revokes a client's key for good. Input: clientId. Marks the client revoked. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.
+- What it does: Revokes a client's key for good. Input: clientId. Marks the client revoked. A client with more scopes, trust, projects or expiry than the caller answers 404, like an unknown id.
 - Success: HTTP 200 with `{ client: Client }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
 
@@ -834,7 +834,7 @@ Path parameters (all required):
 - Operation: `auth.clients.rotate`
 - Scope: `auth:admin`
 - MCP tool: none (REST only)
-- What it does: Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. Refused (403) for a client with more scopes, trust, projects or expiry than the caller.
+- What it does: Issues a new key for a client and invalidates the old one. Input: clientId. Returns the new key once. A client with more scopes, trust, projects or expiry than the caller answers 404, like an unknown id.
 - Success: HTTP 200 with `{ client: Client, key: string }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
 
@@ -1765,7 +1765,7 @@ Query parameters:
 - Operation: `settings.update`
 - Scope: `settings:write`
 - MCP tool: none (REST only)
-- What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json.
+- What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.
 - Success: HTTP 200 with `Settings`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
@@ -1955,7 +1955,7 @@ Path parameters (all required):
 - Operation: `webhooks.list`
 - Scope: `admin`
 - MCP tool: none (REST only)
-- What it does: Lists the webhook subscriptions without their secrets. No input. Admin only.
+- What it does: Lists the webhook subscriptions without their secrets. No input. Admin only; a project-restricted key sees only the webhooks that reach its projects alone.
 - Success: HTTP 200 with `{ webhooks: { created: string, createdBy: string, enabled: boolean, events: string[], id: kebab-id, projects: "*" | kebab-id[], url: string }[] }`.
 - Errors: `403 forbidden_scope`
 
@@ -1980,7 +1980,7 @@ JSON body (unknown keys are rejected):
 - Operation: `webhooks.delete`
 - Scope: `admin`
 - MCP tool: none (REST only)
-- What it does: Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped.
+- What it does: Removes a webhook subscription. Input: webhookId. Admin only; undelivered retries are dropped. A project-restricted key may remove only a webhook that reaches its projects alone (others answer 404).
 - Success: HTTP 200 with `{ ok: true }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `404 not_found`
 
