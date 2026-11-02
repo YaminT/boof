@@ -76,6 +76,7 @@
     <goal id="ui-url-follows-state" path="goals/ui-url-follows-state" order="73" status="plan"></goal>
     <goal id="desktop-orphan-reaping-macos-windows" path="goals/desktop-orphan-reaping-macos-windows" order="74" status="plan"><depends-on>orphan-agent-processes</depends-on></goal>
     <goal id="worktree-root-scope" path="goals/worktree-root-scope" order="75" status="done"></goal>
+    <goal id="audit-stdio-and-cli-writes" path="goals/audit-stdio-and-cli-writes" order="77" status="plan"><depends-on>boof-split</depends-on></goal>
     <goal id="desktop-window-navigation-guard" path="goals/desktop-window-navigation-guard" order="76" status="done"></goal>
   </goals>
 </plan>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Writes made through the stdio MCP server (`boof-runner mcp`) and through the CLI are not audited. The audit log (`audit/&lt;date&gt;.jsonl`) is written by the web server&#x27;s audit middleware, so only REST and MCP-over-HTTP requests appear in it. A tool call over stdio runs `op.execute` in its own process as the local principal or a `--client`, and the hand-written and generated CLI commands write the stores directly; none of them leave an audit line. Record who did what for these paths too: one audit line per write operation (principal, operation, project, target, outcome, `via: stdio-mcp | cli`), written by the same code as the middleware and subject to the same `security.audit` settings. Fix it with the split&#x27;s M3, when the operations run behind one shared executor.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <dont>Do not log request bodies, prompts or keys; the audit log records who, what, outcome and timing only.</dont>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Found while planning the split&#x27;s M0 (2026-11-02): with every operation on MCP and in the CLI, the writes that do not pass the web server leave no audit line; not started. Scheduled with M3.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>A stdio MCP tool call and a CLI write each append one audit line with the principal, the operation and the outcome, and none when security.audit.enabled is false; the line never holds a prompt or a key.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/web/src/security.test.ts bin</run>
+    </tests>
+  </progress>
+</boof>
