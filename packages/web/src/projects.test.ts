@@ -790,6 +790,18 @@ describe("project registration by non-local principals (project_root_not_allowed
       });
     });
 
+    it("auto with an id that is a link to the allowed root itself is 403 and initialises nothing", async () => {
+      const pr = join(allowedRoot, "pr");
+      await mkdir(pr);
+      await new SettingsStore(root).update({ projectsRoot: pr });
+      await setSecurity({ allowedProjectRoots: [pr] });
+      await symlink(pr, join(pr, "self"));
+      const res = await createPath({ mode: "auto" }, writer, { id: "self" });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe("project_root_not_allowed");
+      expect(existsSync(join(pr, ".git"))).toBe(false);
+    });
+
     it("the local principal may create new anywhere except /, home and the data root", async () => {
       peer = LOOPBACK;
       const ok = await createPath({ mode: "new", directory: join(base, "local-new") }, "");
@@ -838,6 +850,26 @@ describe("project registration by non-local principals (project_root_not_allowed
     const adminRes = await create(outside, admin);
     expect(adminRes.status).toBe(403);
     expect((await adminRes.json()).error.details).toEqual({ allowedRoots: [allowedRoot] });
+  });
+
+  it("a client move re-checks the real directory the store resolves (a link planted after the API check)", async () => {
+    await setSecurity({ allowedProjectRoots: [allowedRoot] });
+    const dir = await repo("ok", { parent: allowedRoot });
+    await create(dir);
+    const next = await repo("next", { parent: allowedRoot });
+    const outside = await repo("outside");
+    const real = (service as unknown as { projects: ProjectStore }).projects;
+    (service as unknown as { projects: unknown }).projects = {
+      update: async (...args: Parameters<ProjectStore["update"]>) => {
+        await rm(next, { recursive: true });
+        await symlink(outside, next);
+        return real.update(...args);
+      },
+    };
+    const res = await call("/api/projects/ok", put({ workingDirectory: next }), writer);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe("project_root_not_allowed");
+    expect((await real.get("ok"))?.workingDirectory).toBe(dir);
   });
 
   it("applies the same restriction when a client moves a project's working directory", async () => {

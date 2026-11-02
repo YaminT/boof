@@ -486,6 +486,61 @@ describe("create with path modes", () => {
       expect(existsSync(parent)).toBe(false);
     });
 
+    it("new: the rollback after a refused second look never deletes recursively", async () => {
+      const child = join(allowed(), "swap", "child");
+      let calls = 0;
+      const s = new ProjectStore(root, { isGitRepo: fakeGit, initGitRepo: fakeInit });
+      await expect(
+        s.create({
+          workingDirectory: child,
+          path: { mode: "new" },
+          assertTarget: async (real) => {
+            calls++;
+            // Stands for something that landed in the directory (or a re-pointed parent) meanwhile.
+            if (calls === 2) {
+              await writeFile(join(real, "precious.txt"), "keep");
+              throw new Error("refused on the second look");
+            }
+            await guard(real);
+          },
+        }),
+      ).rejects.toThrow(/second look/);
+      expect(await readFile(join(child, "precious.txt"), "utf8")).toBe("keep");
+    });
+
+    it("update: a changed working directory goes through assertTarget with the vetted real path", async () => {
+      const a = await makeRepo("a");
+      const b = await makeRepo("b");
+      const link = join(base, "blink");
+      await symlink(b, link);
+      const p = await store.create({ workingDirectory: a });
+      const seen: string[] = [];
+      await expect(
+        store.update(
+          p.id,
+          { workingDirectory: link },
+          {
+            assertTarget: async (real) => {
+              seen.push(real);
+              throw new Error("refused");
+            },
+          },
+        ),
+      ).rejects.toThrow(/refused/);
+      expect(seen).toEqual([b]);
+      expect((await store.get(p.id))?.workingDirectory).toBe(a);
+      // Unchanged directories and other fields do not call it.
+      await store.update(
+        p.id,
+        { name: "n", workingDirectory: a },
+        {
+          assertTarget: async () => {
+            throw new Error("must not run");
+          },
+        },
+      );
+    });
+
     it("existing: the real path of a work tree is checked too", async () => {
       const outside = join(base, "outside");
       await fakeInit(outside);

@@ -603,11 +603,12 @@ export class TaskService {
       // directory it really uses, under the create lock and after the mkdir.
       const why =
         "settings.projectsRoot is not under an allowed project root (add it to security.allowedProjectRoots to let API clients create projects automatically)";
-      const strict = mode === "new";
-      const check = (dir: string, w?: string) =>
+      // The directory made for a project must be inside a root, never the root itself; only the
+      // projects root of `auto` may be one (it is the parent, not the project).
+      const check = (dir: string, w?: string, strict = mode !== "existing") =>
         this.assertRegistrationAllowed(actor, dir, { mayNotExist: true, strict, why: w });
       if (mode === "auto") {
-        await check(projectsRoot, why);
+        await check(projectsRoot, why, false);
         // The final directory is <projectsRoot>/<id>; an id that is a symlink must not lead out.
         if (rest.id !== undefined) {
           await check(
@@ -618,7 +619,7 @@ export class TaskService {
       } else {
         await this.assertRegistrationAllowed(actor, directory ?? "", {
           mayNotExist: mode === "new",
-          strict,
+          strict: mode === "new",
         });
       }
       assertTarget = (real) =>
@@ -653,11 +654,14 @@ export class TaskService {
   }
 
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
+    let assertTarget: ((real: string) => Promise<void>) | undefined;
     if (patch.workingDirectory !== undefined && actor && actor.kind !== "local") {
       await this.assertRegistrationAllowed(actor, patch.workingDirectory);
+      // The store resolves the path again; check the directory it really uses.
+      assertTarget = (real) => this.assertRegistrationAllowed(actor, real);
     }
     try {
-      return await this.projects.update(id, patch);
+      return await this.projects.update(id, patch, { assertTarget });
     } catch (err) {
       throw this.mapProjectError(err, actor);
     }

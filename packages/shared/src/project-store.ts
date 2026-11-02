@@ -238,7 +238,7 @@ export class ProjectStore {
   private async prepareNewDirectory(
     target: string,
     opts: { confirm?: boolean; auto?: boolean; assertTarget?: (real: string) => Promise<void> },
-  ): Promise<{ real: string; undo: () => Promise<void> }> {
+  ): Promise<{ real: string; undo: (opts?: { initialised?: boolean }) => Promise<void> }> {
     if (!isAbsolute(target)) {
       throw new ProjectError("directory_not_allowed", `Path must be absolute: ${target}`);
     }
@@ -308,9 +308,15 @@ export class ProjectStore {
     }
     let created = false;
     let firstParent: string | undefined;
-    const undo = async (): Promise<void> => {
+    const undo = async (undoOpts: { initialised?: boolean } = {}): Promise<void> => {
       if (created && !(await this.isRegisteredDirectory(real))) {
-        await rm(real, { recursive: true, force: true }).catch(() => undefined);
+        // Before the repository exists the directory is empty, so a plain rmdir (which refuses
+        // anything else) is enough, and a path re-pointed meanwhile cannot make this delete a tree.
+        if (undoOpts.initialised) {
+          await rm(real, { recursive: true, force: true }).catch(() => undefined);
+        } else {
+          await rmdir(real).catch(() => undefined);
+        }
       }
       // Remove only the parents this call made, deepest first, and only while they are empty.
       if (firstParent !== undefined) {
@@ -356,7 +362,7 @@ export class ProjectStore {
     try {
       await this.initGitRepo?.(real);
     } catch (err) {
-      await undo();
+      await undo({ initialised: true });
       throw new ProjectError(
         "directory_create_failed",
         `Cannot initialise a repository in ${real}: ${err instanceof Error ? err.message : String(err)}`,
@@ -418,7 +424,7 @@ export class ProjectStore {
     }
 
     let real: string;
-    let undo: () => Promise<void> = async () => undefined;
+    let undo: (opts?: { initialised?: boolean }) => Promise<void> = async () => undefined;
     if (spec.mode === "existing") {
       real = await this.vetDirectory(target);
       await input.assertTarget?.(real);
@@ -474,13 +480,17 @@ export class ProjectStore {
           await rm(this.dir(id), { recursive: true, force: true }).catch(() => undefined);
         }
       }
-      await undo();
+      await undo({ initialised: true });
       throw err;
     }
   }
 
   /** Apply a patch (null clears an optional field), re-vetting a changed working directory. */
-  async update(id: string, patch: ProjectPatch): Promise<Project> {
+  async update(
+    id: string,
+    patch: ProjectPatch,
+    opts: { assertTarget?: (real: string) => Promise<void> } = {},
+  ): Promise<Project> {
     const path = projectPaths(this.root, id).json;
     return withFileLock(`${path}#mutate`, async () => {
       const current = await this.require(id);
@@ -495,6 +505,7 @@ export class ProjectStore {
         patch.workingDirectory !== current.workingDirectory
       ) {
         next.workingDirectory = await this.vetDirectory(patch.workingDirectory, id);
+        await opts.assertTarget?.(next.workingDirectory as string);
       }
       next.updated = nowIso();
       const project = ProjectSchema.parse(next);
