@@ -66,6 +66,18 @@ describe("atomicWrite", () => {
     expect((await readdir(dir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("the wx fallback also works without fsync (sync: false, used for lock files)", async () => {
+    const dest = join(dir, "lock");
+    const noLink = (async () => {
+      throw Object.assign(new Error("no links"), { code: "EPERM" });
+    }) as unknown as typeof import("node:fs/promises").link;
+    await atomicWrite(dest, "123\n", { exclusive: true, sync: false, linkFn: noLink });
+    expect(await readFile(dest, "utf8")).toBe("123\n");
+    await expect(
+      atomicWrite(dest, "456\n", { exclusive: true, sync: false, linkFn: noLink }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+  });
+
   it("removes the partial destination when the wx fallback write fails", async () => {
     const dest = join(dir, "t.md");
     const noLink = (async () => {

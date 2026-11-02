@@ -56,6 +56,10 @@ async function writeAndSync(fh: FileHandle, contents: string): Promise<void> {
   await fh.sync();
 }
 
+async function writeOnly(fh: FileHandle, contents: string): Promise<void> {
+  await fh.writeFile(contents, "utf8");
+}
+
 /** link(2) failures that mean "this filesystem has no hard links". */
 const NO_HARD_LINK_CODES = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
 
@@ -76,7 +80,7 @@ export async function atomicWrite(
     exclusive,
     sync = true,
     linkFn = link,
-    fallbackWrite = writeAndSync,
+    fallbackWrite,
   } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
@@ -99,7 +103,7 @@ export async function atomicWrite(
         // see a partial file; that beats refusing every create on such filesystems.
         const fh = await open(path, "wx", mode ?? 0o666);
         try {
-          await fallbackWrite(fh, contents);
+          await (fallbackWrite ?? (sync ? writeAndSync : writeOnly))(fh, contents);
         } catch (writeErr) {
           // We created the destination, so a failed write must not leave a partial file behind
           // (a partial task file would make list() throw; a partial lock file wedges migration).

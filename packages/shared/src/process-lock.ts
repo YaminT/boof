@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
-import { uptime } from "node:os";
 import { dirname } from "node:path";
 import { atomicWrite } from "./atomic.js";
 
@@ -14,46 +13,47 @@ export interface ProcessLockOptions {
   lockPollMs?: number;
   /** Our pid in the lock file; default `process.pid`. Tests use it to simulate other processes. */
   pid?: number;
-  /** Our boot id in the lock file; default {@link currentBootId}. A lock from another boot is stale. */
-  bootId?: string;
+  /**
+   * Our boot id in the lock file; default {@link currentBootId}. `null` = this process has none.
+   * A lock that names another boot is stale, but only when both sides have a boot id.
+   */
+  bootId?: string | null;
+  /** Test hook: runs while the takeover guard is held. */
+  guardHeld?: () => Promise<void>;
 }
 
-let bootId: string | undefined;
+const BOOT_UUID = /^[0-9a-f][0-9a-f-]{15,}$/i;
+let bootId: string | undefined | null = null;
 
 /**
- * An id of the current boot of this machine, a token without spaces. A lock written before a
- * reboot names a pid that may belong to another process now; comparing boot ids tells it apart.
- * Linux: `/proc/sys/kernel/random/boot_id`. macOS: the `kern.boottime` seconds. Elsewhere
- * (Windows): the boot time derived from the uptime, which jitters, so ids of the `t:` form are
- * compared with a tolerance ({@link sameBoot}).
+ * The id of the current boot of this machine, a real per-boot uuid, or undefined when the system
+ * has none we can read. A lock written before a reboot names a pid that may belong to another
+ * process now; comparing boot ids tells it apart. Linux: `/proc/sys/kernel/random/boot_id`.
+ * macOS: `sysctl -n kern.bootsessionuuid`. Nothing is derived from the clock: a boot time computed
+ * from the uptime moves when the clock is stepped, and would make live locks look stale. Without
+ * a uuid (Windows, a sandbox with /proc masked) a lock is judged by its pid alone, and a stale one
+ * left by a crash plus a reboot with a reused pid has to be removed by hand (the error names it).
  */
-export function currentBootId(): string {
-  if (bootId) return bootId;
+export function currentBootId(): string | undefined {
+  if (bootId !== null) return bootId;
+  bootId = undefined;
   try {
     const id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-    if (/^\S+$/.test(id)) return (bootId = id);
+    if (BOOT_UUID.test(id)) return (bootId = id);
   } catch {
-    // not Linux
+    // not Linux, or /proc is not readable
   }
   if (process.platform === "darwin") {
     try {
-      const out = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" });
-      const sec = /sec\s*=\s*(\d+)/.exec(out)?.[1];
-      if (sec) return (bootId = `t:${sec}`);
+      const id = execFileSync("sysctl", ["-n", "kern.bootsessionuuid"], {
+        encoding: "utf8",
+      }).trim();
+      if (BOOT_UUID.test(id)) return (bootId = id);
     } catch {
-      // fall through to the uptime
+      // no sysctl
     }
   }
-  return (bootId = `t:${Math.round(Date.now() / 1000 - uptime())}`);
-}
-
-/** Do two boot ids name the same boot? `t:<seconds>` ids may differ by a little clock jitter. */
-function sameBoot(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (a.startsWith("t:") && b.startsWith("t:")) {
-    return Math.abs(Number(a.slice(2)) - Number(b.slice(2))) <= 120;
-  }
-  return false;
+  return bootId;
 }
 
 export function defaultAlive(pid: number): boolean {
@@ -79,9 +79,12 @@ const TAKEOVER_GUARD_STALE_MS = 5000;
 
 /**
  * A lock file that is empty or unreadable for this long was never completed (a crash between
- * creating and writing it, or a power loss with the data unflushed): it is stale.
+ * creating and writing it, or a power loss with the data unflushed): it is stale. The link path
+ * never shows a live writer's lock empty; on a file system without hard links the lock is created
+ * and then written in place, and is empty for the instants in between (no fsync there either).
+ * The window equals the default wait, so a writer would have to be stopped for that long to lose.
  */
-const INCOMPLETE_LOCK_STALE_MS = 5000;
+const INCOMPLETE_LOCK_STALE_MS = 30_000;
 
 /**
  * Run `fn` while holding the cross-process lock file `lock` (it holds the owner's pid and the
@@ -89,7 +92,7 @@ const INCOMPLETE_LOCK_STALE_MS = 5000;
  * Callers in this process queue in memory. A lock file is stale, and is taken over under an
  * exclusive `<lock>.takeover` guard so only one process removes it, when it names another boot
  * (a pid can be reused after a reboot), a dead pid, or our own pid while we are not holding it,
- * or when it is empty or unreadable and older than a few seconds (never completed). A live
+ * or when it is empty or unreadable and older than 30 s (never completed). A live
  * holder is waited for until `lockTimeoutMs`, then `timeoutError(holder, lock)` is thrown; a
  * fresh file that is not yet complete is treated as still being written.
  * Liveness is checked locally, so a lock left by a process on another host sharing the root
@@ -130,7 +133,7 @@ async function acquireFileLock(
   timeoutError: (holder: string, lockPath: string) => Error,
 ): Promise<void> {
   const alive = opts.isProcessAlive ?? defaultAlive;
-  const boot = opts.bootId ?? currentBootId();
+  const boot = opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
   const timeoutMs = opts.lockTimeoutMs ?? 30_000;
   const pollMs = opts.lockPollMs ?? 50;
   const guard = `${lock}.takeover`;
@@ -140,7 +143,10 @@ async function acquireFileLock(
     try {
       // No fsync: a lock is stale after a crash anyway, and a file that comes back empty after a
       // power loss is taken over once it is old enough.
-      await atomicWrite(lock, `${pid} ${boot}\n`, { exclusive: true, sync: false });
+      await atomicWrite(lock, boot ? `${pid} ${boot}\n` : `${pid}\n`, {
+        exclusive: true,
+        sync: false,
+      });
       return;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -156,13 +162,17 @@ async function acquireFileLock(
     const holder = held ? Number(held[1]) : 0;
     const holderBoot = held?.[2];
     if (holder > 0) {
-      const stale =
-        (holderBoot !== undefined && !sameBoot(holderBoot, boot)) ||
-        holder === pid ||
-        !alive(holder);
-      if (stale && (await takeOver(lock, guard, text))) continue;
+      // Another boot overrides a live pid only when both ids are real uuids; a lock without one
+      // (old format, a legacy `t:` id, a process that could not read it) is judged by the pid.
+      const otherBoot =
+        boot !== undefined &&
+        holderBoot !== undefined &&
+        BOOT_UUID.test(holderBoot) &&
+        holderBoot.toLowerCase() !== boot.toLowerCase();
+      const stale = otherBoot || holder === pid || !alive(holder);
+      if (stale && (await takeOver(lock, guard, text, opts.guardHeld))) continue;
     } else if (await olderThan(lock, INCOMPLETE_LOCK_STALE_MS)) {
-      if (await takeOver(lock, guard, text)) continue;
+      if (await takeOver(lock, guard, text, opts.guardHeld)) continue;
     }
     if (Date.now() >= deadline) throw timeoutError(held ? String(holder) : text, lock);
     await sleep(pollMs);
@@ -178,7 +188,12 @@ async function olderThan(path: string, ms: number): Promise<boolean> {
 }
 
 /** Remove the stale lock naming `text` while holding the takeover guard; false = guard busy. */
-async function takeOver(lock: string, guard: string, text: string): Promise<boolean> {
+async function takeOver(
+  lock: string,
+  guard: string,
+  text: string,
+  guardHeld?: () => Promise<void>,
+): Promise<boolean> {
   try {
     await atomicWrite(guard, `${process.pid}\n`, { exclusive: true, sync: false });
   } catch (err) {
@@ -191,6 +206,7 @@ async function takeOver(lock: string, guard: string, text: string): Promise<bool
     return false;
   }
   try {
+    await guardHeld?.();
     const again = await readFile(lock, "utf8").catch(() => null);
     if (again !== null && again.trim() === text) await rm(lock, { force: true });
   } finally {
