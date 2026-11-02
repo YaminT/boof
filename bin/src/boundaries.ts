@@ -40,12 +40,11 @@ export const BROWSER_SAFE: Record<string, string> = {
   "@boof-runner/shared/ids": "packages/shared/src/ids.ts",
 };
 
-/** Known debts, each fixed by a named step of the split. An entry that matches no import fails. */
-export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [
-  // Not in the design's list of seven: plan-cli reaches the composition root's project resolver.
-  // `resolveProject` and `ProjectResolutionError` move into Heart core with the plan helpers.
-  { file: "bin/src/plan-cli.ts", to: "bin", fixedBy: "M1 (resolveProject re-homed)" },
-];
+/**
+ * Known debts, each fixed by a named step of the split. An entry that matches no import fails.
+ * Empty since M1: no production import crosses a boundary the design does not allow.
+ */
+export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [];
 
 /** Folders walked for production files. */
 export const SOURCE_ROOTS = ["packages/*/src", "packages/web/ui/src", "bin/src"];
