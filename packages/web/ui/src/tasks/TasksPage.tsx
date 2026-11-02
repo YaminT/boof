@@ -14,7 +14,9 @@ import {
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import type { AppData } from "../useAppData.js";
 import { QueuedSection } from "./QueuedSection.js";
+import { groupSubtasks } from "../lib/task-hierarchy.js";
 import { TaskRow, type RowContext, type RowEntry } from "./TaskRow.js";
+import { useEpics } from "./useEpics.js";
 import { TaskSection } from "./TaskSection.js";
 import { TasksToolbar } from "./TasksToolbar.js";
 import { useTaskActions } from "./useTaskActions.js";
@@ -66,6 +68,8 @@ export function TasksPage({
     return [...ids].sort((a, b) => at(a) - at(b));
   }, [shownPending, localOrder]);
 
+  const epics = useEpics(pid, tasks);
+
   const rows = useMemo(() => {
     const q = filter.query.trim().toLowerCase();
     const plansShown =
@@ -95,15 +99,31 @@ export function TasksPage({
     const finished = filtered
       .filter((t) => FINISHED.has(t.frontmatter.status))
       .sort((a, b) => (a.frontmatter.updated < b.frontmatter.updated ? 1 : -1));
-    return {
-      needs,
-      proposed,
-      running: groups.running.map((t) => task("running", t)),
-      queued,
-      drafts: [...groups.drafts].sort(runOrder).map((t) => task("draft", t)),
-      finished: finished.map((t) => task("finished", t)),
+    // Subtasks follow their parent inside a section; the queue keeps its order (it is draggable)
+    // and only names the parent.
+    const withHierarchy = (entries: RowEntry[], nest = true): RowEntry[] => {
+      const taskEntries = entries.filter(
+        (e): e is Exclude<RowEntry, { kind: "plan" }> => e.kind !== "plan",
+      );
+      const byTask = new Map(taskEntries.map((e) => [e.task.frontmatter.id, e]));
+      const grouped = groupSubtasks(
+        taskEntries.map((e) => e.task),
+        { all: tasks, nest },
+      ).map((h) => ({ ...byTask.get(h.task.frontmatter.id)!, hier: h }) as RowEntry);
+      return [...grouped, ...entries.filter((e) => e.kind === "plan")];
     };
-  }, [groups, plans, filter, filtered, shownPending, queuedOrder]);
+    return {
+      needs: withHierarchy(needs),
+      proposed: withHierarchy(proposed),
+      running: withHierarchy(groups.running.map((t) => task("running", t))),
+      queued: withHierarchy(queued, false) as typeof queued,
+      drafts: withHierarchy([...groups.drafts].sort(runOrder).map((t) => task("draft", t))),
+      finished: withHierarchy(finished.map((t) => task("finished", t))) as Exclude<
+        RowEntry,
+        { kind: "plan" }
+      >[],
+    };
+  }, [groups, plans, filter, filtered, shownPending, queuedOrder, tasks]);
 
   const filtering = filter.query.trim() !== "" || filter.state !== "all" || filter.label !== null;
   const finishedOpen = showFinished || filtering;
@@ -189,6 +209,7 @@ export function TasksPage({
     tabbableKey: (selected ?? visible[0])?.key ?? null,
     onSelect: setSelectedKey,
     onStop: setStopId,
+    epics,
   };
   const list = (entries: RowEntry[]) => (
     <ul className="m-0 list-none p-0">

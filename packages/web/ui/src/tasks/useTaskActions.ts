@@ -46,6 +46,18 @@ export function useTaskActions(pid: string, data: AppData, navigate: (to: Route)
         "Duplicated",
         "Could not duplicate",
       ),
+    detachParent: (id: string) =>
+      run(
+        () => api.moveTask(pid, id, { parentId: null }),
+        "Now a top-level task",
+        "Could not detach",
+      ),
+    detachEpic: (id: string) =>
+      run(
+        () => api.moveTask(pid, id, { epicId: null }),
+        "Epic cleared",
+        "Could not clear the epic",
+      ),
     copyId: (id: string) =>
       void act(() => navigator.clipboard.writeText(id), {
         success: "Copied",

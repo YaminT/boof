@@ -32,7 +32,7 @@ export function TaskRowMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-40"
+        className="w-52"
         // Closing the menu puts focus on the row, so j/k and Enter carry on from there.
         finalFocus={() => trigger.current?.closest<HTMLElement>("li") ?? true}
       >
@@ -46,6 +46,16 @@ export function TaskRowMenu({
         {queued && (
           <DropdownMenuItem onClick={() => actions.setSkip(f.id, !f.skip)}>
             {f.skip ? "Unskip" : "Skip"}
+          </DropdownMenuItem>
+        )}
+        {task.parentMissing && (
+          <DropdownMenuItem onClick={() => actions.detachParent(f.id)}>
+            Detach from missing parent
+          </DropdownMenuItem>
+        )}
+        {task.epicMissing && f.epicId && (
+          <DropdownMenuItem onClick={() => actions.detachEpic(f.id)}>
+            Clear missing epic
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onClick={() => actions.duplicate(task)}>Duplicate</DropdownMenuItem>

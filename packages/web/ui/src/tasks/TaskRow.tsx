@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode, Ref } from "react";
-import type { PlanSummary, TaskView } from "../api.js";
+import type { EpicView, PlanSummary, TaskView } from "../api.js";
+import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "../lib/run-timing.js";
@@ -13,9 +14,10 @@ export type RowEntry =
       key: string;
       kind: "question" | "proposed" | "draft" | "running" | "finished";
       task: TaskView;
+      hier?: HierarchyRow;
     }
   /** `pos` is the queue number, or null for a skipped task. */
-  | { key: string; kind: "queued"; task: TaskView; pos: number | null }
+  | { key: string; kind: "queued"; task: TaskView; pos: number | null; hier?: HierarchyRow }
   | { key: string; kind: "plan"; plan: PlanSummary };
 
 export interface RowContext {
@@ -26,6 +28,8 @@ export interface RowContext {
   tabbableKey: string | null;
   onSelect: (key: string) => void;
   onStop: (id: string) => void;
+  /** The project's epics by id, to name the epic chips. */
+  epics: ReadonlyMap<string, EpicView>;
 }
 
 function RunningMarker({ pid, task }: { pid: string; task: TaskView }) {
@@ -85,6 +89,74 @@ function primary(entry: RowEntry, ctx: RowContext): { label: string; run: () => 
   }
 }
 
+const chip = "shrink-0 rounded border border-line px-1 text-[length:var(--text-meta)]";
+
+/** Epic, subtask progress, parent and missing-reference chips after the title. */
+function HierarchyChips({
+  task,
+  hier,
+  ctx,
+}: {
+  task: TaskView;
+  hier: HierarchyRow | undefined;
+  ctx: RowContext;
+}) {
+  const epic = task.epicId ? (ctx.epics.get(task.epicId)?.title ?? task.epicId) : null;
+  return (
+    <>
+      {hier?.progress && (
+        <span
+          className={cn(chip, "tabular-nums text-ink-muted")}
+          title={`${hier.progress.done} of ${hier.progress.total} subtasks done`}
+        >
+          {progressLabel(hier.progress)}
+        </span>
+      )}
+      {hier?.parentRef && (
+        <button
+          type="button"
+          onClick={() => ctx.actions.open(hier.parentRef!.id)}
+          title={`Subtask of ${hier.parentRef.title}`}
+          className={cn(
+            chip,
+            "hidden max-w-40 truncate bg-transparent text-ink-muted hover:underline min-[720px]:block",
+          )}
+        >
+          ↳ {hier.parentRef.title}
+        </button>
+      )}
+      {epic && !task.epicMissing && (
+        <span
+          className={cn(chip, "hidden max-w-32 truncate text-ink-muted min-[720px]:block")}
+          title={`Epic: ${epic}`}
+        >
+          {epic}
+        </span>
+      )}
+      {task.parentMissing && (
+        <span
+          className={cn(chip, "border-attention text-attention")}
+          title="This task names a parent that no longer exists, so it is listed on its own. Detach it from the row menu."
+        >
+          parent missing
+        </span>
+      )}
+      {task.epicMissing && (
+        <span
+          className={cn(chip, "border-attention text-attention")}
+          title={`The epic ${task.epicId ?? ""} does not exist. ${
+            task.frontmatter.epicId
+              ? "Clear it from the row menu."
+              : "It comes from the parent task."
+          }`}
+        >
+          epic missing
+        </span>
+      )}
+    </>
+  );
+}
+
 /** One 40 px row: marker, title, metadata, one primary action and the overflow menu. */
 export function TaskRow({
   entry,
@@ -110,6 +182,7 @@ export function TaskRow({
       : actions.open(entry.task.frontmatter.id);
   const action = primary(entry, ctx);
   const f = task?.frontmatter;
+  const hier = entry.kind === "plan" ? undefined : entry.hier;
   return (
     <li
       ref={rowRef}
@@ -131,10 +204,19 @@ export function TaskRow({
       <button
         type="button"
         onClick={open}
-        className="min-w-[8rem] flex-1 truncate bg-transparent p-0 text-left text-[length:inherit] font-medium text-ink hover:underline"
+        className={cn(
+          "min-w-[4rem] flex-1 truncate bg-transparent p-0 min-[720px]:min-w-[8rem] text-left text-[length:inherit] font-medium text-ink hover:underline",
+          hier?.child && "ml-4",
+        )}
       >
+        {hier?.child && (
+          <span aria-hidden className="mr-1 text-ink-muted">
+            ↳
+          </span>
+        )}
         {title}
       </button>
+      {task && <HierarchyChips task={task} hier={hier} ctx={ctx} />}
       {f && (
         <span className="hidden w-auto max-w-52 shrink items-center gap-1.5 truncate text-[length:var(--text-meta)] text-ink-muted min-[1100px]:flex">
           <span>p{f.priority}</span>

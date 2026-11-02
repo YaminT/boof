@@ -46,7 +46,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "tasks.update": {
     where: "updateTask \u2014 TaskForm, NeedsYouList, CommandPalette (edit a task)",
   },
-  "tasks.move": { none: "the hierarchy UI is not built yet" },
+  "tasks.move": { where: "moveTask \u2014 TaskRowMenu (detach from a missing parent or epic)" },
   "tasks.queue": {
     where:
       "updateTask {status: pending} \u2014 Queue buttons (useTaskActions, NeedsYouList, InboxPage, CommandPalette)",
@@ -73,7 +73,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "tasks.attachments.get": {
     where: "attachmentBlobUrl \u2014 TaskAttachments (show an attachment)",
   },
-  "epics.list": { none: "the hierarchy UI is not built yet" },
+  "epics.list": { where: "listEpics \u2014 TasksPage (epic names on the task rows)" },
   "epics.get": { none: "the hierarchy UI is not built yet" },
   "epics.create": { none: "the hierarchy UI is not built yet" },
   "epics.update": { none: "the hierarchy UI is not built yet" },

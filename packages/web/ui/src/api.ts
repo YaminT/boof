@@ -1,4 +1,6 @@
 import type {
+  Epic,
+  EpicPatch,
   Project,
   ProjectPatch,
   Settings,
@@ -75,7 +77,18 @@ export type TaskView = Task & {
   /** The verdict of the last round of each role that reviewed. */
   finalVerdict?: { observer?: TaskReview["verdict"]; reviewer?: TaskReview["verdict"] };
   branch?: string;
+  /** The effective epic: the task's own, or its parent's for a subtask. */
+  epicId?: string;
+  /** Non-archived subtasks and how many are done; present when there are any. */
+  subtasks?: { total: number; done: number };
+  /** The task names a parent that does not exist; it is listed as a top-level task. */
+  parentMissing?: true;
+  /** The task's effective epic does not exist in this project. */
+  epicMissing?: true;
 };
+
+/** An epic with its progress: non-archived top-level tasks and how many are done. */
+export type EpicView = Epic & { progress: { total: number; done: number } };
 
 /** The versioned REST API; the unversioned /api/* routes are deprecated. */
 // Relative so the UI also works behind a reverse-proxy path prefix (https://host/boof/).
@@ -187,6 +200,31 @@ export const api = {
   retry: (pid: string, id: string) => httpTask(`${T(pid, id)}/retry`, { method: "POST" }),
   archive: (pid: string, id: string) => httpTask(`${T(pid, id)}/archive`, { method: "POST" }),
   unarchive: (pid: string, id: string) => httpTask(`${T(pid, id)}/unarchive`, { method: "POST" }),
+  /** Move a task under a parent or into an epic; `null` clears it. Give one of the two. */
+  moveTask: (
+    pid: string,
+    id: string,
+    move: { parentId: string | null } | { epicId: string | null },
+  ) => httpTask(`${T(pid, id)}/move`, { method: "POST", body: JSON.stringify(move) }),
+  listEpics: (pid: string, includeArchived = false) =>
+    http<{ items: EpicView[] }>(
+      `${P(pid)}/epics${includeArchived ? "?includeArchived=true" : ""}`,
+    ).then((r) => r.items),
+  createEpic: (
+    pid: string,
+    input: { title: string; id?: string; description?: string; priority?: number },
+  ) => http<EpicView>(`${P(pid)}/epics`, { method: "POST", body: JSON.stringify(input) }),
+  updateEpic: (pid: string, epicId: string, patch: EpicPatch & { expectedUpdated?: string }) =>
+    http<EpicView>(`${P(pid)}/epics/${encodeURIComponent(epicId)}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  /** Refused with 409 `has_tasks` while tasks name the epic, unless `detach` clears it on them. */
+  deleteEpic: (pid: string, epicId: string, detach = false) =>
+    http<{ ok: true; detached: string[] }>(
+      `${P(pid)}/epics/${encodeURIComponent(epicId)}${detach ? "?detach=true" : ""}`,
+      { method: "DELETE" },
+    ),
   deleteTask: (pid: string, id: string) => http<{ ok: true }>(T(pid, id), { method: "DELETE" }),
   liveLog: (pid: string, id: string) =>
     http<{ log: string; running: boolean }>(`${T(pid, id)}/live-log`),
