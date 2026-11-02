@@ -860,6 +860,7 @@ describe("project registration by non-local principals (project_root_not_allowed
     const outside = await repo("outside");
     const real = (service as unknown as { projects: ProjectStore }).projects;
     (service as unknown as { projects: unknown }).projects = {
+      get: (pid: string) => real.get(pid),
       update: async (...args: Parameters<ProjectStore["update"]>) => {
         await rm(next, { recursive: true });
         await symlink(outside, next);
@@ -1267,6 +1268,31 @@ describe("worktree.root for non-local principals (project_root_not_allowed)", ()
     expect((await setProject("app", ".wt")).status).toBe(200);
     expect((await setProject("app", "../../../escape")).status).toBe(403);
     expect((await setProject("app", join(base, "elsewhere"))).status).toBe(403);
+  });
+
+  it("re-checks a stored relative root when the working directory moves", async () => {
+    const deep = join(allowedRoot, "b", "c", "d");
+    await mkdir(deep, { recursive: true });
+    await execCommand("git", ["init", "-q"], { cwd: deep });
+    await new ProjectStore(root).create({ workingDirectory: deep, id: "deep" });
+    // From .../allowed/b/c/d, three levels up is `allowed`: fine.
+    expect((await setProject("deep", "../../..")).status).toBe(200);
+    // Moving the project up to `allowed/b` would make the same root point at `/`...
+    const up = join(allowedRoot, "b");
+    await execCommand("git", ["init", "-q"], { cwd: up });
+    const res = await call("/api/projects/deep", put({ workingDirectory: up }), key);
+    expect(res.status).toBe(403);
+    expect(await code(res)).toBe("project_root_not_allowed");
+    expect((await (await call("/api/projects/deep", {}, key)).json()).workingDirectory).toBe(
+      await realpath(deep),
+    );
+  });
+
+  it("checks a root-only patch against the stored directory", async () => {
+    const dir = await repo("only", { parent: allowedRoot });
+    await new ProjectStore(root).create({ workingDirectory: dir, id: "only" });
+    expect((await setProject("only", "../../../../../../..")).status).toBe(403);
+    expect((await setProject("only", "wt")).status).toBe(200);
   });
 
   it("checks the override at project create too", async () => {

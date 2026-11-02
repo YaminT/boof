@@ -655,9 +655,20 @@ export class TaskService {
   }
 
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
-    if (patch.worktree?.root !== undefined && actor && !this.actsAsLocal(actor)) {
-      const dir = patch.workingDirectory ?? (await this.getProject(id)).workingDirectory;
-      await this.assertWorktreeRootAllowed(actor, patch.worktree.root, dir);
+    if (
+      actor &&
+      !this.actsAsLocal(actor) &&
+      (patch.worktree !== undefined || patch.workingDirectory !== undefined)
+    ) {
+      // A relative root resolves against the directory, so moving the directory changes where
+      // the stored root points: check the effective pair, patched or stored.
+      const current = await this.getProject(id);
+      const root = patch.worktree !== undefined ? patch.worktree?.root : current.worktree?.root;
+      await this.assertWorktreeRootAllowed(
+        actor,
+        root,
+        patch.workingDirectory ?? current.workingDirectory,
+      );
     }
     let assertTarget: ((real: string) => Promise<void>) | undefined;
     if (patch.workingDirectory !== undefined && actor && !this.actsAsLocal(actor)) {
