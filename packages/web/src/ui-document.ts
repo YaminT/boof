@@ -28,13 +28,23 @@ export function isUiPath(rawPath: string): boolean {
 /** Serves `index.html` with a `<base href>` worked out from the request depth only. */
 export function uiDocument(uiDir: string): (c: Context) => Promise<Response> {
   return async (c) => {
-    const html = await readFile(join(uiDir, "index.html"), "utf8");
+    let html: string;
+    try {
+      html = await readFile(join(uiDir, "index.html"), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return c.notFound();
+      throw err;
+    }
     const tag = `<base href="${relativeBase(new URL(c.req.url).pathname)}">`;
     const body = /<head[^>]*>/i.test(html)
       ? html.replace(/<head[^>]*>/i, (m) => m + tag)
       : tag + html;
     return new Response(body, {
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache",
+        "content-length": String(Buffer.byteLength(body)),
+      },
     });
   };
 }

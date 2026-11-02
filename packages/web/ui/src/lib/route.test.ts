@@ -123,6 +123,11 @@ describe("formatRoute", () => {
     for (const r of routes) expect(parseRoute(formatRoute(r))).toEqual(r);
   });
 
+  it("never emits %2F (a proxy may decode it and move the base)", () => {
+    for (const r of routes.filter((r) => !JSON.stringify(r).includes("a/b")))
+      expect(formatRoute(r)).not.toMatch(/%2f/i);
+  });
+
   it("never starts with / or #", () => {
     for (const r of routes) expect(formatRoute(r)).not.toMatch(/^[/#]/);
   });

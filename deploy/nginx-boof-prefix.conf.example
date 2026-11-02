@@ -6,8 +6,10 @@
 # (copy it to /etc/nginx/snippets/boof.conf; see deploy/README.md "Path prefix"). For a host name of
 # its own use deploy/nginx-boof.conf.example instead.
 #
-# The trailing slash on proxy_pass strips /boof, so boof itself still lives at /. The web UI uses
-# relative URLs (the server adds a relative `<base>` to the page), so it works unchanged behind the prefix; the API is at
+# The two rewrites strip /boof from the raw request URI, so boof itself still lives at / and an
+# encoded %2F reaches it unchanged (a plain `proxy_pass .../;` would decode it and the page's
+# relative <base> would be one level too deep). The web UI uses relative URLs (the server adds a
+# relative `<base>` to the page), so it works unchanged behind the prefix; the API is at
 # /boof/api/v1, MCP at /boof/mcp, the harness guide at /boof/harness.txt.
 #
 # Boof listens on 127.0.0.1:4319 only; nginx terminates TLS and forwards the original Host header,
@@ -16,7 +18,10 @@
 location = /boof { return 301 /boof/; }
 
 location /boof/ {
-    proxy_pass http://127.0.0.1:4319/;
+    rewrite ^ $request_uri;
+    rewrite ^/boof(/[^?]*) $1 break;
+    return 400;
+    proxy_pass http://127.0.0.1:4319$uri$is_args$args;
 
     # Boof's DNS-rebinding guard compares this with security.allowedHosts.
     proxy_set_header Host $host;

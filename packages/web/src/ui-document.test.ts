@@ -46,6 +46,10 @@ describe("isUiPath", () => {
     "/boof-runner.png",
     "/unknown",
     "/inbox/x",
+    "//p/boof",
+    "/p//boof",
+    "/P/boof",
+    "/inbox/x/",
   ])("false: %s", (p) => expect(isUiPath(p)).toBe(false));
 });
 
@@ -85,10 +89,17 @@ describe("UI document and SPA fallback", () => {
     expect(await (await get("/p/boof/tasks/a%2Fb")).text()).toContain('<base href="../../../">');
   });
 
-  it("answers HEAD with an empty body", async () => {
+  it("answers HEAD with an empty body and the length of the document", async () => {
     const res = await get("/p/boof", { method: "HEAD" });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("");
+    const full = await (await get("/p/boof")).text();
+    expect(res.headers.get("content-length")).toBe(String(Buffer.byteLength(full)));
+  });
+
+  it("answers 404 when index.html is missing", async () => {
+    await rm(join(ui, "index.html"));
+    expect((await get("/p/boof")).status).toBe(404);
   });
 
   it("serves assets and 404s everything else", async () => {
