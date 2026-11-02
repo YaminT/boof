@@ -30,6 +30,16 @@ export const ALLOWED: Record<Part, Part[]> = {
 /** Parts whose imports of other parts must all be `import type`/`export type`. */
 export const TYPE_ONLY: Part[] = ["facedisk/ui"];
 
+/**
+ * Shared subpaths a TYPE_ONLY part (the browser UI) may import as values, with the source file each
+ * resolves to. Every entry must be pure: no `node:` or third-party imports, and relative imports
+ * only of other entries; import-boundaries.test.ts checks it, so the exception cannot quietly grow
+ * a Node dependency into the browser bundle.
+ */
+export const BROWSER_SAFE: Record<string, string> = {
+  "@boof-runner/shared/ids": "packages/shared/src/ids.ts",
+};
+
 /** Known debts, each fixed by a named step of the split. An entry that matches no import fails. */
 export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [
   { file: "packages/api/src/services/service.ts", to: "runner", fixedBy: "M1" },

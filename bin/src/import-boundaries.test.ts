@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   ALLOW,
   ALLOWED,
+  BROWSER_SAFE,
   SOURCE_ROOTS,
   TYPE_ONLY,
   partOfFile,
@@ -109,7 +110,7 @@ function violations(): Violation[] {
       if (!to || to === from) continue;
       const base = { file, line: imp.line, from, to, specifier: imp.specifier };
       if (!ALLOWED[from].includes(to)) found.push({ ...base, reason: "edge" });
-      else if (TYPE_ONLY.includes(from) && !imp.typeOnly) {
+      else if (TYPE_ONLY.includes(from) && !imp.typeOnly && !(imp.specifier in BROWSER_SAFE)) {
         found.push({ ...base, reason: "value-import" });
       }
     }
@@ -187,6 +188,36 @@ describe("import boundaries", () => {
       (v) => !ALLOW.some((a) => a.file === v.file && a.to === v.to),
     );
     expect(unexpected.map(show)).toEqual([]);
+  });
+
+  it("keeps the browser-safe shared subpaths pure", () => {
+    const safeFiles = new Set(Object.values(BROWSER_SAFE));
+    expect(safeFiles.size).toBe(Object.keys(BROWSER_SAFE).length);
+    for (const [spec, file] of Object.entries(BROWSER_SAFE)) {
+      expect(partOfFile(file), spec).toBe("heart");
+      const text = readFileSync(join(repo, file), "utf8");
+      const bad = extractImports(text)
+        .filter((i) => {
+          if (!i.specifier.startsWith(".")) return true; // node: and third-party
+          const target = join(dirname(file), i.specifier.replace(/\.js$/, ".ts"));
+          return !safeFiles.has(target.split("\\").join("/"));
+        })
+        .map((i) => `${file}:${i.line} "${i.specifier}"`);
+      expect(bad, `${spec} must stay free of Node and third-party imports`).toEqual([]);
+    }
+  });
+
+  it("lets the UI value-import only the browser-safe subpaths", () => {
+    const text = (spec: string) => `import { x } from "${spec}";`;
+    const ui = "packages/web/ui/src/lib/f.ts";
+    const check = (spec: string) => {
+      const imp = extractImports(text(spec))[0];
+      const to = partOfSpecifier(spec, ui)!;
+      return ALLOWED["facedisk/ui"].includes(to) && (imp.typeOnly || spec in BROWSER_SAFE);
+    };
+    expect(check("@boof-runner/shared/ids")).toBe(true);
+    expect(check("@boof-runner/shared/schema")).toBe(false);
+    expect(check("@boof-runner/shared")).toBe(false);
   });
 
   it("has no stale allow-list entry", () => {
