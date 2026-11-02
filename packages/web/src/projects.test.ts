@@ -1146,6 +1146,10 @@ describe("the desktop operator key", () => {
   it.each([
     ["x-forwarded-for", "10.0.0.9"],
     ["forwarded", "for=10.0.0.9"],
+    ["x-real-ip", "10.0.0.9"],
+    ["x-forwarded-host", "boof.example.com"],
+    ["x-forwarded-proto", "https"],
+    ["via", "1.1 proxy"],
   ])("is an ordinary client behind a %s header", async (name, value) => {
     const res = await register(await repo("r2"), op.key, { [name]: value });
     expect(res.status).toBe(403);
@@ -1165,9 +1169,30 @@ describe("the desktop operator key", () => {
       { scopes: ["admin"] as Scope[], expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
     ],
   ])("loses operator status when its client %s", async (_label, extra) => {
-    const weak = await authStore.create({ name: "weak", ...extra });
+    const weak = await authStore.create({ name: "weak", trust: "trusted", ...extra });
     asOperator(weak.client.id);
     expect((await register(await repo("r4"), weak.key)).status).toBe(403);
+  });
+
+  it("answers a non-git directory with 400 for the operator and 403 for an ordinary key", async () => {
+    const plain = await repo("plain", { git: false });
+    const res = await register(plain, op.key);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("not_a_git_repo");
+    const other = await mint(["admin"], "*", "other");
+    const denied = await register(plain, other);
+    expect(denied.status).toBe(403);
+    expect((await denied.json()).error.code).toBe("project_root_not_allowed");
+  });
+
+  it("a second client named desktop-ui (id desktop-ui-2) is not the operator", async () => {
+    const twin = await authStore.create({
+      name: "desktop-ui",
+      scopes: ["admin"],
+      trust: "trusted",
+    });
+    expect(twin.client.id).toBe("desktop-ui-2");
+    expect((await register(await repo("r7"), twin.key)).status).toBe(403);
   });
 
   it("a key that is not listed gets nothing from other keys being listed", async () => {

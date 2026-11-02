@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RunnerEngine } from "@boof-runner/runner";
-import { createQuitHandler, serverOptions, shutdownGraceMs } from "./lifecycle.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AuthStore } from "@boof-runner/shared";
+import {
+  createQuitHandler,
+  operatorClientId,
+  serverOptions,
+  shutdownGraceMs,
+} from "./lifecycle.js";
 
 describe("desktop /healthz facts", () => {
   it("passes the app version and a live runnerRunning to the server", () => {
@@ -92,5 +101,32 @@ describe("desktop before-quit", () => {
     await s.quit({ preventDefault: vi.fn() });
     expect(s.log).toContain("Grace period of 5000 ms elapsed; quitting anyway");
     expect(s.order).toEqual(["shutdown 5000", "server.stop", "exit 0"]);
+  });
+});
+
+describe("operatorClientId", () => {
+  it("is the client id inside the key the desktop holds, and undefined without a usable key", () => {
+    expect(operatorClientId("boof_desktop-ui_c2VjcmV0")).toBe("desktop-ui");
+    expect(operatorClientId(undefined)).toBeUndefined();
+    expect(operatorClientId("not a key")).toBeUndefined();
+  });
+
+  it("follows the re-issued client after desktop-ui was revoked", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-desktop-op-"));
+    try {
+      const store = new AuthStore(root);
+      await store.create({ name: "desktop-ui", kind: "ui", scopes: ["admin"], trust: "trusted" });
+      await store.revoke("desktop-ui");
+      const second = await store.create({
+        name: "desktop-ui",
+        kind: "ui",
+        scopes: ["admin"],
+        trust: "trusted",
+      });
+      expect(second.client.id).toBe("desktop-ui-2");
+      expect(operatorClientId(second.key)).toBe("desktop-ui-2");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

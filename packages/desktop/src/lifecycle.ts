@@ -1,6 +1,7 @@
 // Desktop lifecycle logic kept free of `electron` so it can be unit-tested without an
 // Electron runtime. main.ts wires these functions to the app, the server and the engine.
 import type { RunnerEngine } from "@boof-runner/runner";
+import { parseKey } from "@boof-runner/shared";
 import type { RunningServer, startServer } from "@boof-runner/web";
 
 export type ServerOptions = Parameters<typeof startServer>[0];
@@ -21,6 +22,14 @@ export function serverOptions(
     runnerRunning: () => engine() !== null,
     ...(operatorClientId ? { operatorClients: new Set([operatorClientId]) } : {}),
   };
+}
+
+/**
+ * The id of the client the desktop's own key belongs to, read from the key it holds. After the
+ * `desktop-ui` client is revoked a new one (`desktop-ui-2`) is issued, so the id is not a constant.
+ */
+export function operatorClientId(token: string | undefined): string | undefined {
+  return token ? parseKey(token)?.clientId : undefined;
 }
 
 const DEFAULT_GRACE_MS = 30_000;

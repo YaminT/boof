@@ -5,7 +5,12 @@ import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electro
 import { RunnerEngine } from "@boof-runner/runner";
 import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
 import { startServer, type RunningServer } from "@boof-runner/web";
-import { createQuitHandler, serverOptions, shutdownGraceMs } from "./lifecycle.js";
+import {
+  createQuitHandler,
+  operatorClientId,
+  serverOptions,
+  shutdownGraceMs,
+} from "./lifecycle.js";
 
 // Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
 // window/menu. Must run before any getPath("userData") call.
@@ -132,15 +137,12 @@ async function boot(): Promise<void> {
     console.error("desktop auth setup failed; using local-trust:", err);
     return undefined;
   });
-  const operatorClientId = desktopToken
-    ? (await new AuthStore(root).get(DESKTOP_CLIENT_NAME))?.id
-    : undefined;
   server = await startServer(
     serverOptions(
       { root, port: PORT, uiDir: uiDir() },
       app.getVersion(),
       () => engine,
-      operatorClientId,
+      operatorClientId(desktopToken),
     ),
   );
   engine = new RunnerEngine({ root });

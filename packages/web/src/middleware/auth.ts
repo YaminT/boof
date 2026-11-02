@@ -80,6 +80,15 @@ class ClientCache {
   }
 }
 
+const PROXY_HEADERS = [
+  "x-forwarded-for",
+  "forwarded",
+  "x-real-ip",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "via",
+];
+
 export function principalFromClient(client: Client, opts: { operator?: boolean } = {}): Principal {
   return {
     kind: "client",
@@ -163,9 +172,9 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       lastTouch.set(client.id, t);
       opts.store.touch(client.id).catch((err) => console.error("lastUsedAt update failed", err));
     }
-    // A local reverse proxy makes every peer look like loopback; never trust those.
-    const proxied =
-      c.req.header("x-forwarded-for") !== undefined || c.req.header("forwarded") !== undefined;
+    // A local reverse proxy makes every peer look like loopback. For this check any common
+    // proxy header counts (the local-trust branch above reads only the first two).
+    const proxied = PROXY_HEADERS.some((h) => c.req.header(h) !== undefined);
     const operator =
       opts.operatorClients?.has(client.id) === true &&
       isLoopbackAddress(peer) &&
