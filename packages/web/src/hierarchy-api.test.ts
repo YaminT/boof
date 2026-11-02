@@ -1,7 +1,7 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   atomicWrite,
   defaultSettings,
@@ -174,5 +174,21 @@ describe("task hierarchy over the API", () => {
     const v = (await list()).body.items[0];
     for (const k of ["epicId", "subtasks", "parentMissing", "epicMissing"])
       expect(v[k]).toBeUndefined();
+  });
+
+  it("keeps listing tasks when epics.json is corrupt, flagging their epic as missing", async () => {
+    await epics().create({ title: "Web" });
+    await mk("P", { epicId: "web" });
+    await writeFile(join(service.projects.dir("demo"), "epics.json"), "{ not json");
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { status, body } = await list();
+      expect(status).toBe(200);
+      expect(body.items[0].epicMissing).toBe(true);
+      expect((await mk("Q")).status).toBe(201);
+      expect((await call(`${V1}/projects/demo/tasks/p`)).status).toBe(200);
+    } finally {
+      err.mockRestore();
+    }
   });
 });

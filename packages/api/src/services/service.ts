@@ -158,7 +158,12 @@ export class ProjectService {
   async hierarchy(): Promise<HierarchyIndex> {
     const [tasks, epics] = await Promise.all([
       this.tasks.list(),
-      new EpicStore(this.root).list({ includeArchived: true }),
+      // A broken epics.json must not take every task read down (the epic operations still fail
+      // loudly): without epics, tasks that name one show `epicMissing`.
+      new EpicStore(this.root).list({ includeArchived: true }).catch((err) => {
+        console.error(`epics of project ${this.projectId} are unreadable:`, err);
+        return [];
+      }),
     ]);
     return buildHierarchyIndex(tasks, epics);
   }
