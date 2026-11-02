@@ -78,6 +78,25 @@ export const RunnerBudgetExceededEventSchema = z.object({
   by,
 });
 
+/** A task changed epic or parent (a move, a detach on delete). */
+export const TaskMovedEventSchema = z.object({
+  type: z.literal("task.moved"),
+  ts: z.string(),
+  project,
+  task: z.string(),
+  from: z.object({ epicId: z.string().nullable(), parentId: z.string().nullable() }),
+  to: z.object({ epicId: z.string().nullable(), parentId: z.string().nullable() }),
+  by,
+});
+export const EpicUpdatedEventSchema = z.object({
+  type: z.literal("epic.updated"),
+  ts: z.string(),
+  project,
+  epic: z.string(),
+  change: z.enum(["created", "updated", "deleted"]),
+  by,
+});
+
 export const BoofEventSchema = z.discriminatedUnion("type", [
   TaskCreatedEventSchema,
   TaskStatusEventSchema,
@@ -86,6 +105,8 @@ export const BoofEventSchema = z.discriminatedUnion("type", [
   PlanSyncedEventSchema,
   RunnerEnabledEventSchema,
   RunnerBudgetExceededEventSchema,
+  TaskMovedEventSchema,
+  EpicUpdatedEventSchema,
 ]);
 export type BoofEvent = z.infer<typeof BoofEventSchema>;
 export type BoofEventType = BoofEvent["type"];
@@ -97,6 +118,8 @@ export const EVENT_TYPES = [
   "plan.synced",
   "runner.enabled",
   "runner.budget_exceeded",
+  "task.moved",
+  "epic.updated",
 ] as const satisfies readonly BoofEventType[];
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;

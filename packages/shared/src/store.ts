@@ -227,6 +227,12 @@ export class TaskStore {
         task.body.injected = disk.body.injected;
         if (disk.frontmatter.startedAt) task.frontmatter.startedAt = disk.frontmatter.startedAt;
         if (disk.frontmatter.steps) task.frontmatter.steps = disk.frontmatter.steps;
+        // Hierarchy keys are written only by hierarchy.ts through modify, so a copy read earlier
+        // must not revert a move (and a key the disk lacks must not reappear from the copy).
+        for (const key of ["epicId", "parentId"] as const) {
+          if (disk.frontmatter[key] !== undefined) task.frontmatter[key] = disk.frontmatter[key];
+          else delete task.frontmatter[key];
+        }
       }
       await atomicWrite(located.path, serializeTask(task));
       return task;

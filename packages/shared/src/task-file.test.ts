@@ -302,3 +302,47 @@ describe("task-file reserved headings", () => {
     expect(serializeTask(back)).toBe(once);
   });
 });
+
+describe("task-file hierarchy keys", () => {
+  const old = `---
+id: old-task
+title: Old
+status: pending
+priority: 0
+skip: false
+labels: []
+command: null
+attachments: []
+questions: none
+runs: 1
+completedRuns: 0
+created: 2026-06-04T10:00:00.000Z
+updated: 2026-06-04T10:00:00.000Z
+---
+
+## Prompt
+
+hi
+`;
+
+  it("parses a pre-hierarchy task file unchanged", () => {
+    const task = parseTask(old);
+    expect(task.frontmatter.epicId).toBeUndefined();
+    expect(task.frontmatter.parentId).toBeUndefined();
+    const text = serializeTask(task);
+    expect(text).not.toContain("epicId");
+    expect(text).not.toContain("parentId");
+    expect(parseTask(text)).toEqual(task);
+  });
+
+  it("round-trips epicId and parentId", () => {
+    const back = parseTask(serializeTask(newTask(fm({ epicId: "web", parentId: "t1" }), "p")));
+    expect(back.frontmatter).toMatchObject({ epicId: "web", parentId: "t1" });
+  });
+
+  it("clearing a key with delete writes no key", () => {
+    const task = parseTask(serializeTask(newTask(fm({ parentId: "t1" }), "p")));
+    delete task.frontmatter.parentId;
+    expect(serializeTask(task)).not.toContain("parentId");
+  });
+});

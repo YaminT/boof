@@ -108,3 +108,25 @@ describe("events", () => {
     expect(events[5]).toMatchObject({ plan: "p", version: plan.version + 1, by: "client:h" });
   });
 });
+
+describe("hierarchy events", () => {
+  it("parses task.moved and epic.updated lines", async () => {
+    await appendEvent(dir, {
+      type: "task.moved",
+      project: "p",
+      task: "t1",
+      from: { epicId: null, parentId: null },
+      to: { epicId: "web", parentId: null },
+      by: "local",
+    });
+    await appendEvent(dir, {
+      type: "epic.updated",
+      project: "p",
+      epic: "web",
+      change: "created",
+      by: "local",
+    });
+    const got = await readEvents(dir, null);
+    expect(got.map((e) => e.event.type)).toEqual(["task.moved", "epic.updated"]);
+  });
+});

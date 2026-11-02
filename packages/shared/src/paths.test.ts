@@ -57,6 +57,7 @@ describe("data root layout v2 paths", () => {
       plans: "/d/projects/app/plans",
       usage: "/d/projects/app/usage.json",
       events: "/d/projects/app/events.jsonl",
+      epics: "/d/projects/app/epics.json",
     });
   });
 

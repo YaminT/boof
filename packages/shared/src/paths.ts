@@ -85,6 +85,8 @@ export interface ProjectPaths {
   plans: string;
   usage: string;
   events: string;
+  /** `{ "epics": [...] }`; created by the first `epics.create`. */
+  epics: string;
 }
 
 /** Paths of project `id` (kebab-checked: the id becomes a directory name). */
@@ -97,6 +99,7 @@ export function projectPaths(root: string, id: string): ProjectPaths {
     plans: join(dir, "plans"),
     usage: join(dir, "usage.json"),
     events: join(dir, "events.jsonl"),
+    epics: join(dir, "epics.json"),
   };
 }
 

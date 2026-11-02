@@ -683,9 +683,11 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `command`: `kebab-id | null`, required; default `null`
 - `completedRuns`: `integer >= 0`, required; default `0`
 - `created`: `ISO-8601 string`, required
+- `epicId`: `kebab-id`, optional
 - `id`: `kebab-id`, required
 - `labels`: `string[]`, required; default `[]`
 - `origin`: `{ client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }`, optional
+- `parentId`: `kebab-id`, optional
 - `planRef`: `{ goalId: kebab-id, planId: kebab-id, revision: integer >= 1 }`, optional
 - `priority`: `integer`, required
 - `promptSource`: `"plan" | "manual"`, optional

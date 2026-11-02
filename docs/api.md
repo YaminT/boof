@@ -141,15 +141,17 @@ server starts.
 Every status change and plan write appends a line to `<project>/events.jsonl` (runner toggles go
 to `<data>/events.jsonl`); files rotate monthly. Event types:
 
-| Type                     | Fields (besides `ts`, `type`)                             |
-| ------------------------ | --------------------------------------------------------- |
-| `task.created`           | `project`, `task`, `status`, `by`                         |
-| `task.status`            | `project`, `task`, `from`, `to`, `by`                     |
-| `task.questions`         | `project`, `task`, `count`, `by`                          |
-| `plan.updated`           | `project`, `plan`, `version`, `by`                        |
-| `plan.synced`            | `project`, `plan`, `created`, `updated`, `by`             |
-| `runner.enabled`         | `value`, `by`                                             |
-| `runner.budget_exceeded` | `scope`, `date`, `spentUsd`, `limitUsd`, `project?`, `by` |
+| Type                     | Fields (besides `ts`, `type`)                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `task.created`           | `project`, `task`, `status`, `by`                                                      |
+| `task.status`            | `project`, `task`, `from`, `to`, `by`                                                  |
+| `task.questions`         | `project`, `task`, `count`, `by`                                                       |
+| `plan.updated`           | `project`, `plan`, `version`, `by`                                                     |
+| `plan.synced`            | `project`, `plan`, `created`, `updated`, `by`                                          |
+| `task.moved`             | `project`, `task`, `from`, `to` (each `{ epicId, parentId }`, `null` when unset), `by` |
+| `epic.updated`           | `project`, `epic`, `change` (`created`, `updated`, `deleted`), `by`                    |
+| `runner.enabled`         | `value`, `by`                                                                          |
+| `runner.budget_exceeded` | `scope`, `date`, `spentUsd`, `limitUsd`, `project?`, `by`                              |
 
 `by` is the principal id or `runner`.
 

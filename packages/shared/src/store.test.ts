@@ -466,3 +466,29 @@ describe("TaskStore races", () => {
     expect(await copies("t2")).toBe(1);
   });
 });
+
+describe("TaskStore.save and the hierarchy keys", () => {
+  it("save keeps the on-disk epicId and parentId", async () => {
+    await store.create(newTask(fm(), "p"));
+    const stale = (await store.get("t1"))!;
+    await store.modify("t1", (t) => {
+      t.frontmatter.parentId = "p";
+      t.frontmatter.epicId = "e";
+    });
+    stale.frontmatter.title = "X";
+    await store.save(stale);
+    const now = (await store.get("t1"))!;
+    expect(now.frontmatter).toMatchObject({ title: "X", parentId: "p", epicId: "e" });
+  });
+
+  it("save drops a key the disk copy no longer has", async () => {
+    await store.create(newTask(fm(), "p"));
+    const stale = (await store.get("t1"))!;
+    stale.frontmatter.parentId = "q";
+    stale.frontmatter.epicId = "r";
+    await store.save(stale);
+    const now = (await store.get("t1"))!;
+    expect(now.frontmatter.parentId).toBeUndefined();
+    expect(now.frontmatter.epicId).toBeUndefined();
+  });
+});

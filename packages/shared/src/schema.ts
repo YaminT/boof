@@ -134,10 +134,40 @@ export const TaskFrontmatterSchema = z.object({
   promptSource: z.enum(["plan", "manual"]).optional(),
   // Set when the task was submitted by an external client (drives the prompt's Provenance section).
   origin: TaskOriginSchema.optional(),
+  // The task's epic (a record in the project's epics.json). A subtask has none of its own: its epic
+  // is its parent's. Both keys resolve only inside the task's project; a missing target is dangling.
+  epicId: kebab.optional(),
+  // The parent task (one level only). Written only by hierarchy.ts, through TaskStore.modify.
+  parentId: kebab.optional(),
   created: isoDatetime,
   updated: isoDatetime,
 });
 export type TaskFrontmatter = z.infer<typeof TaskFrontmatterSchema>;
+
+/** A group of tasks in one project, stored in `projects/<id>/epics.json`. */
+export const EpicSchema = z.object({
+  id: kebab,
+  title: z.string().min(1).max(200),
+  description: z.string().max(20_000).optional(),
+  priority: z.number().int().default(0),
+  archived: z.boolean().default(false),
+  created: isoDatetime,
+  updated: isoDatetime,
+});
+export type Epic = z.infer<typeof EpicSchema>;
+
+export const EpicsFileSchema = z.object({ epics: z.array(EpicSchema).default([]) });
+
+/** Fields of an epic a caller may change; `null` clears the description. */
+export const EpicPatchSchema = z
+  .strictObject({
+    title: z.string().trim().min(1).max(200),
+    description: z.string().max(20_000).nullable(),
+    priority: z.number().int(),
+    archived: z.boolean(),
+  })
+  .partial();
+export type EpicPatch = z.infer<typeof EpicPatchSchema>;
 
 /** Command-template frontmatter (command-templates spec). */
 export const CommandTemplateFrontmatterSchema = z.object({
