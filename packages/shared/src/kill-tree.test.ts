@@ -15,19 +15,20 @@ vi.mock("node:child_process", async (orig) => {
       calls.push({ cmd, args, input: opts.input });
       const text = args.join(" ");
       if (text.includes("LastBootUpTime")) return "2024-11-01T08:00:00.0000000Z";
-      if (text.includes("-Filter")) return stopped ? "" : "2026-11-02T17:30:07.1234567Z|1";
+      if (text.includes("-Filter")) return stopped ? "" : "2026-11-02T17:30:07.1234560Z|1";
       if (opts.input !== undefined) {
         stopped = true;
         return "";
       }
       if (cmd === "powershell")
-        return "4242|1|2026-11-02T17:30:07.1234567Z\n5000|4242|2026-11-02T17:30:09.0000000Z";
+        return "4242|1|2026-11-02T17:30:07.1234560Z\n5000|4242|2026-11-02T17:30:09.0000000Z";
       throw new Error(`unexpected ${cmd}`);
     },
   };
 });
 
 const { reapOrphan } = await import("./pid-file.js");
+const { ticksOf } = await import("./process-identity.js");
 
 let dir: string;
 beforeEach(async () => {
@@ -50,7 +51,7 @@ describe("Windows reaping with the real default runner", () => {
         startedAt: "2026-11-02T17:30:07.000Z",
         bootId: `boottime:${Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000)}`,
         startTicks: null,
-        startTime: "2026-11-02T17:30:07.1234567Z",
+        startTime: "2026-11-02T17:30:07.1234560Z",
         ownerPid: null,
       }),
     );
@@ -62,8 +63,8 @@ describe("Windows reaping with the real default runner", () => {
     const kill = calls.find((c) => c.input !== undefined);
     expect(kill?.cmd).toBe("powershell");
     expect(JSON.parse(kill!.input!)).toEqual([
-      { pid: 5000, created: "2026-11-02T17:30:09.0000000Z" },
-      { pid: 4242, created: "2026-11-02T17:30:07.1234567Z" },
+      { pid: 5000, ticks: ticksOf("2026-11-02T17:30:09.0000000Z") },
+      { pid: 4242, ticks: ticksOf("2026-11-02T17:30:07.1234560Z") },
     ]);
     expect(calls.some((c) => c.cmd === "taskkill")).toBe(false);
   });

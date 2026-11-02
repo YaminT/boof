@@ -331,16 +331,38 @@ export interface VerifiedProcess {
   created: string;
 }
 
+/** The 100 ns count since the Unix epoch of a fixed-width UTC `'o'` time, as a digit string. */
+export function ticksOf(iso: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{7})Z$/.exec(iso);
+  if (!m) throw new Error(`not a fixed-width UTC time: ${iso}`);
+  return String(BigInt(Date.parse(`${m[1]}Z`) / 1000) * 10_000_000n + BigInt(m[2]!));
+}
+
 /**
- * The kill script is fixed text. The (pid, created) pairs arrive as JSON on stdin, never inside
- * the script. For each pair it opens the process (a held handle keeps Windows from handing the
- * pid to someone else), compares its start time with the verified one, and only then kills it.
+ * Does a held process's start time (100 ns ticks since the Unix epoch, as Windows keeps it) match
+ * the verified one? The verified time comes from WMI/CIM, which holds whole microseconds (the 7th
+ * digit is always 0), so the process's own time is cut to whole microseconds first. The kill script
+ * does exactly this; this function is its reference.
+ */
+export function startTimeMatches(processTicks: bigint, verifiedTicks: bigint): boolean {
+  return processTicks - (processTicks % 10n) === verifiedTicks;
+}
+
+/**
+ * The kill script is fixed text; it targets Windows PowerShell 5.1 (also fine on 7). The pairs
+ * arrive as JSON on stdin, never inside the script, with the time as a digit STRING of ticks so
+ * `ConvertFrom-Json` (PowerShell 7 turns date-looking strings into dates) cannot touch it. For each
+ * pair it opens the process (a held handle keeps Windows from handing the pid to someone else),
+ * takes its start time in UTC (so a repeated DST hour cannot shift it), cuts it to whole
+ * microseconds like {@link startTimeMatches}, and only on equality kills it.
  */
 const KILL_SCRIPT =
   "$ErrorActionPreference = 'SilentlyContinue'; " +
   "foreach ($t in ($input | Out-String | ConvertFrom-Json)) { " +
   "$p = Get-Process -Id ([int]$t.pid); " +
-  "if ($p -and $p.StartTime.ToUniversalTime().ToString('o') -eq [string]$t.created) { $p.Kill() } }";
+  "if ($p) { $s = $p.StartTime.ToUniversalTime().Ticks - 621355968000000000; " +
+  "$s = $s - ($s % 10); " +
+  "if ($s -eq [long]$t.ticks) { $p.Kill() } } }";
 
 /**
  * Windows: stop these processes, in the order given, from ONE PowerShell process. A pair whose
@@ -355,7 +377,7 @@ export function killVerified(list: VerifiedProcess[], d: IdentityDeps = {}): boo
   }
   return (
     run("powershell", ["-NoProfile", "-NonInteractive", "-Command", KILL_SCRIPT], {
-      input: JSON.stringify(list.map((t) => ({ pid: t.pid, created: t.created }))),
+      input: JSON.stringify(list.map((t) => ({ pid: t.pid, ticks: ticksOf(t.created) }))),
     }) !== null
   );
 }

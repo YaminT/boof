@@ -13,6 +13,7 @@ import {
   writePidFile,
   type PidRecord,
 } from "./pid-file.js";
+import { ticksOf } from "./process-identity.js";
 
 let dir: string;
 const spawned: number[] = [];
@@ -325,8 +326,8 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
 
   const WIN_BOOT = "2024-11-01T08:00:00.0000000Z";
   const winBootSec = Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000);
-  const AGENT_START = "2026-11-02T17:30:07.1234567Z";
-  type Pair = { pid: number; created: string };
+  const AGENT_START = "2026-11-02T17:30:07.1234560Z";
+  type Pair = { pid: number; ticks: string };
   /**
    * A Windows box. `table` is the CIM process table (`pid|ppid|created` lines; null: the query
    * fails). The kill script gets its (pid, created) pairs as JSON on stdin and the agent
@@ -384,9 +385,9 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     expect(res.outcome).toBe("killed");
     expect(box.pairs).toEqual([
       [
-        { pid: 5001, created: "2026-11-02T17:30:10.0000000Z" },
-        { pid: 5000, created: "2026-11-02T17:30:09.0000000Z" },
-        { pid: 4242, created: AGENT_START },
+        { pid: 5001, ticks: ticksOf("2026-11-02T17:30:10.0000000Z") },
+        { pid: 5000, ticks: ticksOf("2026-11-02T17:30:09.0000000Z") },
+        { pid: 4242, ticks: ticksOf(AGENT_START) },
       ],
     ]);
     expect(box.taskkills).toEqual([]);
@@ -403,6 +404,9 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     expect(script).toContain("Get-Process -Id");
     expect(script).toContain("StartTime");
     expect(script).toContain(".Kill()");
+    // Compared in UTC ticks, StartTime cut to whole microseconds (CIM has no 7th digit).
+    expect(script).toContain("ToUniversalTime().Ticks");
+    expect(script).toContain("% 10");
     expect(script).not.toMatch(/4242|5000|2026-11-02/);
     expect(box.scriptArgs[0]).toContain("-NoProfile");
     expect(box.scriptArgs[0]!.join(" ")).not.toMatch(/4242|5000/);
@@ -522,7 +526,7 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     };
     const bootSec = Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000);
     const path = await write(
-      rec({ bootId: `boottime:${bootSec}`, startTime: "2026-11-02T17:30:07.1234567Z" }),
+      rec({ bootId: `boottime:${bootSec}`, startTime: "2026-11-02T17:30:07.1234560Z" }),
     );
     const res = await reapOrphan(path, log, { identity, isAlive: () => true });
     expect(res.outcome).toBe("dead");

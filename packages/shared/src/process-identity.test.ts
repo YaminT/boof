@@ -7,6 +7,8 @@ import {
   bootIdentity,
   killVerified,
   probeEnv,
+  startTimeMatches,
+  ticksOf,
   probeProcess,
   processTable,
   resetBootCache,
@@ -59,7 +61,7 @@ describe("Windows (mocked: no Windows here)", () => {
   it("reads boot time and creation time through PowerShell CIM", () => {
     const { run, calls } = fakeRun({
       LastBootUpTime: "2026-11-01T08:00:00.5000000Z\r\n",
-      Win32_Process: "2026-11-02T17:30:07.1234567Z|777\r\n",
+      Win32_Process: "2026-11-02T17:30:07.1234560Z|777\r\n",
     });
     const deps = { platform: "win32" as const, run };
     expect(bootIdentity(deps)).toBe(
@@ -67,7 +69,7 @@ describe("Windows (mocked: no Windows here)", () => {
     );
     expect(probeProcess(100, deps)).toEqual({
       startTicks: null,
-      startTime: "2026-11-02T17:30:07.1234567Z",
+      startTime: "2026-11-02T17:30:07.1234560Z",
       ppid: 777,
     });
     expect(calls.every((c) => c.startsWith("powershell"))).toBe(true);
@@ -270,6 +272,27 @@ describe("killVerified", () => {
       ),
     };
     expect(killVerified([{ pid: 7, created: T }], deps)).toBe(true);
-    expect(seen).toEqual([{ cmd: "powershell", input: JSON.stringify([{ pid: 7, created: T }]) }]);
+    expect(seen).toEqual([
+      { cmd: "powershell", input: JSON.stringify([{ pid: 7, ticks: ticksOf(T) }]) },
+    ]);
+  });
+});
+
+describe("start times in ticks", () => {
+  it("ticksOf is the 100 ns count since the Unix epoch, as a digit string (no date conversion by ConvertFrom-Json)", () => {
+    expect(ticksOf("1970-01-01T00:00:00.0000000Z")).toBe("0");
+    expect(ticksOf("1970-01-01T00:00:01.0000010Z")).toBe("10000010");
+    expect(ticksOf("2026-11-02T17:30:07.1234560Z")).toBe(
+      String(BigInt(Date.parse("2026-11-02T17:30:07Z") / 1000) * 10_000_000n + 1234560n),
+    );
+    expect(() => ticksOf("yesterday")).toThrow();
+  });
+
+  it("a held process matches when its StartTime, cut to whole microseconds, equals the CIM time", () => {
+    const cim = BigInt(ticksOf("2026-11-02T17:30:07.1234560Z"));
+    // Process.StartTime keeps 100 ns: the 7th digit is usually not 0.
+    for (const sub of [0n, 1n, 7n, 9n]) expect(startTimeMatches(cim + sub, cim)).toBe(true);
+    expect(startTimeMatches(cim + 10n, cim)).toBe(false); // a different microsecond
+    expect(startTimeMatches(cim - 1n, cim)).toBe(false);
   });
 });
