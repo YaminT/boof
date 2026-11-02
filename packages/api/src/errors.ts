@@ -2,6 +2,7 @@ import { ZodError } from "zod";
 import {
   InvalidIdError,
   InvalidTransitionError,
+  EpicError,
   HierarchyError,
   TaskExistsError,
   TaskNotFoundError,
@@ -55,6 +56,7 @@ export const ERROR_CODES = {
     409,
     "The epic has tasks; pass detach to clear their epic, or archive the epic instead.",
   ],
+  epic_modified: [409, "The epic changed since the ETag in If-Match."],
   plan_version_conflict: [409, "The plan changed since the version in If-Match / expectedVersion."],
   task_modified: [409, "The task changed since the ETag in If-Match."],
   plan_exists: [409, "A plan with this id already exists."],
@@ -121,6 +123,11 @@ export function formatIssues(err: ZodError): { path: string; message: string }[]
 /** Map any thrown value to an {@link OpError}. Never leaks internals (unknown errors are `internal`). */
 export function toOpError(err: unknown): OpError {
   if (err instanceof OpError) return err;
+  if (err instanceof EpicError) {
+    if (err.code === "not_found") return new OpError(404, err.message, "epic_not_found");
+    if (err.code === "modified") return new OpError(409, err.message, "epic_modified");
+    return new OpError(409, err.message, "conflict");
+  }
   if (err instanceof HierarchyError) {
     const status = err.code === "epic_not_found" || err.code === "parent_not_found" ? 404 : 409;
     return new OpError(status, err.message, err.code);

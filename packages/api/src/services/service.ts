@@ -14,6 +14,10 @@ import {
   removeTask,
   type MoveInput,
   EpicStore,
+  removeEpic,
+  type CreateEpicInput,
+  type Epic,
+  type EpicPatch,
   type HierarchyIndex,
   injectCommand,
   isUserTransition,
@@ -104,6 +108,9 @@ export interface UpdateTaskInput {
   /** The task's `updated` timestamp the caller last saw (HTTP If-Match); a newer one is a 409. */
   expectedUpdated?: string;
 }
+
+/** An epic as sent over the API: the record plus its derived progress. */
+export type EpicView = Epic & { progress: { total: number; done: number } };
 
 /** A task as sent over the API: the task file plus the project it lives in. */
 export type TaskView = Omit<Task, "body"> & {
@@ -197,6 +204,65 @@ export class ProjectService {
       "This client has review trust and can only stop or steer tasks it created",
       "forbidden_trust",
     );
+  }
+
+  // --- Epics ---
+
+  private async epicView(epic: Epic, index?: HierarchyIndex): Promise<EpicView> {
+    const idx = index ?? (await this.hierarchy());
+    return { ...epic, progress: idx.epicProgress(epic.id) };
+  }
+
+  async listEpics(opts: { includeArchived?: boolean } = {}): Promise<EpicView[]> {
+    const [epics, index] = await Promise.all([
+      new EpicStore(this.root).list(opts),
+      this.hierarchy(),
+    ]);
+    return Promise.all(epics.map((e) => this.epicView(e, index)));
+  }
+
+  async getEpic(id: string): Promise<EpicView> {
+    return this.epicView(await new EpicStore(this.root).require(id));
+  }
+
+  async createEpic(input: CreateEpicInput, actor?: Principal): Promise<EpicView> {
+    return this.epicView(
+      await new EpicStore(this.root).create(input, { by: actor?.id ?? "local" }),
+    );
+  }
+
+  async updateEpic(
+    id: string,
+    patch: EpicPatch & { expectedUpdated?: string },
+    actor?: Principal,
+  ): Promise<EpicView> {
+    const { expectedUpdated, ...fields } = patch;
+    return this.epicView(
+      await new EpicStore(this.root).update(id, fields, {
+        by: actor?.id ?? "local",
+        expectedUpdated,
+      }),
+    );
+  }
+
+  /** Delete an epic; tasks that name it block it unless `detach` clears their epic. */
+  async deleteEpic(
+    id: string,
+    opts: { detach?: boolean } = {},
+    actor?: Principal,
+  ): Promise<{ ok: true; detached: string[] }> {
+    if (await this.needsApproval(actor)) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot delete epics; archive it or ask the user",
+        "forbidden_trust",
+      );
+    }
+    const { detached } = await removeEpic(this.root, id, {
+      detach: opts.detach,
+      by: actor?.id ?? "local",
+    });
+    return { ok: true, detached };
   }
 
   /** A review-trust client may move only the tasks it created. */

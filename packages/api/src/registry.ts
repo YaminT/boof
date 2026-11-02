@@ -2,6 +2,7 @@ import type { AnyOperation } from "./define-op.js";
 import { adminOps } from "./ops/admin.js";
 import { planOps } from "./ops/plans.js";
 import { projectOps } from "./ops/projects.js";
+import { epicOps } from "./ops/epics.js";
 import { taskOps } from "./ops/tasks.js";
 import { webhookOps } from "./ops/webhooks.js";
 import { whoamiOps } from "./ops/whoami.js";
@@ -12,6 +13,7 @@ export const registry: readonly AnyOperation[] = [
   ...projectOps,
   ...planOps,
   ...taskOps,
+  ...epicOps,
   ...adminOps,
   ...webhookOps,
 ];

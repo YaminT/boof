@@ -371,7 +371,7 @@ curl -s http://127.0.0.1:4319/mcp \
 ## Operations
 
 The full list, inputs and outputs are in the OpenAPI document. Areas: `projects.*`, `plans.*`
-(goals, import/export, sync), `tasks.*` (queue, answers, stop, inject, attachments),
+(goals, import/export, sync), `tasks.*` (queue, answers, stop, inject, attachments), `epics.*`,
 `auth.whoami`, `actions.list`, `settings.*`, `runner.*`, `usage.global`, `usage.budget`, `commands.*`, `auth.clients.*`,
 `webhooks.*`. Request bodies are strict: unknown keys are `400 invalid_input`. GET and DELETE
 inputs come from the query string (`?purge=1`, `?cascade=true`); path placeholders are input
@@ -395,6 +395,13 @@ the subtasks become top-level tasks in the parent's epic, and the result lists t
 (review-trust clients may not detach). Queuing a parent whose subtasks are not all done succeeds with
 the warning `subtasks_open` (header `Boof-Warning`, next to `status_downgraded`); nothing waits for the
 subtasks. Webhooks subscribed to `task.*` or `*` now also receive `task.moved`.
+
+`epics.*` manage a project's epics (`list`, `get`, `create`, `update`, `delete`). `epics.update` is
+`PUT` with a partial body (the contract has no `PATCH`) and takes `If-Match` with the epic's ETag
+(`409 epic_modified` when stale). Every epic carries `progress: {total, done}` over its non-archived
+top-level tasks. `epics.delete` refuses an epic that tasks name (`409 has_tasks`) unless `?detach=true`,
+which clears their epic; archiving keeps the grouping. Review-trust clients may create and update epics
+but never delete one. Epics need the `tasks:read` / `tasks:write` scopes.
 
 ### Editing the contract
 

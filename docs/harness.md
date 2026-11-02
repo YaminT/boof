@@ -578,6 +578,7 @@ Every error has this shape:
 | `has_children`             | 409    | The task has subtasks. Detach them first, or pass `detach`.                                                                                                     |
 | `has_tasks`                | 409    | The epic has tasks. Pass `detach`, or archive the epic.                                                                                                         |
 | `plan_version_conflict`    | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                   |
+| `epic_modified`            | 409    | The epic changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
 | `task_modified`            | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
 | `plan_exists`              | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                              |
 | `plan_not_active`          | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                       |
@@ -640,7 +641,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 67 operations. Every path below starts with `/api/v1`.
+There are 72 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -1649,6 +1650,101 @@ Path parameters (all required):
 - `projectId`: `kebab-id`, required; Project id (kebab-case)
 - `taskId`: `kebab-id`, required; Task id (kebab-case)
 - `attachmentName`: `string`, required; Stored attachment file name; max length 255
+
+### epics
+
+#### `GET /api/v1/projects/{projectId}/epics` (List epics)
+
+- Operation: `epics.list`
+- Scope: `tasks:read`
+- MCP tool: `boof_list_epics`
+- What it does: Lists a project's epics (priority descending, then oldest update) with their progress: non-archived top-level tasks and how many are done. Inputs: projectId, optional includeArchived. No side effects.
+- Success: HTTP 200 with `{ items: { archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: object, title: string, updated: ISO-8601 string }[] }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
+Query parameters:
+
+- `includeArchived`: `boolean`, optional; Also list archived epics
+
+#### `GET /api/v1/projects/{projectId}/epics/{epicId}` (Get an epic)
+
+- Operation: `epics.get`
+- Scope: `tasks:read`
+- MCP tool: `boof_get_epic`
+- What it does: Returns one epic with its progress. Inputs: projectId, epicId. No side effects.
+- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 epic_not_found`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `epicId`: `kebab-id`, required; Epic id (kebab-case)
+
+#### `POST /api/v1/projects/{projectId}/epics` (Create an epic)
+
+- Operation: `epics.create`
+- Scope: `tasks:write`
+- MCP tool: `boof_create_epic`
+- What it does: Creates an epic, a named group of tasks in one project. Inputs: projectId, title, optional id (kebab; derived from the title; none is reserved), description, priority. Writes the project's epics.json.
+- Success: HTTP 201 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
+- Header `Idempotency-Key`: Repeat the request with the same key within 24 hours and get the original response (header Idempotency-Replayed: true).
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 idempotency_conflict`, `409 conflict`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
+JSON body (unknown keys are rejected):
+
+- `description`: `string`, optional; max length 20000
+- `id`: `kebab-id`, optional; Epic id (kebab-case); default derived from the title
+- `priority`: `integer`, optional
+- `title`: `string`, required; max length 200
+
+#### `PUT /api/v1/projects/{projectId}/epics/{epicId}` (Update an epic)
+
+- Operation: `epics.update`
+- Scope: `tasks:write`
+- MCP tool: `boof_update_epic`
+- What it does: Edits an epic. Inputs: projectId, epicId, fields to change (title, description or null, priority, archived) and expectedUpdated (HTTP If-Match) to refuse a stale edit. Archiving hides the epic from the default list; its tasks keep it. Rewrites epics.json.
+- Success: HTTP 200 with `{ archived: boolean, created: ISO-8601 string, description?: string, id: kebab-id, priority: integer, progress: { done: integer, total: integer }, title: string, updated: ISO-8601 string }`. The response has an `ETag` header.
+- Header `If-Match`: The task ETag you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A newer task answers 409 task_modified.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 task_modified`, `404 epic_not_found`, `409 epic_modified`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `epicId`: `kebab-id`, required; Epic id (kebab-case)
+
+JSON body (unknown keys are rejected):
+
+- `archived`: `boolean`, optional
+- `description`: `string | null`, optional
+- `expectedUpdated`: `string`, optional; The epic's `updated` stamp you last saw (HTTP: If-Match with the ETag); max length 100
+- `priority`: `integer`, optional
+- `title`: `string`, optional; max length 200
+
+#### `DELETE /api/v1/projects/{projectId}/epics/{epicId}` (Delete an epic)
+
+- Operation: `epics.delete`
+- Scope: `tasks:write`
+- MCP tool: none (REST only)
+- What it does: Deletes an epic. An epic that tasks name is refused (409 has_tasks) unless detach=true, which clears their epic; archive it instead to keep the grouping. Inputs: projectId, epicId, optional detach (?detach=true). Review-trust clients may not delete epics. Rewrites epics.json and task files.
+- Success: HTTP 200 with `{ detached: string[], ok: true }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `403 forbidden_trust`, `404 epic_not_found`, `409 has_tasks`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `epicId`: `kebab-id`, required; Epic id (kebab-case)
+
+Query parameters:
+
+- `detach`: `boolean`, optional; Clear the epic on its tasks instead of refusing (409 has_tasks)
 
 ### Settings
 

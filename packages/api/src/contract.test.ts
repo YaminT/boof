@@ -48,6 +48,15 @@ describe("operations registry contract", () => {
     });
   });
 
+  it("pins the hierarchy tool names", () => {
+    const byName = Object.fromEntries(registry.map((o) => [o.name, o.mcp.name]));
+    expect(byName).toMatchObject({
+      "epics.list": "boof_list_epics",
+      "epics.create": "boof_create_epic",
+      "tasks.move": "boof_move_task",
+    });
+  });
+
   it("does not expose admin-only operations, secrets or file transfer to MCP", () => {
     for (const op of registry) {
       if (op.scopes.includes("admin") || op.scopes.includes("auth:admin")) {

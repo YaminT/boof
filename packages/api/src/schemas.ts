@@ -2,6 +2,7 @@
 import { z } from "zod";
 import {
   ClientSchema,
+  EpicSchema,
   PlanSchema,
   ProjectSchema,
   BudgetSettingsSchema,
@@ -107,6 +108,11 @@ export const ProjectViewSchema = ProjectSchema.extend({
     description:
       "Branch checked out in the working directory (git symbolic-ref); null when detached or not a repository.",
   }),
+});
+
+/** An epic with its derived progress: non-archived top-level tasks and how many are done. */
+export const EpicViewSchema = EpicSchema.extend({
+  progress: z.object({ total: z.number().int(), done: z.number().int() }),
 });
 
 export const OkSchema = z.object({ ok: z.literal(true) });
