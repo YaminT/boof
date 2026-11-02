@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
-import { atomicWrite, withFileLock } from "./atomic.js";
+import { basename, dirname, join, resolve } from "node:path";
+import { atomicWrite } from "./atomic.js";
+import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { appendEvent } from "./events.js";
 import { assertKebabId } from "./paths.js";
 import { uniqueKebabId } from "./ids.js";
@@ -53,9 +54,30 @@ const nowIso = () => new Date().toISOString();
 export class EpicStore {
   private readonly path: string;
 
-  constructor(private readonly projectDir: string) {
+  constructor(
+    private readonly projectDir: string,
+    /** Test hook: timeouts, polling and liveness of the cross-process lock. */
+    private readonly opts: { lock?: ProcessLockOptions } = {},
+  ) {
     // Resolved, so differently spelled directories share one lock.
     this.path = join(resolve(projectDir), "epics.json");
+  }
+
+  /**
+   * Run `fn` holding the epics lock, `<projectDir>/.locks/epics.lock`: a pid lock shared with the
+   * CLI, MCP stdio and the server, so two processes never overwrite each other's epics.json.
+   * It is the innermost lock (see hierarchy.ts), and `fn` takes no other.
+   */
+  private locked<T>(fn: () => Promise<T>): Promise<T> {
+    return withProcessLock(
+      join(dirname(this.path), ".locks", "epics.lock"),
+      this.opts.lock ?? {},
+      fn,
+      (holder, path) =>
+        new Error(
+          `The epics are being changed by another boof process (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
+        ),
+    );
   }
 
   /**
@@ -127,7 +149,7 @@ export class EpicStore {
     opts: { by?: string; origin?: TaskOrigin } = {},
   ): Promise<Epic> {
     const explicit = input.id === undefined ? undefined : assertKebabId(input.id);
-    const epic = await withFileLock(this.path, async () => {
+    const epic = await this.locked(async () => {
       const { epics, ignored } = await this.load();
       const taken = epics.map((e) => e.id);
       if (explicit !== undefined && (taken.includes(explicit) || RESERVED_IDS.includes(explicit))) {
@@ -157,7 +179,7 @@ export class EpicStore {
     opts: { by?: string; expectedUpdated?: string } = {},
   ): Promise<Epic> {
     const clean = EpicPatchSchema.parse(patch);
-    const result = await withFileLock(this.path, async () => {
+    const result = await this.locked(async () => {
       const { epics, ignored } = await this.load();
       const current = epics.find((e) => e.id === id);
       if (!current) throw new EpicError("not_found", `Epic not found: ${id}`);
@@ -189,7 +211,7 @@ export class EpicStore {
    * only from `removeEpic` (hierarchy.ts), which detaches or refuses first.
    */
   async remove(id: string, opts: { by?: string } = {}): Promise<void> {
-    await withFileLock(this.path, async () => {
+    await this.locked(async () => {
       const { epics, ignored } = await this.load();
       if (!epics.some((e) => e.id === id))
         throw new EpicError("not_found", `Epic not found: ${id}`);

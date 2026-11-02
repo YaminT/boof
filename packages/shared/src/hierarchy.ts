@@ -5,9 +5,12 @@
  * the task lock inside `TaskStore`, then the `epics.json` file lock inside `EpicStore`. Never take
  * the hierarchy lock inside a `modify`/`transition` callback or inside `EpicStore`.
  *
- * The lock is in-process, like `lockTask`. A second process (the CLI beside the server) can still
- * race a mutation; that is covered by dangling-reference tolerance (a missing parent or epic
- * loads fine and is flagged `parentMissing` / `epicMissing`), not by the lock.
+ * All three are pid locks (`withProcessLock`), so they also hold between processes (the CLI and MCP
+ * stdio beside the server): `<project>/.locks/hierarchy.lock`, `<project>/tasks/.locks/<id>.lock`,
+ * `<project>/.locks/epics.lock`. The order is the same across processes, and nothing that holds a
+ * task lock or the epics lock takes the hierarchy lock, so no cycle is possible; the worst case is
+ * a 30 s wait and a clear error. A missing parent or epic still loads fine and is flagged
+ * `parentMissing` / `epicMissing`, for a file edited by hand or a delete from an older version.
  *
  * The lock is not re-entrant: never call `createTaskInHierarchy`, `moveTask`, `removeTask` or
  * `removeEpic` from inside `withHierarchyLock` (or from anything that holds it); it hangs with no
@@ -17,10 +20,10 @@
  * Only this module writes `epicId` and `parentId`, always through `TaskStore.modify`, so
  * `TaskStore.save` can keep the disk values against a stale copy.
  */
-import { withFileLock } from "./atomic.js";
 import { EpicStore } from "./epic-store.js";
 import { appendEvent } from "./events.js";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { withProcessLock } from "./process-lock.js";
 import type { Epic } from "./schema.js";
 import { TaskNotFoundError, TaskStore } from "./store.js";
 import type { Task } from "./task-file.js";
@@ -42,7 +45,15 @@ export class HierarchyError extends Error {
 }
 
 export function withHierarchyLock<T>(projectDir: string, fn: () => Promise<T>): Promise<T> {
-  return withFileLock(`${resolve(projectDir)}#hierarchy`, fn);
+  return withProcessLock(
+    join(resolve(projectDir), ".locks", "hierarchy.lock"),
+    {},
+    fn,
+    (holder, path) =>
+      new Error(
+        `The task hierarchy is being changed by another boof process (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
+      ),
+  );
 }
 
 /** Tasks: priority descending, then updated ascending, then id ascending (the scheduler's order). */
