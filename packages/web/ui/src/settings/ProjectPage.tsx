@@ -100,14 +100,14 @@ export function ProjectPage({
         <label className={label}>
           Brief
           <Textarea
-            className="plain-font mt-0 font-normal"
+            className="mt-0 font-normal"
             rows={6}
             value={p.brief}
             onChange={(e) => setP({ brief: e.target.value })}
           />
           <span className={help}>Given to every agent as the project&apos;s context.</span>
         </label>
-        <label className="check m-0 text-[length:var(--text-body)] font-normal">
+        <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-body)] font-normal">
           <input
             type="checkbox"
             checked={p.paused}

@@ -59,11 +59,7 @@ export function NewPlanDialog({
           </label>
           <label className={label}>
             Description (optional)
-            <Textarea
-              className="plain-font"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
+            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

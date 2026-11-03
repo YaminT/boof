@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
 import { clearToken, setToken } from "../token.js";
 
 /**
@@ -8,8 +10,9 @@ import { clearToken, setToken } from "../token.js";
 export function TokenGate({ onSubmit }: { onSubmit: () => void }) {
   const [value, setValue] = useState("");
   return (
-    <div className="token-gate">
+    <div className="mx-auto my-[12vh] max-w-[440px] rounded-[10px] border border-line bg-surface p-6 shadow-md">
       <form
+        className="flex flex-col gap-3.5"
         onSubmit={(e) => {
           e.preventDefault();
           if (!value.trim()) return;
@@ -17,14 +20,14 @@ export function TokenGate({ onSubmit }: { onSubmit: () => void }) {
           onSubmit();
         }}
       >
-        <h2>API key required</h2>
-        <p className="muted">
+        <h2 className="m-0">API key required</h2>
+        <p className="m-0 text-ink-muted">
           This Boof Runner server requires authentication. Paste an API key created with{" "}
           <code>boof-runner auth add</code>. It is kept for this browser tab only.
         </p>
-        <label>
+        <label className="flex flex-col gap-1.5 text-sm font-medium">
           API key
-          <input
+          <Input
             autoFocus
             type="password"
             autoComplete="off"
@@ -34,19 +37,20 @@ export function TokenGate({ onSubmit }: { onSubmit: () => void }) {
             onChange={(e) => setValue(e.target.value)}
           />
         </label>
-        <div className="editor-actions">
-          <button
+        <div className="flex items-center gap-3">
+          <Button
             type="button"
+            variant="outline"
             onClick={() => {
               clearToken();
               setValue("");
             }}
           >
             Clear
-          </button>
-          <button type="submit" className="primary" disabled={!value.trim()}>
+          </Button>
+          <Button type="submit" disabled={!value.trim()}>
             Continue
-          </button>
+          </Button>
         </div>
       </form>
     </div>

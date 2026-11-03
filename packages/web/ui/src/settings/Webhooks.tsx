@@ -300,7 +300,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
             </label>
             <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0">
               <legend className="mb-1 p-0 text-sm font-medium">Projects</legend>
-              <label className="check m-0 text-[length:var(--text-row)] font-normal">
+              <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
                 <input
                   type="radio"
                   name="wh-projects"
@@ -311,7 +311,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 />
                 Every project
               </label>
-              <label className="check m-0 text-[length:var(--text-row)] font-normal">
+              <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
                 <input
                   type="radio"
                   name="wh-projects"
@@ -329,7 +329,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                   {selectable.map((p) => (
                     <label
                       key={p.id}
-                      className="check m-0 text-[length:var(--text-row)] font-normal"
+                      className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal"
                     >
                       <input
                         type="checkbox"

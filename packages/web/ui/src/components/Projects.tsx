@@ -83,7 +83,7 @@ function AddProjectForm({
   const label = "flex flex-col gap-1.5 text-sm font-medium";
   return (
     <form
-      className="flex flex-col"
+      className="flex flex-col gap-3.5 text-left"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
@@ -114,7 +114,7 @@ function AddProjectForm({
         </NativeSelect>
       </label>
       {form.mode === "auto" ? (
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="mt-0 mb-3.5 text-ink-muted">
           <bdi>{autoPathHint(projectsRoot, form.name)}</bdi>
         </p>
       ) : (
@@ -145,14 +145,13 @@ function AddProjectForm({
           )}
         </span>
         <Textarea
-          className="plain-font"
           value={form.brief}
           onChange={(e) => patch({ brief: e.target.value })}
           placeholder="What is this project and what should the agents know about it?"
         />
       </label>
       {showDefaultOption && (
-        <label className="check">
+        <label className="flex flex-row items-center gap-2 text-[length:var(--text-row)]">
           <input
             type="checkbox"
             checked={makeDefault}
@@ -167,7 +166,7 @@ function AddProjectForm({
         </p>
       )}
       {askConfirm && (
-        <label className="check">
+        <label className="flex flex-row items-center gap-2 text-[length:var(--text-row)]">
           <input
             type="checkbox"
             checked={form.confirm}
@@ -232,11 +231,15 @@ export function AddProjectGate({
   projectsRoot?: string;
 }) {
   return (
-    <div className="gate">
-      <div className="gate-card">
-        <img className="gate-logo" src={boofRunnerLogoUrl} alt="Boof Runner" />
-        <h1>Welcome to Boof Runner</h1>
-        <p className="muted">
+    <div className="flex min-h-screen items-center justify-center p-6">
+      <div className="w-full max-w-[460px] rounded-2xl border border-line bg-surface p-10 text-center shadow-md">
+        <img
+          className="mx-auto mb-4 size-[72px] rounded-full border border-line shadow-sm"
+          src={boofRunnerLogoUrl}
+          alt="Boof Runner"
+        />
+        <h1 className="mt-0 mb-2 text-2xl">Welcome to Boof Runner</h1>
+        <p className="mt-0 mb-6 text-[length:var(--text-body)] text-ink-muted">
           Add the first project: Boof Runner can create it for you or use a git repository you
           already have. You can add more projects and switch between them from the header.
         </p>

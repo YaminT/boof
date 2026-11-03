@@ -195,7 +195,7 @@ export function CommandTemplates({
             <label className={label}>
               Instructions
               <Textarea
-                className="plain-font mt-0 font-normal"
+                className="mt-0 font-normal"
                 rows={14}
                 value={body}
                 onChange={(e) => setBody(e.target.value)}

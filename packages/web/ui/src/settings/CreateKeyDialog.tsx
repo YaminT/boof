@@ -121,7 +121,7 @@ export function CreateKeyDialog({
               return (
                 <label
                   key={s}
-                  className="check m-0 items-start text-[length:var(--text-row)] font-normal"
+                  className="flex flex-row gap-2 m-0 items-start text-[length:var(--text-row)] font-normal"
                 >
                   <input
                     type="checkbox"
@@ -149,7 +149,7 @@ export function CreateKeyDialog({
             <legend className="mb-1 p-0 text-[length:var(--text-body)] font-medium">
               Projects
             </legend>
-            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+            <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
               <input
                 type="radio"
                 name="key-projects"
@@ -160,7 +160,7 @@ export function CreateKeyDialog({
               />
               Every project
             </label>
-            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+            <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
               <input
                 type="radio"
                 name="key-projects"
@@ -173,7 +173,10 @@ export function CreateKeyDialog({
             {v.projects !== "*" && (
               <div className="ml-6 flex max-h-40 flex-col gap-1 overflow-auto">
                 {selectable.map((p) => (
-                  <label key={p.id} className="check m-0 text-[length:var(--text-row)] font-normal">
+                  <label
+                    key={p.id}
+                    className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal"
+                  >
                     <input
                       type="checkbox"
                       className="m-0 size-4 w-4"
@@ -196,7 +199,7 @@ export function CreateKeyDialog({
 
           <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0">
             <legend className="mb-1 p-0 text-[length:var(--text-body)] font-medium">Trust</legend>
-            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+            <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
               <input
                 type="radio"
                 name="key-trust"
@@ -206,7 +209,7 @@ export function CreateKeyDialog({
               />
               Review: its tasks and plans arrive as drafts for you to approve.
             </label>
-            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+            <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
               <input
                 type="radio"
                 name="key-trust"

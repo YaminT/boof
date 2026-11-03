@@ -139,7 +139,7 @@ export function AppShell({
           }
         />
         <div className="flex min-w-0 flex-1 flex-col px-4 min-[720px]:px-8">
-          <main className="mx-auto w-full max-w-[1320px] flex-1 pb-8 min-[720px]:pb-12">
+          <main className="mx-auto w-full max-w-[1320px] min-w-0 flex-1 pt-6 pb-8 min-[720px]:pb-12">
             {children}
           </main>
           <CommandConsole actions={consoleActions.actions} />

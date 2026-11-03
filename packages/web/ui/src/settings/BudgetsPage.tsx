@@ -111,7 +111,7 @@ export function BudgetsPage({
     <Textarea
       aria-label={label}
       rows={2}
-      className="plain-font mt-0 font-mono font-normal"
+      className="mt-0 font-mono font-normal"
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}

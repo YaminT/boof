@@ -1,8 +1,7 @@
-@layer theme, base, legacy, components, utilities;
+@layer theme, base, components, utilities;
 
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "./styles.css" layer(legacy);
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -54,25 +53,6 @@
   --primary-foreground: #0f1418;
 }
 
-/* Legacy styles.css variables mapped onto the dark tokens until the old screens are replaced.
-   `:root.dark` outranks the `:root` block in styles.css regardless of load order. */
-:root.dark {
-  /* Legacy styles.css variables, mapped onto the dark tokens until the old screens are replaced */
-  --bg: var(--page);
-  --panel: var(--surface);
-  --inset: color-mix(in srgb, var(--page) 60%, var(--surface));
-  --text: var(--ink);
-  --legacy-muted: var(--ink-muted);
-  --border-strong: color-mix(in srgb, var(--line) 70%, var(--ink-muted));
-  --legacy-border: var(--line);
-  --legacy-accent: #3d7098;
-  --accent-hover: #4a82ab;
-  --accent-weak: color-mix(in srgb, var(--accent-brand) 16%, transparent);
-  --green: var(--done);
-  --red: var(--failed);
-  --amber: var(--attention);
-}
-
 @theme inline {
   --color-page: var(--page);
   --color-surface: var(--surface);
@@ -120,10 +100,14 @@
 }
 
 body {
+  margin: 0;
   font-size: 14px;
+  line-height: 1.5;
   font-family: var(--font-sans);
   background: var(--page);
   color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 @layer base {
@@ -133,6 +117,12 @@ body {
   h4 {
     font-weight: 600;
     margin-block: 0.5em;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.01em;
   }
   h1 {
     font-size: var(--text-page);
@@ -159,6 +149,7 @@ body {
   }
   a:focus-visible,
   summary:focus-visible,
+  input[type="checkbox"]:focus-visible,
   [tabindex]:not([tabindex="-1"]):focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;

@@ -240,7 +240,7 @@ export function AgentsPage({
           onInherit={(inh) => setO({ gate: inh ? null : g.gate })}
           inheritedText={g.gate ? "yes" : "no"}
           global={
-            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+            <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
               <input
                 className="m-0 size-4 w-4"
                 type="checkbox"
@@ -251,7 +251,7 @@ export function AgentsPage({
             </label>
           }
           override={
-            <label className="check m-0 text-[length:var(--text-row)] font-normal">
+            <label className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal">
               <input
                 className="m-0 size-4 w-4"
                 type="checkbox"

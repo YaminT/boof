@@ -232,7 +232,10 @@ export function GoalEditor({
           <legend className="mb-1 p-0 text-[length:var(--text-row)] font-medium">Depends on</legend>
           <div className="flex max-h-60 flex-col gap-1 overflow-auto rounded-md border border-line p-2">
             {others.map((g) => (
-              <label key={g.id} className="check m-0 text-[length:var(--text-row)] font-normal">
+              <label
+                key={g.id}
+                className="flex flex-row gap-2 items-center m-0 text-[length:var(--text-row)] font-normal"
+              >
                 <input
                   type="checkbox"
                   checked={values.dependsOn.includes(g.id)}
@@ -254,7 +257,7 @@ export function GoalEditor({
       <label className={label}>
         Goal
         <Textarea
-          className="plain-font mt-0 font-normal"
+          className="mt-0 font-normal"
           rows={3}
           value={values.goal}
           onChange={(e) => set("goal", e.target.value)}
@@ -271,7 +274,7 @@ export function GoalEditor({
       <label className={label}>
         Do (one rule per line)
         <Textarea
-          className="plain-font mt-0 font-normal"
+          className="mt-0 font-normal"
           rows={4}
           value={values.doRules}
           onChange={(e) => set("doRules", e.target.value)}
@@ -280,7 +283,7 @@ export function GoalEditor({
       <label className={label}>
         Don&apos;t (one rule per line)
         <Textarea
-          className="plain-font mt-0 font-normal"
+          className="mt-0 font-normal"
           rows={3}
           value={values.dontRules}
           onChange={(e) => set("dontRules", e.target.value)}
