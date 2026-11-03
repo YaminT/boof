@@ -27,6 +27,7 @@ import {
   type EpicSection,
   type PrefStore,
 } from "../lib/epic-grouping.js";
+import { useFocusMode } from "../lib/useFocusMode.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
 import { withEpicQuery, withQuery } from "../lib/task-links.js";
 import { groupSubtasks } from "../lib/task-hierarchy.js";
@@ -81,6 +82,7 @@ export function TasksPage({
   const actions = useTaskActions(pid, data, navigate);
   const [filter, setFilter] = useState<TaskFilter>({ ...NO_FILTER, epic });
   useEffect(() => setFilter((f) => (f.epic === epic ? f : { ...f, epic })), [epic]);
+  const focus = useFocusMode("tasks");
   const store = useMemo(safeStorage, []);
   const [grouping, setGrouping] = useState(() => readGrouping(store, pid));
   const [collapsed, setCollapsed] = useState(() => readCollapsed(store, pid));
@@ -262,7 +264,7 @@ export function TasksPage({
     setCollapsed(next);
     writeCollapsed(store, pid, next);
   };
-  const finishedOpen = showFinished || filtering;
+  const finishedOpen = showFinished || filtering || focus.expanded;
   const visible: RowEntry[] = [
     ...rows.needs,
     ...rows.proposed,
@@ -371,6 +373,8 @@ export function TasksPage({
         grouping={grouping}
         onGrouping={toggleGrouping}
         onManageEpics={() => setManaging(true)}
+        focusMode={focus.mode}
+        onFocusToggle={focus.toggle}
       />
       {data.tasksLoaded && tasks.length === 0 && plans.every((p) => p.status !== "draft") && (
         <div className="py-8">
@@ -454,7 +458,7 @@ export function TasksPage({
               done {counts.done}, failed {counts.failed}, stopped {counts.stopped}, archived{" "}
               {counts.archived}
             </span>
-            {!filtering && (
+            {!filtering && !focus.expanded && (
               <Button
                 size="sm"
                 variant="ghost"

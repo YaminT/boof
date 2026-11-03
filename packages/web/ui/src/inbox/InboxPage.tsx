@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { api, type PlanSummary, type TaskView } from "../api.js";
 import { Button } from "@/ui/button";
+import { FocusToggle } from "@/ui/focus-toggle";
+import { useFocusMode } from "../lib/useFocusMode.js";
 import { act } from "../lib/act.js";
 import { inboxGroups, type InboxGroup } from "../lib/inbox.js";
 import { formatRoute, type Route } from "../lib/route.js";
@@ -178,10 +180,17 @@ export function InboxPage({
     selectedPid ? { pid: selectedPid, needsYou } : null,
     projects,
   );
+  const focus = useFocusMode("inbox");
   const changed = () => void data.refresh();
   return (
     <div className="flex max-w-[1320px] flex-col gap-6">
-      <h1 className="m-0 text-[length:var(--text-page)] leading-tight font-semibold">Inbox</h1>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="m-0 flex-1 text-[length:var(--text-page)] leading-tight font-semibold">
+          Inbox
+        </h1>
+        {/* Everything here needs you, so both views list every group; the choice is remembered anyway. */}
+        <FocusToggle mode={focus.mode} onToggle={focus.toggle} />
+      </div>
       {groups.length === 0 ? (
         <p className="m-0 text-ink-muted">
           Nothing needs you. Planner questions, proposed tasks and draft plans show up here.

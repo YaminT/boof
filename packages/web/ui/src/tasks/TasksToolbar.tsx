@@ -1,7 +1,9 @@
 import { NativeSelect } from "@/ui/native-select";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
+import { FocusToggle } from "@/ui/focus-toggle";
 import { Kbd } from "@/ui/kbd";
+import type { FocusMode } from "../lib/focus-mode.js";
 import type { EpicView } from "../api.js";
 import type { TaskFilter } from "../lib/task-list.js";
 import { paletteShortcutLabel } from "../shell/CommandPalette.js";
@@ -25,6 +27,8 @@ export function TasksToolbar({
   grouping,
   onGrouping,
   onManageEpics,
+  focusMode,
+  onFocusToggle,
 }: {
   filter: TaskFilter;
   labels: string[];
@@ -37,6 +41,8 @@ export function TasksToolbar({
   grouping: boolean;
   onGrouping: (on: boolean) => void;
   onManageEpics: () => void;
+  focusMode: FocusMode;
+  onFocusToggle: () => void;
 }) {
   const shown = epics.filter((e) => !e.archived || e.id === filter.epic);
   return (
@@ -112,7 +118,8 @@ export function TasksToolbar({
       <Button variant="ghost" size="sm" onClick={onManageEpics}>
         Manage epics…
       </Button>
-      <Kbd className="ml-auto hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
+      <FocusToggle mode={focusMode} onToggle={onFocusToggle} className="ml-auto" />
+      <Kbd className=" hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
     </div>
   );
 }
