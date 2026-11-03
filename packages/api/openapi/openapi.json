@@ -1484,6 +1484,30 @@
             },
             "type": "object"
           },
+          "owlish": {
+            "additionalProperties": false,
+            "properties": {
+              "healthGate": {
+                "default": "pause",
+                "enum": [
+                  "pause",
+                  "warn",
+                  "off"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "maxLength": 500,
+                "pattern": "^https?:\\/\\/",
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "healthGate"
+            ],
+            "type": "object"
+          },
           "projectsRoot": {
             "minLength": 1,
             "type": "string"
@@ -1509,6 +1533,12 @@
                 "maximum": 9007199254740991,
                 "type": "integer"
               },
+              "poolWaitMs": {
+                "default": 1800000,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
               "transient": {
                 "default": 2,
                 "maximum": 9007199254740991,
@@ -1519,7 +1549,8 @@
             "required": [
               "transient",
               "backoffMs",
-              "idleTimeoutMs"
+              "idleTimeoutMs",
+              "poolWaitMs"
             ],
             "type": "object"
           },
@@ -11141,6 +11172,12 @@
                       },
                       "idleTimeoutMs": {
                         "default": 1200000,
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "poolWaitMs": {
+                        "default": 1800000,
                         "exclusiveMinimum": 0,
                         "maximum": 9007199254740991,
                         "type": "integer"

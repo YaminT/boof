@@ -221,6 +221,8 @@ export const RetrySettingsSchema = z.object({
   backoffMs: z.array(z.number().int().min(0)).default([30000, 120000]),
   /** Kill a tool step that prints nothing for this long and treat it as transient. */
   idleTimeoutMs: z.number().int().positive().default(1200000),
+  /** How long a running task waits in place for the account pool to recover (owlish). Default 30 minutes. */
+  poolWaitMs: z.number().int().positive().default(1_800_000),
 });
 export type RetrySettings = z.infer<typeof RetrySettingsSchema>;
 
@@ -379,6 +381,21 @@ const EnvNameSchema = z
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name")
   .max(200);
 
+/**
+ * The optional account pool (better-ccflare). Absent: boof works as before. The client key is not
+ * here; it lives in `<data>/owlish/secrets.json` or `BOOF_OWLISH_API_KEY`.
+ */
+export const OwlishSettingsSchema = z.strictObject({
+  url: z
+    .string()
+    .url()
+    .regex(/^https?:\/\//i, "must be an http(s) URL")
+    .max(500),
+  /** `pause`: no routed task starts while the pool is unhealthy; `warn`: report only; `off`: ignore. */
+  healthGate: z.enum(["pause", "warn", "off"]).default("pause"),
+});
+export type OwlishSettings = z.infer<typeof OwlishSettingsSchema>;
+
 /** Runner section of settings.json. */
 export const RunnerSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -417,6 +434,8 @@ export const SettingsSchema = z.object({
   budget: BudgetSettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
   mcp: McpSettingsSchema.optional(),
+  /** The optional better-ccflare account pool. */
+  owlish: OwlishSettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
   webhooks: z.array(WebhookSchema).optional(),
   models: z.record(z.string(), z.array(z.string())),

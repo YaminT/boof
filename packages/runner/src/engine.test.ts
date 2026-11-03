@@ -1124,6 +1124,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
               transient: 2,
               backoffMs: [0],
               idleTimeoutMs: 1200000,
+              poolWaitMs: 1800000,
               ...over.retries,
             },
           }

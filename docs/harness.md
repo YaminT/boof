@@ -1842,7 +1842,7 @@ JSON body (unknown keys are rejected):
 - `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
 - `models`: `{ [key: string]: string[] }`, optional
 - `projectsRoot`: `string | null`, optional
-- `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }`, optional
+- `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, poolWaitMs?: integer, transient?: integer >= 0 }`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }`, optional
 - `roles`: `{ developer: { model: string, tool: string }, observer?: { model: string, tool: string }, planner: { model: string, tool: string }, reviewer: { model: string, tool: string } }`, optional
 - `runner`: `{ agentEnv?: string[], concurrency?: integer >= 1, enabled?: boolean, inheritMcpServers?: boolean }`, optional

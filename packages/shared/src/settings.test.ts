@@ -67,6 +67,7 @@ describe("settings compatibility", () => {
       transient: 2,
       backoffMs: [30000, 120000],
       idleTimeoutMs: 1200000,
+      poolWaitMs: 1800000,
     });
     expect(s.runner.concurrency).toBe(1);
     expect(s.defaultProject).toBeNull();
@@ -79,7 +80,7 @@ describe("settings compatibility", () => {
     const store = new SettingsStore(root);
     const s = defaultSettings();
     s.worktree = { root: "/tmp/wt", onDone: "delete", onFailure: "delete" };
-    s.retries = { transient: 5, backoffMs: [1], idleTimeoutMs: 10 };
+    s.retries = { transient: 5, backoffMs: [1], idleTimeoutMs: 10, poolWaitMs: 1000 };
     await store.save(s);
     const loaded = await store.load();
     expect(worktreeSettings(loaded)).toEqual(s.worktree);

@@ -142,6 +142,9 @@ describe("import boundaries", () => {
     expect(partOfSpecifier("@boof-runner/shared/sub", "bin/src/x.ts")).toBe("heart");
     expect(partOfSpecifier("./scaffold.js", "packages/shared/src/index.ts")).toBe("heart");
     expect(partOfSpecifier("./headless.js", "bin/src/plan-cli.ts")).toBe("bin");
+    // The barrel re-exports Owlish files without being a Heart dependency on them.
+    expect(partOfFile("packages/shared/src/index.ts")).toBeUndefined();
+    expect(partOfFile("packages/shared/src/owlish.ts")).toBe("owlish");
     expect(partOfSpecifier("../../../shared/src/x.js", "packages/api/src/ops/y.ts")).toBe("heart");
     expect(partOfSpecifier("node:fs", "bin/src/x.ts")).toBeUndefined();
     expect(partOfSpecifier("hono", "bin/src/x.ts")).toBeUndefined();
