@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -7,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/ui/dialog";
-import { deleteDialogModel } from "../lib/task-delete.js";
+import { DETACH_ARM_MS, deleteDialogModel } from "../lib/task-delete.js";
 
 /**
  * Confirm before deleting a task; the only place a task can be deleted. A task with subtasks asks
@@ -29,18 +30,28 @@ export function DeleteTaskDialog({
   onConfirm: (detach: boolean) => void;
 }) {
   const m = deleteDialogModel(subtasks, refused);
+  const keep = useRef<HTMLButtonElement>(null);
+  // The question that detaches is dangerous: focus starts on "Keep task", and the destructive
+  // button waits a moment, so a repeated Enter or click cannot answer it unread.
+  const [armed, setArmed] = useState(!m.detach);
+  useEffect(() => {
+    if (!open || !m.detach) return setArmed(true);
+    setArmed(false);
+    const t = window.setTimeout(() => setArmed(true), DETACH_ARM_MS);
+    return () => window.clearTimeout(t);
+  }, [open, m.detach]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent showCloseButton={false} initialFocus={keep}>
         <DialogHeader>
           <DialogTitle>{m.title}</DialogTitle>
           <DialogDescription>{m.body}</DialogDescription>
         </DialogHeader>
         <DialogFooter className="sm:flex-wrap">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button ref={keep} variant="outline" onClick={() => onOpenChange(false)}>
             Keep task
           </Button>
-          <Button variant="destructive" onClick={() => onConfirm(m.detach)}>
+          <Button variant="destructive" disabled={!armed} onClick={() => onConfirm(m.detach)}>
             {m.confirmLabel}
           </Button>
         </DialogFooter>

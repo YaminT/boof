@@ -37,3 +37,18 @@ export function deleteDialogModel(subtasks: number, refused: boolean): DeleteDia
 export function hasChildrenConflict(err: unknown): boolean {
   return err instanceof ApiError && err.status === 409 && err.code === "has_children";
 }
+
+/** The subtask count the server's refusal names ("has 3 subtask(s)"), if it says one. */
+export function serverSubtaskCount(err: unknown): number | null {
+  if (!(err instanceof ApiError)) return null;
+  const m = /\bhas (\d+) subtask/.exec(err.message);
+  return m ? Number(m[1]) : null;
+}
+
+/** The count to show: what the server said, or at least what the page knows. */
+export function shownSubtasks(known: number, fromServer: number | null): number {
+  return Math.max(known, fromServer ?? 0);
+}
+
+/** How long a destructive "delete and detach" stays disabled after it appears. */
+export const DETACH_ARM_MS = 500;

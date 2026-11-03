@@ -6,6 +6,8 @@ import type { Route } from "../lib/route.js";
 import { AddProjectModal } from "../components/Projects.js";
 import { CommandConsole } from "./CommandConsole.js";
 import { CommandPalette, SearchButton } from "./CommandPalette.js";
+import { availableActions } from "../lib/console-command.js";
+import { useHeldScopes } from "../lib/useHeldScopes.js";
 import { useCommandActions } from "./useCommandActions.js";
 import { useEpics } from "../tasks/useEpics.js";
 import { BottomBar } from "./BottomBar.js";
@@ -59,6 +61,7 @@ export function AppShell({
     route?.name === "task"
       ? (data.tasks.find((t) => t.frontmatter.id === route.taskId) ?? null)
       : null;
+  const held = useHeldScopes();
   const palette = useCommandActions({
     data,
     projects,
@@ -159,7 +162,11 @@ export function AppShell({
             </>
           )}
         />
-        <CommandPalette actions={palette.actions} open={searching} onOpenChange={setSearching} />
+        <CommandPalette
+          actions={availableActions(palette.actions, held)}
+          open={searching}
+          onOpenChange={setSearching}
+        />
         {palette.stopDialog}
         {consoleActions.stopDialog}
         <AddProjectModal

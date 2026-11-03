@@ -51,10 +51,17 @@ function pickTarget(
   const candidates = actions.filter((a) => a.id.startsWith(TARGETED[verb]!));
   const want = norm(args);
   if (!want) return unknown(raw, `/${verb} needs a target: which one?`);
-  const byId = candidates.filter((a) => a.id.slice(TARGETED[verb]!.length).toLowerCase() === want);
-  const hits = byId.length
-    ? byId
-    : candidates.filter((a) => norm(`${a.label} ${a.searchValue}`).includes(want));
+  // The target only: its id, then its exact title, then a unique part of its title. Never the
+  // verb's label words or the title of the task the command is about.
+  const idOf = (a: CommandAction) => a.id.slice(TARGETED[verb]!.length).toLowerCase();
+  const titleOf = (a: CommandAction) => norm(a.targetTitle ?? "");
+  const exactId = candidates.filter((a) => idOf(a) === want);
+  const exactTitle = candidates.filter((a) => titleOf(a) === want);
+  const hits = exactId.length
+    ? exactId
+    : exactTitle.length
+      ? exactTitle
+      : candidates.filter((a) => titleOf(a).includes(want));
   if (hits.length === 1) return { kind: "run", action: hits[0]!, args };
   return unknown(
     raw,

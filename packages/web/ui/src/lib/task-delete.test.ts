@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../api.js";
-import { deleteDialogModel, hasChildrenConflict } from "./task-delete.js";
+import {
+  deleteDialogModel,
+  hasChildrenConflict,
+  serverSubtaskCount,
+  shownSubtasks,
+} from "./task-delete.js";
 
 describe("deleteDialogModel", () => {
   it("is the ordinary delete for a task without subtasks", () => {
@@ -36,5 +41,22 @@ describe("hasChildrenConflict", () => {
     expect(hasChildrenConflict(new ApiError("x", 403, "has_children"))).toBe(false);
     expect(hasChildrenConflict(new Error("x"))).toBe(false);
     expect(hasChildrenConflict(undefined)).toBe(false);
+  });
+});
+
+describe("server count", () => {
+  it("reads the count from the refusal and shows the larger of it and what the page knows", () => {
+    const e = new ApiError(
+      "Task a has 4 subtask(s); pass detach to keep them",
+      409,
+      "has_children",
+    );
+    expect(serverSubtaskCount(e)).toBe(4);
+    expect(serverSubtaskCount(new ApiError("nope", 409, "has_children"))).toBeNull();
+    expect(serverSubtaskCount(new Error("x"))).toBeNull();
+    expect(shownSubtasks(2, 4)).toBe(4);
+    expect(shownSubtasks(5, 4)).toBe(5);
+    expect(shownSubtasks(0, null)).toBe(0);
+    expect(deleteDialogModel(shownSubtasks(0, 4), true).body).toContain("4 subtasks.");
   });
 });

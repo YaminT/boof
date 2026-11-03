@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "@/ui/button";
 import {
@@ -13,6 +13,7 @@ import { formatDuration } from "../lib/run-timing.js";
 import { StatusPill } from "../shell/StatusPill.js";
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import type { TaskActions } from "../tasks/useTaskActions.js";
+import { shownSubtasks } from "../lib/task-delete.js";
 import { DeleteTaskDialog } from "./DeleteTaskDialog.js";
 
 /** Back link, title, status, the one primary action and the overflow menu. */
@@ -37,12 +38,14 @@ export function TaskHeader({
   /** Subtasks of this task, which a delete would have to detach. */
   subtasks: number;
   /** Deletes the task; "needs-detach" when the server found subtasks the page did not know of. */
-  onDelete: (detach: boolean) => Promise<"deleted" | "needs-detach" | "failed">;
+  onDelete: (detach: boolean) => Promise<"deleted" | "failed" | { needsDetach: number | null }>;
 }) {
   const f = task.frontmatter;
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [refused, setRefused] = useState(false);
+  // The server found subtasks the page did not know of; kept until the list shows them.
+  const [refused, setRefused] = useState<{ count: number | null } | null>(null);
+  useEffect(() => setRefused(null), [subtasks]);
   const running = f.status === "running";
 
   return (
@@ -105,20 +108,19 @@ export function TaskHeader({
         }}
       />
       <DeleteTaskDialog
+        // A fresh dialog for the detach question, never the same one with new words.
+        key={refused === null ? "ask" : "detach"}
         open={confirmDelete}
-        onOpenChange={(o) => {
-          setConfirmDelete(o);
-          if (!o) setRefused(false);
-        }}
-        subtasks={subtasks}
-        refused={refused}
+        onOpenChange={setConfirmDelete}
+        subtasks={shownSubtasks(subtasks, refused?.count ?? null)}
+        refused={refused !== null}
         onConfirm={(detach) => {
           setConfirmDelete(false);
           void onDelete(detach).then((r) => {
-            if (r !== "needs-detach") return;
-            // The list was out of date: ask again, this time with the detach choice.
-            setRefused(true);
-            setConfirmDelete(true);
+            if (typeof r === "string") return;
+            // The list was out of date: remember it and ask again, with the detach choice.
+            setRefused({ count: r.needsDetach });
+            window.setTimeout(() => setConfirmDelete(true), 0);
           });
         }}
       />

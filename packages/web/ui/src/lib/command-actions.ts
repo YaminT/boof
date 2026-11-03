@@ -16,6 +16,8 @@ export interface CommandAction {
   /** What the palette matches against (defaults to the label). */
   searchValue: string;
   keywords: string[];
+  /** For actions a slash verb aims at something (a task, an epic, a plan, a project): its name. */
+  targetTitle?: string;
   /** The key needs one of these scopes; the server stays the judge. */
   requiredScope?: Scope | Scope[];
   disabled?: boolean;
@@ -97,6 +99,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
   for (const p of ctx.projects.filter((x) => !x.archived)) {
     add({
       id: `switch-project-${p.id}`,
+      targetTitle: p.name,
       label: `Switch to ${p.name}`,
       group: "Projects",
       searchValue: `Switch to project ${p.name}`,
@@ -110,6 +113,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     for (const t of ctx.tasks) {
       add({
         id: `open-task-${t.frontmatter.id}`,
+        targetTitle: t.frontmatter.title,
         label: t.frontmatter.title,
         group: "Tasks",
         searchValue: `Open task ${t.frontmatter.title} ${t.frontmatter.id}`,
@@ -134,6 +138,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     for (const plan of groups.needsYou.flatMap((n) => (n.kind === "draft-plan" ? [n.plan] : []))) {
       add({
         id: `activate-plan-${plan.id}`,
+        targetTitle: plan.title,
         label: `Activate plan: ${plan.title}`,
         group: "Actions",
         searchValue: `Activate plan: ${plan.title} ${plan.id}`,
@@ -146,6 +151,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
       const label = `${proposed.has(t.frontmatter.id) ? "Queue proposed task" : "Queue"}: ${t.frontmatter.title}`;
       add({
         id: `queue-${t.frontmatter.id}`,
+        targetTitle: t.frontmatter.title,
         label,
         group: "Actions",
         searchValue: `${label} ${t.frontmatter.id}`,
@@ -157,6 +163,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     for (const t of groups.running) {
       add({
         id: `stop-${t.frontmatter.id}`,
+        targetTitle: t.frontmatter.title,
         label: `Stop: ${t.frontmatter.title}`,
         group: "Actions",
         searchValue: `Stop: ${t.frontmatter.title} ${t.frontmatter.id}`,
@@ -240,6 +247,7 @@ function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: 
       if (e.archived || e.id === f.epicId) continue;
       add({
         id: `move-epic-${e.id}`,
+        targetTitle: e.title,
         label: `Move to epic: ${e.title}`,
         group: "Actions",
         searchValue: `Move to epic: ${e.title} ${e.id} (${title})`,
@@ -256,6 +264,7 @@ function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: 
       if (pf.id === f.id || pf.parentId || pf.status === "archived") continue;
       add({
         id: `make-subtask-${pf.id}`,
+        targetTitle: pf.title,
         label: `Make subtask of: ${pf.title}`,
         group: "Actions",
         searchValue: `Make subtask of: ${pf.title} ${pf.id} (${title})`,

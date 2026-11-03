@@ -5,7 +5,7 @@ import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
 import { stepHeaders } from "../lib/log-tail.js";
-import { hasChildrenConflict } from "../lib/task-delete.js";
+import { hasChildrenConflict, serverSubtaskCount } from "../lib/task-delete.js";
 import { childTasks, parentFromSearch } from "../lib/task-links.js";
 import { backFor, formatRoute, type Route, type TaskView as RouteView } from "../lib/route.js";
 import { useElapsed } from "../overview/useElapsed.js";
@@ -195,19 +195,21 @@ function Loaded({
     actions.retry(id);
   };
 
-  const remove = async (detach: boolean): Promise<"deleted" | "needs-detach" | "failed"> => {
-    let refused = false;
+  const remove = async (
+    detach: boolean,
+  ): Promise<"deleted" | "failed" | { needsDetach: number | null }> => {
+    let refused: { count: number | null } | null = null;
     const ok = await act(() => api.deleteTask(pid, id, detach), {
       success: "Deleted",
       failure: "Could not delete",
       // Subtasks the list did not show yet: not an error, but a second question for the user.
       onError: (err) => {
         if (detach || !hasChildrenConflict(err)) return false;
-        refused = true;
+        refused = { count: serverSubtaskCount(err) };
         return true;
       },
     });
-    if (refused) return "needs-detach";
+    if (refused) return { needsDetach: (refused as { count: number | null }).count };
     if (!ok) return "failed";
     void data.refresh();
     navigate({ name: "tasks", pid }, { replace: true });

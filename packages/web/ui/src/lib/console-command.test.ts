@@ -93,7 +93,7 @@ function setupWith(o: { ownEpic?: string; parent?: string }) {
     settingsLoaded: true,
     effects,
   });
-  return { actions };
+  return { actions, effects };
 }
 const idOf = (r: ConsoleResolution) => (r.kind === "run" ? r.action.id : r);
 
@@ -157,6 +157,36 @@ describe("resolveConsoleCommand", () => {
     expect(idOf(resolveConsoleCommand("/detach epic", a))).toBe("detach-epic");
     expect(idOf(resolveConsoleCommand("/move none", a))).toBe("detach-epic");
     expect(idOf(resolveConsoleCommand("/detach parent", a))).toBe("detach-parent");
+  });
+
+  it("matches /move and /subtask on the target only, never the current task's title", () => {
+    // the current task is "Fix login": its words are no reason to pick the only other target
+    const { actions: one } = setupWith({});
+    expect(resolveConsoleCommand("/move login", one).kind).toBe("unknown");
+    expect(resolveConsoleCommand("/move epic", one).kind).toBe("unknown");
+    expect(resolveConsoleCommand("/subtask login", one).kind).toBe("unknown");
+    expect(idOf(resolveConsoleCommand("/move checkout", one))).toBe("move-epic-checkout");
+  });
+
+  it("prefers an exact title over a longer one", () => {
+    const mk = (id: string, title: string) =>
+      ({ id, title, archived: false }) as unknown as EpicView;
+    const effects = setupWith({}).effects;
+    const actions = createCommandActions({
+      pid: "alpha",
+      projects: [],
+      tasks: [],
+      plans: [],
+      epics: [mk("e1", "API"), mk("e2", "API v2")],
+      currentTask: task("t1", "draft", "Zed"),
+      runnerEnabled: false,
+      settingsLoaded: true,
+      effects,
+    });
+    expect(idOf(resolveConsoleCommand("/move api", actions))).toBe("move-epic-e1");
+    expect(idOf(resolveConsoleCommand("/move API v2", actions))).toBe("move-epic-e2");
+    expect(idOf(resolveConsoleCommand("/move e2", actions))).toBe("move-epic-e2");
+    expect(resolveConsoleCommand("/move ap", actions).kind).toBe("unknown");
   });
 
   it("refuses ambiguous or missing targets and says why", () => {
