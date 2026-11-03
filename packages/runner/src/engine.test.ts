@@ -464,6 +464,37 @@ describe("RunnerEngine integration (mock tool)", () => {
     ).toBe(true);
   });
 
+  it("hands the pool gateway to a poolable tool only, and the mock never gets one", async () => {
+    const gateway = { url: "http://127.0.0.1:8080", apiKey: "ccf-client-key" };
+    const seen: unknown[] = [];
+    const run = async (poolable: boolean) => {
+      seen.length = 0;
+      // The engine's own registry maps the roles to the mock; make it poolable or not.
+      const tool = engine.registry.get("mock") as { acceptsPool?: boolean };
+      tool.acceptsPool = poolable;
+      mockState.onRun = async (o) => void seen.push((o as { gateway?: unknown }).gateway);
+      await store.create(newTask(fm({ id: poolable ? "tp" : "tn" }), "x"));
+      const running = await store.transition(poolable ? "tp" : "tn", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+        gateway,
+      });
+      expect((await pipeline.run(running)).kind).toBe("done");
+      return [...seen];
+    };
+    const mock = engine.registry.get("mock") as { acceptsPool?: boolean };
+    const routed = await run(true);
+    expect(routed.length).toBeGreaterThan(0);
+    expect(routed.every((g) => JSON.stringify(g) === JSON.stringify(gateway))).toBe(true);
+    const plain = await run(false);
+    expect(plain.length).toBeGreaterThan(0);
+    expect(plain.every((g) => g === undefined)).toBe(true);
+    delete mock.acceptsPool;
+  });
+
   it("adds a Provenance section only for tasks submitted by an external client", async () => {
     await store.create(newTask(fm(), "Local."));
     await store.create(

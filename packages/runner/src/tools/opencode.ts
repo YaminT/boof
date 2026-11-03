@@ -1,6 +1,7 @@
 import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
+import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str, stripAnsi } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
@@ -64,6 +65,7 @@ export class OpencodeTool implements Tool {
   }
 
   readonly supportsResume = true;
+  readonly acceptsPool = true;
 
   /** Argument vector for `opencode run`; exported through the class for tests. */
   buildArgs(opts: RunOptions): string[] {
@@ -91,7 +93,7 @@ export class OpencodeTool implements Tool {
     const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
-      env: agentEnv(process.env, opts.agentEnv),
+      env: { ...agentEnv(process.env, opts.agentEnv), ...gatewayEnv("opencode", opts.gateway) },
       input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

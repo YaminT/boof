@@ -35,6 +35,7 @@ import {
 } from "@boof-runner/shared";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
+import type { Gateway } from "./gateway-env.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { announceBudgetExceeded } from "./budget.js";
@@ -58,6 +59,11 @@ export interface PipelineDeps {
   project?: Project;
   /** The data root: set it (with `project`) to record the daily spend ledger and enforce budgets. */
   dataRoot?: string;
+  /**
+   * The account pool, when one is configured: tools with `acceptsPool` are routed through it by
+   * environment. Absent: every tool runs as before.
+   */
+  gateway?: Gateway;
 }
 
 const VERDICT_PROTOCOL =
@@ -345,6 +351,7 @@ export class Pipeline {
             ...opts,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             agentEnv: this.deps.settings.runner.agentEnv,
+            ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
             prompt,
             resumeSessionId,
             idleTimeoutMs,

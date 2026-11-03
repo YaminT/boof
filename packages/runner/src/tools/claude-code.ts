@@ -1,6 +1,7 @@
 import type { TokenUsage } from "@boof-runner/shared";
 import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
 import { agentEnv } from "../agent-env.js";
+import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { ToolRunError } from "./errors.js";
 import { withQuestions } from "./questions.js";
@@ -72,6 +73,7 @@ export class ClaudeCodeTool implements Tool {
   }
 
   readonly supportsResume = true;
+  readonly acceptsPool = true;
 
   /** Argument vector for `claude --print`; the prompt goes to stdin. */
   buildArgs(opts: RunOptions): string[] {
@@ -106,7 +108,7 @@ export class ClaudeCodeTool implements Tool {
     const render = new StreamRenderer((text) => opts.onChunk?.(text));
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
-      env: agentEnv(process.env, opts.agentEnv),
+      env: { ...agentEnv(process.env, opts.agentEnv), ...gatewayEnv("anthropic", opts.gateway) },
       input: opts.prompt,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

@@ -1,4 +1,7 @@
 import type { HealthResult, Role, TokenUsage } from "@boof-runner/shared";
+import type { Gateway } from "../gateway-env.js";
+
+export type { Gateway } from "../gateway-env.js";
 
 // The health types are Heart's (tool-catalog.ts); Runner re-exports them so adapters do not change.
 export type { HealthResult, HealthStatus } from "@boof-runner/shared";
@@ -25,6 +28,12 @@ export interface RunOptions {
   inheritMcpServers?: boolean;
   /** Extra environment variable names the agent may inherit (`runner.agentEnv`); see `agentEnv()`. */
   agentEnv?: readonly string[];
+  /**
+   * Route this run through the account pool: the tool adds the gateway's base URL and key to its
+   * child's environment. Set by the pipeline only for tools with `acceptsPool`, and only when a
+   * pool is configured.
+   */
+  gateway?: Gateway;
   /** Optional timeout for this run. */
   timeoutMs?: number;
   /**
@@ -75,5 +84,7 @@ export interface Tool {
   listModels(): Promise<string[]>;
   /** True when `run` honours `resumeSessionId`; otherwise a steered step restarts. */
   readonly supportsResume?: boolean;
+  /** True when `run` honours `RunOptions.gateway` (the tool can be served by the account pool). */
+  readonly acceptsPool?: boolean;
   run(opts: RunOptions): Promise<RunResult>;
 }

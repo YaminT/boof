@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
+import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
@@ -86,6 +87,7 @@ export class CodexTool implements Tool {
   }
 
   readonly supportsResume = true;
+  readonly acceptsPool = true;
 
   /**
    * Argument vector for `codex exec`, last entry `-`: the prompt is read from stdin. With `resumeSessionId` it is
@@ -129,7 +131,7 @@ export class CodexTool implements Tool {
       const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
-        env: agentEnv(process.env, opts.agentEnv),
+        env: { ...agentEnv(process.env, opts.agentEnv), ...gatewayEnv("openai", opts.gateway) },
         input: this.promptText(opts),
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
