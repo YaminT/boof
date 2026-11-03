@@ -67,4 +67,36 @@ describe("the injected tool catalog", () => {
     );
     expect(calls).toEqual(["healthAll", "modelsAll"]);
   });
+
+  it("is what MCP over HTTP serves too (boof_get_model_details, boof_refresh_models)", async () => {
+    const calls: string[] = [];
+    const app = createApp({
+      service: new TaskService(root, stubCatalog(calls)),
+      peerAddress: () => "127.0.0.1",
+    });
+    const tool = async (name: string) => {
+      const res = await app.request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: {} },
+        }),
+      });
+      return (await res.json()).result;
+    };
+    const details = await tool("boof_get_model_details");
+    expect(Object.keys(details.structuredContent.tools)).toEqual(["stub"]);
+    expect(details.structuredContent.tools.stub.displayName).toBe("Stub tool");
+    const refreshed = await tool("boof_refresh_models");
+    expect(refreshed.structuredContent.models.stub).toEqual(
+      expect.arrayContaining(["stub-1", "stub-2"]),
+    );
+    expect(calls).toEqual(["modelsAll"]);
+  });
 });

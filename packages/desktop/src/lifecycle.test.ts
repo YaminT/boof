@@ -23,6 +23,7 @@ describe("desktop /healthz facts", () => {
       () => engine,
     );
     expect(opts).toMatchObject({ root: "/r", port: 4319, uiDir: "/ui", version: "0.2.0" });
+    expect(opts.catalog).toBe(catalog); // the registry the app built reaches startServer unchanged
     expect(opts.runnerRunning?.()).toBe(false);
     engine = {} as RunnerEngine; // engine.loop() started
     expect(opts.runnerRunning?.()).toBe(true);
@@ -197,5 +198,13 @@ describe("isExternalUrl", () => {
       "nope",
     ])
       expect(isExternalUrl(u), u).toBe(false);
+  });
+
+  describe("desktop main", () => {
+    it("builds a real ToolRegistry for the server it starts (Heart builds none)", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const src = await readFile(new URL("./main.ts", import.meta.url), "utf8");
+      expect(src).toMatch(/serverOptions\(\s*\{[^}]*catalog: new ToolRegistry\(\)/);
+    });
   });
 });

@@ -1343,17 +1343,17 @@ export class TaskService {
   }
 
   /** The last health results of this process, without running a tool (empty until a check ran). */
-  cachedHealth(): Record<string, CachedHealth> {
+  cachedHealth(): Readonly<Record<string, Readonly<CachedHealth>>> {
     return this.catalog.lastHealth();
   }
 
   /** Ask the tools for their models now (spawns processes) and remember the lists. */
-  listModels(): Promise<Record<string, string[]>> {
+  listModels(): Promise<Readonly<Record<string, readonly string[]>>> {
     return this.catalog.modelsAll();
   }
 
   /** The last model lists (or the built-in defaults), without running a tool. */
-  cachedModels(): Record<string, string[]> {
+  cachedModels(): Readonly<Record<string, readonly string[]>> {
     return this.catalog.cachedModels();
   }
 }

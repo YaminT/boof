@@ -20,15 +20,15 @@ export interface ToolModelDetails {
 
 export interface ModelDetailsInput {
   /** Registered tools (id, display name, built-in default models). */
-  tools: { id: string; displayName: string; defaultModels: readonly string[] }[];
+  tools: readonly { id: string; displayName: string; defaultModels: readonly string[] }[];
   /** What each tool's listModels() returned now; a tool with no live list maps to []. */
-  live: Record<string, string[]>;
+  live: Readonly<Record<string, readonly string[]>>;
   /** Global settings: the role assignments and the user-listed models. */
   settings: Pick<Settings, "roles" | "models">;
   /** Projects the caller may see (their overrides count towards usedBy). */
   projects: Pick<Project, "id" | "roles">[];
   /** Last health result per tool id (absent when no check ran in this process). */
-  health: Record<string, CachedHealth>;
+  health: Readonly<Record<string, Readonly<CachedHealth>>>;
 }
 
 /**

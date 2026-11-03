@@ -114,7 +114,8 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
 - [x] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
 - [ ] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
-- [ ] [`audit-stdio-and-cli-writes`](audit-stdio-and-cli-writes/goal.boof.xml) — Audit the writes made over stdio MCP and through the CLI (after: boof-split, with M3)
+- [x] [`audit-stdio-and-cli-writes`](audit-stdio-and-cli-writes/goal.boof.xml) — Audit the writes made over stdio MCP and through the CLI (after: boof-split, with M3)
+- [ ] [`audit-handwritten-cli`](audit-handwritten-cli/goal.boof.xml) — Audit the hand-written CLI commands (they bypass op.execute; route them through ops or audit with the same line shape) (after: audit-stdio-and-cli-writes)
 - [ ] [`agent-containment`](agent-containment/goal.boof.xml) — Run task agents isolated from boof: no route to the boof port, no data root, no credentials (investigate the Claude and Codex sandboxes, a separate OS user, a container)
 
 ## Verification and release

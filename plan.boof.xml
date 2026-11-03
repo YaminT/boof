@@ -77,7 +77,8 @@
     <goal id="desktop-orphan-reaping-macos-windows" path="goals/desktop-orphan-reaping-macos-windows" order="74" status="done"><depends-on>orphan-agent-processes</depends-on></goal>
     <goal id="worktree-root-scope" path="goals/worktree-root-scope" order="75" status="done"></goal>
     <goal id="agent-containment" path="goals/agent-containment" order="78" status="done"></goal>
-    <goal id="audit-stdio-and-cli-writes" path="goals/audit-stdio-and-cli-writes" order="77" status="plan"><depends-on>boof-split</depends-on></goal>
+    <goal id="audit-stdio-and-cli-writes" path="goals/audit-stdio-and-cli-writes" order="77" status="done"><depends-on>boof-split</depends-on></goal>
+    <goal id="audit-handwritten-cli" path="goals/audit-handwritten-cli" order="79" status="plan"><depends-on>audit-stdio-and-cli-writes</depends-on></goal>
     <goal id="desktop-window-navigation-guard" path="goals/desktop-window-navigation-guard" order="76" status="done"></goal>
     <goal id="webhook-update-and-event-names" path="goals/webhook-update-and-event-names" order="77" status="done"></goal>
     <goal id="settings-version-check" path="goals/settings-version-check" order="78" status="done"></goal>

@@ -24,7 +24,7 @@ export interface CachedHealth extends HealthResult {
 export interface ToolInfo {
   id: string;
   displayName: string;
-  defaultModels: string[];
+  defaultModels: readonly string[];
   supportsResume?: boolean;
 }
 
@@ -38,19 +38,22 @@ export interface HealthOptions {
  * short, paid prompt), so the `cached*`/`last*` readers exist for GET routes, which must not.
  */
 export interface ToolCatalog {
-  list(): ToolInfo[];
+  list(): readonly ToolInfo[];
   get(id: string): ToolInfo | undefined;
   /**
    * Run every tool's health check, unless the last one is younger than `maxAgeMs`; concurrent
    * callers share one check. Returns id → result.
    */
-  healthAll(maxAgeMs?: number, opts?: HealthOptions): Promise<Record<string, HealthResult>>;
+  healthAll(
+    maxAgeMs?: number,
+    opts?: HealthOptions,
+  ): Promise<Readonly<Record<string, Readonly<HealthResult>>>>;
   /** Last health result per tool id of this process, without running a tool. */
-  lastHealth(): Record<string, CachedHealth>;
+  lastHealth(): Readonly<Record<string, Readonly<CachedHealth>>>;
   /** Models each tool lists now (runs the tools), falling back to the built-in defaults. */
-  modelsAll(): Promise<Record<string, string[]>>;
+  modelsAll(): Promise<Readonly<Record<string, readonly string[]>>>;
   /** The last fetched model lists (or the built-in defaults), without running a tool. */
-  cachedModels(): Record<string, string[]>;
+  cachedModels(): Readonly<Record<string, readonly string[]>>;
   /** The lists the last live listing found, without running a tool; a tool not asked yet maps to []. */
-  cachedLiveModels(): Record<string, string[]>;
+  cachedLiveModels(): Readonly<Record<string, readonly string[]>>;
 }

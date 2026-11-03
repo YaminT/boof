@@ -40,6 +40,10 @@ export function publicSettings<T extends { webhooks?: unknown }>(s: T): Omit<T, 
 
 const settingsEtag = (s: { webhooks?: unknown }) => `W/"${settingsVersion(s)}"`;
 
+/** The catalog hands out read-only lists; a response owns its own copy. */
+const mutableLists = (m: Readonly<Record<string, readonly string[]>>): Record<string, string[]> =>
+  Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v]]));
+
 export const settingsGet = defineOp({
   name: "settings.get",
   title: "Get settings",
@@ -130,7 +134,7 @@ export const settingsModels = defineOp({
   rest: { method: "GET", path: "/models" },
   mcp: { expose: true, name: "boof_list_models", annotations: READ },
   summary: (r) => Object.keys(r.models).join(", "),
-  handler: async (ctx) => ({ models: ctx.services.cachedModels() }),
+  handler: async (ctx) => ({ models: mutableLists(ctx.services.cachedModels()) }),
 });
 
 export const settingsRefreshModels = defineOp({
@@ -145,7 +149,7 @@ export const settingsRefreshModels = defineOp({
   rest: { method: "POST", path: "/models/refresh" },
   mcp: { expose: true, name: "boof_refresh_models", annotations: WRITE },
   summary: (r) => Object.keys(r.models).join(", "),
-  handler: async (ctx) => ({ models: await ctx.services.listModels() }),
+  handler: async (ctx) => ({ models: mutableLists(await ctx.services.listModels()) }),
 });
 
 export const settingsModelDetails = defineOp({
