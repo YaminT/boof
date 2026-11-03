@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Project } from "@boof-runner/shared/schema";
 import { BudgetBanner } from "./shell/BudgetBanner.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
-import { TaskDetailPage } from "./task/TaskDetailPage.js";
-import { InboxPage } from "./inbox/InboxPage.js";
 import { TokenGate } from "./components/TokenGate.js";
-import { PlansPage } from "./plans/PlansPage.js";
-import { PlanPage } from "./plans/PlanPage.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
@@ -16,9 +21,25 @@ import { useRoute } from "./lib/useRoute.js";
 import { epicFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
-import { OverviewPage } from "./overview/OverviewPage.js";
-import { SettingsScreen } from "./settings/SettingsScreen.js";
 import { NowStrip } from "./overview/NowStrip.js";
+
+const TaskDetailPage = lazy(() =>
+  import("./task/TaskDetailPage.js").then((m) => ({ default: m.TaskDetailPage })),
+);
+const InboxPage = lazy(() =>
+  import("./inbox/InboxPage.js").then((m) => ({ default: m.InboxPage })),
+);
+const OverviewPage = lazy(() =>
+  import("./overview/OverviewPage.js").then((m) => ({ default: m.OverviewPage })),
+);
+// Screens loaded on first use, so the first paint does not carry them.
+const PlansPage = lazy(() =>
+  import("./plans/PlansPage.js").then((m) => ({ default: m.PlansPage })),
+);
+const PlanPage = lazy(() => import("./plans/PlanPage.js").then((m) => ({ default: m.PlanPage })));
+const SettingsScreen = lazy(() =>
+  import("./settings/SettingsScreen.js").then((m) => ({ default: m.SettingsScreen })),
+);
 
 export function App() {
   const { route, navigate } = useRoute();
@@ -114,83 +135,88 @@ export function App() {
       onSelectProject={openProject}
       onProjectAdded={(p) => void addProject(p)}
     >
-      {budget && <BudgetBanner budget={budget} />}
-      {routeReady && route.name === "overview" && (
-        <OverviewPage pid={pid} project={selected} data={data} navigate={navigate} />
-      )}
-      {routeReady && route.name === "tasks" && (
-        <>
-          <NowStrip pid={pid} groups={groups} />
-          <TasksPage
-            pid={pid}
-            data={data}
-            navigate={navigate}
-            epic={epicFromSearch(window.location.search)}
-          />
-        </>
-      )}
-      {routeReady && route.name === "task" && (
-        <TaskDetailPage
-          key={`${pid}/${route.taskId}`}
-          pid={pid}
-          taskId={route.taskId}
-          view={route.view}
-          data={data}
-          navigate={navigate}
-          previous={previous.current}
-        />
-      )}
-      {routeReady && route.name === "plans" && (
-        <>
-          <NowStrip pid={pid} groups={groups} />
-          {route.planId ? (
-            <PlanPage
-              key={`${pid}/${route.planId}`}
+      <Suspense fallback={null}>
+        {budget && <BudgetBanner budget={budget} />}
+        {routeReady && route.name === "overview" && (
+          <OverviewPage pid={pid} project={selected} data={data} navigate={navigate} />
+        )}
+        {routeReady && route.name === "tasks" && (
+          <>
+            <NowStrip pid={pid} groups={groups} />
+            <TasksPage
               pid={pid}
-              planId={route.planId}
-              goalId={route.goalId}
               data={data}
               navigate={navigate}
+              epic={epicFromSearch(window.location.search)}
             />
-          ) : (
-            <PlansPage pid={pid} data={data} navigate={navigate} />
+          </>
+        )}
+        {routeReady && route.name === "task" && (
+          <TaskDetailPage
+            key={`${pid}/${route.taskId}`}
+            pid={pid}
+            taskId={route.taskId}
+            view={route.view}
+            data={data}
+            navigate={navigate}
+            previous={previous.current}
+          />
+        )}
+        {routeReady && route.name === "plans" && (
+          <>
+            <NowStrip pid={pid} groups={groups} />
+            {route.planId ? (
+              <PlanPage
+                key={`${pid}/${route.planId}`}
+                pid={pid}
+                planId={route.planId}
+                goalId={route.goalId}
+                data={data}
+                navigate={navigate}
+              />
+            ) : (
+              <PlansPage pid={pid} data={data} navigate={navigate} />
+            )}
+          </>
+        )}
+        {routeReady &&
+          route.name === "settings" &&
+          (settings || data.settingsDenied) &&
+          selected && (
+            <SettingsScreen
+              key={selected.id}
+              pid={selected.id}
+              page={route.page}
+              settings={settings}
+              project={selected}
+              projects={projects ?? []}
+              data={data}
+              onProjectAdded={(p) => void addProject(p)}
+              reloadProjects={reload}
+            />
           )}
-        </>
-      )}
-      {routeReady && route.name === "settings" && (settings || data.settingsDenied) && selected && (
-        <SettingsScreen
-          key={selected.id}
-          pid={selected.id}
-          page={route.page}
-          settings={settings}
-          project={selected}
-          projects={projects ?? []}
-          data={data}
-          onProjectAdded={(p) => void addProject(p)}
-          reloadProjects={reload}
-        />
-      )}
-      {route?.name === "settings" && projectsDenied && !selected && (
-        <SettingsScreen
-          key={route.pid}
-          pid={route.pid}
-          page={route.page}
-          settings={settings}
-          project={null}
-          projects={[]}
-          data={data}
-          onProjectAdded={(p) => void addProject(p)}
-          reloadProjects={reload}
-        />
-      )}
-      {route?.name === "inbox" && (
-        <InboxPage
-          selectedPid={selected?.id ?? null}
-          data={data}
-          projects={projects ?? []}
-          navigate={navigate}
-        />
-      )}
+        {route?.name === "settings" && projectsDenied && !selected && (
+          <SettingsScreen
+            key={route.pid}
+            pid={route.pid}
+            page={route.page}
+            settings={settings}
+            project={null}
+            projects={[]}
+            data={data}
+            onProjectAdded={(p) => void addProject(p)}
+            reloadProjects={reload}
+          />
+        )}
+        {route?.name === "inbox" && (
+          <InboxPage
+            selectedPid={selected?.id ?? null}
+            data={data}
+            projects={projects ?? []}
+            navigate={navigate}
+          />
+        )}
+      </Suspense>
     </AppShell>
   );
 }

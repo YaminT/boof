@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
@@ -10,7 +10,7 @@ import { backFor, formatRoute, type Route, type TaskView as RouteView } from "..
 import { useElapsed } from "../overview/useElapsed.js";
 import { useTaskActions } from "../tasks/useTaskActions.js";
 import type { AppData } from "../useAppData.js";
-import { ChangesTab } from "./ChangesTab.js";
+const ChangesTab = lazy(() => import("./ChangesTab.js").then((m) => ({ default: m.ChangesTab })));
 import { QuestionsTab } from "./QuestionsTab.js";
 import { RunTab } from "./RunTab.js";
 import { StepStrip } from "./StepStrip.js";
@@ -246,7 +246,11 @@ function Loaded({
             ))}
           </nav>
           {view === "edit" && <RunTab pid={pid} task={task} reload={reload} />}
-          {view === "changes" && <ChangesTab pid={pid} task={task} />}
+          {view === "changes" && (
+            <Suspense fallback={null}>
+              <ChangesTab pid={pid} task={task} />
+            </Suspense>
+          )}
           {view === "questions" && <QuestionsTab pid={pid} task={task} reload={reload} />}
         </section>
       </div>
