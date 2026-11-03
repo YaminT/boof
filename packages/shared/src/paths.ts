@@ -58,6 +58,8 @@ export interface DataRootPaths {
   webhooks: string;
   /** Webhook signing secrets, mode 0600. */
   webhookSecrets: string;
+  /** boof's better-ccflare client key, mode 0600. */
+  owlishSecrets: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -74,6 +76,7 @@ export function dataRootPaths(root: string): DataRootPaths {
     idempotency: join(root, "idempotency"),
     webhooks: join(root, "webhooks"),
     webhookSecrets: join(root, "webhooks", "secrets.json"),
+    owlishSecrets: join(root, "owlish", "secrets.json"),
   };
 }
 

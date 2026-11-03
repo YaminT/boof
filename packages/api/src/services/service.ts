@@ -1,3 +1,4 @@
+import { OwlishSecretStore } from "@boof-runner/shared/owlish";
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -827,6 +828,8 @@ export class TaskService {
   readonly commands: CommandStore;
   readonly settingsStore: SettingsStore;
   readonly webhookSecrets: WebhookSecretStore;
+  /** boof's one better-ccflare client key (file or BOOF_OWLISH_API_KEY); never part of settings. */
+  readonly owlishSecrets: OwlishSecretStore;
   /** The tools, injected by the composition root (bin, desktop): Heart never builds one. */
   readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
@@ -839,6 +842,7 @@ export class TaskService {
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
+    this.owlishSecrets = new OwlishSecretStore(root);
     this.catalog = catalog;
   }
 
