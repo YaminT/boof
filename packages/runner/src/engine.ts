@@ -32,6 +32,8 @@ import { announceBudgetExceeded } from "./budget.js";
 import { reapOrphan } from "@boof-runner/shared";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { PoolGate, type PoolCheck } from "./pool-gate.js";
+import { OwlishSecretStore } from "@boof-runner/shared/owlish";
 
 export interface EngineOptions {
   root: string;
@@ -39,6 +41,8 @@ export interface EngineOptions {
   registry?: ToolRegistry;
   /** Only serve this project (headless `run --all --project`). */
   onlyProject?: string;
+  /** The account pool gate; default: built from settings.owlish and the stored client key. */
+  pool?: PoolGate;
 }
 
 const INTERRUPTED_NOTE =
@@ -50,7 +54,9 @@ export type TickResult =
   | { kind: "disabled" }
   | { kind: "blocked" }
   /** Nothing started because a day budget is spent (`scopes`); work resumes when it resets. */
-  | { kind: "budget"; scopes: string[] };
+  | { kind: "budget"; scopes: string[] }
+  /** Nothing started because the account pool is unusable (`healthGate: pause`); work resumes when it recovers. */
+  | { kind: "pool"; status: string; reason: string };
 
 /** The next task to run and the project it belongs to. */
 export interface Selection {
@@ -78,6 +84,9 @@ export class RunnerEngine {
   private readonly runningTasks = new Map<string, string>();
   /** Day-budget scopes that kept work from starting in the last selection. */
   private budgetBlocked: BudgetScope[] = [];
+  /** The pool, while it keeps routed work from starting (visible reason); null otherwise. */
+  private poolBlocked: PoolCheck["pool"] | null = null;
+  readonly pool: PoolGate;
   private looping = false;
   private stopRequested = false;
   /** `project/id` keys already asked to stop (or being asked) in the current shutdown. */
@@ -91,6 +100,23 @@ export class RunnerEngine {
     this.registry = opts.registry ?? new ToolRegistry();
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;
     this.onlyProject = opts.onlyProject;
+    this.pool =
+      opts.pool ??
+      new PoolGate({
+        root: opts.root,
+        loadSettings: () => this.settingsStore.load(),
+        readKey: () => new OwlishSecretStore(opts.root).get(),
+      });
+  }
+
+  /** Why routed work is not starting (the account pool), or null. For the Now lane and status. */
+  poolBlock(): { status: string; reason: string } | null {
+    return this.poolBlocked
+      ? {
+          status: this.poolBlocked.status,
+          reason: this.poolBlocked.reason ?? "the account pool is not usable",
+        }
+      : null;
   }
 
   /** Task store of a project. */
@@ -126,6 +152,8 @@ export class RunnerEngine {
     selection: Selection | null;
     blocked: BudgetScope[];
   }> {
+    const poolCheck = await this.pool.check();
+    let poolSkipped = false;
     const settings = await this.settingsStore.load();
     const projects = await this.runnableProjects();
     const limited = settings.budget !== undefined || projects.some((p) => p.budget !== undefined);
@@ -138,11 +166,16 @@ export class RunnerEngine {
       if (this.inflight.has(project.id)) continue;
       for (const task of await this.storeFor(project).list()) {
         if (task.frontmatter.status !== "pending" || task.frontmatter.skip) continue;
+        const eff = effectiveSettings(settings, project);
+        const tools = (["planner", "developer", "reviewer", "observer"] as const)
+          .map((role) => resolveRole(eff, task, role as "observer")?.tool)
+          .filter((t): t is string => t !== undefined);
+        // The pool gate: a task that needs a pool-routed tool waits; the others run as usual.
+        if (poolCheck.blocked && tools.some((t) => this.registry.get(t)?.acceptsPool)) {
+          poolSkipped = true;
+          continue;
+        }
         if (status) {
-          const eff = effectiveSettings(settings, project);
-          const tools = (["planner", "developer", "reviewer", "observer"] as const)
-            .map((role) => resolveRole(eff, task, role as "observer")?.tool)
-            .filter((t): t is string => t !== undefined);
           const hits = blockingScopes(status, project.id, tools);
           if (hits.length > 0) {
             for (const h of hits) blocked.set(h.scope, h);
@@ -155,6 +188,8 @@ export class RunnerEngine {
     if (status) {
       for (const scope of blocked.values()) await announceBudgetExceeded(this.root, status, scope);
     }
+    this.poolBlocked = poolSkipped ? poolCheck.pool : null;
+    if (poolSkipped) await this.pool.announceIfBlocked(poolCheck);
     return { selection: best, blocked: [...blocked.values()] };
   }
 
@@ -231,7 +266,7 @@ export class RunnerEngine {
         id,
         "failed",
         undefined,
-        outcome.budget ? { reason: outcome.error } : undefined,
+        outcome.budget || outcome.pool ? { reason: outcome.error } : undefined,
       );
       await this.noteGoalTaskStatus(project, outcome.task, "failed");
     } else if (outcome.kind === "stopped") {
@@ -403,6 +438,8 @@ export class RunnerEngine {
         settings: effectiveSettings(settings, project),
         project,
         dataRoot: this.root,
+        pool: this.pool,
+        gateway: await this.pool.gateway(),
       });
       const outcome = await pipeline.run(running!);
       await this.finalize(project, store, outcome);
@@ -426,7 +463,9 @@ export class RunnerEngine {
     if (!selection) {
       return blocked.length > 0
         ? { kind: "budget", scopes: blocked.map((b) => b.scope) }
-        : { kind: "idle" };
+        : this.poolBlock()
+          ? { kind: "pool", ...this.poolBlock()! }
+          : { kind: "idle" };
     }
     return this.start(selection);
   }
@@ -484,7 +523,9 @@ export class RunnerEngine {
             ? { kind: "disabled" }
             : this.budgetBlocked.length > 0
               ? { kind: "budget", scopes: this.budgetBlocked.map((b) => b.scope) }
-              : { kind: "idle" },
+              : this.poolBlock()
+                ? { kind: "pool", ...this.poolBlock()! }
+                : { kind: "idle" },
         );
         return results;
       }

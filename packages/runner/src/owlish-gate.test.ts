@@ -1,0 +1,383 @@
+import { existsSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  defaultSettings,
+  execCommand,
+  newTask,
+  ProjectStore,
+  readEvents,
+  SettingsStore,
+  TaskStore,
+  taskControlDir,
+  taskStopRequestPath,
+  type Project,
+  type TaskFrontmatter,
+} from "@boof-runner/shared";
+import { RunnerEngine } from "./engine.js";
+import { PoolGate } from "./pool-gate.js";
+import { MockTool, mockState, resetMock } from "./tools/mock.js";
+import { ToolRegistry } from "./tools/registry.js";
+import type { RunOptions, Tool } from "./tools/types.js";
+
+// Engine and pipeline against a fake gateway (a local HTTP server) and a fake clock: nothing waits
+// for real, and the real gateway is never called.
+
+let dataRoot: string;
+const dirs: string[] = [];
+let server: Server;
+let url: string;
+let hits: number;
+let healthy: boolean;
+let clock: number;
+let sleeps: number[];
+let onSleep: (n: number) => Promise<void>;
+let seenGateways: (RunOptions["gateway"] | undefined)[];
+let settingsStore: SettingsStore;
+let main: Project;
+
+const POOL_OK = {
+  status: "ok",
+  pool: {
+    configured: 2,
+    routable: 2,
+    paused: 0,
+    rate_limited: 0,
+    usage_exhausted: 0,
+    next_available_at: null,
+  },
+};
+const POOL_DOWN = {
+  status: "degraded",
+  pool: {
+    configured: 2,
+    routable: 0,
+    paused: 0,
+    rate_limited: 2,
+    usage_exhausted: 0,
+    next_available_at: null,
+  },
+};
+
+/** The mock under another id, serving the pool, recording the gateway it was handed. */
+function pooledMock(): Tool {
+  const m = new MockTool();
+  return {
+    id: "pooled",
+    displayName: "Pooled mock",
+    defaultModels: ["mock-default"],
+    acceptsPool: true,
+    get supportsResume() {
+      return m.supportsResume;
+    },
+    detect: () => m.detect(),
+    listModels: () => m.listModels(),
+    run: async (o) => {
+      seenGateways.push(o.gateway);
+      return m.run(o);
+    },
+  };
+}
+
+const registry = () => new ToolRegistry([new MockTool(), pooledMock()]);
+const gate = () =>
+  new PoolGate({
+    root: dataRoot,
+    loadSettings: () => settingsStore.load(),
+    readKey: async () => "btr-key",
+    now: () => clock,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      clock += ms;
+      await onSleep(sleeps.length);
+    },
+  });
+let engine: RunnerEngine;
+const makeEngine = () =>
+  (engine = new RunnerEngine({
+    root: dataRoot,
+    pollIntervalMs: 10,
+    registry: registry(),
+    pool: gate(),
+  }));
+
+async function repo(): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "boof-owgate-work-")));
+  dirs.push(dir);
+  const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+  await g(["init", "-b", "main"]);
+  await g(["config", "user.email", "t@e.com"]);
+  await g(["config", "user.name", "T"]);
+  await writeFile(join(dir, "README.md"), "# work\n");
+  await g(["add", "."]);
+  await g(["commit", "-m", "init"]);
+  return dir;
+}
+
+const tasks = (p: Project) => new TaskStore(new ProjectStore(dataRoot).dir(p.id));
+const fm = (
+  id: string,
+  tool: "mock" | "pooled",
+  over: Partial<TaskFrontmatter> = {},
+): TaskFrontmatter =>
+  ({
+    id,
+    title: id,
+    status: "pending",
+    priority: 50,
+    skip: false,
+    labels: [],
+    command: null,
+    attachments: [],
+    questions: "none",
+    tools: {
+      planner: { tool: "mock", model: "mock-default" },
+      developer: { tool, model: "mock-default" },
+      reviewer: { tool: "mock", model: "mock-default" },
+    },
+    created: "2026-06-04T10:00:00.000Z",
+    updated: "2026-06-04T10:00:00.000Z",
+    ...over,
+  }) as TaskFrontmatter;
+const addTask = (id: string, tool: "mock" | "pooled", body = "Work.") =>
+  tasks(main).create(newTask(fm(id, tool), body));
+const status = async (id: string) => (await tasks(main).get(id))?.frontmatter.status;
+const poolEvents = async () =>
+  (await readEvents(dataRoot, null))
+    .map((e) => e.event)
+    .filter((e) => e.type === "runner.pool_exhausted");
+
+async function configure(gateValue: "pause" | "warn" | "off" = "pause", extra: object = {}) {
+  await settingsStore.update({
+    owlish: { url, healthGate: gateValue },
+    ...extra,
+  });
+}
+
+beforeEach(async () => {
+  dataRoot = await mkdtemp(join(tmpdir(), "boof-owgate-data-"));
+  hits = 0;
+  healthy = true;
+  clock = Date.parse("2026-11-03T10:00:00Z");
+  sleeps = [];
+  onSleep = async () => {};
+  seenGateways = [];
+  server = createServer((req, res) => {
+    if (req.url !== "/health") return void res.writeHead(404).end();
+    hits += 1;
+    res
+      .writeHead(healthy ? 200 : 503, { "content-type": "application/json" })
+      .end(JSON.stringify(healthy ? POOL_OK : POOL_DOWN));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  settingsStore = new SettingsStore(dataRoot);
+  await settingsStore.save({ ...defaultSettings(), runner: { enabled: true, concurrency: 1 } });
+  main = await new ProjectStore(dataRoot).create({ workingDirectory: await repo(), id: "main" });
+  resetMock();
+});
+afterEach(async () => {
+  await new Promise<void>((r) => server.close(() => r()));
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const d of dirs.splice(0))
+    await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  resetMock();
+});
+
+describe("selection", () => {
+  it("without settings.owlish nothing changes: a pooled task runs, no gateway, no request", async () => {
+    await addTask("t1", "pooled");
+    makeEngine();
+    const results = await engine.runUntilIdle();
+    expect(await status("t1")).toBe("done");
+    expect(results.at(-1)).toEqual({ kind: "idle" });
+    expect(seenGateways.every((g) => g === undefined)).toBe(true);
+    expect(seenGateways.length).toBeGreaterThan(0);
+    expect(hits).toBe(0);
+  });
+
+  it("a healthy pool: the pooled task runs and is handed the gateway; the mock role gets none", async () => {
+    await configure();
+    await addTask("t1", "pooled");
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("done");
+    expect(seenGateways).toEqual([{ url, apiKey: "btr-key" }]);
+    expect(await poolEvents()).toEqual([]);
+  });
+
+  it("pause + unusable pool: a task whose roles use a pooled tool stays pending, one that does not still runs", async () => {
+    healthy = false;
+    await configure();
+    await addTask("routed", "pooled");
+    await addTask("plain", "mock");
+    makeEngine();
+    const results = await engine.runUntilIdle();
+    expect(await status("plain")).toBe("done");
+    expect(await status("routed")).toBe("pending");
+    expect(seenGateways).toEqual([]);
+    const last = results.at(-1)!;
+    expect(last).toMatchObject({ kind: "pool", status: "degraded" });
+    expect((last as { reason: string }).reason).toMatch(/degraded/);
+    expect(engine.poolBlock()).toMatchObject({ status: "degraded" });
+  });
+
+  it("announces one runner.pool_exhausted per episode however many ticks, and polls about every 30 s", async () => {
+    healthy = false;
+    await configure();
+    await addTask("routed", "pooled");
+    makeEngine();
+    for (let i = 0; i < 40; i++) {
+      expect((await engine.tick()).kind).toBe("pool");
+      clock += 500;
+    }
+    expect(await poolEvents()).toHaveLength(1);
+    expect(hits).toBe(1);
+  });
+
+  it("resumes on its own once health returns, and a later outage is a new episode", async () => {
+    healthy = false;
+    await configure();
+    await addTask("routed", "pooled");
+    makeEngine();
+    expect((await engine.tick()).kind).toBe("pool");
+    healthy = true;
+    clock += 31_000;
+    const res = await engine.tick();
+    expect(res.kind).toBe("ran");
+    expect(await status("routed")).toBe("done");
+    expect(engine.poolBlock()).toBeNull();
+    healthy = false;
+    clock += 31_000;
+    await addTask("routed2", "pooled");
+    expect((await engine.tick()).kind).toBe("pool");
+    expect(await poolEvents()).toHaveLength(2);
+  });
+
+  it("warn does not block; off does not even ask", async () => {
+    healthy = false;
+    await configure("warn");
+    await addTask("a", "pooled");
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("a")).toBe("done");
+    expect(await poolEvents()).toEqual([]);
+    hits = 0;
+    await configure("off");
+    await addTask("b", "pooled");
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("b")).toBe("done");
+    expect(hits).toBe(0);
+  });
+});
+
+describe("a running task and the pool", () => {
+  it("waits in place before a pooled step while the pool is down, stays running, and finishes when it recovers", async () => {
+    await configure("pause");
+    await addTask("t1", "pooled");
+    const observed: (string | undefined)[] = [];
+    // The pool goes down after the first step (planner), with the cache already stale.
+    mockState.onRun = async (o) => {
+      if (o.role === "planner" && mockState.calls.length === 1) {
+        healthy = false;
+        clock += 31_000;
+      }
+    };
+    onSleep = async (n) => {
+      observed.push(await status("t1"));
+      if (n === 3) healthy = true; // recovers on the third wait
+    };
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("done");
+    expect(sleeps.length).toBeGreaterThanOrEqual(3);
+    expect(Math.min(...sleeps)).toBeGreaterThanOrEqual(1000);
+    expect(observed.every((s) => s === "running")).toBe(true);
+    const t = await tasks(main).get("t1");
+    expect(t?.body.log).toContain("### Waiting for the account pool");
+    expect(hits).toBeLessThanOrEqual(8);
+  });
+
+  it("fails with pool exhausted after retries.poolWaitMs, keeps the worktree, does not spin", async () => {
+    await configure("pause", {
+      retries: { transient: 2, backoffMs: [0], idleTimeoutMs: 1_200_000, poolWaitMs: 120_000 },
+    });
+    await settingsStore.update({ worktree: { onDone: "keep-branch", onFailure: "delete" } });
+    await addTask("t1", "pooled");
+    mockState.onRun = async (o) => {
+      if (o.role === "planner" && mockState.calls.length === 1) {
+        healthy = false;
+        clock += 31_000;
+      }
+    };
+    makeEngine();
+    const results = await engine.runUntilIdle();
+    const t = await tasks(main).get("t1");
+    expect(t?.frontmatter.status).toBe("failed");
+    expect(t?.body.log).toMatch(/pool exhausted/);
+    expect(existsSync(join(main.workingDirectory, ".boof-runner-worktrees", "t1"))).toBe(true);
+    const waited = sleeps.reduce((a, b) => a + b, 0);
+    expect(waited).toBeGreaterThanOrEqual(120_000);
+    expect(waited).toBeLessThan(120_000 + 31_000);
+    expect(sleeps.length).toBeLessThanOrEqual(6); // ~30 s polls, not a busy loop
+    expect(results.some((r) => r.kind === "ran" && r.outcome.kind === "failed")).toBe(true);
+  });
+
+  it("a proxy 503 while the pool is down waits for it instead of spending a retry", async () => {
+    await configure("pause", {
+      retries: { transient: 0, backoffMs: [0], idleTimeoutMs: 1_200_000, poolWaitMs: 600_000 },
+    });
+    await addTask("t1", "pooled", "Work. [[mock-transient developer=1]]");
+    // The developer's first run is the 503; at that moment the gateway reports the pool down.
+    mockState.onRun = async (o) => {
+      if (o.role === "developer" && !mockState.transientCounts.get("developer")) healthy = false;
+    };
+    onSleep = async (n) => {
+      if (n === 2) healthy = true;
+    };
+    makeEngine();
+    await engine.runUntilIdle();
+    // transient: 0 would fail the task on the 503 alone; the pool wait let the step run again.
+    expect(await status("t1")).toBe("done");
+    expect(sleeps.length).toBeGreaterThanOrEqual(2);
+    const t = await tasks(main).get("t1");
+    expect(t?.body.log).toContain("the account pool is not usable");
+  });
+
+  it("a 503 with a healthy pool is an ordinary retry (the pool wait is not involved)", async () => {
+    await configure("pause", {
+      retries: { transient: 1, backoffMs: [0], idleTimeoutMs: 1_200_000, poolWaitMs: 600_000 },
+    });
+    await addTask("t1", "pooled", "Work. [[mock-transient developer=1]]");
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("done");
+    expect(sleeps).toEqual([]);
+  });
+
+  it("a stop request ends the wait", async () => {
+    await configure("pause");
+    await addTask("t1", "pooled");
+    mockState.onRun = async (o) => {
+      if (o.role === "planner" && mockState.calls.length === 1) {
+        healthy = false;
+        clock += 31_000;
+      }
+    };
+    onSleep = async (n) => {
+      if (n === 2) {
+        const dir = new ProjectStore(dataRoot).dir("main");
+        await mkdir(taskControlDir(dir, "t1"), { recursive: true });
+        await writeFile(taskStopRequestPath(dir, "t1"), "stop\n");
+      }
+    };
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("stopped");
+  });
+});

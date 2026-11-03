@@ -78,6 +78,17 @@ export const RunnerBudgetExceededEventSchema = z.object({
   by,
 });
 
+/** The account pool stopped routed work (unreachable, degraded or unhealthy); once per episode. */
+export const RunnerPoolExhaustedEventSchema = z.object({
+  type: z.literal("runner.pool_exhausted"),
+  ts: z.string(),
+  status: z.enum(["unreachable", "degraded", "unhealthy"]),
+  /** Why, at most 200 characters; never a key. */
+  reason: z.string(),
+  nextAvailableAt: z.string().nullable(),
+  by,
+});
+
 /** A task changed epic or parent (a move, a detach on delete). */
 export const TaskMovedEventSchema = z.object({
   type: z.literal("task.moved"),
@@ -105,6 +116,7 @@ export const BoofEventSchema = z.discriminatedUnion("type", [
   PlanSyncedEventSchema,
   RunnerEnabledEventSchema,
   RunnerBudgetExceededEventSchema,
+  RunnerPoolExhaustedEventSchema,
   TaskMovedEventSchema,
   EpicUpdatedEventSchema,
 ]);
@@ -118,6 +130,7 @@ export const EVENT_TYPES = [
   "plan.synced",
   "runner.enabled",
   "runner.budget_exceeded",
+  "runner.pool_exhausted",
   "task.moved",
   "epic.updated",
 ] as const satisfies readonly BoofEventType[];

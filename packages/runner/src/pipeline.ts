@@ -36,6 +36,7 @@ import {
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
 import type { Gateway } from "./gateway-env.js";
+import type { PoolGate } from "./pool-gate.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { announceBudgetExceeded } from "./budget.js";
@@ -64,6 +65,8 @@ export interface PipelineDeps {
    * environment. Absent: every tool runs as before.
    */
   gateway?: Gateway;
+  /** The fail-safe pool gate: a pool-routed step waits in place while the pool is unusable. */
+  pool?: PoolGate;
 }
 
 const VERDICT_PROTOCOL =
@@ -221,11 +224,22 @@ class BudgetExceededError extends Error {
   }
 }
 
+/**
+ * Thrown when a step waited the whole `retries.poolWaitMs` for the account pool and it did not
+ * recover. The work is kept like a budget stop with `onExceed: pause`.
+ */
+class PoolExhaustedError extends Error {
+  constructor(reason: string, waitedMs: number) {
+    super(`pool exhausted: ${reason} (waited ${+(waitedMs / 60000).toFixed(1)} min)`);
+    this.name = "PoolExhaustedError";
+  }
+}
+
 /** Outcome of running the pipeline for a single task. */
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true }
+  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true }
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
@@ -307,6 +321,7 @@ export class Pipeline {
   ): Promise<RunResult> {
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
+    await this.awaitPool(id, tool);
     await this.log(id, `\n### ${label}`);
     await this.deps.store.appendStep(id, label).catch(() => {});
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
@@ -396,6 +411,18 @@ export class Pipeline {
           }
           resumeSessionId = undefined;
           const reason = transientReason(err);
+          // A failure that looks like the pool's (proxy 5xx) while the pool is unusable is not the
+          // step's fault: wait for the pool instead of spending a retry, then run the step again.
+          if (reason !== null && (await this.poolDown(tool))) {
+            await this.log(
+              id,
+              `\nTransient failure in ${label}: ${reason}; the account pool is not usable`,
+            );
+            await this.awaitPool(id, tool, true);
+            await this.log(id, `\n### ${label} (after the pool recovered)`);
+            prompt = compose("a transient error (API or network failure, or a stalled stream)");
+            continue;
+          }
           if (reason === null || failures >= transient) throw err;
           const attempt = failures++;
           // A retry never starts on a spent budget.
@@ -489,6 +516,35 @@ export class Pipeline {
     if (!hit) return;
     await announceBudgetExceeded(dataRoot, status, hit, project.id);
     throw new BudgetExceededError(hit.scope, hit.spentUsd, hit.limitUsd!);
+  }
+
+  /** Is the pool unusable right now (a fresh look)? False for tools it does not serve. */
+  private async poolDown(tool: Tool): Promise<boolean> {
+    const pool = this.deps.pool;
+    if (!pool || !tool.acceptsPool) return false;
+    return (await pool.check({ fresh: true })).blocked;
+  }
+
+  /**
+   * Before a pool-routed step, and again before re-running one that failed: while the pool is
+   * unusable wait in place (the task stays `running`, the log says why), for at most
+   * `retries.poolWaitMs`; then fail with "pool exhausted". Never a tight loop; a stop request ends
+   * the wait.
+   */
+  private async awaitPool(id: string, tool: Tool, fresh = false): Promise<void> {
+    const pool = this.deps.pool;
+    if (!pool || !tool.acceptsPool) return;
+    if (!(await pool.check({ fresh })).blocked) return;
+    const maxMs = retrySettings(this.deps.settings).poolWaitMs;
+    const started = Date.now();
+    const res = await pool.waitHealthy({
+      maxMs,
+      log: (line) => this.log(id, line),
+      beforeEachWait: () => this.assertNotStopped(id),
+    });
+    if (!res.ok) {
+      throw new PoolExhaustedError(res.pool.reason ?? res.pool.status, Date.now() - started);
+    }
   }
 
   /** Wait `ms`, checking the stop signal every 250 ms; a stop request throws like any other stop. */
@@ -995,8 +1051,9 @@ export class Pipeline {
         return this.park(task, usages, err.questions);
       }
       const overBudget = err instanceof BudgetExceededError;
+      const poolExhausted = err instanceof PoolExhaustedError;
       const message =
-        err instanceof ReviewNotApprovedError || overBudget
+        err instanceof ReviewNotApprovedError || overBudget || poolExhausted
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -1013,7 +1070,7 @@ export class Pipeline {
       if (worktree) {
         // A budget stop with onExceed "pause" keeps the work too, so a retry resumes it.
         const keepForBudget =
-          overBudget &&
+          (overBudget || poolExhausted) &&
           projectTaskBudget(this.deps.settings, this.deps.project).onExceed === "pause";
         if (
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
@@ -1039,6 +1096,7 @@ export class Pipeline {
         task,
         error: message,
         ...(overBudget ? { budget: true as const } : {}),
+        ...(poolExhausted ? { pool: true as const } : {}),
       };
     }
   }

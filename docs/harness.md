@@ -2319,7 +2319,7 @@ curl -sS -N -H "Authorization: Bearer $BOOF_KEY" \
   "$BOOF_URL/api/v1/events?project=shop&since=start"
 ```
 
-- Each event has `event: <type>`, `id: <cursor>` and `data: <json>`. Types: `task.created`, `task.status`, `task.questions`, `plan.updated`, `plan.synced`, `runner.enabled`, `runner.budget_exceeded`. A `task.status` event has `project`, `task`, `from`, `to`, `by`.
+- Each event has `event: <type>`, `id: <cursor>` and `data: <json>`. Types: `task.created`, `task.status`, `task.questions`, `plan.updated`, `plan.synced`, `runner.enabled`, `runner.budget_exceeded`, `runner.pool_exhausted`. A `task.status` event has `project`, `task`, `from`, `to`, `by`.
 - Without `since` you get only new events. `since=start` replays all. `since=<cursor>` or the header `Last-Event-ID: <cursor>` replays what follows that event.
 - Keep the last `id`. On disconnect reconnect with it.
 - `event: ready` opens the stream. `event: changed` is a hint without id. Ignore hints, or re-read the task after one.

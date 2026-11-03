@@ -165,6 +165,7 @@ to `<data>/events.jsonl`); files rotate monthly. Event types:
 | `epic.updated`           | `project`, `epic`, `change` (`created`, `updated`, `deleted`), `by`                    |
 | `runner.enabled`         | `value`, `by`                                                                          |
 | `runner.budget_exceeded` | `scope`, `date`, `spentUsd`, `limitUsd`, `project?`, `by`                              |
+| `runner.pool_exhausted`  | `status`, `reason`, `nextAvailableAt`, `by`                                            |
 
 `by` is the principal id or `runner`.
 

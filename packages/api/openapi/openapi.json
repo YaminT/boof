@@ -427,6 +427,48 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "nextAvailableAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "unreachable",
+                  "degraded",
+                  "unhealthy"
+                ],
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "runner.pool_exhausted",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "status",
+              "reason",
+              "nextAvailableAt",
+              "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
               "from": {
                 "additionalProperties": false,
                 "properties": {
