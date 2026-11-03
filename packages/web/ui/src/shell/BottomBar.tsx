@@ -49,6 +49,8 @@ export function BottomBar({
         <button
           type="button"
           data-more-trigger
+          aria-haspopup="dialog"
+          aria-label={counts.inbox > 0 ? `More, ${counts.inbox} in inbox` : "More"}
           className={tabClass(moreActive)}
           onClick={() => setOpen(true)}
         >
