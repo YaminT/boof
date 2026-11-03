@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { api, ApiError, type PlanSummary } from "../api.js";
 import { Button } from "@/ui/button";
+import { FocusToggle } from "@/ui/focus-toggle";
+import { useFocusMode } from "../lib/useFocusMode.js";
 import { act } from "../lib/act.js";
 import { planStatusTone } from "../lib/plan-view.js";
 import { formatRoute, type Route } from "../lib/route.js";
@@ -45,6 +47,7 @@ export function PlansPage({
   data: AppData;
   navigate: (to: Route) => void;
 }) {
+  const focus = useFocusMode("plans");
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [imported, setImported] = useState<{ lines: string[]; exists?: boolean } | null>(null);
@@ -79,6 +82,7 @@ export function PlansPage({
         <Button variant="outline" onClick={() => void runImport(false)}>
           Import from repo
         </Button>
+        <FocusToggle mode={focus.mode} onToggle={focus.toggle} className="ml-auto" />
       </div>
       {data.plans.length === 0 ? (
         <p className="m-0 py-6 text-ink-muted">
@@ -95,11 +99,18 @@ export function PlansPage({
         <section className="flex flex-col gap-1">
           <div className="flex items-center gap-2 text-[length:var(--text-row)] text-ink-muted">
             Archived ({archived.length})
-            <Button size="xs" variant="ghost" onClick={() => setShowArchived((s) => !s)}>
-              {showArchived ? "Hide" : "Show"}
-            </Button>
+            {!focus.expanded && (
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-expanded={showArchived}
+                onClick={() => setShowArchived((s) => !s)}
+              >
+                {showArchived ? "Hide" : "Show"}
+              </Button>
+            )}
           </div>
-          {showArchived && (
+          {(showArchived || focus.expanded) && (
             <ul className="m-0 list-none p-0">
               {archived.map((p) => (
                 <PlanRow key={p.id} pid={pid} plan={p} />

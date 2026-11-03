@@ -12,6 +12,7 @@ import {
   type AgentsValues,
   type RoleName,
 } from "../lib/settings-agents.js";
+import { AdvancedSection } from "./AdvancedSection.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { AddModelDialog } from "./AddModelDialog.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
@@ -106,10 +107,13 @@ export function AgentsPage({
   form,
   set,
   project,
+  advancedOpen,
 }: {
   form: AgentsValues;
   set: (update: (v: AgentsValues) => AgentsValues) => void;
   project: Project;
+  /** Show the advanced sections (expanded view, or the page has unsaved edits). */
+  advancedOpen: boolean;
 }) {
   const g = form.global;
   const o = form.project;
@@ -228,8 +232,7 @@ export function AgentsPage({
         ))}
       </section>
 
-      <section className="flex flex-col">
-        <h2 className={h2}>Review</h2>
+      <AdvancedSection title="Review" className="flex flex-col" open={advancedOpen}>
         <OverrideHeader projectName={project.name} />
         <OverrideRow
           label="Only a reviewer approval finishes a task as done"
@@ -272,10 +275,9 @@ export function AgentsPage({
             0,
           )}
         />
-      </section>
+      </AdvancedSection>
 
-      <section className="flex flex-col">
-        <h2 className={h2}>Retries</h2>
+      <AdvancedSection title="Retries" className="flex flex-col" open={advancedOpen}>
         <OverrideHeader projectName={project.name} />
         <OverrideRow
           label="Retries per step after a transient failure"
@@ -290,10 +292,9 @@ export function AgentsPage({
             0,
           )}
         />
-      </section>
+      </AdvancedSection>
 
-      <section className="flex flex-col">
-        <h2 className={h2}>Worktree</h2>
+      <AdvancedSection title="Worktree" className="flex flex-col" open={advancedOpen}>
         <OverrideHeader projectName={project.name} />
         <OverrideRow
           label="When a task is done"
@@ -363,10 +364,9 @@ export function AgentsPage({
             </NativeSelect>
           }
         />
-      </section>
+      </AdvancedSection>
 
-      <section className="flex flex-col gap-3">
-        <h2 className={h2}>Tools and models</h2>
+      <AdvancedSection title="Tools and models" className="flex flex-col gap-3" open={advancedOpen}>
         {loading && (
           <p className="m-0 text-[length:var(--text-row)] text-ink-muted">Checking the tools…</p>
         )}
@@ -442,7 +442,7 @@ export function AgentsPage({
             No models detected yet.
           </p>
         )}
-      </section>
+      </AdvancedSection>
 
       <AddModelDialog
         tool={addFor}

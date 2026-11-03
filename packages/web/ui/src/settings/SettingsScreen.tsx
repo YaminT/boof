@@ -1,3 +1,5 @@
+import { FocusToggle } from "@/ui/focus-toggle";
+import { useFocusMode } from "../lib/useFocusMode.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Settings } from "@boof-runner/shared/schema";
 import type { SettingsPageId } from "../lib/route.js";
@@ -46,6 +48,7 @@ function SettingsForms({
   reloadProjects: () => Promise<void>;
 }) {
   const onSaved = useMemo(() => () => data.refresh(), [data]);
+  const focus = useFocusMode("settings");
   const proj = useSettingsPage(projectPage, settings, project, pid, onSaved);
   const agents = useSettingsPage(agentsPage, settings, project, pid, onSaved);
   const budgets = useSettingsPage(budgetsPage, settings, project, pid, onSaved);
@@ -97,9 +100,12 @@ function SettingsForms({
           go?.();
         }}
       />
-      <h1 className="m-0 mb-4 text-[length:var(--text-page)] leading-tight font-semibold">
-        Settings
-      </h1>
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="m-0 flex-1 text-[length:var(--text-page)] leading-tight font-semibold">
+          Settings
+        </h1>
+        <FocusToggle mode={focus.mode} onToggle={focus.toggle} />
+      </div>
       <SettingsNav pid={pid} active={page} unsaved={unsaved} />
       {page === "project" && (
         <>
@@ -112,6 +118,7 @@ function SettingsForms({
             projectsRoot={settings.projectsRoot}
             onProjectAdded={onProjectAdded}
             reloadProjects={reloadProjects}
+            advancedOpen={focus.expanded || proj.dirty}
           />
           <SettingsFooter
             dirty={proj.dirty}
@@ -126,7 +133,12 @@ function SettingsForms({
       )}
       {page === "agents" && (
         <>
-          <AgentsPage form={agents.form} set={agents.set} project={project} />
+          <AgentsPage
+            form={agents.form}
+            set={agents.set}
+            project={project}
+            advancedOpen={focus.expanded || agents.dirty}
+          />
           <SettingsFooter
             dirty={agents.dirty}
             elsewhere={agents.elsewhere}

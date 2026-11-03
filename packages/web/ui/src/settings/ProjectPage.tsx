@@ -13,6 +13,7 @@ import type { ProjectPageValues } from "../lib/settings-project.js";
 import { ArchivedProjects } from "./ArchivedProjects.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 
+import { AdvancedSection } from "./AdvancedSection.js";
 const label = "flex flex-col gap-1.5 text-[length:var(--text-body)] font-medium";
 const help = "text-[length:var(--text-row)] font-normal text-ink-muted";
 const h2 = "m-0 text-[length:var(--text-section)] font-semibold";
@@ -27,7 +28,10 @@ export function ProjectPage({
   projectsRoot,
   onProjectAdded,
   reloadProjects,
+  advancedOpen,
 }: {
+  /** Show the advanced sections (expanded view, or the page has unsaved edits). */
+  advancedOpen: boolean;
   /** The page has unsaved edits. */
   dirty: boolean;
   form: ProjectPageValues;
@@ -123,8 +127,7 @@ export function ProjectPage({
         </div>
       </section>
 
-      <section className="flex flex-col gap-4">
-        <h2 className={h2}>All projects</h2>
+      <AdvancedSection title="All projects" className="flex flex-col gap-4" open={advancedOpen}>
         <label className={label}>
           Default project
           <NativeSelect
@@ -158,7 +161,7 @@ export function ProjectPage({
             New project…
           </Button>
         </div>
-      </section>
+      </AdvancedSection>
 
       <ArchivedProjects reloadProjects={reloadProjects} />
 
