@@ -68,6 +68,7 @@ export function TaskForm({
   onCreated,
   handle,
   parentId,
+  onAttention,
 }: {
   pid: string;
   task: TaskView | null;
@@ -78,6 +79,8 @@ export function TaskForm({
   handle?: RefObject<FormHandle | null>;
   /** A new task is created as a subtask of this task. */
   parentId?: string;
+  /** Told whenever the form holds something that must not be hidden (edits, a conflict). */
+  onAttention?: (needs: boolean) => void;
 }) {
   const isNew = task === null;
   const server = useMemo(() => (task ? toValues(task) : EMPTY), [task]);
@@ -221,6 +224,8 @@ export function TaskForm({
     }
   };
   if (handle) handle.current = { dirty, save };
+  const attention = dirty || conflict || elsewhere;
+  useEffect(() => onAttention?.(attention), [attention]);
 
   const create = async (status: "draft" | "pending") => {
     if (busy.current) return;

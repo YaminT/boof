@@ -1,10 +1,13 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { act } from "../lib/act.js";
 import { stepHeaders } from "../lib/log-tail.js";
+import { FocusToggle } from "@/ui/focus-toggle";
+import { taskFormOpen } from "../lib/focus-views.js";
+import { useFocusMode } from "../lib/useFocusMode.js";
 import { hasChildrenConflict, serverSubtaskCount } from "../lib/task-delete.js";
 import { childTasks, parentFromSearch } from "../lib/task-links.js";
 import { backFor, formatRoute, type Route, type TaskView as RouteView } from "../lib/route.js";
@@ -182,6 +185,10 @@ function Loaded({
   const running = task.frontmatter.status === "running";
   const elapsed = useElapsed(pid, task, running);
   const actions = useTaskActions(pid, data, navigate);
+  const focus = useFocusMode("task-detail");
+  const [disclosed, setDisclosed] = useState(false);
+  const [attention, setAttention] = useState(false);
+  const formOpen = taskFormOpen(focus.expanded, disclosed, attention);
 
   // Queue and Retry must carry unsaved edits, or they would run what the form no longer shows.
   const form = useRef<FormHandle | null>(null);
@@ -231,15 +238,34 @@ function Loaded({
       />
       <TaskHierarchy pid={pid} task={task} tasks={data.tasks} actions={actions} />
       <StepStrip task={task} now={Date.now()} logHeaders={stepHeaders(task.body.log)} />
-      <div className="grid items-start gap-6 min-[1024px]:grid-cols-[2fr_3fr]">
-        <TaskForm
-          pid={pid}
-          task={task}
-          locked={running}
-          reload={reload}
-          onCreated={() => {}}
-          handle={form}
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        {!focus.expanded && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-expanded={formOpen}
+            aria-controls="task-form-region"
+            disabled={attention}
+            title={attention ? "Open because it has unsaved changes" : undefined}
+            onClick={() => setDisclosed(!disclosed)}
+          >
+            {formOpen ? "Hide task details" : "Edit task details"}
+          </Button>
+        )}
+        <FocusToggle mode={focus.mode} onToggle={focus.toggle} className="ml-auto" />
+      </div>
+      <div className={cn("grid items-start gap-6", formOpen && "min-[1024px]:grid-cols-[2fr_3fr]")}>
+        <div id="task-form-region" hidden={!formOpen}>
+          <TaskForm
+            pid={pid}
+            task={task}
+            locked={running}
+            reload={reload}
+            onCreated={() => {}}
+            handle={form}
+            onAttention={setAttention}
+          />
+        </div>
         <section className="min-w-0">
           <nav aria-label="Task view" className="mb-3 flex gap-1 border-b border-line">
             {TABS.map((t) => (

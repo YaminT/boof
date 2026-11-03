@@ -13,3 +13,15 @@ export function overviewParts(
   const wrong = recent.filter((t) => ["failed", "stopped"].includes(t.frontmatter.status));
   return { recent: wrong, showRecent: wrong.length > 0, showSpend: spendExceeded };
 }
+
+/**
+ * Whether the task form is shown. Expanded always shows it. Simple tucks it behind a disclosure,
+ * but never while it holds unsaved edits, a refused save or a newer server copy.
+ */
+export function taskFormOpen(
+  expanded: boolean,
+  disclosed: boolean,
+  needsAttention: boolean,
+): boolean {
+  return expanded || disclosed || needsAttention;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskView } from "../api.js";
-import { overviewParts } from "./focus-views.js";
+import { overviewParts, taskFormOpen } from "./focus-views.js";
 
 const t = (id: string, status: string) => ({ frontmatter: { id, status } }) as unknown as TaskView;
 const recent = [t("a", "done"), t("b", "failed"), t("c", "stopped"), t("d", "done")];
@@ -23,5 +23,18 @@ describe("overviewParts", () => {
   it("simple hides Recent when nothing in it went wrong", () => {
     expect(overviewParts(false, [t("a", "done")], false).showRecent).toBe(false);
     expect(overviewParts(false, [], false).showRecent).toBe(false);
+  });
+});
+
+describe("taskFormOpen", () => {
+  it("expanded always shows the form", () => {
+    expect(taskFormOpen(true, false, false)).toBe(true);
+  });
+  it("simple hides it until the user opens it", () => {
+    expect(taskFormOpen(false, false, false)).toBe(false);
+    expect(taskFormOpen(false, true, false)).toBe(true);
+  });
+  it("simple never hides a form that needs attention", () => {
+    expect(taskFormOpen(false, false, true)).toBe(true);
   });
 });
