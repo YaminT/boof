@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./owlish": {
+      "types": "./src/owlish-index.ts",
+      "default": "./src/owlish-index.ts"
+    },
     "./ids": {
       "types": "./src/ids.ts",
       "default": "./src/ids.ts"

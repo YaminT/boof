@@ -73,8 +73,6 @@ const CLI_COMMANDS = [
 /** The part a repo-relative file path (forward slashes) belongs to, or undefined outside the map. */
 export function partOfFile(file: string): Part | undefined {
   const p = normalize(file).split("\\").join("/");
-  // The package barrel only re-exports every part (Owlish files included); it holds no logic to police.
-  if (p === "packages/shared/src/index.ts") return undefined;
   if (p.startsWith("packages/web/ui/src/")) return "facedisk/ui";
   if (p.startsWith("packages/shared/src/") && basename(p).startsWith("owlish")) return "owlish";
   const pkg = /^packages\/([^/]+)\/src\//.exec(p)?.[1];
@@ -90,6 +88,8 @@ export function partOfFile(file: string): Part | undefined {
  * resolving it against the importing file. Third-party and `node:` specifiers give undefined.
  */
 export function partOfSpecifier(spec: string, fromFile: string): Part | undefined {
+  // Owlish is its own part, reached through the `@boof-runner/shared/owlish` subpath.
+  if (spec === "@boof-runner/shared/owlish") return "owlish";
   const pkg = /^@boof-runner\/([^/]+)/.exec(spec)?.[1];
   if (pkg) return PACKAGE_PART[pkg];
   if (!spec.startsWith(".")) return undefined;
