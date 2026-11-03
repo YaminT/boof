@@ -201,7 +201,7 @@ Fix errors this way:
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 73 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 79 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
 
 ### MCP over HTTP (remote)
 
@@ -272,7 +272,7 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (73). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (79). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
 | Area                       | Tools                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -286,6 +286,7 @@ Tools (73). Arguments that name a project use `projectId`; plan tools use `planI
 | Command templates          | `boof_list_commands`, `boof_create_command`, `boof_update_command`, `boof_delete_command`                                                                                                                                                                                                                                                                                                     |
 | API clients                | `boof_list_clients`, `boof_create_client`, `boof_revoke_client`, `boof_rotate_client`                                                                                                                                                                                                                                                                                                         |
 | Webhooks                   | `boof_list_webhooks`, `boof_create_webhook`, `boof_update_webhook`, `boof_delete_webhook`                                                                                                                                                                                                                                                                                                     |
+| Account pool               | `boof_list_accounts`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`                                                                                                                                                                                                                                         |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
 
@@ -599,6 +600,8 @@ Every error has this shape:
 | `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                               |
 | `unsupported_media_type`   | 415    | Send the body with `Content-Type: application/json`.                                                                                                            |
 | `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                   |
+| `not_configured`           | 409    | No account pool (better-ccflare) is set up. Tell the user to set `settings.owlish`; do not retry.                                                               |
+| `gateway_error`            | 502    | The account pool gateway failed or is unreachable. Check `accounts.health`; retry later.                                                                        |
 | `internal`                 | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                 |
 
 `origin_not_allowed` (403) appears on `/api/*` and `/mcp` for requests with a cross-site `Origin` header.
@@ -649,7 +652,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 75 operations. Every path below starts with `/api/v1`.
+There are 81 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -1841,6 +1844,8 @@ JSON body (unknown keys are rejected):
 - `defaultProject`: `kebab-id | null`, optional
 - `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
 - `models`: `{ [key: string]: string[] }`, optional
+- `owlish`: `{ healthGate?: "pause" | "warn" | "off", url: string } | null`, optional
+- `owlishApiKey`: `string | null`, optional; boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)
 - `projectsRoot`: `string | null`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, poolWaitMs?: integer, transient?: integer >= 0 }`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }`, optional
@@ -1931,7 +1936,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_runner`
 - CLI: `boof-runner runner status`
 - What it does: Returns whether the runner is enabled and its concurrency. No input. No side effects.
-- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean }`.
+- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/runner/status` (Runner and queue status)
@@ -1941,7 +1946,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_runner_status`
 - CLI: `boof-runner runner overview`
 - What it does: Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.
-- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
+- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
 - Errors: `403 forbidden_scope`
 
 #### `PUT /api/v1/runner` (Start or pause the runner)
@@ -2029,6 +2034,92 @@ JSON body (unknown keys are rejected):
 Path parameters (all required):
 
 - `commandId`: `kebab-id`, required; Command template id
+
+### Account pool (better-ccflare)
+
+#### `GET /api/v1/accounts` (List pool accounts)
+
+- Operation: `accounts.list`
+- Scope: `settings:read`
+- MCP tool: `boof_list_accounts`
+- CLI: `boof-runner accounts list`
+- What it does: Lists the accounts of the better-ccflare pool (id, name, provider, priority, paused, token and rate-limit state). `configured: false` and no accounts when settings.owlish is not set. No input. No side effects. Fails with 502 gateway_error when the gateway cannot be reached.
+- Success: HTTP 200 with `{ accounts: { id: string, name: string, paused?: boolean, priority?: number, provider?: string, rateLimitReset?: string | number | null, rateLimitStatus?: string, tokenStatus?: string }[], configured: boolean }`.
+- Errors: `403 forbidden_scope`
+
+#### `GET /api/v1/accounts/health` (Pool health)
+
+- Operation: `accounts.health`
+- Scope: `settings:read`
+- MCP tool: `boof_get_pool_health`
+- CLI: `boof-runner accounts health`
+- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds. No input. No side effects.
+- Success: HTTP 200 with `{ configured: boolean, healthGate: "pause" | "warn" | "off" | null, keySource: "file" | "env" | null, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, url: string | null }`.
+- Errors: `403 forbidden_scope`
+
+#### `POST /api/v1/accounts/{accountId}/pause` (Pause an account)
+
+- Operation: `accounts.pause`
+- Scope: `settings:write`
+- MCP tool: `boof_pause_account`
+- CLI: `boof-runner accounts pause`
+- What it does: Pause an account in the better-ccflare pool, at once (the gateway stops or resumes routing to it). Input: accountId. Needs settings:write and a trusted, project-unrestricted client: the pool is shared by every project. 409 not_configured without settings.owlish.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `accountId`: `string`, required; better-ccflare account id (see accounts.list); max length 200
+
+#### `POST /api/v1/accounts/{accountId}/resume` (Resume an account)
+
+- Operation: `accounts.resume`
+- Scope: `settings:write`
+- MCP tool: `boof_resume_account`
+- CLI: `boof-runner accounts resume`
+- What it does: Resume an account in the better-ccflare pool, at once (the gateway stops or resumes routing to it). Input: accountId. Needs settings:write and a trusted, project-unrestricted client: the pool is shared by every project. 409 not_configured without settings.owlish.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `accountId`: `string`, required; better-ccflare account id (see accounts.list); max length 200
+
+#### `POST /api/v1/accounts/{accountId}/priority` (Set an account's priority)
+
+- Operation: `accounts.priority`
+- Scope: `settings:write`
+- MCP tool: `boof_set_account_priority`
+- CLI: `boof-runner accounts priority`
+- What it does: Sets the routing priority of a pool account: 0 to 100, lower is used first. Inputs: accountId, priority. Needs settings:write and a trusted, project-unrestricted client. 409 not_configured without settings.owlish.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `accountId`: `string`, required; better-ccflare account id (see accounts.list); max length 200
+
+JSON body (unknown keys are rejected):
+
+- `priority`: `integer 0..100`, required
+
+#### `POST /api/v1/accounts/{accountId}/thresholds` (Set an account's usage-pause thresholds)
+
+- Operation: `accounts.thresholds`
+- Scope: `settings:write`
+- MCP tool: `boof_set_account_thresholds`
+- CLI: `boof-runner accounts thresholds`
+- What it does: Sets when the gateway pauses a pool account on its own: percent (0 to 100, or null for none) of a usage window, for example { fiveHour: 80, weekly: null }. Inputs: accountId, thresholds. Needs settings:write and a trusted, project-unrestricted client. 409 not_configured without settings.owlish.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `accountId`: `string`, required; better-ccflare account id (see accounts.list); max length 200
+
+JSON body (unknown keys are rejected):
+
+- `thresholds`: `{ [key: string]: number 0..100 | null }`, required
 
 ### Webhooks (admin)
 

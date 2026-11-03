@@ -480,6 +480,8 @@ export const SettingsPatchSchema = z
     worktree: WorktreeSettingsSchema.optional(),
     retries: RetrySettingsSchema.optional(),
     budget: BudgetSettingsSchema.optional(),
+    /** The account pool; `null` removes it (the key is handled by settings.update, never stored here). */
+    owlish: OwlishSettingsSchema.nullable().optional(),
     models: z.record(z.string(), z.array(z.string())).optional(),
   })
   .partial();

@@ -16,6 +16,14 @@ export const planIdParam = idParam("plan id", "Plan id (kebab-case).");
 export const goalIdParam = idParam("goal id", "Goal id (kebab-case).");
 export const clientIdParam = idParam("id", "API client id.");
 export const commandIdParam = idParam("id", "Command template id.");
+/** A better-ccflare account id: URL-safe, never a path. */
+export const accountIdParam = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9._:-]+$/, "Invalid account id")
+  .meta({ description: "better-ccflare account id (see accounts.list)." });
+
 export const webhookIdParam = idParam("id", "Webhook id.");
 
 export const READ: McpAnnotations = {

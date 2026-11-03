@@ -20,6 +20,7 @@ import {
   PublicClientSchema,
   BudgetExceededListSchema,
   BudgetStatusSchema,
+  PoolStatusSchema,
   PublicSettingsSchema,
   TaskViewSchema,
 } from "../schemas.js";
@@ -72,14 +73,32 @@ export const settingsUpdate = defineOp({
       description:
         "The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write.",
     }),
+    owlishApiKey: z.string().min(1).max(512).nullable().optional().meta({
+      description:
+        "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
+    }),
   }),
   output: PublicSettingsSchema,
   rest: { method: "PUT", path: "/settings", ifMatch: "expectedUpdated", etag: settingsEtag },
   mcp: { expose: true, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
   summary: () => "Settings updated",
-  handler: async (ctx, { expectedUpdated, ...patch }) => {
+  handler: async (ctx, { expectedUpdated, owlishApiKey, ...patch }) => {
     assertMayWriteSettings(ctx);
-    return publicSettings(await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated));
+    const saved = await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated);
+    // The key never touches settings.json: it goes to the secret store, and is not echoed.
+    if (typeof owlishApiKey === "string") {
+      try {
+        await ctx.services.owlishSecrets.set(owlishApiKey);
+      } catch {
+        throw new OpError(
+          400,
+          "The client key must be 1-512 printable characters without spaces",
+          "invalid_input",
+          [{ path: "owlishApiKey", message: "Invalid key" }],
+        );
+      }
+    } else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
+    return publicSettings(saved);
   },
 });
 
@@ -231,6 +250,8 @@ export const runnerStatus = defineOp({
     concurrency: z.number().int(),
     /** Day budgets that are spent today: the runner does not start work in these scopes. */
     budgetExceeded: BudgetExceededListSchema,
+    /** The account pool (absent when settings.owlish is not set). */
+    pool: PoolStatusSchema,
   }),
   rest: { method: "GET", path: "/runner" },
   mcp: { expose: true, name: "boof_get_runner", annotations: READ },
@@ -242,6 +263,7 @@ export const runnerStatus = defineOp({
       enabled: runner.enabled,
       concurrency: runner.concurrency,
       budgetExceeded: budget.exceeded,
+      pool: await ctx.services.poolStatus(),
     };
   },
 });
@@ -259,6 +281,8 @@ export const runnerOverview = defineOp({
     concurrency: z.number().int(),
     /** Day budgets that are spent today: the runner does not start work in these scopes. */
     budgetExceeded: BudgetExceededListSchema,
+    /** The account pool (absent when settings.owlish is not set). */
+    pool: PoolStatusSchema,
     projects: z.array(
       z.object({
         id: z.string(),
@@ -301,6 +325,7 @@ export const runnerOverview = defineOp({
       enabled: runner.enabled,
       concurrency: runner.concurrency,
       budgetExceeded: budget.exceeded,
+      pool: await ctx.services.poolStatus(),
       projects,
     };
   },
@@ -396,7 +421,7 @@ function assertMayWriteCommands(ctx: OpContext): void {
 }
 
 /** Settings are global (roles, budgets, worktree, security): trusted, unrestricted callers only. */
-function assertMayWriteSettings(ctx: OpContext): void {
+export function assertMayWriteSettings(ctx: OpContext): void {
   const me = ctx.principal;
   if (me.trust !== "trusted" || me.projects !== "*") {
     throw new OpError(

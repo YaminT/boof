@@ -312,3 +312,30 @@ export const TaskDiffSchema = z.object({
       "The <branch>--leftovers side branch holding uncommitted work saved at the end of a run, when it exists.",
   }),
 });
+
+/** The account pool as the gateway health check reports it (see `@boof-runner/shared/owlish`). */
+export const PoolStatusSchema = z.object({
+  status: z.enum(["absent", "unreachable", "ok", "degraded", "unhealthy"]),
+  configured: z.number().int().nullable(),
+  routable: z.number().int().nullable(),
+  paused: z.number().int().nullable(),
+  rateLimited: z.number().int().nullable(),
+  usageExhausted: z.number().int().nullable(),
+  nextAvailableAt: z.string().nullable(),
+  reason: z
+    .string()
+    .nullable()
+    .meta({ description: "Why the pool is not ok; at most 200 characters." }),
+});
+
+/** One account of the pool; fields the gateway adds later pass through. */
+export const AccountSchema = z.looseObject({
+  id: z.string(),
+  name: z.string(),
+  provider: z.string().optional(),
+  priority: z.number().optional(),
+  paused: z.boolean().optional(),
+  tokenStatus: z.string().optional(),
+  rateLimitStatus: z.string().optional(),
+  rateLimitReset: z.union([z.string(), z.number()]).nullable().optional(),
+});

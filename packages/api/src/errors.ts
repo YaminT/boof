@@ -78,6 +78,8 @@ export const ERROR_CODES = {
   payload_too_large: [413, "The request body exceeds the size limit."],
   unsupported_media_type: [415, "A JSON operation needs Content-Type: application/json."],
   rate_limited: [429, "Too many requests; retry after the Retry-After header."],
+  not_configured: [409, "No account pool is configured (settings.owlish is not set)."],
+  gateway_error: [502, "The account pool gateway (better-ccflare) failed or is unreachable."],
   internal: [500, "Unexpected server error; details are in the server log."],
 } as const;
 

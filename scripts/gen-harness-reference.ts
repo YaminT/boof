@@ -268,6 +268,7 @@ const AREA_TITLE: Record<string, string> = {
   usage: "Usage",
   commands: "Command templates",
   webhooks: "Webhooks (admin)",
+  accounts: "Account pool (better-ccflare)",
 };
 
 /** The generated reference as markdown (not yet formatted by prettier). */

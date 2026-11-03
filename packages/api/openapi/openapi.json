@@ -134,6 +134,8 @@
                   "payload_too_large",
                   "unsupported_media_type",
                   "rate_limited",
+                  "not_configured",
+                  "gateway_error",
                   "internal"
                 ],
                 "type": "string"
@@ -2479,6 +2481,564 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/accounts": {
+      "get": {
+        "description": "Lists the accounts of the better-ccflare pool (id, name, provider, priority, paused, token and rate-limit state). `configured: false` and no accounts when settings.owlish is not set. No input. No side effects. Fails with 502 gateway_error when the gateway cannot be reached.",
+        "operationId": "accounts.list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accounts": {
+                      "items": {
+                        "additionalProperties": {},
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "paused": {
+                            "type": "boolean"
+                          },
+                          "priority": {
+                            "type": "number"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "rateLimitReset": {
+                            "type": [
+                              "string",
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "rateLimitStatus": {
+                            "type": "string"
+                          },
+                          "tokenStatus": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "accounts"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List pool accounts",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_list_accounts"
+      }
+    },
+    "/accounts/{accountId}/pause": {
+      "post": {
+        "description": "Pause an account in the better-ccflare pool, at once (the gateway stops or resumes routing to it). Input: accountId. Needs settings:write and a trusted, project-unrestricted client: the pool is shared by every project. 409 not_configured without settings.owlish.",
+        "operationId": "accounts.pause",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "description": "better-ccflare account id (see accounts.list).",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Pause an account",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_pause_account"
+      }
+    },
+    "/accounts/{accountId}/priority": {
+      "post": {
+        "description": "Sets the routing priority of a pool account: 0 to 100, lower is used first. Inputs: accountId, priority. Needs settings:write and a trusted, project-unrestricted client. 409 not_configured without settings.owlish.",
+        "operationId": "accounts.priority",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "description": "better-ccflare account id (see accounts.list).",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "priority": {
+                    "maximum": 100,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "priority"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set an account's priority",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_set_account_priority"
+      }
+    },
+    "/accounts/{accountId}/resume": {
+      "post": {
+        "description": "Resume an account in the better-ccflare pool, at once (the gateway stops or resumes routing to it). Input: accountId. Needs settings:write and a trusted, project-unrestricted client: the pool is shared by every project. 409 not_configured without settings.owlish.",
+        "operationId": "accounts.resume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "description": "better-ccflare account id (see accounts.list).",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resume an account",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_resume_account"
+      }
+    },
+    "/accounts/{accountId}/thresholds": {
+      "post": {
+        "description": "Sets when the gateway pauses a pool account on its own: percent (0 to 100, or null for none) of a usage window, for example { fiveHour: 80, weekly: null }. Inputs: accountId, thresholds. Needs settings:write and a trusted, project-unrestricted client. 409 not_configured without settings.owlish.",
+        "operationId": "accounts.thresholds",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "description": "better-ccflare account id (see accounts.list).",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "thresholds": {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "maximum": 100,
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "propertyNames": {
+                      "maxLength": 40,
+                      "pattern": "^[A-Za-z][A-Za-z0-9]*$",
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "thresholds"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set an account's usage-pause thresholds",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_set_account_thresholds"
+      }
+    },
+    "/accounts/health": {
+      "get": {
+        "description": "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds. No input. No side effects.",
+        "operationId": "accounts.health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "healthGate": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "pause",
+                            "warn",
+                            "off"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "keySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "file",
+                            "env"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pool": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configured": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "nextAvailableAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "paused": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "rateLimited": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "description": "Why the pool is not ok; at most 200 characters.",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "routable": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "absent",
+                            "unreachable",
+                            "ok",
+                            "degraded",
+                            "unhealthy"
+                          ],
+                          "type": "string"
+                        },
+                        "usageExhausted": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "configured",
+                        "routable",
+                        "paused",
+                        "rateLimited",
+                        "usageExhausted",
+                        "nextAvailableAt",
+                        "reason"
+                      ],
+                      "type": "object"
+                    },
+                    "url": {
+                      "description": "scheme://host:port of the gateway.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "url",
+                    "healthGate",
+                    "keySource",
+                    "pool"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Pool health",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_pool_health"
+      }
+    },
     "/actions": {
       "get": {
         "description": "Lists tasks parked with questions across the projects the client may access. No input. No side effects.",
@@ -10785,12 +11345,112 @@
                     },
                     "enabled": {
                       "type": "boolean"
+                    },
+                    "pool": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configured": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "nextAvailableAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "paused": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "rateLimited": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "description": "Why the pool is not ok; at most 200 characters.",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "routable": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "absent",
+                            "unreachable",
+                            "ok",
+                            "degraded",
+                            "unhealthy"
+                          ],
+                          "type": "string"
+                        },
+                        "usageExhausted": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "configured",
+                        "routable",
+                        "paused",
+                        "rateLimited",
+                        "usageExhausted",
+                        "nextAvailableAt",
+                        "reason"
+                      ],
+                      "type": "object"
                     }
                   },
                   "required": [
                     "enabled",
                     "concurrency",
-                    "budgetExceeded"
+                    "budgetExceeded",
+                    "pool"
                   ],
                   "type": "object"
                 }
@@ -10946,6 +11606,105 @@
                     "enabled": {
                       "type": "boolean"
                     },
+                    "pool": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configured": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "nextAvailableAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "paused": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "rateLimited": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "description": "Why the pool is not ok; at most 200 characters.",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "routable": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "absent",
+                            "unreachable",
+                            "ok",
+                            "degraded",
+                            "unhealthy"
+                          ],
+                          "type": "string"
+                        },
+                        "usageExhausted": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "configured",
+                        "routable",
+                        "paused",
+                        "rateLimited",
+                        "usageExhausted",
+                        "nextAvailableAt",
+                        "reason"
+                      ],
+                      "type": "object"
+                    },
                     "projects": {
                       "items": {
                         "additionalProperties": false,
@@ -10989,6 +11748,7 @@
                     "enabled",
                     "concurrency",
                     "budgetExceeded",
+                    "pool",
                     "projects"
                   ],
                   "type": "object"
@@ -11143,6 +11903,49 @@
                       "type": "string"
                     },
                     "type": "object"
+                  },
+                  "owlish": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "healthGate": {
+                            "default": "pause",
+                            "enum": [
+                              "pause",
+                              "warn",
+                              "off"
+                            ],
+                            "type": "string"
+                          },
+                          "url": {
+                            "maxLength": 500,
+                            "pattern": "^https?:\\/\\/",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "owlishApiKey": {
+                    "anyOf": [
+                      {
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)."
                   },
                   "projectsRoot": {
                     "anyOf": [
@@ -12293,6 +13096,10 @@
       "description": "The client has review trust: a human must approve this change.",
       "status": 403
     },
+    "gateway_error": {
+      "description": "The account pool gateway (better-ccflare) failed or is unreachable.",
+      "status": 502
+    },
     "goal_has_dependents": {
       "description": "Other goals depend on this one; pass cascade to remove them too.",
       "status": 409
@@ -12344,6 +13151,10 @@
     "not_a_git_repo": {
       "description": "The project directory is not a git work tree.",
       "status": 400
+    },
+    "not_configured": {
+      "description": "No account pool is configured (settings.owlish is not set).",
+      "status": 409
     },
     "not_found": {
       "description": "The task, command, client or webhook does not exist.",

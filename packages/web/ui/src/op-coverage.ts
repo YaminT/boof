@@ -122,6 +122,14 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.create": { where: "createClient \u2014 KeysPage (new API client)" },
   "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
   "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
+  "accounts.list": { none: "no Accounts page yet (a later UI task); use REST, MCP or the CLI" },
+  "accounts.health": { none: "no Accounts page yet (a later UI task); use REST, MCP or the CLI" },
+  "accounts.pause": { none: "no Accounts page yet (a later UI task); use REST, MCP or the CLI" },
+  "accounts.resume": { none: "no Accounts page yet (a later UI task); use REST, MCP or the CLI" },
+  "accounts.priority": { none: "no Accounts page yet (a later UI task); use REST, MCP or the CLI" },
+  "accounts.thresholds": {
+    none: "no Accounts page yet (a later UI task); use REST, MCP or the CLI",
+  },
   "webhooks.list": { where: "listWebhooks \u2014 Webhooks (the webhook list)" },
   "webhooks.create": {
     where: "createWebhook \u2014 Webhooks (new webhook; the secret is shown once)",

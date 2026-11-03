@@ -93,6 +93,12 @@ describe("UI coverage of the operations", () => {
         "settings.models",
         "runner.status",
         "runner.overview",
+        "accounts.list",
+        "accounts.health",
+        "accounts.pause",
+        "accounts.resume",
+        "accounts.priority",
+        "accounts.thresholds",
       ]
     `);
   });

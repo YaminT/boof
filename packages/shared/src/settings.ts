@@ -87,13 +87,15 @@ export class SettingsStore {
   update(patch: SettingsUpdate, guard?: (current: Settings) => void): Promise<Settings> {
     return this.mutate((current) => {
       guard?.(current);
-      const { runner, projectsRoot, ...rest } = patch;
+      const { runner, projectsRoot, owlish, ...rest } = patch;
       const next = {
         ...current,
         ...rest,
         ...(runner ? { runner: { ...current.runner, ...stripUndefined(runner) } } : {}),
       } as Settings;
       // `null` clears the projects root back to its default.
+      if (owlish === null) delete next.owlish;
+      else if (owlish !== undefined) next.owlish = owlish;
       if (projectsRoot === null) delete next.projectsRoot;
       else if (projectsRoot !== undefined) next.projectsRoot = projectsRoot;
       return next;
@@ -120,9 +122,11 @@ export function settingsVersion(settings: { webhooks?: unknown }): string {
 }
 
 /** What {@link SettingsStore.update} accepts: any settings key, `runner` partial, `projectsRoot` nullable. */
-export type SettingsUpdate = Omit<Partial<Settings>, "runner" | "projectsRoot"> & {
+export type SettingsUpdate = Omit<Partial<Settings>, "runner" | "projectsRoot" | "owlish"> & {
   runner?: Partial<Settings["runner"]>;
   projectsRoot?: string | null;
+  /** `null` removes the account pool. */
+  owlish?: Settings["owlish"] | null;
 };
 
 function stripUndefined<T extends object>(o: T): T {

@@ -1,4 +1,10 @@
-import { OwlishSecretStore } from "@boof-runner/shared/owlish";
+import {
+  ABSENT_POOL,
+  OwlishClient,
+  OwlishError,
+  OwlishSecretStore,
+  type PoolStatus,
+} from "@boof-runner/shared/owlish";
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -844,6 +850,60 @@ export class TaskService {
     this.webhookSecrets = new WebhookSecretStore(root);
     this.owlishSecrets = new OwlishSecretStore(root);
     this.catalog = catalog;
+  }
+
+  private owlishClientCache?: { id: string; client: OwlishClient };
+
+  /**
+   * The better-ccflare client for `settings.owlish` and boof's key, or null when no pool is
+   * configured. One client per (url, key), so its 10 s health cache is shared by every caller.
+   */
+  async owlishClient(): Promise<{ client: OwlishClient; url: string; healthGate: string } | null> {
+    const owlish = (await this.loadSettings()).owlish;
+    if (!owlish) return null;
+    const key = await this.owlishSecrets.get();
+    const id = `${owlish.url}\n${key ?? ""}`;
+    if (this.owlishClientCache?.id !== id) {
+      this.owlishClientCache = {
+        id,
+        client: new OwlishClient({ url: owlish.url, apiKey: key ?? undefined }),
+      };
+    }
+    return {
+      client: this.owlishClientCache.client,
+      url: owlish.url,
+      healthGate: owlish.healthGate,
+    };
+  }
+
+  /** The pool right now: `absent` (no request) without `settings.owlish`; never throws. */
+  async poolStatus(): Promise<PoolStatus> {
+    try {
+      const pool = await this.owlishClient();
+      return pool ? await pool.client.health() : { ...ABSENT_POOL };
+    } catch {
+      // An unreadable key file must not take runner.status down; /health needs no key anyway.
+      const owlish = (await this.loadSettings()).owlish;
+      return owlish ? await new OwlishClient({ url: owlish.url }).health() : { ...ABSENT_POOL };
+    }
+  }
+
+  /** Run a gateway call: an absent pool is 409, a gateway failure 502 (no key, no response body). */
+  async withPool<T>(fn: (client: OwlishClient) => Promise<T>): Promise<T> {
+    const pool = await this.owlishClient();
+    if (!pool) {
+      throw new OpError(
+        409,
+        "No account pool is configured (settings.owlish is not set)",
+        "not_configured",
+      );
+    }
+    try {
+      return await fn(pool.client);
+    } catch (err) {
+      if (err instanceof OwlishError) throw new OpError(502, err.message, "gateway_error");
+      throw err;
+    }
   }
 
   /** The (cached) service of project `id`. Does not check that the project exists. */
