@@ -7,12 +7,13 @@
     "./cli/*.js": "./cli/*.ts"
   },
   "scripts": {
-    "build": "vite build ui"
+    "build": "vite build ui",
+    "dev:ui": "vite ui"
   },
   "dependencies": {
     "@boof/heart": "*",
     "@boof/heart-server": "*",
-    "@modelcontextprotocol/sdk": "~1.32.2"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@base-ui/react": "^1.9.0",

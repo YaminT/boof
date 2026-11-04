@@ -9,6 +9,7 @@ import { AuthStore } from "@boof/heart";
 import { mcpCommand, MCP_HELP } from "./mcp-cli.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+// This integration test spawns bin; test files are outside the production boundary check.
 const entry = join(here, "..", "..", "..", "bin", "src", "boof-runner.ts");
 const tsx = join(here, "..", "..", "..", "node_modules", ".bin", "tsx");
 

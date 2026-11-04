@@ -278,7 +278,7 @@ Roadmap step 15's done criterion "every operation over REST, MCP and CLI" is thi
 
 Files: `bin/src/boundaries.ts` (the map and the allow-list) and `bin/src/import-boundaries.test.ts`. The vitest include already covers `bin/**/*.test.ts`.
 
-1. Walk `packages/*/src`, `packages/web/ui/src`, `bin/src` for `.ts`, `.tsx`, `.mjs`; skip `*.test.ts`, `*.test.tsx`, `node_modules`, `dist`, `.tsc-typecheck`, `generated/`.
+1. Walk `packages/*/src`, `packages/facedisk/ui/src`, `bin/src` for `.ts`, `.tsx`, `.mjs`; skip `*.test.ts`, `*.test.tsx`, `node_modules`, `dist`, `.tsc-typecheck`, `generated/`.
 2. Extract specifiers with a regex over `import … from "x"`, `export … from "x"`, `import("x")`, and note whether the statement is `import type` or `export type`.
 3. Map each file and each specifier to a **part**: `@boof-runner/<pkg>[/sub]` by package name; a relative path by resolving it and looking up the folder map; `node:*` and third-party ignored.
 4. Allowed edges are the table in §5.1 (parts, not packages); a `facedisk/ui → heart` or `facedisk/ui → heart-server` edge must be type-only.
@@ -291,13 +291,13 @@ Files: `bin/src/boundaries.ts` (the map and the allow-list) and `bin/src/import-
 | `packages/heart/src/**` except `owlish*`                                                   | heart        |
 | `packages/owlish/src/**`                                                                   | owlish       |
 | `packages/runner/src/**`                                                                   | runner       |
-| `packages/api/src/**`, `packages/mcp/src/**`, `packages/web/src/**`                        | heart-server |
-| `packages/web/ui/src/**`                                                                   | facedisk/ui  |
+| `packages/heart-server/src/{api,mcp,server}/**`                                            | heart-server |
+| `packages/facedisk/ui/src/**`                                                              | facedisk/ui  |
 | `bin/src/{auth,plan,project,remote,service,mcp}-cli.ts`                                    | facedisk/cli |
 | `bin/src/**` otherwise (`boof-runner.ts`, `headless.ts`, `scaffold.ts`, `runner-guard.ts`) | bin          |
 | `packages/desktop/src/**`                                                                  | desktop      |
 
-Within one package the map is by file, so the lint already guards the future boundaries (`web/src` versus `web/ui`, the CLI commands versus the composition root, the Owlish client inside `shared`) while the files stay put. Edges inside a part (for example `api → mcp` inside heart-server, `bin → scaffold`) are not checked.
+Within one package the map is by file, so the lint guards the future boundaries (`heart-server/src` versus `facedisk/ui`, the CLI commands versus the composition root, the Owlish client inside `shared`). In M8, split the bare `@boof/facedisk` mapping by subpath so UI imports map to `facedisk/ui` and CLI imports map to `facedisk/cli`. Edges inside a part (for example `api → mcp` inside heart-server, `bin → scaffold`) are not checked.
 
 ### 7.4 The allow-list on day one
 

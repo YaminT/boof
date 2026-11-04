@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildUnit,
+  defaultServiceEnv,
   envLine,
   execWord,
   mergePath,
@@ -13,6 +14,13 @@ import {
   type RunResult,
   type ServiceEnv,
 } from "./service-cli.js";
+
+// This source-resolution check runs outside the production import-boundary map.
+describe("source service runner path", () => {
+  it("resolves the composition-root bundle from the Facedisk source tree", () => {
+    expect(defaultServiceEnv().scriptPath).toMatch(/\/bin\/dist\/boof-runner\.js$/);
+  });
+});
 
 let home: string;
 let data: string;

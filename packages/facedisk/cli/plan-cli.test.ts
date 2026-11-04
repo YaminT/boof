@@ -16,6 +16,7 @@ import {
   selectActionableUnits,
 } from "@boof/heart";
 import { ToolRegistry } from "@boof-runner/runner";
+// These integration tests cross into bin; test files are outside the production boundary check.
 import { drainQueue, scanRepoToTasks } from "../../../bin/src/headless.js";
 import { planCommand } from "./plan-cli.js";
 

@@ -115,7 +115,7 @@ function defaultScriptPath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   return basename(here) === "dist"
     ? join(here, "boof-runner.js")
-    : resolve(here, "..", "dist", "boof-runner.js");
+    : resolve(here, "..", "..", "..", "bin", "dist", "boof-runner.js");
 }
 
 export function defaultServiceEnv(): ServiceEnv {

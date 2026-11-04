@@ -23,7 +23,7 @@
     <tests>
       <strategy>Screenshots of each screen simple and expanded, light and dark, 420 px and desktop; UI checks that the expansion state is remembered.</strategy>
       <technology>manual + vitest</technology>
-      <run>npm run build -w @boof-runner/web-ui</run>
+      <run>npm run build -w @boof/facedisk</run>
     </tests>
   </progress>
 </boof>

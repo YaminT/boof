@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -17,6 +18,25 @@ const repo = fileURLToPath(new URL("../../", import.meta.url));
 const SKIP_DIRS = new Set(["node_modules", "dist", ".tsc-typecheck", "generated"]);
 const SOURCE = /\.(ts|tsx|mjs)$/;
 const TEST = /\.test\.tsx?$/;
+
+describe("tracked source git hygiene", () => {
+  it("does not ignore any tracked source file under packages", () => {
+    const tracked = execFileSync("git", ["ls-files", "-z", "packages"], { cwd: repo })
+      .toString()
+      .split("\0")
+      .filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs|css|html|json)$/.test(file));
+    const ignored = tracked.filter((file) => {
+      try {
+        execFileSync("git", ["check-ignore", "--no-index", "-q", "--", file], { cwd: repo });
+        return true;
+      } catch (error) {
+        if ((error as { status?: number }).status === 1) return false;
+        throw error;
+      }
+    });
+    expect(ignored, `tracked source files ignored by git:\n${ignored.join("\n")}`).toEqual([]);
+  });
+});
 
 interface Import {
   specifier: string;
