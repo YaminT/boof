@@ -3,7 +3,6 @@ import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type Goal, type SyncReport } from "../api.js";
 import { Button } from "@/ui/button";
-import { FocusToggle } from "@/ui/focus-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +14,6 @@ import { act } from "../lib/act.js";
 import { listKeyAction, moveQueued } from "../lib/task-list.js";
 import { SortableList } from "../shell/SortableList.js";
 import { planErrorLines, sortGoals } from "../lib/plan-view.js";
-import { useFocusMode } from "../lib/useFocusMode.js";
 import { formatRoute, type Route } from "../lib/route.js";
 import type { AppData } from "../useAppData.js";
 import { GoalEditor } from "./GoalEditor.js";
@@ -40,7 +38,6 @@ export function PlanPage({
   navigate: (to: Route, opts?: { replace?: boolean }) => void;
 }) {
   const { plan, missing, failed, reload, mutate } = usePlan(pid, planId, data.planTick);
-  const focus = useFocusMode("plans");
   // The panel shows the goal editor: "new" for a goal being added, else the id of the goal edited.
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [deleting, setDeleting] = useState<{ goal: Goal; dependents: string[] | null } | null>(
@@ -228,7 +225,6 @@ export function PlanPage({
           )
         }
         onArchive={() => setArchiving(true)}
-        focusToggle={<FocusToggle mode={focus.mode} onToggle={focus.toggle} />}
       />
       <div className="flex flex-col gap-6 min-[1024px]:flex-row min-[1024px]:items-start">
         <div className={`min-w-0 flex-1 ${goal || editing ? "hidden min-[1024px]:block" : ""}`}>

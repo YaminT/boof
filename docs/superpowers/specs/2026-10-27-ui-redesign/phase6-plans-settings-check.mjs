@@ -88,21 +88,12 @@ for (const scheme of ["light", "dark"]) {
     if (w === 420) check(!(await sideways(p)), `${tag} expanded: no sideways scroll`);
     await p.screenshot({ path: `${OUT}/phase6-settings-expanded-${w}-${scheme}.png` });
     await toggleOf(p).click();
-    // Plan detail shares the plans preference and has its own focus control.
+    // Plan detail has no focus toggle because its content has no useful collapse target.
     tag = `plan detail ${w}px ${scheme}`;
     await p.goto(`${BASE}p/${PID}/plans/active-plan`);
-    const detailToggle = toggleOf(p);
-    await detailToggle.waitFor();
-    check(
-      (await detailToggle.getAttribute("aria-pressed")) === "false",
-      `${tag}: toggle starts simple`,
-    );
+    check((await toggleOf(p).count()) === 0, `${tag}: no no-op focus toggle`);
     await p.waitForTimeout(500);
     await p.screenshot({ path: `${OUT}/phase6-plan-detail-simple-${w}-${scheme}.png` });
-    await detailToggle.click();
-    check((await detailToggle.getAttribute("aria-pressed")) === "true", `${tag}: toggle expands`);
-    await p.screenshot({ path: `${OUT}/phase6-plan-detail-expanded-${w}-${scheme}.png` });
-    await detailToggle.click();
 
     // Pages without collapsible content omit the focus control.
     for (const [page, route] of [
@@ -130,15 +121,31 @@ for (const scheme of ["light", "dark"]) {
     await first.fill("7");
     const save = p.getByRole("button", { name: /^Save/ });
     check(await save.first().isVisible(), `${tag}: Save bar visible with an unsaved edit`);
-    if (w === 1440) {
-      await p.evaluate(() => window.scrollTo(0, 0));
-      const unobscured = await save.first().evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return !!hit && el.contains(hit);
-      });
-      check(unobscured, `${tag}: Save button hit target stays above the console`);
-    }
+    await p.evaluate(() => window.scrollTo(0, 0));
+    const geometry = await save.first().evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      const consoleEl = document.querySelector('[aria-label="Command console"]');
+      const consoleRect = consoleEl?.getBoundingClientRect();
+      const footer = el.closest(".sticky");
+      const footerRect = footer?.getBoundingClientRect();
+      const bottomBar = [...document.querySelectorAll('nav[aria-label="Main"]')].find(
+        (el) => getComputedStyle(el).position === "fixed",
+      );
+      const bottomRect = bottomBar?.getBoundingClientRect();
+      return {
+        unobscured: !!hit && el.contains(hit) && !!consoleRect && r.bottom <= consoleRect.top + 1,
+        consoleHeight: consoleRect?.height ?? -1,
+        footerGap: footerRect && consoleRect ? Math.round(consoleRect.top - footerRect.bottom) : -1,
+        bottomBarHeight: bottomRect?.height ?? 0,
+        saveBottom: Math.round(r.bottom),
+        consoleTop: Math.round(consoleRect?.top ?? -1),
+      };
+    });
+    check(geometry.unobscured, `${tag}: Save hit target is visible above measured console`);
+    console.log(
+      `${tag}: measured console ${geometry.consoleHeight}px, footer gap ${geometry.footerGap}px, bottom bar ${geometry.bottomBarHeight}px, Save bottom ${geometry.saveBottom}px, console top ${geometry.consoleTop}px`,
+    );
     check(
       (await p.getByRole("button", { name: /^(Show|Hide) Review$/ }).count()) === 0,
       `${tag}: unsaved edit opens the advanced sections`,

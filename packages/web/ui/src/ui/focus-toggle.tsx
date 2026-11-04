@@ -24,9 +24,19 @@ export function FocusToggle({
       aria-label="Expanded view"
       title={expanded ? "Show simple view" : "Show expanded view"}
       onClick={onToggle}
-      className={className}
+      className={[
+        "aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       Expanded view
+      {expanded && (
+        <span aria-hidden="true" className="ml-1 font-bold">
+          ✓
+        </span>
+      )}
     </Button>
   );
 }

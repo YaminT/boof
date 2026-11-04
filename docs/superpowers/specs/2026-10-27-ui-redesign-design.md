@@ -66,7 +66,7 @@ Color (light), named by role, not by hue:
 | `ink-muted` | `#5F6B76` | secondary text, metadata                                                           |
 | `line`      | `#DCE3EA` | hairlines, inputs                                                                  |
 | `accent`    | `#2F5A75` | primary action, focus ring, active nav (kept from the current steel-blue identity) |
-| `running`   | `#1E6FD9` | live dot, running pill                                                             |
+| `running`   | `#1B66C9` | live dot, running pill                                                             |
 | `attention` | `#AD510B` | needs-you pill and count                                                           |
 | `done`      | `#2E7D52` | done pill, approve verdict                                                         |
 | `failed`    | `#C0392B` | failed pill, reject verdict, destructive confirm                                   |

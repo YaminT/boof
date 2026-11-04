@@ -106,7 +106,7 @@ function HierarchyChips({
     <>
       {hier?.progress && (
         <span
-          className={cn(chip, "focus-ring tabular-nums text-ink-muted")}
+          className={cn(chip, "tabular-nums text-ink-muted")}
           title={`${hier.progress.done} of ${hier.progress.total} subtasks done`}
         >
           {progressLabel(hier.progress)}

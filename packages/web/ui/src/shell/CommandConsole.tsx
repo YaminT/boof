@@ -33,6 +33,28 @@ export function CommandConsole({
   const [busy, setBusy] = useState(false);
   const held = useHeldScopes();
   const logRef = useRef<HTMLDivElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const bottomNav = document.querySelector<HTMLElement>("[data-bottom-nav]");
+    const update = () => {
+      document.documentElement.style.setProperty(
+        "--command-console-height",
+        `${section.getBoundingClientRect().height}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--bottom-nav-height",
+        `${bottomNav?.getBoundingClientRect().height ?? 0}px`,
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(section);
+    if (bottomNav) observer.observe(bottomNav);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (open && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -71,8 +93,9 @@ export function CommandConsole({
   const last = output[output.length - 1];
   return (
     <section
+      ref={sectionRef}
       aria-label="Command console"
-      className="sticky bottom-14 z-30 -mx-4 border-t border-line bg-surface px-4 py-2 min-[720px]:bottom-0 min-[720px]:-mx-8 min-[720px]:px-8"
+      className="sticky bottom-[var(--bottom-nav-height,0px)] z-30 -mx-4 border-t border-line bg-surface px-4 py-2 min-[720px]:bottom-0 min-[720px]:-mx-8 min-[720px]:px-8"
     >
       <div className="mx-auto w-full max-w-[1320px]">
         {open && (
