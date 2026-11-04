@@ -1,7 +1,8 @@
 import { chmod, mkdir, readdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildUnit,
@@ -18,7 +19,8 @@ import {
 // This source-resolution check runs outside the production import-boundary map.
 describe("source service runner path", () => {
   it("resolves the composition-root bundle from the Facedisk source tree", () => {
-    expect(defaultServiceEnv().scriptPath).toMatch(/\/bin\/dist\/boof-runner\.js$/);
+    const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+    expect(defaultServiceEnv().scriptPath).toBe(resolve(repoRoot, "bin/dist/boof-runner.js"));
   });
 });
 

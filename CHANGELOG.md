@@ -2,6 +2,10 @@
 
 ## 0.3.0 (unreleased)
 
+### 2026-11-04
+
+- Rename and move internal packages into the final workspace layout; user-facing behavior is unchanged.
+
 ### Projects
 
 - Create projects in an existing directory, a new Git repository, or an automatically chosen directory under the configured projects root.

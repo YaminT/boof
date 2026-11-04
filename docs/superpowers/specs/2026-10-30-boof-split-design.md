@@ -280,24 +280,23 @@ Files: `bin/src/boundaries.ts` (the map and the allow-list) and `bin/src/import-
 
 1. Walk `packages/*/src`, `packages/facedisk/ui/src`, `bin/src` for `.ts`, `.tsx`, `.mjs`; skip `*.test.ts`, `*.test.tsx`, `node_modules`, `dist`, `.tsc-typecheck`, `generated/`.
 2. Extract specifiers with a regex over `import … from "x"`, `export … from "x"`, `import("x")`, and note whether the statement is `import type` or `export type`.
-3. Map each file and each specifier to a **part**: `@boof-runner/<pkg>[/sub]` by package name; a relative path by resolving it and looking up the folder map; `node:*` and third-party ignored.
+3. Map each file and each specifier to a **package**: `@boof/<pkg>[/sub]` by package name; a relative path by resolving it and looking up the package map; `node:*` and third-party ignored.
 4. Allowed edges are the table in §5.1 (parts, not packages); a `facedisk/ui → heart` or `facedisk/ui → heart-server` edge must be type-only.
 5. A violation outside the allow-list fails with `file:line  from-part → to-part  "specifier"`. An allow-list entry that no longer matches any import also fails, so the list only shrinks.
 
-### 7.3 The folder-to-part map today (no file moves)
+### 7.3 The package map after M8
 
-| Folder or glob                                                                             | Part         |
-| ------------------------------------------------------------------------------------------ | ------------ |
-| `packages/heart/src/**` except `owlish*`                                                   | heart        |
-| `packages/owlish/src/**`                                                                   | owlish       |
-| `packages/runner/src/**`                                                                   | runner       |
-| `packages/heart-server/src/{api,mcp,server}/**`                                            | heart-server |
-| `packages/facedisk/ui/src/**`                                                              | facedisk/ui  |
-| `bin/src/{auth,plan,project,remote,service,mcp}-cli.ts`                                    | facedisk/cli |
-| `bin/src/**` otherwise (`boof-runner.ts`, `headless.ts`, `scaffold.ts`, `runner-guard.ts`) | bin          |
-| `packages/desktop/src/**`                                                                  | desktop      |
+| Workspace directory        | Package      |
+| -------------------------- | ------------ |
+| `packages/heart/**`        | heart        |
+| `packages/owlish/**`       | owlish       |
+| `packages/runner/**`       | runner       |
+| `packages/heart-server/**` | heart-server |
+| `packages/facedisk/**`     | facedisk     |
+| `bin/**`                   | bin          |
+| `packages/desktop/**`      | desktop      |
 
-Within one package the map is by file, so the lint guards the future boundaries (`heart-server/src` versus `facedisk/ui`, the CLI commands versus the composition root, the Owlish client inside `shared`). In M8, split the bare `@boof/facedisk` mapping by subpath so UI imports map to `facedisk/ui` and CLI imports map to `facedisk/cli`. Edges inside a part (for example `api → mcp` inside heart-server, `bin → scaffold`) are not checked.
+The checker walks each package's production source roots, including `packages/facedisk/ui/src` and `packages/facedisk/cli`. Facedisk UI imports from Heart and Heart server remain type-only, except for the explicitly browser-safe Heart subpaths. Owlish has its own package under `packages/owlish`; CLI commands live in `packages/facedisk/cli`, while `bin/src/**` is the composition root. Edges within a package (for example API to MCP within heart-server) are not checked.
 
 ### 7.4 The allow-list on day one
 
@@ -326,7 +325,7 @@ Preconditions: roadmap steps 4 (hierarchy data), 8 (Owlish v1) and 12 (Console B
 - **M0 (before the move, with step 9, CLI group), M.** The generated command set as `bin/src/ops-cli.ts`, the `cli` field on `defineOp`, the `op-coverage.ts` manifest in `web/ui`, the parity test in `bin`, the MCP exposure change (owner question 3). Additive, no moves; the parity test is red until the manifest is complete, which is the work. Owner question 9.
 - **M1 (the only code step), M-L.** Re-home into `shared`: `plan-sync`, `plan-import`, `plan-base`, `boof-scan`, `task-diff`, `untracked-diff`, `usage-store`, `tools/usage`, `exec`, the query half of `worktree.ts` plus `leftoversBranch` as `git.ts`, `bin/src/scaffold.ts`. Add `tool-catalog.ts` with `HealthResult`; `ToolRegistry implements ToolCatalog`; `TaskService`, `startServer`, `runStdio`, `handleMcpHttp` require a catalog; `bin` and `desktop` pass `new ToolRegistry()`; `runner-guard.ts` moves to `runner` (**deferred**: it stays in `bin` for now; it breaks no boundary). After this, no production file in `api`, `mcp`, `web/src` or the CLI commands imports `runner`; the allow-list is empty and is deleted. Done: lint green with no allow-list; all tests green.
   - **M1 as built, accepted deviations:** (1) `ALLOW` is kept as an exported empty array (the test validates the no-exceptions state) instead of being deleted; (2) `pid-file.ts` moved to Heart (`packages/heart/src/pid-file.ts`) with `exec`, because `process.ts` writes the pid record and Heart cannot import Runner (it was listed under Runner above); (3) `UnknownBaseRefError` and `NotAGitRepoError` stay in Runner's `worktree.ts` (only lifecycle code throws them); (4) `git()`, `canonical()` and `pathExists()` are public exports of `git.ts` (Runner's lifecycle code uses them); (5) the branch-exists query in `git.ts` is `localBranchExists`, because `plan-base` exports a different `branchExists`; (6) `ToolCatalog` has the members `TaskService` really calls (see 5.2).
-- **M2, S.** `git mv packages/shared packages/heart`; package name `@boof/heart`; rewrite the `@boof-runner/shared` specifiers (subpaths `/schema`, `/task-types`, `/injected` kept). Update `tsup` `noExternal` to `/^@boof(-runner)?\//` for the transition, the CI symlink check to `node_modules/@boof/*`, `scripts/gen-harness-reference.ts` paths.
+- **M2, S.** `git mv packages/shared packages/heart`; package name `@boof/heart`; rewrite the `@boof-runner/shared` specifiers (subpaths `/schema`, `/task-types`, `/injected` kept). Update the CI symlink check to `node_modules/@boof/*` and `scripts/gen-harness-reference.ts` paths. M7 removes the temporary transitional `tsup` scope matcher.
 - **M3, M (three commits or three PRs).** Create `packages/heart-server` (`@boof/heart-server`): move `packages/api/src` to `src/api`, then `packages/mcp/src` to `src/mcp`, then `packages/web/src` to `src/server`; package-internal imports become relative; one `src/index.ts` re-exports the three. `packages/web` keeps only `ui/` until M5. Update `docs:gen`, `build:server`.
 - **M4, S.** `git mv packages/heart/src/owlish*` (now under `packages/heart/src`) to `packages/owlish/src`; `@boof/owlish`; Runner and Heart server import it.
 - **M5, M.** Create `packages/facedisk`: move `packages/web/ui` to `packages/facedisk/ui` (Vite root, Tailwind, `@/` alias, `op-coverage.ts`); move `bin/src/*-cli.ts` and `ops-cli.ts` with tests to `packages/facedisk/cli`; update `resolveUiDir()` in `bin`, `uiDir()` and `stage-app.mjs` in `desktop`, the `build:server` and `desktop:build` scripts, `.github/workflows/release.yml` asset paths if they change (they do not: desktop output stays under `packages/desktop/build`). Delete the empty `packages/web`.

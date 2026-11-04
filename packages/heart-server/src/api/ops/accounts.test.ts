@@ -20,6 +20,8 @@ let seen: { method: string; url: string; key?: string; body: string }[];
 let healthBody: object;
 let healthStatus: number;
 let accountStatus: number;
+let holdHealthResponse: boolean;
+let releaseHealthResponse: (() => void) | undefined;
 
 const svcFor = () => new TaskService(root, new ToolRegistry([new MockTool()]));
 let service: TaskService;
@@ -51,6 +53,8 @@ beforeEach(async () => {
   seen = [];
   healthStatus = 200;
   accountStatus = 200;
+  holdHealthResponse = false;
+  releaseHealthResponse = undefined;
   healthBody = {
     status: "ok",
     pool: {
@@ -73,8 +77,12 @@ beforeEach(async () => {
         body: Buffer.concat(chunks).toString(),
       });
       res.setHeader("content-type", "application/json");
-      if (req.url === "/health")
-        return void res.writeHead(healthStatus).end(JSON.stringify(healthBody));
+      if (req.url === "/health") {
+        const respond = () => res.writeHead(healthStatus).end(JSON.stringify(healthBody));
+        if (holdHealthResponse) releaseHealthResponse = respond;
+        else respond();
+        return;
+      }
       if (req.url === "/api/accounts") {
         return void res
           .writeHead(accountStatus)
@@ -262,9 +270,36 @@ describe("with a gateway", () => {
       pool: { configured: 2, routable: 0, paused: 0, rate_limited: 2, usage_exhausted: 0 },
     };
     expect((await run("accounts.health", admin)).pool.status).toBe("ok");
-    const results = await Promise.all(
-      Array.from({ length: 20 }, () => run("accounts.health", admin, { refresh: true })),
+    const pool = await service.owlishClient();
+    expect(pool).not.toBeNull();
+    const originalHealth = pool!.client.health.bind(pool!.client);
+    let forcedChecks = 0;
+    let releaseChecks!: () => void;
+    const allChecksPending = new Promise<void>((resolve) => {
+      releaseChecks = resolve;
+    });
+    pool!.client.health = async (force = false) => {
+      if (force) {
+        forcedChecks += 1;
+        if (forcedChecks === 20) releaseChecks();
+        await allChecksPending;
+      }
+      return originalHealth(force);
+    };
+    holdHealthResponse = true;
+    const pending = Array.from({ length: 20 }, () =>
+      run("accounts.health", admin, { refresh: true }),
     );
+    // Wait until all callers are parked at health(), then let their shared request start.
+    await allChecksPending;
+    // Keep the fake gateway response held until the coalesced request has arrived.
+    for (let attempt = 0; !releaseHealthResponse && attempt < 100; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    expect(releaseHealthResponse).toBeDefined();
+    holdHealthResponse = false;
+    releaseHealthResponse?.();
+    const results = await Promise.all(pending);
     expect(results.every((result) => result.pool.status === "degraded")).toBe(true);
     expect(seen.filter((entry) => entry.url === "/health")).toHaveLength(2);
   });
