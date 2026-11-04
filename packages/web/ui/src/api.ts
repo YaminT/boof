@@ -18,6 +18,8 @@ import type {
   TaskDiff,
   ToolModelDetails,
   Whoami,
+  AccountsHealth,
+  AccountsList,
 } from "./api-types.js";
 import type { TaskReview } from "@boof-runner/shared";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
@@ -285,8 +287,25 @@ export const api = {
     http<{ referencedBy: string[] }>(`${V1}/commands/${id}`, { method: "DELETE" }),
 
   getSettings: () => http<Settings>(`${V1}/settings`),
-  updateSettings: (patch: SettingsPatch) =>
+  updateSettings: (patch: SettingsPatch & { owlishApiKey?: string | null }) =>
     http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
+  accountsHealth: () => http<AccountsHealth>(`${V1}/accounts/health`),
+  listAccounts: () => http<AccountsList>(`${V1}/accounts`),
+  accountAction: (verb: "pause" | "resume", accountId: string) =>
+    http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/${verb}`, {
+      method: "POST",
+      body: "{}",
+    }),
+  accountPriority: (accountId: string, priority: number) =>
+    http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/priority`, {
+      method: "POST",
+      body: JSON.stringify({ priority }),
+    }),
+  accountThresholds: (accountId: string, thresholds: Record<string, number | null>) =>
+    http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/thresholds`, {
+      method: "POST",
+      body: JSON.stringify({ thresholds }),
+    }),
   /** Runs the tools' version probes (POST), then returns their results. GET /health only reads the last ones. */
   health: () =>
     http<{ tools: Record<string, HealthResult> }>(`${V1}/health/check`, { method: "POST" }).then(

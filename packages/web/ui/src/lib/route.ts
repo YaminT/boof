@@ -1,4 +1,4 @@
-export type SettingsPageId = "project" | "agents" | "budgets" | "keys" | "automation";
+export type SettingsPageId = "project" | "agents" | "budgets" | "keys" | "automation" | "accounts";
 export type TaskView = "edit" | "changes" | "questions";
 export type Route =
   | { name: "overview"; pid: string }
@@ -14,6 +14,7 @@ const SETTINGS_PAGES: readonly SettingsPageId[] = [
   "budgets",
   "keys",
   "automation",
+  "accounts",
 ];
 
 /** Parses an app-relative path such as "p/boof/tasks"; one leading "/" is ignored. */

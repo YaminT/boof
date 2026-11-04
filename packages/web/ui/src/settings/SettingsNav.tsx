@@ -7,9 +7,10 @@ const PAGES: { page: SettingsPageId; label: string }[] = [
   { page: "budgets", label: "Budgets" },
   { page: "keys", label: "API keys" },
   { page: "automation", label: "Automation" },
+  { page: "accounts", label: "Accounts" },
 ];
 
-/** The five settings pages as tabs; a tab with unsaved edits carries a dot. */
+/** Settings pages as tabs; a tab with unsaved edits carries a dot. */
 export function SettingsNav({
   pid,
   active,

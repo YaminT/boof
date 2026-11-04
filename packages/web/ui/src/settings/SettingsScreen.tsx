@@ -22,6 +22,8 @@ import { ProjectPage } from "./ProjectPage.js";
 import { SettingsFooter } from "./SettingsFooter.js";
 import { SettingsNav } from "./SettingsNav.js";
 import { useSettingsPage } from "./useSettingsPage.js";
+import { AccountsPage } from "./AccountsPage.js";
+import { accountsPage } from "../lib/settings-accounts.js";
 
 /**
  * Every settings route of one project. It holds each form page's draft, so moving between pages
@@ -52,14 +54,16 @@ function SettingsForms({
   const proj = useSettingsPage(projectPage, settings, project, pid, onSaved);
   const agents = useSettingsPage(agentsPage, settings, project, pid, onSaved);
   const budgets = useSettingsPage(budgetsPage, settings, project, pid, onSaved);
+  const accounts = useSettingsPage(accountsPage, settings, project, pid, onSaved);
 
   const unsaved = useMemo(() => {
     const s = new Set<SettingsPageId>();
     if (proj.dirty) s.add("project");
     if (agents.dirty) s.add("agents");
     if (budgets.dirty) s.add("budgets");
+    if (accounts.dirty) s.add("accounts");
     return s;
-  }, [proj.dirty, agents.dirty, budgets.dirty]);
+  }, [proj.dirty, agents.dirty, budgets.dirty, accounts.dirty]);
 
   // In-app navigation away from the settings (another screen, another project) asks first.
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
@@ -173,6 +177,26 @@ function SettingsForms({
       )}
       {page === "keys" && <KeysPage projects={projects} />}
       {page === "automation" && <AutomationPage projects={projects} onChange={data.refresh} />}
+      {page === "accounts" && (
+        <>
+          <AccountsPage
+            settings={settings}
+            onChanged={onSaved}
+            advancedOpen={focus.expanded}
+            form={accounts.form.global}
+            setForm={(update) => accounts.set((v) => ({ ...v, global: update(v.global) }))}
+          />
+          <SettingsFooter
+            dirty={accounts.dirty}
+            elsewhere={accounts.elsewhere}
+            busy={accounts.busy}
+            problems={accounts.problems}
+            savedAt={accounts.savedAt}
+            onSave={() => void accounts.save()}
+            onReload={accounts.reload}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -207,6 +231,14 @@ export function SettingsScreen(props: {
         </p>
       ) : props.page === "keys" ? (
         <KeysPage projects={props.projects} />
+      ) : props.page === "accounts" ? (
+        <AccountsPage
+          settings={{} as Settings}
+          onChanged={props.data.refresh}
+          advancedOpen={false}
+          form={{ enabled: false, url: "http://127.0.0.1:8080", healthGate: "pause" }}
+          setForm={() => {}}
+        />
       ) : (
         <AutomationPage projects={props.projects} onChange={props.data.refresh} />
       )}

@@ -1,5 +1,40 @@
 // UI-only response shapes that have no counterpart in the shared schema.
 import type { Scope } from "@boof-runner/shared/schema";
+export type PoolState = "absent" | "unreachable" | "ok" | "degraded" | "unhealthy";
+export interface PoolStatus {
+  status: PoolState;
+  configured: number | null;
+  routable: number | null;
+  paused: number | null;
+  rateLimited: number | null;
+  usageExhausted: number | null;
+  nextAvailableAt: string | null;
+  reason: string | null;
+}
+export interface AccountSummary {
+  id: string;
+  name: string;
+  provider?: string;
+  priority?: number;
+  paused?: boolean;
+  tokenStatus?: string;
+  rateLimitStatus?: string;
+  rateLimitReset?: string | number | null;
+  [extra: string]: unknown;
+}
+export type Thresholds = Record<string, number | null>;
+
+export interface AccountsHealth {
+  configured: boolean;
+  url: string | null;
+  healthGate: "pause" | "warn" | "off" | null;
+  keySource: "file" | "env" | null;
+  pool: PoolStatus;
+}
+export interface AccountsList {
+  configured: boolean;
+  accounts: AccountSummary[];
+}
 
 export interface CommandTemplate {
   id: string;
