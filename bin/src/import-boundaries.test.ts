@@ -8,10 +8,11 @@ import {
   ALLOWED,
   BROWSER_SAFE,
   SOURCE_ROOTS,
-  TYPE_ONLY,
+  isAllowedImport,
+  packageOfDirectory,
   partOfFile,
   partOfSpecifier,
-  type Part,
+  type Package,
 } from "./boundaries.js";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
@@ -19,24 +20,62 @@ const SKIP_DIRS = new Set(["node_modules", "dist", ".tsc-typecheck", "generated"
 const SOURCE = /\.(ts|tsx|mjs)$/;
 const TEST = /\.test\.tsx?$/;
 
+function insideGitWorkTree(): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: repo, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe("tracked source git hygiene", () => {
-  it("does not ignore any tracked source file under packages", () => {
-    const tracked = execFileSync("git", ["ls-files", "-z", "packages"], { cwd: repo })
-      .toString()
-      .split("\0")
-      .filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs|css|html|json)$/.test(file));
-    const ignored = tracked.filter((file) => {
-      try {
-        execFileSync("git", ["check-ignore", "--no-index", "-q", "--", file], { cwd: repo });
-        return true;
-      } catch (error) {
-        if ((error as { status?: number }).status === 1) return false;
-        throw error;
-      }
-    });
-    expect(ignored, `tracked source files ignored by git:\n${ignored.join("\n")}`).toEqual([]);
-  });
+  it.skipIf(!insideGitWorkTree())(
+    "does not ignore tracked files under packages or bin (skipped outside a git work tree)",
+    () => {
+      const tracked = execFileSync("git", ["ls-files", "-z", "--", "packages", "bin"], {
+        cwd: repo,
+      })
+        .toString()
+        .split("\0")
+        .filter(Boolean);
+      const ignored = tracked.filter((file) => {
+        try {
+          execFileSync("git", ["check-ignore", "--no-index", "-q", "--", file], { cwd: repo });
+          return true;
+        } catch (error) {
+          if ((error as { status?: number }).status === 1) return false;
+          throw error;
+        }
+      });
+      expect(ignored, `tracked source files ignored by git:\n${ignored.join("\n")}`).toEqual([]);
+    },
+  );
 });
+
+async function workspaceDirs(): Promise<string[]> {
+  const root = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as {
+    workspaces: string[];
+  };
+  const dirs: string[] = [];
+  for (const pattern of root.workspaces) {
+    if (pattern.endsWith("/*")) {
+      const base = pattern.slice(0, -2);
+      for (const entry of readdirSync(join(repo, base), { withFileTypes: true })) {
+        const rel = join(base, entry.name);
+        if (entry.isDirectory()) {
+          try {
+            readFileSync(join(repo, rel, "package.json"));
+            dirs.push(rel);
+          } catch {
+            // Not a workspace package directory.
+          }
+        }
+      }
+    } else dirs.push(pattern);
+  }
+  return dirs.sort();
+}
 
 interface Import {
   specifier: string;
@@ -113,8 +152,8 @@ function sourceFiles(): string[] {
 interface Violation {
   file: string;
   line: number;
-  from: Part;
-  to: Part;
+  from: Package;
+  to: Package;
   specifier: string;
   reason: "edge" | "value-import";
 }
@@ -129,9 +168,15 @@ function violations(): Violation[] {
       const to = partOfSpecifier(imp.specifier, file);
       if (!to || to === from) continue;
       const base = { file, line: imp.line, from, to, specifier: imp.specifier };
-      if (!ALLOWED[from].includes(to)) found.push({ ...base, reason: "edge" });
-      else if (TYPE_ONLY.includes(from) && !imp.typeOnly && !(imp.specifier in BROWSER_SAFE)) {
-        found.push({ ...base, reason: "value-import" });
+      if (!isAllowedImport(from, to, file, imp.specifier, imp.typeOnly)) {
+        const reason =
+          file.startsWith("packages/facedisk/ui/") &&
+          (to === "heart" || to === "heart-server") &&
+          !imp.typeOnly &&
+          !(imp.specifier in BROWSER_SAFE)
+            ? "value-import"
+            : "edge";
+        found.push({ ...base, reason });
       }
     }
   }
@@ -142,16 +187,29 @@ const show = (v: Violation) =>
   `${v.file}:${v.line}  ${v.from} → ${v.to}  "${v.specifier}"${v.reason === "value-import" ? "  (must be import type)" : ""}`;
 
 describe("import boundaries", () => {
-  it("maps folders to parts", () => {
+  it("maps every workspace directory to its package identity", async () => {
+    const dirs = await workspaceDirs();
+    for (const dir of dirs) expect(packageOfDirectory(dir), dir).toBeDefined();
+    expect(dirs.map((dir) => [dir, packageOfDirectory(dir)])).toEqual(
+      expect.arrayContaining([
+        ["packages/heart", "heart"],
+        ["packages/owlish", "owlish"],
+        ["packages/runner", "runner"],
+        ["packages/heart-server", "heart-server"],
+        ["packages/facedisk", "facedisk"],
+        ["packages/desktop", "desktop"],
+        ["bin", "bin"],
+      ]),
+    );
     expect(partOfFile("packages/heart/src/schema.ts")).toBe("heart");
     expect(partOfFile("packages/owlish/src/owlish.ts")).toBe("owlish");
     expect(partOfFile("packages/runner/src/engine.ts")).toBe("runner");
     expect(partOfFile("packages/heart-server/src/api/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/heart-server/src/mcp/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/heart-server/src/server/x.ts")).toBe("heart-server");
-    expect(partOfFile("packages/facedisk/ui/src/App.tsx")).toBe("facedisk/ui");
-    expect(partOfFile("packages/facedisk/cli/auth-cli.ts")).toBe("facedisk/cli");
-    expect(partOfFile("packages/facedisk/cli/ops-cli.ts")).toBe("facedisk/cli");
+    expect(partOfFile("packages/facedisk/ui/src/App.tsx")).toBe("facedisk");
+    expect(partOfFile("packages/facedisk/cli/auth-cli.ts")).toBe("facedisk");
+    expect(partOfFile("packages/facedisk/cli/ops-cli.ts")).toBe("facedisk");
     expect(partOfFile("bin/src/project-cli.ts")).toBe("bin");
     expect(partOfFile("bin/src/headless.ts")).toBe("bin");
     expect(partOfFile("packages/desktop/src/main.ts")).toBe("desktop");
@@ -235,13 +293,55 @@ describe("import boundaries", () => {
     }
   });
 
+  it("enforces every declared package edge and representative forbidden edges", () => {
+    for (const [from, targets] of Object.entries(ALLOWED) as [Package, Package[]][]) {
+      for (const to of targets) {
+        const file =
+          from === "facedisk" ? "packages/facedisk/cli/x.ts" : `packages/${from}/src/x.ts`;
+        expect(isAllowedImport(from, to, file, `@boof/${to}`, false), `${from} -> ${to}`).toBe(
+          true,
+        );
+      }
+    }
+    expect(
+      isAllowedImport(
+        "heart",
+        "heart-server",
+        "packages/heart/src/x.ts",
+        "@boof/heart-server",
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedImport("heart", "facedisk", "packages/heart/src/x.ts", "@boof/facedisk", false),
+    ).toBe(false);
+    expect(
+      isAllowedImport(
+        "runner",
+        "heart-server",
+        "packages/runner/src/x.ts",
+        "@boof/heart-server",
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedImport(
+        "facedisk",
+        "heart",
+        "packages/facedisk/ui/src/x.ts",
+        "@boof/heart/schema",
+        false,
+      ),
+    ).toBe(false);
+  });
+
   it("lets the UI value-import only the browser-safe subpaths", () => {
     const text = (spec: string) => `import { x } from "${spec}";`;
     const ui = "packages/facedisk/ui/src/lib/f.ts";
     const check = (spec: string) => {
       const imp = extractImports(text(spec))[0];
       const to = partOfSpecifier(spec, ui)!;
-      return ALLOWED["facedisk/ui"].includes(to) && (imp.typeOnly || spec in BROWSER_SAFE);
+      return isAllowedImport("facedisk", to, ui, spec, imp.typeOnly);
     };
     expect(check("@boof/heart/ids")).toBe(true);
     expect(check("@boof/heart/schema")).toBe(false);
