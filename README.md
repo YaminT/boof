@@ -430,21 +430,23 @@ For offline tests the `mock` tool takes a marker in the prompt: `[[mock-verdicts
 
 ## Project layout
 
-```
-packages/heart    task-file format, schemas, projects, plans, auth store, events, v1→v2 migration, lifecycle
-packages/runner    tool adapters, git worktree isolation, plan sync, the pipeline engine
-packages/heart-server operations registry, services, OpenAPI generator, MCP and Hono server
-packages/owlish   Owlish client and secret store
-packages/facedisk  React UI under ui/; command implementations under cli/
-packages/desktop   Electron app: boots the server + runner in-process, opens the UI window
-bin/               the `boof-runner` CLI: scaffolds data, boots web, ensures a single runner
-docs/              harness.md (guide for AI agents), api.md (REST and MCP), boof-runner.md (architecture)
-scripts/           install script and the harness guide generator
-```
+The seven workspaces are:
+
+| Workspace                                      | Role                                                                                    | Depends on                                          |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `@boof/heart` (`packages/heart`)               | Core schemas, file stores, lifecycle, plans, projects, and shared process/git utilities | —                                                   |
+| `@boof/owlish` (`packages/owlish`)             | Owlish client, routing, and secret store                                                | `@boof/heart`                                       |
+| `@boof/runner` (`packages/runner`)             | Execution engine, pipeline, tool adapters, and worktree lifecycle                       | `@boof/heart`, `@boof/owlish`                       |
+| `@boof/heart-server` (`packages/heart-server`) | Operations, services, OpenAPI, MCP, and Hono server                                     | `@boof/heart`, `@boof/owlish`                       |
+| `@boof/facedisk` (`packages/facedisk`)         | React UI (`ui/`) and CLI command implementations (`cli/`)                               | `@boof/heart`, `@boof/heart-server`                 |
+| `@boof/boof` (`bin/`)                          | `boof-runner` composition root, CLI dispatch, scaffolding, and server startup           | Core, Runner, Heart server, and Facedisk            |
+| `@boof/desktop` (`packages/desktop`)           | Electron app that boots the server and Runner in-process                                | `@boof/heart`, `@boof/runner`, `@boof/heart-server` |
+
+`@boof/facedisk` is the single workspace for both UI and CLI code; the UI is built by Vite and served by the Hono server. `@boof/boof` and `@boof/desktop` compose the lower-level workspaces. The root package remains `boof-runner` and provides the unchanged `boof-runner` executable.
 
 The root devDependency on `@boof/runner` supports heart-server tests only.
 
-The `@boof/facedisk`, `@boof/heart`, `@boof/heart-server`, `@boof/owlish`, and `@boof/runner` packages are consumed from source and bundled into the self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
+The `@boof/*` workspaces are consumed from source and bundled into the self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
 
 For a deeper explanation of the architecture, see [docs/boof-runner.md](docs/boof-runner.md).
 

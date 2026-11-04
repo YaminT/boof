@@ -24,15 +24,17 @@ The product goal is not to replace a developer's judgment. Boof Runner automates
 
 boof is the broader project (it also includes boof-planner, which writes `plan.boof.xml` and `goal.boof.xml` files). Boof Runner is the part responsible for code execution.
 
-In this repository, Boof Runner includes:
+In this repository, Boof Runner is organized as seven workspaces:
 
-- `packages/runner`: the execution engine, pipeline, tool adapters, worktree handling, usage tracking, and process execution.
-- `packages/heart`: the task file format, schemas, lifecycle state machine, settings, paths, attachment storage, and atomic file writes.
-- `packages/heart-server`: the operations registry (`defineOp`), services, OpenAPI generator, MCP server and Hono server.
-- `packages/owlish`: the Owlish client and secret store used by Runner and Heart server.
-- `packages/facedisk`: the React UI under `ui/` and CLI commands under `cli/`; the UI handles task management, settings, live logs, actions, and runtime controls.
-- `packages/desktop`: the Electron wrapper that runs the same server, runner, and UI in a native window.
-- `bin`: the `boof-runner` command that scaffolds the data root, starts the web server, and ensures only one runner is active.
+- `@boof/heart` (`packages/heart`) owns shared schemas, file stores, lifecycle, plans, projects, and core process/git utilities.
+- `@boof/owlish` (`packages/owlish`) provides the Owlish client and secret store; it depends on Heart.
+- `@boof/runner` (`packages/runner`) owns the execution engine, pipeline, tool adapters, and worktree lifecycle; it depends on Heart and Owlish.
+- `@boof/heart-server` (`packages/heart-server`) owns operations, services, OpenAPI, MCP, and the Hono server; it depends on Heart and Owlish.
+- `@boof/facedisk` (`packages/facedisk`) contains both the React UI under `ui/` and CLI command implementations under `cli/`; its CLI depends on Heart and Heart server, while the UI uses Heart and Heart server types.
+- `@boof/boof` (`bin/`) is the `boof-runner` composition root: it dispatches commands, scaffolds the data root, starts the web server, and ensures only one Runner is active. It composes Facedisk, Runner, Heart server, and their lower-level dependencies.
+- `@boof/desktop` (`packages/desktop`) is the Electron wrapper that runs Heart server and Runner in-process and opens the Facedisk UI.
+
+Dependency direction runs from Heart to Owlish, Runner, and Heart server; Facedisk uses Heart and Heart server; the `@boof/boof` composition root and `@boof/desktop` assemble the runtime. The root npm package and executable remain named `boof-runner`.
 
 ## Core Design
 
