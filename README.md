@@ -130,6 +130,7 @@ Each task runs in its own git worktree on branch `boof-runner/<id>`. Task frontm
 | `retries.transient`     | `2`                                         | Retries per step after a transient API error (5xx, 429, 529, overloaded, ECONNRESET, ETIMEDOUT, ...).                                     |
 | `retries.backoffMs`     | `[30000, 120000]`                           | Delay before each retry; a stop request during the wait stops the task.                                                                   |
 | `retries.idleTimeoutMs` | `1200000`                                   | A step that prints nothing for this long is killed and retried as transient.                                                              |
+| `retries.poolWaitMs`    | `1800000`                                   | Maximum in-place wait (30 minutes) for an exhausted or unavailable configured account pool between steps.                                 |
 
 Nothing is deleted under the defaults. A done task's uncommitted leftovers never land on the task branch: they are saved on `boof-runner/<id>--leftovers`. With `runs > 1`, each iteration after the first sees the previous iteration's final observer and reviewer reports. See [docs/boof-runner.md](docs/boof-runner.md) for details.
 
@@ -156,6 +157,16 @@ Exactly what happens:
 - **Between steps**, before each step starts, the pipeline checks the run's cost against `perTaskUsd` and the day budgets that apply to the step (global, project, the step's tool, project plus tool). If one is spent the task fails with `budget exceeded: <scope> <spent>/<limit> USD` (scope `task:<id>`, `global`, `project:<id>`, `tool:<tool>` or `project:<id>/tool:<tool>`). A step that runs is **never** stopped for budget: a CLI step cannot be interrupted at a cost boundary, so it can finish above the limit. The cost of a task's last step is recorded but cannot fail the task.
 - **`onExceed`.** In both modes the task becomes `failed` with the reason above. `"pause"` always keeps the worktree and branch (even with `worktree.onFailure: "delete"`) so a retry continues the work; `"fail"` follows `worktree.onFailure`. After a day budget stops a task, the spent scope also blocks new tasks until the reset (above); other scopes keep running.
 - **See it.** `GET /api/v1/usage/budget` (scope `settings:read` or `tasks:read`) returns the limits, today's spend, remaining amount and `exceeded` flag per scope, `unknownSteps` and `resetsAt`. `GET /api/v1/runner` and `GET /api/v1/runner/status` (MCP `boof_runner_status`) carry `budgetExceeded`. The UI shows it under Settings (Budget, Token usage) and a banner while a budget is spent.
+
+### Optional account pool (better-ccflare)
+
+Boof can route supported task tools through [better-ccflare](https://github.com/tombii/better-ccflare), an MIT-licensed gateway called over HTTP. **Account pooling by better-ccflare.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; it does not include the later Accounts settings tab or the Agent SDK adapter (8b).
+
+Configure `settings.owlish` in `settings.json` (or through `settings.update`) with the gateway `url` and `healthGate: "pause" | "warn" | "off"` (default `pause`). With `pause`, selection of work using a pool-routed tool pauses when the configured gateway is degraded, unhealthy or unreachable; the reason is visible in runner pool status. `warn` reports health without blocking and `off` disables the gate. With no `settings.owlish`, there is no gateway request or gate.
+
+The optional better-ccflare client key is set once with `settings.update`'s write-only `owlishApiKey`, or supplied through `BOOF_OWLISH_API_KEY` (which takes precedence). The file store is `<data>/owlish/secrets.json` with mode 0600; the key is never returned after setting it. Boof does not store provider credentials. If the pool runs out between pipeline steps, the task stays running and waits in place for `retries.poolWaitMs` (default 30 minutes), then fails as pool exhausted.
+
+The registry-generated commands are `boof-runner accounts list`, `pause`, `resume`, `priority`, `thresholds` and `health`; run `boof-runner accounts --help` or `boof-runner accounts <command> --help` for inputs. Reads need `settings:read`; changes need `settings:write` and a trusted, project-unrestricted principal because the pool is shared. `review-trust` and `local-mcp` principals cannot change account state or gateway settings.
 
 ### Install or update from source
 

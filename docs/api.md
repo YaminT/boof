@@ -57,6 +57,16 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 - `GET /api/v1/openapi.json` needs any valid principal.
 - `GET /api/v1/whoami` (MCP `boof_whoami`) needs no scope: it returns `{ principal: { kind, id, name, trust, scopes[], projects, expiresAt? }, server: { version, authMode, mcpEnabled } }`. Call it first to learn what a key may do.
 
+## better-ccflare account pool
+
+**Account pooling by better-ccflare.** better-ccflare is MIT licensed; boof calls its optional gateway over HTTP. Boof never handles provider credentials. Sign-in and adding accounts happen in the better-ccflare dashboard.
+
+Set `settings.owlish` to an object with `url` and optional `healthGate` (`pause`, `warn` or `off`; default `pause`). If it is absent, the pool is `absent` and no health gate applies. With `pause`, selection of tasks using a pool-capable tool pauses if the configured gateway is unhealthy, degraded or unreachable; the visible reason is included in runner pool status. `warn` reports without blocking, and `off` disables the gate. A running task waits in place for up to `retries.poolWaitMs` (default 30 minutes) between steps; it remains running during that wait.
+
+The optional client key can be set once using `settings.update` input `owlishApiKey`, which is write-only, or supplied as `BOOF_OWLISH_API_KEY` (environment takes precedence). The stored file is `<data>/owlish/secrets.json`, mode 0600. The setting response does not return the key. The generated CLI commands are `boof-runner accounts list|pause|resume|priority|thresholds|health`; their exact flags are shown by `--help`. Reads use `settings:read`. Account mutations and gateway configuration use `settings:write` and require a trusted, project-unrestricted principal; `review-trust` and `local-mcp` cannot perform these changes.
+
+This is the 8a HTTP integration only. The Accounts settings tab and Agent SDK adapter (8b) are not included.
+
 ## Versioning
 
 `/api/v1` is the stable surface. The old unversioned routes (`/api/projects/...`,
