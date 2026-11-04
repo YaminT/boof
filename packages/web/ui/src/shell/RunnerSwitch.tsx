@@ -1,4 +1,4 @@
-import type { Settings } from "@boof-runner/shared/schema";
+import type { Settings } from "@boof/heart/schema";
 import { cn } from "@/lib/utils";
 import { api } from "../api.js";
 import { act } from "../lib/act.js";

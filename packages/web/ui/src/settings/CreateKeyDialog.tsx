@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Project, Scope } from "@boof-runner/shared/schema";
+import type { Project, Scope } from "@boof/heart/schema";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";

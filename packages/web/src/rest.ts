@@ -8,7 +8,7 @@ import {
   type AnyOperation,
   type OpContext,
 } from "@boof-runner/api";
-import { AuthStore } from "@boof-runner/shared";
+import { AuthStore } from "@boof/heart";
 import type { ResolveHost, TaskService, UploadedFile } from "@boof-runner/api";
 
 /** Unversioned routes are removed after this date (sent as the `Sunset` header). */

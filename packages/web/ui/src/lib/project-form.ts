@@ -1,4 +1,4 @@
-import { toKebabId } from "@boof-runner/shared/ids";
+import { toKebabId } from "@boof/heart/ids";
 import type { CreateProjectInput } from "../api.js";
 
 export type ProjectPathMode = "auto" | "new" | "existing";

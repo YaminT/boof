@@ -1,5 +1,5 @@
-import type { Project, Role, RoleAssignment, Settings } from "@boof-runner/shared";
-import type { CachedHealth } from "@boof-runner/shared";
+import type { Project, Role, RoleAssignment, Settings } from "@boof/heart";
+import type { CachedHealth } from "@boof/heart";
 
 const ROLES: Role[] = ["planner", "developer", "observer", "reviewer"];
 

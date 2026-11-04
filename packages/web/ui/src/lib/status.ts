@@ -1,4 +1,4 @@
-import type { Status } from "@boof-runner/shared/schema";
+import type { Status } from "@boof/heart/schema";
 
 export type Tone = "neutral" | "running" | "attention" | "done" | "failed";
 

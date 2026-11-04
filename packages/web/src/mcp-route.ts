@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { handleMcpHttp } from "@boof-runner/mcp";
-import { mcpSettings, type AuthStore } from "@boof-runner/shared";
+import { mcpSettings, type AuthStore } from "@boof/heart";
 import type { ResolveHost, TaskService } from "@boof-runner/api";
 
 export interface McpRouteDeps {

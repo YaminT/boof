@@ -9,7 +9,7 @@ import {
   ProjectStore,
   TaskStore,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { projectCommand } from "./project-cli.js";
 import { taskCommand } from "./task-cli.js";
 

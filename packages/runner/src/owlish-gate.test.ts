@@ -19,7 +19,7 @@ import {
   taskStopRequestPath,
   type Project,
   type TaskFrontmatter,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { PoolGate } from "./pool-gate.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";

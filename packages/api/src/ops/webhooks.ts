@@ -1,12 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import {
-  EVENT_TYPES,
-  isExpired,
-  securitySettings,
-  type Client,
-  type Webhook,
-} from "@boof-runner/shared";
+import { EVENT_TYPES, isExpired, securitySettings, type Client, type Webhook } from "@boof/heart";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { assertWebhookTarget } from "../net-guard.js";

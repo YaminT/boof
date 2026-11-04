@@ -1,4 +1,4 @@
-import { parseOwlishGatewayUrl } from "@boof-runner/shared/schema";
+import { parseOwlishGatewayUrl } from "@boof/heart/schema";
 
 /**
  * The environment that routes a task agent through the account pool (better-ccflare). Built from

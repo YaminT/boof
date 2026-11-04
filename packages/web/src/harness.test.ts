@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSettings, SettingsStore } from "@boof-runner/shared";
+import { defaultSettings, SettingsStore } from "@boof/heart";
 import { ERROR_CODES, registry, TaskService } from "@boof-runner/api";
 import { exposedOps } from "@boof-runner/mcp";
 import { createApp } from "./app.js";

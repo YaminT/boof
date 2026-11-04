@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EpicPatchSchema } from "@boof-runner/shared";
+import { EpicPatchSchema } from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { DeleteResultSchema, EpicViewSchema } from "../schemas.js";
 import {

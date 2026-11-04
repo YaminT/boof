@@ -27,13 +27,13 @@ import {
   pruneStaleWorktrees,
   syncPlan,
   taskStatusForPlan,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { announceBudgetExceeded } from "./budget.js";
-import { reapOrphan } from "@boof-runner/shared";
+import { reapOrphan } from "@boof/heart";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { PoolGate, type PoolCheck } from "./pool-gate.js";
-import { OwlishSecretStore } from "@boof-runner/shared/owlish";
+import { OwlishSecretStore } from "@boof/heart/owlish";
 
 export interface EngineOptions {
   root: string;

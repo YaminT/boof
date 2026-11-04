@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { currentBootId, dataRootPaths, processStartTicks } from "@boof-runner/shared";
+import { currentBootId, dataRootPaths, processStartTicks } from "@boof/heart";
 import { RunnerGuard } from "./runner-guard.js";
 
 let root: string;

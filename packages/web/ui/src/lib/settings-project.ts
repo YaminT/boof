@@ -1,4 +1,4 @@
-import type { ProjectPatch, SettingsPatch } from "@boof-runner/shared/schema";
+import type { ProjectPatch, SettingsPatch } from "@boof/heart/schema";
 import { changedKeys, type PageModel, type PageValues } from "./settings-draft.js";
 
 export type ProjectPageValues = PageValues<

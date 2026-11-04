@@ -1,7 +1,7 @@
 // Desktop lifecycle logic kept free of `electron` so it can be unit-tested without an
 // Electron runtime. main.ts wires these functions to the app, the server and the engine.
 import type { RunnerEngine } from "@boof-runner/runner";
-import { parseKey } from "@boof-runner/shared";
+import { parseKey } from "@boof/heart";
 import type { RunningServer, startServer } from "@boof-runner/web";
 
 export type ServerOptions = Parameters<typeof startServer>[0];

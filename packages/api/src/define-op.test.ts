@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof-runner/shared";
+import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof/heart";
 import { defineOp, type OpContext } from "./define-op.js";
 import { OpError } from "./errors.js";
 import { TaskService } from "./services/service.js";

@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import type { SecuritySettings } from "@boof-runner/shared";
+import type { SecuritySettings } from "@boof/heart";
 import type { PeerAddressResolver } from "./auth.js";
 import { clientAddress } from "./client-address.js";
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { toast } from "sonner";
-import type { Project, PublicWebhook } from "@boof-runner/shared/schema";
+import type { Project, PublicWebhook } from "@boof/heart/schema";
 import { api, ApiError } from "../api.js";
 import type { Whoami } from "../api-types.js";
 import { callerProjects } from "../lib/clients.js";

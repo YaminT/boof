@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Scope } from "@boof-runner/shared/schema";
+import type { Scope } from "@boof/heart/schema";
 import { Button } from "@/ui/button";
 import {
   Dialog,

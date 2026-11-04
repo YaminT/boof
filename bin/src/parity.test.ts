@@ -13,7 +13,7 @@ import {
   defaultSettings,
   SettingsStore,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { cliOps, commandPath, matchOpCommand, opsCommand } from "./ops-cli.js";
 

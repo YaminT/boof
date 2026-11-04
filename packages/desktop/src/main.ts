@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
 import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
-import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
+import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof/heart";
 import { startServer, type RunningServer } from "@boof-runner/web";
 import {
   createQuitHandler,

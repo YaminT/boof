@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof-runner/shared";
+import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { LOCAL_MCP_PRINCIPAL } from "../local-principal.js";
 import type { OpContext } from "../define-op.js";

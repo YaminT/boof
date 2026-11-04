@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Scope } from "@boof-runner/shared/schema";
+import type { Scope } from "@boof/heart/schema";
 import { ApiError } from "../api.js";
 import type { CommandAction } from "./command-actions.js";
 import { appendOutput, pushHistory, recall, submitConsole } from "./console-session.js";

@@ -5,7 +5,7 @@ import {
   matchesHierarchy,
   StatusSchema,
   type Task,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { sleepUnlessAborted } from "../abort.js";

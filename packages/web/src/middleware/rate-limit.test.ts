@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import type { SecuritySettings } from "@boof-runner/shared";
-import { SecuritySettingsSchema } from "@boof-runner/shared";
+import type { SecuritySettings } from "@boof/heart";
+import { SecuritySettingsSchema } from "@boof/heart";
 import { unauthenticatedRateLimit } from "./rate-limit.js";
 
 const security = async (): Promise<SecuritySettings> =>

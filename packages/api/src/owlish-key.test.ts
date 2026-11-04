@@ -2,8 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultSettings, SettingsStore } from "@boof-runner/shared";
-import { OwlishSecretStore } from "@boof-runner/shared/owlish";
+import { defaultSettings, SettingsStore } from "@boof/heart";
+import { OwlishSecretStore } from "@boof/heart/owlish";
 import { TaskService } from "./services/service.js";
 
 let root: string;

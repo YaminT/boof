@@ -11,7 +11,7 @@ import {
   securitySettings,
   type Settings,
   type ToolCatalog,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";

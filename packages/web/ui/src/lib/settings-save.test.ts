@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import { isDirty, startDraft, type PageModel, type PageValues } from "./settings-draft.js";
 import { afterSaveEdits, performSave, raiseNotice, type SaveWrites } from "./settings-save.js";
 

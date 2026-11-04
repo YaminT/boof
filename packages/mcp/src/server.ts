@@ -18,13 +18,7 @@ import {
   type OpError,
   type ResolveHost,
 } from "@boof-runner/api";
-import {
-  authorize,
-  BOOF_VERSION,
-  type AuthStore,
-  type Principal,
-  type Scope,
-} from "@boof-runner/shared";
+import { authorize, BOOF_VERSION, type AuthStore, type Principal, type Scope } from "@boof/heart";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
 

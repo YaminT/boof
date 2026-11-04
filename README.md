@@ -431,7 +431,7 @@ For offline tests the `mock` tool takes a marker in the prompt: `[[mock-verdicts
 ## Project layout
 
 ```
-packages/shared    task-file format, schemas, projects, plans, auth store, events, v1→v2 migration, lifecycle
+packages/heart    task-file format, schemas, projects, plans, auth store, events, v1→v2 migration, lifecycle
 packages/runner    tool adapters, git worktree isolation, plan sync, the pipeline engine
 packages/api       operations registry (defineOp), services, OpenAPI generator
 packages/mcp       MCP server (stdio + Streamable HTTP) generated from the registry

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ERROR_CODES } from "./errors.js";
 import { MCP_NAME } from "./define-op.js";
 import { registry } from "./registry.js";
-import { SCOPES } from "@boof-runner/shared";
+import { SCOPES } from "@boof/heart";
 
 describe("operations registry contract", () => {
   it("has unique names and unique REST routes", () => {

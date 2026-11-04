@@ -4,7 +4,7 @@ import {
   OwlishError,
   OwlishSecretStore,
   type PoolStatus,
-} from "@boof-runner/shared/owlish";
+} from "@boof/heart/owlish";
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -83,7 +83,7 @@ import {
   type CachedHealth,
   type HealthResult,
   type ToolCatalog,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";

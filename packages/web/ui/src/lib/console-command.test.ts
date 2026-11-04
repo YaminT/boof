@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Project, Scope } from "@boof-runner/shared/schema";
+import type { Project, Scope } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import {
   availableActions,

@@ -8,7 +8,7 @@ import {
   type BoofEvent,
   type EventPos,
   type Principal,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import type { TaskService } from "@boof-runner/api";
 
 /** Scope name of the global events file (`<data>/events.jsonl`); projects use their id. */

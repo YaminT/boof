@@ -2,10 +2,10 @@ import { ClaudeCodeTool } from "./claude-code.js";
 import { CodexTool } from "./codex.js";
 import { MockTool } from "./mock.js";
 import { OpencodeTool } from "./opencode.js";
-import type { CachedHealth, HealthResult, ToolCatalog } from "@boof-runner/shared";
+import type { CachedHealth, HealthResult, ToolCatalog } from "@boof/heart";
 import type { DetectOptions, Tool } from "./types.js";
 
-export type { CachedHealth } from "@boof-runner/shared";
+export type { CachedHealth } from "@boof/heart";
 
 /**
  * Registry of available tools. New tools register here without the pipeline

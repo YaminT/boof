@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@boof-runner/shared";
+import type { TokenUsage } from "@boof/heart";
 
 /** Optional details of a failed run that the pipeline uses to continue the step. */
 export interface ToolRunErrorExtra {

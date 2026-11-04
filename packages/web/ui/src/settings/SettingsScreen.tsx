@@ -1,7 +1,7 @@
 import { FocusToggle } from "@/ui/focus-toggle";
 import { useFocusMode } from "../lib/useFocusMode.js";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import type { SettingsPageId } from "../lib/route.js";
 import {
   NEEDS_PROJECTS_READ,

@@ -1,4 +1,4 @@
-import type { Project, Scope } from "@boof-runner/shared/schema";
+import type { Project, Scope } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import type { Route, SettingsPageId } from "./route.js";
 import type { ThemePref } from "./theme.js";

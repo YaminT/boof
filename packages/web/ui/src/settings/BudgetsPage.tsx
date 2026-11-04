@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Project, TokenUsage } from "@boof-runner/shared/schema";
+import type { Project, TokenUsage } from "@boof/heart/schema";
 import { api } from "../api.js";
 import type { BudgetStatus } from "../api-types.js";
 import { Input } from "@/ui/input";

@@ -13,7 +13,7 @@ import {
   ScopeSchema,
   StatusSchema,
   TrustSchema,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 const kebabId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 const labels = z.array(z.string().max(100)).max(50);

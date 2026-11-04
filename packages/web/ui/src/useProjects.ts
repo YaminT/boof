@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import { api, ApiError } from "./api.js";
 
 const STORAGE_KEY = "boof-runner.project";

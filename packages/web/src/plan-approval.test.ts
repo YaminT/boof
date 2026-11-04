@@ -10,7 +10,7 @@ import {
   TaskStore,
   type Scope,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
@@ -345,7 +345,7 @@ describe("status_downgraded warnings", () => {
 describe("structured reviews and live-log text", () => {
   async function seedReviewedTask(): Promise<void> {
     const store = new TaskStore(new ProjectStore(root).dir("demo"));
-    const { newTask } = await import("@boof-runner/shared");
+    const { newTask } = await import("@boof/heart");
     const task = newTask(
       {
         id: "rev",

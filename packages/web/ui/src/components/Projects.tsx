@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import { api, ApiError } from "../api.js";
 import { desktop } from "../desktop.js";
 import { boofRunnerLogoUrl } from "../assets.js";

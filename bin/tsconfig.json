@@ -9,7 +9,7 @@
     "composite": true
   },
   "references": [
-    { "path": "../packages/shared" },
+    { "path": "../packages/heart" },
     { "path": "../packages/api" },
     { "path": "../packages/runner" },
     { "path": "../packages/mcp" },

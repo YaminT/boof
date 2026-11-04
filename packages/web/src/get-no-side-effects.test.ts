@@ -12,7 +12,7 @@ import {
   TaskStore,
   type Task,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry, type HealthResult, type Tool } from "@boof-runner/runner";
 import { registry, TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newTask, type Epic, type Task, type TaskFrontmatter } from "@boof-runner/shared";
+import { newTask, type Epic, type Task, type TaskFrontmatter } from "@boof/heart";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 
 const mk = (id: string, over: Partial<TaskFrontmatter> = {}): Task =>

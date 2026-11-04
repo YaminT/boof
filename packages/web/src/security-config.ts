@@ -4,7 +4,7 @@ import {
   SecuritySettingsSchema,
   securitySettings,
   type SecuritySettings,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import type { TaskService } from "@boof-runner/api";
 
 /**

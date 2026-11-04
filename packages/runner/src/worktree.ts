@@ -11,7 +11,7 @@ import {
   canonical,
   untrackedFiles,
   untrackedPatch,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 const BRANCH_PREFIX = "boof-runner/";
 

@@ -13,7 +13,7 @@ import {
   parseInjected,
   workingAreaDir,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { IdempotencyStore, TaskService, tailLines } from "@boof-runner/api";

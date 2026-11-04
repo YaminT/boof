@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dataRootPaths } from "@boof-runner/shared";
+import { dataRootPaths } from "@boof/heart";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpError } from "./errors.js";
 import { IdempotencyStore } from "./idempotency.js";

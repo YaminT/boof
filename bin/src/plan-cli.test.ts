@@ -14,7 +14,7 @@ import {
   execCommand,
   buildUnitPrompt,
   selectActionableUnits,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { ToolRegistry } from "@boof-runner/runner";
 import { drainQueue, scanRepoToTasks } from "./headless.js";
 import { planCommand } from "./plan-cli.js";

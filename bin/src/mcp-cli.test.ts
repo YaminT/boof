@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
-import { AuthStore } from "@boof-runner/shared";
+import { AuthStore } from "@boof/heart";
 import { mcpCommand, MCP_HELP } from "./mcp-cli.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -134,7 +134,7 @@ describe("boof-runner mcp over stdio", () => {
   };
 
   it("without --admin the host acts as a review-trust client: the unattended-agent chain fails at every step", async () => {
-    const { ProjectStore, execCommand } = await import("@boof-runner/shared");
+    const { ProjectStore, execCommand } = await import("@boof/heart");
     const base = await mkdtemp(join(tmpdir(), "boof-mcp-repos-"));
     const repoDir = join(base, "repo");
     const elsewhere = join(base, "elsewhere");
@@ -239,7 +239,7 @@ describe("mcpCommand", () => {
     expect(await run(["-d", root, "--client", "x", "--admin"])).toBe(1);
     expect(errs.at(-1)).toContain("--admin");
 
-    const { SettingsStore, defaultSettings } = await import("@boof-runner/shared");
+    const { SettingsStore, defaultSettings } = await import("@boof/heart");
     const settings = defaultSettings();
     settings.security = {
       allowedHosts: [],

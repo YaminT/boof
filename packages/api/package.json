@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@boof-runner/runner": "*",
-    "@boof-runner/shared": "*",
+    "@boof/heart": "*",
     "zod": "^4.6.7"
   }
 }

@@ -1,5 +1,5 @@
-import { appendEvent, type Settings } from "@boof-runner/shared";
-import { ABSENT_POOL, OwlishClient, type PoolStatus } from "@boof-runner/shared/owlish";
+import { appendEvent, type Settings } from "@boof/heart";
+import { ABSENT_POOL, OwlishClient, type PoolStatus } from "@boof/heart/owlish";
 import type { Gateway } from "./gateway-env.js";
 
 /** Ask the gateway at most this often (a known `nextAvailableAt` may bring the next check forward). */

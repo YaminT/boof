@@ -2,7 +2,7 @@
   "files": [],
   "references": [
     {
-      "path": "./packages/shared"
+      "path": "./packages/heart"
     },
     {
       "path": "./packages/runner"

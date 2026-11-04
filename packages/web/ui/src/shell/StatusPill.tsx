@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Status } from "@boof-runner/shared/schema";
+import type { Status } from "@boof/heart/schema";
 import { cn } from "@/lib/utils";
 import { statusLabel, statusTone, type Tone } from "../lib/status.js";
 

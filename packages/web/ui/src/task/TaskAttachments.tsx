@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
-import type { Attachment } from "@boof-runner/shared/schema";
+import type { Attachment } from "@boof/heart/schema";
 import { Button } from "@/ui/button";
 import { api } from "../api.js";
 

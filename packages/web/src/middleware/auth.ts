@@ -9,7 +9,7 @@ import {
   type Principal,
   type Scope,
   type SecuritySettings,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 declare module "hono" {
   interface ContextVariableMap {

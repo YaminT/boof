@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Settings } from "@boof-runner/shared/schema";
+import type { Settings } from "@boof/heart/schema";
 import { api, ApiError, type PlanSummary, type TaskView } from "./api.js";
 import type { BudgetStatus } from "./api-types.js";
 import { onUnauthorized } from "./token.js";

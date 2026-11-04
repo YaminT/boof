@@ -18,7 +18,7 @@
     "@boof-runner/api": "*",
     "@boof-runner/mcp": "*",
     "@boof-runner/runner": "*",
-    "@boof-runner/shared": "*",
+    "@boof/heart": "*",
     "@hono/node-server": "^2.0.0",
     "chokidar": "^6.0.0",
     "hono": "^4.13.13",

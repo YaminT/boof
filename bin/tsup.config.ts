@@ -10,7 +10,7 @@ export default defineConfig({
   // Inline only the @boof-runner/* workspace source; keep third-party libs external so
   // they load from node_modules at runtime (avoids bundling CJS dynamic-require
   // libs like gray-matter/chokidar into the ESM bundle).
-  noExternal: [/^@boof-runner\//],
+  noExternal: [/^@boof(-runner)?\//],
   external: ["gray-matter", "zod", "chokidar", "hono", "@hono/node-server"],
   banner: { js: "#!/usr/bin/env node" },
 });

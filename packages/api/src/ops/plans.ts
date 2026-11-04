@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mergeOrderOf, PlanSchema } from "@boof-runner/shared";
+import { mergeOrderOf, PlanSchema } from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { OpError } from "../errors.js";
 import {

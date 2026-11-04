@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
 import { act } from "../lib/act.js";

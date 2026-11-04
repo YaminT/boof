@@ -1,5 +1,5 @@
 import { Button } from "@/ui/button";
-import type { Settings } from "@boof-runner/shared/schema";
+import type { Settings } from "@boof/heart/schema";
 import type { Route } from "../lib/route.js";
 import type { TaskGroups } from "../lib/task-groups.js";
 import { toggleRunner } from "../shell/RunnerSwitch.js";

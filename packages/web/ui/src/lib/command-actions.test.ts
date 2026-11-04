@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import { createCommandActions, type ActionContext, type ActionEffects } from "./command-actions.js";
 

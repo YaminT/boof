@@ -21,7 +21,7 @@ import {
   type SyncResult,
   ProjectResolutionError,
   resolveProject,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 export const PLAN_HELP = `boof-runner plan — import, sync and export a project's plans
 

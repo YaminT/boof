@@ -32,7 +32,7 @@ import {
   isGitRepo,
   sumUsage,
   UsageStore,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
 import type { Gateway } from "./gateway-env.js";

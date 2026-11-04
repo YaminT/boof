@@ -12,7 +12,7 @@ import {
   TaskStore,
   execCommand,
   ProjectResolutionError,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry, mockState, resetMock } from "@boof-runner/runner";
 import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
 import { firstPositional, runCommand } from "./boof-runner.js";

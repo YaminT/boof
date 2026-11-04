@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import { projectPage } from "./settings-project.js";
 
 const settings = { defaultProject: null, projectsRoot: undefined } as unknown as Settings;

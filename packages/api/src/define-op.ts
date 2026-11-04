@@ -5,7 +5,7 @@ import {
   type AuthStore,
   type Principal,
   type Scope,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { formatIssues, OpError, toOpError, type ErrorCode } from "./errors.js";
 import type { ResolveHost } from "./net-guard.js";
 import type { TaskService } from "./services/service.js";

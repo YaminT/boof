@@ -4,7 +4,7 @@ import type {
   RoleAssignment,
   Settings,
   SettingsPatch,
-} from "@boof-runner/shared/schema";
+} from "@boof/heart/schema";
 import { parseCount } from "./form-numbers.js";
 import { changedKeys, sameValue, type PageModel, type PageValues } from "./settings-draft.js";
 

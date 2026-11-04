@@ -6,11 +6,11 @@ import {
   SettingsPatchSchema,
   settingsVersion,
   TokenUsageSchema,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { buildModelDetails } from "../services/model-details.js";
-import type { Client } from "@boof-runner/shared";
+import type { Client } from "@boof/heart";
 import { CommandBody, CreateClientBody } from "../validation.js";
 import {
   CommandRenameSchema,

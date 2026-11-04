@@ -27,7 +27,7 @@
         "@boof-runner/api": "*",
         "@boof-runner/mcp": "*",
         "@boof-runner/runner": "*",
-        "@boof-runner/shared": "*",
+        "@boof/heart": "*",
         "@boof-runner/web": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
@@ -44,7 +44,7 @@
       "version": "0.2.0",
       "dependencies": {
         "@boof-runner/runner": "*",
-        "@boof-runner/shared": "*",
+        "@boof/heart": "*",
         "zod": "^4.6.7",
       },
     },
@@ -53,7 +53,7 @@
       "version": "0.2.0",
       "dependencies": {
         "@boof-runner/runner": "*",
-        "@boof-runner/shared": "*",
+        "@boof/heart": "*",
         "@boof-runner/web": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
@@ -71,7 +71,7 @@
       "version": "0.2.0",
       "dependencies": {
         "@boof-runner/api": "*",
-        "@boof-runner/shared": "*",
+        "@boof/heart": "*",
         "@modelcontextprotocol/sdk": "~1.32.2",
         "zod": "^4.6.7",
       },
@@ -83,11 +83,11 @@
       "name": "@boof-runner/runner",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/shared": "*",
+        "@boof/heart": "*",
       },
     },
-    "packages/shared": {
-      "name": "@boof-runner/shared",
+    "packages/heart": {
+      "name": "@boof/heart",
       "version": "0.2.0",
       "dependencies": {
         "fast-xml-parser": "^5.11.2",
@@ -102,7 +102,7 @@
         "@boof-runner/api": "*",
         "@boof-runner/mcp": "*",
         "@boof-runner/runner": "*",
-        "@boof-runner/shared": "*",
+        "@boof/heart": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "hono": "^4.13.13",
@@ -160,7 +160,7 @@
 
     "@boof-runner/runner": ["@boof-runner/runner@workspace:packages/runner"],
 
-    "@boof-runner/shared": ["@boof-runner/shared@workspace:packages/shared"],
+    "@boof/heart": ["@boof/heart@workspace:packages/heart"],
 
     "@boof-runner/web": ["@boof-runner/web@workspace:packages/web"],
 

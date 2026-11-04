@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import { api } from "../api.js";
 import { act } from "../lib/act.js";
 import { afterSaveEdits, performSave, raiseNotice } from "../lib/settings-save.js";

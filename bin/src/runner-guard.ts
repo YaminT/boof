@@ -1,5 +1,5 @@
-import { dataRootPaths, inspectProcessLock, tryAcquireProcessLock } from "@boof-runner/shared";
-import type { HeldProcessLock } from "@boof-runner/shared";
+import { dataRootPaths, inspectProcessLock, tryAcquireProcessLock } from "@boof/heart";
+import type { HeldProcessLock } from "@boof/heart";
 
 /**
  * Single-runner guard via a pid lock file, `<data>/.runner.pid` (cli-packaging spec). Prevents a

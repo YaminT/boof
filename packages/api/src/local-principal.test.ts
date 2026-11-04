@@ -8,7 +8,7 @@ import {
   LOCAL_PRINCIPAL,
   SecuritySettingsSchema,
   type Settings,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { LOCAL_MCP_ID, LocalPrincipalError, localPrincipal } from "./local-principal.js";
 
 let root: string;

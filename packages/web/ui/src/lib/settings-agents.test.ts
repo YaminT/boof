@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import { agentsPage, checkedAgo, usageLabel } from "./settings-agents.js";
 
 const roles = {

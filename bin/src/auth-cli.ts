@@ -11,7 +11,7 @@ import {
   TrustSchema,
   type PublicClient,
   type Scope,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 export const AUTH_HELP = `boof-runner auth — manage API clients (keys are root-equivalent: anyone who can create a task can run code as you)
 

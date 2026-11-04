@@ -11,7 +11,7 @@ import {
   SettingsStore,
   TaskStore,
   scaffoldDataRoot,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { ZodError } from "zod";
 
 export const EPIC_HELP = `boof-runner epic — manage the epics (named groups of tasks) of a project

@@ -123,8 +123,8 @@ const show = (v: Violation) =>
 
 describe("import boundaries", () => {
   it("maps folders to parts", () => {
-    expect(partOfFile("packages/shared/src/schema.ts")).toBe("heart");
-    expect(partOfFile("packages/shared/src/owlish-client.ts")).toBe("owlish");
+    expect(partOfFile("packages/heart/src/schema.ts")).toBe("heart");
+    expect(partOfFile("packages/heart/src/owlish-client.ts")).toBe("owlish");
     expect(partOfFile("packages/runner/src/engine.ts")).toBe("runner");
     for (const p of ["api", "mcp", "web"]) {
       expect(partOfFile(`packages/${p}/src/x.ts`)).toBe("heart-server");
@@ -139,15 +139,15 @@ describe("import boundaries", () => {
 
   it("maps specifiers and ignores third-party ones", () => {
     expect(partOfSpecifier("@boof-runner/runner", "bin/src/x.ts")).toBe("runner");
-    expect(partOfSpecifier("@boof-runner/shared/sub", "bin/src/x.ts")).toBe("heart");
-    expect(partOfSpecifier("./scaffold.js", "packages/shared/src/index.ts")).toBe("heart");
+    expect(partOfSpecifier("@boof/heart/sub", "bin/src/x.ts")).toBe("heart");
+    expect(partOfSpecifier("./scaffold.js", "packages/heart/src/index.ts")).toBe("heart");
     expect(partOfSpecifier("./headless.js", "bin/src/plan-cli.ts")).toBe("bin");
     // Owlish has its own subpath; the package barrel is Heart and does not re-export it.
-    expect(partOfSpecifier("@boof-runner/shared/owlish", "bin/src/x.ts")).toBe("owlish");
-    expect(partOfSpecifier("@boof-runner/shared", "bin/src/x.ts")).toBe("heart");
-    expect(partOfFile("packages/shared/src/owlish-index.ts")).toBe("owlish");
-    expect(readFileSync(join(repo, "packages/shared/src/index.ts"), "utf8")).not.toMatch(/owlish/);
-    expect(partOfSpecifier("../../../shared/src/x.js", "packages/api/src/ops/y.ts")).toBe("heart");
+    expect(partOfSpecifier("@boof/heart/owlish", "bin/src/x.ts")).toBe("owlish");
+    expect(partOfSpecifier("@boof/heart", "bin/src/x.ts")).toBe("heart");
+    expect(partOfFile("packages/heart/src/owlish-index.ts")).toBe("owlish");
+    expect(readFileSync(join(repo, "packages/heart/src/index.ts"), "utf8")).not.toMatch(/owlish/);
+    expect(partOfSpecifier("../../../heart/src/x.js", "packages/api/src/ops/y.ts")).toBe("heart");
     expect(partOfSpecifier("node:fs", "bin/src/x.ts")).toBeUndefined();
     expect(partOfSpecifier("hono", "bin/src/x.ts")).toBeUndefined();
   });
@@ -221,9 +221,9 @@ describe("import boundaries", () => {
       const to = partOfSpecifier(spec, ui)!;
       return ALLOWED["facedisk/ui"].includes(to) && (imp.typeOnly || spec in BROWSER_SAFE);
     };
-    expect(check("@boof-runner/shared/ids")).toBe(true);
-    expect(check("@boof-runner/shared/schema")).toBe(false);
-    expect(check("@boof-runner/shared")).toBe(false);
+    expect(check("@boof/heart/ids")).toBe(true);
+    expect(check("@boof/heart/schema")).toBe(false);
+    expect(check("@boof/heart")).toBe(false);
   });
 
   it("has no stale allow-list entry", () => {

@@ -1,5 +1,5 @@
 // UI-only response shapes that have no counterpart in the shared schema.
-import type { Scope } from "@boof-runner/shared/schema";
+import type { Scope } from "@boof/heart/schema";
 export type PoolState = "absent" | "unreachable" | "ok" | "degraded" | "unhealthy";
 export interface PoolStatus {
   status: PoolState;

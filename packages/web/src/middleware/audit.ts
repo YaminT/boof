@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { appendAuditLine, type SecuritySettings } from "@boof-runner/shared";
+import { appendAuditLine, type SecuritySettings } from "@boof/heart";
 import { clientAddress } from "./client-address.js";
 
 /**
@@ -51,4 +51,4 @@ export function audit(opts: {
   };
 }
 
-export { pruneAudit } from "@boof-runner/shared";
+export { pruneAudit } from "@boof/heart";

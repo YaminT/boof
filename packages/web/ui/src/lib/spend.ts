@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@boof-runner/shared/schema";
+import type { TokenUsage } from "@boof/heart/schema";
 import type { BudgetScope, BudgetStatus } from "../api-types.js";
 
 export interface Spend {

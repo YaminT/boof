@@ -19,7 +19,7 @@ import {
   type Scope,
   type Settings,
   scaffoldDataRoot,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { assertBindAllowed } from "@boof-runner/web";
 
 /** The "full harness" scope set from docs/harness.md: everything except settings writes, clients and webhooks. */

@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import { BudgetBanner } from "./shell/BudgetBanner.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";

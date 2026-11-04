@@ -29,7 +29,7 @@ import {
   syncPlan,
   taskStatusForPlan,
   type SyncResult,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import type { z } from "zod";
 import { formatIssues, OpError } from "../errors.js";
 import { sleepUnlessAborted } from "../abort.js";

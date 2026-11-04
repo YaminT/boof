@@ -10,7 +10,7 @@ import {
   TaskStore,
   type Task,
   scaffoldDataRoot,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { ZodError } from "zod";
 import { CliUsageError, dataRootOf, isExpectedCliError, resolveProjectDir } from "./epic-cli.js";
 

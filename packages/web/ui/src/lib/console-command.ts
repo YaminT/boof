@@ -1,4 +1,4 @@
-import type { Scope } from "@boof-runner/shared/schema";
+import type { Scope } from "@boof/heart/schema";
 import type { CommandAction } from "./command-actions.js";
 
 export type ConsoleResolution =

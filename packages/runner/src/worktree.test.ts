@@ -8,7 +8,7 @@ import {
   isGitRepo,
   pruneStaleWorktrees,
   repoCommonDir,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import {
   commitLeftovers,
   createWorktree as create,

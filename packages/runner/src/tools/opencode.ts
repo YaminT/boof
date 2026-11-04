@@ -1,11 +1,11 @@
-import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
+import { commandExists, execCommand, parseUsage } from "@boof/heart";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
 import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str, stripAnsi } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
-import type { TokenUsage } from "@boof-runner/shared";
+import type { TokenUsage } from "@boof/heart";
 
 /**
  * Adapter for the `opencode` CLI. Runs non-interactively via `opencode run`;

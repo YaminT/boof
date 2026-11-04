@@ -61,7 +61,7 @@ jobs:
       - name: Workspace packages are symlinks
         shell: bash
         run: |
-          for d in node_modules/@boof-runner/*; do
+          for d in node_modules/@boof/* node_modules/@boof-runner/*; do
             test -L "$d" || { echo "$d is not a symlink: npm fetched it from the registry"; exit 1; }
           done
 
@@ -80,7 +80,7 @@ jobs:
       - name: Run the built CLI
         shell: bash
         run: |
-          ls -la node_modules/@boof-runner
+          ls -la node_modules/@boof node_modules/@boof-runner
           test "$(node bin/dist/boof-runner.js --version)" = "$(node -p "require('./package.json').version")"
           if node bin/dist/boof-runner.js status; then echo "an unknown command must exit 1"; exit 1; fi
           npm install -g --prefix "$RUNNER_TEMP/prefix" . --no-audit --no-fund

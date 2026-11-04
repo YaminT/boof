@@ -1,14 +1,14 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
+import { commandExists, execCommand, parseUsage } from "@boof/heart";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
 import { gatewayEnv, gatewayUrl } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
-import type { TokenUsage } from "@boof-runner/shared";
+import type { TokenUsage } from "@boof/heart";
 
 /** Build the inline TOML provider table; JSON's string quoting is valid TOML basic-string syntax. */
 export function codexProviderConfig(url: string): string {

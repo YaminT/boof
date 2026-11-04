@@ -10,7 +10,7 @@ import {
   TaskFrontmatterSchema,
   TokenUsageSchema,
   WebhookSchema,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { WarningSchema } from "./warnings.js";
 
 export const TaskViewSchema = z.object({
@@ -313,7 +313,7 @@ export const TaskDiffSchema = z.object({
   }),
 });
 
-/** The account pool as the gateway health check reports it (see `@boof-runner/shared/owlish`). */
+/** The account pool as the gateway health check reports it (see `@boof/heart/owlish`). */
 export const PoolStatusSchema = z.object({
   status: z.enum(["absent", "unreachable", "ok", "degraded", "unhealthy"]),
   configured: z.number().int().nullable(),

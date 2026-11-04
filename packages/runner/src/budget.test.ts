@@ -18,9 +18,9 @@ import {
   type BudgetSettings,
   type Project,
   type TaskFrontmatter,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "@boof-runner/shared";
+import { execCommand } from "@boof/heart";
 import { mockState, resetMock } from "./tools/mock.js";
 
 let dataRoot: string;

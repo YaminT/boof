@@ -1,4 +1,4 @@
-import { buildHierarchyIndex, type Epic, type Task } from "@boof-runner/shared";
+import { buildHierarchyIndex, type Epic, type Task } from "@boof/heart";
 
 const MAX_LISTED = 50;
 

@@ -1,11 +1,5 @@
 import { z } from "zod";
-import {
-  BOOF_VERSION,
-  mcpSettings,
-  ScopeSchema,
-  securitySettings,
-  TrustSchema,
-} from "@boof-runner/shared";
+import { BOOF_VERSION, mcpSettings, ScopeSchema, securitySettings, TrustSchema } from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { READ } from "./common.js";
 

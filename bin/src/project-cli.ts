@@ -13,7 +13,7 @@ import {
   isGitRepo,
   pruneStaleWorktrees,
   repoCommonDir,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 export const PROJECT_HELP = `boof-runner project — manage the projects (git repositories) one data root serves
 

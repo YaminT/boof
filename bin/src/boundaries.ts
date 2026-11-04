@@ -37,7 +37,7 @@ export const TYPE_ONLY: Part[] = ["facedisk/ui"];
  * a Node dependency into the browser bundle.
  */
 export const BROWSER_SAFE: Record<string, string> = {
-  "@boof-runner/shared/ids": "packages/shared/src/ids.ts",
+  "@boof/heart/ids": "packages/heart/src/ids.ts",
 };
 
 /**
@@ -50,7 +50,7 @@ export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [];
 export const SOURCE_ROOTS = ["packages/*/src", "packages/web/ui/src", "bin/src"];
 
 const PACKAGE_PART: Record<string, Part> = {
-  shared: "heart",
+  heart: "heart",
   runner: "runner",
   api: "heart-server",
   mcp: "heart-server",
@@ -74,7 +74,7 @@ const CLI_COMMANDS = [
 export function partOfFile(file: string): Part | undefined {
   const p = normalize(file).split("\\").join("/");
   if (p.startsWith("packages/web/ui/src/")) return "facedisk/ui";
-  if (p.startsWith("packages/shared/src/") && basename(p).startsWith("owlish")) return "owlish";
+  if (p.startsWith("packages/heart/src/") && basename(p).startsWith("owlish")) return "owlish";
   const pkg = /^packages\/([^/]+)\/src\//.exec(p)?.[1];
   if (pkg) return PACKAGE_PART[pkg];
   if (p.startsWith("bin/src/")) {
@@ -84,13 +84,14 @@ export function partOfFile(file: string): Part | undefined {
 }
 
 /**
- * The part an import specifier reaches: `@boof-runner/<pkg>[/sub]` by package, a relative path by
+ * The part an import specifier reaches: `@boof(-runner)?/<pkg>[/sub]` by package, a relative path by
  * resolving it against the importing file. Third-party and `node:` specifiers give undefined.
  */
 export function partOfSpecifier(spec: string, fromFile: string): Part | undefined {
-  // Owlish is its own part, reached through the `@boof-runner/shared/owlish` subpath.
-  if (spec === "@boof-runner/shared/owlish") return "owlish";
-  const pkg = /^@boof-runner\/([^/]+)/.exec(spec)?.[1];
+  // Owlish is its own part, reached through the `@boof/heart/owlish` subpath.
+  if (spec === "@boof/heart/owlish") return "owlish";
+  const pkg = /^@boof(?:-runner)?\/([^/]+)/.exec(spec)?.[1];
+  if (pkg === "heart") return "heart";
   if (pkg) return PACKAGE_PART[pkg];
   if (!spec.startsWith(".")) return undefined;
   // A `.js` specifier names the `.ts` file.

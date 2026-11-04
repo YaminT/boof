@@ -10,7 +10,7 @@ import {
   LOCAL_PRINCIPAL,
   MAX_ATTACHMENT_BYTES,
   type Principal,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import {
   buildOpenApi,
   IdempotencyStore,

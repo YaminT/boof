@@ -1,5 +1,5 @@
-import type { TokenUsage } from "@boof-runner/shared";
-import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
+import type { TokenUsage } from "@boof/heart";
+import { commandExists, execCommand, parseUsage } from "@boof/heart";
 import { agentEnv } from "../agent-env.js";
 import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";

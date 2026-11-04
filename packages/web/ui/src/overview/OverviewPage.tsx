@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { FocusToggle } from "@/ui/focus-toggle";

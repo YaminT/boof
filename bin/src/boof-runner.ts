@@ -16,7 +16,7 @@ import { taskCommand } from "./task-cli.js";
 import { planCommand } from "./plan-cli.js";
 import { mcpCommand } from "./mcp-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
-import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof-runner/shared";
+import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
 
 interface ServeArgs {
   dataRoot: string;

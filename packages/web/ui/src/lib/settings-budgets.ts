@@ -1,4 +1,4 @@
-import type { ProjectPatch, SettingsPatch } from "@boof-runner/shared/schema";
+import type { ProjectPatch, SettingsPatch } from "@boof/heart/schema";
 import { parseToolLimits, parseUsd, toolLimitsText } from "./form-numbers.js";
 import { changedKeys, type PageModel, type PageValues } from "./settings-draft.js";
 

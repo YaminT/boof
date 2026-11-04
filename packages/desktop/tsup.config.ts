@@ -11,6 +11,6 @@ export default defineConfig({
   target: "node20",
   clean: true,
   dts: false,
-  noExternal: [/^@boof-runner\//, "hono", "@hono/node-server", "chokidar", "gray-matter", "zod"],
+  noExternal: [/^@boof(-runner)?\//, "hono", "@hono/node-server", "chokidar", "gray-matter", "zod"],
   external: ["electron", "fsevents"],
 });

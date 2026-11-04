@@ -1,6 +1,6 @@
 import chokidar, { type FSWatcher } from "chokidar";
 import { relative, sep } from "node:path";
-import { dataRootPaths } from "@boof-runner/shared";
+import { dataRootPaths } from "@boof/heart";
 
 /** Payload of a `changed` ping: the project whose files changed, or none for global changes. */
 export interface ChangeData {

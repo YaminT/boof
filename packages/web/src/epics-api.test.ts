@@ -9,7 +9,7 @@ import {
   readEvents,
   SettingsStore,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";
@@ -108,9 +108,10 @@ describe("epic operations", () => {
     await mk("S", { parentId: "a" });
     for (const id of ["a", "s"]) {
       for (const st of ["pending", "running", "done"]) {
-        await new (await import("@boof-runner/shared")).TaskStore(
-          service.projects.dir("demo"),
-        ).transition(id, st as never);
+        await new (await import("@boof/heart")).TaskStore(service.projects.dir("demo")).transition(
+          id,
+          st as never,
+        );
       }
     }
     const got = await (await call(`${V1}/projects/demo/epics/web`)).json();

@@ -7,7 +7,7 @@ import {
   type Client,
   type Principal,
   type Settings,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 export { LOCAL_MCP_ID };
 

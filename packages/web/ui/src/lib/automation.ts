@@ -1,4 +1,4 @@
-import { toKebabId } from "@boof-runner/shared/ids";
+import { toKebabId } from "@boof/heart/ids";
 import { ApiError } from "../api.js";
 import type { Whoami } from "../api-types.js";
 import { errorMessage } from "./act.js";

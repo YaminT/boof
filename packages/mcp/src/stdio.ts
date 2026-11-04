@@ -12,7 +12,7 @@ import {
   mcpSettings,
   type Principal,
   type ToolCatalog,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { createBoofMcpServer, type ToolCallInfo } from "./server.js";
 
 /**

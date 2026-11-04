@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { Scope, Settings } from "@boof-runner/shared/schema";
+import type { Scope, Settings } from "@boof/heart/schema";
 import type { AccountsGlobal } from "../lib/settings-accounts.js";
 import { api } from "../api.js";
 import type { AccountSummary, AccountsHealth, PoolState, Thresholds } from "../api-types.js";

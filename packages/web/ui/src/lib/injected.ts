@@ -14,7 +14,7 @@ const META = /^<!-- boof: (.*) -->$/;
 const HEADER = /^### (\d{4}-\d{2}-\d{2}T\S+) — (.*)$/;
 
 /**
- * The entries of `task.body.injected`, oldest first. Same format as `packages/shared/src/injected.ts`
+ * The entries of `task.body.injected`, oldest first. Same format as `packages/heart/src/injected.ts`
  * (a copy: the UI does not value-import the runner package).
  */
 export function parseInjected(md: string): InjectedEntry[] {

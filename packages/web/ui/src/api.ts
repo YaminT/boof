@@ -7,9 +7,9 @@ import type {
   SettingsPatch,
   Status,
   TokenUsage,
-} from "@boof-runner/shared/schema";
-import type { PublicWebhook } from "@boof-runner/shared/schema";
-import type { Task } from "@boof-runner/shared/task-types";
+} from "@boof/heart/schema";
+import type { PublicWebhook } from "@boof/heart/schema";
+import type { Task } from "@boof/heart/task-types";
 import type {
   BudgetStatus,
   CommandTemplate,
@@ -21,8 +21,8 @@ import type {
   AccountsHealth,
   AccountsList,
 } from "./api-types.js";
-import type { TaskReview } from "@boof-runner/shared";
-import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof-runner/shared";
+import type { TaskReview } from "@boof/heart";
+import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
 import { authHeaders, getToken, notifyUnauthorized } from "./token.js";
 
 /** An error response of the v1 API, with its machine-readable code and details. */

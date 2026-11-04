@@ -29,7 +29,7 @@ import {
   selectActionableUnits,
   syncPlan,
   type ScannedUnit,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { RunnerEngine, ToolRegistry, type TickResult } from "@boof-runner/runner";
 
 /** Id of the plan `scan` keeps for a project. */

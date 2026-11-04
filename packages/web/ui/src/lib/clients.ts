@@ -1,4 +1,4 @@
-import type { Scope } from "@boof-runner/shared/schema";
+import type { Scope } from "@boof/heart/schema";
 import type { PublicClient, Whoami } from "../api-types.js";
 
 /** What each scope allows, in the words the create form shows. A Record keeps the list complete. */

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { HierarchyIndex, Task } from "@boof-runner/shared";
+import type { HierarchyIndex, Task } from "@boof/heart";
 import type { McpAnnotations, OpContext } from "../define-op.js";
 import { toTaskView, type ProjectService, type TaskView } from "../services/service.js";
 

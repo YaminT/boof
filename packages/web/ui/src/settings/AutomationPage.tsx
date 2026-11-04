@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import { api } from "../api.js";
 import type { Whoami } from "../api-types.js";
 import { CommandTemplates } from "./CommandTemplates.js";

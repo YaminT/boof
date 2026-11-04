@@ -1,7 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { toOpError } from "@boof-runner/api";
-import { authorize, goalFilePath, PLAN_FILE, type Scope } from "@boof-runner/shared";
+import { authorize, goalFilePath, PLAN_FILE, type Scope } from "@boof/heart";
 import type { McpRuntime } from "./server.js";
 
 const JSON_MIME = "application/json";

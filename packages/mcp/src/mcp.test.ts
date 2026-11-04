@@ -13,7 +13,7 @@ import {
   type Principal,
   type Scope,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { resetMock, RunnerEngine, MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import {

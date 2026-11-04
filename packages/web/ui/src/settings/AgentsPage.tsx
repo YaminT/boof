@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Project, RoleAssignment } from "@boof-runner/shared/schema";
+import type { Project, RoleAssignment } from "@boof/heart/schema";
 import { api } from "../api.js";
 import type { HealthResult, ToolModelDetails } from "../api-types.js";
 import { Button } from "@/ui/button";

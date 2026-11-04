@@ -8,7 +8,7 @@ import {
   TaskNotFoundError,
   TaskNotRunningError,
   TaskRunningError,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 
 /**
  * Every error code an operation can return, with the HTTP status REST uses for it. MCP reports

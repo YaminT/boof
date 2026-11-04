@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <boof>
   <overal>
-    <goal>packages/shared/src/task-file.ts splits the body at any `## Prompt|Command|Questions|Answers|Reports|Log|Injected` line (and `### Planner|Developer|Observer|Reviewer` inside reports) and a second occurrence replaces the first section. Nothing escapes those headings in the prompt, agent reports or the copied log.txt (only the injected section indents them), so an agent that prints `## Log` in its summary makes the next parse+save permanently drop the real reports and hides review rounds from the verdict parser. Escape or indent reserved headings on write (as injected.ts does) and parse only the first occurrence of each; add a round-trip test with hostile content.</goal>
+    <goal>packages/heart/src/task-file.ts splits the body at any `## Prompt|Command|Questions|Answers|Reports|Log|Injected` line (and `### Planner|Developer|Observer|Reviewer` inside reports) and a second occurrence replaces the first section. Nothing escapes those headings in the prompt, agent reports or the copied log.txt (only the injected section indents them), so an agent that prints `## Log` in its summary makes the next parse+save permanently drop the real reports and hides review rounds from the verdict parser. Escape or indent reserved headings on write (as injected.ts does) and parse only the first occurrence of each; add a round-trip test with hostile content.</goal>
     <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
     <rules>
       <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>

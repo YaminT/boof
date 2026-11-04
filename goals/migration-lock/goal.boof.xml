@@ -7,7 +7,7 @@
       <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
       <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
       <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
-      <do>Keep the lock mechanism in packages/shared/src/migrate.ts; reuse the atomic write helpers.</do>
+      <do>Keep the lock mechanism in packages/heart/src/migrate.ts; reuse the atomic write helpers.</do>
       <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
       <dont>Do not commit secrets, data roots or build output.</dont>
     </rules>

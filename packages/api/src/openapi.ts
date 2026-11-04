@@ -8,7 +8,7 @@ import {
   ProjectSchema,
   TaskFrontmatterSchema,
   TokenUsageSchema,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import type { AnyOperation } from "./define-op.js";
 import { ERROR_CODES } from "./errors.js";
 import { PublicSettingsSchema, TaskViewSchema } from "./schemas.js";

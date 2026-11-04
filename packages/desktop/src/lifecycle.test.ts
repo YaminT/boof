@@ -3,7 +3,7 @@ import { MockTool, ToolRegistry, type RunnerEngine } from "@boof-runner/runner";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStore } from "@boof-runner/shared";
+import { AuthStore } from "@boof/heart";
 import {
   createQuitHandler,
   isAppUrl,

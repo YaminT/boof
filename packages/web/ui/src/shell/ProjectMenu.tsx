@@ -1,5 +1,5 @@
 import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
-import type { Project } from "@boof-runner/shared/schema";
+import type { Project } from "@boof/heart/schema";
 import {
   DropdownMenu,
   DropdownMenuContent,

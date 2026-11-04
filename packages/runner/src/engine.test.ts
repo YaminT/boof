@@ -40,11 +40,11 @@ import {
   initGitRepo,
   isGitRepo,
   repoCommonDir,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "@boof-runner/shared";
+import { execCommand } from "@boof/heart";
 import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
-import { currentBootIdentity, isAlive, writePidFile } from "@boof-runner/shared";
+import { currentBootIdentity, isAlive, writePidFile } from "@boof/heart";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";

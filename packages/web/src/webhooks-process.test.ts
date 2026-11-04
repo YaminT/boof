@@ -12,7 +12,7 @@ import {
   SecuritySettingsSchema,
   SettingsStore,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { TaskService } from "@boof-runner/api";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";

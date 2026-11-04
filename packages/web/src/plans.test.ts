@@ -9,7 +9,7 @@ import {
   SettingsStore,
   type Scope,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "@boof-runner/api";

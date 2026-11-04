@@ -1,10 +1,10 @@
-import type { HealthResult, Role, TokenUsage } from "@boof-runner/shared";
+import type { HealthResult, Role, TokenUsage } from "@boof/heart";
 import type { Gateway } from "../gateway-env.js";
 
 export type { Gateway } from "../gateway-env.js";
 
 // The health types are Heart's (tool-catalog.ts); Runner re-exports them so adapters do not change.
-export type { HealthResult, HealthStatus } from "@boof-runner/shared";
+export type { HealthResult, HealthStatus } from "@boof/heart";
 
 export interface DetectOptions {
   /** As `RunOptions.inheritMcpServers`: false (default) keeps the probe away from the user's MCP servers. */

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore, defaultSettings, SettingsStore, type Scope } from "@boof-runner/shared";
+import { AuthStore, defaultSettings, SettingsStore, type Scope } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "@boof-runner/api";
 import { createApp } from "./app.js";

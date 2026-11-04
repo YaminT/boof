@@ -1,4 +1,4 @@
-import type { Project, ProjectPatch, Settings, SettingsPatch } from "@boof-runner/shared/schema";
+import type { Project, ProjectPatch, Settings, SettingsPatch } from "@boof/heart/schema";
 
 /** JSON with object keys sorted and `undefined` members dropped, so equal values compare equal. */
 export function stableKey(v: unknown): string {

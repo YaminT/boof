@@ -1,4 +1,4 @@
-import type { Project, Settings } from "@boof-runner/shared/schema";
+import type { Project, Settings } from "@boof/heart/schema";
 import {
   rebase,
   sameValue,

@@ -23,7 +23,7 @@ import {
   type Scope,
   type SecuritySettings,
   execCommand,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { createApp } from "./app.js";
 import { pruneAudit } from "./middleware/audit.js";
@@ -419,7 +419,7 @@ describe("authorize (scopes)", () => {
     expect((await put(trusted, { brief: "ok" })).status).toBe(200);
     // Creating a project is an operator action: refused as review trust, not as a bad root,
     // even when the path is allowed and the directory is fresh.
-    const { SecuritySettingsSchema } = await import("@boof-runner/shared");
+    const { SecuritySettingsSchema } = await import("@boof/heart");
     const settings = new SettingsStore(root);
     const cur = await settings.load();
     const allowed = join(root, "allowed-projects");

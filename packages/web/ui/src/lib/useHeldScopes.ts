@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Scope } from "@boof-runner/shared/schema";
+import type { Scope } from "@boof/heart/schema";
 import { api } from "../api.js";
 import { heldScopes } from "./clients.js";
 

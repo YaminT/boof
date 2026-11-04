@@ -16,7 +16,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.0",
     "@boof-runner/runner": "*",
-    "@boof-runner/shared": "*",
+    "@boof/heart": "*",
     "@boof-runner/web": "*",
     "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",

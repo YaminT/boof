@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as prettier from "prettier";
 import { buildOpenApi, getOp, registry } from "../packages/api/src/index.js";
-import { SCOPES } from "../packages/shared/src/index.js";
+import { SCOPES } from "../packages/heart/src/index.js";
 import { commandPath } from "../bin/src/ops-cli.js";
 
 export const BEGIN = "<!-- BEGIN GENERATED REFERENCE -->";

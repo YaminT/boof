@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWrite, dataRootPaths } from "@boof-runner/shared";
+import { atomicWrite, dataRootPaths } from "@boof/heart";
 import { OpError } from "./errors.js";
 
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
