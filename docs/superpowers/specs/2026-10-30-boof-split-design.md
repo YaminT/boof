@@ -283,7 +283,7 @@ Files: `bin/src/boundaries.ts` (the map and the allow-list) and `bin/src/import-
 1. Walk `packages/*/src`, `packages/facedisk/ui/src`, `packages/facedisk/cli`, `bin/src` for `.ts`, `.tsx`, `.mjs`; skip `*.test.ts`, `*.test.tsx`, `node_modules`, `dist`, `.tsc-typecheck`, `generated/`.
 2. Extract specifiers with a regex over `import … from "x"`, `export … from "x"`, `import("x")`, and note whether the statement is `import type` or `export type`.
 3. Map each file and each specifier to a **package**: `@boof/<pkg>[/sub]` by package name; a relative path by resolving it and looking up the package map; `node:*` and third-party ignored.
-4. Allowed edges are the final package identities in §7.3. Within folded Facedisk, UI imports that leave `packages/facedisk/ui/` must be type-only except the browser-safe Heart subpaths; CLI imports into the UI are forbidden.
+4. Allowed edges are the final package identities in §7.3. The UI may import Heart and Heart server as types, plus the browser-safe value import `@boof/heart/ids`; imports from the Facedisk CLI are forbidden, including type-only imports.
 5. A violation outside the allow-list fails with `file:line  from-package → to-package  "specifier"`. An allow-list entry that no longer matches any import also fails, so the list only shrinks.
 
 ### 7.3 The package map after M8

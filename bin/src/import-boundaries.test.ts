@@ -372,7 +372,10 @@ describe("import boundaries", () => {
       false,
     );
     expect(isAllowedImport("facedisk", "facedisk", ui, "../../cli/service-cli.js", true)).toBe(
-      true,
+      false,
+    );
+    expect(isAllowedImport("facedisk", "facedisk", ui, "@boof/facedisk/cli/x.js", true)).toBe(
+      false,
     );
     expect(isAllowedImport("facedisk", "facedisk", cli, "../ui/src/App.js", false)).toBe(false);
     expect(isAllowedImport("facedisk", "facedisk", cli, "../ui/src/App.js", true)).toBe(false);

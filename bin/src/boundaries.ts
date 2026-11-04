@@ -109,7 +109,7 @@ export function isAllowedImport(
     (namesCli ||
       (to === "facedisk" && target !== undefined && !isUnder(target, "packages/facedisk/ui")))
   ) {
-    return typeOnly;
+    return false;
   }
   if (from === to) return true;
   if (!ALLOWED[from].includes(to)) return false;
