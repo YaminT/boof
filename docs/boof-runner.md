@@ -28,10 +28,8 @@ In this repository, Boof Runner includes:
 
 - `packages/runner`: the execution engine, pipeline, tool adapters, worktree handling, usage tracking, and process execution.
 - `packages/heart`: the task file format, schemas, lifecycle state machine, settings, paths, attachment storage, and atomic file writes.
-- `packages/api`: the operations registry (`defineOp`), the services over the stores (`TaskService`, `ProjectService`, `PlanService`), the error table and the OpenAPI generator.
-- `packages/mcp`: the MCP server (stdio and Streamable HTTP), generated from the registry.
-- `packages/web`: the Hono server: the security middleware chain, the REST routes generated from the registry, the event stream, webhook delivery, the `/mcp` mount and the public agent docs.
-- `packages/web/ui`: the React UI for task management, settings, live logs, actions, and runtime controls.
+- `packages/heart-server`: the operations registry (`defineOp`), services, OpenAPI generator, MCP server and Hono server.
+- `packages/web`: the UI workspace; its React app is under `packages/web/ui` and handles task management, settings, live logs, actions, and runtime controls.
 - `packages/desktop`: the Electron wrapper that runs the same server, runner, and UI in a native window.
 - `bin`: the `boof-runner` command that scaffolds the data root, starts the web server, and ensures only one runner is active.
 
@@ -435,12 +433,12 @@ This gives the user a practical way to steer a long-running task between steps w
 
 ## Architecture of the API layer
 
-Everything a client can do is one **operation**, defined once with `defineOp()` in `packages/api/src/ops/` (projects, plans, tasks, epics, admin, webhooks, whoami). An operation holds its name (`plans.sync`), scope(s), Zod input and output schemas, a REST mapping (method, path, status, `If-Match` field, ETag, idempotency), an optional MCP mapping (tool name and annotations) and a handler. The list is the **registry** (`registry.ts`). Four things are generated from it, so they cannot drift apart:
+Everything a client can do is one **operation**, defined once with `defineOp()` in `packages/heart-server/src/api/ops/` (projects, plans, tasks, epics, admin, webhooks, whoami). An operation holds its name (`plans.sync`), scope(s), Zod input and output schemas, a REST mapping (method, path, status, `If-Match` field, ETag, idempotency), an optional MCP mapping (tool name and annotations) and a handler. The list is the **registry** (`registry.ts`). Four things are generated from it, so they cannot drift apart:
 
-- **REST routes.** `packages/web/src/rest.ts` mounts one Hono route per operation under `/api/v1` (and the deprecated unversioned `/api` copies). It maps path and query parameters, JSON bodies, `If-Match` and `Idempotency-Key` onto the input.
-- **MCP tools.** `packages/mcp` serves every operation with `mcp.expose` as a tool (every JSON operation, 79 today; `tools/list` is filtered by the caller's scopes, `boof_<verb>_<noun>`), plus resources and two prompts.
-- **CLI commands.** `bin/src/ops-cli.ts` turns each operation into `boof-runner <area> <verb>` (the words of the operation name in kebab-case: `plans.replaceGoals` is `plans replace-goals`) and runs it in-process with `op.execute`, as the local administrator or `--client <id>` (see the README, "Operation commands"). The parity test (`bin/src/parity.test.ts`) and the UI manifest (`packages/web/ui/src/op-coverage.ts`, checked by `packages/web/src/op-coverage.test.ts`) keep the surfaces complete: every operation is a REST route, an MCP tool (except attachment upload and download) and a CLI command, and the manifest records what the web UI does for each.
-- **OpenAPI and the harness guide.** `buildOpenApi(registry)` produces the OpenAPI 3.1 document (`GET /api/v1/openapi.json`, committed as `packages/api/openapi/openapi.json`). `scripts/gen-harness-reference.ts` turns it into the REST reference of `docs/harness.md` and writes `packages/web/src/generated/harness.ts`, the copy the server embeds.
+- **REST routes.** `packages/heart-server/src/server/rest.ts` mounts one Hono route per operation under `/api/v1` (and the deprecated unversioned `/api` copies). It maps path and query parameters, JSON bodies, `If-Match` and `Idempotency-Key` onto the input.
+- **MCP tools.** `packages/heart-server/src/mcp/` serves every operation with `mcp.expose` as a tool (every JSON operation, 79 today; `tools/list` is filtered by the caller's scopes, `boof_<verb>_<noun>`), plus resources and two prompts.
+- **CLI commands.** `bin/src/ops-cli.ts` turns each operation into `boof-runner <area> <verb>` (the words of the operation name in kebab-case: `plans.replaceGoals` is `plans replace-goals`) and runs it in-process with `op.execute`, as the local administrator or `--client <id>` (see the README, "Operation commands"). The parity test (`bin/src/parity.test.ts`) and the UI manifest (`packages/web/ui/src/op-coverage.ts`, checked by `packages/heart-server/src/server/op-coverage.test.ts`) keep the surfaces complete: every operation is a REST route, an MCP tool (except attachment upload and download) and a CLI command, and the manifest records what the web UI does for each.
+- **OpenAPI and the harness guide.** `buildOpenApi(registry)` produces the OpenAPI 3.1 document (`GET /api/v1/openapi.json`, committed as `packages/heart-server/openapi/openapi.json`). `scripts/gen-harness-reference.ts` turns it into the REST reference of `docs/harness.md` and writes `packages/heart-server/src/server/generated/harness.ts`, the copy the server embeds.
 
 `Operation.execute` is the only way in. It checks the scope (an empty scope list, as in `auth.whoami`, means any authenticated caller), validates the input (`400 invalid_input` or `invalid_plan`), authorizes the project (`403 forbidden_project`), runs the handler, validates the output and maps every failure to an `OpError` with a stable code from `ERROR_CODES`. REST and MCP therefore share scopes, project restrictions, trust rules, validation and error codes.
 
@@ -483,7 +481,7 @@ Important UI areas:
 
 ## API Authentication
 
-Authentication is middleware in `packages/web/src/middleware/`. The operations declare their scope in the registry, `execute` enforces it, and `authorizeProject()` runs before any project access.
+Authentication is middleware in `packages/heart-server/src/server/middleware/`. The operations declare their scope in the registry, `execute` enforces it, and `authorizeProject()` runs before any project access.
 
 - Principals: `local` (loopback peer, no `Authorization` header, no `X-Forwarded-For`, `security.auth.mode = "local-trust"`; all scopes, `trusted`) or a client holding a key `boof_<clientId>_<base64url(32 bytes)>`. Only `sha256(secret)` is stored, in `<data>/auth/clients.json` (mode 0600), compared with `timingSafeEqual`. A JSON body without `Content-Type: application/json` is `415 unsupported_media_type`; with the `Origin` check this is the CSRF defence for the local principal (the Host guard only blocks DNS rebinding).
 - Scopes: `projects:read|write`, `plans:read|write`, `tasks:read|write|control` (stop, inject), `settings:read|write`, `runner:control`, `auth:admin`, `admin` (everything). Pause and resume accept `runner:control` or `projects:write`; toggling the runner accepts `runner:control` or `settings:write`; usage accepts `projects:read` or `tasks:read`. `auth.whoami` needs no scope.

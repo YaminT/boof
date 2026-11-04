@@ -433,9 +433,9 @@ For offline tests the `mock` tool takes a marker in the prompt: `[[mock-verdicts
 ```
 packages/heart    task-file format, schemas, projects, plans, auth store, events, v1→v2 migration, lifecycle
 packages/runner    tool adapters, git worktree isolation, plan sync, the pipeline engine
-packages/api       operations registry (defineOp), services, OpenAPI generator
-packages/mcp       MCP server (stdio + Streamable HTTP) generated from the registry
-packages/web       Hono server: security chain, REST routes, SSE, webhooks, /mcp; React UI under packages/web/ui
+                 The root devDependency on `@boof-runner/runner` supports heart-server tests only.
+packages/heart-server operations registry, services, OpenAPI generator, MCP and Hono server
+packages/web       React UI workspace under packages/web/ui
 packages/desktop   Electron app: boots the server + runner in-process, opens the UI window
 bin/               the `boof-runner` CLI: scaffolds data, boots web, ensures a single runner
 docs/              harness.md (guide for AI agents), api.md (REST and MCP), boof-runner.md (architecture)
@@ -458,7 +458,7 @@ npm run build        # vite build (UI) + tsup bundle (CLI)
 npm run docs:gen     # regenerate the REST reference in docs/harness.md and its embedded copy
 ```
 
-All pipeline tests drive the **mock** tool, so CI never makes network calls or burns tokens. After changing an operation, run `UPDATE_OPENAPI=1 npx vitest run packages/api` and `npm run docs:gen`.
+All pipeline tests drive the **mock** tool, so CI never makes network calls or burns tokens. After changing an operation, run `UPDATE_OPENAPI=1 npx vitest run packages/heart-server/src/api/openapi.test.ts` and `npm run docs:gen`.
 
 ## Credits
 

@@ -22,7 +22,7 @@
     <tests>
       <strategy>A stdio MCP tool call and a CLI write each append one audit line with the principal, the operation and the outcome, and none when security.audit.enabled is false; the line never holds a prompt or a key.</strategy>
       <technology>vitest</technology>
-      <run>npx vitest run packages/web/src/security.test.ts bin</run>
+      <run>npx vitest run packages/heart-server/src/security.test.ts bin</run>
     </tests>
   </progress>
 </boof>

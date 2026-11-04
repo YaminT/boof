@@ -1,10 +1,10 @@
 # boof-runner REST API (v1)
 
-The API is generated from one operations registry (`packages/api`), so REST, the MCP tools
+The API is generated from one operations registry (`packages/heart-server`), so REST, the MCP tools
 (see "MCP" below) and the CLI commands (`boof-runner <area> <verb>`) stay identical. The exceptions:
 attachment upload and download are not MCP tools, and the gaps of the web UI are listed in
 `packages/web/ui/src/op-coverage.ts`. The machine-readable contract is the OpenAPI 3.1 document at
-`GET /api/v1/openapi.json` (a sorted copy is committed as `packages/api/openapi/openapi.json`).
+`GET /api/v1/openapi.json` (a sorted copy is committed as `packages/heart-server/openapi/openapi.json`).
 Generate a client from it, or use the examples below.
 
 **Using an AI agent?** Point it at `<boof-host>/harness.txt` (public, no key; also `/harness.md` and `/llms.txt`), or `https://nodets.com/boof/harness.txt`. That guide, [harness.md](harness.md), holds a complete generated reference of every operation below.
@@ -459,6 +459,6 @@ state a `GET` changes. Reading settings does not create `settings.json` when it 
 
 ### Editing the contract
 
-Operations are defined once with `defineOp()` in `packages/api/src/ops/`. After a change run
-`UPDATE_OPENAPI=1 npx vitest run packages/api` to rewrite the committed OpenAPI snapshot; the
+Operations are defined once with `defineOp()` in `packages/heart-server/src/api/ops/`. After a change run
+`UPDATE_OPENAPI=1 npx vitest run packages/heart-server/src/api/openapi.test.ts` to rewrite the committed OpenAPI snapshot; the
 test fails otherwise, so the diff of `openapi.json` shows up in review.

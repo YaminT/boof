@@ -21,7 +21,7 @@
     <tests>
       <strategy>Screenshots light, dark, 420 px and desktop of every changed screen, checked against the spec&#x27;s Global Constraints; unit tests for any src/lib logic.</strategy>
       <technology>manual + vitest</technology>
-      <run>npx vitest run &amp;&amp; npm run build -w @boof-runner/web</run>
+      <run>npx vitest run &amp;&amp; npm run build -w @boof-runner/web-ui</run>
     </tests>
   </progress>
 </boof>

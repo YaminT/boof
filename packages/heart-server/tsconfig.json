@@ -12,9 +12,6 @@
     },
     {
       "path": "../owlish"
-    },
-    {
-      "path": "../runner"
     }
   ],
   "include": ["src/**/*"],

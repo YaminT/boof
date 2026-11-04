@@ -77,6 +77,29 @@
         "hono": "^4.13.13",
         "zod": "^4.6.7",
       },
+    },
+    "packages/owlish": {
+      "name": "@boof/owlish",
+      "version": "0.2.0",
+      "dependencies": {
+        "@boof/heart": "*",
+        "zod": "^4.6.7",
+      },
+    },
+    "packages/runner": {
+      "name": "@boof-runner/runner",
+      "version": "0.2.0",
+      "dependencies": {
+        "@boof/heart": "*",
+        "@boof/owlish": "*",
+      },
+    },
+    "packages/web": {
+      "name": "@boof-runner/web-ui",
+      "version": "0.2.0",
+      "dependencies": {
+        "@boof/heart": "*",
+      },
       "devDependencies": {
         "@base-ui/react": "^1.9.0",
         "@dnd-kit/core": "^6.3.1",
@@ -102,22 +125,6 @@
         "vite": "^8.0.0",
       },
     },
-    "packages/owlish": {
-      "name": "@boof/owlish",
-      "version": "0.2.0",
-      "dependencies": {
-        "@boof/heart": "*",
-        "zod": "^4.6.7",
-      },
-    },
-    "packages/runner": {
-      "name": "@boof-runner/runner",
-      "version": "0.2.0",
-      "dependencies": {
-        "@boof/heart": "*",
-        "@boof/owlish": "*",
-      },
-    },
   },
   "trustedDependencies": [
     "electron",
@@ -140,6 +147,8 @@
     "@boof-runner/desktop": ["@boof-runner/desktop@workspace:packages/desktop"],
 
     "@boof-runner/runner": ["@boof-runner/runner@workspace:packages/runner"],
+
+    "@boof-runner/web-ui": ["@boof-runner/web-ui@workspace:packages/web"],
 
     "@boof/heart": ["@boof/heart@workspace:packages/heart"],
 
