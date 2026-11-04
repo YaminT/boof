@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { LOCAL_MCP_PRINCIPAL, registry, TaskService, type AnyOperation } from "@boof-runner/api";
-import { createBoofMcpServer, exposedOps } from "@boof-runner/mcp";
+import { LOCAL_MCP_PRINCIPAL, registry, TaskService, type AnyOperation } from "@boof/heart-server";
+import { createBoofMcpServer, exposedOps } from "@boof/heart-server";
 import {
   AuthStore,
   authorize,
@@ -17,8 +17,8 @@ import {
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { cliOps, commandPath, matchOpCommand, opsCommand } from "./ops-cli.js";
 
-// REST is proven by packages/web/src/contract.test.ts (every operation has a route and a test of
-// its shape) and the web UI by packages/web/src/op-coverage.test.ts. This file ties MCP and the CLI
+// REST is proven by packages/heart-server/src/server/contract.test.ts (every operation has a route and a test of
+// its shape) and the web UI by packages/heart-server/src/server/op-coverage.test.ts. This file ties MCP and the CLI
 // to the same registry.
 
 const json = (o: AnyOperation) => !o.rest.kind || o.rest.kind === "json";
@@ -227,7 +227,7 @@ describe("read-only operations answer on both local surfaces", () => {
         scopes: ["tasks:read"],
         trust: "trusted",
       });
-      const principal = (await import("@boof-runner/api")).principalFromClient(
+      const principal = (await import("@boof/heart-server")).principalFromClient(
         (await authStore.get(c.id))!,
       );
       const server = createBoofMcpServer({ root, principal, services, authStore });

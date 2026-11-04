@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getOp, registry } from "@boof-runner/api";
+import { getOp, registry } from "@boof/heart-server";
 import {
   HAND_WRITTEN_COMMANDS,
   RESERVED_FLAGS,

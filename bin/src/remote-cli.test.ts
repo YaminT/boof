@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof/heart";
-import { assertBindAllowed } from "@boof-runner/web";
+import { assertBindAllowed } from "@boof/heart-server";
 import { normaliseHostname, remoteCommand } from "./remote-cli.js";
 
 let root: string;

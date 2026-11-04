@@ -1,7 +1,7 @@
 /**
  * What the web UI does for each operation of the registry, in registry order. `where` names the
  * UI client method (`api.ts`) and the screen that calls it; `none` says why the UI does not do it.
- * Data only: nothing in the app imports this file. `packages/web/src/op-coverage.test.ts` checks it
+ * Data only: nothing in the app imports this file. `packages/heart-server/src/server/op-coverage.test.ts` checks it
  * against the registry, so a new operation must be listed here (a reviewed decision).
  */
 export const OP_COVERAGE: Record<string, { where: string } | { none: string }> = {

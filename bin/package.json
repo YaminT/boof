@@ -11,15 +11,13 @@
     "@modelcontextprotocol/sdk": "~1.32.2"
   },
   "dependencies": {
-    "@boof-runner/api": "*",
-    "@boof-runner/mcp": "*",
     "@boof-runner/runner": "*",
     "@boof/heart": "*",
-    "@boof-runner/web": "*",
     "@hono/node-server": "^2.0.0",
     "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.13",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@boof/heart-server": "*"
   }
 }

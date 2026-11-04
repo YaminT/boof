@@ -52,9 +52,7 @@ export const SOURCE_ROOTS = ["packages/*/src", "packages/web/ui/src", "bin/src"]
 const PACKAGE_PART: Record<string, Part> = {
   heart: "heart",
   runner: "runner",
-  api: "heart-server",
-  mcp: "heart-server",
-  web: "heart-server",
+  "heart-server": "heart-server",
   desktop: "desktop",
 };
 

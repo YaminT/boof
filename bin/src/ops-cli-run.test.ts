@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TaskService } from "@boof-runner/api";
+import { TaskService } from "@boof/heart-server";
 import { AuthStore, SecuritySettingsSchema, SettingsStore, execCommand } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { opsCommand } from "./ops-cli.js";

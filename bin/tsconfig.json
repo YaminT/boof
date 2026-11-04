@@ -10,10 +10,8 @@
   },
   "references": [
     { "path": "../packages/heart" },
-    { "path": "../packages/api" },
     { "path": "../packages/runner" },
-    { "path": "../packages/mcp" },
-    { "path": "../packages/web" }
+    { "path": "../packages/heart-server" }
   ],
   "include": ["src/**/*"]
 }

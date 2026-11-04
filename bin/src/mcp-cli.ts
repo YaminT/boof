@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { McpStartError, runStdio } from "@boof-runner/mcp";
+import { McpStartError, runStdio } from "@boof/heart-server";
 import type { ToolCatalog } from "@boof/heart";
 import { InvalidIdError, isKebabId, scaffoldDataRoot } from "@boof/heart";
 

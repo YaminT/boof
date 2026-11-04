@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
 import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
 import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof/heart";
-import { startServer, type RunningServer } from "@boof-runner/web";
+import { startServer, type RunningServer } from "@boof/heart-server";
 import {
   createQuitHandler,
   isAppUrl,
@@ -80,7 +80,7 @@ ipcMain.on("boof-runner:get-token", (event) => {
  * Built React UI, served by the in-process server.
  * - Packaged (asar:false): main.js sits at <Resources>/app and the UI is staged
  *   beside it as ./ui, so serveStatic reads it as plain files on disk.
- * - Dev (`electron .`): dist/main.js resolves to the sibling @boof-runner/web package.
+ * - Dev (`electron .`): dist/main.js resolves to the sibling @boof/heart-server package.
  */
 function uiDir(): string {
   if (app.isPackaged) return join(__dirname, "ui");

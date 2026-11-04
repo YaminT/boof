@@ -2,7 +2,7 @@
 // Electron runtime. main.ts wires these functions to the app, the server and the engine.
 import type { RunnerEngine } from "@boof-runner/runner";
 import { parseKey } from "@boof/heart";
-import type { RunningServer, startServer } from "@boof-runner/web";
+import type { RunningServer, startServer } from "@boof/heart-server";
 
 export type ServerOptions = Parameters<typeof startServer>[0];
 

@@ -11,10 +11,10 @@ data/
 .claude/
 .codex/
 openspec/
-packages/api/openapi/
+packages/heart-server/openapi/
 
 # Generated from docs/harness.md by scripts/gen-harness-reference.ts
-packages/web/src/generated/
+packages/heart-server/src/server/generated/
 
 # Planning and review scratch
 .superpowers/

@@ -20,7 +20,7 @@ import {
   type Settings,
   scaffoldDataRoot,
 } from "@boof/heart";
-import { assertBindAllowed } from "@boof-runner/web";
+import { assertBindAllowed } from "@boof/heart-server";
 
 /** The "full harness" scope set from docs/harness.md: everything except settings writes, clients and webhooks. */
 export const FULL_HARNESS_SCOPES =

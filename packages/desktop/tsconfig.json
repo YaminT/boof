@@ -7,6 +7,6 @@
     "rootDir": "./src",
     "composite": true
   },
-  "references": [{ "path": "../heart" }, { "path": "../runner" }, { "path": "../web" }],
+  "references": [{ "path": "../heart" }, { "path": "../runner" }, { "path": "../heart-server" }],
   "include": ["src/**/*"]
 }

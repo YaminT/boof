@@ -126,9 +126,9 @@ describe("import boundaries", () => {
     expect(partOfFile("packages/heart/src/schema.ts")).toBe("heart");
     expect(partOfFile("packages/heart/src/owlish-client.ts")).toBe("owlish");
     expect(partOfFile("packages/runner/src/engine.ts")).toBe("runner");
-    for (const p of ["api", "mcp", "web"]) {
-      expect(partOfFile(`packages/${p}/src/x.ts`)).toBe("heart-server");
-    }
+    expect(partOfFile("packages/heart-server/src/api/x.ts")).toBe("heart-server");
+    expect(partOfFile("packages/heart-server/src/mcp/x.ts")).toBe("heart-server");
+    expect(partOfFile("packages/heart-server/src/server/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/web/ui/src/App.tsx")).toBe("facedisk/ui");
     expect(partOfFile("bin/src/project-cli.ts")).toBe("facedisk/cli");
     expect(partOfFile("bin/src/ops-cli.ts")).toBe("facedisk/cli");
@@ -147,7 +147,9 @@ describe("import boundaries", () => {
     expect(partOfSpecifier("@boof/heart", "bin/src/x.ts")).toBe("heart");
     expect(partOfFile("packages/heart/src/owlish-index.ts")).toBe("owlish");
     expect(readFileSync(join(repo, "packages/heart/src/index.ts"), "utf8")).not.toMatch(/owlish/);
-    expect(partOfSpecifier("../../../heart/src/x.js", "packages/api/src/ops/y.ts")).toBe("heart");
+    expect(
+      partOfSpecifier("../../../../heart/src/x.js", "packages/heart-server/src/api/ops/y.ts"),
+    ).toBe("heart");
     expect(partOfSpecifier("node:fs", "bin/src/x.ts")).toBeUndefined();
     expect(partOfSpecifier("hono", "bin/src/x.ts")).toBeUndefined();
   });

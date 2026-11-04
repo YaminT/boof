@@ -8,13 +8,7 @@
       "path": "./packages/runner"
     },
     {
-      "path": "./packages/api"
-    },
-    {
-      "path": "./packages/mcp"
-    },
-    {
-      "path": "./packages/web"
+      "path": "./packages/heart-server"
     },
     {
       "path": "./packages/desktop"

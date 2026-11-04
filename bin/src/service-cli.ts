@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof/heart";
-import { assertBindAllowed } from "@boof-runner/web";
+import { assertBindAllowed } from "@boof/heart-server";
 
 export const SERVICE_HELP = `boof-runner service — run boof-runner as a systemd user service (Linux)
 

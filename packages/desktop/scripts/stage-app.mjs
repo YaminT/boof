@@ -30,7 +30,7 @@ function need(path, hint) {
 
 need(join(distDir, "main.js"), "run `npm run build -w @boof-runner/desktop` first");
 need(join(distDir, "preload.js"), "run `npm run build -w @boof-runner/desktop` first");
-need(join(uiDistDir, "index.html"), "run `npm run build -w @boof-runner/web` first");
+need(join(uiDistDir, "index.html"), "run `npm run build -w @boof/heart-server` first");
 
 rmSync(appDir, { recursive: true, force: true });
 mkdirSync(appDir, { recursive: true });
