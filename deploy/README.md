@@ -110,7 +110,7 @@ Check it works: `curl https://boof.example.com/healthz`, then `curl -H "Authoriz
 
 ## 8. Upgrade
 
-With bun, an in-place update may leave stale `node_modules/@boof/*` links and an ignored `packages/shared/` folder; these leftovers are harmless.
+With bun, an in-place update may leave stale `node_modules/@boof-runner/*` links and an ignored `packages/shared/` folder; these leftovers are harmless.
 
 ```bash
 bash ~/.local/share/boof-runner/source/scripts/install-or-update-boof-runner.sh

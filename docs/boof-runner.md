@@ -34,7 +34,7 @@ In this repository, Boof Runner is organized as seven workspaces:
 - `@boof/boof` (`bin/`) is the `boof-runner` composition root: it dispatches commands, scaffolds the data root, starts the web server, and ensures only one Runner is active. It composes Facedisk, Runner, Heart server, and their lower-level dependencies.
 - `@boof/desktop` (`packages/desktop`) is the Electron wrapper that runs Heart server and Runner in-process and opens the Facedisk UI.
 
-Dependency direction runs from Heart to Owlish, Runner, and Heart server; Facedisk uses Heart and Heart server; the `@boof/boof` composition root and `@boof/desktop` assemble the runtime. The root npm package and executable remain named `boof-runner`.
+Imports point down only: heart ← owlish ← runner; heart, owlish ← heart-server; heart, heart-server ← facedisk (the UI as types only); bin and desktop compose everything. The boundary test enforces this. Heart server never imports Runner; Runner never imports Heart server or Facedisk; Facedisk CLI never imports Runner or Owlish; the UI imports Heart and Heart server as types only, except the browser-safe `@boof/heart/ids`; bin never imports desktop. The root npm package and executable remain named `boof-runner`.
 
 ## Core Design
 
