@@ -2,27 +2,7 @@
 // Electron runtime. main.ts wires these functions to the app, the server and the engine.
 import type { RunnerEngine } from "@boof/runner";
 import { parseKey } from "@boof/heart";
-import type { RunningServer, startServer } from "@boof/heart-server";
-
-export type ServerOptions = Parameters<typeof startServer>[0];
-
-/**
- * Server options for the desktop app: the app version and whether the engine loop runs. With
- * `operatorClientId` (the id of the desktop's own key) that key registers projects like the local user.
- */
-export function serverOptions(
-  base: Pick<ServerOptions, "root" | "port" | "uiDir" | "catalog">,
-  version: string,
-  engine: () => RunnerEngine | null,
-  operatorClientId?: string,
-): ServerOptions {
-  return {
-    ...base,
-    version,
-    runnerRunning: () => engine() !== null,
-    ...(operatorClientId ? { operatorClients: new Set([operatorClientId]) } : {}),
-  };
-}
+import type { RunningServer } from "@boof/heart-server";
 
 /**
  * The id of the client the desktop's own key belongs to, read from the key it holds. After the

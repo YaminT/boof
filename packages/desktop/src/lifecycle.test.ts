@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { MockTool, ToolRegistry, type RunnerEngine } from "@boof/runner";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,34 +8,10 @@ import {
   isAppUrl,
   isExternalUrl,
   operatorClientId,
-  serverOptions,
   shutdownGraceMs,
 } from "./lifecycle.js";
 
-describe("desktop /healthz facts", () => {
-  it("passes the app version and a live runnerRunning to the server", () => {
-    let engine: RunnerEngine | null = null;
-    const catalog = new ToolRegistry([new MockTool()]);
-    const opts = serverOptions(
-      { root: "/r", port: 4319, uiDir: "/ui", catalog },
-      "0.2.0",
-      () => engine,
-    );
-    expect(opts).toMatchObject({ root: "/r", port: 4319, uiDir: "/ui", version: "0.2.0" });
-    expect(opts.catalog).toBe(catalog); // the registry the app built reaches startServer unchanged
-    expect(opts.runnerRunning?.()).toBe(false);
-    engine = {} as RunnerEngine; // engine.loop() started
-    expect(opts.runnerRunning?.()).toBe(true);
-  });
-
-  it("marks the desktop client as the operator only when an id is given", () => {
-    const base = { root: "/r", port: 1, catalog: new ToolRegistry([new MockTool()]) };
-    expect(serverOptions(base, "1.0.0", () => null, "desktop-ui").operatorClients).toEqual(
-      new Set(["desktop-ui"]),
-    );
-    expect(serverOptions(base, "1.0.0", () => null).operatorClients).toBeUndefined();
-  });
-
+describe("desktop lifecycle", () => {
   it("reads the grace period from BOOF_RUNNER_SHUTDOWN_GRACE_MS, default 30 s", () => {
     expect(shutdownGraceMs({})).toBe(30_000);
     expect(shutdownGraceMs({ BOOF_RUNNER_SHUTDOWN_GRACE_MS: "5000" })).toBe(5_000);

@@ -214,6 +214,8 @@ export async function boot(opts: BootOptions): Promise<Booted>;
 
 Order inside: scaffold and migrate the root, build the `ToolRegistry`, start the Owlish observer when `settings.owlish` is set, `startServer({ catalog, ... })`, acquire the runner guard and start the engine, return a `stop` that drains the engine first. The desktop keeps its own token and window code; `createQuitHandler` calls `booted.stop`.
 
+**As built:** `boot()` uses `onServer`/`onRunner` callbacks and has no pool observer; the CLI scaffolds before boot and the desktop migrates before boot. The desktop's `createQuitHandler` drains the engine itself.
+
 ## 6. Every job via MCP, REST, CLI, web and desktop
 
 ### 6.1 REST
@@ -329,7 +331,7 @@ Preconditions: roadmap steps 4 (hierarchy data), 8 (Owlish v1) and 12 (Console B
 - **M3, M (three commits or three PRs).** Create `packages/heart-server` (`@boof/heart-server`): move `packages/api/src` to `src/api`, then `packages/mcp/src` to `src/mcp`, then `packages/web/src` to `src/server`; package-internal imports become relative; one `src/index.ts` re-exports the three. `packages/web` keeps only `ui/` until M5. Update `docs:gen`, `build:server`.
 - **M4, S.** `git mv packages/heart/src/owlish*` (now under `packages/heart/src`) to `packages/owlish/src`; `@boof/owlish`; Runner and Heart server import it.
 - **M5, M.** Create `packages/facedisk`: move `packages/web/ui` to `packages/facedisk/ui` (Vite root, Tailwind, `@/` alias, `op-coverage.ts`); move `bin/src/*-cli.ts` and `ops-cli.ts` with tests to `packages/facedisk/cli`; update `resolveUiDir()` in `bin`, `uiDir()` and `stage-app.mjs` in `desktop`, the `build:server` and `desktop:build` scripts, `.github/workflows/release.yml` asset paths if they change (they do not: desktop output stays under `packages/desktop/build`). Delete the empty `packages/web`.
-- **M6 as built, S.** `@boof/runner` rename; shared `boot()` composition lives in `bin/src/boot.ts` and owns the ToolRegistry, common server options, engine loop and drain messages, and optional RunnerGuard. The CLI and desktop import it; desktop reaches it through the `@boof/boof/boot` source export and a project reference to `bin`. Desktop owns Electron token/window/notification lifecycle, and the CLI owns argument parsing and console URLs.
+- **M6 as built, S.** `@boof/runner` rename; shared `boot()` composition lives in `bin/src/boot.ts` and owns the ToolRegistry, common server options, engine loop, optional RunnerGuard, and `stop(graceMs)` drain/messages. The CLI and desktop import it; desktop reaches it through the `@boof/boof/boot` source export and a project reference to `bin`. Desktop's own `createQuitHandler`, given the real engine, drains it on quit. Desktop owns Electron token/window/notification lifecycle, and the CLI owns argument parsing and console URLs.
 - **M7, S.** `bin` becomes `@boof/boof`, `packages/desktop` becomes `@boof/desktop`; root `tsconfig.json` references; README project layout; `docs/boof-runner.md` architecture section; `deploy/README.md` unchanged in substance.
 - **M8, S.** Flip the lint map from folders to packages (one line per package), remove the transitional `tsup` regex, run the parity test as the step's done criterion.
 
