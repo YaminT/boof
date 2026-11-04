@@ -19,7 +19,7 @@ export function SettingsFooter({
   onReload: () => void;
 }) {
   return (
-    <div className="sticky bottom-14 z-10 -mx-1 mt-6 flex flex-wrap items-center gap-3 border-t border-line bg-surface px-1 py-3 min-[720px]:bottom-0">
+    <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-1 mt-6 flex flex-wrap items-center gap-3 border-t border-line bg-surface px-1 py-3 min-[720px]:bottom-[220px]">
       <div className="min-w-0 flex-1 text-[length:var(--text-row)]">
         {elsewhere ? (
           <span role="status" className="flex flex-wrap items-center gap-2 text-attention">

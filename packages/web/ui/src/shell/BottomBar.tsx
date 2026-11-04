@@ -26,7 +26,7 @@ export function BottomBar({
   const moreActive = active === "inbox" || active === "settings";
   const tabClass = (on: boolean) =>
     cn(
-      "flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[length:var(--text-meta)]",
+      "focus-ring flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[length:var(--text-meta)]",
       on ? "font-medium text-accent-brand" : "text-ink-muted",
     );
   return (

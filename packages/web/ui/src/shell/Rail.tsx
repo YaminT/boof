@@ -25,7 +25,7 @@ export function NavItem({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex h-9 w-full items-center justify-between rounded-lg px-2 text-left text-[length:var(--text-body)] transition-colors",
+        "focus-ring flex h-9 w-full items-center justify-between rounded-lg px-2 text-left text-[length:var(--text-body)] transition-colors",
         active ? "bg-accent font-medium text-ink" : "text-ink-muted hover:bg-accent hover:text-ink",
         className,
       )}

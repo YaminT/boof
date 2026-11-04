@@ -119,7 +119,7 @@ export function TasksToolbar({
         Manage epics…
       </Button>
       <FocusToggle mode={focusMode} onToggle={onFocusToggle} className="ml-auto" />
-      <Kbd className=" hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
+      <Kbd className="hidden min-[720px]:inline-flex">{paletteShortcutLabel()}</Kbd>
     </div>
   );
 }

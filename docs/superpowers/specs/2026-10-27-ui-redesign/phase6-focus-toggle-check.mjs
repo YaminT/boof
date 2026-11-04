@@ -23,13 +23,13 @@ async function run(denyStorage) {
       });
     });
   await p.goto(BASE + PAGE);
-  const toggle = p.getByRole("button", { name: /^Show (expanded|simple) view$/ });
+  const toggle = p.getByRole("button", { name: /^Expanded view$/ });
   await toggle.waitFor();
-  check((await toggle.innerText()) === "Simple", `${tag}: starts simple`);
+  check((await toggle.innerText()) === "Expanded view", `${tag}: visible label is Expanded view`);
   check((await toggle.getAttribute("aria-pressed")) === "false", `${tag}: aria-pressed false`);
   check(
-    (await toggle.getAttribute("aria-label")) === "Show expanded view",
-    `${tag}: names the action`,
+    (await toggle.getAttribute("aria-label")) === "Expanded view",
+    `${tag}: has a constant accessible name`,
   );
   await toggle.focus();
   const ring = await toggle.evaluate((el) => {
@@ -38,15 +38,25 @@ async function run(denyStorage) {
   });
   check(ring, `${tag}: visible focus indicator`);
   await p.keyboard.press("Enter");
-  check((await toggle.innerText()) === "Expanded", `${tag}: Enter expands at once`);
+  check(
+    (await toggle.innerText()) === "Expanded view",
+    `${tag}: Enter keeps the constant visible label`,
+  );
   check((await toggle.getAttribute("aria-pressed")) === "true", `${tag}: aria-pressed true`);
   await p.keyboard.press("Space");
-  check((await toggle.innerText()) === "Simple", `${tag}: Space collapses`);
+  check(
+    (await toggle.innerText()) === "Expanded view",
+    `${tag}: Space keeps the constant visible label`,
+  );
   await p.keyboard.press("Space");
   await p.reload();
   await toggle.waitFor();
   const after = await toggle.innerText();
-  check(after === (denyStorage ? "Simple" : "Expanded"), `${tag}: after reload shows ${after}`);
+  check(after === "Expanded view", `${tag}: label stays constant after reload`);
+  check(
+    (await toggle.getAttribute("aria-pressed")) === (denyStorage ? "false" : "true"),
+    `${tag}: state persists after reload`,
+  );
   await ctx.close();
 }
 await run(false);

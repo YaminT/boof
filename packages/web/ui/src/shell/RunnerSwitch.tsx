@@ -35,7 +35,7 @@ export function RunnerSwitch({
       disabled={!settings}
       onClick={() => void toggle()}
       title={enabled ? "Pause the runner" : "Start the runner"}
-      className="flex h-9 w-full items-center justify-between gap-2 rounded-lg px-2 text-[length:var(--text-row)] text-ink hover:bg-accent disabled:opacity-50"
+      className="focus-ring flex h-9 w-full items-center justify-between gap-2 rounded-lg px-2 text-[length:var(--text-row)] text-ink hover:bg-accent disabled:opacity-50"
     >
       <span className="flex items-center gap-2">
         <span className={cn("size-2 rounded-full", enabled ? "bg-done" : "bg-ink-muted/60")} />

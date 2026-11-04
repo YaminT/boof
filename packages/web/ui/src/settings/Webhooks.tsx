@@ -304,7 +304,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 <input
                   type="radio"
                   name="wh-projects"
-                  className="m-0 size-4 w-4"
+                  className="focus-ring m-0 size-4 w-4"
                   checked={scope === "*"}
                   disabled={reach !== null}
                   onChange={() => setScope("*")}
@@ -315,7 +315,7 @@ export function Webhooks({ whoami, projects }: { whoami: Whoami | null; projects
                 <input
                   type="radio"
                   name="wh-projects"
-                  className="m-0 size-4 w-4"
+                  className="focus-ring m-0 size-4 w-4"
                   checked={scope !== "*"}
                   onChange={() => setScope([])}
                 />

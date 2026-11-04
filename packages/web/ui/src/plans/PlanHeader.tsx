@@ -1,4 +1,5 @@
 import { EllipsisIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Plan } from "../api.js";
 import { Button } from "@/ui/button";
 import {
@@ -30,6 +31,7 @@ export function PlanHeader({
   onBumpTo,
   onExport,
   onArchive,
+  focusToggle,
 }: {
   pid: string;
   plan: Plan;
@@ -41,6 +43,7 @@ export function PlanHeader({
   onBumpTo: (v: "review" | "done") => void;
   onExport: () => void;
   onArchive: () => void;
+  focusToggle?: ReactNode;
 }) {
   const p = planProgress(plan.goals);
   return (
@@ -54,6 +57,7 @@ export function PlanHeader({
         </h1>
         <TonePill tone={planStatusTone(plan.status)}>{plan.status}</TonePill>
         <span className="ml-auto flex items-center gap-2">
+          {focusToggle}
           {plan.status === "draft" && (
             <Button onClick={onActivate} disabled={busy}>
               Activate plan

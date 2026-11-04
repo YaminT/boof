@@ -42,7 +42,7 @@ function Item({
       type="button"
       ref={setActivatorNodeRef}
       aria-label={`Drag ${label} to reorder`}
-      className="cursor-grab touch-none rounded text-ink-muted outline-none hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
+      className="cursor-grab touch-none rounded text-ink-muted focus-ring hover:text-ink"
       {...attributes}
       {...listeners}
     >

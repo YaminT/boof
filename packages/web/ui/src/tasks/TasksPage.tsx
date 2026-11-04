@@ -3,7 +3,7 @@ import { api, type TaskView } from "../api.js";
 import { Button } from "@/ui/button";
 import { act } from "../lib/act.js";
 import type { Route } from "../lib/route.js";
-import { groupTasks, runOrder } from "../lib/task-groups.js";
+import { failedTasksVisible, groupTasks, runOrder } from "../lib/task-groups.js";
 import {
   allLabels,
   filterTasks,
@@ -264,6 +264,15 @@ export function TasksPage({
     setCollapsed(next);
     writeCollapsed(store, pid, next);
   };
+  const failedTasks = failedTasksVisible(
+    focus.expanded,
+    rows.finished.map((r) => r.task),
+  );
+  const failedIds = new Set(failedTasks.map((t) => t.frontmatter.id));
+  const failedRows = focus.expanded
+    ? []
+    : rows.finished.filter((r) => failedIds.has(r.task.frontmatter.id));
+  const finishedHistory = rows.finished.filter((r) => !failedIds.has(r.task.frontmatter.id));
   const finishedOpen = showFinished || filtering || focus.expanded;
   const visible: RowEntry[] = [
     ...rows.needs,
@@ -271,10 +280,10 @@ export function TasksPage({
     ...rows.running,
     ...rows.queued,
     ...rows.drafts,
-    ...(finishedOpen ? rows.finished : []),
+    ...(finishedOpen ? rows.finished : failedRows),
   ];
   const foldedRows = rows.queuedCount - rows.queued.length + (rows.draftCount - rows.drafts.length);
-  const total = visible.length + foldedRows + (finishedOpen ? 0 : rows.finished.length);
+  const total = visible.length + foldedRows + (finishedOpen ? 0 : finishedHistory.length);
   const selected = visible.find((r) => r.key === selectedKey) ?? null;
 
   const reorder = (order: string[]) => {
@@ -451,8 +460,13 @@ export function TasksPage({
           ))}
         </TaskSection>
       )}
-      {rows.finished.length > 0 && (
-        <TaskSection title="Finished" count={rows.finished.length}>
+      {!focus.expanded && failedRows.length > 0 && (
+        <TaskSection title="Failed" count={failedRows.length}>
+          {list(failedRows)}
+        </TaskSection>
+      )}
+      {finishedHistory.length > 0 && (
+        <TaskSection title="Finished" count={finishedHistory.length}>
           <div className="mb-1 flex items-center gap-3 text-[length:var(--text-row)] text-ink-muted">
             <span>
               done {counts.done}, failed {counts.failed}, stopped {counts.stopped}, archived{" "}
@@ -469,7 +483,7 @@ export function TasksPage({
               </Button>
             )}
           </div>
-          {finishedOpen && list(rows.finished)}
+          {finishedOpen && list(focus.expanded ? rows.finished : finishedHistory)}
         </TaskSection>
       )}
       <ManageEpicsSheet

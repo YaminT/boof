@@ -40,8 +40,8 @@ const NO =
   "w-px min-w-11 bg-page px-2 text-right align-top tabular-nums text-ink-muted select-none";
 const SIGN = "w-px px-1 text-center align-top select-none";
 const CODE = "px-2 align-top whitespace-pre";
-const ADD_COUNT = "font-semibold tabular-nums text-done";
-const DEL_COUNT = "font-semibold tabular-nums text-failed";
+const ADD_COUNT = "font-semibold tabular-nums text-[#276b46] dark:text-done";
+const DEL_COUNT = "font-semibold tabular-nums text-[#a93226] dark:text-failed";
 const NOTE = "my-2 rounded-lg bg-accent-brand/10 px-3 py-2 text-[length:var(--text-row)]";
 const HEAD = "mt-[18px] mb-2 text-[length:var(--text-body)] text-ink-muted";
 
@@ -108,8 +108,8 @@ function DiffView({ path, patch }: { path: string; patch: string }) {
                 <td
                   className={cn(
                     SIGN,
-                    r.kind === "add" && "font-bold text-done",
-                    r.kind === "del" && "font-bold text-failed",
+                    r.kind === "add" && "font-bold text-[#276b46] dark:text-done",
+                    r.kind === "del" && "font-bold text-[#a93226] dark:text-failed",
                   )}
                   aria-label={r.kind === "add" ? "added" : r.kind === "del" ? "removed" : undefined}
                 >

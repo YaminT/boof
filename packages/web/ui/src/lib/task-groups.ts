@@ -72,3 +72,8 @@ export function groupTasks(
     },
   };
 }
+
+/** In simple Tasks view, failed tasks remain actionable through Retry. */
+export function failedTasksVisible(expanded: boolean, finished: TaskView[]): TaskView[] {
+  return expanded ? [] : finished.filter((task) => task.frontmatter.status === "failed");
+}

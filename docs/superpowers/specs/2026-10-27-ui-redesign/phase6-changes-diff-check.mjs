@@ -1,7 +1,9 @@
 // Renders the Changes view with a mocked diff (the task has no real branch) at both widths and
-// schemes, checks no page-level sideways scroll and no sub-4.5 text in dark. Usage: node phase6-changes-diff-check.mjs <outdir>
-import { chromium } from "playwright";
+// schemes, checks no page-level sideways scroll and diff text contrast in both themes. Usage: node phase6-changes-diff-check.mjs <outdir>
+const { chromium } = await import(process.env.PLAYWRIGHT ?? "playwright");
 const out = process.argv[2];
+const BASE = process.env.BASE ?? "http://127.0.0.1:4477/";
+const PID = process.env.PID ?? "repo";
 const long = "x".repeat(260);
 const patch = `diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts
@@ -49,7 +51,7 @@ for (const scheme of ["light", "dark"])
       (r) => r.fulfill({ json: diff }),
     );
     await p.route(
-      (u) => u.pathname.endsWith("/tasks/fix-login"),
+      (u) => u.pathname.endsWith("/tasks/fix-login-flow"),
       async (r) => {
         const res = await r.fetch();
         const j = await res.json();
@@ -57,7 +59,7 @@ for (const scheme of ["light", "dark"])
         await r.fulfill({ response: res, json: j });
       },
     );
-    await p.goto("http://127.0.0.1:4477/p/repo/tasks/fix-login/changes");
+    await p.goto(`${BASE}p/${PID}/tasks/fix-login-flow/changes`);
     await p.waitForTimeout(2500);
     console.log(
       w,
@@ -71,7 +73,7 @@ for (const scheme of ["light", "dark"])
       }),
     );
     await p.screenshot({ path: `${out}/changes-diff-${w}-${scheme}.png` });
-    if (scheme === "dark" && w === 1440) {
+    if (w === 1440) {
       const low = await p.evaluate(() => {
         const lum = (c) => {
           const f = (v) => {
@@ -98,7 +100,9 @@ for (const scheme of ["light", "dark"])
               if (c.a >= 1) break;
             }
           }
-          let base = [15, 20, 24];
+          let base = document.documentElement.classList.contains("dark")
+            ? [15, 20, 24]
+            : [243, 245, 247];
           for (let i = l.length - 1; i >= 0; i--)
             base = base.map((v, k) => l[i].c[k] * l[i].a + v * (1 - l[i].a));
           return base;
@@ -121,7 +125,63 @@ for (const scheme of ["light", "dark"])
         }
         return res;
       });
-      console.log("dark diff low contrast:", JSON.stringify(low));
+      const targets = await p.evaluate(() => {
+        const lum = (c) => {
+          const f = (v) => {
+            v /= 255;
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+          };
+          return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+        };
+        const parse = (s) => {
+          const m = s.match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          const a = m[1]
+            .split(/[ ,\/]+/)
+            .filter(Boolean)
+            .map(Number);
+          return { c: a.slice(0, 3), a: a[3] ?? 1 };
+        };
+        const bgOf = (el) => {
+          const layers = [];
+          for (let e = el; e; e = e.parentElement) {
+            const c = parse(getComputedStyle(e).backgroundColor);
+            if (c && c.a > 0) {
+              layers.push(c);
+              if (c.a >= 1) break;
+            }
+          }
+          let base = document.documentElement.classList.contains("dark")
+            ? [15, 20, 24]
+            : [243, 245, 247];
+          for (let i = layers.length - 1; i >= 0; i--)
+            base = base.map((v, k) => layers[i].c[k] * layers[i].a + v * (1 - layers[i].a));
+          return base;
+        };
+        return [
+          ...document.querySelectorAll('[class*="text-[#276b46]"], [class*="text-[#a93226]"]'),
+        ].flatMap((el) => {
+          const own = [...el.childNodes]
+            .filter((n) => n.nodeType === 3 && n.textContent.trim())
+            .map((n) => n.textContent.trim())
+            .join(" ");
+          if (!own) return [];
+          const fg = parse(getComputedStyle(el).color),
+            bg = bgOf(el);
+          const f = fg.c.map((v, k) => v * fg.a + bg[k] * (1 - fg.a));
+          return [
+            {
+              text: own,
+              ratio: (
+                (Math.max(lum(f), lum(bg)) + 0.05) /
+                (Math.min(lum(f), lum(bg)) + 0.05)
+              ).toFixed(2),
+            },
+          ];
+        });
+      });
+      console.log(`${scheme} diff low contrast:`, JSON.stringify(low));
+      console.log(`${scheme} signs/counts contrast:`, JSON.stringify(targets));
     }
     await ctx.close();
   }

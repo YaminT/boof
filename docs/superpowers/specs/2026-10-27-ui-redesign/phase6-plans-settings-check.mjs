@@ -11,7 +11,7 @@ const check = (ok, what) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
 };
 const sideways = (p) => p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-const toggleOf = (p) => p.getByRole("button", { name: /^Show (expanded|simple) view$/ });
+const toggleOf = (p) => p.getByRole("button", { name: /^Expanded view$/ });
 const visible = async (p, text) =>
   p
     .getByText(text, { exact: true })
@@ -88,13 +88,57 @@ for (const scheme of ["light", "dark"]) {
     if (w === 420) check(!(await sideways(p)), `${tag} expanded: no sideways scroll`);
     await p.screenshot({ path: `${OUT}/phase6-settings-expanded-${w}-${scheme}.png` });
     await toggleOf(p).click();
+    // Plan detail shares the plans preference and has its own focus control.
+    tag = `plan detail ${w}px ${scheme}`;
+    await p.goto(`${BASE}p/${PID}/plans/active-plan`);
+    const detailToggle = toggleOf(p);
+    await detailToggle.waitFor();
+    check(
+      (await detailToggle.getAttribute("aria-pressed")) === "false",
+      `${tag}: toggle starts simple`,
+    );
+    await p.waitForTimeout(500);
+    await p.screenshot({ path: `${OUT}/phase6-plan-detail-simple-${w}-${scheme}.png` });
+    await detailToggle.click();
+    check((await detailToggle.getAttribute("aria-pressed")) === "true", `${tag}: toggle expands`);
+    await p.screenshot({ path: `${OUT}/phase6-plan-detail-expanded-${w}-${scheme}.png` });
+    await detailToggle.click();
+
+    // Pages without collapsible content omit the focus control.
+    for (const [page, route] of [
+      ["budgets", "budgets"],
+      ["API keys", "keys"],
+      ["Automation", "automation"],
+    ]) {
+      tag = `settings ${page} ${w}px ${scheme}`;
+      await p.goto(`${BASE}p/${PID}/settings/${route}`);
+      check(
+        (await p.getByRole("button", { name: /^Expanded view$/ }).count()) === 0,
+        `${tag}: no no-op focus toggle`,
+      );
+      await p.waitForTimeout(250);
+      if (w === 420) check(!(await sideways(p)), `${tag}: no sideways scroll`);
+      await p.screenshot({ path: `${OUT}/phase6-settings-${route}-${w}-${scheme}.png` });
+    }
+    await p.goto(`${BASE}p/${PID}/settings/agents`);
+    await toggleOf(p).waitFor();
     // an unsaved edit in simple keeps advanced sections open and the Save bar visible
     await show.click(); // open Review, edit nothing: instead edit a main field
     await p.getByRole("button", { name: "Hide Review" }).click();
+    tag = `settings agents ${w}px ${scheme}`;
     const first = p.locator("input[type=number], input:not([type])").first();
     await first.fill("7");
     const save = p.getByRole("button", { name: /^Save/ });
     check(await save.first().isVisible(), `${tag}: Save bar visible with an unsaved edit`);
+    if (w === 1440) {
+      await p.evaluate(() => window.scrollTo(0, 0));
+      const unobscured = await save.first().evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!hit && el.contains(hit);
+      });
+      check(unobscured, `${tag}: Save button hit target stays above the console`);
+    }
     check(
       (await p.getByRole("button", { name: /^(Show|Hide) Review$/ }).count()) === 0,
       `${tag}: unsaved edit opens the advanced sections`,

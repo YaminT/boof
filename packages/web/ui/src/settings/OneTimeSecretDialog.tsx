@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +43,7 @@ export function OneTimeSecretDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{intro}</DialogDescription>
         </DialogHeader>
-        <input
+        <Input
           readOnly
           aria-label="Secret"
           value={secret}

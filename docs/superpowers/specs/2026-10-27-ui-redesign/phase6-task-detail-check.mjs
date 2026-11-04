@@ -10,7 +10,7 @@ const check = (ok, what) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
 };
 const sideways = (p) => p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-const toggleOf = (p) => p.getByRole("button", { name: /^Show (expanded|simple) view$/ });
+const toggleOf = (p) => p.getByRole("button", { name: /^Expanded view$/ });
 const title = (p) => p.getByLabel("Title", { exact: true });
 const browser = await chromium.launch();
 for (const scheme of ["light", "dark"]) {
@@ -53,7 +53,11 @@ for (const scheme of ["light", "dark"]) {
     check(await title(p).isVisible(), `${tag}: disclosure opens the form`);
     await title(p).fill((await title(p).inputValue()) + " x");
     const hide = p.getByRole("button", { name: "Hide task details" });
-    check(await hide.isDisabled(), `${tag}: unsaved edit keeps it open`);
+    check(
+      (await hide.getAttribute("aria-disabled")) === "true" &&
+        (await p.getByText("Task details stay open while they have unsaved changes.").isVisible()),
+      `${tag}: unsaved edit keeps details open with a visible reason`,
+    );
     await toggleOf(p).click();
     check(await title(p).isVisible(), `${tag} expanded: form shown with edits kept`);
     check((await title(p).inputValue()).endsWith(" x"), `${tag} expanded: edit kept`);

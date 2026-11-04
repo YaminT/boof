@@ -12,7 +12,7 @@
   --ink-muted: #5f6b76;
   --line: #dce3ea;
   --accent-brand: #2f5a75;
-  --running: #1e6fd9;
+  --running: #1b66c9;
   --attention: #ad510b;
   --done: #2e7d52;
   --failed: #c0392b;
@@ -149,8 +149,18 @@ body {
   }
   a:focus-visible,
   summary:focus-visible,
+  button:not([data-slot]):focus-visible,
+  input[type="radio"]:focus-visible,
   input[type="checkbox"]:focus-visible,
   [tabindex]:not([tabindex="-1"]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@utility focus-ring {
+  outline: none;
+  &:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }

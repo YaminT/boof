@@ -245,12 +245,17 @@ function Loaded({
             size="sm"
             aria-expanded={formOpen}
             aria-controls="task-form-region"
-            disabled={attention}
+            aria-disabled={attention || undefined}
             title={attention ? "Open because it has unsaved changes" : undefined}
-            onClick={() => setDisclosed(!disclosed)}
+            onClick={() => !attention && setDisclosed(!disclosed)}
           >
             {formOpen ? "Hide task details" : "Edit task details"}
           </Button>
+        )}
+        {attention && !focus.expanded && (
+          <span className="text-[length:var(--text-meta)] text-attention">
+            Task details stay open while they have unsaved changes.
+          </span>
         )}
         <FocusToggle mode={focus.mode} onToggle={focus.toggle} className="ml-auto" />
       </div>

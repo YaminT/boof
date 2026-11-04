@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlanSummary, TaskView } from "../api.js";
-import { groupTasks } from "./task-groups.js";
+import { failedTasksVisible, groupTasks } from "./task-groups.js";
 
 function task(p: {
   id: string;
@@ -40,6 +40,14 @@ const plan = (id: string, status: string, created: string): PlanSummary =>
 const ids = (ts: TaskView[]) => ts.map((t) => t.frontmatter.id);
 
 describe("groupTasks", () => {
+  it("keeps failed tasks visible in simple mode because Retry is actionable", () => {
+    const finished = [
+      task({ id: "failed", status: "failed" }),
+      task({ id: "done", status: "done" }),
+    ];
+    expect(ids(failedTasksVisible(false, finished))).toEqual(["failed"]);
+    expect(failedTasksVisible(true, finished)).toEqual([]);
+  });
   it("is empty for no tasks", () => {
     expect(groupTasks([])).toEqual({
       needsYou: [],

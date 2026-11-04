@@ -106,7 +106,7 @@ function HierarchyChips({
     <>
       {hier?.progress && (
         <span
-          className={cn(chip, "tabular-nums text-ink-muted")}
+          className={cn(chip, "focus-ring tabular-nums text-ink-muted")}
           title={`${hier.progress.done} of ${hier.progress.total} subtasks done`}
         >
           {progressLabel(hier.progress)}
@@ -118,6 +118,7 @@ function HierarchyChips({
           onClick={() => ctx.actions.open(hier.parentRef!.id)}
           title={`Subtask of ${hier.parentRef.title}`}
           className={cn(
+            "focus-ring",
             chip,
             "hidden max-w-40 truncate bg-transparent text-ink-muted hover:underline min-[720px]:block",
           )}

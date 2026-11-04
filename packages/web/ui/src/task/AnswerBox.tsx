@@ -39,7 +39,6 @@ export function AnswerBox({
       </div>
       <Textarea
         aria-labelledby={labelId}
-
         rows={6}
         value={answers}
         onChange={(e) => setAnswers(e.target.value)}

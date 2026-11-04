@@ -153,7 +153,7 @@ export function CreateKeyDialog({
               <input
                 type="radio"
                 name="key-projects"
-                className="m-0 size-4 w-4"
+                className="focus-ring m-0 size-4 w-4"
                 checked={v.projects === "*"}
                 disabled={restricted}
                 onChange={() => setV({ ...v, projects: "*" })}
@@ -164,7 +164,7 @@ export function CreateKeyDialog({
               <input
                 type="radio"
                 name="key-projects"
-                className="m-0 size-4 w-4"
+                className="focus-ring m-0 size-4 w-4"
                 checked={v.projects !== "*"}
                 onChange={() => setV({ ...v, projects: [] })}
               />
@@ -179,7 +179,7 @@ export function CreateKeyDialog({
                   >
                     <input
                       type="checkbox"
-                      className="m-0 size-4 w-4"
+                      className="focus-ring m-0 size-4 w-4"
                       checked={v.projects.includes(p.id)}
                       onChange={(e) =>
                         setV({
@@ -203,7 +203,7 @@ export function CreateKeyDialog({
               <input
                 type="radio"
                 name="key-trust"
-                className="m-0 size-4 w-4"
+                className="focus-ring m-0 size-4 w-4"
                 checked={v.trust === "review"}
                 onChange={() => setV({ ...v, trust: "review" })}
               />
@@ -213,7 +213,7 @@ export function CreateKeyDialog({
               <input
                 type="radio"
                 name="key-trust"
-                className="m-0 size-4 w-4"
+                className="focus-ring m-0 size-4 w-4"
                 checked={v.trust === "trusted"}
                 disabled={reviewOnly}
                 onChange={() => setV({ ...v, trust: "trusted" })}

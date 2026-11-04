@@ -11,7 +11,7 @@ const check = (ok, what) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
 };
 const sideways = (p) => p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-const toggleOf = (p) => p.getByRole("button", { name: /^Show (expanded|simple) view$/ });
+const toggleOf = (p) => p.getByRole("button", { name: /^Expanded view$/ });
 const has = async (p, text) => (await p.getByText(text, { exact: false }).count()) > 0;
 
 const screens = [
@@ -24,7 +24,7 @@ const screens = [
   {
     name: "tasks",
     path: `p/${PID}/tasks`,
-    simple: { yes: ["Needs you", "Queued", "Drafts"], no: [] },
+    simple: { yes: ["Needs you", "Queued", "Drafts", "Failed task"], no: [] },
     expanded: { yes: ["Needs you", "Queued", "Drafts", "Finished"] },
   },
   {

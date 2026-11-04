@@ -104,7 +104,9 @@ function SettingsForms({
         <h1 className="m-0 flex-1 text-[length:var(--text-page)] leading-tight font-semibold">
           Settings
         </h1>
-        <FocusToggle mode={focus.mode} onToggle={focus.toggle} />
+        {!(["budgets", "keys", "automation"] as SettingsPageId[]).includes(page) && (
+          <FocusToggle mode={focus.mode} onToggle={focus.toggle} />
+        )}
       </div>
       <SettingsNav pid={pid} active={page} unsaved={unsaved} />
       {page === "project" && (
