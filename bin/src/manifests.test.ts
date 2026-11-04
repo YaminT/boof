@@ -27,7 +27,7 @@ async function workspaceDirs(): Promise<string[]> {
 }
 
 describe("workspace manifests", () => {
-  it("every @boof/* and @boof-runner/* dependency names a real workspace", async () => {
+  it("every @boof/* dependency names a real workspace", async () => {
     const manifests = await workspaceDirs();
     const names = new Set<string>();
     for (const rel of manifests) names.add((await read(rel)).name);

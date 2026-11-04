@@ -22,7 +22,7 @@
       },
     },
     "bin": {
-      "name": "@boof-runner/cli",
+      "name": "@boof/boof",
       "version": "0.2.0",
       "dependencies": {
         "@boof/facedisk": "*",
@@ -40,7 +40,7 @@
       },
     },
     "packages/desktop": {
-      "name": "@boof-runner/desktop",
+      "name": "@boof/desktop",
       "version": "0.2.0",
       "dependencies": {
         "@boof/heart": "*",
@@ -145,9 +145,9 @@
 
     "@base-ui/utils": ["@base-ui/utils@0.5.0", "", { "dependencies": { "@babel/runtime": "^7.29.7 || ^8.0.0", "@floating-ui/utils": "^0.2.12", "reselect": "^5.3.0", "use-sync-external-store": "^1.7.0" }, "peerDependencies": { "@types/react": "^17 || ^18 || ^19", "react": "^17 || ^18 || ^19", "react-dom": "^17 || ^18 || ^19" }, "optionalPeers": ["@types/react"] }, "sha512-dYGGcEttjkYiMoa5nHm8vLaJ2UcuTWxo3BFAwOYXeRg/q7UVVvA6cacEIXEs3FgBfK1CGtW1ptElqs7wsx+t9A=="],
 
-    "@boof-runner/cli": ["@boof-runner/cli@workspace:bin"],
+    "@boof/boof": ["@boof/boof@workspace:bin"],
 
-    "@boof-runner/desktop": ["@boof-runner/desktop@workspace:packages/desktop"],
+    "@boof/desktop": ["@boof/desktop@workspace:packages/desktop"],
 
     "@boof/facedisk": ["@boof/facedisk@workspace:packages/facedisk"],
 

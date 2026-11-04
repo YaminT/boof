@@ -1,5 +1,5 @@
 {
-  "name": "@boof-runner/cli",
+  "name": "@boof/boof",
   "version": "0.2.0",
   "private": true,
   "type": "module",

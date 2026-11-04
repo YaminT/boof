@@ -6,7 +6,7 @@
     <rules>
       <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
       <do>Keep the origin check in a pure function in packages/desktop/src/lifecycle.ts and write a failing test first, then make it pass; keep the change focused on this goal.</do>
-      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server &amp;&amp; npm run build -w @boof-runner/desktop` before finishing.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server &amp;&amp; npm run build -w @boof/desktop` before finishing.</do>
       <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
       <dont>Do not commit secrets, data roots or build output.</dont>
     </rules>

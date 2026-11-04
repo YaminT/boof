@@ -701,7 +701,7 @@ async function install(
   if (!(await requireSystemd(env, err))) return 1;
   if (!existsSync(env.scriptPath)) {
     err(
-      `service install: ${env.scriptPath} does not exist; build first (npm run build -w @boof-runner/cli)`,
+      `service install: ${env.scriptPath} does not exist; build first (npm run build -w @boof/boof)`,
     );
     return 1;
   }
