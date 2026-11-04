@@ -12,4 +12,3 @@ export * from "./tools/registry.js";
 export * from "./worktree.js";
 export * from "./pipeline.js";
 export * from "./engine.js";
-export * from "./boot.js";

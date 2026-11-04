@@ -201,10 +201,12 @@ describe("isExternalUrl", () => {
   });
 
   describe("desktop main", () => {
-    it("builds a real ToolRegistry for the server it starts (Heart builds none)", async () => {
+    it("uses the shared bin boot composition to build the server registry", async () => {
       const { readFile } = await import("node:fs/promises");
       const src = await readFile(new URL("./main.ts", import.meta.url), "utf8");
-      expect(src).toMatch(/serverOptions\(\s*\{[^}]*catalog: new ToolRegistry\(\)/);
+      const boot = await readFile(new URL("../../../bin/src/boot.ts", import.meta.url), "utf8");
+      expect(src).toContain('import { boot } from "@boof/boof/boot"');
+      expect(boot).toContain("catalog: new ToolRegistry()");
     });
   });
 });

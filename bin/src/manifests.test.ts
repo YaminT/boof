@@ -41,7 +41,7 @@ describe("workspace manifests", () => {
         "optionalDependencies",
       ]) {
         for (const name of Object.keys(pkg[section] ?? {})) {
-          if (!/^@boof(-runner)?\//.test(name)) continue;
+          if (!/^@boof\//.test(name)) continue;
           checked += 1;
           expect(names.has(name), `${rel}: ${name} is not a workspace (${[...names]})`).toBe(true);
         }
@@ -62,7 +62,7 @@ describe("workspace manifests", () => {
       ]) {
         for (const [name, spec] of Object.entries(pkg[section] ?? {})) {
           expect(String(spec), `${rel}: ${name}`).not.toMatch(/^workspace:/);
-          if (/^@boof(-runner)?\//.test(name)) expect(spec, `${rel}: ${name}`).toBe("*");
+          if (/^@boof\//.test(name)) expect(spec, `${rel}: ${name}`).toBe("*");
         }
       }
     }

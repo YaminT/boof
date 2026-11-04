@@ -43,6 +43,7 @@
       "name": "@boof/desktop",
       "version": "0.2.0",
       "dependencies": {
+        "@boof/boof": "*",
         "@boof/heart": "*",
         "@boof/heart-server": "*",
         "@boof/runner": "*",
