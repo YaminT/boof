@@ -18,3 +18,7 @@ packages/web/src/generated/
 
 # Planning and review scratch
 .superpowers/
+
+# Agent scratch output
+.codex-out/
+.codex-prompts/

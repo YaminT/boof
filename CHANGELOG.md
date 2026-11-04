@@ -23,8 +23,9 @@
 
 ### Tasks, epics, and subtasks
 
-- Group tasks into optional epics and one-level subtasks, with derived progress and hierarchy details in task views and agent prompts.
-- Create, update, archive, and remove epics; move tasks between epics and parents; filter task lists by hierarchy and priority.
+- Group tasks into optional epics and one-level subtasks, with row chips, a task-page hierarchy and subtasks list, and derived progress in task views and agent prompts.
+- Filter and group task lists by epic, use palette actions to move tasks or create subtasks, and manage epics from the task list.
+- Delete epics with safe detachment of their tasks; task and hierarchy changes are serialized across processes.
 - See open-subtask warnings when queuing a parent task; hierarchy does not change queue scheduling.
 - Inspect task diffs, including untracked files, commits, and uncommitted work in a retained worktree.
 - Retry stopped or failed tasks, preserve their worktrees, and record stopped as a distinct outcome.
@@ -41,7 +42,7 @@
 - Pass large Codex and OpenCode prompts through stdin to avoid command-line length limits.
 - Limit agent environment variables to an allowlist and avoid loading user MCP configuration by default; opt in to inherited MCP servers through settings.
 - Show tool health, model sources, and usage, with health and model reads reporting cached probes and explicit endpoints refreshing them.
-- Preserve work after interrupted runs and reap verified orphaned agent processes where supported.
+- Preserve work after interrupted runs and reap verified orphaned agent processes where supported; Windows orphan reaping is experimental.
 
 ### Web UI
 
@@ -54,6 +55,8 @@
 - Manage API client scopes, rotate and revoke keys, configure command templates, and manage webhook delivery from the UI.
 - Open tasks from plans and return to the originating plan; keep the URL aligned when projects or tasks change.
 - Load major screens on first use to reduce the initial UI load.
+- Use a persistent bottom console for palette actions and slash commands, with command history and confirmations for destructive actions.
+- Switch each screen between remembered simple and expanded views; improve contrast and keyboard focus states, and remove the legacy stylesheet.
 
 ### REST API v1, events, and MCP
 
@@ -69,6 +72,10 @@
 - Add `boof-runner mcp --admin` for a local stdio host that needs administrator access; keyless MCP defaults to a review-trust identity.
 - Record operation calls made through stdio MCP and the generated CLI in the shared audit log.
 - Use a shared operation registry to generate `boof-runner <area> <verb>` commands with consistent argument handling and exit codes.
+- Configure an optional better-ccflare account pool with `settings.owlish` (`url`, `healthGate`) and a write-only client key; route Claude, Codex, and OpenCode through the gateway when their tools support pooling.
+- Pause selection of pool-routed work when the fail-safe health gate is closed, and wait in place up to `retries.poolWaitMs` when a running pipeline reaches an unavailable pool.
+- List and manage pool accounts through `boof-runner accounts list|pause|resume|priority|thresholds|health` and the `accounts.*` operations; review-trust and keyless clients may read pool status but cannot change accounts or gateway settings.
+- Account pooling by better-ccflare.
 
 ### Security and access control
 
@@ -96,7 +103,9 @@
 - Install, inspect, uninstall, and view logs for a system service; preserve configured options when reinstalling it.
 - Install and safely update a headless server, with a deployment runbook and reverse-proxy guidance.
 - Configure service secrets through an environment file and set up remote access with a guided tunnel flow.
-- Keep only one runner and one webhook dispatcher active per data root, using cross-process locks.
+- Keep one runner and one webhook dispatcher active per data root with cross-process guards; webhook delivery uses stable delivery ids so receivers can identify retries.
+- Identify runner processes by boot and start identity when available, and serialize task and epic hierarchy changes across processes.
+- Upgrade the TypeScript toolchain to 7.0.2.
 - Shut down the runner gracefully, stop tasks starting during shutdown, and recover interrupted tasks on restart.
 - Report app version and runner state from the desktop server, keep navigation on the app origin, and shut down the engine cleanly when the app quits.
 - Build desktop release installers from versioned release tags; npm-only installs are supported.
@@ -112,3 +121,4 @@
 - Webhook secrets are stored separately from `settings.json`; older runner versions cannot read a migrated settings file with inline webhook secrets removed.
 - Webhook delivery now blocks private, loopback, and reserved destinations unless explicitly allowed in `security.allowedPrivateWebhookHosts`.
 - The data root uses schema version 2 and projects; do not run an older version that drops project or task hierarchy fields against the upgraded data root.
+- Optional `settings.owlish`, write-only `owlishApiKey`, and `retries.poolWaitMs` settings add better-ccflare account pooling; existing settings files need no migration.
