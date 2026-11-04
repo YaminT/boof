@@ -51,6 +51,7 @@ export const SOURCE_ROOTS = ["packages/*/src", "packages/web/ui/src", "bin/src"]
 
 const PACKAGE_PART: Record<string, Part> = {
   heart: "heart",
+  owlish: "owlish",
   runner: "runner",
   "heart-server": "heart-server",
   desktop: "desktop",
@@ -72,7 +73,6 @@ const CLI_COMMANDS = [
 export function partOfFile(file: string): Part | undefined {
   const p = normalize(file).split("\\").join("/");
   if (p.startsWith("packages/web/ui/src/")) return "facedisk/ui";
-  if (p.startsWith("packages/heart/src/") && basename(p).startsWith("owlish")) return "owlish";
   const pkg = /^packages\/([^/]+)\/src\//.exec(p)?.[1];
   if (pkg) return PACKAGE_PART[pkg];
   if (p.startsWith("bin/src/")) {
@@ -86,8 +86,6 @@ export function partOfFile(file: string): Part | undefined {
  * resolving it against the importing file. Third-party and `node:` specifiers give undefined.
  */
 export function partOfSpecifier(spec: string, fromFile: string): Part | undefined {
-  // Owlish is its own part, reached through the `@boof/heart/owlish` subpath.
-  if (spec === "@boof/heart/owlish") return "owlish";
   const pkg = /^@boof(?:-runner)?\/([^/]+)/.exec(spec)?.[1];
   if (pkg) return PACKAGE_PART[pkg];
   if (!spec.startsWith(".")) return undefined;

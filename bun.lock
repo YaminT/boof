@@ -70,6 +70,7 @@
       "version": "0.2.0",
       "dependencies": {
         "@boof/heart": "*",
+        "@boof/owlish": "*",
         "@hono/node-server": "^2.0.0",
         "@modelcontextprotocol/sdk": "~1.32.2",
         "chokidar": "^6.0.0",
@@ -101,11 +102,20 @@
         "vite": "^8.0.0",
       },
     },
+    "packages/owlish": {
+      "name": "@boof/owlish",
+      "version": "0.2.0",
+      "dependencies": {
+        "@boof/heart": "*",
+        "zod": "^4.6.7",
+      },
+    },
     "packages/runner": {
       "name": "@boof-runner/runner",
       "version": "0.2.0",
       "dependencies": {
         "@boof/heart": "*",
+        "@boof/owlish": "*",
       },
     },
   },
@@ -134,6 +144,8 @@
     "@boof/heart": ["@boof/heart@workspace:packages/heart"],
 
     "@boof/heart-server": ["@boof/heart-server@workspace:packages/heart-server"],
+
+    "@boof/owlish": ["@boof/owlish@workspace:packages/owlish"],
 
     "@dnd-kit/accessibility": ["@dnd-kit/accessibility@3.1.1", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw=="],
 

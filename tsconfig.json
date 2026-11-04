@@ -5,6 +5,9 @@
       "path": "./packages/heart"
     },
     {
+      "path": "./packages/owlish"
+    },
+    {
       "path": "./packages/runner"
     },
     {

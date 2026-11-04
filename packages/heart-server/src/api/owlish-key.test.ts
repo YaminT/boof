@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, SettingsStore } from "@boof/heart";
-import { OwlishSecretStore } from "@boof/heart/owlish";
+import { OwlishSecretStore } from "@boof/owlish";
 import { TaskService } from "./services/service.js";
 
 let root: string;

@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OwlishSecretStore } from "./owlish-secrets.js";
-import { dataRootPaths } from "./paths.js";
-import { defaultSettings, SettingsStore } from "./settings.js";
+import { dataRootPaths, defaultSettings, SettingsStore } from "@boof/heart";
 
 let root: string;
 beforeEach(async () => (root = await mkdtemp(join(tmpdir(), "boof-owsec-"))));

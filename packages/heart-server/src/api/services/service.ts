@@ -4,7 +4,7 @@ import {
   OwlishError,
   OwlishSecretStore,
   type PoolStatus,
-} from "@boof/heart/owlish";
+} from "@boof/owlish";
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";

@@ -1,8 +1,7 @@
 import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { lockedAtomicWrite, withFileLock } from "./atomic.js";
-import { dataRootPaths } from "./paths.js";
+import { dataRootPaths, lockedAtomicWrite, withFileLock } from "@boof/heart";
 
 const FileSchema = z.object({ apiKey: z.unknown().optional() }).passthrough();
 const TOLERATED = new Set(["ENOENT", "EPERM", "ENOTSUP", "EOPNOTSUPP"]);

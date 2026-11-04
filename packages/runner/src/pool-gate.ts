@@ -1,5 +1,5 @@
 import { appendEvent, type Settings } from "@boof/heart";
-import { ABSENT_POOL, OwlishClient, type PoolStatus } from "@boof/heart/owlish";
+import { ABSENT_POOL, OwlishClient, type PoolStatus } from "@boof/owlish";
 import type { Gateway } from "./gateway-env.js";
 
 /** Ask the gateway at most this often (a known `nextAvailableAt` may bring the next check forward). */

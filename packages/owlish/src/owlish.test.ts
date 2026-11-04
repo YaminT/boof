@@ -7,8 +7,8 @@ import {
   parseOwlishGatewayUrl,
   RetrySettingsSchema,
   SettingsSchema,
-} from "./schema.js";
-import { defaultSettings } from "./settings.js";
+} from "@boof/heart";
+import { defaultSettings } from "@boof/heart";
 
 interface Seen {
   method: string;

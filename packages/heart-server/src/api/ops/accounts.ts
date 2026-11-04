@@ -77,7 +77,7 @@ function accountAction(
   verb: "pause" | "resume",
   title: string,
   tool: string,
-  call: (c: import("@boof/heart/owlish").OwlishClient, id: string) => Promise<void>,
+  call: (c: import("@boof/owlish").OwlishClient, id: string) => Promise<void>,
 ) {
   return defineOp({
     name: `accounts.${verb}`,

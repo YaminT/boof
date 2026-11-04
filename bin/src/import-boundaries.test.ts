@@ -124,7 +124,7 @@ const show = (v: Violation) =>
 describe("import boundaries", () => {
   it("maps folders to parts", () => {
     expect(partOfFile("packages/heart/src/schema.ts")).toBe("heart");
-    expect(partOfFile("packages/heart/src/owlish-client.ts")).toBe("owlish");
+    expect(partOfFile("packages/owlish/src/owlish.ts")).toBe("owlish");
     expect(partOfFile("packages/runner/src/engine.ts")).toBe("runner");
     expect(partOfFile("packages/heart-server/src/api/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/heart-server/src/mcp/x.ts")).toBe("heart-server");
@@ -142,10 +142,8 @@ describe("import boundaries", () => {
     expect(partOfSpecifier("@boof/heart/sub", "bin/src/x.ts")).toBe("heart");
     expect(partOfSpecifier("./scaffold.js", "packages/heart/src/index.ts")).toBe("heart");
     expect(partOfSpecifier("./headless.js", "bin/src/plan-cli.ts")).toBe("bin");
-    // Owlish has its own subpath; the package barrel is Heart and does not re-export it.
-    expect(partOfSpecifier("@boof/heart/owlish", "bin/src/x.ts")).toBe("owlish");
+    expect(partOfSpecifier("@boof/owlish", "bin/src/x.ts")).toBe("owlish");
     expect(partOfSpecifier("@boof/heart", "bin/src/x.ts")).toBe("heart");
-    expect(partOfFile("packages/heart/src/owlish-index.ts")).toBe("owlish");
     expect(readFileSync(join(repo, "packages/heart/src/index.ts"), "utf8")).not.toMatch(/owlish/);
     expect(
       partOfSpecifier("../../../../heart/src/x.js", "packages/heart-server/src/api/ops/y.ts"),

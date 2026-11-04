@@ -33,7 +33,7 @@ import { reapOrphan } from "@boof/heart";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { PoolGate, type PoolCheck } from "./pool-gate.js";
-import { OwlishSecretStore } from "@boof/heart/owlish";
+import { OwlishSecretStore } from "@boof/owlish";
 
 export interface EngineOptions {
   root: string;

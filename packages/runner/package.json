@@ -13,6 +13,7 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@boof/heart": "*"
+    "@boof/heart": "*",
+    "@boof/owlish": "*"
   }
 }
