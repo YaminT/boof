@@ -18,18 +18,13 @@ export function FocusToggle({
   return (
     <Button
       type="button"
-      variant="outline"
+      variant={expanded ? "default" : "outline"}
       size="sm"
       aria-pressed={expanded}
       aria-label="Expanded view"
       title={expanded ? "Show simple view" : "Show expanded view"}
       onClick={onToggle}
-      className={[
-        "aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground",
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
+      className={className}
     >
       Expanded view
       {expanded && (
