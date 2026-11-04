@@ -61,6 +61,7 @@ jobs:
       - name: Workspace packages are symlinks
         shell: bash
         run: |
+          # TODO(M7): drop the @boof-runner glob after all workspaces move to @boof/*.
           for d in node_modules/@boof/* node_modules/@boof-runner/*; do
             test -L "$d" || { echo "$d is not a symlink: npm fetched it from the registry"; exit 1; }
           done

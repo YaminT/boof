@@ -192,13 +192,14 @@ describe("import boundaries", () => {
   });
 
   it("has no import outside the allowed edges except the day-one allow-list", () => {
+    expect(ALLOW).toEqual([]);
     const unexpected = violations().filter(
       (v) => !ALLOW.some((a) => a.file === v.file && a.to === v.to),
     );
     expect(unexpected.map(show)).toEqual([]);
   });
 
-  it("keeps the browser-safe shared subpaths pure", () => {
+  it("keeps the browser-safe Heart subpaths pure", () => {
     const safeFiles = new Set(Object.values(BROWSER_SAFE));
     expect(safeFiles.size).toBe(Object.keys(BROWSER_SAFE).length);
     for (const [spec, file] of Object.entries(BROWSER_SAFE)) {

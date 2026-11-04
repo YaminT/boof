@@ -31,7 +31,7 @@ export const ALLOWED: Record<Part, Part[]> = {
 export const TYPE_ONLY: Part[] = ["facedisk/ui"];
 
 /**
- * Shared subpaths a TYPE_ONLY part (the browser UI) may import as values, with the source file each
+ * Heart subpaths a TYPE_ONLY part (the browser UI) may import as values, with the source file each
  * resolves to. Every entry must be pure: no `node:` or third-party imports, and relative imports
  * only of other entries; import-boundaries.test.ts checks it, so the exception cannot quietly grow
  * a Node dependency into the browser bundle.
@@ -89,7 +89,6 @@ export function partOfSpecifier(spec: string, fromFile: string): Part | undefine
   // Owlish is its own part, reached through the `@boof/heart/owlish` subpath.
   if (spec === "@boof/heart/owlish") return "owlish";
   const pkg = /^@boof(?:-runner)?\/([^/]+)/.exec(spec)?.[1];
-  if (pkg === "heart") return "heart";
   if (pkg) return PACKAGE_PART[pkg];
   if (!spec.startsWith(".")) return undefined;
   // A `.js` specifier names the `.ts` file.

@@ -27,7 +27,7 @@ async function workspaceDirs(): Promise<string[]> {
 }
 
 describe("workspace manifests", () => {
-  it("every @boof-runner/* dependency names a real workspace", async () => {
+  it("every @boof/* and @boof-runner/* dependency names a real workspace", async () => {
     const manifests = await workspaceDirs();
     const names = new Set<string>();
     for (const rel of manifests) names.add((await read(rel)).name);
@@ -41,7 +41,7 @@ describe("workspace manifests", () => {
         "optionalDependencies",
       ]) {
         for (const name of Object.keys(pkg[section] ?? {})) {
-          if (!name.startsWith("@boof-runner/")) continue;
+          if (!/^@boof(-runner)?\//.test(name)) continue;
           checked += 1;
           expect(names.has(name), `${rel}: ${name} is not a workspace (${[...names]})`).toBe(true);
         }
@@ -62,7 +62,7 @@ describe("workspace manifests", () => {
       ]) {
         for (const [name, spec] of Object.entries(pkg[section] ?? {})) {
           expect(String(spec), `${rel}: ${name}`).not.toMatch(/^workspace:/);
-          if (name.startsWith("@boof-runner/")) expect(spec, `${rel}: ${name}`).toBe("*");
+          if (/^@boof(-runner)?\//.test(name)) expect(spec, `${rel}: ${name}`).toBe("*");
         }
       }
     }
