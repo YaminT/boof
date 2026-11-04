@@ -3,7 +3,7 @@
 // root), and which imports may cross. Files stay where they are; the map follows the design in
 // docs/superpowers/specs/2026-10-30-boof-split-design.md (§5.1, §7). Step 15 of the roadmap turns
 // the folder rules into one line per package.
-import { basename, dirname, join, normalize } from "node:path";
+import { dirname, join, normalize } from "node:path";
 
 export type Part =
   | "heart"
@@ -47,7 +47,12 @@ export const BROWSER_SAFE: Record<string, string> = {
 export const ALLOW: { file: string; to: Part; fixedBy: string }[] = [];
 
 /** Folders walked for production files. */
-export const SOURCE_ROOTS = ["packages/*/src", "packages/web/ui/src", "bin/src"];
+export const SOURCE_ROOTS = [
+  "packages/*/src",
+  "packages/facedisk/ui/src",
+  "packages/facedisk/cli",
+  "bin/src",
+];
 
 const PACKAGE_PART: Record<string, Part> = {
   heart: "heart",
@@ -55,29 +60,17 @@ const PACKAGE_PART: Record<string, Part> = {
   runner: "runner",
   "heart-server": "heart-server",
   desktop: "desktop",
+  facedisk: "facedisk/cli",
 };
-
-const CLI_COMMANDS = [
-  "auth",
-  "epic",
-  "plan",
-  "project",
-  "remote",
-  "service",
-  "task",
-  "mcp",
-  "ops",
-].map((c) => `${c}-cli.ts`);
 
 /** The part a repo-relative file path (forward slashes) belongs to, or undefined outside the map. */
 export function partOfFile(file: string): Part | undefined {
   const p = normalize(file).split("\\").join("/");
-  if (p.startsWith("packages/web/ui/src/")) return "facedisk/ui";
+  if (p.startsWith("packages/facedisk/ui/src/")) return "facedisk/ui";
+  if (p.startsWith("packages/facedisk/cli/")) return "facedisk/cli";
   const pkg = /^packages\/([^/]+)\/src\//.exec(p)?.[1];
   if (pkg) return PACKAGE_PART[pkg];
-  if (p.startsWith("bin/src/")) {
-    return dirname(p) === "bin/src" && CLI_COMMANDS.includes(basename(p)) ? "facedisk/cli" : "bin";
-  }
+  if (p.startsWith("bin/src/")) return "bin";
   return undefined;
 }
 

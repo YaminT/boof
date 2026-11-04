@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProjectStore, SettingsStore, execCommand, scaffoldDataRoot } from "@boof/heart";
 import { projectCommand } from "./project-cli.js";
-import { main } from "./boof-runner.js";
+import { main } from "../../../bin/src/boof-runner.js";
 
 let base: string;
 let root: string;

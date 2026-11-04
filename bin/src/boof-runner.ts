@@ -5,16 +5,21 @@ import { fileURLToPath } from "node:url";
 import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
 import { startServer } from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
-import { authCommand } from "./auth-cli.js";
-import { remoteCommand } from "./remote-cli.js";
-import { serviceCommand } from "./service-cli.js";
+import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
+import { remoteCommand } from "@boof/facedisk/cli/remote-cli.js";
+import { serviceCommand } from "@boof/facedisk/cli/service-cli.js";
 import { TaskService } from "@boof/heart-server";
-import { epicCommand } from "./epic-cli.js";
-import { HAND_WRITTEN_COMMANDS, isOpArea, matchOpCommand, opsCommand } from "./ops-cli.js";
-import { projectCommand } from "./project-cli.js";
-import { taskCommand } from "./task-cli.js";
-import { planCommand } from "./plan-cli.js";
-import { mcpCommand } from "./mcp-cli.js";
+import { epicCommand } from "@boof/facedisk/cli/epic-cli.js";
+import {
+  HAND_WRITTEN_COMMANDS,
+  isOpArea,
+  matchOpCommand,
+  opsCommand,
+} from "@boof/facedisk/cli/ops-cli.js";
+import { projectCommand } from "@boof/facedisk/cli/project-cli.js";
+import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
+import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
+import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
 
@@ -109,8 +114,8 @@ Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionab
 /** Locate the built UI directory shipped alongside this CLI, if present. */
 function resolveUiDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  // From bin/dist or bin/src → ../../packages/web/ui/dist
-  return resolve(here, "..", "..", "packages", "web", "ui", "dist");
+  // From bin/dist or bin/src → ../../packages/facedisk/ui/dist
+  return resolve(here, "..", "..", "packages", "facedisk", "ui", "dist");
 }
 
 /** Version from the package.json two levels above bin/src or bin/dist. */

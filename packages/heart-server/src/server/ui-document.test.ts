@@ -7,7 +7,7 @@ import { MockTool, ToolRegistry } from "@boof-runner/runner";
 import { TaskService } from "../api/index.js";
 import { createApp } from "./app.js";
 import { isUiPath, relativeBase } from "./ui-document.js";
-import { parseRoute } from "../../../web/ui/src/lib/route";
+import { parseRoute } from "../../../facedisk/ui/src/lib/route";
 
 describe("relativeBase", () => {
   it.each([

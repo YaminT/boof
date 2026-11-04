@@ -1,14 +1,18 @@
 {
-  "name": "@boof-runner/web-ui",
+  "name": "@boof/facedisk",
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./cli/*.js": "./cli/*.ts"
+  },
   "scripts": {
-    "build": "vite build ui",
-    "dev:ui": "vite ui"
+    "build": "vite build ui"
   },
   "dependencies": {
-    "@boof/heart": "*"
+    "@boof/heart": "*",
+    "@boof/heart-server": "*",
+    "@modelcontextprotocol/sdk": "~1.32.2"
   },
   "devDependencies": {
     "@base-ui/react": "^1.9.0",

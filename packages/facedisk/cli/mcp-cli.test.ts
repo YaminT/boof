@@ -9,8 +9,8 @@ import { AuthStore } from "@boof/heart";
 import { mcpCommand, MCP_HELP } from "./mcp-cli.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const entry = join(here, "boof-runner.ts");
-const tsx = join(here, "..", "..", "node_modules", ".bin", "tsx");
+const entry = join(here, "..", "..", "..", "bin", "src", "boof-runner.ts");
+const tsx = join(here, "..", "..", "..", "node_modules", ".bin", "tsx");
 
 let root: string;
 beforeEach(async () => {

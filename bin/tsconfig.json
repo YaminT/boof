@@ -11,7 +11,8 @@
   "references": [
     { "path": "../packages/heart" },
     { "path": "../packages/runner" },
-    { "path": "../packages/heart-server" }
+    { "path": "../packages/heart-server" },
+    { "path": "../packages/facedisk" }
   ],
   "include": ["src/**/*"]
 }

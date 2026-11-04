@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@boof-runner/runner": "*",
+    "@boof/facedisk": "*",
     "@boof/heart": "*",
     "@boof/heart-server": "*",
     "@hono/node-server": "^2.0.0",

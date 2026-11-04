@@ -16,7 +16,7 @@ import {
   selectActionableUnits,
 } from "@boof/heart";
 import { ToolRegistry } from "@boof-runner/runner";
-import { drainQueue, scanRepoToTasks } from "./headless.js";
+import { drainQueue, scanRepoToTasks } from "../../../bin/src/headless.js";
 import { planCommand } from "./plan-cli.js";
 
 let dataRoot: string;

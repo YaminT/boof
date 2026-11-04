@@ -3,9 +3,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { registry } from "../api/index.js";
-import { OP_COVERAGE } from "../../../web/ui/src/op-coverage.js";
+import { OP_COVERAGE } from "../../../facedisk/ui/src/op-coverage.js";
 
-const UI_SRC = join(dirname(fileURLToPath(import.meta.url)), "../../../web/ui/src");
+const UI_SRC = join(dirname(fileURLToPath(import.meta.url)), "../../../facedisk/ui/src");
 
 /** Every non-test source file of the UI, by base name (api.ts and the manifest itself left out). */
 function uiSources(): Map<string, string> {

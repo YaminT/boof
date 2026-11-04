@@ -129,9 +129,10 @@ describe("import boundaries", () => {
     expect(partOfFile("packages/heart-server/src/api/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/heart-server/src/mcp/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/heart-server/src/server/x.ts")).toBe("heart-server");
-    expect(partOfFile("packages/web/ui/src/App.tsx")).toBe("facedisk/ui");
-    expect(partOfFile("bin/src/project-cli.ts")).toBe("facedisk/cli");
-    expect(partOfFile("bin/src/ops-cli.ts")).toBe("facedisk/cli");
+    expect(partOfFile("packages/facedisk/ui/src/App.tsx")).toBe("facedisk/ui");
+    expect(partOfFile("packages/facedisk/cli/auth-cli.ts")).toBe("facedisk/cli");
+    expect(partOfFile("packages/facedisk/cli/ops-cli.ts")).toBe("facedisk/cli");
+    expect(partOfFile("bin/src/project-cli.ts")).toBe("bin");
     expect(partOfFile("bin/src/headless.ts")).toBe("bin");
     expect(partOfFile("packages/desktop/src/main.ts")).toBe("desktop");
     expect(partOfFile("scripts/x.ts")).toBeUndefined();
@@ -186,7 +187,7 @@ describe("import boundaries", () => {
     expect(files.length).toBeGreaterThan(100);
     expect(files.some((f) => TEST.test(f))).toBe(false);
     expect(files).toContain("bin/src/boundaries.ts");
-    expect(files).toContain("packages/web/ui/src/main.tsx");
+    expect(files).toContain("packages/facedisk/ui/src/main.tsx");
   });
 
   it("has no import outside the allowed edges except the day-one allow-list", () => {
@@ -216,7 +217,7 @@ describe("import boundaries", () => {
 
   it("lets the UI value-import only the browser-safe subpaths", () => {
     const text = (spec: string) => `import { x } from "${spec}";`;
-    const ui = "packages/web/ui/src/lib/f.ts";
+    const ui = "packages/facedisk/ui/src/lib/f.ts";
     const check = (spec: string) => {
       const imp = extractImports(text(spec))[0];
       const to = partOfSpecifier(spec, ui)!;

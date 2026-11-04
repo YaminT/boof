@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./.tsc-typecheck",
+    "rootDir": "./cli",
+    "composite": true
+  },
+  "references": [{ "path": "../heart" }, { "path": "../heart-server" }],
+  "include": ["cli/**/*.ts"],
+  "exclude": ["cli/**/*.test.ts"]
+}

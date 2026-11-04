@@ -435,7 +435,7 @@ packages/heart    task-file format, schemas, projects, plans, auth store, events
 packages/runner    tool adapters, git worktree isolation, plan sync, the pipeline engine
                  The root devDependency on `@boof-runner/runner` supports heart-server tests only.
 packages/heart-server operations registry, services, OpenAPI generator, MCP and Hono server
-packages/web       React UI workspace under packages/web/ui
+packages/facedisk  React UI under ui/; command implementations under cli/
 packages/desktop   Electron app: boots the server + runner in-process, opens the UI window
 bin/               the `boof-runner` CLI: scaffolds data, boots web, ensures a single runner
 docs/              harness.md (guide for AI agents), api.md (REST and MCP), boof-runner.md (architecture)

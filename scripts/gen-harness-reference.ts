@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import * as prettier from "prettier";
 import { buildOpenApi, getOp, registry } from "../packages/heart-server/src/api/index.js";
 import { SCOPES } from "../packages/heart/src/index.js";
-import { commandPath } from "../bin/src/ops-cli.js";
+import { commandPath } from "../packages/facedisk/cli/ops-cli.js";
 
 export const BEGIN = "<!-- BEGIN GENERATED REFERENCE -->";
 export const END = "<!-- END GENERATED REFERENCE -->";

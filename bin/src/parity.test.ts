@@ -15,7 +15,7 @@ import {
   execCommand,
 } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof-runner/runner";
-import { cliOps, commandPath, matchOpCommand, opsCommand } from "./ops-cli.js";
+import { cliOps, commandPath, matchOpCommand, opsCommand } from "@boof/facedisk/cli/ops-cli.js";
 
 // REST is proven by packages/heart-server/src/server/contract.test.ts (every operation has a route and a test of
 // its shape) and the web UI by packages/heart-server/src/server/op-coverage.test.ts. This file ties MCP and the CLI

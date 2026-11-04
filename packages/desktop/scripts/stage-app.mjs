@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(here, "..");
 const distDir = join(desktopDir, "dist");
-const uiDistDir = resolve(desktopDir, "..", "web", "ui", "dist");
+const uiDistDir = resolve(desktopDir, "..", "facedisk", "ui", "dist");
 const appDir = join(desktopDir, "build", "app");
 
 const pkg = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
@@ -30,7 +30,7 @@ function need(path, hint) {
 
 need(join(distDir, "main.js"), "run `npm run build -w @boof-runner/desktop` first");
 need(join(distDir, "preload.js"), "run `npm run build -w @boof-runner/desktop` first");
-need(join(uiDistDir, "index.html"), "run `npm run build -w @boof-runner/web-ui` first");
+need(join(uiDistDir, "index.html"), "run `npm run build -w @boof/facedisk` first");
 
 rmSync(appDir, { recursive: true, force: true });
 mkdirSync(appDir, { recursive: true });

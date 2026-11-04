@@ -14,6 +14,9 @@
       "path": "./packages/heart-server"
     },
     {
+      "path": "./packages/facedisk"
+    },
+    {
       "path": "./packages/desktop"
     },
     {

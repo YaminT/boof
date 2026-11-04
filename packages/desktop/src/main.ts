@@ -80,11 +80,11 @@ ipcMain.on("boof-runner:get-token", (event) => {
  * Built React UI, served by the in-process server.
  * - Packaged (asar:false): main.js sits at <Resources>/app and the UI is staged
  *   beside it as ./ui, so serveStatic reads it as plain files on disk.
- * - Dev (`electron .`): dist/main.js resolves the UI from packages/web/ui/dist.
+ * - Dev (`electron .`): dist/main.js resolves the UI from packages/facedisk/ui/dist.
  */
 function uiDir(): string {
   if (app.isPackaged) return join(__dirname, "ui");
-  return resolve(__dirname, "..", "..", "web", "ui", "dist");
+  return resolve(__dirname, "..", "..", "facedisk", "ui", "dist");
 }
 
 /**
