@@ -30,7 +30,7 @@ import {
   syncPlan,
   type ScannedUnit,
 } from "@boof/heart";
-import { RunnerEngine, ToolRegistry, type TickResult } from "@boof-runner/runner";
+import { RunnerEngine, ToolRegistry, type TickResult } from "@boof/runner";
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";

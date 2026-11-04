@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { AuthStore } from "@boof/heart";
 import { mcpCommand, MCP_HELP } from "./mcp-cli.js";
 

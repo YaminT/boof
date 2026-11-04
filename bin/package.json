@@ -11,7 +11,7 @@
     "@modelcontextprotocol/sdk": "~1.32.2"
   },
   "dependencies": {
-    "@boof-runner/runner": "*",
+    "@boof/runner": "*",
     "@boof/facedisk": "*",
     "@boof/heart": "*",
     "@boof/heart-server": "*",

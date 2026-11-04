@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSettings, SettingsStore, execCommand } from "@boof/heart";
-import { RunnerEngine, mockState, resetMock, MockTool, ToolRegistry } from "@boof-runner/runner";
+import { RunnerEngine, mockState, resetMock, MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "../api/index.js";
 

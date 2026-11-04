@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, dataRootPaths, defaultSettings, SettingsStore } from "@boof/heart";
 import { TaskService } from "../api/index.js";
 import { createApp } from "./app.js";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 
 let base: string;
 let root: string;

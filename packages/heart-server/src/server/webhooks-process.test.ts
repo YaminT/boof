@@ -14,7 +14,7 @@ import {
   execCommand,
 } from "@boof/heart";
 import { TaskService } from "../api/index.js";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 
 let base: string;

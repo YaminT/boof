@@ -16,7 +16,7 @@ import {
   isGitRepo,
   repoCommonDir,
 } from "@boof/heart";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "../api/index.js";
 import { DataWatcher } from "./watch.js";

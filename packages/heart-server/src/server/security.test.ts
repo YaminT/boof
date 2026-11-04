@@ -24,7 +24,7 @@ import {
   type SecuritySettings,
   execCommand,
 } from "@boof/heart";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 import { pruneAudit } from "./middleware/audit.js";
 import { assertBindAllowed, startServer } from "./server.js";

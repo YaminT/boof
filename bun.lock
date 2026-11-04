@@ -12,7 +12,7 @@
         "zod": "^4.6.7",
       },
       "devDependencies": {
-        "@boof-runner/runner": "*",
+        "@boof/runner": "*",
         "@types/node": "^22.20.5",
         "prettier": "^3.9.10",
         "tsup": "^9.0.0",
@@ -25,10 +25,10 @@
       "name": "@boof-runner/cli",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/runner": "*",
         "@boof/facedisk": "*",
         "@boof/heart": "*",
         "@boof/heart-server": "*",
+        "@boof/runner": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
@@ -43,9 +43,9 @@
       "name": "@boof-runner/desktop",
       "version": "0.2.0",
       "dependencies": {
-        "@boof-runner/runner": "*",
         "@boof/heart": "*",
         "@boof/heart-server": "*",
+        "@boof/runner": "*",
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
@@ -63,7 +63,7 @@
       "dependencies": {
         "@boof/heart": "*",
         "@boof/heart-server": "*",
-        "@modelcontextprotocol/sdk": "~1.32.2",
+        "zod": "^4.6.7",
       },
       "devDependencies": {
         "@base-ui/react": "^1.9.0",
@@ -121,7 +121,7 @@
       },
     },
     "packages/runner": {
-      "name": "@boof-runner/runner",
+      "name": "@boof/runner",
       "version": "0.2.0",
       "dependencies": {
         "@boof/heart": "*",
@@ -149,8 +149,6 @@
 
     "@boof-runner/desktop": ["@boof-runner/desktop@workspace:packages/desktop"],
 
-    "@boof-runner/runner": ["@boof-runner/runner@workspace:packages/runner"],
-
     "@boof/facedisk": ["@boof/facedisk@workspace:packages/facedisk"],
 
     "@boof/heart": ["@boof/heart@workspace:packages/heart"],
@@ -158,6 +156,8 @@
     "@boof/heart-server": ["@boof/heart-server@workspace:packages/heart-server"],
 
     "@boof/owlish": ["@boof/owlish@workspace:packages/owlish"],
+
+    "@boof/runner": ["@boof/runner@workspace:packages/runner"],
 
     "@dnd-kit/accessibility": ["@dnd-kit/accessibility@3.1.1", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw=="],
 

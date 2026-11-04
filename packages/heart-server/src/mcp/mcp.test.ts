@@ -14,7 +14,7 @@ import {
   type Scope,
   execCommand,
 } from "@boof/heart";
-import { resetMock, RunnerEngine, MockTool, ToolRegistry } from "@boof-runner/runner";
+import { resetMock, RunnerEngine, MockTool, ToolRegistry } from "@boof/runner";
 import { TaskService } from "../api/index.js";
 import {
   closeWhenDrained,

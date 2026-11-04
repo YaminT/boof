@@ -14,7 +14,7 @@
     "dist:win": "npm run stage && electron-builder --win --publish never"
   },
   "dependencies": {
-    "@boof-runner/runner": "*",
+    "@boof/runner": "*",
     "@boof/heart": "*",
     "@boof/heart-server": "*",
     "@hono/node-server": "^2.0.0",

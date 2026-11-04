@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof/heart";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { LOCAL_MCP_PRINCIPAL } from "../local-principal.js";
 import type { OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";

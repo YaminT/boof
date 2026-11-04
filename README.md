@@ -442,9 +442,9 @@ docs/              harness.md (guide for AI agents), api.md (REST and MCP), boof
 scripts/           install script and the harness guide generator
 ```
 
-The root devDependency on `@boof-runner/runner` supports heart-server tests only.
+The root devDependency on `@boof/runner` supports heart-server tests only.
 
-The `@boof/facedisk`, `@boof/heart`, `@boof/heart-server`, `@boof/owlish`, and `@boof-runner/runner` packages are consumed from source and bundled into the self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
+The `@boof/facedisk`, `@boof/heart`, `@boof/heart-server`, `@boof/owlish`, and `@boof/runner` packages are consumed from source and bundled into the self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
 
 For a deeper explanation of the architecture, see [docs/boof-runner.md](docs/boof-runner.md).
 

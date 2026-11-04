@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MockTool, ToolRegistry, type RunnerEngine } from "@boof-runner/runner";
+import { MockTool, ToolRegistry, type RunnerEngine } from "@boof/runner";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -15,7 +15,7 @@ import {
   TaskStore,
   execCommand,
 } from "@boof/heart";
-import { RunnerEngine, resetMock, MockTool, ToolRegistry } from "@boof-runner/runner";
+import { RunnerEngine, resetMock, MockTool, ToolRegistry } from "@boof/runner";
 import { TaskService } from "../api/index.js";
 import { createApp } from "./app.js";
 

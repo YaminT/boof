@@ -13,7 +13,7 @@ import {
   execCommand,
   ProjectResolutionError,
 } from "@boof/heart";
-import { MockTool, ToolRegistry, mockState, resetMock } from "@boof-runner/runner";
+import { MockTool, ToolRegistry, mockState, resetMock } from "@boof/runner";
 import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
 import { firstPositional, runCommand } from "./boof-runner.js";
 

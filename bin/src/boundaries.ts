@@ -75,7 +75,7 @@ export function partOfFile(file: string): Part | undefined {
 }
 
 /**
- * The part an import specifier reaches: `@boof(-runner)?/<pkg>[/sub]` by package, a relative path by
+ * The part an import specifier reaches: `@boof/<pkg>[/sub]` or a remaining transitional `@boof-runner/<pkg>` by package, a relative path by
  * resolving it against the importing file. Third-party and `node:` specifiers give undefined.
  */
 export function partOfSpecifier(spec: string, fromFile: string): Part | undefined {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TaskService } from "@boof/heart-server";
 import { AuthStore, SecuritySettingsSchema, SettingsStore, execCommand } from "@boof/heart";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { opsCommand } from "./ops-cli.js";
 
 let base: string;

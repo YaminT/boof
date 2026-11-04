@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RunnerEngine, ToolRegistry } from "@boof-runner/runner";
+import { RunnerEngine, ToolRegistry } from "@boof/runner";
 import { startServer } from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";

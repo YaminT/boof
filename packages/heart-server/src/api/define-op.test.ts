@@ -7,7 +7,7 @@ import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof/he
 import { defineOp, type OpContext } from "./define-op.js";
 import { OpError } from "./errors.js";
 import { TaskService } from "./services/service.js";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 
 let root: string;
 let ctx: OpContext;

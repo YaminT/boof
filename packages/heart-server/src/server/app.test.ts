@@ -14,7 +14,7 @@ import {
   workingAreaDir,
   execCommand,
 } from "@boof/heart";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 import { IdempotencyStore, TaskService, tailLines } from "../api/index.js";
 

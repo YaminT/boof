@@ -13,7 +13,7 @@ import {
   HARNESS_MD as HARNESS_MD_PATH,
   HARNESS_TS,
 } from "../../../../scripts/gen-harness-reference.js";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 
 const UPDATE = process.env["UPDATE_HARNESS_DOCS"] === "1";
 

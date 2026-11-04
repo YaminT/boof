@@ -14,7 +14,7 @@ import {
   SettingsStore,
   execCommand,
 } from "@boof/heart";
-import { MockTool, ToolRegistry } from "@boof-runner/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { cliOps, commandPath, matchOpCommand, opsCommand } from "@boof/facedisk/cli/ops-cli.js";
 
 // REST is proven by packages/heart-server/src/server/contract.test.ts (every operation has a route and a test of

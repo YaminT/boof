@@ -13,7 +13,7 @@ import {
   type Task,
   execCommand,
 } from "@boof/heart";
-import { MockTool, ToolRegistry, type HealthResult, type Tool } from "@boof-runner/runner";
+import { MockTool, ToolRegistry, type HealthResult, type Tool } from "@boof/runner";
 import { registry, TaskService } from "../api/index.js";
 import { createApp } from "./app.js";
 
