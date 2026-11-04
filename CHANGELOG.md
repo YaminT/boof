@@ -2,6 +2,10 @@
 
 ## 0.3.0 (unreleased)
 
+### Fixes
+
+- Handle CLI stop signals received during startup and release the runner guard cleanly.
+
 ### Internal
 
 - Rename and move internal packages into the final workspace layout; user-facing behavior is unchanged.

@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,4 +151,75 @@ describe("boof-runner top level", () => {
     expect(process.exitCode).toBe(1);
     expect(errs.join("\n")).toMatch(/unknown command.*tasks/);
   });
+});
+
+describe("serve startup signals", () => {
+  it("drains and releases the runner guard when SIGINT arrives during startup", async () => {
+    const scratch = await mkdtemp(join(tmpdir(), "boof-early-signal-"));
+    const root = join(scratch, "data");
+    const home = join(scratch, "home");
+    await mkdir(home);
+    const probe = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", resolve);
+    });
+    const address = probe.address();
+    if (!address || typeof address === "string") throw new Error("No free port assigned");
+    const port = address.port;
+    await new Promise<void>((resolve, reject) =>
+      probe.close((err) => (err ? reject(err) : resolve())),
+    );
+    try {
+      const child = spawn(
+        process.execPath,
+        [
+          "--import",
+          "tsx/esm",
+          "bin/src/boof-runner.ts",
+          "serve",
+          "--data",
+          root,
+          "--port",
+          String(port),
+        ],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, HOME: home, BOOF_RUNNER_DATA_ROOT: root },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let output = "";
+      let sentSignal = false;
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+        output += chunk;
+        if (!sentSignal && output.includes("Scaffolded data root:")) {
+          sentSignal = true;
+          child.kill("SIGINT");
+        }
+      });
+      child.stderr.setEncoding("utf8").on("data", (chunk: string) => (output += chunk));
+      const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve, reject) => {
+          const timer = setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(new Error(`serve did not exit; output:\n${output}`));
+          }, 20_000);
+          child.once("error", (err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+          child.once("exit", (code, signal) => {
+            clearTimeout(timer);
+            resolve({ code, signal });
+          });
+        },
+      );
+      expect(exit, output).toEqual({ code: 0, signal: null });
+      expect(output).toContain("Shutting down (SIGINT)…");
+      expect(existsSync(join(root, ".runner.pid"))).toBe(false);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

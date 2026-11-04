@@ -209,12 +209,31 @@ function parseServeArgs(argv: string[]): ServeArgs {
 export async function serve(argv: string[]): Promise<void> {
   const args = parseServeArgs(argv);
   const root = args.dataRoot;
+  let starting = true;
+  let pendingSignal: string | undefined;
+  let shuttingDown = false;
+  let stop: (() => Promise<void>) | undefined;
+  const shutdown = async (signal: string) => {
+    if (starting) {
+      pendingSignal ??= signal;
+      return;
+    }
+    if (shuttingDown) {
+      console.log(`\n${signal} again: exiting now`);
+      process.exit(1);
+    }
+    shuttingDown = true;
+    console.log(`\nShutting down (${signal})…`);
+    await stop?.();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
   const { created } = await scaffoldDataRoot(root);
   console.log(`${created ? "Scaffolded" : "Using"} data root: ${root}`);
 
   const uiDir = resolveUiDir();
   const guard = new RunnerGuard(root);
-  let stop: () => Promise<void>;
   try {
     const composition = await boot({
       root,
@@ -248,20 +267,8 @@ export async function serve(argv: string[]): Promise<void> {
     console.error(isRunnerStartFailure(err) ? err : err instanceof Error ? err.message : err);
     process.exit(1);
   }
-
-  let shuttingDown = false;
-  const shutdown = async (signal: string) => {
-    if (shuttingDown) {
-      console.log(`\n${signal} again: exiting now`);
-      process.exit(1);
-    }
-    shuttingDown = true;
-    console.log(`\nShutting down (${signal})…`);
-    await stop();
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  starting = false;
+  if (pendingSignal) void shutdown(pendingSignal);
 }
 
 /** `run` subcommand. Returns a process exit code. */
