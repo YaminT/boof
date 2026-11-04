@@ -205,6 +205,18 @@ function parseServeArgs(argv: string[]): ServeArgs {
   };
 }
 
+export function handleStartupSignal(
+  signal: string,
+  pendingSignal: string | undefined,
+  exit: (code: number) => never = process.exit,
+): string {
+  if (pendingSignal) {
+    console.log(`\n${signal} again: exiting now`);
+    exit(1);
+  }
+  return signal;
+}
+
 /** The original behavior: scaffold data, boot the web UI + background runner. */
 export async function serve(argv: string[]): Promise<void> {
   const args = parseServeArgs(argv);
@@ -215,7 +227,7 @@ export async function serve(argv: string[]): Promise<void> {
   let stop: (() => Promise<void>) | undefined;
   const shutdown = async (signal: string) => {
     if (starting) {
-      pendingSignal ??= signal;
+      pendingSignal = handleStartupSignal(signal, pendingSignal);
       return;
     }
     if (shuttingDown) {

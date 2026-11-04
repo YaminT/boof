@@ -5,7 +5,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isServeFlag, main, routeArgv } from "./boof-runner.js";
+import { handleStartupSignal, isServeFlag, main, routeArgv } from "./boof-runner.js";
 
 describe("boof-runner top level", () => {
   let logs: string[];
@@ -154,6 +154,20 @@ describe("boof-runner top level", () => {
 });
 
 describe("serve startup signals", () => {
+  it("remembers the first signal and exits on the second while startup is pending", () => {
+    const logs: string[] = [];
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    vi.spyOn(console, "log").mockImplementation((line) => void logs.push(String(line)));
+
+    const pending = handleStartupSignal("SIGINT", undefined, exit);
+    expect(pending).toBe("SIGINT");
+    expect(() => handleStartupSignal("SIGTERM", pending, exit)).toThrow("exit 1");
+    expect(logs).toEqual(["\nSIGTERM again: exiting now"]);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("drains and releases the runner guard when SIGINT arrives during startup", async () => {
     const scratch = await mkdtemp(join(tmpdir(), "boof-early-signal-"));
     const root = join(scratch, "data");
