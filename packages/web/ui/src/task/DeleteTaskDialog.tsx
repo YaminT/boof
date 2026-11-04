@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -34,8 +34,12 @@ export function DeleteTaskDialog({
   // The question that detaches is dangerous: focus starts on "Keep task", and the destructive
   // button waits a moment, so a repeated Enter or click cannot answer it unread.
   const [armed, setArmed] = useState(!m.detach);
-  useEffect(() => {
-    if (!open || !m.detach) return setArmed(true);
+  useLayoutEffect(() => {
+    if (!m.detach) {
+      setArmed(true);
+      return;
+    }
+    if (!open) return;
     setArmed(false);
     const t = window.setTimeout(() => setArmed(true), DETACH_ARM_MS);
     return () => window.clearTimeout(t);

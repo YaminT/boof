@@ -55,6 +55,15 @@ function pickTarget(
   // verb's label words or the title of the task the command is about.
   const idOf = (a: CommandAction) => a.id.slice(TARGETED[verb]!.length).toLowerCase();
   const titleOf = (a: CommandAction) => norm(a.targetTitle ?? "");
+  const universe = actions.find((a) => a.targetUniverseKind === verb)?.targetUniverse ?? [];
+  const exactUniverse =
+    universe.find((t) => t.id.toLowerCase() === want) ??
+    universe.find((t) => norm(t.title) === want);
+  if (exactUniverse) {
+    if (exactUniverse.reason) return unknown(raw, exactUniverse.reason);
+    const exactAction = candidates.find((a) => idOf(a) === exactUniverse.id.toLowerCase());
+    if (exactAction) return { kind: "run", action: exactAction, args };
+  }
   const exactId = candidates.filter((a) => idOf(a) === want);
   const exactTitle = candidates.filter((a) => titleOf(a) === want);
   const hits = exactId.length

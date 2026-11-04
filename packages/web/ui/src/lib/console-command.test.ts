@@ -189,6 +189,50 @@ describe("resolveConsoleCommand", () => {
     expect(resolveConsoleCommand("/move ap", actions).kind).toBe("unknown");
   });
 
+  it("checks every epic before substring fallback and explains current or archived exact matches", () => {
+    const effects = setupWith({}).effects;
+    const current = task("t1", "draft", "Fix login");
+    const actions = createCommandActions({
+      pid: "alpha",
+      projects: [],
+      tasks: [current],
+      plans: [],
+      epics: [
+        { id: "api", title: "API", archived: false },
+        { id: "api-v2", title: "API v2", archived: false },
+        { id: "old", title: "Old API", archived: true },
+      ] as unknown as EpicView[],
+      currentTask: {
+        ...current,
+        frontmatter: { ...current.frontmatter, epicId: "api" },
+        epicId: "api",
+      } as TaskView,
+      runnerEnabled: false,
+      settingsLoaded: true,
+      effects,
+    });
+    expect(resolveConsoleCommand("/move API", actions)).toMatchObject({
+      kind: "unknown",
+      reason: "already in epic API",
+    });
+    expect(resolveConsoleCommand("/move Old API", actions)).toMatchObject({
+      kind: "unknown",
+      reason: "epic Old API is archived",
+    });
+  });
+
+  it("checks current parent and self against all task targets before fallback", () => {
+    const { actions } = setupWith({ parent: "t2" });
+    expect(resolveConsoleCommand("/subtask Fix logout", actions)).toMatchObject({
+      kind: "unknown",
+      reason: "already a subtask of Fix logout",
+    });
+    expect(resolveConsoleCommand("/subtask Fix login", actions)).toMatchObject({
+      kind: "unknown",
+      reason: "a task cannot be a subtask of itself",
+    });
+  });
+
   it("refuses ambiguous or missing targets and says why", () => {
     const amb = resolveConsoleCommand("/queue fix", actions);
     expect(amb).toMatchObject({ kind: "unknown" });

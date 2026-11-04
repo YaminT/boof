@@ -18,6 +18,9 @@ export interface CommandAction {
   keywords: string[];
   /** For actions a slash verb aims at something (a task, an epic, a plan, a project): its name. */
   targetTitle?: string;
+  /** Full hierarchy target set, including targets omitted from the available actions. */
+  targetUniverse?: { id: string; title: string; reason?: string }[];
+  targetUniverseKind?: "move" | "subtask";
   /** The key needs one of these scopes; the server stays the judge. */
   requiredScope?: Scope | Scope[];
   disabled?: boolean;
@@ -218,10 +221,36 @@ function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: 
   const topLevel = !f.parentId;
   const move = (m: { epicId: string | null } | { parentId: string | null }) => () =>
     fx.moveTask(pid, f.id, m);
+  const epicTargets = ctx.epics.map((e) => ({
+    id: e.id,
+    title: e.title,
+    reason: e.archived
+      ? `epic ${e.title} is archived`
+      : e.id === f.epicId
+        ? `already in epic ${e.title}`
+        : undefined,
+  }));
+  const taskTargets = ctx.tasks.map((p) => {
+    const pf = p.frontmatter;
+    return {
+      id: pf.id,
+      title: pf.title,
+      reason:
+        pf.id === f.id
+          ? "a task cannot be a subtask of itself"
+          : pf.id === f.parentId
+            ? `already a subtask of ${pf.title}`
+            : pf.parentId || pf.status === "archived"
+              ? `task ${pf.title} is not available as a parent`
+              : undefined,
+    };
+  });
 
   if (f.parentId) {
     add({
       id: "detach-parent",
+      targetUniverse: taskTargets,
+      targetUniverseKind: "subtask",
       label: "Detach from parent",
       group: "Actions",
       searchValue: `Detach from parent ${title}`,
@@ -233,6 +262,8 @@ function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: 
   if (f.epicId) {
     add({
       id: "detach-epic",
+      targetUniverse: epicTargets,
+      targetUniverseKind: "move",
       label: "Detach from epic",
       group: "Actions",
       searchValue: `Detach from epic ${title}`,
@@ -248,6 +279,8 @@ function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: 
       add({
         id: `move-epic-${e.id}`,
         targetTitle: e.title,
+        targetUniverse: epicTargets,
+        targetUniverseKind: "move",
         label: `Move to epic: ${e.title}`,
         group: "Actions",
         searchValue: `Move to epic: ${e.title} ${e.id} (${title})`,
@@ -265,6 +298,8 @@ function hierarchyActions(pid: string, ctx: ActionContext, task: TaskView, add: 
       add({
         id: `make-subtask-${pf.id}`,
         targetTitle: pf.title,
+        targetUniverse: taskTargets,
+        targetUniverseKind: "subtask",
         label: `Make subtask of: ${pf.title}`,
         group: "Actions",
         searchValue: `Make subtask of: ${pf.title} ${pf.id} (${title})`,
