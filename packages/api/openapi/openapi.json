@@ -2622,7 +2622,7 @@
               "description": "better-ccflare account id (see accounts.list).",
               "maxLength": 200,
               "minLength": 1,
-              "pattern": "^[A-Za-z0-9._:-]+$",
+              "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._:-]+$",
               "type": "string"
             }
           }
@@ -2680,7 +2680,7 @@
               "description": "better-ccflare account id (see accounts.list).",
               "maxLength": 200,
               "minLength": 1,
-              "pattern": "^[A-Za-z0-9._:-]+$",
+              "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._:-]+$",
               "type": "string"
             }
           }
@@ -2759,7 +2759,7 @@
               "description": "better-ccflare account id (see accounts.list).",
               "maxLength": 200,
               "minLength": 1,
-              "pattern": "^[A-Za-z0-9._:-]+$",
+              "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._:-]+$",
               "type": "string"
             }
           }
@@ -2817,7 +2817,7 @@
               "description": "better-ccflare account id (see accounts.list).",
               "maxLength": 200,
               "minLength": 1,
-              "pattern": "^[A-Za-z0-9._:-]+$",
+              "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._:-]+$",
               "type": "string"
             }
           }
@@ -11860,7 +11860,7 @@
         "x-mcp-tool": "boof_get_settings"
       },
       "put": {
-        "description": "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
+        "description": "Changes global settings, including owlish gateway settings and its write-only client key. Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
         "operationId": "settings.update",
         "parameters": [
           {

@@ -90,10 +90,17 @@ export class OpencodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
+    const childEnv = agentEnv(process.env, opts.agentEnv);
+    if (opts.gateway) {
+      delete childEnv.ANTHROPIC_API_KEY;
+      delete childEnv.ANTHROPIC_AUTH_TOKEN;
+      delete childEnv.CLAUDE_CODE_USE_BEDROCK;
+      delete childEnv.CLAUDE_CODE_USE_VERTEX;
+    }
     const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
-      env: { ...agentEnv(process.env, opts.agentEnv), ...gatewayEnv("opencode", opts.gateway) },
+      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway) },
       input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

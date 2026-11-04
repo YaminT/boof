@@ -390,7 +390,17 @@ export const OwlishSettingsSchema = z.strictObject({
     .string()
     .url()
     .regex(/^https?:\/\//i, "must be an http(s) URL")
-    .max(500),
+    .max(500)
+    .refine((value) => {
+      const u = new URL(value);
+      const loopback =
+        u.hostname === "localhost" ||
+        u.hostname === "::1" ||
+        /^127(?:\.\d{1,3}){3}$/.test(u.hostname);
+      return (
+        !u.username && !u.password && !u.search && !u.hash && (u.protocol === "https:" || loopback)
+      );
+    }, "Use HTTPS off loopback and omit credentials, query and fragment"),
   /** `pause`: no routed task starts while the pool is unhealthy; `warn`: report only; `off`: ignore. */
   healthGate: z.enum(["pause", "warn", "off"]).default("pause"),
 });

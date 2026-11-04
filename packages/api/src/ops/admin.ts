@@ -65,7 +65,7 @@ export const settingsUpdate = defineOp({
   name: "settings.update",
   title: "Update settings",
   description:
-    "Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
+    "Changes global settings, including owlish gateway settings and its write-only client key. Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.",
   scope: "settings:write",
   projectScoped: false,
   input: SettingsPatchSchema.extend({
@@ -84,7 +84,6 @@ export const settingsUpdate = defineOp({
   summary: () => "Settings updated",
   handler: async (ctx, { expectedUpdated, owlishApiKey, ...patch }) => {
     assertMayWriteSettings(ctx);
-    const saved = await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated);
     // The key never touches settings.json: it goes to the secret store, and is not echoed.
     if (typeof owlishApiKey === "string") {
       try {
@@ -98,6 +97,7 @@ export const settingsUpdate = defineOp({
         );
       }
     } else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
+    const saved = await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated);
     return publicSettings(saved);
   },
 });

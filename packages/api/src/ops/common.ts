@@ -21,7 +21,7 @@ export const accountIdParam = z
   .string()
   .min(1)
   .max(200)
-  .regex(/^[A-Za-z0-9._:-]+$/, "Invalid account id")
+  .regex(/^(?!\.{1,2}$)[A-Za-z0-9._:-]+$/, "Invalid account id")
   .meta({ description: "better-ccflare account id (see accounts.list)." });
 
 export const webhookIdParam = idParam("id", "Webhook id.");

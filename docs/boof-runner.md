@@ -334,6 +334,8 @@ The client key is optional. Set it once through the write-only `owlishApiKey` in
 
 Account operations are generated from the same registry as REST and MCP: `boof-runner accounts list`, `pause`, `resume`, `priority`, `thresholds` and `health`. Use the generated command help for required flags and arguments. Reads need `settings:read`. Account changes and gateway settings need `settings:write` plus a trusted, project-unrestricted principal; `review-trust` and `local-mcp` cannot change accounts or gateway settings. The pool is shared across projects. A running pipeline waits in place up to `retries.poolWaitMs` (default 30 minutes) when it reaches a pool-unavailable step; the task remains running during the wait.
 
+Routed agents receive the gateway client key in their process environment and can call ccflare's `/api/*` endpoints directly with it, bypassing boof's account-operation authorization. See [Agents are not sandboxed](#agents-are-not-sandboxed) and the [agent-containment goal](superpowers/specs/2026-10-29-boof-roadmap.md).
+
 This documents the 8a HTTP integration. The later Accounts settings tab and Agent SDK adapter (8b) are not included.
 
 - `onExceed: "pause"` keeps the worktree and branch whatever `worktree.onFailure` says; `"fail"` follows it. Both fail the task; a day budget that is spent blocks new work in its scope until midnight (in the budget zone) for both.

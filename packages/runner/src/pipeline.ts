@@ -322,6 +322,7 @@ export class Pipeline {
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
     await this.awaitPool(id, tool);
+    await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
     await this.deps.store.appendStep(id, label).catch(() => {});
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
@@ -419,6 +420,7 @@ export class Pipeline {
               `\nTransient failure in ${label}: ${reason}; the account pool is not usable`,
             );
             await this.awaitPool(id, tool, true);
+            await this.assertBudget(id, tool.id);
             await this.log(id, `\n### ${label} (after the pool recovered)`);
             prompt = compose("a transient error (API or network failure, or a stalled stream)");
             continue;

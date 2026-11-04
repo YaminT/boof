@@ -65,6 +65,8 @@ Set `settings.owlish` to an object with `url` and optional `healthGate` (`pause`
 
 The optional client key can be set once using `settings.update` input `owlishApiKey`, which is write-only, or supplied as `BOOF_OWLISH_API_KEY` (environment takes precedence). The stored file is `<data>/owlish/secrets.json`, mode 0600. The setting response does not return the key. The generated CLI commands are `boof-runner accounts list|pause|resume|priority|thresholds|health`; their exact flags are shown by `--help`. Reads use `settings:read`. Account mutations and gateway configuration use `settings:write` and require a trusted, project-unrestricted principal; `review-trust` and `local-mcp` cannot perform these changes.
 
+Routed agents receive the gateway key in their environment and can call ccflare `/api/*` endpoints directly, outside boof's account-operation authorization. See [Agents are not sandboxed](boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](superpowers/specs/2026-10-29-boof-roadmap.md).
+
 This is the 8a HTTP integration only. The Accounts settings tab and Agent SDK adapter (8b) are not included.
 
 ## Versioning

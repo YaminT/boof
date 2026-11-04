@@ -208,7 +208,7 @@ describe("waitHealthy", () => {
     });
     expect(res.ok).toBe(true);
     expect(sleeps.length).toBeGreaterThanOrEqual(3);
-    expect(Math.min(...sleeps)).toBeGreaterThanOrEqual(1000); // no spin
+    expect(Math.max(...sleeps)).toBeLessThanOrEqual(250); // stop checks stay responsive
     expect(Math.max(...sleeps)).toBeLessThanOrEqual(30_000);
     expect(logs.join("\n")).toMatch(/Waiting for the account pool/);
     expect(hits).toBeLessThanOrEqual(6); // polled about every 30 s, not every sleep tick
@@ -240,5 +240,20 @@ describe("waitHealthy", () => {
         },
       }),
     ).rejects.toThrow(/stopped/);
+  });
+
+  it("checks stop during a wait at no more than 250 ms intervals", async () => {
+    health = POOL_DOWN();
+    let checks = 0;
+    await expect(
+      gate().waitHealthy({
+        maxMs: 60_000,
+        beforeEachWait: async () => {
+          if (++checks === 3) throw new Error("Task stopped by user");
+        },
+      }),
+    ).rejects.toThrow(/stopped/);
+    expect(checks).toBe(3);
+    expect(Math.max(...sleeps)).toBeLessThanOrEqual(250);
   });
 });

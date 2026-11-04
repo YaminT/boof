@@ -166,6 +166,8 @@ Configure `settings.owlish` in `settings.json` (or through `settings.update`) wi
 
 The optional better-ccflare client key is set once with `settings.update`'s write-only `owlishApiKey`, or supplied through `BOOF_OWLISH_API_KEY` (which takes precedence). The file store is `<data>/owlish/secrets.json` with mode 0600; the key is never returned after setting it. Boof does not store provider credentials. If the pool runs out between pipeline steps, the task stays running and waits in place for `retries.poolWaitMs` (default 30 minutes), then fails as pool exhausted.
 
+Routed agents receive the gateway client key in their process environment. Agents run as the server's OS user and can call ccflare's `/api/*` endpoints directly with that key, outside boof's account-operation authorization; see [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](docs/superpowers/specs/2026-10-29-boof-roadmap.md).
+
 The registry-generated commands are `boof-runner accounts list`, `pause`, `resume`, `priority`, `thresholds` and `health`; run `boof-runner accounts --help` or `boof-runner accounts <command> --help` for inputs. Reads need `settings:read`; changes need `settings:write` and a trusted, project-unrestricted principal because the pool is shared. `review-trust` and `local-mcp` principals cannot change account state or gateway settings.
 
 ### Install or update from source

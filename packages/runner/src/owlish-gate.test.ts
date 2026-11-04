@@ -7,10 +7,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   defaultSettings,
+  budgetTimeZone,
   execCommand,
   newTask,
   ProjectStore,
   readEvents,
+  recordSpend,
   SettingsStore,
   TaskStore,
   taskControlDir,
@@ -277,6 +279,65 @@ describe("selection", () => {
 });
 
 describe("a running task and the pool", () => {
+  it("checks the day budget again after a successful pre-step pool wait", async () => {
+    await configure("pause", { budget: { perDayUsd: 0.5, onExceed: "pause" } });
+    await addTask("t1", "pooled");
+    mockState.onRun = async (o) => {
+      if (o.role === "planner" && mockState.calls.length === 1) {
+        healthy = false;
+        clock += 31_000;
+      }
+    };
+    onSleep = async (n) => {
+      if (n === 1) {
+        await recordSpend({
+          dataRoot,
+          projectId: main.id,
+          projectDir: main.workingDirectory,
+          tool: "external",
+          usage: { costUsd: 1, known: true },
+          timezone: budgetTimeZone({}),
+        });
+        healthy = true;
+      }
+    };
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("failed");
+    expect(mockState.calls).toEqual(["planner", "planner"]);
+    expect(mockState.calls).not.toContain("developer");
+    expect((await tasks(main).get("t1"))?.body.log).toContain("budget exceeded: global");
+  });
+
+  it("checks the day budget after a 503 pool wait before rerunning the step", async () => {
+    await configure("pause", {
+      budget: { perDayUsd: 0.5, onExceed: "pause" },
+      retries: { transient: 0, backoffMs: [0], idleTimeoutMs: 1_200_000, poolWaitMs: 600_000 },
+    });
+    await addTask("t1", "pooled", "Work. [[mock-transient developer=1]]");
+    mockState.onRun = async (o) => {
+      if (o.role === "developer" && !mockState.transientCounts.get("developer")) healthy = false;
+    };
+    onSleep = async (n) => {
+      if (n === 1) {
+        await recordSpend({
+          dataRoot,
+          projectId: main.id,
+          projectDir: main.workingDirectory,
+          tool: "external",
+          usage: { costUsd: 1, known: true },
+          timezone: budgetTimeZone({}),
+        });
+        healthy = true;
+      }
+    };
+    makeEngine();
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("failed");
+    expect(mockState.calls.filter((role) => role === "developer")).toHaveLength(1);
+    expect((await tasks(main).get("t1"))?.body.log).toContain("budget exceeded: global");
+  });
+
   it("waits in place before a pooled step while the pool is down, stays running, and finishes when it recovers", async () => {
     await configure("pause");
     await addTask("t1", "pooled");
@@ -296,10 +357,11 @@ describe("a running task and the pool", () => {
     await engine.runUntilIdle();
     expect(await status("t1")).toBe("done");
     expect(sleeps.length).toBeGreaterThanOrEqual(3);
-    expect(Math.min(...sleeps)).toBeGreaterThanOrEqual(1000);
+    expect(Math.max(...sleeps)).toBeLessThanOrEqual(250);
     expect(observed.every((s) => s === "running")).toBe(true);
     const t = await tasks(main).get("t1");
     expect(t?.body.log).toContain("### Waiting for the account pool");
+    expect(await poolEvents()).toHaveLength(1);
     expect(hits).toBeLessThanOrEqual(8);
   });
 
@@ -324,7 +386,7 @@ describe("a running task and the pool", () => {
     const waited = sleeps.reduce((a, b) => a + b, 0);
     expect(waited).toBeGreaterThanOrEqual(120_000);
     expect(waited).toBeLessThan(120_000 + 31_000);
-    expect(sleeps.length).toBeLessThanOrEqual(6); // ~30 s polls, not a busy loop
+    expect(hits).toBeLessThanOrEqual(8); // ~30 s health polls, not a busy loop
     expect(results.some((r) => r.kind === "ran" && r.outcome.kind === "failed")).toBe(true);
   });
 

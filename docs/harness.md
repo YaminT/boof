@@ -1833,7 +1833,7 @@ Query parameters:
 - Scope: `settings:write`
 - MCP tool: `boof_update_settings`
 - CLI: `boof-runner settings update`
-- What it does: Changes global settings. Input: the fields to change (runner, defaultProject, roles, review, worktree, retries, budget, models). Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.
+- What it does: Changes global settings, including owlish gateway settings and its write-only client key. Rewrites settings.json. Needs settings:write and a trusted, project-unrestricted client: settings are global.
 - Success: HTTP 200 with `Settings`. The response has an `ETag` header.
 - Header `If-Match`: The ETag of GET /settings you last saw, e.g. W/"3fa9c1d2e4b5a687". Settings that changed since answer 409 settings_modified. Omit it (or send *) for an unconditional write.
 - Errors: `403 forbidden_scope`, `400 invalid_input`, `409 settings_modified`

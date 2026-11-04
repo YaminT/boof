@@ -151,8 +151,8 @@ describe("routing through the account pool gateway", () => {
       ANTHROPIC_BASE_URL: "http://127.0.0.1:8080",
       ANTHROPIC_AUTH_TOKEN: "ccf-client-key",
     });
-    expect(gatewayEnv("anthropic", { url: "http://gw:8080" })).toEqual({
-      ANTHROPIC_BASE_URL: "http://gw:8080",
+    expect(gatewayEnv("anthropic", { url: "https://gw:8080" })).toEqual({
+      ANTHROPIC_BASE_URL: "https://gw:8080",
     });
   });
 
@@ -161,8 +161,8 @@ describe("routing through the account pool gateway", () => {
       OPENAI_BASE_URL: "http://127.0.0.1:8080/v1",
       OPENAI_API_KEY: "ccf-client-key",
     });
-    expect(gatewayEnv("openai", { url: "http://gw:8080" })).toEqual({
-      OPENAI_BASE_URL: "http://gw:8080/v1",
+    expect(gatewayEnv("openai", { url: "https://gw:8080" })).toEqual({
+      OPENAI_BASE_URL: "https://gw:8080/v1",
       OPENAI_API_KEY: "dummy-key",
     });
   });
@@ -171,13 +171,13 @@ describe("routing through the account pool gateway", () => {
     const withKey = JSON.parse(gatewayEnv("opencode", gw).OPENCODE_CONFIG_CONTENT!);
     expect(withKey).toEqual({
       provider: {
-        anthropic: { options: { baseURL: "http://127.0.0.1:8080", apiKey: "ccf-client-key" } },
+        anthropic: { options: { baseURL: "http://127.0.0.1:8080/v1", apiKey: "ccf-client-key" } },
       },
     });
     const noKey = JSON.parse(
-      gatewayEnv("opencode", { url: "http://gw:8080" }).OPENCODE_CONFIG_CONTENT!,
+      gatewayEnv("opencode", { url: "https://gw:8080" }).OPENCODE_CONFIG_CONTENT!,
     );
-    expect(noKey.provider.anthropic.options).toEqual({ baseURL: "http://gw:8080" });
+    expect(noKey.provider.anthropic.options).toEqual({ baseURL: "https://gw:8080/v1" });
   });
 
   it("gatewayEnv: nothing without a gateway", () => {
@@ -271,9 +271,10 @@ describe("routing through the account pool gateway", () => {
 
     it("claude with a gateway but no key: no token is invented", async () => {
       const dir = await setup("BOOF_RUNNER_CLAUDE_BIN", "claude");
+      set("ANTHROPIC_AUTH_TOKEN", "inherited-provider-token");
       const { env } = await run(() => new ClaudeCodeTool(), dir, { gateway: { url: gw.url } });
       expect(env).toContain("ANTHROPIC_BASE_URL=http://127.0.0.1:8080\n");
-      expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN");
+      expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN=");
     });
 
     it("codex: /v1 URL and key by env, config isolation kept, key not in argv", async () => {
@@ -283,9 +284,48 @@ describe("routing through the account pool gateway", () => {
       expect(env).toContain("OPENAI_API_KEY=ccf-client-key");
       expect(env).not.toContain("BOOF_");
       expect(argv).toContain("--ignore-user-config");
+      expect(argv).toContain("-c model_provider=boofpool");
+      expect(argv).toContain(
+        '-c model_providers.boofpool={ base_url = "http://127.0.0.1:8080/v1", env_key = "OPENAI_API_KEY", wire_api = "responses" }',
+      );
       expect(argv).not.toContain("ccf-client-key");
+      expect(
+        new CodexTool().buildArgs({ ...base, cwd: "/tmp", gateway: gw }, "/tmp/final.txt"),
+      ).toEqual([
+        "exec",
+        "--json",
+        "--model",
+        "m",
+        "--ignore-user-config",
+        "-c",
+        "model_provider=boofpool",
+        "-c",
+        'model_providers.boofpool={ base_url = "http://127.0.0.1:8080/v1", env_key = "OPENAI_API_KEY", wire_api = "responses" }',
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-o",
+        "/tmp/final.txt",
+        "-",
+      ]);
       const open = await run(() => new CodexTool(), dir, { gateway: gw, inheritMcpServers: true });
       expect(open.argv).not.toContain("--ignore-user-config");
+    });
+
+    it("claude gateway removes inherited provider credentials and bypass flags", async () => {
+      const dir = await setup("BOOF_RUNNER_CLAUDE_BIN", "claude");
+      set("ANTHROPIC_API_KEY", "real-provider-key");
+      set("ANTHROPIC_AUTH_TOKEN", "real-auth-token");
+      set("CLAUDE_CODE_USE_BEDROCK", "1");
+      const { env } = await run(() => new ClaudeCodeTool(), dir, { gateway: gw });
+      expect(env).not.toContain("ANTHROPIC_API_KEY=");
+      expect(env).not.toContain("CLAUDE_CODE_USE_BEDROCK=");
+      expect(env).toContain("ANTHROPIC_AUTH_TOKEN=ccf-client-key");
+    });
+
+    it("rejects unsafe Codex gateway URLs before composing TOML", async () => {
+      const dir = await setup("BOOF_RUNNER_CODEX_BIN", "codex");
+      await expect(
+        run(() => new CodexTool(), dir, { gateway: { url: 'http://gw/"\nmodel = "injected"' } }),
+      ).rejects.toThrow();
     });
 
     it("codex without a key uses a dummy one", async () => {
@@ -301,7 +341,7 @@ describe("routing through the account pool gateway", () => {
       expect(
         JSON.parse(line.slice("OPENCODE_CONFIG_CONTENT=".length)).provider.anthropic.options,
       ).toEqual({
-        baseURL: "http://127.0.0.1:8080",
+        baseURL: "http://127.0.0.1:8080/v1",
         apiKey: "ccf-client-key",
       });
       expect(argv).not.toContain("ccf-client-key");

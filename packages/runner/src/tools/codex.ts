@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { commandExists, execCommand, parseUsage } from "@boof-runner/shared";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
-import { gatewayEnv } from "../gateway-env.js";
+import { gatewayEnv, gatewayUrl } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
@@ -103,6 +103,15 @@ export class CodexTool implements Tool {
     // CODEX_HOME. The run needs nothing else from it: the model is passed above, and approval and
     // sandbox below (a user's model_provider or base_url is lost: set inheritMcpServers for that).
     if (!opts.inheritMcpServers) args.push("--ignore-user-config");
+    if (opts.gateway) {
+      const url = `${gatewayUrl(opts.gateway.url)}/v1`;
+      args.push(
+        "-c",
+        "model_provider=boofpool",
+        "-c",
+        `model_providers.boofpool={ base_url = "${url}", env_key = "OPENAI_API_KEY", wire_api = "responses" }`,
+      );
+    }
     if (opts.autoApprove) {
       // Full auto-approval, no sandbox — the runner's equivalent of claude's
       // --dangerously-skip-permissions. Mutually exclusive with --full-auto

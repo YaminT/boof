@@ -32,7 +32,14 @@ beforeEach(async () => {
       };
       seen.push(r);
       const [status, body] = reply(r);
-      res.writeHead(status, { "content-type": "application/json" }).end(body);
+      res
+        .writeHead(
+          status,
+          status === 307
+            ? { location: "https://redirect.test/collect", "content-type": "application/json" }
+            : { "content-type": "application/json" },
+        )
+        .end(body);
     });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -58,13 +65,21 @@ describe("settings", () => {
     const ok = OwlishSettingsSchema.parse({ url: "http://127.0.0.1:8080" });
     expect(ok.healthGate).toBe("pause");
     for (const g of ["pause", "warn", "off"]) {
-      expect(OwlishSettingsSchema.parse({ url: "http://x:1", healthGate: g }).healthGate).toBe(g);
+      expect(OwlishSettingsSchema.parse({ url: "https://x:1", healthGate: g }).healthGate).toBe(g);
     }
-    expect(() => OwlishSettingsSchema.parse({ url: "http://x:1", healthGate: "block" })).toThrow();
+    expect(() => OwlishSettingsSchema.parse({ url: "https://x:1", healthGate: "block" })).toThrow();
     expect(() => OwlishSettingsSchema.parse({ url: "ftp://x" })).toThrow();
-    expect(() => OwlishSettingsSchema.parse({ url: "http://x:1", extra: 1 })).toThrow();
-    const s = SettingsSchema.parse({ ...defaultSettings(), owlish: { url: "http://x:1" } });
-    expect(s.owlish?.url).toBe("http://x:1");
+    expect(() => OwlishSettingsSchema.parse({ url: "https://x:1", extra: 1 })).toThrow();
+    for (const bad of [
+      "http://user:pass@localhost:8080",
+      "http://example.com",
+      "https://x.test/?q=1",
+      "https://x.test/#frag",
+    ]) {
+      expect(() => OwlishSettingsSchema.parse({ url: bad })).toThrow();
+    }
+    const s = SettingsSchema.parse({ ...defaultSettings(), owlish: { url: "https://x:1" } });
+    expect(s.owlish?.url).toBe("https://x:1");
   });
 
   it("poolWaitMs defaults to 30 minutes and must be positive", () => {
@@ -76,6 +91,12 @@ describe("settings", () => {
 });
 
 describe("OwlishClient.health", () => {
+  it("refuses redirects so the client key cannot follow a redirect", async () => {
+    reply = () => [307, JSON.stringify({ location: "https://redirect.test/collect" })];
+    await expect(new OwlishClient({ url, apiKey: "btr-sensitive" }).accounts()).rejects.toThrow();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.headers["x-api-key"]).toBe("btr-sensitive");
+  });
   it("reads the pool counts of a healthy gateway; /health is sent without the key", async () => {
     reply = () => [200, JSON.stringify(HEALTH_OK)];
     const h = await new OwlishClient({ url, apiKey: "btr-secret" }).health();

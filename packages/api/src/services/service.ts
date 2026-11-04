@@ -849,6 +849,9 @@ export class TaskService {
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
     this.owlishSecrets = new OwlishSecretStore(root);
+    void this.owlishSecrets.tighten().catch(() => {
+      console.error("could not secure Owlish secret storage");
+    });
     this.catalog = catalog;
   }
 

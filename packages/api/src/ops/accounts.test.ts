@@ -172,6 +172,26 @@ describe("without a gateway configured", () => {
 });
 
 describe("with a gateway", () => {
+  it("rejects an invalid key without changing settings", async () => {
+    await service.settingsStore.save({
+      ...(await service.loadSettings()),
+      defaultProject: "before",
+    });
+    const before = await readFile(join(root, "settings.json"), "utf8");
+    await run("settings.update", LOCAL_PRINCIPAL, {
+      owlish: { url },
+      owlishApiKey: "has space",
+    }).catch(() => undefined);
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(before);
+  });
+
+  it("refuses dot traversal account ids before calling the gateway", async () => {
+    await configure();
+    for (const accountId of [".", "..", "x/y"]) {
+      await run("accounts.pause", admin, { accountId }).catch(() => undefined);
+    }
+    expect(seen.filter((r) => r.url.includes("/api/"))).toEqual([]);
+  });
   it("settings.update stores url and gate in settings, the key only in the secret store", async () => {
     await configure();
     const settings = await readFile(join(root, "settings.json"), "utf8");

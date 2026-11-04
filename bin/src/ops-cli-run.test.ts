@@ -158,6 +158,11 @@ describe("generated commands", () => {
     expect(text()).toContain("tasks create");
   });
 
+  it("account operation help includes the better-ccflare credit line", async () => {
+    expect(await run(["accounts", "--help"])).toBe(0);
+    expect(text()).toContain("Account pooling by better-ccflare");
+  });
+
   it("bad usage exits 1", async () => {
     await seed();
     expect(await run(["tasks", "create", "--nope"])).toBe(1);

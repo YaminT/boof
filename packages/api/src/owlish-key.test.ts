@@ -1,8 +1,9 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, SettingsStore } from "@boof-runner/shared";
+import { OwlishSecretStore } from "@boof-runner/shared/owlish";
 import { TaskService } from "./services/service.js";
 
 let root: string;
@@ -11,6 +12,13 @@ afterEach(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDel
 
 describe("TaskService and the Owlish client key", () => {
   const catalog = { list: () => [] } as never;
+
+  it("tightens the Owlish secret store when the service starts", () => {
+    const tighten = vi.spyOn(OwlishSecretStore.prototype, "tighten").mockResolvedValue();
+    new TaskService(root, catalog);
+    expect(tighten).toHaveBeenCalledOnce();
+    tighten.mockRestore();
+  });
 
   it("holds the key store, and loadSettings never returns the key", async () => {
     await new SettingsStore(root).save({

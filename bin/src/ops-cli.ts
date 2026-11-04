@@ -335,6 +335,7 @@ function helpFor(op: AnyOperation): string[] {
     op.title,
     "",
     op.description,
+    ...(path.startsWith("accounts ") ? ["Account pooling by better-ccflare."] : []),
     "",
     `Usage: boof-runner ${path} [flags]`,
     `Scope: ${op.scopes.length > 0 ? op.scopes.join(" or ") : "none"}`,
@@ -369,6 +370,7 @@ function listCommands(ops: AnyOperation[], out: (l: string) => void): void {
   for (const [area, list] of byArea) {
     out(`${area}:`);
     for (const o of list) out(`  ${commandPath(o).join(" ").padEnd(34)}${o.title}`);
+    if (area === "accounts") out("  Account pooling by better-ccflare.");
   }
 }
 

@@ -120,6 +120,7 @@ export class PoolGate {
     let said = "";
     for (;;) {
       const check = await this.check();
+      await this.announceIfBlocked(check);
       if (!check.blocked) return { ok: true, pool: check.pool };
       const left = start + opts.maxMs - this.now();
       if (left <= 0) return { ok: false, pool: check.pool };
@@ -130,10 +131,16 @@ export class PoolGate {
         said = note;
         await opts.log?.(`\n### Waiting for the account pool (${note})`);
       }
-      await opts.beforeEachWait?.();
       const sinceAsk = this.now() - (this.last?.at ?? this.now());
       const untilPoll = Math.max(POOL_POLL_MS - sinceAsk, 0);
-      await this.sleep(Math.min(Math.max(untilPoll, MIN_SLEEP_MS), POOL_POLL_MS, left));
+      const duration = Math.min(Math.max(untilPoll, MIN_SLEEP_MS), POOL_POLL_MS, left);
+      let remaining = duration;
+      while (remaining > 0) {
+        await opts.beforeEachWait?.();
+        const slice = Math.min(250, remaining);
+        await this.sleep(slice);
+        remaining -= slice;
+      }
     }
   }
 }
