@@ -160,7 +160,9 @@ describe("generated commands", () => {
 
   it("account operation help includes the better-ccflare credit line", async () => {
     expect(await run(["accounts", "--help"])).toBe(0);
-    expect(text()).toContain("Account pooling by better-ccflare");
+    expect(text()).toContain(
+      "Account pooling by better-ccflare (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.",
+    );
   });
 
   it("bad usage exits 1", async () => {

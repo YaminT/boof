@@ -110,6 +110,11 @@ export class ClaudeCodeTool implements Tool {
       delete childEnv.ANTHROPIC_AUTH_TOKEN;
       delete childEnv.CLAUDE_CODE_USE_BEDROCK;
       delete childEnv.CLAUDE_CODE_USE_VERTEX;
+      delete childEnv.ANTHROPIC_CUSTOM_HEADERS;
+      for (const key of Object.keys(childEnv)) {
+        if (key.startsWith("CLAUDE_CODE_USE_") || key.startsWith("ANTHROPIC_FOUNDRY_"))
+          delete childEnv[key];
+      }
     }
 
     const render = new StreamRenderer((text) => opts.onChunk?.(text));

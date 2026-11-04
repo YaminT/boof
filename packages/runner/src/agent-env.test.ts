@@ -1,4 +1,5 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -186,6 +187,17 @@ describe("routing through the account pool gateway", () => {
     }
   });
 
+  it("normalizes TOML-unsafe URL characters through the shared settings parser", () => {
+    expect(gatewayEnv("openai", { url: 'http://127.0.0.1:8080/"quoted' }).OPENAI_BASE_URL).toBe(
+      "http://127.0.0.1:8080/%22quoted/v1",
+    );
+    expect(gatewayEnv("openai", { url: "http://[::1]:8080" }).OPENAI_BASE_URL).toBe(
+      "http://[::1]:8080/v1",
+    );
+    expect(() => gatewayEnv("openai", { url: "http://127.0.0.1:8080?" })).toThrow();
+    expect(() => gatewayEnv("openai", { url: "http://127.0.0.1:8080/has space" })).toThrow();
+  });
+
   it("only the tools that can be pooled say so; the mock does not", () => {
     expect(new ClaudeCodeTool().acceptsPool).toBe(true);
     expect(new CodexTool().acceptsPool).toBe(true);
@@ -286,7 +298,7 @@ describe("routing through the account pool gateway", () => {
       expect(argv).toContain("--ignore-user-config");
       expect(argv).toContain("-c model_provider=boofpool");
       expect(argv).toContain(
-        '-c model_providers.boofpool={ base_url = "http://127.0.0.1:8080/v1", env_key = "OPENAI_API_KEY", wire_api = "responses" }',
+        '-c model_providers.boofpool={ name = "boof pool", base_url = "http://127.0.0.1:8080/v1", env_key = "OPENAI_API_KEY", wire_api = "responses" }',
       );
       expect(argv).not.toContain("ccf-client-key");
       expect(
@@ -300,7 +312,7 @@ describe("routing through the account pool gateway", () => {
         "-c",
         "model_provider=boofpool",
         "-c",
-        'model_providers.boofpool={ base_url = "http://127.0.0.1:8080/v1", env_key = "OPENAI_API_KEY", wire_api = "responses" }',
+        'model_providers.boofpool={ name = "boof pool", base_url = "http://127.0.0.1:8080/v1", env_key = "OPENAI_API_KEY", wire_api = "responses" }',
         "--dangerously-bypass-approvals-and-sandbox",
         "-o",
         "/tmp/final.txt",
@@ -315,9 +327,15 @@ describe("routing through the account pool gateway", () => {
       set("ANTHROPIC_API_KEY", "real-provider-key");
       set("ANTHROPIC_AUTH_TOKEN", "real-auth-token");
       set("CLAUDE_CODE_USE_BEDROCK", "1");
+      set("CLAUDE_CODE_USE_FOUNDRY", "1");
+      set("CLAUDE_CODE_USE_ANYTHING", "1");
+      set("ANTHROPIC_CUSTOM_HEADERS", "X-Probe-Cred: secret");
       const { env } = await run(() => new ClaudeCodeTool(), dir, { gateway: gw });
       expect(env).not.toContain("ANTHROPIC_API_KEY=");
       expect(env).not.toContain("CLAUDE_CODE_USE_BEDROCK=");
+      expect(env).not.toContain("CLAUDE_CODE_USE_FOUNDRY=");
+      expect(env).not.toContain("CLAUDE_CODE_USE_ANYTHING=");
+      expect(env).not.toContain("ANTHROPIC_CUSTOM_HEADERS=");
       expect(env).toContain("ANTHROPIC_AUTH_TOKEN=ccf-client-key");
     });
 
@@ -347,4 +365,65 @@ describe("routing through the account pool gateway", () => {
       expect(argv).not.toContain("ccf-client-key");
     });
   });
+
+  it.skipIf(process.env.BOOF_REAL_CODEX !== "1")(
+    "real codex routes to a local fake gateway with isolated homes",
+    async () => {
+      const temp = await mkdtemp(join(tmpdir(), "boof-real-codex-"));
+      const home = join(temp, "home");
+      const codexHome = join(temp, "codex");
+      await import("node:fs/promises").then(({ mkdir }) =>
+        Promise.all([mkdir(home), mkdir(codexHome)]),
+      );
+      const requests: Array<{ method?: string; url?: string; authorization?: string }> = [];
+      const fake = createServer((req, res) => {
+        requests.push({
+          method: req.method,
+          url: req.url,
+          authorization: req.headers.authorization,
+        });
+        res
+          .writeHead(401, { "content-type": "application/json" })
+          .end('{"error":"smoke complete"}');
+      });
+      await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve));
+      const gateway = `http://127.0.0.1:${(fake.address() as import("node:net").AddressInfo).port}`;
+      const envNames = ["HOME", "CODEX_HOME", "OPENAI_API_KEY", "OPENAI_BASE_URL"];
+      const original = Object.fromEntries(envNames.map((k) => [k, process.env[k]]));
+      try {
+        process.env.HOME = home;
+        process.env.CODEX_HOME = codexHome;
+        process.env.OPENAI_API_KEY = "inherited-provider-key-must-not-win";
+        delete process.env.OPENAI_BASE_URL;
+        const tool = new CodexTool();
+        await expect(
+          tool.run({
+            role: "developer",
+            model: "gpt-5.5",
+            systemPrompt: "smoke",
+            prompt: "smoke",
+            cwd: temp,
+            autoApprove: true,
+            gateway: { url: gateway, apiKey: "btr-local-smoke-key" },
+          }),
+        ).rejects.toThrow();
+        expect(
+          requests.some(
+            (r) =>
+              r.method === "POST" &&
+              r.url === "/v1/responses" &&
+              r.authorization === "Bearer btr-local-smoke-key",
+          ),
+        ).toBe(true);
+      } finally {
+        for (const [k, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[k];
+          else process.env[k] = value;
+        }
+        await new Promise<void>((resolve) => fake.close(() => resolve()));
+        await rm(temp, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
 });

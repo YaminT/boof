@@ -109,7 +109,7 @@ export class CodexTool implements Tool {
         "-c",
         "model_provider=boofpool",
         "-c",
-        `model_providers.boofpool={ base_url = "${url}", env_key = "OPENAI_API_KEY", wire_api = "responses" }`,
+        `model_providers.boofpool={ name = "boof pool", base_url = "${url}", env_key = "OPENAI_API_KEY", wire_api = "responses" }`,
       );
     }
     if (opts.autoApprove) {

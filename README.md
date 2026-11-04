@@ -160,11 +160,13 @@ Exactly what happens:
 
 ### Optional account pool (better-ccflare)
 
-Boof can route supported task tools through [better-ccflare](https://github.com/tombii/better-ccflare), an MIT-licensed gateway called over HTTP. **Account pooling by better-ccflare.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; it does not include the later Accounts settings tab or the Agent SDK adapter (8b).
+Boof can route supported task tools through the better-ccflare HTTP gateway. **Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; it does not include the later Accounts settings tab or the Agent SDK adapter (8b).
 
 Configure `settings.owlish` in `settings.json` (or through `settings.update`) with the gateway `url` and `healthGate: "pause" | "warn" | "off"` (default `pause`). With `pause`, selection of work using a pool-routed tool pauses when the configured gateway is degraded, unhealthy or unreachable; the reason is visible in runner pool status. `warn` reports health without blocking and `off` disables the gate. With no `settings.owlish`, there is no gateway request or gate.
 
 The optional better-ccflare client key is set once with `settings.update`'s write-only `owlishApiKey`, or supplied through `BOOF_OWLISH_API_KEY` (which takes precedence). The file store is `<data>/owlish/secrets.json` with mode 0600; the key is never returned after setting it. Boof does not store provider credentials. If the pool runs out between pipeline steps, the task stays running and waits in place for `retries.poolWaitMs` (default 30 minutes), then fails as pool exhausted.
+
+Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Credentials, query strings and fragments are rejected.
 
 Routed agents receive the gateway client key in their process environment. Agents run as the server's OS user and can call ccflare's `/api/*` endpoints directly with that key, outside boof's account-operation authorization; see [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](docs/superpowers/specs/2026-10-29-boof-roadmap.md).
 
@@ -457,6 +459,10 @@ npm run docs:gen     # regenerate the REST reference in docs/harness.md and its 
 ```
 
 All pipeline tests drive the **mock** tool, so CI never makes network calls or burns tokens. After changing an operation, run `UPDATE_OPENAPI=1 npx vitest run packages/api` and `npm run docs:gen`.
+
+## Credits
+
+Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.
 
 ## License
 

@@ -44,6 +44,12 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 });
 
 describe("settings compatibility", () => {
+  it("reports invalid gateway URLs as settings validation errors when loading", async () => {
+    const path = dataRootPaths(root).settings;
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify({ ...defaultSettings(), owlish: { url: "not a url" } }));
+    await expect(new SettingsStore(root).load()).rejects.toThrow(/Invalid URL|validation|url/i);
+  });
   it("loads an old settings.json without observer or review", async () => {
     const old = {
       schemaVersion: 2,

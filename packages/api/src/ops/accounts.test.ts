@@ -178,11 +178,31 @@ describe("with a gateway", () => {
       defaultProject: "before",
     });
     const before = await readFile(join(root, "settings.json"), "utf8");
-    await run("settings.update", LOCAL_PRINCIPAL, {
-      owlish: { url },
-      owlishApiKey: "has space",
-    }).catch(() => undefined);
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, {
+        owlish: { url },
+        owlishApiKey: "has space",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
     expect(await readFile(join(root, "settings.json"), "utf8")).toBe(before);
+  });
+
+  it("rejects a malformed gateway URL through input validation", async () => {
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, { owlish: { url: "not a url" } }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("a stale settings ETag leaves the key unchanged", async () => {
+    await service.owlishSecrets.set("btr-original-key-0001");
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, {
+        owlish: { url },
+        owlishApiKey: "btr-replacement-key-0001",
+        expectedUpdated: "stale",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await service.owlishSecrets.get()).toBe("btr-original-key-0001");
   });
 
   it("refuses dot traversal account ids before calling the gateway", async () => {

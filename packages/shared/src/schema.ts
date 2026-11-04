@@ -391,19 +391,45 @@ export const OwlishSettingsSchema = z.strictObject({
     .url()
     .regex(/^https?:\/\//i, "must be an http(s) URL")
     .max(500)
-    .refine((value) => {
-      const u = new URL(value);
-      const loopback =
-        u.hostname === "localhost" ||
-        u.hostname === "::1" ||
-        /^127(?:\.\d{1,3}){3}$/.test(u.hostname);
-      return (
-        !u.username && !u.password && !u.search && !u.hash && (u.protocol === "https:" || loopback)
-      );
-    }, "Use HTTPS off loopback and omit credentials, query and fragment"),
+    .refine(
+      isValidOwlishGatewayUrl,
+      "Use HTTPS off loopback and omit credentials, query and fragment",
+    ),
   /** `pause`: no routed task starts while the pool is unhealthy; `warn`: report only; `off`: ignore. */
   healthGate: z.enum(["pause", "warn", "off"]).default("pause"),
 });
+
+/** Shared URL parser and policy for settings validation and runtime routing. */
+export function parseOwlishGatewayUrl(value: string): URL | null {
+  if (/[\u0000-\u0020\u007f]/.test(value) || value.endsWith("?") || value.endsWith("#"))
+    return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  const hostname = parsed.hostname
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "")
+    .toLowerCase();
+  const loopback =
+    hostname === "localhost" || hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    (parsed.protocol === "http:" && !loopback)
+  )
+    return null;
+  return parsed;
+}
+
+export function isValidOwlishGatewayUrl(value: string): boolean {
+  return parseOwlishGatewayUrl(value) !== null;
+}
 export type OwlishSettings = z.infer<typeof OwlishSettingsSchema>;
 
 /** Runner section of settings.json. */

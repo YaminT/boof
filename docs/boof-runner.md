@@ -326,9 +326,15 @@ The mock tool can simulate both: `[[mock-transient developer=1]]` fails the firs
 - Selection (`RunnerEngine.selectWithBudget`) skips projects and tasks (by the tools of all four roles) whose day scope is spent and reports them. When nothing can start and something was skipped, `tick()` returns `{ kind: "budget", scopes }` and `runUntilIdle()` ends with that result instead of `idle`. `runner.budget_exceeded` is appended to `<data>/events.jsonl` once per day and scope (the marker is the `notified` list in the global ledger, so a restart does not repeat it); project scopes carry `project`.
 - **Account pool gate** (`settings.owlish`, `PoolGate` in `packages/runner/src/pool-gate.ts`). With `healthGate: "pause"`, a task whose roles use a pool-routed tool (`acceptsPool`) does not start while better-ccflare is degraded, unhealthy or unreachable; other tasks run. The reason is in `runner.status.pool` and the tick result (`kind: "pool"`); one `runner.pool_exhausted` event is written per blocked episode and selection resumes by itself when health returns. The gateway is asked at most every 30 s (sooner only once a known `nextAvailableAt` has passed). A running step that is about to use a pool-routed tool waits in place (task stays `running`, log line `### Waiting for the account pool (...)`) for at most `retries.poolWaitMs` (default 30 minutes), then fails `pool exhausted` and keeps the worktree when the budget `onExceed` is `pause`. A proxy 5xx while the pool is unusable waits for the pool instead of spending a retry. `warn` only reports; `off` does not look; without `settings.owlish` nothing changes.
 
+- `onExceed: "pause"` keeps the worktree and branch whatever `worktree.onFailure` says; `"fail"` follows it. Both fail the task; a day budget that is spent blocks new work in its scope until midnight (in the budget zone) for both.
+- Usage with `known: false` counts as 0 and increments `unknownSteps`; a tool without cost reporting is therefore unlimited. Codex reports token counts but no price, so its steps are unknown and `perToolDayUsd` cannot limit it; ledgers written before this change keep what they recorded.
+- Spent means `spent >= limit`. Per-task cost counts the current pipeline run only.
+- Read side: `evaluateBudget` (shared) powers `GET /api/v1/usage/budget`, the `budgetExceeded` list in `runner.status` and `runner.overview`, and the UI.
+- The mock tool takes `[[mock-cost 0.5]]` (every step costs $0.50) or `[[mock-cost unknown]]` (no usage reported); the default is $0.01.
+
 ### Optional account pool (better-ccflare)
 
-**Account pooling by better-ccflare.** better-ccflare is MIT licensed and boof calls its gateway over HTTP. Set `settings.owlish` to `{ "url": "http://127.0.0.1:8080", "healthGate": "pause" }`; `healthGate` accepts `pause`, `warn` or `off` and defaults to `pause`. With the setting absent, boof makes no pool health request and does not gate selection. When configured and the gateway is down, the `pause` gate pauses selection of tasks whose role uses a pool-capable tool, with a visible reason in `runner.status.pool`. `warn` exposes health without blocking; `off` disables the gate.
+**Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Boof calls its gateway over HTTP. Set `settings.owlish` to `{ "url": "http://127.0.0.1:8080", "healthGate": "pause" }`; `healthGate` accepts `pause`, `warn` or `off` and defaults to `pause`. With the setting absent, boof makes no pool health request and does not gate selection. When configured and the gateway is down, the `pause` gate pauses selection of tasks whose role uses a pool-capable tool, with a visible reason in `runner.status.pool`. `warn` exposes health without blocking; `off` disables the gate.
 
 The client key is optional. Set it once through the write-only `owlishApiKey` input of `settings.update`, or set `BOOF_OWLISH_API_KEY`; the environment value wins. Otherwise the key is stored at `<data>/owlish/secrets.json` with file mode 0600 (and its directory mode 0700). Boof never handles provider credentials. Sign-in and account addition take place in the better-ccflare dashboard. The key is never returned by settings reads or by the one-time set response.
 
@@ -338,11 +344,7 @@ Routed agents receive the gateway client key in their process environment and ca
 
 This documents the 8a HTTP integration. The later Accounts settings tab and Agent SDK adapter (8b) are not included.
 
-- `onExceed: "pause"` keeps the worktree and branch whatever `worktree.onFailure` says; `"fail"` follows it. Both fail the task; a day budget that is spent blocks new work in its scope until midnight (in the budget zone) for both.
-- Usage with `known: false` counts as 0 and increments `unknownSteps`; a tool without cost reporting is therefore unlimited. Codex reports token counts but no price, so its steps are unknown and `perToolDayUsd` cannot limit it; ledgers written before this change keep what they recorded.
-- Spent means `spent >= limit`. Per-task cost counts the current pipeline run only.
-- Read side: `evaluateBudget` (shared) powers `GET /api/v1/usage/budget`, the `budgetExceeded` list in `runner.status` and `runner.overview`, and the UI.
-- The mock tool takes `[[mock-cost 0.5]]` (every step costs $0.50) or `[[mock-cost unknown]]` (no usage reported); the default is $0.01.
+Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Credentials, query strings and fragments are rejected. Routed agents receive the gateway client key in their process environment and can use it to call the gateway API directly.
 
 ## Non-Interactive Guard
 

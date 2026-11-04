@@ -1,3 +1,5 @@
+import { parseOwlishGatewayUrl } from "@boof-runner/shared/schema";
+
 /**
  * The environment that routes a task agent through the account pool (better-ccflare). Built from
  * the configured gateway and added on top of `agentEnv()`'s allowlist by the tool adapters, so
@@ -21,24 +23,9 @@ export const DUMMY_OPENAI_KEY = "dummy-key";
 
 /** Validate and normalize a gateway URL before putting it in an environment or Codex TOML. */
 export function gatewayUrl(value: string): string {
-  if (/[\r\n"'\\]/.test(value)) throw new Error("Invalid gateway URL");
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("Invalid gateway URL");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-    throw new Error("Invalid gateway URL");
-  if (parsed.username || parsed.password || parsed.search || parsed.hash)
-    throw new Error("Invalid gateway URL");
-  const loopback =
-    parsed.hostname === "localhost" ||
-    parsed.hostname === "::1" ||
-    /^127(?:\.\d{1,3}){3}$/.test(parsed.hostname);
-  if (parsed.protocol === "http:" && !loopback)
-    throw new Error("Gateway URL must use HTTPS off loopback");
-  return value.replace(/\/+$/, "");
+  const parsed = parseOwlishGatewayUrl(value);
+  if (!parsed) throw new Error("Invalid gateway URL");
+  return parsed.href.replace(/\/+$/, "");
 }
 
 export function gatewayEnv(kind: GatewayKind, gateway: Gateway | undefined): NodeJS.ProcessEnv {

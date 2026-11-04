@@ -2,7 +2,12 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OwlishClient, OwlishError } from "./owlish.js";
-import { OwlishSettingsSchema, RetrySettingsSchema, SettingsSchema } from "./schema.js";
+import {
+  OwlishSettingsSchema,
+  parseOwlishGatewayUrl,
+  RetrySettingsSchema,
+  SettingsSchema,
+} from "./schema.js";
 import { defaultSettings } from "./settings.js";
 
 interface Seen {
@@ -69,14 +74,26 @@ describe("settings", () => {
     }
     expect(() => OwlishSettingsSchema.parse({ url: "https://x:1", healthGate: "block" })).toThrow();
     expect(() => OwlishSettingsSchema.parse({ url: "ftp://x" })).toThrow();
+    expect(() => OwlishSettingsSchema.parse({ url: "not a url" })).toThrow(
+      /URL|HTTPS|credentials/i,
+    );
     expect(() => OwlishSettingsSchema.parse({ url: "https://x:1", extra: 1 })).toThrow();
     for (const bad of [
       "http://user:pass@localhost:8080",
       "http://example.com",
       "https://x.test/?q=1",
       "https://x.test/#frag",
+      "http://127.0.0.1:8080?",
+      "http://127.0.0.1:8080/has space",
     ]) {
       expect(() => OwlishSettingsSchema.parse({ url: bad })).toThrow();
+    }
+    expect(parseOwlishGatewayUrl('http://127.0.0.1:8080/"unsafe')?.href).toBe(
+      "http://127.0.0.1:8080/%22unsafe",
+    );
+    for (const good of ["http://[::1]:8080", "http://localhost.:8080"]) {
+      expect(OwlishSettingsSchema.parse({ url: good }).url).toBe(good);
+      expect(parseOwlishGatewayUrl(good)).not.toBeNull();
     }
     const s = SettingsSchema.parse({ ...defaultSettings(), owlish: { url: "https://x:1" } });
     expect(s.owlish?.url).toBe("https://x:1");
@@ -92,10 +109,28 @@ describe("settings", () => {
 
 describe("OwlishClient.health", () => {
   it("refuses redirects so the client key cannot follow a redirect", async () => {
-    reply = () => [307, JSON.stringify({ location: "https://redirect.test/collect" })];
-    await expect(new OwlishClient({ url, apiKey: "btr-sensitive" }).accounts()).rejects.toThrow();
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.headers["x-api-key"]).toBe("btr-sensitive");
+    const redirected: string[] = [];
+    const second = createServer((req, res) => {
+      redirected.push(req.url ?? "");
+      res.end("{}");
+    });
+    await new Promise<void>((r) => second.listen(0, "127.0.0.1", r));
+    const target = `http://127.0.0.1:${(second.address() as AddressInfo).port}/collect`;
+    reply = () => [307, "{}"];
+    // Redirect response points to a second local fake server.
+    server.removeAllListeners("request");
+    server.on("request", (req, res) => {
+      seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body: "" });
+      res.writeHead(307, { location: target }).end();
+    });
+    try {
+      await expect(new OwlishClient({ url, apiKey: "btr-sensitive" }).accounts()).rejects.toThrow();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.headers["x-api-key"]).toBe("btr-sensitive");
+      expect(redirected).toEqual([]);
+    } finally {
+      await new Promise<void>((r) => second.close(() => r()));
+    }
   });
   it("reads the pool counts of a healthy gateway; /health is sent without the key", async () => {
     reply = () => [200, JSON.stringify(HEALTH_OK)];
