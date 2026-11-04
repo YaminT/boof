@@ -44,4 +44,31 @@ describe("Accounts settings draft", () => {
       accountsPage.patches({ ...base, global: { ...base.global, enabled: false } }, base, latest),
     ).toEqual({ settings: { owlish: null } });
   });
+
+  it("rejects non-http protocols before saving", () => {
+    expect(
+      accountsPage.problems({
+        global: { enabled: true, url: "ftp://gateway.example", healthGate: "pause" },
+        project: {},
+      }),
+    ).toContain("Use an http or https gateway URL.");
+  });
+
+  it("uses the latest server value for an unchanged field after a conflict", () => {
+    const base = accountsPage.values(settings, project);
+    const latest = {
+      settings: {
+        ...settings,
+        owlish: { url: "https://new.example", healthGate: "pause" as const },
+      },
+      project,
+    };
+    expect(
+      accountsPage.patches(
+        { ...base, global: { ...base.global, healthGate: "warn" } },
+        base,
+        latest,
+      ),
+    ).toEqual({ settings: { owlish: { url: "https://new.example", healthGate: "warn" } } });
+  });
 });

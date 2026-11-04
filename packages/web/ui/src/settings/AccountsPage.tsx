@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Settings } from "@boof-runner/shared/schema";
+import { toast } from "sonner";
+import type { Scope, Settings } from "@boof-runner/shared/schema";
 import type { AccountsGlobal } from "../lib/settings-accounts.js";
 import { api } from "../api.js";
 import type { AccountSummary, AccountsHealth, PoolState, Thresholds } from "../api-types.js";
-import { accountActionAccess, gatePauses } from "../lib/accounts-page.js";
-import { useHeldScopes } from "../lib/useHeldScopes.js";
+import { gatePauses } from "../lib/accounts-page.js";
+import { heldScopes } from "../lib/clients.js";
+import { Button } from "../ui/button.js";
+import { Input } from "../ui/input.js";
+import type { Whoami } from "../api-types.js";
+import { inputErrorLines } from "../lib/automation.js";
+import { thresholdFields, accountActionAccess, priorityProblem } from "../lib/accounts-page.js";
+import { TonePill } from "../shell/StatusPill.js";
+import { NativeSelect } from "../ui/native-select.js";
+import { Alert } from "../ui/alert.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 
 const inputClass = "min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-ink";
@@ -24,11 +33,24 @@ export function AccountsPage({
   form: AccountsGlobal;
   setForm: (update: (form: AccountsGlobal) => AccountsGlobal) => void;
 }) {
-  const held = useHeldScopes();
-  const canWrite = accountActionAccess(held);
+  const [whoami, setWhoami] = useState<Whoami | null>(null);
+  useEffect(() => {
+    void api
+      .whoami()
+      .then(setWhoami)
+      .catch(() => setWhoami(null));
+  }, []);
+  const canWrite = accountActionAccess(
+    whoami ? heldScopes(whoami) : new Set<Scope>(),
+    whoami?.principal.trust ?? "trusted",
+    whoami?.principal.projects ?? "*",
+  );
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [health, setHealth] = useState<AccountsHealth | null>(null);
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [error, setError] = useState("");
+  const [listError, setListError] = useState("");
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
@@ -36,23 +58,30 @@ export function AccountsPage({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [h, a] = await Promise.all([api.accountsHealth(), api.listAccounts()]);
-      setHealth(h);
-      setAccounts(a.accounts);
+      const [h, a] = await Promise.allSettled([api.accountsHealth(), api.listAccounts()]);
+      if (h.status === "fulfilled") setHealth(h.value);
+      if (a.status === "fulfilled") setAccounts(a.value.accounts);
+      setListError(a.status === "rejected" ? inputErrorLines(a.reason).join("; ") : "");
+      setError(h.status === "rejected" ? inputErrorLines(h.reason).join("; ") : "");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(inputErrorLines(e).join("; "));
     }
+    setCheckedAt(Date.now());
   }, []);
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const runAccount = async (id: string, fn: () => Promise<unknown>) => {
     setRowErrors((e) => ({ ...e, [id]: "" }));
     try {
       await fn();
       await refresh();
     } catch (e) {
-      setRowErrors((x) => ({ ...x, [id]: e instanceof Error ? e.message : String(e) }));
+      setRowErrors((x) => ({ ...x, [id]: inputErrorLines(e).join("; ") }));
     }
   };
   const saveGateway = async () => {
@@ -63,8 +92,23 @@ export function AccountsPage({
       setKey("");
       await onChanged();
       await refresh();
+      toast.success("Client key saved");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(inputErrorLines(e).join("; "));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clearClientKey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateSettings({ owlishApiKey: null });
+      await onChanged();
+      await refresh();
+      toast.success("Client key cleared");
+    } catch (e) {
+      setError(inputErrorLines(e).join("; "));
     } finally {
       setBusy(false);
     }
@@ -73,12 +117,12 @@ export function AccountsPage({
     setBusy(true);
     setError("");
     try {
-      await api.updateSettings({ owlish: null });
+      await api.updateSettings({ owlish: null, owlishApiKey: null });
       setRemoveOpen(false);
       await onChanged();
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(inputErrorLines(e).join("; "));
     } finally {
       setBusy(false);
     }
@@ -95,20 +139,20 @@ export function AccountsPage({
         open={removeOpen}
         onOpenChange={setRemoveOpen}
         title="Remove gateway?"
-        body="This clears the better-ccflare gateway settings. Boof will continue to work without an account pool."
+        body="This clears the better-ccflare gateway settings and stored client key. Boof will continue to work without an account pool."
         confirmLabel="Remove gateway"
         destructive
         onConfirm={() => void removeGateway()}
       />
       {paused && (
-        <div
-          role="alert"
-          className="rounded-md border border-attention/40 bg-attention/10 p-3 text-sm text-attention"
-        >
+        <Alert tone="attention">
           The account pool health gate is pausing work.{" "}
-          {pool?.reason ?? "The pool is not available."}
-        </div>
+          {pool?.status === "unreachable"
+            ? "The gateway could not be reached."
+            : `Pool status: ${pool?.status ?? "unavailable"}.`}
+        </Alert>
       )}
+      {error && <Alert className="m-0">{error}</Alert>}
       <section className={cardClass}>
         <h2 className="m-0 mb-2 text-lg font-semibold">Gateway</h2>
         {!configured && (
@@ -120,7 +164,7 @@ export function AccountsPage({
         <div className="grid min-w-0 gap-3 sm:grid-cols-2">
           <label className={labelClass}>
             Gateway URL
-            <input
+            <Input
               className={inputClass}
               value={form.url}
               onChange={(e) => setForm((f) => ({ ...f, enabled: true, url: e.target.value }))}
@@ -129,8 +173,8 @@ export function AccountsPage({
           </label>
           <label className={labelClass}>
             Health gate
-            <select
-              className={inputClass}
+            <NativeSelect
+              className="min-w-0"
               value={form.healthGate}
               onChange={(e) =>
                 setForm((f) => ({
@@ -144,11 +188,11 @@ export function AccountsPage({
               <option value="pause">Pause work</option>
               <option value="warn">Warn only</option>
               <option value="off">Off</option>
-            </select>
+            </NativeSelect>
           </label>
           <label className={labelClass}>
             Client key (write only)
-            <input
+            <Input
               type="password"
               autoComplete="new-password"
               className={inputClass}
@@ -168,30 +212,29 @@ export function AccountsPage({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {!configured && canWrite && (
-            <button
-              className="rounded-md bg-accent-brand px-3 py-2 text-sm text-white"
-              onClick={() => setForm((f) => ({ ...f, enabled: true }))}
-            >
+            <Button className="" onClick={() => setForm((f) => ({ ...f, enabled: true }))}>
               Use this gateway
-            </button>
+            </Button>
           )}
           {canWrite && key && (
-            <button
-              className="rounded-md bg-accent-brand px-3 py-2 text-sm text-white disabled:opacity-50"
-              disabled={busy}
-              onClick={() => void saveGateway()}
-            >
+            <Button className="" disabled={busy} onClick={() => void saveGateway()}>
               Save client key
-            </button>
+            </Button>
           )}
           {configured && canWrite && (
-            <button
-              className="rounded-md border border-line px-3 py-2 text-sm"
-              disabled={busy}
-              onClick={() => setRemoveOpen(true)}
-            >
+            <Button variant="outline" disabled={busy} onClick={() => setRemoveOpen(true)}>
               Remove gateway
-            </button>
+            </Button>
+          )}
+          {health?.keySource === "file" && canWrite && (
+            <Button variant="outline" disabled={busy} onClick={() => void clearClientKey()}>
+              Clear client key
+            </Button>
+          )}
+          {health?.keySource === "env" && (
+            <p className="m-0 self-center text-sm text-ink-muted">
+              Client key comes from BOOF_OWLISH_API_KEY and cannot be cleared here.
+            </p>
           )}
         </div>
         {!canWrite && (
@@ -203,13 +246,15 @@ export function AccountsPage({
       <section className={cardClass}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="m-0 text-lg font-semibold">Pool status</h2>
-          <button
-            className="rounded-md border border-line px-3 py-2 text-sm"
-            onClick={() => void refresh()}
-          >
+          <Button variant="outline" onClick={() => void refresh()}>
             Check now
-          </button>
+          </Button>
         </div>
+        {checkedAt && (
+          <p className="m-0 text-xs text-ink-muted">
+            Checked {Math.max(0, Math.floor((now - checkedAt) / 1000))} s ago
+          </p>
+        )}
         {!configured ? (
           <p className="mb-0 mt-2 text-sm text-ink-muted">No gateway configured.</p>
         ) : (
@@ -224,17 +269,9 @@ export function AccountsPage({
                 <Status label="Usage exhausted" value={pool.usageExhausted} />
                 <Status
                   label="Next available"
-                  value={
-                    pool.nextAvailableAt ? new Date(pool.nextAvailableAt).toLocaleString() : "—"
-                  }
+                  value={pool.nextAvailableAt ? formatTime(pool.nextAvailableAt) : "—"}
                 />
               </div>
-            )}
-            {pool?.reason && <p className="mb-0 text-sm text-ink-muted">{pool.reason}</p>}
-            {error && (
-              <p role="alert" className="mb-0 text-sm text-red-600">
-                {error}
-              </p>
             )}
           </>
         )}
@@ -242,7 +279,8 @@ export function AccountsPage({
       {configured && (
         <section className={cardClass}>
           <h2 className="m-0 mb-3 text-lg font-semibold">Accounts</h2>
-          {accounts.length === 0 ? (
+          {listError && <Alert>Could not load accounts: {listError}</Alert>}
+          {accounts.length === 0 && !listError ? (
             <p className="text-sm text-ink-muted">No accounts returned by the gateway.</p>
           ) : (
             <div className="grid min-w-0 gap-3">
@@ -273,12 +311,33 @@ export function AccountsPage({
               better-ccflare dashboard
             </a>
             . Boof never asks for or handles provider credentials.
+            {accounts.some(
+              (a) =>
+                /anthropic/i.test(a.provider ?? "") ||
+                /oauth|subscription/i.test(
+                  `${a.provider ?? ""} ${a.authType ?? ""} ${a.accountType ?? ""} ${a.name}`,
+                ),
+            ) && (
+              <>
+                {" "}
+                Subscription OAuth accounts must follow their provider’s terms. Anthropic
+                subscription credentials must not be routed through third-party services.
+              </>
+            )}
           </p>
         </section>
       )}
       <footer className="pb-4 text-xs text-ink-muted">
-        Account pooling by better-ccflare (MIT, © 2025 snipeship &amp; tombii), a fork of ccflare by
-        snipeship
+        Account pooling by{" "}
+        <a
+          className="underline"
+          href="https://github.com/tombii/better-ccflare"
+          target="_blank"
+          rel="noreferrer"
+        >
+          better-ccflare
+        </a>{" "}
+        (MIT, © 2025 snipeship &amp; tombii), a fork of ccflare by snipeship.
       </footer>
     </div>
   );
@@ -311,9 +370,7 @@ function AccountRow({
     account.thresholds ??
     {}) as Thresholds;
   const [thresholds, setThresholds] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      Object.entries(returnedThresholds).map(([k, v]) => [k, v === null ? "" : String(v)]),
-    ),
+    Object.fromEntries(thresholdFields(returnedThresholds)),
   );
   const thresholdNames = [...new Set([...Object.keys(returnedThresholds), "fiveHour", "weekly"])];
   return (
@@ -326,14 +383,26 @@ function AccountRow({
             {account.provider ? ` · ${account.provider}` : ""}
           </p>
         </div>
-        <span className="shrink-0 rounded bg-page px-2 py-1 text-xs">
-          {account.paused ? "Paused" : (account.rateLimitStatus ?? account.tokenStatus ?? "Ready")}
-        </span>
+        <TonePill
+          tone={
+            account.paused
+              ? "attention"
+              : account.rateLimitStatus === "rate_limited"
+                ? "failed"
+                : "done"
+          }
+        >
+          {account.paused
+            ? "Paused"
+            : (account.rateLimitStatus ?? account.tokenStatus ?? "Ready")
+                .replaceAll("_", " ")
+                .replace(/^\w/, (c) => c.toUpperCase())}
+        </TonePill>
       </div>
       {canWrite && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            className="rounded border border-line px-3 py-2 text-sm"
+          <Button
+            variant="outline"
             onClick={() =>
               void run(account.id, () =>
                 api.accountAction(account.paused ? "resume" : "pause", account.id),
@@ -341,10 +410,10 @@ function AccountRow({
             }
           >
             {account.paused ? "Resume" : "Pause"}
-          </button>
+          </Button>
           <label className="flex items-center gap-2 text-sm">
             Priority
-            <input
+            <Input
               aria-label={`Priority for ${account.name}`}
               className={`${inputClass} w-20`}
               type="number"
@@ -354,14 +423,18 @@ function AccountRow({
               onChange={(e) => setPriority(e.target.value)}
             />
           </label>
-          <button
-            className="rounded border border-line px-3 py-2 text-sm"
+          <Button
+            variant="outline"
             onClick={() =>
-              void run(account.id, () => api.accountPriority(account.id, Number(priority)))
+              void run(account.id, async () => {
+                const problem = priorityProblem(priority);
+                if (problem) throw new Error(problem);
+                return api.accountPriority(account.id, Number(priority));
+              })
             }
           >
             Set priority
-          </button>
+          </Button>
         </div>
       )}
       <details className="mt-3" open={expanded}>
@@ -369,8 +442,12 @@ function AccountRow({
         <div className="mt-2 flex min-w-0 flex-wrap items-end gap-2 text-sm">
           {thresholdNames.map((name) => (
             <label className={labelClass} key={name}>
-              {name} threshold %
-              <input
+              {name === "fiveHour"
+                ? `5-hour usage pause threshold for ${account.name || account.id} (%)`
+                : name === "weekly"
+                  ? `Weekly usage pause threshold for ${account.name || account.id} (%)`
+                  : `${name} threshold for ${account.name || account.id} (%)`}
+              <Input
                 className={`${inputClass} w-28`}
                 type="number"
                 min="0"
@@ -382,8 +459,8 @@ function AccountRow({
             </label>
           ))}
           {canWrite && (
-            <button
-              className="rounded border border-line px-3 py-2"
+            <Button
+              variant="outline"
               onClick={() =>
                 void run(account.id, () =>
                   api.accountThresholds(
@@ -396,20 +473,28 @@ function AccountRow({
               }
             >
               Set thresholds
-            </button>
+            </Button>
           )}
         </div>
         <p className="mb-0 break-words text-xs text-ink-muted">
           Priority {account.priority ?? "—"} · token {account.tokenStatus ?? "unknown"} · rate limit{" "}
           {account.rateLimitStatus ?? "unknown"}
-          {account.rateLimitReset ? ` · reset ${account.rateLimitReset}` : ""}
+          {account.rateLimitReset ? ` · reset ${formatTime(account.rateLimitReset)}` : ""}
         </p>
       </details>
-      {error && (
-        <p role="alert" className="mb-0 mt-2 break-words text-sm text-red-600">
-          {error}
-        </p>
-      )}
+      {error && <Alert className="mb-0 mt-2 break-words">{error}</Alert>}
     </article>
   );
+}
+
+function formatTime(value: string | number): string {
+  const ms = typeof value === "number" || /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+  if (!Number.isFinite(ms)) return "time unavailable";
+  const delta = ms - Date.now();
+  const relative =
+    Math.abs(delta) < 60_000
+      ? `${Math.round(Math.abs(delta) / 1000)} s`
+      : `${Math.round(Math.abs(delta) / 60_000)} min`;
+  const relativeText = delta >= 0 ? `in ${relative}` : `${relative} ago`;
+  return `${new Date(ms).toLocaleString()} (${relativeText})`;
 }

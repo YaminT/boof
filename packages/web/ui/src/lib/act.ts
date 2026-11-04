@@ -15,7 +15,13 @@ export interface ActOptions {
 
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    return err.status === 401 ? "Your API key was rejected. Enter a new one." : err.message;
+    if (err.status === 401) return "Your API key was rejected. Enter a new one.";
+    if (err.status === 400 && Array.isArray(err.details)) {
+      const details = err.details as { path?: string; message: string }[];
+      if (details.length)
+        return `${err.message}: ${details.map((d) => (d.path ? `${d.path}: ${d.message}` : d.message)).join("; ")}`;
+    }
+    return err.message;
   }
   if (err instanceof Error) return err.message;
   return String(err);

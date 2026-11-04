@@ -9,6 +9,12 @@ describe("settingsPageAccess", () => {
       expect(settingsPageAccess(page, { settings: false, project: false })).toBe("own");
       expect(settingsPageAccess(page, all)).toBe("own");
     }
+    expect(settingsPageAccess("accounts", { settings: false, project: true })).toBe(
+      "needs-settings-read",
+    );
+    expect(settingsPageAccess("accounts", { settings: true, project: false })).toBe(
+      "needs-projects-read",
+    );
   });
   it("the forms need a project first, then the settings", () => {
     for (const page of ["project", "agents", "budgets"] as const) {

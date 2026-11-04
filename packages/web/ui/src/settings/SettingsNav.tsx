@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useEffect, useRef } from "react";
 import { formatRoute, type Route, type SettingsPageId } from "../lib/route.js";
 
 const PAGES: { page: SettingsPageId; label: string }[] = [
@@ -20,6 +21,10 @@ export function SettingsNav({
   active: SettingsPageId;
   unsaved: ReadonlySet<SettingsPageId>;
 }) {
+  const activeTab = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    activeTab.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
   return (
     <nav
       aria-label="Settings"
@@ -31,6 +36,7 @@ export function SettingsNav({
         return (
           <a
             key={page}
+            ref={isActive ? activeTab : undefined}
             href={formatRoute(route)}
             aria-current={isActive ? "page" : undefined}
             className={cn(

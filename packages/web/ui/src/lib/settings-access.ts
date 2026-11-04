@@ -8,7 +8,11 @@ export function settingsPageAccess(
   page: SettingsPageId,
   have: { settings: boolean; project: boolean },
 ): "forms" | "own" | "needs-projects-read" | "needs-settings-read" {
-  if (page === "keys" || page === "automation" || page === "accounts") return "own";
+  if (page === "keys" || page === "automation") return "own";
+  if (page === "accounts") {
+    if (!have.settings) return "needs-settings-read";
+    return have.project ? "own" : "needs-projects-read";
+  }
   if (!have.project) return "needs-projects-read";
   return have.settings ? "forms" : "needs-settings-read";
 }
