@@ -2,11 +2,12 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
-import { RunnerEngine, ToolRegistry } from "@boof/runner";
+import { RunnerEngine, ToolRegistry, boot, type BootResult } from "@boof/runner";
 import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof/heart";
 import { startServer, type RunningServer } from "@boof/heart-server";
 import {
   createQuitHandler,
+  QUIT_DRAIN_NOTICE,
   isAppUrl,
   isExternalUrl,
   operatorClientId,
@@ -19,8 +20,10 @@ import {
 app.setName("Boof Runner");
 
 const PORT = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
+const SHUTDOWN_GRACE_MS = shutdownGraceMs();
 
 let server: RunningServer | null = null;
+let composition: BootResult<RunningServer, RunnerEngine> | null = null;
 let engine: RunnerEngine | null = null;
 let win: BrowserWindow | null = null;
 /** API key for the bundled UI; undefined when safeStorage is unavailable (local-trust fallback). */
@@ -151,22 +154,41 @@ ipcMain.handle(
   },
 );
 
-async function boot(): Promise<void> {
+async function startComposition(): Promise<void> {
   const root = await ensureDataRoot();
   desktopToken = await ensureDesktopToken(root).catch((err) => {
     console.error("desktop auth setup failed; using local-trust:", err);
     return undefined;
   });
-  server = await startServer(
-    serverOptions(
-      { root, port: PORT, uiDir: uiDir(), catalog: new ToolRegistry() },
-      app.getVersion(),
-      () => engine,
-      operatorClientId(desktopToken),
-    ),
-  );
-  engine = new RunnerEngine({ root });
-  void engine.loop();
+  composition = await boot({
+    startServer: () =>
+      startServer(
+        serverOptions(
+          { root, port: PORT, uiDir: uiDir(), catalog: new ToolRegistry() },
+          app.getVersion(),
+          () => engine,
+          operatorClientId(desktopToken),
+        ),
+      ),
+    startRunner: () => {
+      engine = new RunnerEngine({ root });
+      void engine.loop();
+      return engine;
+    },
+    stopRunner: async (activeEngine) => {
+      if (!activeEngine) return;
+      win?.setTitle(`Boof Runner — ${QUIT_DRAIN_NOTICE}`);
+      if (Notification.isSupported())
+        new Notification({ title: "Boof Runner", body: QUIT_DRAIN_NOTICE }).show();
+      const graceMs = SHUTDOWN_GRACE_MS;
+      const { stopped, timedOut } = await activeEngine.shutdown(graceMs);
+      if (stopped.length > 0) console.log(`Stopped running task(s): ${stopped.join(", ")}`);
+      if (timedOut) console.log(`Grace period of ${graceMs} ms elapsed; quitting anyway`);
+    },
+    stopServer: (activeServer) => activeServer.stop(),
+  });
+  server = composition.server;
+  engine = composition.runner;
   createWindow(server.port);
 }
 
@@ -183,7 +205,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app
     .whenReady()
-    .then(boot)
+    .then(startComposition)
     .catch((err) => {
       console.error("Boof Runner failed to start:", err);
       dialog.showErrorBox("Boof Runner failed to start", String(err?.stack ?? err));
@@ -199,10 +221,10 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   const quit = createQuitHandler({
-    engine: () => engine,
-    server: () => server,
+    engine: () => null,
+    server: () => (composition ? { stop: () => composition!.stop() } : null),
     exit: (code) => app.exit(code),
-    graceMs: shutdownGraceMs(),
+    graceMs: SHUTDOWN_GRACE_MS,
     log: console.log,
     notify: (message) => {
       win?.setTitle(`Boof Runner — ${message}`);

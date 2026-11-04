@@ -3,6 +3,7 @@ import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerEngine, ToolRegistry } from "@boof/runner";
+import { boot } from "@boof/runner";
 import { startServer } from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
@@ -213,39 +214,56 @@ export async function serve(argv: string[]): Promise<void> {
   console.log(`${created ? "Scaffolded" : "Using"} data root: ${root}`);
 
   const uiDir = resolveUiDir();
-  let running;
   let engine: RunnerEngine | null = null;
+  const guard = new RunnerGuard(root);
+  let stop: () => Promise<void>;
   try {
-    running = await startServer({
-      root,
-      catalog: new ToolRegistry(),
-      port: args.port,
-      host: args.host,
-      uiDir,
-      version: readVersion(),
-      runnerRunning: () => engine !== null,
-      tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
-      tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
+    const composition = await boot({
+      startServer: () =>
+        startServer({
+          root,
+          catalog: new ToolRegistry(),
+          port: args.port,
+          host: args.host,
+          uiDir,
+          version: readVersion(),
+          runnerRunning: () => engine !== null,
+          tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
+          tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
+        }),
+      afterServer: (server) => {
+        const scheme = args.tlsCert ? "https" : "http";
+        const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
+        const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
+        console.log(`Web UI:  ${scheme}://${hostPart}:${server.port}`);
+        console.log(`API:     ${scheme}://${hostPart}:${server.port}/api`);
+      },
+      startRunner: async () => {
+        if (args.noRunner) return null;
+        if (await guard.acquire()) {
+          engine = new RunnerEngine({ root });
+          console.log("Runner:  started (toggle on/off in the UI)");
+          void engine.loop();
+          return engine;
+        }
+        console.log("Runner:  already running in another process — not starting a second one");
+        return null;
+      },
+      stopRunner: async () => {
+        const graceMs = Number(process.env.BOOF_RUNNER_SHUTDOWN_GRACE_MS ?? 30_000);
+        if (engine) {
+          const { stopped, timedOut } = await engine.shutdown(graceMs);
+          if (stopped.length > 0) console.log(`Stopped running task(s): ${stopped.join(", ")}`);
+          if (timedOut) console.log(`Grace period of ${graceMs} ms elapsed; exiting anyway`);
+        }
+      },
+      afterRunnerStop: () => guard.release(),
+      stopServer: (server) => server.stop(),
     });
+    stop = composition.stop;
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
     process.exit(1);
-  }
-  const scheme = args.tlsCert ? "https" : "http";
-  const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
-  const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
-  console.log(`Web UI:  ${scheme}://${hostPart}:${running.port}`);
-  console.log(`API:     ${scheme}://${hostPart}:${running.port}/api`);
-
-  const guard = new RunnerGuard(root);
-  if (!args.noRunner) {
-    if (await guard.acquire()) {
-      engine = new RunnerEngine({ root });
-      console.log("Runner:  started (toggle on/off in the UI)");
-      void engine.loop();
-    } else {
-      console.log("Runner:  already running in another process — not starting a second one");
-    }
   }
 
   let shuttingDown = false;
@@ -256,14 +274,7 @@ export async function serve(argv: string[]): Promise<void> {
     }
     shuttingDown = true;
     console.log(`\nShutting down (${signal})…`);
-    const graceMs = Number(process.env.BOOF_RUNNER_SHUTDOWN_GRACE_MS ?? 30_000);
-    if (engine) {
-      const { stopped, timedOut } = await engine.shutdown(graceMs);
-      if (stopped.length > 0) console.log(`Stopped running task(s): ${stopped.join(", ")}`);
-      if (timedOut) console.log(`Grace period of ${graceMs} ms elapsed; exiting anyway`);
-    }
-    await guard.release();
-    await running.stop();
+    await stop();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
