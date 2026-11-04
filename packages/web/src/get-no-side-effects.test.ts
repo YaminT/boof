@@ -27,7 +27,6 @@ class SpyTool extends MockTool {
   }
   override async listModels(): Promise<string[]> {
     this.probes++;
-    await new Promise((r) => setTimeout(r, 40)); // a real tool takes a while: callers overlap
     return super.listModels();
   }
 }
@@ -126,6 +125,18 @@ describe("POST /health/check and /models/refresh", () => {
   });
 
   it("50 parallel model refreshes list the models once", async () => {
+    const listModels = service.listModels.bind(service);
+    let arrivals = 0;
+    let release!: () => void;
+    const allRequestsArrived = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    service.listModels = () => {
+      arrivals++;
+      if (arrivals === 50) release();
+      return allRequestsArrived.then(listModels);
+    };
+
     await Promise.all(Array.from({ length: 50 }, () => post("/models/refresh")));
     expect(spy.probes).toBe(1);
   });
