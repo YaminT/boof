@@ -278,11 +278,11 @@ Roadmap step 15's done criterion "every operation over REST, MCP and CLI" is thi
 
 Files: `bin/src/boundaries.ts` (the map and the allow-list) and `bin/src/import-boundaries.test.ts`. The vitest include already covers `bin/**/*.test.ts`.
 
-1. Walk `packages/*/src`, `packages/facedisk/ui/src`, `bin/src` for `.ts`, `.tsx`, `.mjs`; skip `*.test.ts`, `*.test.tsx`, `node_modules`, `dist`, `.tsc-typecheck`, `generated/`.
+1. Walk `packages/*/src`, `packages/facedisk/ui/src`, `packages/facedisk/cli`, `bin/src` for `.ts`, `.tsx`, `.mjs`; skip `*.test.ts`, `*.test.tsx`, `node_modules`, `dist`, `.tsc-typecheck`, `generated/`.
 2. Extract specifiers with a regex over `import … from "x"`, `export … from "x"`, `import("x")`, and note whether the statement is `import type` or `export type`.
 3. Map each file and each specifier to a **package**: `@boof/<pkg>[/sub]` by package name; a relative path by resolving it and looking up the package map; `node:*` and third-party ignored.
-4. Allowed edges are the table in §5.1 (parts, not packages); a `facedisk/ui → heart` or `facedisk/ui → heart-server` edge must be type-only.
-5. A violation outside the allow-list fails with `file:line  from-part → to-part  "specifier"`. An allow-list entry that no longer matches any import also fails, so the list only shrinks.
+4. Allowed edges are the final package identities in §7.3. Within folded Facedisk, UI imports that leave `packages/facedisk/ui/` must be type-only except the browser-safe Heart subpaths; CLI imports into the UI are forbidden.
+5. A violation outside the allow-list fails with `file:line  from-package → to-package  "specifier"`. An allow-list entry that no longer matches any import also fails, so the list only shrinks.
 
 ### 7.3 The package map after M8
 

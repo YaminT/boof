@@ -92,8 +92,9 @@ export function extractImports(text: string): Import[] {
     const start = text.lastIndexOf("\n", index) + 1;
     return !/^\s*(\/\/|\*|\/\*)/.test(text.slice(start, index + 1));
   };
-  const statics = /^[ \t]*(?:import|export)\s+(type\s+)?([^;'"]*?)\bfrom\s+["']([^"']+)["']/gm;
+  const statics = /\b(?:import|export)\s+(type\s+)?([^;'"]*?)\bfrom\s+["']([^"']+)["']/g;
   for (const m of text.matchAll(statics)) {
+    if (!code(m.index)) continue;
     const named = /\{([^}]*)\}/.exec(m[2])?.[1];
     const allInline =
       named !== undefined &&
@@ -109,8 +110,8 @@ export function extractImports(text: string): Import[] {
       typeOnly: m[1] !== undefined || allInline,
     });
   }
-  for (const m of text.matchAll(/^[ \t]*import\s+["']([^"']+)["']/gm)) {
-    found.push({ specifier: m[1], line: lineOf(m.index), typeOnly: false });
+  for (const m of text.matchAll(/\bimport\s+["']([^"']+)["']/g)) {
+    if (code(m.index)) found.push({ specifier: m[1], line: lineOf(m.index), typeOnly: false });
   }
   for (const m of text.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) {
     if (code(m.index)) found.push({ specifier: m[1], line: lineOf(m.index), typeOnly: false });
@@ -166,7 +167,7 @@ function violations(): Violation[] {
     const text = readFileSync(join(repo, file), "utf8");
     for (const imp of extractImports(text)) {
       const to = partOfSpecifier(imp.specifier, file);
-      if (!to || to === from) continue;
+      if (!to) continue;
       const base = { file, line: imp.line, from, to, specifier: imp.specifier };
       if (!isAllowedImport(from, to, file, imp.specifier, imp.typeOnly)) {
         const reason =
@@ -223,6 +224,8 @@ describe("import boundaries", () => {
     expect(partOfSpecifier("./headless.js", "bin/src/plan-cli.ts")).toBe("bin");
     expect(partOfSpecifier("@boof/owlish", "bin/src/x.ts")).toBe("owlish");
     expect(partOfSpecifier("@boof/heart", "bin/src/x.ts")).toBe("heart");
+    expect(partOfSpecifier("@boof/boof", "packages/heart/src/x.ts")).toBe("bin");
+    expect(partOfSpecifier("@boof/boof/boot", "packages/desktop/src/x.ts")).toBe("bin");
     expect(readFileSync(join(repo, "packages/heart/src/index.ts"), "utf8")).not.toMatch(/owlish/);
     expect(
       partOfSpecifier("../../../../heart/src/x.js", "packages/heart-server/src/api/ops/y.ts"),
@@ -258,6 +261,14 @@ describe("import boundaries", () => {
       ["x8", false],
     ]);
     expect(extractImports(text).find((i) => i.specifier === "x4")?.line).toBe(4);
+  });
+
+  it("finds multiple imports and exports on one line", () => {
+    expect(
+      extractImports('import { a } from "x1"; export { b } from "x2"; const c = import("x3");').map(
+        (i) => i.specifier,
+      ),
+    ).toEqual(["x1", "x2", "x3"]);
   });
 
   it("walks production files only", () => {
@@ -297,10 +308,13 @@ describe("import boundaries", () => {
     for (const [from, targets] of Object.entries(ALLOWED) as [Package, Package[]][]) {
       for (const to of targets) {
         const file =
-          from === "facedisk" ? "packages/facedisk/cli/x.ts" : `packages/${from}/src/x.ts`;
-        expect(isAllowedImport(from, to, file, `@boof/${to}`, false), `${from} -> ${to}`).toBe(
-          true,
-        );
+          from === "bin"
+            ? "bin/src/x.ts"
+            : from === "facedisk"
+              ? "packages/facedisk/cli/x.ts"
+              : `packages/${from}/src/x.ts`;
+        const specifier = to === "bin" ? "@boof/boof" : `@boof/${to}`;
+        expect(isAllowedImport(from, to, file, specifier, false), `${from} -> ${to}`).toBe(true);
       }
     }
     expect(
@@ -346,6 +360,29 @@ describe("import boundaries", () => {
     expect(check("@boof/heart/ids")).toBe(true);
     expect(check("@boof/heart/schema")).toBe(false);
     expect(check("@boof/heart")).toBe(false);
+  });
+
+  it("keeps Facedisk UI and CLI boundaries inside the folded package", () => {
+    const ui = "packages/facedisk/ui/src/x.ts";
+    const cli = "packages/facedisk/cli/x.ts";
+    expect(isAllowedImport("facedisk", "facedisk", ui, "../../cli/service-cli.js", false)).toBe(
+      false,
+    );
+    expect(isAllowedImport("facedisk", "facedisk", ui, "@boof/facedisk/cli/x.js", false)).toBe(
+      false,
+    );
+    expect(isAllowedImport("facedisk", "facedisk", ui, "../../cli/service-cli.js", true)).toBe(
+      true,
+    );
+    expect(isAllowedImport("facedisk", "facedisk", cli, "../ui/src/App.js", false)).toBe(false);
+    expect(isAllowedImport("facedisk", "facedisk", cli, "../ui/src/App.js", true)).toBe(false);
+    expect(isAllowedImport("facedisk", "bin", "bin/src/x.ts", "@boof/desktop", false)).toBe(false);
+    expect(isAllowedImport("heart", "bin", "packages/heart/src/x.ts", "@boof/boof", false)).toBe(
+      false,
+    );
+    expect(
+      isAllowedImport("desktop", "bin", "packages/desktop/src/x.ts", "@boof/boof/boot", false),
+    ).toBe(true);
   });
 
   it("has no stale allow-list entry", () => {

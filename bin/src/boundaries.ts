@@ -1,4 +1,4 @@
-import { dirname, join, normalize } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 
 export type Package =
   "heart" | "owlish" | "runner" | "heart-server" | "facedisk" | "bin" | "desktop";
@@ -36,6 +36,7 @@ const PACKAGE_ID: Record<string, Package> = {
   runner: "runner",
   "heart-server": "heart-server",
   facedisk: "facedisk",
+  boof: "bin",
   desktop: "desktop",
 };
 
@@ -69,6 +70,23 @@ export function partOfSpecifier(spec: string, fromFile: string): Package | undef
   return partOfFile(target);
 }
 
+function resolvedTarget(specifier: string, fromFile: string): string | undefined {
+  if (!specifier.startsWith(".")) return undefined;
+  return normalize(join(dirname(fromFile), specifier.replace(/\.js$/, ".ts")))
+    .split("\\")
+    .join("/");
+}
+
+function isUnder(file: string, directory: string): boolean {
+  const rel = relative(directory, file);
+  return (
+    rel === "" ||
+    (!isAbsolute(rel) &&
+      rel !== ".." &&
+      !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+  );
+}
+
 /** Apply the package graph and Facedisk UI's existing browser-safety rule. */
 export function isAllowedImport(
   from: Package,
@@ -77,6 +95,23 @@ export function isAllowedImport(
   specifier: string,
   typeOnly: boolean,
 ): boolean {
+  const target = resolvedTarget(specifier, file);
+  const uiFile = isFacediskUiFile(file);
+  const cliFile = file.startsWith("packages/facedisk/cli/");
+  const namesCli = specifier.startsWith("@boof/facedisk/cli/");
+  const targetsUi =
+    target !== undefined
+      ? isUnder(target, "packages/facedisk/ui")
+      : /^@boof\/facedisk\/ui(?:\/|$)/.test(specifier);
+  if (cliFile && targetsUi) return false;
+  if (
+    uiFile &&
+    (namesCli ||
+      (to === "facedisk" && target !== undefined && !isUnder(target, "packages/facedisk/ui")))
+  ) {
+    return typeOnly;
+  }
+  if (from === to) return true;
   if (!ALLOWED[from].includes(to)) return false;
   if (!isFacediskUiFile(file) || (to !== "heart" && to !== "heart-server")) return true;
   return typeOnly || specifier in BROWSER_SAFE;

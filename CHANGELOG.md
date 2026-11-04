@@ -2,7 +2,7 @@
 
 ## 0.3.0 (unreleased)
 
-### 2026-11-04
+### Internal
 
 - Rename and move internal packages into the final workspace layout; user-facing behavior is unchanged.
 
