@@ -21,7 +21,7 @@
     <tests>
       <strategy>API tests: update enable, disable and edit of a webhook keeps its secret; an event pattern with an underscore (runner.budget_exceeded) is accepted; unknown events are still refused; non-admin keys are refused.</strategy>
       <technology>vitest</technology>
-      <run>npx vitest run packages/heart-server packages/web</run>
+      <run>npx vitest run packages/heart-server</run>
     </tests>
   </progress>
 </boof>

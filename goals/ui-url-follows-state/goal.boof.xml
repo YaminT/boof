@@ -22,7 +22,7 @@
     <tests>
       <strategy>A test per transition (project switch from a task, a plan and settings; task deleted while open; unknown id in a pasted URL); a browser check of the project switch.</strategy>
       <technology>vitest + manual</technology>
-      <run>npx vitest run packages/heart-server/ui</run>
+      <run>npx vitest run packages/facedisk/ui</run>
     </tests>
   </progress>
 </boof>

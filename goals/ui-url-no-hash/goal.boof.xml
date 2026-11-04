@@ -22,7 +22,7 @@
     <tests>
       <strategy>Unit tests for parse/format of path routes and the hash-to-path redirect; server tests for the SPA fallback next to /api, /mcp and docs routes; a browser check under the /boof/ prefix and at the root.</strategy>
       <technology>vitest + manual</technology>
-      <run>npx vitest run packages/heart-server</run>
+      <run>npx vitest run packages/facedisk/ui packages/heart-server</run>
     </tests>
   </progress>
 </boof>

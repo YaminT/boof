@@ -75,7 +75,7 @@ Boof's design keeps boof itself clear of the "collect, store, or intermediate cr
 
 The `Tool` interface gains `acceptsPool?: boolean` so the engine knows which roles are routed.
 
-**Owlish client** (`packages/heart/src/owlish.ts` now, `@boof/owlish` at the split): `health()`, `accounts()`, `pause(id)`, `resume(id)`, `setPriority`, `setThresholds`, `spend(filter)` over `/api/analytics`. Ten-second cache for health, errors mapped to one `PoolStatus`: `absent | unreachable | ok | degraded | unhealthy` with the pool counts and `nextAvailableAt`.
+**Owlish client** (`packages/owlish/src/owlish.ts` now, `@boof/owlish` at the split): `health()`, `accounts()`, `pause(id)`, `resume(id)`, `setPriority`, `setThresholds`, `spend(filter)` over `/api/analytics`. Ten-second cache for health, errors mapped to one `PoolStatus`: `absent | unreachable | ok | degraded | unhealthy` with the pool counts and `nextAvailableAt`.
 
 **Operations** (`defineOp`, so REST, MCP and CLI come together): `accounts.list` (GET `/accounts`, `boof_list_accounts`, `boof-runner accounts`), `accounts.pause`, `accounts.resume`, `accounts.priority`, `accounts.thresholds` (POST, `settings:write`), `accounts.health` (GET `/accounts/health`). `runner.status` and `runner.overview` gain `pool: PoolStatus`. `settings.update` accepts `owlish`.
 

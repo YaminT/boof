@@ -29,6 +29,7 @@ In this repository, Boof Runner includes:
 - `packages/runner`: the execution engine, pipeline, tool adapters, worktree handling, usage tracking, and process execution.
 - `packages/heart`: the task file format, schemas, lifecycle state machine, settings, paths, attachment storage, and atomic file writes.
 - `packages/heart-server`: the operations registry (`defineOp`), services, OpenAPI generator, MCP server and Hono server.
+- `packages/owlish`: the Owlish client and secret store used by Runner and Heart server.
 - `packages/facedisk`: the React UI under `ui/` and CLI commands under `cli/`; the UI handles task management, settings, live logs, actions, and runtime controls.
 - `packages/desktop`: the Electron wrapper that runs the same server, runner, and UI in a native window.
 - `bin`: the `boof-runner` command that scaffolds the data root, starts the web server, and ensures only one runner is active.

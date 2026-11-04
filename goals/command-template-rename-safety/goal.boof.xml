@@ -22,7 +22,7 @@
     <tests>
       <strategy>Service test with the mock tool: rename a template used by a pending and a running task; the pending one is repointed under the lock, the running one is left alone.</strategy>
       <technology>vitest</technology>
-      <run>npx vitest run packages/heart-server packages/web</run>
+      <run>npx vitest run packages/heart-server packages/facedisk/ui</run>
     </tests>
   </progress>
 </boof>

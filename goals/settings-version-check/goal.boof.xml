@@ -21,7 +21,7 @@
     <tests>
       <strategy>API tests: PUT /settings with a stale If-Match answers 409 and changes nothing; without If-Match it behaves as before; the UI sends the version.</strategy>
       <technology>vitest</technology>
-      <run>npx vitest run packages/heart-server packages/web</run>
+      <run>npx vitest run packages/heart-server</run>
     </tests>
   </progress>
 </boof>

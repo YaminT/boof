@@ -21,7 +21,7 @@
     <tests>
       <strategy>Security tests per gap with a restricted key, over REST v1, the unversioned /api routes and MCP where exposed.</strategy>
       <technology>vitest</technology>
-      <run>npx vitest run packages/heart-server/src/security.test.ts</run>
+      <run>npx vitest run packages/heart-server/src/server/security.test.ts</run>
     </tests>
   </progress>
 </boof>

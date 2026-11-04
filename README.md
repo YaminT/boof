@@ -433,8 +433,8 @@ For offline tests the `mock` tool takes a marker in the prompt: `[[mock-verdicts
 ```
 packages/heart    task-file format, schemas, projects, plans, auth store, events, v1→v2 migration, lifecycle
 packages/runner    tool adapters, git worktree isolation, plan sync, the pipeline engine
-                 The root devDependency on `@boof-runner/runner` supports heart-server tests only.
 packages/heart-server operations registry, services, OpenAPI generator, MCP and Hono server
+packages/owlish   Owlish client and secret store
 packages/facedisk  React UI under ui/; command implementations under cli/
 packages/desktop   Electron app: boots the server + runner in-process, opens the UI window
 bin/               the `boof-runner` CLI: scaffolds data, boots web, ensures a single runner
@@ -442,7 +442,9 @@ docs/              harness.md (guide for AI agents), api.md (REST and MCP), boof
 scripts/           install script and the harness guide generator
 ```
 
-The `@boof-runner/*` packages are consumed from source and bundled into a single self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
+The root devDependency on `@boof-runner/runner` supports heart-server tests only.
+
+The `@boof/facedisk`, `@boof/heart`, `@boof/heart-server`, `@boof/owlish`, and `@boof-runner/runner` packages are consumed from source and bundled into the self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
 
 For a deeper explanation of the architecture, see [docs/boof-runner.md](docs/boof-runner.md).
 

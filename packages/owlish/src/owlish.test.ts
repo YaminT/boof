@@ -3,12 +3,12 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OwlishClient, OwlishError } from "./owlish.js";
 import {
+  defaultSettings,
   OwlishSettingsSchema,
   parseOwlishGatewayUrl,
   RetrySettingsSchema,
   SettingsSchema,
 } from "@boof/heart";
-import { defaultSettings } from "@boof/heart";
 
 interface Seen {
   method: string;
