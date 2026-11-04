@@ -15,6 +15,7 @@ import { TonePill } from "../shell/StatusPill.js";
 import { NativeSelect } from "../ui/native-select.js";
 import { Alert } from "../ui/alert.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { formatTime } from "../lib/format-time.js";
 
 const inputClass = "min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-ink";
 const labelClass = "flex min-w-0 flex-col gap-1 text-sm text-ink-muted";
@@ -34,17 +35,42 @@ export function AccountsPage({
   setForm: (update: (form: AccountsGlobal) => AccountsGlobal) => void;
 }) {
   const [whoami, setWhoami] = useState<Whoami | null>(null);
+  const [whoamiError, setWhoamiError] = useState("");
+  const [whoamiResolved, setWhoamiResolved] = useState(false);
   useEffect(() => {
-    void api
-      .whoami()
-      .then(setWhoami)
-      .catch(() => setWhoami(null));
+    let live = true;
+    void api.whoami().then(
+      (result) => {
+        if (!live) return;
+        setWhoami(result);
+        setWhoamiResolved(true);
+      },
+      async (firstError) => {
+        try {
+          const result = await api.whoami();
+          if (!live) return;
+          setWhoami(result);
+        } catch {
+          if (!live) return;
+          setWhoamiError(
+            `Could not check this browser key: ${inputErrorLines(firstError).join("; ")}`,
+          );
+        }
+        if (live) setWhoamiResolved(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
   }, []);
-  const canWrite = accountActionAccess(
-    whoami ? heldScopes(whoami) : new Set<Scope>(),
-    whoami?.principal.trust ?? "trusted",
-    whoami?.principal.projects ?? "*",
-  );
+  const canWrite =
+    whoamiResolved && !whoami
+      ? true
+      : accountActionAccess(
+          whoami ? heldScopes(whoami) : new Set<Scope>(),
+          whoami?.principal.trust ?? "trusted",
+          whoami?.principal.projects ?? "*",
+        );
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const [health, setHealth] = useState<AccountsHealth | null>(null);
@@ -55,10 +81,10 @@ export function AccountsPage({
   const [key, setKey] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     setError("");
     try {
-      const [h, a] = await Promise.allSettled([api.accountsHealth(), api.listAccounts()]);
+      const [h, a] = await Promise.allSettled([api.accountsHealth(force), api.listAccounts()]);
       if (h.status === "fulfilled") setHealth(h.value);
       if (a.status === "fulfilled") setAccounts(a.value.accounts);
       setListError(a.status === "rejected" ? inputErrorLines(a.reason).join("; ") : "");
@@ -152,7 +178,7 @@ export function AccountsPage({
             : `Pool status: ${pool?.status ?? "unavailable"}.`}
         </Alert>
       )}
-      {error && <Alert className="m-0">{error}</Alert>}
+      {(error || whoamiError) && <Alert className="m-0">{whoamiError || error}</Alert>}
       <section className={cardClass}>
         <h2 className="m-0 mb-2 text-lg font-semibold">Gateway</h2>
         {!configured && (
@@ -239,14 +265,14 @@ export function AccountsPage({
         </div>
         {!canWrite && (
           <p className="mb-0 text-sm text-ink-muted">
-            This browser key needs settings:write to change gateway settings.
+            Changing the gateway needs a trusted key without a project restriction.
           </p>
         )}
       </section>
       <section className={cardClass}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="m-0 text-lg font-semibold">Pool status</h2>
-          <Button variant="outline" onClick={() => void refresh()}>
+          <Button variant="outline" onClick={() => void refresh(true)}>
             Check now
           </Button>
         </div>
@@ -311,21 +337,17 @@ export function AccountsPage({
               better-ccflare dashboard
             </a>
             . Boof never asks for or handles provider credentials.
-            {accounts.some(
-              (a) =>
-                /anthropic/i.test(a.provider ?? "") ||
-                /oauth|subscription/i.test(
-                  `${a.provider ?? ""} ${a.authType ?? ""} ${a.accountType ?? ""} ${a.name}`,
-                ),
-            ) && (
-              <>
-                {" "}
-                Subscription OAuth accounts must follow their provider’s terms. Anthropic
-                subscription credentials must not be routed through third-party services.
-              </>
-            )}
           </p>
         </section>
+      )}
+      {accounts.some((a) =>
+        /oauth|subscription/i.test(
+          `${a.provider ?? ""} ${a.authType ?? ""} ${a.accountType ?? ""}`,
+        ),
+      ) && (
+        <p className="m-0 text-sm text-ink-muted">
+          Check your provider&apos;s terms before pooling subscription accounts.
+        </p>
       )}
       <footer className="pb-4 text-xs text-ink-muted">
         Account pooling by{" "}
@@ -485,16 +507,4 @@ function AccountRow({
       {error && <Alert className="mb-0 mt-2 break-words">{error}</Alert>}
     </article>
   );
-}
-
-function formatTime(value: string | number): string {
-  const ms = typeof value === "number" || /^\d+$/.test(value) ? Number(value) : Date.parse(value);
-  if (!Number.isFinite(ms)) return "time unavailable";
-  const delta = ms - Date.now();
-  const relative =
-    Math.abs(delta) < 60_000
-      ? `${Math.round(Math.abs(delta) / 1000)} s`
-      : `${Math.round(Math.abs(delta) / 60_000)} min`;
-  const relativeText = delta >= 0 ? `in ${relative}` : `${relative} ago`;
-  return `${new Date(ms).toLocaleString()} (${relativeText})`;
 }

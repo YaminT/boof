@@ -34,10 +34,10 @@ export const accountsHealth = defineOp({
   name: "accounts.health",
   title: "Pool health",
   description:
-    "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds. No input. No side effects.",
+    "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
   scope: "settings:read",
   projectScoped: false,
-  input: z.strictObject({}),
+  input: z.strictObject({ refresh: z.boolean().optional() }),
   output: z.object({
     configured: z.boolean(),
     url: z.string().nullable().meta({ description: "scheme://host:port of the gateway." }),
@@ -51,7 +51,7 @@ export const accountsHealth = defineOp({
     r.configured
       ? `Pool ${r.pool.status}${r.pool.reason ? `: ${r.pool.reason}` : ""}`
       : "No account pool is configured",
-  handler: async (ctx) => {
+  handler: async (ctx, { refresh }) => {
     const pool = await ctx.services.owlishClient().catch(() => null);
     const settings = await ctx.services.loadSettings();
     if (!settings.owlish) {
@@ -68,7 +68,7 @@ export const accountsHealth = defineOp({
       url: new URL(settings.owlish.url).origin,
       healthGate: settings.owlish.healthGate,
       keySource: await ctx.services.owlishSecrets.source().catch(() => null),
-      pool: pool ? await pool.client.health() : await ctx.services.poolStatus(),
+      pool: pool ? await pool.client.health(refresh) : await ctx.services.poolStatus(),
     };
   },
 });

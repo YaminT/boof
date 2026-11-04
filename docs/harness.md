@@ -2053,9 +2053,13 @@ Path parameters (all required):
 - Scope: `settings:read`
 - MCP tool: `boof_get_pool_health`
 - CLI: `boof-runner accounts health`
-- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds. No input. No side effects.
+- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.
 - Success: HTTP 200 with `{ configured: boolean, healthGate: "pause" | "warn" | "off" | null, keySource: "file" | "env" | null, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, url: string | null }`.
-- Errors: `403 forbidden_scope`
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Query parameters:
+
+- `refresh`: `boolean`, optional
 
 #### `POST /api/v1/accounts/{accountId}/pause` (Pause an account)
 

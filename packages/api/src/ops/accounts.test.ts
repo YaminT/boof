@@ -253,6 +253,22 @@ describe("with a gateway", () => {
     expect(seen[0]!.key).toBeUndefined();
   });
 
+  it("refresh bypasses the health cache and coalesces concurrent forced checks", async () => {
+    await configure();
+    expect((await run("accounts.health", admin)).pool.status).toBe("ok");
+    healthStatus = 503;
+    healthBody = {
+      status: "degraded",
+      pool: { configured: 2, routable: 0, paused: 0, rate_limited: 2, usage_exhausted: 0 },
+    };
+    expect((await run("accounts.health", admin)).pool.status).toBe("ok");
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => run("accounts.health", admin, { refresh: true })),
+    );
+    expect(results.every((result) => result.pool.status === "degraded")).toBe(true);
+    expect(seen.filter((entry) => entry.url === "/health")).toHaveLength(2);
+  });
+
   it("a degraded or unreachable pool is reported with its reason, never throws", async () => {
     await configure();
     healthStatus = 503;

@@ -7,11 +7,12 @@ import {
 } from "./accounts-page.js";
 
 describe("accounts page helpers", () => {
-  it("shows account actions only to a key with settings:write", () => {
+  it("requires a trusted, project-unrestricted key with settings:write for shared pool actions", () => {
     expect(accountActionAccess("all")).toBe(true);
     expect(accountActionAccess(new Set(["settings:write"]))).toBe(true);
     expect(accountActionAccess(new Set(["settings:read"]))).toBe(false);
     expect(accountActionAccess(new Set(["settings:write"]), "review", "*")).toBe(false);
+    expect(accountActionAccess(new Set(["settings:write"]), "trusted", ["project-a"])).toBe(false);
     expect(accountActionAccess(new Set(["settings:write"]), "trusted", ["repo"])).toBe(false);
     expect(accountActionAccess(new Set(["settings:write"]), "trusted", "*")).toBe(true);
   });

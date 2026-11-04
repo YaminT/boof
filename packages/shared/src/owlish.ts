@@ -94,6 +94,7 @@ export class OwlishClient {
   private readonly timeoutMs: number;
   private readonly now: () => number;
   private cached?: { at: number; status: PoolStatus };
+  private forcedHealth?: Promise<PoolStatus>;
 
   constructor(opts: OwlishClientOptions) {
     this.base = opts.url.replace(/\/+$/, "");
@@ -104,7 +105,20 @@ export class OwlishClient {
   }
 
   /** The pool right now (cached 10 s, failures too). Never throws. */
-  async health(): Promise<PoolStatus> {
+  async health(force = false): Promise<PoolStatus> {
+    if (force) {
+      if (this.forcedHealth) return this.forcedHealth;
+      const request = this.fetchHealth().then((status) => {
+        this.cached = { at: this.now(), status };
+        return status;
+      });
+      this.forcedHealth = request;
+      try {
+        return await request;
+      } finally {
+        if (this.forcedHealth === request) this.forcedHealth = undefined;
+      }
+    }
     const t = this.now();
     if (this.cached && t - this.cached.at < HEALTH_TTL_MS) return this.cached.status;
     const status = await this.fetchHealth();
