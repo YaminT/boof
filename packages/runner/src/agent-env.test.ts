@@ -2,12 +2,13 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { agentEnv } from "./agent-env.js";
 import { gatewayEnv } from "./gateway-env.js";
 import { MockTool } from "./tools/mock.js";
 import { ClaudeCodeTool } from "./tools/claude-code.js";
-import { CodexTool } from "./tools/codex.js";
+import { CodexTool, codexProviderConfig } from "./tools/codex.js";
 import { OpencodeTool } from "./tools/opencode.js";
 
 describe("agentEnv", () => {
@@ -320,6 +321,28 @@ describe("routing through the account pool gateway", () => {
       ]);
       const open = await run(() => new CodexTool(), dir, { gateway: gw, inheritMcpServers: true });
       expect(open.argv).not.toContain("--ignore-user-config");
+    });
+
+    it("Codex gateway URL remains one TOML string even when passed a hostile host", () => {
+      const probe = 'https://127.0.0.1",query_params={probe="injected"},zz="y';
+      const config = codexProviderConfig(`${probe}/v1`);
+      const parsed = JSON.parse(
+        execFileSync(
+          "python3",
+          ["-c", "import json,sys,tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())))"],
+          { input: config, encoding: "utf8" },
+        ),
+      );
+      expect(parsed).toEqual({
+        model_providers: {
+          boofpool: {
+            name: "boof pool",
+            base_url: `${probe}/v1`,
+            env_key: "OPENAI_API_KEY",
+            wire_api: "responses",
+          },
+        },
+      });
     });
 
     it("claude gateway removes inherited provider credentials and bypass flags", async () => {

@@ -85,9 +85,17 @@ describe("settings", () => {
       "https://x.test/#frag",
       "http://127.0.0.1:8080?",
       "http://127.0.0.1:8080/has space",
+      'https://127.0.0.1",query_params={probe="injected"},zz="y',
+      "https://bad_host.example",
+      "https://bad=host.example",
     ]) {
       expect(() => OwlishSettingsSchema.parse({ url: bad })).toThrow();
     }
+    expect(() =>
+      OwlishSettingsSchema.parse({
+        url: 'https://127.0.0.1",query_params={probe="injected"},zz="y',
+      }),
+    ).toThrow(/ASCII DNS hostname or bracketed IPv6/i);
     expect(parseOwlishGatewayUrl('http://127.0.0.1:8080/"unsafe')?.href).toBe(
       "http://127.0.0.1:8080/%22unsafe",
     );
@@ -95,6 +103,8 @@ describe("settings", () => {
       expect(OwlishSettingsSchema.parse({ url: good }).url).toBe(good);
       expect(parseOwlishGatewayUrl(good)).not.toBeNull();
     }
+    expect(parseOwlishGatewayUrl("https://xn--bcher-kva.example")).not.toBeNull();
+    expect(parseOwlishGatewayUrl("https://[2001:db8::1]")).not.toBeNull();
     const s = SettingsSchema.parse({ ...defaultSettings(), owlish: { url: "https://x:1" } });
     expect(s.owlish?.url).toBe("https://x:1");
   });

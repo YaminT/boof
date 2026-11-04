@@ -344,7 +344,7 @@ Routed agents receive the gateway client key in their process environment and ca
 
 This documents the 8a HTTP integration. The later Accounts settings tab and Agent SDK adapter (8b) are not included.
 
-Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Credentials, query strings and fragments are rejected. Routed agents receive the gateway client key in their process environment and can use it to call the gateway API directly.
+Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Hostnames must use ASCII DNS labels (IDNA/punycode is allowed) or a bracketed IPv6 literal. Credentials, query strings and fragments are rejected. Routed agents receive the gateway client key in their process environment and can use it to call the gateway API directly.
 
 ## Non-Interactive Guard
 

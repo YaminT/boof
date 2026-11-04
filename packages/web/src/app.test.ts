@@ -312,6 +312,18 @@ describe("commands API", () => {
 });
 
 describe("settings & health API", () => {
+  it("rejects a TOML-injection gateway hostname in settings", async () => {
+    const res = await req("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        owlish: { url: 'https://127.0.0.1",query_params={probe="injected"},zz="y' },
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_input");
+  });
+
   it("reads and patches settings", async () => {
     const res = await req("/api/settings", {
       method: "PUT",

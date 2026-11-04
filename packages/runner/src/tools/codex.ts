@@ -10,6 +10,11 @@ import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js
 import { withQuestions } from "./questions.js";
 import type { TokenUsage } from "@boof-runner/shared";
 
+/** Build the inline TOML provider table; JSON's string quoting is valid TOML basic-string syntax. */
+export function codexProviderConfig(url: string): string {
+  return `model_providers.boofpool={ name = "boof pool", base_url = ${JSON.stringify(url)}, env_key = "OPENAI_API_KEY", wire_api = "responses" }`;
+}
+
 /**
  * Adapter for the `codex` CLI. Runs non-interactively via `exec`; in auto mode
  * uses full-auto / bypass sandbox flags. Scoped to `opts.cwd`.
@@ -105,12 +110,7 @@ export class CodexTool implements Tool {
     if (!opts.inheritMcpServers) args.push("--ignore-user-config");
     if (opts.gateway) {
       const url = `${gatewayUrl(opts.gateway.url)}/v1`;
-      args.push(
-        "-c",
-        "model_provider=boofpool",
-        "-c",
-        `model_providers.boofpool={ name = "boof pool", base_url = "${url}", env_key = "OPENAI_API_KEY", wire_api = "responses" }`,
-      );
+      args.push("-c", "model_provider=boofpool", "-c", codexProviderConfig(url));
     }
     if (opts.autoApprove) {
       // Full auto-approval, no sandbox — the runner's equivalent of claude's

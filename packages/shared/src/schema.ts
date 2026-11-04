@@ -393,7 +393,7 @@ export const OwlishSettingsSchema = z.strictObject({
     .max(500)
     .refine(
       isValidOwlishGatewayUrl,
-      "Use HTTPS off loopback and omit credentials, query and fragment",
+      "Use HTTPS off loopback, an ASCII DNS hostname or bracketed IPv6 literal, and omit credentials, query and fragment",
     ),
   /** `pause`: no routed task starts while the pool is unhealthy; `warn`: report only; `off`: ignore. */
   healthGate: z.enum(["pause", "warn", "off"]).default("pause"),
@@ -409,6 +409,17 @@ export function parseOwlishGatewayUrl(value: string): URL | null {
   } catch {
     return null;
   }
+  // WHATWG URL keeps TOML punctuation such as quotes and braces in an https host. Restrict
+  // ordinary DNS/IPv4 names to ASCII labels (including IDNA's ASCII punycode form), and allow
+  // IPv6 only in its URL-required bracketed form.
+  const rawHostname = parsed.hostname;
+  const validHostname = rawHostname.startsWith("[")
+    ? /^\[[0-9a-f:.]+\]$/i.test(rawHostname)
+    : rawHostname
+        .replace(/\.$/, "")
+        .split(".")
+        .every((label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
+  if (!validHostname) return null;
   const hostname = parsed.hostname
     .replace(/^\[|\]$/g, "")
     .replace(/\.$/, "")
