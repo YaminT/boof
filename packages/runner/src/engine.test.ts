@@ -1715,6 +1715,161 @@ describe("steering a running step (mock tool)", () => {
     }
     expect(devCalls()).toBe(1);
   });
+
+  it("in-place steering logs the steer and marks the injection applied", async () => {
+    const originalTool = engine.registry.get("mock")!;
+    const tool = {
+      id: originalTool.id,
+      displayName: originalTool.displayName,
+      defaultModels: originalTool.defaultModels,
+      detect: (...args: any[]) => originalTool.detect(...args),
+      listModels: () => originalTool.listModels(),
+      run: (opts: RunOptions) => originalTool.run(opts),
+      supportsResume: true,
+      steersInPlace: true,
+    };
+    engine.registry.register(tool);
+    let steered = false;
+    const seen: RunOptions[] = [];
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer") return;
+      seen.push(opts);
+      if (!steered) {
+        steered = true;
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await store.appendInjected("t1", "keep going", "user", "now");
+        await writeFile(
+          taskSteerRequestPath(projectDir, "t1"),
+          JSON.stringify({ text: "keep going" }) + "\n",
+        );
+        const req = await opts.onSteer?.();
+        expect(req?.texts).toEqual(["keep going"]);
+        expect(req?.last).toBe(false);
+      }
+    };
+    try {
+      await store.create(newTask(fm(), "Build it."));
+      const running = await store.transition("t1", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+      });
+      const outcome = await pipeline.run(running);
+      expect(outcome.kind).toBe("done");
+      expect(seen).toHaveLength(1);
+      const done = await store.get("t1");
+      expect(done?.body.log).toContain("### Steered (in place)\nkeep going");
+      expect(done?.body.injected).toContain("keep going");
+    } finally {
+      engine.registry.register(originalTool);
+    }
+  });
+
+  it("passes the cumulative interrupted cost as the resumed session baseline", async () => {
+    const originalTool = engine.registry.get("mock")!;
+    const tool = {
+      id: originalTool.id,
+      displayName: originalTool.displayName,
+      defaultModels: originalTool.defaultModels,
+      detect: (...args: any[]) => originalTool.detect(...args),
+      listModels: () => originalTool.listModels(),
+      run: async (opts: RunOptions) => {
+        if (opts.role === "developer") {
+          seen.push(opts);
+          if (first) {
+            first = false;
+            await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+            await writeFile(
+              taskSteerRequestPath(projectDir, "t1"),
+              JSON.stringify({ text: "resume" }) + "\n",
+            );
+            throw new ToolRunError("mock", 1, false, false, "", "", false, 0, {
+              steered: true,
+              sessionId: "same-session",
+              usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.4, known: true },
+            });
+          }
+          return {
+            output: "",
+            report: "# Developer",
+            sessionId: opts.resumeSessionId,
+            usage: { inputTokens: 20, outputTokens: 8, costUsd: 0.6, known: true },
+          };
+        }
+        return originalTool.run(opts);
+      },
+      supportsResume: true,
+    };
+    engine.registry.register(tool);
+    let first = true;
+    const seen: RunOptions[] = [];
+    try {
+      await store.create(newTask(fm(), "Build it. [[mock-cost 0]]"));
+      const running = await store.transition("t1", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+      });
+      expect((await pipeline.run(running)).kind).toBe("done");
+      expect(seen[1]?.resumeSessionId).toBe("same-session");
+      expect(seen[1]?.resumeBaseline).toEqual({
+        inputTokens: 10,
+        outputTokens: 4,
+        costUsd: 0.4,
+        known: true,
+      });
+      expect((await store.get("t1"))?.frontmatter.tokens?.costUsd).toBeCloseTo(1.0);
+    } finally {
+      engine.registry.register(originalTool);
+    }
+  });
+
+  it("applies a fallback steer model to the rerun attempt", async () => {
+    const originalTool = engine.registry.get("mock")!;
+    const tool = {
+      id: originalTool.id,
+      displayName: originalTool.displayName,
+      defaultModels: originalTool.defaultModels,
+      detect: (...args: any[]) => originalTool.detect(...args),
+      listModels: () => originalTool.listModels(),
+      run: (opts: RunOptions) => originalTool.run(opts),
+      supportsResume: false,
+    };
+    engine.registry.register(tool);
+    let first = true;
+    const models: string[] = [];
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer") return;
+      models.push(opts.model);
+      if (first) {
+        first = false;
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await writeFile(
+          taskSteerRequestPath(projectDir, "t1"),
+          JSON.stringify({ text: "switch", model: "opus" }) + "\n",
+        );
+        throw new ToolRunError("mock", 1, false, false, "", "", false, 0, { steered: true });
+      }
+    };
+    try {
+      await store.create(newTask(fm(), "Build it. [[mock-cost 0]]"));
+      const running = await store.transition("t1", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+      });
+      expect((await pipeline.run(running)).kind).toBe("done");
+      expect(models).toEqual(["mock-default", "opus"]);
+    } finally {
+      engine.registry.register(originalTool);
+    }
+  });
 });
 
 describe("multi-project engine (mock tool)", () => {

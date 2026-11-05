@@ -249,4 +249,258 @@ describe("ClaudeAgentTool", () => {
     expect(fake.calls.options[0].env.ANTHROPIC_API_KEY).toBe(key);
     expect(fake.calls.options[0].env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
+
+  it("streams a now steer in place and does not finish on the interrupted result", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-steer-"));
+    const steerSignalPath = join(dir, "steer.jsonl");
+    let pushed: any;
+    let promptStream: AsyncIterable<any>;
+    const calls = { interrupts: 0, setModel: [] as (string | undefined)[], closed: 0 };
+    const query = {
+      async *[Symbol.asyncIterator]() {
+        const input = promptStream[Symbol.asyncIterator]();
+        yield msg("system", {
+          subtype: "init",
+          apiKeySource: "ANTHROPIC_API_KEY",
+          session_id: "s1",
+        });
+        const first = await input.next();
+        yield msg("result", {
+          subtype: "success",
+          result: "old",
+          total_cost_usd: 0.8,
+          modelUsage: {},
+          user_message_uuids: [first.value.uuid],
+        });
+        const next = await input.next();
+        pushed = next.value;
+        yield msg("result", {
+          subtype: "success",
+          result: "new",
+          total_cost_usd: 1.0,
+          modelUsage: {},
+          user_message_uuids: [pushed.uuid],
+        });
+      },
+      async interrupt() {
+        calls.interrupts++;
+        return undefined;
+      },
+      async setModel(model?: string) {
+        calls.setModel.push(model);
+      },
+      async streamInput(stream: AsyncIterable<any>) {
+        for await (const item of stream) pushed = item;
+      },
+      async close() {
+        calls.closed++;
+      },
+    };
+    await writeFile(
+      steerSignalPath,
+      JSON.stringify({ text: "do this now", model: "sonnet" }) +
+        "\n" +
+        JSON.stringify({ text: "also preserve this", model: "opus" }) +
+        "\n",
+    );
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () =>
+        ({
+          query: ({ prompt }: { prompt: AsyncIterable<any> }) => {
+            promptStream = prompt;
+            return query;
+          },
+        }) as any,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    try {
+      const result = await tool.run({
+        ...base,
+        steerSignalPath,
+        resumeBaseline: { inputTokens: 0, outputTokens: 0, costUsd: 0.4, known: true },
+        onSteer: async () => {
+          await rm(steerSignalPath, { force: true });
+          return { texts: ["do this now", "also preserve this"], model: "opus", last: false };
+        },
+      });
+      expect(calls.interrupts).toBe(1);
+      expect(calls.setModel).toEqual(["opus"]);
+      expect(pushed.message.content).toContain("do this now");
+      expect(pushed.message.content).toContain("also preserve this");
+      expect(result.report).toBe("new");
+      expect(result.usage?.costUsd).toBeCloseTo(0.6);
+      expect(calls.closed).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resets the SDK model when a steer selects default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-model-"));
+    const steerSignalPath = join(dir, "steer.jsonl");
+    let pushed: any;
+    const setModel: (string | undefined)[] = [];
+    let promptStream!: AsyncIterable<any>;
+    const query = {
+      async *[Symbol.asyncIterator]() {
+        const input = promptStream[Symbol.asyncIterator]();
+        yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+        await input.next();
+        const next = await input.next();
+        pushed = next.value;
+        yield msg("result", {
+          subtype: "success",
+          result: "done",
+          user_message_uuids: [pushed.uuid],
+        });
+      },
+      async interrupt() {},
+      async setModel(model?: string) {
+        setModel.push(model);
+      },
+      async close() {},
+    };
+    await writeFile(steerSignalPath, JSON.stringify({ text: "continue", model: "default" }) + "\n");
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () =>
+        ({
+          query: ({ prompt }: { prompt: AsyncIterable<any> }) => {
+            promptStream = prompt;
+            return query;
+          },
+        }) as any,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    try {
+      await tool.run({
+        ...base,
+        steerSignalPath,
+        onSteer: async () => {
+          await rm(steerSignalPath, { force: true });
+          return { texts: ["continue"], model: "default", last: false };
+        },
+      });
+      expect(setModel).toEqual([undefined]);
+      expect(pushed.message.content).toContain("continue");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a steer pending and falls back when interrupt rejects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-interrupt-fail-"));
+    const steerSignalPath = join(dir, "steer.jsonl");
+    await writeFile(steerSignalPath, JSON.stringify({ text: "retry this" }) + "\n");
+    const fake = fakeSdk([
+      {
+        emit: msg("system", {
+          subtype: "init",
+          apiKeySource: "ANTHROPIC_API_KEY",
+          session_id: "s1",
+        }),
+      },
+      "hang",
+      { interruptResult: new Error("interrupt failed") },
+    ]);
+    const onSteer = vi.fn(async () => ({ texts: ["retry this"], last: false }));
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    try {
+      await expect(tool.run({ ...base, steerSignalPath, onSteer })).rejects.toMatchObject({
+        steered: true,
+      });
+      expect(onSteer).not.toHaveBeenCalled();
+      expect(fake.calls.interrupts).toBe(1);
+      expect(fake.calls.closed).toBe(1);
+      await expect(
+        import("node:fs/promises").then(({ access }) => access(steerSignalPath)),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets stop win when stop and steer files appear together", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-stop-steer-"));
+    const steerSignalPath = join(dir, "steer.jsonl");
+    const stopSignalPath = join(dir, "stop");
+    await writeFile(steerSignalPath, JSON.stringify({ text: "steer" }) + "\n");
+    await writeFile(stopSignalPath, "stop\n");
+    const fake = fakeSdk([
+      { emit: msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" }) },
+      "hang",
+    ]);
+    const onSteer = vi.fn(async () => ({ texts: ["steer"], last: false }));
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    try {
+      await expect(
+        tool.run({ ...base, steerSignalPath, stopSignalPath, onSteer }),
+      ).rejects.toMatchObject({
+        stopped: true,
+      });
+      expect(onSteer).not.toHaveBeenCalled();
+      expect(fake.calls.interrupts).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops watching once the in-place steer limit is reached", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-steer-limit-"));
+    const steerSignalPath = join(dir, "steer.jsonl");
+    let pushed: any;
+    let promptStream!: AsyncIterable<any>;
+    const fakeQuery = {
+      async *[Symbol.asyncIterator]() {
+        const input = promptStream[Symbol.asyncIterator]();
+        yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+        await input.next();
+        pushed = (await input.next()).value;
+        yield msg("result", {
+          subtype: "success",
+          result: "done",
+          user_message_uuids: [pushed.uuid],
+        });
+      },
+      async interrupt() {},
+      async setModel() {},
+      async close() {},
+    };
+    await writeFile(steerSignalPath, JSON.stringify({ text: "fifth" }) + "\n");
+    const onSteer = vi.fn(async () => {
+      await rm(steerSignalPath, { force: true });
+      await writeFile(steerSignalPath, JSON.stringify({ text: "sixth" }) + "\n");
+      return { texts: ["fifth"], last: true };
+    });
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () =>
+        ({
+          query: ({ prompt }: { prompt: AsyncIterable<any> }) => {
+            promptStream = prompt;
+            return fakeQuery;
+          },
+        }) as any,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    try {
+      await tool.run({ ...base, steerSignalPath, onSteer });
+      expect(onSteer).toHaveBeenCalledTimes(1);
+      expect(pushed.message.content).toContain("fifth");
+      await expect(
+        import("node:fs/promises").then(({ access }) => access(steerSignalPath)),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -31,7 +31,7 @@ export function fakeSdk(script: FakeStep[]): {
       async *[Symbol.asyncIterator]() {
         for (const step of script) {
           if (ended) break;
-          if (step === "hang") await new Promise<void>(() => {});
+          if (step === "hang") while (!ended) await new Promise<void>((r) => (wake = r));
           if (step === "waitForPush")
             while (!pending.length && !ended) await new Promise<void>((r) => (wake = r));
           if (typeof step === "object" && "emit" in step) yield step.emit;
@@ -44,6 +44,13 @@ export function fakeSdk(script: FakeStep[]): {
       },
       async interrupt() {
         calls.interrupts++;
+        const configured = script.find(
+          (step) => typeof step === "object" && "interruptResult" in step,
+        );
+        if (configured && typeof configured === "object" && "interruptResult" in configured) {
+          if (configured.interruptResult instanceof Error) throw configured.interruptResult;
+          return configured.interruptResult;
+        }
         return undefined;
       },
       async setModel(model?: string) {

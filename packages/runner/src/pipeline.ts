@@ -246,7 +246,7 @@ export type PipelineOutcome =
 /** Steer requests one step takes before further ones wait for the next step (loop guard). */
 export const MAX_STEERS_PER_STEP = 5;
 
-const RESUME_PROMPT_PREFIX =
+export const RESUME_PROMPT_PREFIX =
   "The user sent new instructions while you were working. Continue the same task from where " +
   "you stopped and apply them:\n\n";
 
@@ -328,12 +328,14 @@ export class Pipeline {
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
     // Prompts the user steered in, accumulated for a rerun that cannot resume the tool session.
     const steerTexts: string[] = [];
+    let stepModel = opts.model;
     // A steer that arrived between steps (or before this step started): it is simply applied
     // here, no kill. The prompt was built earlier, so add what it may have missed.
     const early = await this.takeSteer(id);
-    if (early.length > 0) {
-      steerTexts.push(...early.filter((t) => !opts.prompt.includes(t)));
-      await this.log(id, `\n### Steered\n${early.join("\n\n")}`);
+    if (early.texts.length > 0) {
+      steerTexts.push(...early.texts.filter((t) => !opts.prompt.includes(t)));
+      await this.log(id, `\n### Steered\n${early.texts.join("\n\n")}`);
+      if (early.model) stepModel = early.model;
     }
     this.deps.store.markInjectedApplied(id).catch(() => {});
     const compose = (interruptedBy: string | null): string => {
@@ -365,15 +367,38 @@ export class Pipeline {
         try {
           const result = await tool.run({
             ...opts,
+            model: stepModel,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             agentEnv: this.deps.settings.runner.agentEnv,
             ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
             prompt,
             resumeSessionId,
+            ...(resumeSessionId ? { resumeBaseline: sumUsage(interrupted) } : {}),
             idleTimeoutMs,
             stopSignalPath: taskStopRequestPath(this.deps.root, id),
             pidFilePath: taskPidPath(this.deps.root, id),
             steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
+            ...(tool.steersInPlace && canSteer
+              ? {
+                  onSteer: async () => {
+                    const request = await this.takeSteer(id);
+                    steers++;
+                    steerTexts.push(...request.texts);
+                    if (request.model) stepModel = request.model;
+                    this.deps.store.markInjectedApplied(id).catch(() => {});
+                    await this.log(id, `\n### Steered (in place)\n${request.texts.join("\n\n")}`);
+                    await this.log(id, `\n### ${label} (steer ${steers})`);
+                    const last = steers >= MAX_STEERS_PER_STEP;
+                    if (last) {
+                      await this.log(
+                        id,
+                        `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
+                      );
+                    }
+                    return { ...request, last };
+                  },
+                }
+              : {}),
             onChunk: (c) => void this.streamChunk(id, c),
           });
           await this.recordStepCost(id, tool.id, result.usage);
@@ -389,7 +414,9 @@ export class Pipeline {
             await this.assertNotStopped(id);
             // A steered rerun is paid like a retry: never start it on a spent budget.
             await this.assertBudget(id, tool.id);
-            const texts = await this.takeSteer(id);
+            const request = await this.takeSteer(id);
+            const texts = request.texts;
+            if (request.model) stepModel = request.model;
             steers++;
             steerTexts.push(...texts);
             this.deps.store.markInjectedApplied(id).catch(() => {});
@@ -453,27 +480,30 @@ export class Pipeline {
    * Take the pending steer request: the prompts it carries (written by the inject API next to the
    * durable copies), removing the file. Empty when there is none.
    */
-  private async takeSteer(id: string): Promise<string[]> {
+  private async takeSteer(id: string): Promise<{ texts: string[]; model?: string }> {
     const path = taskSteerRequestPath(this.deps.root, id);
     const taken = `${path}.taken`;
     try {
       await rename(path, taken);
     } catch {
-      return [];
+      return { texts: [] };
     }
     const raw = await readFile(taken, "utf8").catch(() => "");
     await rm(taken, { force: true });
     const texts: string[] = [];
+    let model: string | undefined;
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       try {
-        const text = (JSON.parse(line) as { text?: unknown }).text;
+        const request = JSON.parse(line) as { text?: unknown; model?: unknown };
+        const text = request.text;
         if (typeof text === "string" && text.trim()) texts.push(text.trim());
+        if (typeof request.model === "string" && request.model.trim()) model = request.model.trim();
       } catch {
         /* a hand-written marker file: nothing to carry */
       }
     }
-    return texts;
+    return { texts, ...(model ? { model } : {}) };
   }
 
   /** Add a finished step's cost to the run total and the daily ledgers; never fails the step. */
