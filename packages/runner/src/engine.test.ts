@@ -247,7 +247,7 @@ describe("RunnerEngine integration (mock tool)", () => {
     );
     const result = await engine.tick();
     expect(result.kind).toBe("ran");
-    expect(checks).toBe(2); // selection, then immediately before Developer
+    expect(checks).toBe(3); // selection, gateway routing check, then fresh pre-spawn decision
     const task = await store.get("t1");
     expect(task?.frontmatter.status).toBe("failed");
     expect(task?.body.log).toContain(reason);

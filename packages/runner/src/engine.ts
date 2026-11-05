@@ -154,6 +154,7 @@ export class RunnerEngine {
    * flight are excluded.
    */
   async selectNext(): Promise<Selection | null> {
+    // This display helper can refuse and fail pending tasks as part of selection.
     return (await this.selectWithBudget()).selection;
   }
 
@@ -182,6 +183,9 @@ export class RunnerEngine {
       if (this.inflight.has(project.id)) continue;
       for (const task of await this.storeFor(project).list()) {
         if (task.frontmatter.status !== "pending" || task.frontmatter.skip) continue;
+        for (const key of this.authRefusalEvents)
+          if (key.startsWith(`${project.id}\0${task.frontmatter.id}\0`))
+            this.authRefusalEvents.delete(key);
         const eff = effectiveSettings(settings, project);
         const tools = (["planner", "developer", "reviewer", "observer"] as const)
           .map((role) => resolveRole(eff, task, role as "observer")?.tool)
@@ -189,7 +193,11 @@ export class RunnerEngine {
         const resolved = tools.map((id) => this.registry.get(id)).filter((t) => t !== undefined);
         const unavailable = resolved.find((tool) => tool.unavailableReason);
         if (unavailable) {
-          await this.refuseBeforeStart(project, task, unavailable.unavailableReason!);
+          try {
+            await this.refuseBeforeStart(project, task, unavailable.unavailableReason!);
+          } catch (error) {
+            console.error(`could not refuse task ${task.frontmatter.id}:`, error);
+          }
           continue;
         }
         const authTool = resolved.find((tool) => tool.needsAgentAuth);
@@ -201,7 +209,12 @@ export class RunnerEngine {
             agentDecisions.set(project.id, agentDecision);
           }
           if (!agentDecision.ok) {
-            await this.refuseBeforeStart(project, task, agentDecision.reason);
+            try {
+              await this.refuseBeforeStart(project, task, agentDecision.reason);
+              await this.noteGoalTaskStatus(project, task, "failed");
+            } catch (error) {
+              console.error(`could not refuse task ${task.frontmatter.id}:`, error);
+            }
             continue;
           }
         }
@@ -326,8 +339,22 @@ export class RunnerEngine {
         id,
         "failed",
         undefined,
-        outcome.budget || outcome.pool ? { reason: outcome.error } : undefined,
+        outcome.budget || outcome.pool || outcome.authRefused
+          ? { reason: outcome.error }
+          : undefined,
       );
+      if (outcome.authRefused) {
+        const key = `${project.id}\0${id}\0${outcome.error}`;
+        if (!this.authRefusalEvents.has(key)) {
+          this.authRefusalEvents.add(key);
+          await appendEvent(this.root, {
+            type: "runner.agent_auth_refused",
+            projectId: project.id,
+            taskId: id,
+            reason: outcome.error,
+          });
+        }
+      }
       await this.noteGoalTaskStatus(project, outcome.task, "failed");
     } else if (outcome.kind === "stopped") {
       // Only a stop request gets here (user stop, plan goal removed, server shutdown). The

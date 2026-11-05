@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:f
 import { join } from "node:path";
 import {
   blockingScopes,
+  BOOF_VERSION,
   budgetExceededMessage,
   budgetTimeZone,
   evaluateBudget,
@@ -42,6 +43,7 @@ import type { ToolRegistry } from "./tools/registry.js";
 import { AgentAuthRefusedError, claudeAgentEnv, type AgentAuthResolver } from "./agent-auth.js";
 import { announceBudgetExceeded } from "./budget.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
+import { RESUME_PROMPT_PREFIX } from "./tools/steer.js";
 import {
   diffAgainstBase,
   discardWorktree,
@@ -241,16 +243,12 @@ class PoolExhaustedError extends Error {
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true }
+  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true; authRefused?: true }
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
 /** Steer requests one step takes before further ones wait for the next step (loop guard). */
 export const MAX_STEERS_PER_STEP = 5;
-
-export const RESUME_PROMPT_PREFIX =
-  "The user sent new instructions while you were working. Continue the same task from where " +
-  "you stopped and apply them:\n\n";
 
 /** First word of a stop-request file written by RunnerEngine.shutdown. */
 export const SHUTDOWN_STOP_MARKER = "shutdown";
@@ -321,6 +319,7 @@ export class Pipeline {
     tool: Tool,
     opts: RunOptions,
   ): Promise<RunResult> {
+    if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
     if (!tool.needsAgentAuth) await this.awaitPool(id, tool);
@@ -372,25 +371,47 @@ export class Pipeline {
         try {
           let authOptions: Partial<RunOptions> = {};
           if (tool.needsAgentAuth) {
+            if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
             if (!this.deps.agentAuth || !this.deps.project)
               throw new AgentAuthRefusedError(
                 "claude-agent cannot start: no authentication resolver",
               );
-            const decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
-            if (!decision.ok) throw new AgentAuthRefusedError(decision.reason);
-            const auth = await this.deps.agentAuth.credentials(this.deps.project, decision);
             const claudeConfigDir = await this.deps.agentAuth.configDir(this.deps.project);
+            const initial = await this.deps.agentAuth.decide(this.deps.project);
+            if (initial.ok && initial.via === "gateway") {
+              authViaGateway = true;
+              await this.awaitPool(id, { ...tool, acceptsPool: true }, true);
+            }
+            await this.assertBudget(id, tool.id);
+            let decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+            if (
+              decision.ok &&
+              decision.via === "gateway" &&
+              !(initial.ok && initial.via === "gateway")
+            ) {
+              // Auth settings may have changed from project-key to gateway while this attempt
+              // was being prepared. Route it through the pool, then decide afresh once more.
+              await this.awaitPool(id, { ...tool, acceptsPool: true }, true);
+              await this.assertBudget(id, tool.id);
+              decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+            }
+            if (!decision.ok) throw new AgentAuthRefusedError(decision.reason);
             authViaGateway = decision.via === "gateway";
             if (decision.note && !authNoteLogged) {
-              await this.log(id, `\n${decision.note}`);
+              void this.log(id, `\n${decision.note}`);
               authNoteLogged = true;
             }
+            const auth = await this.deps.agentAuth.credentials(this.deps.project, decision);
             authOptions = {
               agentAuth: auth,
               claudeConfigDir,
-              env: claudeAgentEnv(process.env, auth, "boof-runner", claudeConfigDir),
+              env: claudeAgentEnv(
+                process.env,
+                auth,
+                `boof-runner/${BOOF_VERSION}`,
+                claudeConfigDir,
+              ),
             };
-            if (authViaGateway) await this.awaitPool(id, { ...tool, acceptsPool: true });
           }
           const result = await tool.run({
             ...opts,
@@ -1166,6 +1187,7 @@ export class Pipeline {
         error: message,
         ...(overBudget ? { budget: true as const } : {}),
         ...(poolExhausted ? { pool: true as const } : {}),
+        ...(authRefused ? { authRefused: true as const } : {}),
       };
     }
   }

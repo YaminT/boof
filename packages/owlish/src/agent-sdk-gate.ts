@@ -103,6 +103,10 @@ export type AgentAuthDecision =
 export const AGENT_AUTH_POLICY =
   "Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI.";
 
+export function agentAuthRefusalMessage(projectName: string, why: string): string {
+  return `claude-agent cannot start: ${why}. ${AGENT_AUTH_POLICY} Set an Anthropic API key for project "${projectName}" (Settings › Project), or use claude-code for this role.`;
+}
+
 export function decideAgentAuth(input: {
   projectName: string;
   choice: "gateway" | "project-key";
@@ -112,7 +116,7 @@ export function decideAgentAuth(input: {
 }): AgentAuthDecision {
   const refuse = (why: string): AgentAuthDecision => ({
     ok: false,
-    reason: `claude-agent cannot start: ${why}. ${AGENT_AUTH_POLICY} Set an Anthropic API key for project "${input.projectName}" (Settings › Project), or use claude-code for this role.`,
+    reason: agentAuthRefusalMessage(input.projectName, why),
   });
   if (input.choice === "project-key")
     return input.hasProjectKey

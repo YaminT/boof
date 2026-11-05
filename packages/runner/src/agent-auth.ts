@@ -3,7 +3,7 @@ import { claudeAgentConfigDir, isAnthropicApiKey } from "@boof/heart";
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  AGENT_AUTH_POLICY,
+  agentAuthRefusalMessage,
   decideAgentAuth,
   OwlishClient,
   ProjectKeyStore,
@@ -14,8 +14,7 @@ import {
 import { gatewayEnv } from "./gateway-env.js";
 import { createHash } from "node:crypto";
 
-const refusal = (project: Project, why: string) =>
-  `claude-agent cannot start: ${why}. ${AGENT_AUTH_POLICY} Set an Anthropic API key for project "${project.name}" (Settings › Project), or use claude-code for this role.`;
+const refusal = (project: Project, why: string) => agentAuthRefusalMessage(project.name, why);
 
 export class AgentAuthRefusedError extends Error {
   constructor(message: string) {

@@ -22,6 +22,8 @@ import {
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { PoolGate } from "./pool-gate.js";
+import { AgentAuthResolver } from "./agent-auth.js";
+import { ProjectKeyStore } from "@boof/owlish";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";
 import { ToolRegistry } from "./tools/registry.js";
 import type { RunOptions, Tool } from "./tools/types.js";
@@ -35,6 +37,8 @@ let server: Server;
 let url: string;
 let hits: number;
 let healthy: boolean;
+let accountOAuth = false;
+let accountRequests = 0;
 let clock: number;
 let sleeps: number[];
 let onSleep: (n: number) => Promise<void>;
@@ -169,6 +173,19 @@ beforeEach(async () => {
   onSleep = async () => {};
   seenGateways = [];
   server = createServer((req, res) => {
+    if (req.url === "/api/accounts") {
+      accountRequests += 1;
+      return void res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            id: "account-1",
+            name: accountOAuth ? "Max OAuth" : "Console API",
+            provider: accountOAuth ? "anthropic" : "claude-console-api",
+            hasRefreshToken: accountOAuth,
+          },
+        ]),
+      );
+    }
     if (req.url !== "/health") return void res.writeHead(404).end();
     hits += 1;
     res
@@ -191,6 +208,128 @@ afterEach(async () => {
 });
 
 describe("selection", () => {
+  it("desktop unavailability wins before auth even with a project key and configured gateway", async () => {
+    await configure();
+    await new ProjectKeyStore(dataRoot).set(main.id, "sk-ant-api03-abcdefghijklmnop");
+    const registry = new ToolRegistry([
+      new MockTool(),
+      {
+        id: "claude-agent",
+        displayName: "Claude Agent",
+        defaultModels: ["default"],
+        needsAgentAuth: true,
+        unavailableReason: "desktop Claude Agent SDK unavailable",
+        detect: async () => ({ status: "unavailable", message: "unavailable" }),
+        listModels: async () => ["default"],
+        run: async () => ({ output: "unused", report: "unused" }),
+      },
+    ]);
+    await tasks(main).create(
+      newTask(
+        fm("t-desktop-race", "mock", {
+          tools: {
+            planner: { tool: "mock", model: "mock-default" },
+            developer: { tool: "mock", model: "mock-default" },
+            reviewer: { tool: "claude-agent", model: "default" },
+          },
+        }),
+        "Work.",
+      ),
+    );
+    engine = new RunnerEngine({ root: dataRoot, registry });
+    await engine.tick();
+    expect((await tasks(main).get("t-desktop-race"))?.body.log).toContain(
+      "desktop Claude Agent SDK unavailable",
+    );
+    expect(accountRequests).toBe(0);
+  });
+
+  it("refuses after a pool wait when the real resolver sees a newly added OAuth account", async () => {
+    await configure();
+    const toolRuns: unknown[] = [];
+    const registry = new ToolRegistry([
+      new MockTool(),
+      {
+        id: "claude-agent",
+        displayName: "Claude Agent",
+        defaultModels: ["default"],
+        needsAgentAuth: true,
+        detect: async () => ({ status: "ok", message: "test" }),
+        listModels: async () => ["default"],
+        run: async (opts) => {
+          toolRuns.push(opts);
+          return { output: "ok", report: "ok" };
+        },
+      },
+    ]);
+    const auth = new AgentAuthResolver({
+      root: dataRoot,
+      loadSettings: () => settingsStore.load(),
+      readGatewayKey: async () => "client-key",
+    });
+    let injectedOAuth = false;
+    const realPool = new PoolGate({
+      root: dataRoot,
+      loadSettings: () => settingsStore.load(),
+      readKey: async () => "client-key",
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+        if (!injectedOAuth) {
+          injectedOAuth = true;
+          accountOAuth = true;
+          healthy = true;
+        }
+      },
+    });
+    let degradedAfterPlanner = false;
+    mockState.onRun = async (opts) => {
+      if (opts.role === "planner" && !degradedAfterPlanner) {
+        degradedAfterPlanner = true;
+        healthy = false;
+      }
+    };
+    await tasks(main).create(
+      newTask(
+        fm("t-auth-flip", "mock", {
+          tools: {
+            planner: { tool: "mock", model: "mock-default" },
+            developer: { tool: "claude-agent", model: "default" },
+            reviewer: { tool: "mock", model: "mock-default" },
+          },
+        }),
+        "Work.",
+      ),
+    );
+    engine = new RunnerEngine({ root: dataRoot, registry, pool: realPool, agentAuth: auth });
+    const result = await engine.tick();
+    expect(result.kind).toBe("ran");
+    const task = await tasks(main).get("t-auth-flip");
+    expect(task?.frontmatter.status).toBe("failed");
+    const refusal =
+      `claude-agent cannot start: the better-ccflare gateway would route to subscription accounts (Max OAuth). ` +
+      `Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI. ` +
+      `Set an Anthropic API key for project "${main.name}" (Settings › Project), or use claude-code for this role.`;
+    expect(task?.body.log).toContain(refusal);
+    expect(toolRuns).toHaveLength(0);
+    expect(existsSync(join(main.workingDirectory, ".boof-runner-worktrees", "t-auth-flip"))).toBe(
+      true,
+    );
+    await engine.tick();
+    expect(
+      (await readEvents(dataRoot, null)).filter(
+        (row) => row.event.type === "runner.agent_auth_refused",
+      ),
+    ).toHaveLength(1);
+    accountOAuth = false;
+    healthy = true;
+    await tasks(main).transition("t-auth-flip", "pending");
+    const retried = await engine.tick();
+    expect(retried.kind).toBe("ran");
+    expect(await status("t-auth-flip")).toBe("done");
+    expect(toolRuns).toHaveLength(1);
+  });
+
   it("without settings.owlish nothing changes: a pooled task runs, no gateway, no request", async () => {
     await addTask("t1", "pooled");
     makeEngine();
@@ -248,6 +387,7 @@ describe("selection", () => {
     makeEngine();
     expect((await engine.tick()).kind).toBe("pool");
     healthy = true;
+    accountOAuth = false;
     clock += 31_000;
     const res = await engine.tick();
     expect(res.kind).toBe("ran");
@@ -269,6 +409,8 @@ describe("selection", () => {
     expect(await status("a")).toBe("done");
     expect(await poolEvents()).toEqual([]);
     hits = 0;
+    accountOAuth = false;
+    accountRequests = 0;
     await configure("off");
     await addTask("b", "pooled");
     makeEngine();
