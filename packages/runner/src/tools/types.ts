@@ -1,4 +1,5 @@
 import type { HealthResult, Role, TokenUsage } from "@boof/heart";
+import type { AgentAuth } from "@boof/owlish";
 import type { Gateway } from "../gateway-env.js";
 
 export type { Gateway } from "../gateway-env.js";
@@ -56,7 +57,15 @@ export interface RunOptions {
    * steered. Ignored by tools without `supportsResume`.
    */
   resumeSessionId?: string;
+  /** Explicit per-project Claude Agent SDK credentials, set by the pipeline. */
+  agentAuth?: AgentAuth;
+  /** In-place steering request source, consumed by resumable adapters. */
+  onSteer?: () => Promise<SteerRequest>;
+  /** Cumulative SDK usage at the start of a resumed session. */
+  resumeBaseline?: TokenUsage;
 }
+
+export type SteerRequest = { texts: string[]; model?: string; last: boolean };
 
 export interface RunResult {
   /** Raw combined output captured from the tool (also written to log.txt). */
@@ -86,5 +95,8 @@ export interface Tool {
   readonly supportsResume?: boolean;
   /** True when `run` honours `RunOptions.gateway` (the tool can be served by the account pool). */
   readonly acceptsPool?: boolean;
+  readonly needsAgentAuth?: boolean;
+  readonly steersInPlace?: boolean;
+  readonly unavailableReason?: string;
   run(opts: RunOptions): Promise<RunResult>;
 }
