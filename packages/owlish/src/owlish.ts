@@ -59,6 +59,7 @@ export class OwlishError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
+    readonly kind: "unreachable" | "malformed" | "http" = status === null ? "malformed" : "http",
   ) {
     super(message);
     this.name = "OwlishError";
@@ -200,19 +201,41 @@ export class OwlishClient {
     );
   }
 
+  /** Strict-only account list used by eligibility; never filters malformed entries.
+   * The gate requires a better-ccflare admin client key; api-only keys get HTTP 401 and keep it closed.
+   */
+  private async accountsForEligibility(): Promise<AccountSummary[]> {
+    const body = await this.json("GET", "/api/accounts");
+    if (
+      !Array.isArray(body) ||
+      body.some(
+        (a) =>
+          !isRecord(a) ||
+          typeof a.id !== "string" ||
+          typeof a.name !== "string" ||
+          typeof a.provider !== "string" ||
+          a.provider.length === 0 ||
+          typeof a.hasRefreshToken !== "boolean",
+      )
+    ) {
+      throw new OwlishError("better-ccflare returned a malformed account list", null, "malformed");
+    }
+    return body as AccountSummary[];
+  }
+
   /** Account-type compliance for Claude Agent SDK. Failures are represented as a closed gate. */
   async agentSdkEligibility(): Promise<AgentSdkEligibility> {
     try {
-      return agentSdkEligibility(await this.accounts(true), new Date(this.now()));
+      return agentSdkEligibility(await this.accountsForEligibility(), new Date(this.now()));
     } catch (error) {
       let detail = "malformed answer";
       if (error instanceof OwlishError) {
         detail =
-          error.status === null
-            ? error.message.endsWith("unreachable")
-              ? "unreachable"
-              : "malformed answer"
-            : `HTTP ${error.status}`;
+          error.kind === "unreachable"
+            ? "unreachable"
+            : error.kind === "malformed"
+              ? "malformed answer"
+              : `HTTP ${error.status}`;
       }
       return agentSdkEligibility(null, new Date(this.now()), detail);
     }
@@ -244,7 +267,7 @@ export class OwlishClient {
     try {
       res = await this.request(method, path, body, true);
     } catch {
-      throw new OwlishError(`better-ccflare at ${this.base}: unreachable`, null);
+      throw new OwlishError(`better-ccflare at ${this.base}: unreachable`, null, "unreachable");
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);

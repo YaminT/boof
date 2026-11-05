@@ -56,6 +56,13 @@ describe("agentSdkEligibility", () => {
     );
     expect(many.blocking).toHaveLength(20);
     expect(many.reason.length).toBeLessThanOrEqual(300);
+    expect(many.reason).toContain("50 subscription accounts");
+    expect(many.reason).not.toContain("blocked-0");
+    const injected = agentSdkEligibility(
+      [account("safe", "anthropic", { name: "evil\n\u0000name" })],
+      now,
+    );
+    expect(injected.blocking[0]?.name).toBe("evil  name");
   });
 });
 

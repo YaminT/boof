@@ -37,7 +37,7 @@ const SUBSCRIPTION = new Set(["anthropic", "codex", "codebuddy", "qwen", "xai"])
 const MAX_REASON = 300;
 const bounded = (text: string) =>
   text.length <= MAX_REASON ? text : `${text.slice(0, MAX_REASON - 1)}…`;
-const safeName = (name: string) => name.slice(0, 80);
+const safeName = (name: string) => name.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 80);
 
 export function agentSdkEligibility(
   accounts: AccountSummary[] | null,
@@ -77,11 +77,11 @@ export function agentSdkEligibility(
         ["unknown-type", "accounts with unknown authentication types"],
       ] as const;
       const details = groups.flatMap(([why, label]) => {
-        const names = blocking
-          .filter((item) => item.why === why)
-          .slice(0, 20)
-          .map((item) => item.name);
-        return names.length ? [`${label} (${names.join(", ")})`] : [];
+        const matches = blocking.filter((item) => item.why === why);
+        if (!matches.length) return [];
+        return blocking.length > 20
+          ? [`${matches.length} ${label}`]
+          : [`${label} (${matches.map((item) => item.name).join(", ")})`];
       });
       reason = `the better-ccflare gateway would route to ${details.join("; ")}`;
     }

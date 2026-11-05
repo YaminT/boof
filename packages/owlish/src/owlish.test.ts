@@ -310,6 +310,43 @@ describe("OwlishClient.agentSdkEligibility", () => {
     const dead = new OwlishClient({ url: "http://127.0.0.1:1" });
     expect((await dead.agentSdkEligibility()).reason).toContain("unreachable");
   });
+  it.each([
+    [
+      "wrapped object",
+      {
+        accounts: [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: false }],
+      },
+    ],
+    [
+      "pagination field",
+      {
+        accounts: [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: false }],
+        nextCursor: "p2",
+      },
+    ],
+    ["error field", { accounts: [], error: "partial" }],
+    [
+      "renamed refresh field",
+      [{ id: "a", name: "ok", provider: "claude-console-api", has_refresh_token: false }],
+    ],
+    ["missing refresh field", [{ id: "a", name: "ok", provider: "claude-console-api" }]],
+    [
+      "string refresh field",
+      [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: "true" }],
+    ],
+    [
+      "numeric refresh field",
+      [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: 1 }],
+    ],
+    ["missing provider", [{ id: "a", name: "ok", hasRefreshToken: false }]],
+    ["empty provider", [{ id: "a", name: "ok", provider: "", hasRefreshToken: false }]],
+  ])("closes on non-v3.6.3 response shape: %s", async (_label, body) => {
+    reply = () => [200, JSON.stringify(body)];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).allowed).toBe(false);
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain(
+      "malformed answer",
+    );
+  });
 });
 
 describe("OwlishClient accounts", () => {

@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { dataRootPaths, isAnthropicApiKey, lockedAtomicWrite, withFileLock } from "@boof/heart";
 
-const TOLERATED = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP"]);
+const TOLERATED = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOENT"]);
 const tryChmod = async (path: string, mode: number) => {
   try {
     await chmod(path, mode);
@@ -27,17 +27,27 @@ const parseFile = (text: string): Record<string, string> => {
     Array.isArray(value.keys)
   )
     throw new Error("owlish/project-keys.json is not an object");
-  const keys = (value as { keys: Record<string, unknown> }).keys;
-  for (const [id, key] of Object.entries(keys))
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || !isAnthropicApiKey(key))
-      throw new Error("owlish/project-keys.json contains invalid data");
-  return keys as Record<string, string>;
+  const keys = Object.create(null) as Record<string, string>;
+  let skipped = false;
+  for (const [id, key] of Object.entries((value as { keys: Record<string, unknown> }).keys)) {
+    if (
+      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) ||
+      typeof key !== "string" ||
+      !isAnthropicApiKey(key)
+    ) {
+      skipped = true;
+      continue;
+    }
+    keys[id] = key;
+  }
+  if (skipped) console.warn("owlish/project-keys.json contains invalid entries; skipped them");
+  return keys;
 };
 
-/** Project API keys, kept only in `<data>/owlish/project-keys.json` (mode 0600). */
+/** Project keys at rest (0600). Mutations use an in-process lock; concurrent cross-process writers can lose updates. */
 export class ProjectKeyStore {
   private readonly path: string;
-  constructor(root: string, _env: NodeJS.ProcessEnv = process.env) {
+  constructor(root: string) {
     this.path = dataRootPaths(root).owlishProjectKeys;
   }
   private async read(): Promise<Record<string, string>> {
@@ -50,7 +60,10 @@ export class ProjectKeyStore {
     }
   }
   async get(projectId: string): Promise<string | null> {
-    return (await this.read())[projectId] ?? null;
+    const keys = await this.read();
+    return Object.hasOwn(keys, projectId) && typeof keys[projectId] === "string"
+      ? keys[projectId]!
+      : null;
   }
   async has(projectId: string): Promise<boolean> {
     return (await this.get(projectId)) !== null;
@@ -83,7 +96,15 @@ export class ProjectKeyStore {
 
 export function redactSecrets(text: string, secrets: readonly string[]): string {
   let result = text;
-  for (const secret of secrets)
-    if (secret.length >= 8) result = result.split(secret).join("[redacted]");
+  const variants = new Set<string>();
+  for (const secret of secrets) {
+    if (secret.length < 8) continue;
+    variants.add(secret);
+    variants.add(JSON.stringify(secret).slice(1, -1));
+    variants.add(encodeURIComponent(secret));
+  }
+  for (const secret of [...variants].sort((a, b) => b.length - a.length))
+    result = result.split(secret).join("[redacted]");
+  result = result.replace(/sk-ant-api\d{2}-[\x21-\x7e]{8,}/g, "[redacted]");
   return result;
 }
