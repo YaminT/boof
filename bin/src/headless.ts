@@ -220,6 +220,13 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   out(
     `\n${ok ? "[done]" : finalStatus === "stopped" ? "[stopped]" : "[not done]"} task ${project.id}/${id}: ${finalStatus}\n`,
   );
+  if (!ok && !["stopped", "action", "archived"].includes(finalStatus)) {
+    const task = await store.get(id);
+    const refusal = task?.body.log
+      .match(/(?:^|\n)### Not started\n([\s\S]*?)(?=\n### |$)/)?.[1]
+      ?.trim();
+    if (refusal) out(`${refusal}\n`);
+  }
   return { id, projectId: project.id, status: finalStatus as Status, ok };
 }
 

@@ -224,6 +224,7 @@ describe("selection", () => {
       root: dataRoot,
       loadSettings: () => settingsStore.load(),
       readGatewayKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
     });
     const agent = new MockTool();
     const registry = new ToolRegistry([
@@ -403,6 +404,7 @@ describe("selection", () => {
       root: dataRoot,
       loadSettings: () => settingsStore.load(),
       readGatewayKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
     });
     await tasks(main).create(
       newTask(
@@ -452,6 +454,7 @@ describe("selection", () => {
       root: dataRoot,
       loadSettings: () => settingsStore.load(),
       readGatewayKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
     });
     await tasks(main).create(
       newTask(

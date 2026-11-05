@@ -133,6 +133,35 @@ describe("runTask (headless)", () => {
     expect(res.ok).toBe(false);
     expect(res.status).toBe("failed");
   });
+
+  it("prints the refusal reason after the failed task summary", async () => {
+    const reason = "claude-agent cannot start: no better-ccflare gateway is configured";
+    const claudeAgent = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      detect: async () => ({ status: "available" as const, message: "test" }),
+      listModels: async () => ["default"],
+      run: async () => ({ output: "", report: "" }),
+    };
+    let output = "";
+    const result = await runTask({
+      root: dataRoot,
+      prompt: "Try the Agent SDK.",
+      repo,
+      tool: "claude-agent",
+      registry: new ToolRegistry([claudeAgent]),
+      out: (chunk) => (output += chunk),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.ok).toBe(false);
+    expect(output).toContain(`[not done] task ${result.projectId}/${result.id}: failed`);
+    expect(output).toContain(reason);
+    expect(output.indexOf(reason)).toBeGreaterThan(
+      output.indexOf(`[not done] task ${result.projectId}/${result.id}: failed`),
+    );
+  });
 });
 
 describe("run --parent and --epic", () => {
