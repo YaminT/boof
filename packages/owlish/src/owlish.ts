@@ -179,22 +179,13 @@ export class OwlishClient {
   }
 
   /** The gateway's accounts. Entries without an id and a name are dropped. */
-  async accounts(strict = false): Promise<AccountSummary[]> {
+  async accounts(): Promise<AccountSummary[]> {
     const body = await this.json("GET", "/api/accounts");
-    if (!Array.isArray(body) && !(isRecord(body) && Array.isArray(body.accounts))) {
-      throw new OwlishError("better-ccflare returned a malformed account list", null);
-    }
     const list = Array.isArray(body)
       ? body
       : isRecord(body) && Array.isArray(body.accounts)
         ? body.accounts
         : [];
-    if (
-      strict &&
-      list.some((a) => !isRecord(a) || typeof a.id !== "string" || typeof a.name !== "string")
-    ) {
-      throw new OwlishError("better-ccflare returned a malformed account list", null);
-    }
     return list.filter(
       (a): a is AccountSummary =>
         isRecord(a) && typeof a.id === "string" && typeof a.name === "string",

@@ -251,6 +251,17 @@ export function parseOpArgs(
           if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
             throw new CliUsageError("--input: must be a JSON object");
           }
+          // Inline JSON is part of argv (visible in `ps` and shell history): a write-only secret
+          // may come only from a file or stdin. Name the field, never its value.
+          if (!v.startsWith("@")) {
+            const secret = Object.keys(parsed).find((k) =>
+              [...flags.values()].some((f) => f.key === k && f.writeOnly),
+            );
+            if (secret)
+              throw new CliUsageError(
+                `--input: "${secret}" is write-only; pass the input with --input @file.json or --input @- to read stdin, not inline`,
+              );
+          }
           base = parsed as Record<string, unknown>;
         } else {
           result[name as "data" | "client" | "out"] = v;

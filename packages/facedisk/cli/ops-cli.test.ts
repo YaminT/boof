@@ -118,7 +118,7 @@ describe("parseOpArgs", () => {
     );
   });
 
-  it("refuses write-only secrets as flags and accepts them in --input", () => {
+  it("refuses write-only secrets as flags and inline in --input; a file or stdin carries them", async () => {
     expect(() =>
       parseOpArgs(
         op("projects.update"),
@@ -126,13 +126,34 @@ describe("parseOpArgs", () => {
         dir,
       ),
     ).toThrow(/write-only.*--input @file\.json or --input @- to read stdin/);
+    for (const [name, field] of [
+      ["projects.update", "anthropicApiKey"],
+      ["settings.update", "owlishApiKey"],
+      ["settings.update", "owlishAgentKey"],
+    ] as const) {
+      for (const args of [
+        ["--input", `{"${field}":"SECRET-VALUE-1"}`],
+        [`--input={"${field}":"SECRET-VALUE-1"}`],
+      ]) {
+        const err = (() => {
+          try {
+            parseOpArgs(op(name), args, dir);
+          } catch (e) {
+            return e as Error;
+          }
+        })();
+        expect(err?.message, `${name} ${field}`).toMatch(/write-only.*--input @file\.json/);
+        expect(err?.message).not.toContain("SECRET-VALUE-1");
+      }
+    }
+    await writeFile(join(dir, "secret.json"), '{"projectId":"p","anthropicApiKey":"secret"}');
     expect(
-      parseOpArgs(
-        op("projects.update"),
-        ["--input", '{"projectId":"p","anthropicApiKey":"secret"}'],
-        dir,
-      ).input.anthropicApiKey,
+      parseOpArgs(op("projects.update"), ["--input", "@secret.json"], dir).input.anthropicApiKey,
     ).toBe("secret");
+    // Non-secret inline JSON still works.
+    expect(
+      parseOpArgs(op("projects.update"), ["--input", '{"projectId":"p","name":"n"}'], dir).input,
+    ).toMatchObject({ projectId: "p", name: "n" });
     expect(() => parseOpArgs(op("settings.update"), ["--owlish-api-key", "secret"], dir)).toThrow(
       /write-only/,
     );

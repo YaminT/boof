@@ -111,6 +111,9 @@ export const projectsUpdate = defineOp({
         throw new OpError(403, "forbidden", "forbidden_trust");
       }
     }
+    // Fail before anything is saved when the key store cannot be read, so a store that is corrupt
+    // or locked cannot leave the project changed (say, to project-key auth) and its key unstored.
+    if (anthropicApiKey !== undefined) await ctx.services.projectKeys.has(projectId);
     const project = await ctx.services.updateProject(projectId, patch, ctx.principal);
     if (typeof anthropicApiKey === "string")
       await ctx.services.projectKeys.set(projectId, anthropicApiKey);

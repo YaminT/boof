@@ -379,6 +379,9 @@ describe("OwlishClient accounts", () => {
     expect(seen[0]!.headers["x-api-key"]).toBe("btr-secret");
     reply = () => [200, JSON.stringify({ accounts: [account, { nope: true }, 5] })];
     expect((await c.accounts()).map((a) => a.id)).toEqual(["a1"]);
+    // Lenient, as before 8b: a body that is no list is an empty list (only the gate is strict).
+    reply = () => [200, JSON.stringify({ unexpected: true })];
+    expect(await c.accounts()).toEqual([]);
   });
 
   it("pause, resume, priority and thresholds use the documented routes", async () => {
