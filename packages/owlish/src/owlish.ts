@@ -8,6 +8,8 @@
  * bounded, unknown fields are ignored, and every failure becomes one {@link PoolStatus}.
  */
 
+import { agentSdkEligibility, type AgentSdkEligibility } from "./agent-sdk-gate.js";
+
 export type PoolState = "absent" | "unreachable" | "ok" | "degraded" | "unhealthy";
 
 export interface PoolStatus {
@@ -40,6 +42,7 @@ export interface AccountSummary {
   id: string;
   name: string;
   provider?: string;
+  hasRefreshToken?: boolean;
   priority?: number;
   paused?: boolean;
   tokenStatus?: string;
@@ -175,17 +178,44 @@ export class OwlishClient {
   }
 
   /** The gateway's accounts. Entries without an id and a name are dropped. */
-  async accounts(): Promise<AccountSummary[]> {
+  async accounts(strict = false): Promise<AccountSummary[]> {
     const body = await this.json("GET", "/api/accounts");
+    if (!Array.isArray(body) && !(isRecord(body) && Array.isArray(body.accounts))) {
+      throw new OwlishError("better-ccflare returned a malformed account list", null);
+    }
     const list = Array.isArray(body)
       ? body
       : isRecord(body) && Array.isArray(body.accounts)
         ? body.accounts
         : [];
+    if (
+      strict &&
+      list.some((a) => !isRecord(a) || typeof a.id !== "string" || typeof a.name !== "string")
+    ) {
+      throw new OwlishError("better-ccflare returned a malformed account list", null);
+    }
     return list.filter(
       (a): a is AccountSummary =>
         isRecord(a) && typeof a.id === "string" && typeof a.name === "string",
     );
+  }
+
+  /** Account-type compliance for Claude Agent SDK. Failures are represented as a closed gate. */
+  async agentSdkEligibility(): Promise<AgentSdkEligibility> {
+    try {
+      return agentSdkEligibility(await this.accounts(true), new Date(this.now()));
+    } catch (error) {
+      let detail = "malformed answer";
+      if (error instanceof OwlishError) {
+        detail =
+          error.status === null
+            ? error.message.endsWith("unreachable")
+              ? "unreachable"
+              : "malformed answer"
+            : `HTTP ${error.status}`;
+      }
+      return agentSdkEligibility(null, new Date(this.now()), detail);
+    }
   }
 
   async pause(id: string): Promise<void> {

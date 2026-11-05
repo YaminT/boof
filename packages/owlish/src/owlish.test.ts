@@ -278,6 +278,40 @@ describe("OwlishClient.health", () => {
   });
 });
 
+describe("OwlishClient.agentSdkEligibility", () => {
+  it("uses the account list and client key", async () => {
+    reply = () => [
+      200,
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    ];
+    const result = await new OwlishClient({ url, apiKey: "btr-secret" }).agentSdkEligibility();
+    expect(result).toMatchObject({ gateway: "checked", allowed: true });
+    expect(seen[0]?.headers["x-api-key"]).toBe("btr-secret");
+  });
+  it("maps HTTP, malformed and unreachable errors without throwing", async () => {
+    reply = () => [401, "{}"];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain("HTTP 401");
+    reply = () => [200, "not json"];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain(
+      "malformed answer",
+    );
+    reply = () => [
+      200,
+      JSON.stringify([
+        { id: "known", name: "console", provider: "claude-console-api" },
+        { nope: true },
+      ]),
+    ];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain(
+      "malformed answer",
+    );
+    const dead = new OwlishClient({ url: "http://127.0.0.1:1" });
+    expect((await dead.agentSdkEligibility()).reason).toContain("unreachable");
+  });
+});
+
 describe("OwlishClient accounts", () => {
   const account = {
     id: "a1",
