@@ -142,8 +142,7 @@ describe("runner status gateway eligibility", () => {
     expect(status.agentAuth[0]).toMatchObject({
       allowed: false,
       via: null,
-      reason:
-        'claude-agent cannot start: no better-ccflare client key is configured. Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI. Set an Anthropic API key for project "No client key" (Settings › Project), or use claude-code for this role.',
+      reason: expect.stringContaining("set an api-only better-ccflare agent key"),
     });
     expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(0);
   });
@@ -218,6 +217,7 @@ describe("runner status gateway eligibility", () => {
 
   it("checks once for four projects using the gateway", async () => {
     await configure();
+    await service.owlishSecrets.setAgent("btr-status-agent-key-0001");
     for (let n = 0; n < 4; n += 1) {
       await service.projects.create({
         id: `status-${n}`,
@@ -232,6 +232,30 @@ describe("runner status gateway eligibility", () => {
     const status = await run("runner.status", LOCAL_PRINCIPAL);
     expect(status.agentAuth).toHaveLength(4);
     expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(1);
+  });
+
+  it("reports eligibility outages as waiting for the gateway", async () => {
+    await configure();
+    await service.owlishSecrets.setAgent("btr-status-agent-key-0002");
+    accountStatus = 503;
+    await service.projects.create({
+      id: "status-outage",
+      name: "Status outage",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const tasks = service.forProject("status-outage");
+    const task = await tasks.create({ title: "Task override", status: "pending" });
+    await tasks.tasks.modify(task.frontmatter.id, (current) => {
+      current.frontmatter.tools = {
+        developer: { tool: "claude-agent", model: "default" },
+      } as never;
+    });
+    const status = await run("runner.status", LOCAL_PRINCIPAL);
+    expect(status.agentAuth[0]).toMatchObject({
+      allowed: false,
+      via: null,
+      reason: expect.stringContaining("waiting for the gateway"),
+    });
   });
 
   it("reports a catalog unavailable reason without checking the gateway", async () => {
@@ -766,6 +790,29 @@ describe("the separate agent key (owlishAgentKey)", () => {
     await expect(
       run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: "has space" }),
     ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("settings.update refuses equal admin and agent keys", async () => {
+    await configure();
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: KEY }),
+    ).rejects.toMatchObject({ status: 400 });
+    await run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: AGENT });
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, { owlishApiKey: AGENT }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(JSON.stringify(await run("settings.get", admin))).not.toContain(AGENT);
+  });
+
+  it("settings.update refuses to replace unreadable secrets without exposing their contents", async () => {
+    await configure();
+    const secretsFile = join(root, "owlish", "secrets.json");
+    await writeFile(secretsFile, "private-corrupt-secret-marker");
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: AGENT }),
+    ).rejects.toMatchObject({ status: 400, message: "owlish/secrets.json is not valid JSON" });
+    expect(await readFile(secretsFile, "utf8")).toBe("private-corrupt-secret-marker");
+    expect(await readFile(secretsFile, "utf8")).not.toContain(AGENT);
   });
 
   it("is marked writeOnly in the operation schema that REST, MCP and the CLI are generated from", async () => {

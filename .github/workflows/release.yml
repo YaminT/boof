@@ -26,11 +26,9 @@ jobs:
         include:
           - os: macos-latest
             name: macOS
-            script: desktop:dist:mac
             assets: packages/desktop/build/release/*.dmg packages/desktop/build/release/*.zip
           - os: windows-latest
             name: Windows
-            script: desktop:dist:win
             assets: packages/desktop/build/release/*.exe
     runs-on: ${{ matrix.os }}
     defaults:

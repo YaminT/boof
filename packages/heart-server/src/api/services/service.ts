@@ -987,9 +987,37 @@ export class TaskService {
       }
       const gateway = settings.owlish;
       const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
-      if (gateway && useGateway && gatewayEligibility === undefined)
+      let hasAgentKey = false;
+      try {
+        hasAgentKey = Boolean(await this.owlishSecrets.getAgent());
+        await this.owlishSecrets.get();
+      } catch {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: agentAuthRefusalMessage(
+            project.name,
+            "authentication settings or credentials could not be read",
+          ),
+        });
+        continue;
+      }
+      if (gateway && useGateway && hasAgentKey && gatewayEligibility === undefined)
         gatewayEligibility = await this.agentSdkEligibility();
-      const eligibility = gateway && useGateway ? (gatewayEligibility ?? null) : null;
+      const eligibility =
+        gateway && useGateway
+          ? hasAgentKey
+            ? (gatewayEligibility ?? null)
+            : {
+                gateway: "checked" as const,
+                allowed: true,
+                reason: "",
+                blocking: [],
+                checkedAt: new Date().toISOString(),
+              }
+          : null;
       const decision = decideAgentAuth({
         projectName: project.name,
         choice: project.claudeAgent?.auth ?? "gateway",
@@ -997,14 +1025,22 @@ export class TaskService {
         eligibility,
         hasProjectKey,
         // agentSdkEligibility() already applied the agent-key rule: `allowed` implies a key.
-        hasAgentKey: true,
+        hasAgentKey,
       });
+      const waiting = hasAgentKey && !!eligibility?.failure;
       result.push({
         projectId: project.id,
         roles: [...roles],
-        allowed: decision.ok,
+        allowed: waiting ? false : decision.ok,
         via: decision.ok ? decision.via : null,
-        reason: decision.ok ? null : decision.reason,
+        reason: waiting
+          ? agentAuthRefusalMessage(
+              project.name,
+              "waiting for the gateway: eligibility could not be checked",
+            )
+          : decision.ok
+            ? null
+            : decision.reason,
       });
     }
     return result;

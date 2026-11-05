@@ -30,6 +30,8 @@ export interface AgentSdkEligibility {
   /** One sentence; at most 300 characters; never contains a key. */
   reason: string;
   blocking: AgentSdkBlockingAccount[];
+  /** Structured transport failure; account names and prose never control wait behavior. */
+  failure?: "unreachable" | "http-5xx";
   checkedAt: string;
 }
 
@@ -43,6 +45,7 @@ export function agentSdkEligibility(
   accounts: AccountSummary[] | null,
   now: Date,
   detail?: string,
+  failure?: "unreachable" | "http-5xx",
 ): AgentSdkEligibility {
   let blocking: AgentSdkBlockingAccount[] = [];
   let reason: string;
@@ -92,6 +95,7 @@ export function agentSdkEligibility(
     allowed: accounts !== null && accounts.length > 0 && blocking.length === 0,
     reason: bounded(reason),
     blocking,
+    ...(failure ? { failure } : {}),
     checkedAt: now.toISOString(),
   };
 }

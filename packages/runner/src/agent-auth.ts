@@ -12,7 +12,7 @@ import {
   type AgentSdkEligibility,
 } from "@boof/owlish";
 import { gatewayEnv } from "./gateway-env.js";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 const refusal = (project: Project, why: string) => agentAuthRefusalMessage(project.name, why);
 
@@ -92,6 +92,25 @@ export class AgentAuthResolver {
         return decision;
       }
 
+      // A gateway cannot serve the Agent SDK without the separate child credential.
+      // Decide locally so outages never turn this definite refusal/fallback into a wait.
+      if (choice === "gateway" && gateway && !agentKey) {
+        return decideAgentAuth({
+          projectName: project.name,
+          choice,
+          gatewayConfigured: true,
+          eligibility: {
+            gateway: "checked",
+            allowed: true,
+            reason: "",
+            blocking: [],
+            checkedAt: new Date(this.now()).toISOString(),
+          },
+          hasProjectKey,
+          hasAgentKey: false,
+        });
+      }
+
       let eligibility: AgentSdkEligibility | null = null;
       let checkedKey = "";
       if (gateway) {
@@ -139,10 +158,7 @@ export class AgentAuthResolver {
           }
         }
       }
-      if (
-        eligibility?.reason.includes("(unreachable)") ||
-        /\(HTTP 5\d\d\)/.test(eligibility?.reason ?? "")
-      ) {
+      if (eligibility?.failure) {
         return {
           ok: false,
           unreachable: true,
@@ -194,6 +210,18 @@ export class AgentAuthResolver {
       const settings = await this.options.loadSettings();
       const key = await this.options.readGatewayKey();
       const agentKey = await this.options.readAgentKey();
+      if (
+        key &&
+        agentKey &&
+        key.length === agentKey.length &&
+        timingSafeEqual(Buffer.from(key), Buffer.from(agentKey))
+      )
+        throw new AgentAuthRefusedError(
+          refusal(
+            project,
+            "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+          ),
+        );
       if (
         !checked ||
         !settings.owlish ||

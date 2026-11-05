@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { timingSafeEqual } from "node:crypto";
 import { dataRootPaths, lockedAtomicWrite, withFileLock } from "@boof/heart";
 
 const FileSchema = z
@@ -80,8 +81,22 @@ export class OwlishSecretStore {
       throw new Error(`the key must be 1-${MAX_KEY} printable characters without spaces`);
     }
     await withFileLock(`${this.path}#mutate`, async () => {
-      // Keep the other key; a file we cannot read is replaced only for the admin key (as before).
-      const current = await this.readFileObject().catch(() => ({}));
+      // Refuse when the current file is unreadable: replacing it could silently discard
+      // the other credential, and either key may be needed independently.
+      const current = await this.readFileObject();
+      const otherField = field === "apiKey" ? "agentKey" : "apiKey";
+      const otherEnv = this.envKey(otherField);
+      const otherStored = usable(current[otherField]) ? current[otherField] : null;
+      const other = otherEnv ?? otherStored;
+      if (
+        other &&
+        key.length === other.length &&
+        timingSafeEqual(Buffer.from(key), Buffer.from(other))
+      ) {
+        throw new Error(
+          "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+        );
+      }
       await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
       await lockedAtomicWrite(
         this.path,

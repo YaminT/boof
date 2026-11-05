@@ -220,6 +220,7 @@ export class OwlishClient {
       return agentSdkEligibility(await this.accountsForEligibility(), new Date(this.now()));
     } catch (error) {
       let detail = "malformed answer";
+      let failure: "unreachable" | "http-5xx" | undefined;
       if (error instanceof OwlishError) {
         detail =
           error.kind === "unreachable"
@@ -227,8 +228,13 @@ export class OwlishClient {
             : error.kind === "malformed"
               ? "malformed answer"
               : `HTTP ${error.status}`;
+        if (error.kind === "unreachable") failure = "unreachable";
+        else if (error.status !== null && error.status >= 500) failure = "http-5xx";
       }
-      return agentSdkEligibility(null, new Date(this.now()), detail);
+      return {
+        ...agentSdkEligibility(null, new Date(this.now()), detail),
+        ...(failure ? { failure } : {}),
+      };
     }
   }
 

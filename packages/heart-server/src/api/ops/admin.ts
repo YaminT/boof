@@ -103,11 +103,32 @@ export const settingsUpdate = defineOp({
     assertMayWriteSettings(ctx);
     const saved = await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated);
     // Write the separate secret only after settings and its ETag check succeeded.
-    if (typeof owlishApiKey === "string") await ctx.services.owlishSecrets.set(owlishApiKey);
-    else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
-    if (typeof owlishAgentKey === "string")
-      await ctx.services.owlishSecrets.setAgent(owlishAgentKey);
-    else if (owlishAgentKey === null) await ctx.services.owlishSecrets.deleteAgent();
+    if (typeof owlishApiKey === "string") {
+      try {
+        await ctx.services.owlishSecrets.set(owlishApiKey);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes("agent key must be a separate") ||
+            error.message.startsWith("owlish/secrets.json"))
+        )
+          throw new OpError(400, error.message, "invalid_input");
+        throw error;
+      }
+    } else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
+    if (typeof owlishAgentKey === "string") {
+      try {
+        await ctx.services.owlishSecrets.setAgent(owlishAgentKey);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes("agent key must be a separate") ||
+            error.message.startsWith("owlish/secrets.json"))
+        )
+          throw new OpError(400, error.message, "invalid_input");
+        throw error;
+      }
+    } else if (owlishAgentKey === null) await ctx.services.owlishSecrets.deleteAgent();
     return publicSettings(saved);
   },
 });
