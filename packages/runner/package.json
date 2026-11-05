@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@boof/heart": "*",
-    "@boof/owlish": "*"
+    "@boof/owlish": "*",
+    "@anthropic-ai/claude-agent-sdk": "0.3.318"
   }
 }

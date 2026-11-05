@@ -84,4 +84,35 @@ describe("workspace manifests", () => {
     const ignore = await readFile(join(repo, ".gitignore"), "utf8");
     expect(ignore.split("\n")).toContain("package-lock.json");
   });
+
+  it("keeps the Claude Agent SDK in CLI/server installs and outside desktop bundles", async () => {
+    const sdk = "@anthropic-ai/claude-agent-sdk";
+    const expected = "0.3.318";
+    for (const rel of ["packages/runner", "bin", "."]) {
+      const pkg = await read(rel);
+      expect(pkg.dependencies?.[sdk], `${rel} dependency`).toBe(expected);
+    }
+    const root = await read(".");
+    expect(root.devDependencies?.["@anthropic-ai/sdk"]).toBe("1.5.0");
+    const desktop = await read("packages/desktop");
+    for (const section of [
+      "dependencies",
+      "devDependencies",
+      "peerDependencies",
+      "optionalDependencies",
+    ]) {
+      expect(desktop[section]?.[sdk], `desktop ${section}`).toBeUndefined();
+    }
+    for (const path of ["bin/tsup.config.ts", "packages/desktop/tsup.config.ts"]) {
+      expect(await readFile(join(repo, path), "utf8"), path).toMatch(
+        /external: \[[^\]]*claude-agent-sdk/s,
+      );
+    }
+    const main = join(repo, "packages/desktop/dist/main.js");
+    if (existsSync(main)) {
+      const bundle = await readFile(main, "utf8");
+      expect(bundle).not.toContain("@anthropic-ai/claude-agent-sdk-linux-x64");
+      expect(bundle).not.toContain("ProcessTransport");
+    }
+  });
 });

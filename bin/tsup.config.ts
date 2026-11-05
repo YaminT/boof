@@ -11,6 +11,13 @@ export default defineConfig({
   // they load from node_modules at runtime (avoids bundling CJS dynamic-require
   // libs like gray-matter/chokidar into the ESM bundle).
   noExternal: [/^@boof\//],
-  external: ["gray-matter", "zod", "chokidar", "hono", "@hono/node-server"],
+  external: [
+    "gray-matter",
+    "zod",
+    "chokidar",
+    "hono",
+    "@hono/node-server",
+    "@anthropic-ai/claude-agent-sdk",
+  ],
   banner: { js: "#!/usr/bin/env node" },
 });

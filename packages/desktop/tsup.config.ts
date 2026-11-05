@@ -12,5 +12,5 @@ export default defineConfig({
   clean: true,
   dts: false,
   noExternal: [/^@boof\//, "hono", "@hono/node-server", "chokidar", "gray-matter", "zod"],
-  external: ["electron", "fsevents"],
+  external: ["electron", "fsevents", "@anthropic-ai/claude-agent-sdk"],
 });
