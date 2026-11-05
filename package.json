@@ -1,8 +1,8 @@
 {
   "name": "boof-runner",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Agent Task Runner \u2014 queue prompts and run them through a planner \u2192 developer \u2192 reviewer pipeline",
+  "description": "Agent Task Runner \u2014 queue prompts and run them through a planner → developer → reviewer pipeline",
   "type": "module",
   "engines": {
     "node": ">=22.22"

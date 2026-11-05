@@ -1,12 +1,14 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## Unreleased
+
+## 0.3.0 (2026-11-05)
 
 ### Fixes
 
 - Handle CLI stop signals received during startup and release the runner guard cleanly.
 
-### Internal
+### Internal package split
 
 - Rename and move internal packages into the final workspace layout; user-facing behavior is unchanged.
 
@@ -35,8 +37,6 @@
 - Filter and group task lists by epic, use palette actions to move tasks or create subtasks, and manage epics from the task list.
 - Delete epics with safe detachment of their tasks; task and hierarchy changes are serialized across processes.
 - See open-subtask warnings when queuing a parent task; hierarchy does not change queue scheduling.
-- Inspect task diffs, including untracked files, commits, and uncommitted work in a retained worktree.
-- Retry stopped or failed tasks, preserve their worktrees, and record stopped as a distinct outcome.
 - Edit tasks with optimistic concurrency checks and preserve user edits made while a task is running.
 - Keep task logs and reports readable when prompts contain section-like headings.
 - Record run and step timings, attempt usage, and a closing outcome entry.
@@ -45,17 +45,21 @@
 
 - An empty Codex model uses the CLI built-in default; Boof ignores `config.toml` model by default and honors it when `runner.inheritMcpServers` is enabled. Existing saved models remain unchanged.
 - Route planner questions from developer, observer, and reviewer steps back to the role that asked, and park tasks when the planner needs user input.
-- Inject new instructions for the next step or interrupt and steer the active step where the agent tool supports it.
-- Keep injected instructions across retries and later runs, and show them in task details.
 - Retry transient tool failures in the same worktree with backoff, while recording each attempt and checking budgets before retries.
 - Pass large Codex and OpenCode prompts through stdin to avoid command-line length limits.
 - Limit agent environment variables to an allowlist and avoid loading user MCP configuration by default; opt in to inherited MCP servers through settings.
 - Show tool health, model sources, and usage, with health and model reads reporting cached probes and explicit endpoints refreshing them.
 - Preserve work after interrupted runs and reap verified orphaned agent processes where supported; Windows orphan reaping is experimental.
 
-### Web UI
+### Diff review and stopped status
+
+- Inspect task diffs, including untracked files, commits, and uncommitted work in a retained worktree.
+- Retry stopped or failed tasks, preserve their worktrees, and record stopped as a distinct outcome.
+
+### Web UI and redesign phases
 
 - Replace the previous interface with a redesigned navigation shell, task overview, grouped task list, command palette, and task detail tabs for runs, changes, and questions.
+- Deliver the redesign through focused phases covering navigation and task views, simple and expanded modes, settings and plans, and the final styling and accessibility pass.
 - Navigate with path-based URLs, including under a reverse-proxy prefix, and redirect old hash-based links.
 - Use the Plans screen, goal editor and history panel, and a global Inbox for questions that need answers.
 - Reorder tasks and goals with pointer or keyboard controls, with focus-managed dialogs and accessible status updates.
@@ -67,24 +71,34 @@
 - Use a persistent bottom console for palette actions and slash commands, with command history and confirmations for destructive actions.
 - Switch each screen between remembered simple and expanded views; improve contrast and keyboard focus states, and remove the legacy stylesheet.
 
-### REST API v1, events, and MCP
+### REST API v1
 
 - Add the versioned `/api/v1` API with an OpenAPI document and operations shared by the REST routes, MCP tools, and generated CLI.
 - Expose project, plan, goal, task, epic, settings, client, command-template, usage, runner, and webhook operations.
 - Add project-scoped task pagination, optional task-log retrieval, live log streaming, task diffs, and version-based conditional writes.
 - Add idempotency keys for project, plan, and task creation, including safe replay of concurrent identical requests.
-- Stream typed events over server-sent events, replay from cursors, and end streams when their authorization is revoked.
-- Deliver signed webhooks for task, plan, and runner events, with event and project filters, retries, and dead-letter records.
-- Provide webhook editing, including enable, disable, URL, event, and project updates.
+- Use a shared operation registry to generate `boof-runner <area> <verb>` commands with consistent argument handling and exit codes.
+
+### MCP
+
 - Generate MCP tools from the operation registry for stdio and Streamable HTTP; tools use the same validation, permissions, and audit trail as REST.
 - Expose each registered operation to MCP callers according to their scopes, with administrative tools reserved for administrators.
 - Add `boof-runner mcp --admin` for a local stdio host that needs administrator access; keyless MCP defaults to a review-trust identity.
 - Record operation calls made through stdio MCP and the generated CLI in the shared audit log.
-- Use a shared operation registry to generate `boof-runner <area> <verb>` commands with consistent argument handling and exit codes.
-- Configure an optional better-ccflare account pool with `settings.owlish` (`url`, `healthGate`) and a write-only client key; route Claude, Codex, and OpenCode through the gateway when their tools support pooling.
+
+### Events and webhooks
+
+- Stream typed events over server-sent events, replay from cursors, and end streams when their authorization is revoked.
+- Deliver signed webhooks for task, plan, and runner events, with event and project filters, retries, and dead-letter records.
+- Provide webhook editing, including enable, disable, URL, event, and project updates.
+
+### Owlish account pooling and Accounts tab
+
+- Configure Owlish integration with the better-ccflare account pool through `settings.owlish` (`url`, `healthGate`) and a write-only client key; route Claude, Codex, and OpenCode through the gateway when their tools support pooling.
 - Pause selection of pool-routed work when the fail-safe health gate is closed, and wait in place up to `retries.poolWaitMs` when a running pipeline reaches an unavailable pool.
 - List and manage pool accounts through `boof-runner accounts list|pause|resume|priority|thresholds|health` and the `accounts.*` operations; review-trust and keyless clients may read pool status but cannot change accounts or gateway settings.
 - Account pooling by better-ccflare.
+- Add an Accounts settings tab to inspect pool health and manage account pause state, priority, and thresholds.
 
 ### Security and access control
 
@@ -105,12 +119,19 @@
 - Track token usage per attempt and tool; represent unknown costs as unknown rather than zero.
 - Include usage from failed and steered attempts in task records and budget accounting.
 
-### CLI, server, and desktop
+### Steering
+
+- Inject new instructions for the next step or interrupt and steer the active step where the agent tool supports it.
+- Keep injected instructions across retries and later runs, and show them in task details.
+
+### CLI, server service, and desktop
 
 - Add project, plan, task, and epic commands, including project creation modes and hierarchy-aware task runs.
 - Add `--version`; unknown commands now return an error instead of starting the server.
 - Install, inspect, uninstall, and view logs for a system service; preserve configured options when reinstalling it.
+- Install and update the server service on a headless Linux host, with systemd and remote access setup guidance.
 - Install and safely update a headless server, with a deployment runbook and reverse-proxy guidance.
+- Host the UI under a reverse-proxy path prefix using relative URLs without a build option.
 - Configure service secrets through an environment file and set up remote access with a guided tunnel flow.
 - Keep one runner and one webhook dispatcher active per data root with cross-process guards; webhook delivery uses stable delivery ids so receivers can identify retries.
 - Identify runner processes by boot and start identity when available, and serialize task and epic hierarchy changes across processes.
@@ -121,6 +142,7 @@
 
 ### Breaking changes and upgrade notes
 
+- New Codex roles no longer name a model; Codex uses its built-in default, or `config.toml` when `runner.inheritMcpServers` is enabled. Saved models are unchanged.
 - `GET /health` and `GET /models` report the last probe result; run `POST /health/check` or `POST /models/refresh` to start a probe.
 - Keyless loopback access to `/mcp` now uses the restricted `local-mcp` review-trust principal; use an authorized key or stdio `--admin` when administrator access is required.
 - Review-trust API clients have narrower write permissions, including restrictions on task ownership, project administration, plan activation, and hierarchy detachment.

@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+
+const packageVersion = JSON.parse(
+  readFileSync(resolve(fileURLToPath(new URL("../../", import.meta.url)), "package.json"), "utf8"),
+).version as string;
 
 const { startServer, constructEngine, engineLoop, engineShutdown } = vi.hoisted(() => ({
   startServer: vi.fn(),
@@ -30,7 +37,7 @@ describe("bin boot", () => {
     constructEngine.mockImplementation(() => {
       throw failure;
     });
-    await expect(boot({ root: "/tmp/boot-test", version: "0.2.0" })).rejects.toBe(failure);
+    await expect(boot({ root: "/tmp/boot-test", version: packageVersion })).rejects.toBe(failure);
     expect(server.stop).toHaveBeenCalledOnce();
     expect(isRunnerStartFailure(failure)).toBe(true);
     expect(isRunnerStartFailure(new Error("unrelated"))).toBe(false);
@@ -62,7 +69,7 @@ describe("bin boot", () => {
     try {
       const result = await boot({
         root: "/tmp/boot-test",
-        version: "0.2.0",
+        version: packageVersion,
         guard: guard as never,
         onServer: () => {
           order.push("server.ready");

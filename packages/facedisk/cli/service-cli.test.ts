@@ -1,4 +1,5 @@
 import { chmod, mkdir, readdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -37,6 +38,12 @@ let failOn: string | null;
 let healthUrls: string[];
 
 const ok = (stdout = ""): RunResult => ({ code: 0, stdout, stderr: "" });
+const packageVersion = JSON.parse(
+  readFileSync(
+    resolve(fileURLToPath(new URL("../../../", import.meta.url)), "package.json"),
+    "utf8",
+  ),
+).version as string;
 
 const makeEnv = (over: Partial<ServiceEnv> = {}): ServiceEnv => ({
   platform: "linux",
@@ -61,7 +68,7 @@ const makeEnv = (over: Partial<ServiceEnv> = {}): ServiceEnv => ({
   },
   health: async (url) => {
     healthUrls.push(url);
-    return { ok: true, summary: "ok (version 0.2.0, up 3s, runner running)" };
+    return { ok: true, summary: `ok (version ${packageVersion}, up 3s, runner running)` };
   },
   ...over,
 });
@@ -591,7 +598,7 @@ describe("uninstall, status and logs", () => {
     expect(await run(["status"])).toBe(0);
     expect(calls).toContain("systemctl --user status boof-runner.service --no-pager --lines=10");
     expect(healthUrls).toEqual(["http://127.0.0.1:4400"]);
-    expect(out.join("\n")).toContain("healthz: ok (version 0.2.0");
+    expect(out.join("\n")).toContain(`healthz: ok (version ${packageVersion}`);
   });
 
   it("status fails when healthz is unreachable", async () => {
