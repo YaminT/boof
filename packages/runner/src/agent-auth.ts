@@ -224,7 +224,18 @@ export function claudeAgentEnv(
   }
   if (auth.kind === "gateway") {
     if (!auth.apiKey) throw new Error("claude-agent gateway credentials are required");
-    Object.assign(env, gatewayEnv("anthropic", auth));
+    const gateway = gatewayEnv("anthropic", auth);
+    env.ANTHROPIC_BASE_URL = gateway.ANTHROPIC_BASE_URL!;
+    env.ANTHROPIC_API_KEY = auth.apiKey;
+    const host = new URL(auth.url).hostname;
+    for (const name of ["NO_PROXY", "no_proxy"]) {
+      const entries = (env[name] ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!entries.includes(host)) entries.push(host);
+      env[name] = entries.join(",");
+    }
   } else env.ANTHROPIC_API_KEY = auth.apiKey;
   env.CLAUDE_AGENT_SDK_CLIENT_APP = clientApp;
   env.CLAUDE_CONFIG_DIR = configDir;

@@ -19,6 +19,8 @@ export interface RunOptions {
   prompt: string;
   /** Working directory (the per-task worktree, or the working directory). */
   cwd: string;
+  /** Per-project Claude configuration directory under the boof data root. */
+  claudeConfigDir?: string;
   /** Auto mode: pass non-interactive / no-permission-prompt flags. */
   autoApprove: boolean;
   /**

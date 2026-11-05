@@ -105,6 +105,7 @@ export class ProjectKeyStore {
       async () => {
         const { keys, invalid } = await this.read();
         delete keys[projectId];
+        delete invalid[projectId];
         if (Object.keys(keys).length + Object.keys(invalid).length === 0)
           await rm(this.path, { force: true });
         else

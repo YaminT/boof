@@ -4,6 +4,9 @@ import { fakeSdk } from "./fake-agent-sdk.js";
 import { AgentAuthRefusedError } from "../agent-auth.js";
 import { DESKTOP_CLAUDE_AGENT_REASON } from "../index.js";
 import { ToolRunError, isTransientToolError } from "./errors.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const base = {
   role: "developer" as const,
@@ -11,6 +14,7 @@ const base = {
   systemPrompt: "system",
   prompt: "hello",
   cwd: "/tmp",
+  claudeConfigDir: "/tmp/boof-data/claude-agent-config/project",
   autoApprove: false,
   agentAuth: { kind: "gateway" as const, url: "http://127.0.0.1:0", apiKey: "fake-gateway-key" },
 };
@@ -36,10 +40,40 @@ describe("ClaudeAgentTool", () => {
       strictMcpConfig: true,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      settingSources: ["user", "project", "local"],
+      settingSources: [],
+      extraArgs: { bare: null },
       systemPrompt: { type: "preset", preset: "claude_code", append: "system" },
     });
+    expect(fake.calls.options[0].env).toMatchObject({
+      CLAUDE_CONFIG_DIR: "/tmp/boof-data/claude-agent-config/project",
+      ANTHROPIC_API_KEY: "fake-gateway-key",
+    });
+    expect(fake.calls.options[0].env.CLAUDE_CONFIG_DIR).not.toBe("/tmp");
+    expect(fake.calls.options[0].env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
     expect(fake.calls.options[0]).not.toHaveProperty("model");
+  });
+
+  it.each([
+    ["gateway", { kind: "gateway" as const, url: "http://127.0.0.1:0", apiKey: "gateway" }],
+    ["project-key", { kind: "project-key" as const, apiKey: "sk-ant-api03-abcdefghijklmnop" }],
+  ])("uses bare mode, no settings, and API key auth in %s mode", async (_mode, agentAuth) => {
+    const fake = fakeSdk([{ emit: msg("result", { subtype: "success", result: "ok" }) }]);
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+    });
+    await tool.run({ ...base, agentAuth });
+    expect(fake.calls.options[0]).toMatchObject({ settingSources: [], extraArgs: { bare: null } });
+    expect(fake.calls.options[0].env).toHaveProperty("ANTHROPIC_API_KEY");
+    expect(fake.calls.options[0].env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  });
+
+  it("refuses to use cwd as a fallback config directory", async () => {
+    const loadSdk = vi.fn();
+    const tool = new ClaudeAgentTool({ loadSdk });
+    const { claudeConfigDir: _unused, ...withoutConfigDir } = base;
+    await expect(tool.run(withoutConfigDir)).rejects.toThrow(/per-project Claude config directory/);
+    expect(loadSdk).not.toHaveBeenCalled();
   });
 
   it("streams output and reports SDK usage; omits default model", async () => {
@@ -48,7 +82,7 @@ describe("ClaudeAgentTool", () => {
         emit: msg("system", {
           subtype: "init",
           session_id: "sess",
-          apiKeySource: "/login managed key",
+          apiKeySource: "ANTHROPIC_API_KEY",
         }),
       },
       {
@@ -87,6 +121,26 @@ describe("ClaudeAgentTool", () => {
       usage: { inputTokens: 10, outputTokens: 7, costUsd: 0.42, known: true },
     });
     expect(onChunk.mock.calls.flat().join("")).toContain("hello");
+  });
+
+  it("appends the working directory CLAUDE.md to the system prompt in bare mode", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "claude-agent-bare-"));
+    try {
+      await writeFile(join(cwd, "CLAUDE.md"), "repo-specific instructions");
+      const fake = fakeSdk([{ emit: msg("result", { subtype: "success", result: "ok" }) }]);
+      const tool = new ClaudeAgentTool({
+        loadSdk: async () => fake.sdk,
+        resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      });
+      await tool.run({ ...base, cwd });
+      expect(fake.calls.options[0].systemPrompt).toMatchObject({
+        append: expect.stringContaining(
+          "## Repository instructions (CLAUDE.md)\nrepo-specific instructions",
+        ),
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("does not pass a literal default model, but passes explicit models", async () => {
@@ -156,7 +210,7 @@ describe("ClaudeAgentTool", () => {
         agentAuth: { kind: "project-key", apiKey: "sk-ant-api03-abcdefghijklmnop" },
       }),
     ).rejects.toMatchObject({
-      output: expect.stringContaining("would have used a subscription login"),
+      output: expect.stringContaining("explicit ANTHROPIC_API_KEY"),
     });
     expect(fake.calls.closed).toBe(1);
   });

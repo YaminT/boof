@@ -2,7 +2,7 @@ import type { TokenUsage } from "@boof/heart";
 import { writePidFile } from "@boof/heart";
 import { redactSecrets } from "@boof/owlish";
 import { spawn as nodeSpawn } from "node:child_process";
-import { access, rm } from "node:fs/promises";
+import { access, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import type { Options as SdkOptions, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AgentAuthRefusedError, claudeAgentEnv } from "../agent-auth.js";
@@ -176,6 +176,10 @@ export class ClaudeAgentTool implements Tool {
     const auth = opts.agentAuth;
     if (!auth)
       throw new AgentAuthRefusedError("claude-agent cannot start: no authentication decision");
+    if (!opts.claudeConfigDir)
+      throw new AgentAuthRefusedError(
+        "claude-agent cannot start: the per-project Claude config directory is unavailable",
+      );
     const secrets = auth.apiKey ? [auth.apiKey] : [];
     const scrub = (s: string) => redactSecrets(s, secrets);
     const sdk = await this.loadSdk();
@@ -191,18 +195,26 @@ export class ClaudeAgentTool implements Tool {
       agentEnv(process.env, opts.agentEnv),
       auth,
       this.clientApp,
-      opts.cwd,
+      opts.claudeConfigDir,
     );
+    const claudeMd = await readFile(`${opts.cwd}/CLAUDE.md`, "utf8")
+      .then((text) => text.slice(0, 64 * 1024))
+      .catch(() => "");
     const childEnv = { ...env };
     const queryOptions: SdkOptions = {
       cwd: opts.cwd,
       ...(opts.model && opts.model !== "default" && opts.model !== "" ? { model: opts.model } : {}),
-      systemPrompt: { type: "preset", preset: "claude_code", append: opts.systemPrompt },
+      systemPrompt: {
+        type: "preset",
+        preset: "claude_code",
+        append: `${opts.systemPrompt}${claudeMd ? `\n\n## Repository instructions (CLAUDE.md)\n${claudeMd}` : ""}`,
+      },
       strictMcpConfig: !opts.inheritMcpServers,
       ...(opts.autoApprove
         ? { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }
         : { permissionMode: "default", permissionPrompts: "none" }),
-      settingSources: ["user", "project", "local"],
+      settingSources: [],
+      extraArgs: { bare: null },
       resume: opts.resumeSessionId,
       includePartialMessages: true,
       env: childEnv,
@@ -276,42 +288,14 @@ export class ClaudeAgentTool implements Tool {
         const m = (message ?? {}) as unknown as Record<string, unknown>;
         renderer.push(JSON.stringify(message) + "\n");
         if (typeof m.session_id === "string") sessionId = m.session_id;
-        if (
-          m.type === "system" &&
-          m.subtype === "init" &&
-          auth.kind === "project-key" &&
-          m.apiKeySource !== "ANTHROPIC_API_KEY"
-        ) {
+        if (m.type === "system" && m.subtype === "init" && m.apiKeySource !== "ANTHROPIC_API_KEY") {
           closeQuery();
           throw new ToolRunError(
             this.id,
             1,
             false,
             false,
-            "claude-agent refused: the run would have used a subscription login because the session did not authenticate with the project's API key (apiKeySource=" +
-              scrub(String(m.apiKeySource ?? "missing")) +
-              ")",
-            "",
-            false,
-            0,
-            { sessionId },
-          );
-        }
-        if (
-          m.type === "system" &&
-          m.subtype === "init" &&
-          auth.kind === "gateway" &&
-          m.apiKeySource !== "/login managed key"
-        ) {
-          closeQuery();
-          throw new ToolRunError(
-            this.id,
-            1,
-            false,
-            false,
-            "claude-agent refused: the session did not authenticate with the gateway credential (apiKeySource=" +
-              scrub(String(m.apiKeySource ?? "missing")) +
-              ")",
+            "claude-agent refused: the session did not authenticate with an explicit ANTHROPIC_API_KEY",
             "",
             false,
             0,

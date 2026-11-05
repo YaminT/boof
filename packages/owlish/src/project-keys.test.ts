@@ -39,6 +39,17 @@ describe("ProjectKeyStore", () => {
       expect(await store.get(id)).toBeNull();
     }
   });
+  it("delete removes a same-id invalid entry instead of preserving it", async () => {
+    const store = await setup();
+    const path = (await import("@boof/heart")).dataRootPaths(root).owlishProjectKeys;
+    await mkdir(join(root, "owlish"), { recursive: true });
+    await writeFile(path, '{"keys":{"project":"not-an-api-key"}}');
+    await store.delete("project");
+    await expect(store.get("project")).resolves.toBeNull();
+    await expect((await import("node:fs/promises")).readFile(path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
   it("tightens a fresh root without requiring a key file", async () => {
     const store = await setup();
     await expect(store.tighten()).resolves.toBeUndefined();

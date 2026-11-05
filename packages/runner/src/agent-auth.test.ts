@@ -91,8 +91,8 @@ describe("claudeAgentEnv", () => {
       for (const name of credentials) {
         if (
           name === "CLAUDE_CONFIG_DIR" ||
-          (mode === "gateway" &&
-            (name === "ANTHROPIC_AUTH_TOKEN" || name === "ANTHROPIC_BASE_URL")) ||
+          (mode === "gateway" && name === "ANTHROPIC_BASE_URL") ||
+          (mode === "gateway" && name === "ANTHROPIC_API_KEY") ||
           (mode === "project-key" && name === "ANTHROPIC_API_KEY")
         )
           continue;
@@ -103,7 +103,7 @@ describe("claudeAgentEnv", () => {
       if (mode === "gateway")
         expect(result).toMatchObject({
           ANTHROPIC_BASE_URL: "http://127.0.0.1:9000",
-          ANTHROPIC_AUTH_TOKEN: "client",
+          ANTHROPIC_API_KEY: "client",
         });
       else expect(result.ANTHROPIC_API_KEY).toBe("project");
     },
@@ -126,6 +126,18 @@ describe("claudeAgentEnv", () => {
       CLAUDE_AGENT_SDK_CLIENT_APP: "app",
       CLAUDE_CONFIG_DIR: "/cfg",
     });
+  });
+  it("bypasses inherited proxies for the checked gateway host", () => {
+    const result = claudeAgentEnv(
+      { NO_PROXY: "localhost", no_proxy: "internal", HTTPS_PROXY: "http://proxy" },
+      { kind: "gateway", url: "http://127.0.0.1:9000", apiKey: "client" },
+      "app",
+      "/cfg",
+    );
+    expect(result.NO_PROXY).toBe("localhost,127.0.0.1");
+    expect(result.no_proxy).toBe("internal,127.0.0.1");
+    expect(result.ANTHROPIC_API_KEY).toBe("client");
+    expect(result).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
   it("refuses gateway environment construction without an explicit key", () => {
     expect(() =>
@@ -327,5 +339,13 @@ describe("AgentAuthResolver", () => {
     const folder = await resolver.configDir(makeProject());
     expect(folder).toBe(join(root, "claude-agent-config", "p"));
     expect((await stat(folder)).mode & 0o777).toBe(0o700);
+    const env = claudeAgentEnv(
+      {},
+      { kind: "project-key", apiKey: "sk-ant-api03-abcdefghijklmnop" },
+      "app",
+      folder,
+    );
+    expect(env.CLAUDE_CONFIG_DIR).toBe(join(root, "claude-agent-config", "p"));
+    expect(env.CLAUDE_CONFIG_DIR).not.toBe(makeProject().path);
   });
 });
