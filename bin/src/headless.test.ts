@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentStatus,
   defaultSettings,
@@ -300,7 +300,9 @@ describe("toolOverride model choice", () => {
     process.env.BOOF_RUNNER_CODEX_BIN = "/missing/codex-for-test";
     try {
       const tool = new CodexTool();
+      const listModels = vi.spyOn(tool, "listModels");
       const tools = await toolOverride(new ToolRegistry([tool]), defaultSettings(), "codex");
+      expect(listModels).not.toHaveBeenCalled();
       expect(tools?.developer).toEqual({ tool: "codex", model: "" });
       const base = {
         role: "developer" as const,

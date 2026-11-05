@@ -13,6 +13,10 @@ import {
   type AgentsValues,
   type RoleName,
 } from "../lib/settings-agents.js";
+
+export function inheritedRoleLabel(tool: string, model: string): string {
+  return `${tool}, ${roleModelLabel(tool, model)}`;
+}
 import { AdvancedSection } from "./AdvancedSection.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { AddModelDialog } from "./AddModelDialog.js";
@@ -148,7 +152,7 @@ export function AgentsPage({
               )
             }
             inheritedText={
-              g.roles[role] ? roleModelLabel(g.roles[role]!.tool, g.roles[role]!.model) : "none"
+              g.roles[role] ? inheritedRoleLabel(g.roles[role]!.tool, g.roles[role]!.model) : "none"
             }
             global={
               <RoleSelects

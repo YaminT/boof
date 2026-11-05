@@ -2,10 +2,6 @@
 
 ## 0.3.0 (unreleased)
 
-### Runner and agent workflow
-
-- An empty Codex model uses the CLI built-in default; Boof ignores `config.toml` model by default and honors it when `runner.inheritMcpServers` is enabled. Existing saved models remain unchanged.
-
 ### Fixes
 
 - Handle CLI stop signals received during startup and release the runner guard cleanly.
@@ -47,6 +43,7 @@
 
 ### Runner and agent workflow
 
+- An empty Codex model uses the CLI built-in default; Boof ignores `config.toml` model by default and honors it when `runner.inheritMcpServers` is enabled. Existing saved models remain unchanged.
 - Route planner questions from developer, observer, and reviewer steps back to the role that asked, and park tasks when the planner needs user input.
 - Inject new instructions for the next step or interrupt and steer the active step where the agent tool supports it.
 - Keep injected instructions across retries and later runs, and show them in task details.

@@ -1,4 +1,6 @@
 import type { ReactElement } from "react";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RoleAssignment } from "@boof/heart/schema";
 import { RoleSelects } from "./RoleSelects.js";
@@ -56,5 +58,16 @@ describe("RoleSelects", () => {
     expect(saved).toEqual({ tool: "codex", model: "" });
     const codexAgain = selects(saved!, models, (next) => (saved = next));
     expect(codexAgain.model.props.children.map((option) => option.props.value)).toContain("");
+  });
+});
+
+describe("inheritedRoleLabel", () => {
+  it("includes the inherited tool alongside the model label", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./AgentsPage.tsx", import.meta.url)),
+      "utf8",
+    );
+    expect(source).toContain("return `${tool}, ${roleModelLabel(tool, model)}`;");
+    expect(source).toContain("inheritedRoleLabel(g.roles[role]!.tool, g.roles[role]!.model)");
   });
 });

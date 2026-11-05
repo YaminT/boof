@@ -62,7 +62,10 @@ export async function toolOverride(
   const t = registry.get(tool);
   // Codex resolves an empty model through its own CLI default. Other tools use
   // the live list, then their built-in default.
-  const listed = model || !t ? undefined : await t.listModels().catch(() => undefined);
+  const listed =
+    model || !t || t.defaultModels.length === 0
+      ? undefined
+      : await t.listModels().catch(() => undefined);
   const m =
     model ?? (t?.defaultModels.length === 0 ? "" : (listed?.[0] ?? t?.defaultModels[0] ?? ""));
   const a = { tool, model: m };
