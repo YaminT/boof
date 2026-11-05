@@ -274,7 +274,7 @@ describe("health detection", () => {
         .list()
         .map((t) => t.id)
         .sort(),
-    ).toEqual(["claude-code", "codex", "mock", "opencode"]);
+    ).toEqual(["claude-agent", "claude-code", "codex", "mock", "opencode"]);
     delete process.env.BOOF_RUNNER_CLAUDE_BIN;
     delete process.env.BOOF_RUNNER_CODEX_BIN;
     delete process.env.BOOF_RUNNER_OPENCODE_BIN;

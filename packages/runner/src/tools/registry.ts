@@ -1,4 +1,5 @@
 import { ClaudeCodeTool } from "./claude-code.js";
+import { ClaudeAgentTool } from "./claude-agent.js";
 import { CodexTool } from "./codex.js";
 import { MockTool } from "./mock.js";
 import { OpencodeTool } from "./opencode.js";
@@ -151,8 +152,14 @@ export class ToolRegistry implements ToolCatalog {
   }
 }
 
-export function defaultTools(): Tool[] {
-  return [new ClaudeCodeTool(), new CodexTool(), new MockTool(), new OpencodeTool()];
+export function defaultTools(opts: { claudeAgentUnavailable?: string } = {}): Tool[] {
+  return [
+    new ClaudeCodeTool(),
+    new ClaudeAgentTool({ unavailableReason: opts.claudeAgentUnavailable }),
+    new CodexTool(),
+    new MockTool(),
+    new OpencodeTool(),
+  ];
 }
 
 function withoutTime(c: CachedHealth): HealthResult {
