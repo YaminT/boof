@@ -18,7 +18,11 @@ async function walk(path: string): Promise<string[]> {
 
 describe("staged desktop app", () => {
   it("contains no Claude Agent SDK files or Claude binary", async () => {
-    if (!existsSync(app)) return;
+    if (!existsSync(app)) {
+      if (process.env.BOOF_REQUIRE_DESKTOP_BUILD === "1")
+        throw new Error(`required staged app is missing: ${app}`);
+      return;
+    }
     const paths = await walk(app);
     for (const path of paths) {
       expect(path).not.toMatch(/claude-agent-sdk|@anthropic-ai/i);
@@ -29,8 +33,9 @@ describe("staged desktop app", () => {
     const main = join(app, "main.js");
     if (existsSync(main)) {
       const contents = await readFile(main, "utf8");
-      expect(contents).not.toContain("@anthropic-ai/claude-agent-sdk-linux-x64");
+      expect(contents).not.toContain("Native CLI binary for");
       expect(contents).not.toContain("ProcessTransport");
+      expect(contents).not.toContain("Anthropic PBC");
     }
   });
 });

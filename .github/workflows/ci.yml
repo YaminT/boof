@@ -41,6 +41,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Build and stage desktop for exclusion scan
+        run: npm run desktop:build && npm run stage -w @boof/desktop
+
+      - name: Require clean staged desktop scan
+        env:
+          BOOF_REQUIRE_DESKTOP_BUILD: "1"
+        run: npm run check:staged-app -w @boof/desktop && npx vitest run packages/desktop/scripts/stage-app.test.ts bin/src/manifests.test.ts
+
   npm-install:
     name: npm-only install
     runs-on: ubuntu-latest

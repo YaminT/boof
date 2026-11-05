@@ -111,8 +111,11 @@ describe("workspace manifests", () => {
     const main = join(repo, "packages/desktop/dist/main.js");
     if (existsSync(main)) {
       const bundle = await readFile(main, "utf8");
-      expect(bundle).not.toContain("@anthropic-ai/claude-agent-sdk-linux-x64");
+      expect(bundle).not.toContain("Native CLI binary for");
       expect(bundle).not.toContain("ProcessTransport");
+      expect(bundle).not.toContain("Anthropic PBC");
+    } else if (process.env.BOOF_REQUIRE_DESKTOP_BUILD === "1") {
+      throw new Error(`required desktop bundle is missing: ${main}`);
     }
   });
 });

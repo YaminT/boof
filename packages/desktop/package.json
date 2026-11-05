@@ -9,6 +9,7 @@
     "start": "electron .",
     "typecheck": "tsc -b",
     "stage": "node scripts/stage-app.mjs",
+    "check:staged-app": "node scripts/check-staged-app.mjs",
     "dist": "npm run stage && electron-builder --publish never",
     "dist:mac": "npm run stage && electron-builder --mac --publish never",
     "dist:win": "npm run stage && electron-builder --win --publish never"

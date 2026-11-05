@@ -60,8 +60,19 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Build and stage desktop (${{ matrix.name }})
+        run: npm run desktop:build && npm run stage -w @boof/desktop
+
+      - name: Require clean staged desktop scan
+        run: npm run check:staged-app -w @boof/desktop
+
       - name: Build installers (${{ matrix.name }})
-        run: npm run ${{ matrix.script }}
+        run: |
+          if [[ "${{ matrix.name }}" == "macOS" ]]; then
+            npm exec --workspace @boof/desktop -- electron-builder --mac --publish never
+          else
+            npm exec --workspace @boof/desktop -- electron-builder --win --publish never
+          fi
 
       - name: Ensure release exists
         env:
