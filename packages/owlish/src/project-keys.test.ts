@@ -43,7 +43,7 @@ describe("ProjectKeyStore", () => {
     const store = await setup();
     await expect(store.tighten()).resolves.toBeUndefined();
   });
-  it("skips invalid entries while preserving valid project keys", async () => {
+  it("preserves invalid entries on rewrite and warns once per file content", async () => {
     const store = await setup();
     const path = (await import("@boof/heart")).dataRootPaths(root).owlishProjectKeys;
     await mkdir(join(root, "owlish"), { recursive: true });
@@ -51,10 +51,31 @@ describe("ProjectKeyStore", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(await store.get("valid")).toBe(KEY);
     expect(await store.get("bad")).toBeNull();
+    expect(await store.get("bad")).toBeNull();
     expect(warn).toHaveBeenCalledWith(
-      "owlish/project-keys.json contains invalid entries; skipped them",
+      "owlish/project-keys.json contains invalid entries; preserving them on write",
     );
+    expect(warn).toHaveBeenCalledTimes(1);
+    await store.set("new", "sk-ant-api03-qrstuvwxyzABCDEF");
+    const saved = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8"));
+    expect(saved.keys).toMatchObject({
+      valid: KEY,
+      bad: "not-a-key",
+      new: "sk-ant-api03-qrstuvwxyzABCDEF",
+    });
+    expect(await store.has("bad")).toBe(false);
     warn.mockRestore();
+  });
+  it("serializes concurrent independent writers with the process lock", async () => {
+    const first = await setup();
+    const second = new ProjectKeyStore(root);
+    await first.set("revoked", KEY);
+    await Promise.all([
+      first.delete("revoked"),
+      second.set("other", "sk-ant-api03-qrstuvwxyzABCDEF"),
+    ]);
+    expect(await first.get("revoked")).toBeNull();
+    expect(await first.has("other")).toBe(true);
   });
   it("rejects OAuth tokens without echoing them and hides corrupt file contents", async () => {
     const store = await setup();
@@ -85,6 +106,13 @@ it.each([
   ["truncated at start", `${KEY.slice(0, 23)} …`, "[redacted] …"],
   ["truncated at end of output", `prefix ${KEY.slice(0, 23)}`, "prefix [redacted]"],
   ["generic unknown key", "x sk-ant-api03-abcdefgh y", "x [redacted] y"],
+  [
+    "JSON keeps surrounding fields",
+    `{"key":"sk-ant-api03-abcdefgh","model":"x"}`,
+    `{"key":"[redacted]","model":"x"}`,
+  ],
+  ["OAuth token", "Bearer sk-ant-oat01-abcdefgh failed", "Bearer [redacted] failed"],
+  ["admin token", "sk-ant-admin01-abcdefgh", "[redacted]"],
   ["normal text", "ordinary message and punctuation", "ordinary message and punctuation"],
 ])("redacts %s", (_label, input, expected) => {
   const escapedKey = 'sk-ant-api03-ab"cd\\ef/gh+ij&kl%mn=op';

@@ -64,6 +64,14 @@ describe("agentSdkEligibility", () => {
     );
     expect(injected.blocking[0]?.name).toBe("evil  name");
   });
+  it("sanitizes Unicode line separators and control characters in account names and ids", () => {
+    const result = agentSdkEligibility(
+      [account("a\u2028b\u2029c\u0085d", "anthropic", { name: "x\u2028y\u2029z\u0085!" })],
+      now,
+    );
+    expect(result.blocking[0]).toMatchObject({ id: "a b c d", name: "x y z !" });
+    expect(result.reason).not.toMatch(/[\u0085\u2028\u2029]/u);
+  });
 });
 
 describe("decideAgentAuth", () => {

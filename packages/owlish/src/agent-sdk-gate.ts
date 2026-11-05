@@ -37,7 +37,7 @@ const SUBSCRIPTION = new Set(["anthropic", "codex", "codebuddy", "qwen", "xai"])
 const MAX_REASON = 300;
 const bounded = (text: string) =>
   text.length <= MAX_REASON ? text : `${text.slice(0, MAX_REASON - 1)}…`;
-const safeName = (name: string) => name.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 80);
+const safeName = (name: string) => name.replace(/[\p{Cc}\u2028\u2029]/gu, " ").slice(0, 80);
 
 export function agentSdkEligibility(
   accounts: AccountSummary[] | null,
@@ -66,7 +66,7 @@ export function agentSdkEligibility(
               ? "oauth-token"
               : null;
       return why
-        ? [{ id: account.id.slice(0, 200), name: safeName(account.name), provider, why }]
+        ? [{ id: safeName(account.id).slice(0, 200), name: safeName(account.name), provider, why }]
         : [];
     });
     if (blocking.length === 0) reason = "every better-ccflare account uses API-key authentication";
