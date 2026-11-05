@@ -2,7 +2,7 @@ import { mkdtemp, chmod, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadAgentSdk, resolveClaudeAgentExecutable } from "./claude-agent-sdk.js";
 
@@ -47,6 +47,59 @@ describe("Claude Agent SDK loading", () => {
     ).resolves.toEqual({ path: executable, source: "path" });
   });
 
+  it("rejects a directory named claude on PATH", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-directory-"));
+    tempDirs.push(dir);
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(join(dir, "claude")));
+    await expect(
+      resolveClaudeAgentExecutable(
+        { PATH: dir },
+        {
+          sdkResolve: () => {
+            throw new Error("no SDK");
+          },
+        },
+      ),
+    ).resolves.toEqual({ path: undefined, source: null });
+  });
+
+  it("resolves a configured relative path with a separator from cwd", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-relative-"));
+    tempDirs.push(dir);
+    const executable = join(dir, "claude");
+    await writeFile(executable, "#!/bin/sh\nexit 0\n");
+    await chmod(executable, 0o755);
+    const relativePath = relative(process.cwd(), executable);
+    await expect(
+      resolveClaudeAgentExecutable(
+        { BOOF_RUNNER_CLAUDE_BIN: relativePath, PATH: "" },
+        {
+          sdkResolve: () => {
+            throw new Error("no SDK");
+          },
+        },
+      ),
+    ).resolves.toEqual({ path: executable, source: "path" });
+  });
+
+  it("does not append .EXE to a configured Windows executable path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-win-"));
+    tempDirs.push(dir);
+    const executable = join(dir, "claude.exe");
+    await writeFile(executable, "binary");
+    await expect(
+      resolveClaudeAgentExecutable(
+        { BOOF_RUNNER_CLAUDE_BIN: executable, PATH: "" },
+        {
+          platform: "win32",
+          sdkResolve: () => {
+            throw new Error("no SDK");
+          },
+        },
+      ),
+    ).resolves.toEqual({ path: executable, source: "path" });
+  });
+
   it("reports no executable when every source is missing", async () => {
     await expect(
       resolveClaudeAgentExecutable(
@@ -58,7 +111,6 @@ describe("Claude Agent SDK loading", () => {
           requireResolve: () => {
             throw new Error("missing");
           },
-          commandExists: async () => false,
         },
       ),
     ).resolves.toEqual({ path: undefined, source: null });

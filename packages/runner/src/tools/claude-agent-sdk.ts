@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -28,6 +28,11 @@ export async function loadAgentSdk(importer?: Importer): Promise<AgentSdk> {
 }
 
 function isExecutable(path: string, platform = process.platform): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+  } catch {
+    return false;
+  }
   if (platform === "win32") return existsSync(path);
   try {
     accessSync(path, constants.X_OK);
@@ -93,11 +98,17 @@ export async function resolveClaudeAgentExecutable(
   const pathDirs = pathValue.split(platform === "win32" ? ";" : ":");
   const extensions =
     platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";") : [""];
-  const candidates = isAbsolute(bin)
-    ? extensions.map((extension) => `${bin}${extension}`)
-    : pathDirs.flatMap((dir) =>
-        extensions.map((extension) => join(dir || process.cwd(), `${bin}${extension}`)),
-      );
+  const hasPathSeparator = bin.includes("/") || bin.includes("\\");
+  const alreadyHasExtension =
+    platform === "win32" &&
+    extensions.some((extension) => bin.toLowerCase().endsWith(extension.toLowerCase()));
+  const suffixes = alreadyHasExtension ? [""] : extensions;
+  const candidates =
+    isAbsolute(bin) || hasPathSeparator
+      ? suffixes.map((extension) => resolve(`${bin}${extension}`))
+      : pathDirs.flatMap((dir) =>
+          suffixes.map((extension) => join(dir || process.cwd(), `${bin}${extension}`)),
+        );
   const path = candidates.find((candidate) => isExecutable(candidate, platform));
   if (path) return { path: resolve(path), source: "path" };
   return { path: undefined, source: null };

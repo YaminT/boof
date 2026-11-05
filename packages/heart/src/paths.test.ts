@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   dataPaths,
   dataRootPaths,
+  claudeAgentConfigDir,
   InvalidIdError,
   projectPaths,
   taskAssetsDir,
@@ -50,6 +51,7 @@ describe("data root layout v2 paths", () => {
       auth: "/d/auth",
       audit: "/d/audit",
       owlishProjectKeys: "/d/owlish/project-keys.json",
+      claudeAgentConfigs: "/d/claude-agent-config",
     });
     expect(projectPaths("/d", "app")).toEqual({
       dir: "/d/projects/app",
@@ -64,6 +66,11 @@ describe("data root layout v2 paths", () => {
 
   it("dataPaths stays as a deprecated alias", () => {
     expect(dataPaths("/d")).toMatchObject({ settings: "/d/settings.json", tasks: "/d/tasks" });
+  });
+
+  it("builds isolated Claude config paths by project", () => {
+    expect(claudeAgentConfigDir("/d", "app")).toBe("/d/claude-agent-config/app");
+    expect(() => claudeAgentConfigDir("/d", "../escape")).toThrow(InvalidIdError);
   });
 
   it("a project dir is a valid root for the task path helpers", () => {

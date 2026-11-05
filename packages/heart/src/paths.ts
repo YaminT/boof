@@ -62,6 +62,8 @@ export interface DataRootPaths {
   owlishSecrets: string;
   /** Project Anthropic API keys, mode 0600. */
   owlishProjectKeys: string;
+  /** Private Claude Agent SDK config folders, isolated per project. */
+  claudeAgentConfigs: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -80,7 +82,13 @@ export function dataRootPaths(root: string): DataRootPaths {
     webhookSecrets: join(root, "webhooks", "secrets.json"),
     owlishSecrets: join(root, "owlish", "secrets.json"),
     owlishProjectKeys: join(root, "owlish", "project-keys.json"),
+    claudeAgentConfigs: join(root, "claude-agent-config"),
   };
+}
+
+/** Private Claude Agent SDK configuration folder for one project. */
+export function claudeAgentConfigDir(root: string, projectId: string): string {
+  return join(dataRootPaths(root).claudeAgentConfigs, assertKebabId(projectId));
 }
 
 /** Locations of one project; `dir` is the `root` to hand to TaskStore, AttachmentStore, UsageStore. */

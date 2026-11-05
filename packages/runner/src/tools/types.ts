@@ -95,8 +95,11 @@ export interface Tool {
   readonly supportsResume?: boolean;
   /** True when `run` honours `RunOptions.gateway` (the tool can be served by the account pool). */
   readonly acceptsPool?: boolean;
+  /** Requires a fresh per-project Agent SDK authentication decision before running. */
   readonly needsAgentAuth?: boolean;
+  /** Handles `now` injections in the current session through interrupt and streamed input. */
   readonly steersInPlace?: boolean;
+  /** Fixed reason shown when this tool is intentionally unavailable in this composition. */
   readonly unavailableReason?: string;
   run(opts: RunOptions): Promise<RunResult>;
 }

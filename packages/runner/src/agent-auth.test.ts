@@ -1,7 +1,11 @@
 import { createServer } from "node:http";
+import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Project, Settings } from "@boof/heart";
 import { AgentAuthRefusedError, AgentAuthResolver, claudeAgentEnv } from "./agent-auth.js";
+import { agentEnv } from "./agent-env.js";
 
 const dirs: string[] = [];
 const makeProject = (claudeAgent?: Project["claudeAgent"]): Project =>
@@ -10,7 +14,7 @@ const settings = (url?: string) =>
   ({ owlish: url ? { url, healthGate: "pause" } : undefined }) as Settings;
 const listen = async (body: string, status = 200) => {
   const server = createServer((req, res) => {
-    expect(req.headers["x-api-key"]).toBe("client-key");
+    expect(req.headers["x-api-key"]).toBeTruthy();
     res.writeHead(status, { "content-type": "application/json" }).end(body);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -29,43 +33,113 @@ afterEach(async () => {
 });
 
 describe("claudeAgentEnv", () => {
-  const inherited = {
-    ANTHROPIC_API_KEY: "inherited",
-    CLAUDE_CODE_OAUTH_TOKEN: "oauth",
-    CLAUDE_CODE_USE_BEDROCK: "1",
-    ANTHROPIC_FOUNDRY_RESOURCE: "resource",
-    ANTHROPIC_BASE_URL: "https://evil.invalid",
-    BOOF_SECRET: "never",
-  };
-  it("clears inherited provider credentials and adds only the gateway credentials", () => {
-    const result = claudeAgentEnv(
-      inherited,
-      { kind: "gateway", url: "http://127.0.0.1:9000", apiKey: "client" },
-      "boof-runner/0.3.0",
-    );
-    expect(result).toEqual({
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:9000",
-      ANTHROPIC_AUTH_TOKEN: "client",
-      CLAUDE_AGENT_SDK_CLIENT_APP: "boof-runner/0.3.0",
-    });
-  });
-  it("adds only the project API key in project-key mode", () => {
+  const credentials = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "ANTHROPIC_IDENTITY_TOKEN",
+    "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    "ANTHROPIC_AWS_API_KEY",
+    "ANTHROPIC_PROFILE",
+    "ANTHROPIC_CONFIG_DIR",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "ANTHROPIC_FOUNDRY_RESOURCE",
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+    "CLAUDE_CODE_GATEWAY_TOKEN",
+    "CLAUDE_CODE_API_BASE_URL",
+    "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+    "CLAUDE_CODE_HOST_CREDS_FILE",
+    "CLAUDE_CODE_CLIENT_KEY",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_API_KEY",
+    "GCLOUD_PROJECT",
+    "CLOUD_ML_REGION",
+    "VERTEX_PROJECT",
+    "AZURE_OPENAI_API_KEY",
+    "BOOF_SECRET",
+  ];
+  it.each(["gateway", "project-key"] as const)(
+    "drops all credential families from extra and parent env (%s mode)",
+    (mode) => {
+      const input = Object.fromEntries(credentials.map((name) => [name, "inherited-secret"]));
+      const auth =
+        mode === "gateway"
+          ? { kind: "gateway" as const, url: "http://127.0.0.1:9000", apiKey: "client" }
+          : { kind: "project-key" as const, apiKey: "project" };
+      const result = claudeAgentEnv(
+        agentEnv(input, credentials),
+        auth,
+        "app",
+        "/private/project-config",
+      );
+      for (const name of credentials) {
+        if (
+          name === "CLAUDE_CONFIG_DIR" ||
+          (mode === "gateway" &&
+            (name === "ANTHROPIC_AUTH_TOKEN" || name === "ANTHROPIC_BASE_URL")) ||
+          (mode === "project-key" && name === "ANTHROPIC_API_KEY")
+        )
+          continue;
+        expect(result, name).not.toHaveProperty(name);
+      }
+      expect(result.CLAUDE_CONFIG_DIR).toBe("/private/project-config");
+      expect(result.CLAUDE_AGENT_SDK_CLIENT_APP).toBe("app");
+      if (mode === "gateway")
+        expect(result).toMatchObject({
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:9000",
+          ANTHROPIC_AUTH_TOKEN: "client",
+        });
+      else expect(result.ANTHROPIC_API_KEY).toBe("project");
+    },
+  );
+  it("retains safe agent basics and adds only explicit auth", () => {
     expect(
-      claudeAgentEnv(inherited, { kind: "project-key", apiKey: "project-secret" }, "app"),
-    ).toEqual({ ANTHROPIC_API_KEY: "project-secret", CLAUDE_AGENT_SDK_CLIENT_APP: "app" });
-  });
-  it("does not add an absent gateway client key", () => {
-    expect(claudeAgentEnv({}, { kind: "gateway", url: "http://127.0.0.1:9000" }, "app")).toEqual({
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:9000",
+      claudeAgentEnv(
+        { PATH: "/bin", HOME: "/home/u", LANG: "C", TERM: "xterm", TMPDIR: "/tmp" },
+        { kind: "project-key", apiKey: "project" },
+        "app",
+        "/cfg",
+      ),
+    ).toEqual({
+      PATH: "/bin",
+      HOME: "/home/u",
+      LANG: "C",
+      TERM: "xterm",
+      TMPDIR: "/tmp",
+      ANTHROPIC_API_KEY: "project",
       CLAUDE_AGENT_SDK_CLIENT_APP: "app",
+      CLAUDE_CONFIG_DIR: "/cfg",
     });
+  });
+  it("refuses gateway environment construction without an explicit key", () => {
+    expect(() =>
+      claudeAgentEnv({}, { kind: "gateway", url: "http://127.0.0.1:9000" }, "app", "/cfg"),
+    ).toThrow(/credentials are required/);
   });
 });
 
 describe("AgentAuthResolver", () => {
   it("caches eligibility for 30 seconds across projects on the same gateway", async () => {
     const { server, url } = await listen(
-      JSON.stringify([{ id: "a", name: "console", provider: "claude-console-api" }]),
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
     );
     const fetcher = vi.fn(fetch);
     const resolver = new AgentAuthResolver({
@@ -134,5 +208,124 @@ describe("AgentAuthResolver", () => {
         note: null,
       }),
     ).rejects.toBeInstanceOf(AgentAuthRefusedError);
+  });
+  it("refuses if the gateway settings change after the checked decision", async () => {
+    const { server, url } = await listen(
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    );
+    let current = url;
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings(current),
+      readGatewayKey: async () => "client-key",
+    });
+    const decision = await resolver.decide(makeProject());
+    current = "http://127.0.0.1:1";
+    await expect(resolver.credentials(makeProject(), decision as never)).rejects.toBeInstanceOf(
+      AgentAuthRefusedError,
+    );
+    server.close();
+  });
+  it("coalesces simultaneous checks and caches by gateway and client key", async () => {
+    const { server, url } = await listen(
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    );
+    let key = "client-key";
+    const fetcher = vi.fn(fetch);
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings(url),
+      readGatewayKey: async () => key,
+      fetch: fetcher,
+    });
+    await Promise.all(Array.from({ length: 5 }, () => resolver.decide(makeProject())));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    key = "other-key";
+    await resolver.decide(makeProject());
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+  it("turns settings and key-store failures into safe refusals", async () => {
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => {
+        throw new Error("secret-key settings error");
+      },
+      readGatewayKey: async () => {
+        throw new Error("secret-key key error");
+      },
+      projectKeys: {
+        has: async () => {
+          throw new Error("secret-key store error");
+        },
+      } as never,
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({ ok: false });
+    expect(JSON.stringify(decision)).not.toContain("secret-key");
+  });
+  it("refuses a corrupt project key file without exposing its contents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-agent-corrupt-keys-"));
+    dirs.push(root);
+    await mkdir(join(root, "owlish"), { recursive: true });
+    await writeFile(join(root, "owlish", "project-keys.json"), '{"keys":{"p":"secret-marker"');
+    const resolver = new AgentAuthResolver({
+      root,
+      loadSettings: async () => settings(),
+      readGatewayKey: async () => null,
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({ ok: false });
+    expect(JSON.stringify(decision)).not.toContain("secret-marker");
+  });
+  it("rejects invalid stored key values including inherited object properties", async () => {
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings(),
+      readGatewayKey: async () => null,
+      projectKeys: { get: async () => "constructor" } as never,
+    });
+    await expect(
+      resolver.credentials(makeProject({ auth: "project-key" }), {
+        ok: true,
+        via: "project-key",
+        note: null,
+      }),
+    ).rejects.toBeInstanceOf(AgentAuthRefusedError);
+  });
+  it("converts project key read errors in credentials into a refusal", async () => {
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings(),
+      readGatewayKey: async () => null,
+      projectKeys: {
+        get: async () => {
+          throw new Error("secret-marker");
+        },
+      } as never,
+    });
+    await expect(
+      resolver.credentials(makeProject({ auth: "project-key" }), {
+        ok: true,
+        via: "project-key",
+        note: null,
+      }),
+    ).rejects.toMatchObject({ name: "AgentAuthRefusedError" });
+  });
+  it("creates private per-project config folders under the supplied temporary root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-agent-config-"));
+    dirs.push(root);
+    const resolver = new AgentAuthResolver({
+      root,
+      loadSettings: async () => settings(),
+      readGatewayKey: async () => null,
+    });
+    const folder = await resolver.configDir(makeProject());
+    expect(folder).toBe(join(root, "claude-agent-config", "p"));
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
   });
 });

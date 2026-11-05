@@ -42,7 +42,7 @@ jobs:
         run: npm run build
 
       - name: Build and stage desktop for exclusion scan
-        run: npm run desktop:build && npm run stage -w @boof/desktop
+        run: npm run stage -w @boof/desktop
 
       - name: Require clean staged desktop scan
         env:
