@@ -119,6 +119,31 @@ async function configure(withKey = true) {
 }
 
 describe("runner status gateway eligibility", () => {
+  it("uses the engine refusal when the gateway client key is missing", async () => {
+    await configure(false);
+    await service.projects.create({
+      id: "no-client-key",
+      name: "No client key",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const projectTasks = service.forProject("no-client-key");
+    const task = await projectTasks.create({ title: "Task override", status: "pending" });
+    await projectTasks.tasks.modify(task.frontmatter.id, (current) => {
+      current.frontmatter.tools = {
+        developer: { tool: "claude-agent", model: "default" },
+      } as never;
+    });
+    seen = [];
+    const status = await run("runner.status", LOCAL_PRINCIPAL);
+    expect(status.agentAuth[0]).toMatchObject({
+      allowed: false,
+      via: null,
+      reason:
+        'claude-agent cannot start: no better-ccflare client key is configured. Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI. Set an Anthropic API key for project "No client key" (Settings › Project), or use claude-code for this role.',
+    });
+    expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(0);
+  });
+
   it("checks once for four projects using the gateway", async () => {
     await configure();
     for (let n = 0; n < 4; n += 1) {

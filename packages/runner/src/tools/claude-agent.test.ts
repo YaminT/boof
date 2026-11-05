@@ -169,6 +169,12 @@ describe("ClaudeAgentTool", () => {
     ).toMatchObject({ costUsd: 0.6, inputTokens: 30, outputTokens: 8 });
     expect(
       usageFromSdkResult(
+        { total_cost_usd: 1, modelUsage },
+        { inputTokens: 0, outputTokens: 0, costUsd: 0.4, known: true },
+      ).known,
+    ).toBe(false);
+    expect(
+      usageFromSdkResult(
         { total_cost_usd: 0.3, modelUsage: {} },
         { inputTokens: 10, outputTokens: 5, costUsd: 0.4, known: true },
       ),
@@ -188,15 +194,17 @@ describe("ClaudeAgentTool", () => {
     const dir = await mkdtemp(join(tmpdir(), "claude-agent-baseline-stop-"));
     const stopSignalPath = join(dir, "stop");
     try {
-      const running = tool.run({
-        ...base,
-        stopSignalPath,
-        resumeSessionId: "s1",
-        resumeBaseline: { inputTokens: 1000, outputTokens: 500, costUsd: 0.4, known: true },
-      });
+      const running = tool
+        .run({
+          ...base,
+          stopSignalPath,
+          resumeSessionId: "s1",
+          resumeBaseline: { inputTokens: 1000, outputTokens: 500, costUsd: 0.4, known: true },
+        })
+        .catch((value) => value as ToolRunError);
       await new Promise((r) => setTimeout(r, 20));
       await writeFile(stopSignalPath, "stop");
-      const error = await running.catch((value) => value as ToolRunError);
+      const error = await running;
       expect(error.stopped).toBe(true);
       expect(error.usage).not.toMatchObject({ inputTokens: 1000, outputTokens: 500, costUsd: 0.4 });
     } finally {
@@ -256,7 +264,7 @@ describe("ClaudeAgentTool", () => {
     );
     let capturedEnv: Record<string, string> = {};
     const sdk = {
-      query: ({ options }: any) => {
+      query: ({ options, prompt }: any) => {
         options.spawnClaudeCodeProcess({
           command: "/fake",
           args: ["--sdk-protocol"],
@@ -271,8 +279,13 @@ describe("ClaudeAgentTool", () => {
         });
         return {
           async *[Symbol.asyncIterator]() {
+            const first = await prompt[Symbol.asyncIterator]().next();
             yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
-            yield msg("result", { subtype: "success", result: "ok" });
+            yield msg("result", {
+              subtype: "success",
+              result: "ok",
+              user_message_uuid: first.value.uuid,
+            });
           },
           async close() {
             childRef.emit("close");
@@ -331,7 +344,7 @@ describe("ClaudeAgentTool", () => {
     const pidFilePath = join(dir, "control", "pid");
     let childRef: any;
     const sdk = {
-      query: ({ options }: any) => {
+      query: ({ options, prompt }: any) => {
         childRef = new EventEmitter();
         Object.assign(childRef, { pid: 4242, exitCode: 0, signalCode: null, kill: vi.fn() });
         options.spawnClaudeCodeProcess({
@@ -343,7 +356,12 @@ describe("ClaudeAgentTool", () => {
         });
         return {
           async *[Symbol.asyncIterator]() {
-            yield msg("result", { subtype: "success", result: "ok" });
+            const first = await prompt[Symbol.asyncIterator]().next();
+            yield msg("result", {
+              subtype: "success",
+              result: "ok",
+              user_message_uuid: first.value.uuid,
+            });
           },
           async close() {},
         };
@@ -733,6 +751,81 @@ describe("ClaudeAgentTool", () => {
       expect(result.report).toBe("new");
       expect(result.usage?.costUsd).toBeCloseTo(0.6);
       expect(calls.closed).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept an SDK result without message uuids as the final answer", async () => {
+    const sdk = {
+      query: () => ({
+        async *[Symbol.asyncIterator]() {
+          yield msg("result", { subtype: "success", result: "unattributed" });
+        },
+        async close() {},
+      }),
+    } as any;
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+    });
+    await expect(tool.run(base)).rejects.toBeInstanceOf(ToolRunError);
+  });
+
+  it("delivers a steer taken at the turn boundary before accepting the result", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-steer-boundary-"));
+    const steerSignalPath = join(dir, "steer.jsonl");
+    let promptStream!: AsyncIterable<any>;
+    let pushed: any;
+    let resolveTaken!: () => void;
+    const taken = new Promise<void>((resolve) => (resolveTaken = resolve));
+    const query = {
+      async *[Symbol.asyncIterator]() {
+        const input = promptStream[Symbol.asyncIterator]();
+        yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+        const first = await input.next();
+        await taken;
+        yield msg("result", {
+          subtype: "success",
+          result: "answer to original",
+          user_message_uuids: [first.value.uuid],
+        });
+        pushed = (await input.next()).value;
+        yield msg("result", {
+          subtype: "success",
+          result: "answer to steer",
+          user_message_uuids: [pushed.uuid],
+        });
+      },
+      async interrupt() {},
+      async setModel() {},
+      async close() {},
+    };
+    await writeFile(steerSignalPath, JSON.stringify({ text: "new instruction" }) + "\n");
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () =>
+        ({
+          query: ({ prompt }: { prompt: AsyncIterable<any> }) => {
+            promptStream = prompt;
+            return query;
+          },
+        }) as any,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 2,
+    });
+    try {
+      const result = await tool.run({
+        ...base,
+        steerSignalPath,
+        onSteer: async () => {
+          await rm(steerSignalPath, { force: true });
+          resolveTaken();
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return { texts: ["new instruction"], last: false };
+        },
+      });
+      expect(result.report).toBe("answer to steer");
+      expect(pushed.message.content).toContain("new instruction");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

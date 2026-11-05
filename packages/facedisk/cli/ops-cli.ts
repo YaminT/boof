@@ -266,13 +266,13 @@ export function parseOpArgs(
           )
         )
           throw new CliUsageError(
-            `--${name} is write-only; pass it with --input @file.json or --input - using stdin`,
+            `--${name} is write-only; pass it with --input @file.json or --input @- to read stdin`,
           );
         throw new CliUsageError(`unknown option --${name}`);
       }
       if (flag.writeOnly)
         throw new CliUsageError(
-          `--${name} is write-only; pass it with --input @file.json or --input - using stdin`,
+          `--${name} is write-only; pass it with --input @file.json or --input @- to read stdin`,
         );
       const f = flag.field;
       if (op.rest.kind === "multipart" && flag.key === "file") {

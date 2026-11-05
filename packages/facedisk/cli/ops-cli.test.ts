@@ -125,7 +125,7 @@ describe("parseOpArgs", () => {
         ["--project-id", "p", "--anthropic-api-key", "secret"],
         dir,
       ),
-    ).toThrow(/write-only.*--input @file/);
+    ).toThrow(/write-only.*--input @file\.json or --input @- to read stdin/);
     expect(
       parseOpArgs(
         op("projects.update"),

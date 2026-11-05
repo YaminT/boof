@@ -30,14 +30,24 @@ export function fakeSdk(script: FakeStep[]): {
     let wake: (() => void) | undefined;
     const q = {
       async *[Symbol.asyncIterator]() {
+        const input = params.prompt as AsyncIterable<any>;
+        const first = await input[Symbol.asyncIterator]().next();
+        const initialUuid = first.value?.uuid;
         for (const step of script) {
           if (ended) break;
           if (step === "hang")
             while (!ended && !interrupted) await new Promise<void>((r) => (wake = r));
           if (step === "waitForPush")
             while (!pending.length && !ended) await new Promise<void>((r) => (wake = r));
-          if (typeof step === "object" && "emit" in step) yield step.emit;
-          else if (step === "emit") yield undefined;
+          if (typeof step === "object" && "emit" in step) {
+            const emitted = step.emit as any;
+            yield emitted?.type === "result" &&
+            initialUuid &&
+            !("user_message_uuid" in emitted) &&
+            !("user_message_uuids" in emitted)
+              ? { ...emitted, user_message_uuid: initialUuid }
+              : emitted;
+          } else if (step === "emit") yield undefined;
         }
         while (pending.length && !ended) {
           calls.pushed.push(pending.shift());

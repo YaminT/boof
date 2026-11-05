@@ -5,6 +5,7 @@ import {
   OwlishSecretStore,
   ProjectKeyStore,
   decideAgentAuth,
+  agentAuthRefusalMessage,
   type AgentSdkEligibility,
   type PoolStatus,
 } from "@boof/owlish";
@@ -921,8 +922,15 @@ export class TaskService {
     for (const project of await this.listProjects()) {
       if (!authorized(project.id) || project.archived) continue;
       const effective = effectiveSettings(settings, project);
+      const taskList = await new TaskStore(this.projects.dir(project.id)).list();
       const roles = (["planner", "developer", "observer", "reviewer"] as const).filter(
-        (role) => effective.roles[role]?.tool === "claude-agent",
+        (role) =>
+          effective.roles[role]?.tool === "claude-agent" ||
+          taskList.some(
+            (task) =>
+              task.frontmatter.status === "pending" &&
+              task.frontmatter.tools?.[role]?.tool === "claude-agent",
+          ),
       );
       if (!roles.length) continue;
       const unavailable = this.catalog.get("claude-agent")?.unavailableReason;
@@ -939,16 +947,28 @@ export class TaskService {
       const hasProjectKey = await this.hasProjectKey(project.id);
       const gateway = settings.owlish;
       const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
-      if (gateway && useGateway && gatewayEligibility === undefined)
-        gatewayEligibility = await this.agentSdkEligibility();
+      let missingClientKey = false;
+      if (gateway && useGateway) {
+        if (!(await this.owlishSecrets.get())) missingClientKey = true;
+        else if (gatewayEligibility === undefined)
+          gatewayEligibility = await this.agentSdkEligibility();
+      }
       const eligibility = gateway && useGateway ? (gatewayEligibility ?? null) : null;
-      const decision = decideAgentAuth({
-        projectName: project.name,
-        choice: project.claudeAgent?.auth ?? "gateway",
-        gatewayConfigured: !!gateway,
-        eligibility,
-        hasProjectKey,
-      });
+      const decision = missingClientKey
+        ? {
+            ok: false as const,
+            reason: agentAuthRefusalMessage(
+              project.name,
+              "no better-ccflare client key is configured",
+            ),
+          }
+        : decideAgentAuth({
+            projectName: project.name,
+            choice: project.claudeAgent?.auth ?? "gateway",
+            gatewayConfigured: !!gateway,
+            eligibility,
+            hasProjectKey,
+          });
       result.push({
         projectId: project.id,
         roles: [...roles],

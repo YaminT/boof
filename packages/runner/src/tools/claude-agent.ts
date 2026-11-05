@@ -10,7 +10,7 @@ import { agentEnv } from "../agent-env.js";
 import { StreamRenderer } from "./claude-code.js";
 import { ToolRunError } from "./errors.js";
 import { withQuestions } from "./questions.js";
-import { RESUME_PROMPT_PREFIX } from "../pipeline.js";
+import { RESUME_PROMPT_PREFIX } from "./steer.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import {
   loadAgentSdk,
@@ -84,7 +84,9 @@ export function usageFromSdkResult(
     outputTokens -= baseline.outputTokens;
     costUsd -= baseline.costUsd;
   }
-  return { inputTokens, outputTokens, costUsd, known: known && (baseline?.known ?? true) };
+  // A resumed SDK process may restart cumulative totals without telling us. Keep the
+  // best-effort delta, but never claim it is complete when a resume baseline was used.
+  return { inputTokens, outputTokens, costUsd, known: known && (baseline ? false : true) };
 }
 
 export interface ClaudeAgentToolOptions {
@@ -287,6 +289,9 @@ export class ClaudeAgentTool implements Tool {
     let result: Record<string, unknown> | undefined;
     let latestUuid = uuid;
     let steerPending = false;
+    let polling = false;
+    let steerInFlight = false;
+    let resultsSincePush = 0;
     let steerFailure: ToolRunError | undefined;
     let lastSteer = false;
     let timedOut = false,
@@ -313,93 +318,101 @@ export class ClaudeAgentTool implements Tool {
     };
     resetIdle();
     const poll = setInterval(async () => {
-      if (stopped || timedOut || stalled || steerPending) return;
-      if (opts.stopSignalPath) {
-        try {
-          await access(opts.stopSignalPath);
-          stopped = true;
-          abortController.abort();
-          closeQuery();
-          void killChildGroup();
-          return;
-        } catch {
-          /* absent */
-        }
-      }
-      if (!opts.steerSignalPath || !opts.onSteer || lastSteer) return;
-      steerPending = true;
+      if (polling || stopped || timedOut || stalled || steerPending) return;
+      polling = true;
       try {
-        await access(opts.steerSignalPath);
-      } catch {
-        steerPending = false;
-        return;
-      }
-      if (opts.stopSignalPath) {
+        if (opts.stopSignalPath) {
+          try {
+            await access(opts.stopSignalPath);
+            stopped = true;
+            abortController.abort();
+            closeQuery();
+            void killChildGroup();
+            return;
+          } catch {
+            /* absent */
+          }
+        }
+        if (!opts.steerSignalPath || !opts.onSteer || lastSteer) return;
+        steerPending = true;
         try {
-          await access(opts.stopSignalPath);
-          stopped = true;
-          abortController.abort();
-          closeQuery();
-          void killChildGroup();
+          await access(opts.steerSignalPath);
+        } catch {
           steerPending = false;
           return;
-        } catch {
-          /* no stop */
         }
-      }
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          query.interrupt(),
-          new Promise<never>((_, reject) => {
-            timeout = setTimeout(() => reject(new Error("interrupt timed out")), 10_000);
-          }),
-        ]);
-      } catch {
-        closeQuery();
-        steerFailure = new ToolRunError(
-          this.id,
-          1,
-          false,
-          false,
-          scrub(renderer.transcript),
-          scrub(stderr),
-          false,
-          0,
-          { steered: true, sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
-        );
-        return;
+        if (opts.stopSignalPath) {
+          try {
+            await access(opts.stopSignalPath);
+            stopped = true;
+            abortController.abort();
+            closeQuery();
+            void killChildGroup();
+            steerPending = false;
+            return;
+          } catch {
+            /* no stop */
+          }
+        }
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            query.interrupt(),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(() => reject(new Error("interrupt timed out")), 10_000);
+            }),
+          ]);
+        } catch {
+          closeQuery();
+          steerFailure = new ToolRunError(
+            this.id,
+            1,
+            false,
+            false,
+            scrub(renderer.transcript),
+            scrub(stderr),
+            false,
+            0,
+            { steered: true, sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
+          );
+          return;
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+        try {
+          steerInFlight = true;
+          const request = await opts.onSteer();
+          if (request.model !== undefined)
+            await query.setModel(request.model === "default" ? undefined : request.model);
+          latestUuid = queue.push(
+            request.texts.length
+              ? RESUME_PROMPT_PREFIX + request.texts.join("\n\n")
+              : "Continue the same task from where you stopped.",
+          );
+          resultsSincePush = 0;
+          lastSteer = request.last;
+        } catch (error) {
+          steerFailure =
+            error instanceof ToolRunError
+              ? error
+              : new ToolRunError(
+                  this.id,
+                  1,
+                  false,
+                  false,
+                  scrub(String(error)),
+                  scrub(stderr),
+                  false,
+                  0,
+                  { sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
+                );
+          closeQuery();
+        } finally {
+          steerInFlight = false;
+          steerPending = false;
+        }
       } finally {
-        if (timeout) clearTimeout(timeout);
-      }
-      try {
-        const request = await opts.onSteer();
-        if (request.model !== undefined)
-          await query.setModel(request.model === "default" ? undefined : request.model);
-        latestUuid = queue.push(
-          request.texts.length
-            ? RESUME_PROMPT_PREFIX + request.texts.join("\n\n")
-            : "Continue the same task from where you stopped.",
-        );
-        lastSteer = request.last;
-      } catch (error) {
-        steerFailure =
-          error instanceof ToolRunError
-            ? error
-            : new ToolRunError(
-                this.id,
-                1,
-                false,
-                false,
-                scrub(String(error)),
-                scrub(stderr),
-                false,
-                0,
-                { sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
-              );
-        closeQuery();
-      } finally {
-        steerPending = false;
+        polling = false;
       }
     }, this.signalPollMs);
     let forceClose: ReturnType<typeof setTimeout> | undefined;
@@ -429,6 +442,7 @@ export class ClaudeAgentTool implements Tool {
           );
         }
         if (m.type === "result") {
+          resultsSincePush++;
           lastUsage = usageFromSdkResult(m, opts.resumeBaseline);
           const answered = Array.isArray(m.user_message_uuids)
             ? m.user_message_uuids
@@ -457,7 +471,7 @@ export class ClaudeAgentTool implements Tool {
               }
             }
           }
-          if (answered ? answered.includes(latestUuid) : true) {
+          if (!steerInFlight && resultsSincePush > 0 && answered?.includes(latestUuid)) {
             result = m;
             queue.end();
             forceClose = setTimeout(closeQuery, 5000);
