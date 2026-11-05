@@ -158,6 +158,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(url),
       readGatewayKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
       fetch: fetcher,
     });
     await expect(resolver.decide(makeProject())).resolves.toMatchObject({
@@ -171,6 +172,72 @@ describe("AgentAuthResolver", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     server.close();
   });
+  it("gateway mode gives the child the agent key and never the admin key", async () => {
+    const { server, url } = await listen(
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    );
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings(url),
+      readGatewayKey: async () => "ADMIN-KEY-1",
+      readAgentKey: async () => "AGENT-KEY-1",
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({ ok: true, via: "gateway" });
+    const auth = await resolver.credentials(makeProject(), decision as never);
+    expect(auth).toMatchObject({ kind: "gateway", apiKey: "AGENT-KEY-1" });
+    const env = claudeAgentEnv({ PATH: "/bin" }, auth, "app", "/cfg");
+    expect(env.ANTHROPIC_API_KEY).toBe("AGENT-KEY-1");
+    expect(JSON.stringify([auth, env])).not.toContain("ADMIN-KEY-1");
+    server.close();
+  });
+  it("the child env never holds the admin key even when it is inherited", () => {
+    for (const auth of [
+      { kind: "gateway" as const, url: "http://127.0.0.1:9000", apiKey: "AGENT-KEY-1" },
+      { kind: "project-key" as const, apiKey: "project" },
+    ]) {
+      const env = claudeAgentEnv(
+        { PATH: "/bin", BOOF_OWLISH_API_KEY: "ADMIN-KEY-1", BOOF_OWLISH_AGENT_KEY: "X" },
+        auth,
+        "app",
+        "/cfg",
+      );
+      expect(JSON.stringify(env)).not.toContain("ADMIN-KEY-1");
+      expect(env).not.toHaveProperty("BOOF_OWLISH_API_KEY");
+    }
+  });
+  it("gateway without an agent key refuses with a clear reason, or falls back to the project key", async () => {
+    const { server, url } = await listen(
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    );
+    const base = {
+      root: "/tmp/unused",
+      loadSettings: async () => settings(url),
+      readGatewayKey: async () => "ADMIN-KEY-1",
+      readAgentKey: async () => null,
+    };
+    const refused = await new AgentAuthResolver(base).decide(makeProject());
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        "set an api-only better-ccflare agent key (Settings › Accounts) or a project API key",
+      ),
+    });
+    expect(JSON.stringify(refused)).not.toContain("ADMIN-KEY-1");
+    const fallback = await new AgentAuthResolver({
+      ...base,
+      projectKeys: {
+        has: async () => true,
+        get: async () => "sk-ant-api03-1234567890123456",
+      } as never,
+    }).decide(makeProject());
+    expect(fallback).toMatchObject({ ok: true, via: "project-key" });
+    server.close();
+  });
   it("does not contact the gateway for project-key auth", async () => {
     const fetcher = vi.fn(fetch);
     const projectKeys = {
@@ -181,6 +248,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings("http://127.0.0.1:8089"),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       projectKeys,
       fetch: fetcher,
     });
@@ -196,6 +264,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       fetch: fetcher,
     });
     const decision = await resolver.decide(makeProject());
@@ -214,6 +283,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings("http://127.0.0.1:8089"),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       projectKeys,
     });
     const decision = await resolver.decide(makeProject());
@@ -232,6 +302,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings("http://127.0.0.1:8089"),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       projectKeys: { has: async () => false } as never,
     });
     await expect(resolver.decide(makeProject())).resolves.toMatchObject({
@@ -247,6 +318,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       projectKeys: keys,
     });
     await expect(
@@ -268,6 +340,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(current),
       readGatewayKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
     });
     const decision = await resolver.decide(makeProject());
     current = "http://127.0.0.1:1";
@@ -288,6 +361,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(url),
       readGatewayKey: async () => key,
+      readAgentKey: async () => "agent-key",
       fetch: fetcher,
     });
     await Promise.all(Array.from({ length: 5 }, () => resolver.decide(makeProject())));
@@ -306,6 +380,7 @@ describe("AgentAuthResolver", () => {
       readGatewayKey: async () => {
         throw new Error("secret-key key error");
       },
+      readAgentKey: async () => null,
       projectKeys: {
         has: async () => {
           throw new Error("secret-key store error");
@@ -325,6 +400,7 @@ describe("AgentAuthResolver", () => {
       root,
       loadSettings: async () => settings(),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
     });
     const decision = await resolver.decide(makeProject());
     expect(decision).toMatchObject({ ok: false });
@@ -335,6 +411,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       projectKeys: { get: async () => "constructor" } as never,
     });
     await expect(
@@ -350,6 +427,7 @@ describe("AgentAuthResolver", () => {
       root: "/tmp/unused",
       loadSettings: async () => settings(),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
       projectKeys: {
         get: async () => {
           throw new Error("secret-marker");
@@ -371,6 +449,7 @@ describe("AgentAuthResolver", () => {
       root,
       loadSettings: async () => settings(),
       readGatewayKey: async () => null,
+      readAgentKey: async () => "agent-key",
     });
     const folder = await resolver.configDir(makeProject());
     expect(folder).toBe(join(root, "claude-agent-config", "p"));

@@ -3,6 +3,7 @@ import {
   AGENT_SDK_API_KEY_PROVIDERS,
   agentSdkEligibility,
   decideAgentAuth,
+  withAgentKey,
 } from "./agent-sdk-gate.js";
 
 const account = (id: string, provider?: string, extra = {}) => ({
@@ -94,8 +95,28 @@ describe("decideAgentAuth", () => {
         gatewayConfigured: true,
         eligibility: allowed,
         hasProjectKey: false,
+        hasAgentKey: true,
       }),
     ).toEqual({ ok: true, via: "gateway", note: null });
+    // An allowed gateway without an agent key is not usable: refuse, or fall back to the project key.
+    const noAgent = {
+      projectName: "p",
+      choice: "gateway" as const,
+      gatewayConfigured: true,
+      eligibility: allowed,
+    };
+    expect(decideAgentAuth({ ...noAgent, hasProjectKey: false })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        "set an api-only better-ccflare agent key (Settings › Accounts) or a project API key",
+      ),
+    });
+    expect(decideAgentAuth({ ...noAgent, hasProjectKey: true })).toMatchObject({
+      ok: true,
+      via: "project-key",
+    });
+    expect(withAgentKey(allowed, false)).toMatchObject({ allowed: false });
+    expect(withAgentKey(allowed, true)).toBe(allowed);
     expect(
       decideAgentAuth({
         projectName: "p",

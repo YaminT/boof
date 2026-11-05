@@ -16,6 +16,7 @@ import { gatePauses } from "../lib/accounts-page.js";
 import { heldScopes } from "../lib/clients.js";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
+import { AGENT_KEY_HINT, GatewayKeyField } from "./GatewayKeyField.js";
 import type { Whoami } from "../api-types.js";
 import { inputErrorLines } from "../lib/automation.js";
 import { thresholdFields, accountActionAccess, priorityProblem } from "../lib/accounts-page.js";
@@ -88,6 +89,7 @@ export function AccountsPage({
   const [listError, setListError] = useState("");
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState("");
+  const [agentKey, setAgentKey] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const refresh = useCallback(async (force = false) => {
@@ -154,11 +156,40 @@ export function AccountsPage({
       setBusy(false);
     }
   };
+  const saveAgentKey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateSettings({ owlishAgentKey: agentKey });
+      setAgentKey("");
+      await onChanged();
+      await refresh();
+      toast.success("Agent key saved");
+    } catch (e) {
+      setError(inputErrorLines(e).join("; "));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clearAgentKey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateSettings({ owlishAgentKey: null });
+      await onChanged();
+      await refresh();
+      toast.success("Agent key cleared");
+    } catch (e) {
+      setError(inputErrorLines(e).join("; "));
+    } finally {
+      setBusy(false);
+    }
+  };
   const removeGateway = async () => {
     setBusy(true);
     setError("");
     try {
-      await api.updateSettings({ owlish: null, owlishApiKey: null });
+      await api.updateSettings({ owlish: null, owlishApiKey: null, owlishAgentKey: null });
       setRemoveOpen(false);
       await onChanged();
       await refresh();
@@ -180,7 +211,7 @@ export function AccountsPage({
         open={removeOpen}
         onOpenChange={setRemoveOpen}
         title="Remove gateway?"
-        body="This clears the better-ccflare gateway settings and stored client key. Boof will continue to work without an account pool."
+        body="This clears the better-ccflare gateway settings and its stored client and agent keys. Boof will continue to work without an account pool."
         confirmLabel="Remove gateway"
         destructive
         onConfirm={() => void removeGateway()}
@@ -231,25 +262,23 @@ export function AccountsPage({
               <option value="off">Off</option>
             </NativeSelect>
           </label>
-          <label className={labelClass}>
-            Client key (write only)
-            <Input
-              type="password"
-              autoComplete="new-password"
-              className={inputClass}
-              placeholder={
-                health?.keySource ? "Key is set; enter to replace" : "Optional client key"
-              }
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              disabled={!canWrite}
-            />
-          </label>
-          {health?.keySource && (
-            <p className="m-0 self-end text-sm text-ink-muted">
-              Client key: set ({health.keySource})
-            </p>
-          )}
+          <GatewayKeyField
+            label="Client key"
+            noun="Client key"
+            source={health?.keySource}
+            value={key}
+            onChange={setKey}
+            disabled={!canWrite}
+          />
+          <GatewayKeyField
+            label="Agent key"
+            noun="Agent key"
+            source={health?.agentKeySource}
+            value={agentKey}
+            onChange={setAgentKey}
+            disabled={!canWrite}
+            hint={AGENT_KEY_HINT}
+          />
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {!configured && canWrite && (
@@ -262,6 +291,11 @@ export function AccountsPage({
               Save client key
             </Button>
           )}
+          {canWrite && agentKey && (
+            <Button className="" disabled={busy} onClick={() => void saveAgentKey()}>
+              Save agent key
+            </Button>
+          )}
           {configured && canWrite && (
             <Button variant="outline" disabled={busy} onClick={() => setRemoveOpen(true)}>
               Remove gateway
@@ -271,6 +305,16 @@ export function AccountsPage({
             <Button variant="outline" disabled={busy} onClick={() => void clearClientKey()}>
               Clear client key
             </Button>
+          )}
+          {health?.agentKeySource === "file" && canWrite && (
+            <Button variant="outline" disabled={busy} onClick={() => void clearAgentKey()}>
+              Clear agent key
+            </Button>
+          )}
+          {health?.agentKeySource === "env" && (
+            <p className="m-0 self-center text-sm text-ink-muted">
+              Agent key comes from BOOF_OWLISH_AGENT_KEY and cannot be cleared here.
+            </p>
           )}
           {health?.keySource === "env" && (
             <p className="m-0 self-center text-sm text-ink-muted">

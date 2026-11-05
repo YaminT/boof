@@ -313,6 +313,7 @@ describe("selection", () => {
       root: dataRoot,
       loadSettings: () => settingsStore.load(),
       readGatewayKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
     });
     let injectedOAuth = false;
     const realPool = new PoolGate({

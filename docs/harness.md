@@ -1849,6 +1849,7 @@ JSON body (unknown keys are rejected):
 - `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
 - `models`: `{ [key: string]: string[] }`, optional
 - `owlish`: `{ healthGate?: "pause" | "warn" | "off", url: string } | null`, optional
+- `owlishAgentKey`: `string | null`, optional; An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins)
 - `owlishApiKey`: `string | null`, optional; boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)
 - `projectsRoot`: `string | null`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, poolWaitMs?: integer, transient?: integer >= 0 }`, optional
@@ -2071,8 +2072,8 @@ Query parameters:
 - Scope: `settings:read`
 - MCP tool: `boof_get_pool_health`
 - CLI: `boof-runner accounts health`
-- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.
-- Success: HTTP 200 with `{ configured: boolean, healthGate: "pause" | "warn" | "off" | null, keySource: "file" | "env" | null, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, url: string | null }`.
+- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null) and where the claude-agent key comes from (`agentKeySource`); neither key is ever returned. Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.
+- Success: HTTP 200 with `{ agentKeySource: "file" | "env" | null, configured: boolean, healthGate: "pause" | "warn" | "off" | null, keySource: "file" | "env" | null, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, url: string | null }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 Query parameters:

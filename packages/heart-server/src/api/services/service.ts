@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ABSENT_POOL,
   OwlishClient,
@@ -5,6 +6,7 @@ import {
   OwlishSecretStore,
   ProjectKeyStore,
   decideAgentAuth,
+  withAgentKey,
   agentAuthRefusalMessage,
   type AgentSdkEligibility,
   type PoolStatus,
@@ -896,8 +898,22 @@ export class TaskService {
     return this.projectKeys.has(projectId).catch(() => false);
   }
 
-  async agentSdkEligibility(): Promise<AgentSdkEligibility> {
+  private agentSdkCache?: { id: string; at: number; value: AgentSdkEligibility };
+
+  /**
+   * Whether claude-agent may use the gateway: every account is API-key auth (checked with the admin
+   * client key) and an api-only agent key is stored. Never throws and never queries without a key:
+   * an unreadable or missing key is a closed gate with a key-free reason. `refresh` skips the 10 s cache.
+   */
+  async agentSdkEligibility(refresh = false): Promise<AgentSdkEligibility> {
     const owlish = (await this.loadSettings()).owlish;
+    const closed = (reason: string): AgentSdkEligibility => ({
+      gateway: "checked",
+      allowed: false,
+      reason,
+      blocking: [],
+      checkedAt: new Date().toISOString(),
+    });
     if (!owlish) {
       const now = new Date().toISOString();
       return {
@@ -908,15 +924,26 @@ export class TaskService {
         checkedAt: now,
       };
     }
+    let key: string | null;
     try {
-      const key = await this.owlishSecrets.get();
-      return await new OwlishClient({
-        url: owlish.url,
-        apiKey: key ?? undefined,
-      }).agentSdkEligibility();
+      key = await this.owlishSecrets.get();
     } catch {
-      return new OwlishClient({ url: owlish.url }).agentSdkEligibility();
+      return closed("authentication settings or credentials could not be read");
     }
+    if (!key) return closed("no better-ccflare client key is configured");
+    const hasAgentKey = await this.owlishSecrets
+      .getAgent()
+      .then((k) => Boolean(k))
+      .catch(() => false);
+    const id = `${owlish.url}\n${createHash("sha256").update(key).digest("hex")}`;
+    const cached = this.agentSdkCache;
+    let value: AgentSdkEligibility;
+    if (!refresh && cached?.id === id && Date.now() - cached.at < 10_000) value = cached.value;
+    else {
+      value = await new OwlishClient({ url: owlish.url, apiKey: key }).agentSdkEligibility();
+      this.agentSdkCache = { id, at: Date.now(), value };
+    }
+    return withAgentKey(value, hasAgentKey);
   }
 
   async agentAuthStatus(authorized: (projectId: string) => boolean) {
@@ -960,38 +987,8 @@ export class TaskService {
       }
       const gateway = settings.owlish;
       const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
-      let gatewayKeyReadError = false;
-      let missingClientKey = false;
-      if (gateway && useGateway) {
-        try {
-          if (!(await this.owlishSecrets.get())) missingClientKey = true;
-          else if (gatewayEligibility === undefined)
-            gatewayEligibility = await this.agentSdkEligibility();
-        } catch {
-          gatewayKeyReadError = true;
-        }
-      }
-      if (gatewayKeyReadError) {
-        result.push({
-          projectId: project.id,
-          roles: [...roles],
-          allowed: false,
-          via: null,
-          reason: agentAuthRefusalMessage(
-            project.name,
-            "authentication settings or credentials could not be read",
-          ),
-        });
-        continue;
-      }
-      if (missingClientKey)
-        gatewayEligibility = {
-          gateway: "checked",
-          allowed: false,
-          reason: "no better-ccflare client key is configured",
-          blocking: [],
-          checkedAt: new Date().toISOString(),
-        };
+      if (gateway && useGateway && gatewayEligibility === undefined)
+        gatewayEligibility = await this.agentSdkEligibility();
       const eligibility = gateway && useGateway ? (gatewayEligibility ?? null) : null;
       const decision = decideAgentAuth({
         projectName: project.name,
@@ -999,6 +996,8 @@ export class TaskService {
         gatewayConfigured: !!gateway,
         eligibility,
         hasProjectKey,
+        // agentSdkEligibility() already applied the agent-key rule: `allowed` implies a key.
+        hasAgentKey: true,
       });
       result.push({
         projectId: project.id,

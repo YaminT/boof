@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add the write-only `owlishAgentKey`, an api-only better-ccflare key that `claude-agent` processes receive instead of the admin client key. Gateway mode without it falls back to the project key or is refused.
+- Refuse write-only secrets in inline `--input` JSON on the CLI (use `--input @file` or `--input @-`).
+
 ## 0.3.0 (2026-11-05)
 
 ### Fixes

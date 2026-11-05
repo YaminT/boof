@@ -107,12 +107,31 @@ export function agentAuthRefusalMessage(projectName: string, why: string): strin
   return `claude-agent cannot start: ${why}. ${AGENT_AUTH_POLICY} Set an Anthropic API key for project "${projectName}" (Settings › Project), or use claude-code for this role.`;
 }
 
+/** Why a gateway without an agent key cannot serve claude-agent. */
+export const AGENT_KEY_REQUIRED =
+  "set an api-only better-ccflare agent key (Settings › Accounts) or a project API key";
+
+/**
+ * The gateway is usable for claude-agent only with an agent key: boof's admin key never goes to
+ * the child. Applies the same rule to the Accounts-tab eligibility and to `decideAgentAuth`.
+ */
+export function withAgentKey(
+  eligibility: AgentSdkEligibility,
+  hasAgentKey: boolean,
+): AgentSdkEligibility {
+  return eligibility.allowed && !hasAgentKey
+    ? { ...eligibility, allowed: false, reason: AGENT_KEY_REQUIRED }
+    : eligibility;
+}
+
 export function decideAgentAuth(input: {
   projectName: string;
   choice: "gateway" | "project-key";
   gatewayConfigured: boolean;
   eligibility: AgentSdkEligibility | null;
   hasProjectKey: boolean;
+  /** An api-only agent key is stored; gateway mode needs it (default: none). */
+  hasAgentKey?: boolean;
 }): AgentAuthDecision {
   const refuse = (why: string): AgentAuthDecision => ({
     ok: false,
@@ -122,11 +141,14 @@ export function decideAgentAuth(input: {
     return input.hasProjectKey
       ? { ok: true, via: "project-key", note: null }
       : refuse("the project uses its own API key, but none is set");
+  const eligibility = input.eligibility
+    ? withAgentKey(input.eligibility, input.hasAgentKey === true)
+    : null;
   const why = !input.gatewayConfigured
     ? "no better-ccflare gateway is configured"
-    : (input.eligibility?.reason ??
+    : (eligibility?.reason ??
       "the account types of the better-ccflare gateway could not be determined (malformed answer)");
-  if (input.gatewayConfigured && input.eligibility?.allowed)
+  if (input.gatewayConfigured && eligibility?.allowed)
     return { ok: true, via: "gateway", note: null };
   if (input.hasProjectKey)
     return {

@@ -3053,7 +3053,7 @@
     },
     "/accounts/health": {
       "get": {
-        "description": "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
+        "description": "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null) and where the claude-agent key comes from (`agentKeySource`); neither key is ever returned. Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
         "operationId": "accounts.health",
         "parameters": [
           {
@@ -3072,6 +3072,21 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "agentKeySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "file",
+                            "env"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Where the api-only claude-agent key comes from; null when none is set. The key is never returned."
+                    },
                     "configured": {
                       "type": "boolean"
                     },
@@ -3216,6 +3231,7 @@
                     "url",
                     "healthGate",
                     "keySource",
+                    "agentKeySource",
                     "pool"
                   ],
                   "type": "object"
@@ -12621,6 +12637,19 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "owlishAgentKey": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[\\x21-\\x7e]{1,512}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins).",
+                    "writeOnly": true
                   },
                   "owlishApiKey": {
                     "anyOf": [

@@ -29,6 +29,7 @@ export interface AccountsHealth {
   url: string | null;
   healthGate: "pause" | "warn" | "off" | null;
   keySource: "file" | "env" | null;
+  agentKeySource: "file" | "env" | null;
   pool: PoolStatus;
 }
 export interface AccountsList {

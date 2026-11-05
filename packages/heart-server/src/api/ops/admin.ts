@@ -84,17 +84,30 @@ export const settingsUpdate = defineOp({
           "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
         writeOnly: true,
       }),
+    owlishAgentKey: z
+      .string()
+      .regex(/^[\x21-\x7e]{1,512}$/)
+      .nullable()
+      .optional()
+      .meta({
+        description:
+          "An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins).",
+        writeOnly: true,
+      }),
   }),
   output: PublicSettingsSchema,
   rest: { method: "PUT", path: "/settings", ifMatch: "expectedUpdated", etag: settingsEtag },
   mcp: { expose: true, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
   summary: () => "Settings updated",
-  handler: async (ctx, { expectedUpdated, owlishApiKey, ...patch }) => {
+  handler: async (ctx, { expectedUpdated, owlishApiKey, owlishAgentKey, ...patch }) => {
     assertMayWriteSettings(ctx);
     const saved = await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated);
     // Write the separate secret only after settings and its ETag check succeeded.
     if (typeof owlishApiKey === "string") await ctx.services.owlishSecrets.set(owlishApiKey);
     else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
+    if (typeof owlishAgentKey === "string")
+      await ctx.services.owlishSecrets.setAgent(owlishAgentKey);
+    else if (owlishAgentKey === null) await ctx.services.owlishSecrets.deleteAgent();
     return publicSettings(saved);
   },
 });

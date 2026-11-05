@@ -26,7 +26,10 @@ export class AgentAuthRefusedError extends Error {
 export interface AgentAuthResolverOptions {
   root: string;
   loadSettings: () => Promise<Settings>;
+  /** boof's admin better-ccflare key: used only for the eligibility check, never given to a child. */
   readGatewayKey: () => Promise<string | null>;
+  /** The api-only agent key: the only gateway credential a claude-agent child receives. */
+  readAgentKey: () => Promise<string | null>;
   projectKeys?: ProjectKeyStore;
   fetch?: typeof fetch;
   now?: () => number;
@@ -43,7 +46,7 @@ export class AgentAuthResolver {
   private readonly now: () => number;
   private readonly cache = new Map<string, { at: number; eligibility: AgentSdkEligibility }>();
   private readonly inFlight = new Map<string, Promise<AgentSdkEligibility>>();
-  private readonly checked = new WeakMap<object, { url: string; key: string }>();
+  private readonly checked = new WeakMap<object, { url: string; key: string; agentKey: string }>();
 
   constructor(private readonly options: AgentAuthResolverOptions) {
     this.projectKeys = options.projectKeys ?? new ProjectKeyStore(options.root);
@@ -70,6 +73,14 @@ export class AgentAuthResolver {
       const gateway = settings.owlish;
       const choice = project.claudeAgent?.auth ?? "gateway";
       const hasProjectKey = await this.projectKeys.has(project.id);
+      let agentKey: string | null = null;
+      if (choice === "gateway" && gateway) {
+        try {
+          agentKey = await this.options.readAgentKey();
+        } catch {
+          // An unreadable agent key closes the gateway route like a missing one.
+        }
+      }
       if (choice === "project-key") {
         const decision = decideAgentAuth({
           projectName: project.name,
@@ -144,9 +155,14 @@ export class AgentAuthResolver {
         gatewayConfigured: Boolean(gateway),
         eligibility,
         hasProjectKey,
+        hasAgentKey: Boolean(agentKey),
       });
       if (decision.ok && decision.via === "gateway")
-        this.checked.set(decision, { url: gateway!.url, key: checkedKey });
+        this.checked.set(decision, {
+          url: gateway!.url,
+          key: checkedKey,
+          agentKey: agentKey ?? "",
+        });
       return decision;
     } catch {
       return {
@@ -177,17 +193,21 @@ export class AgentAuthResolver {
       const checked = this.checked.get(decision);
       const settings = await this.options.loadSettings();
       const key = await this.options.readGatewayKey();
+      const agentKey = await this.options.readAgentKey();
       if (
         !checked ||
         !settings.owlish ||
         settings.owlish.url !== checked.url ||
         key !== checked.key ||
-        !key
+        !key ||
+        agentKey !== checked.agentKey ||
+        !agentKey
       )
         throw new AgentAuthRefusedError(
           refusal(project, "gateway settings changed after eligibility was checked"),
         );
-      return { kind: "gateway", url: checked.url, apiKey: checked.key };
+      // The admin key stays here; the child gets only the api-only agent key.
+      return { kind: "gateway", url: checked.url, apiKey: checked.agentKey };
     } catch (error) {
       if (error instanceof AgentAuthRefusedError) throw error;
       throw new AgentAuthRefusedError(

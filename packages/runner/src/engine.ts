@@ -111,6 +111,7 @@ export class RunnerEngine {
         root: opts.root,
         loadSettings: () => this.settingsStore.load(),
         readGatewayKey: () => new OwlishSecretStore(opts.root).get(),
+        readAgentKey: () => new OwlishSecretStore(opts.root).getAgent(),
         projectKeys: new ProjectKeyStore(opts.root),
       });
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;

@@ -292,8 +292,9 @@ export const api = {
     http<{ referencedBy: string[] }>(`${V1}/commands/${id}`, { method: "DELETE" }),
 
   getSettings: () => http<Settings>(`${V1}/settings`),
-  updateSettings: (patch: SettingsPatch & { owlishApiKey?: string | null }) =>
-    http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
+  updateSettings: (
+    patch: SettingsPatch & { owlishApiKey?: string | null; owlishAgentKey?: string | null },
+  ) => http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
   accountsHealth: (refresh = false) =>
     http<AccountsHealth>(`${V1}/accounts/health${refresh ? "?refresh=true" : ""}`),
   listAccounts: () => http<AccountsList>(`${V1}/accounts`),

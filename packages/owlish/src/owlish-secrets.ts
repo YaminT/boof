@@ -3,7 +3,11 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { dataRootPaths, lockedAtomicWrite, withFileLock } from "@boof/heart";
 
-const FileSchema = z.object({ apiKey: z.unknown().optional() }).passthrough();
+const FileSchema = z
+  .object({ apiKey: z.unknown().optional(), agentKey: z.unknown().optional() })
+  .passthrough();
+
+type Field = "apiKey" | "agentKey";
 const TOLERATED = new Set(["ENOENT", "EPERM", "ENOTSUP", "EOPNOTSUPP"]);
 const MAX_KEY = 512;
 
@@ -20,9 +24,11 @@ const usable = (v: unknown): v is string =>
   typeof v === "string" && v.length > 0 && v.length <= MAX_KEY && /^[\x21-\x7e]+$/.test(v);
 
 /**
- * boof's one better-ccflare client key, kept apart from settings.json so settings reads and copies
+ * boof's better-ccflare keys, kept apart from settings.json so settings reads and copies
  * never carry it: `<data>/owlish/secrets.json` is `{ "apiKey": "btr-…" }`, mode 0600 (POSIX), or
- * the environment variable `BOOF_OWLISH_API_KEY`, which wins and is never written. The key is
+ * the environment variable `BOOF_OWLISH_API_KEY`, which wins and is never written. The same file
+ * holds `agentKey`, the api-only key that claude-agent processes use (`BOOF_OWLISH_AGENT_KEY`);
+ * the admin `apiKey` never leaves boof. The key is
  * never put into an error message: a damaged file is reported without quoting it.
  */
 export class OwlishSecretStore {
@@ -39,17 +45,18 @@ export class OwlishSecretStore {
     return this.path;
   }
 
-  private envKey(): string | null {
-    const v = this.env.BOOF_OWLISH_API_KEY?.trim();
+  private envKey(field: Field): string | null {
+    const v =
+      this.env[field === "apiKey" ? "BOOF_OWLISH_API_KEY" : "BOOF_OWLISH_AGENT_KEY"]?.trim();
     return v ? v : null;
   }
 
-  private async fileKey(): Promise<string | null> {
+  private async readFileObject(): Promise<Record<string, unknown>> {
     let text: string;
     try {
       text = await readFile(this.path, "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
       throw new Error("owlish/secrets.json cannot be read");
     }
     let json: unknown;
@@ -60,33 +67,78 @@ export class OwlishSecretStore {
     }
     const parsed = FileSchema.safeParse(json);
     if (!parsed.success) throw new Error("owlish/secrets.json is not an object");
-    return usable(parsed.data.apiKey) ? parsed.data.apiKey : null;
+    return parsed.data;
   }
 
-  /** The effective key (environment first), or null. */
-  async get(): Promise<string | null> {
-    return this.envKey() ?? (await this.fileKey());
+  private async fileKey(field: Field): Promise<string | null> {
+    const value = (await this.readFileObject())[field];
+    return usable(value) ? value : null;
   }
 
-  /** Where the effective key comes from; the key itself is never revealed by this. */
-  async source(): Promise<"env" | "file" | null> {
-    if (this.envKey()) return "env";
-    return (await this.fileKey()) ? "file" : null;
-  }
-
-  async set(key: string): Promise<void> {
+  private async setField(field: Field, key: string): Promise<void> {
     if (!usable(key)) {
-      throw new Error(`the client key must be 1-${MAX_KEY} printable characters without spaces`);
+      throw new Error(`the key must be 1-${MAX_KEY} printable characters without spaces`);
     }
     await withFileLock(`${this.path}#mutate`, async () => {
+      // Keep the other key; a file we cannot read is replaced only for the admin key (as before).
+      const current = await this.readFileObject().catch(() => ({}));
       await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-      await lockedAtomicWrite(this.path, JSON.stringify({ apiKey: key }, null, 2) + "\n", 0o600);
+      await lockedAtomicWrite(
+        this.path,
+        JSON.stringify({ ...current, [field]: key }, null, 2) + "\n",
+        0o600,
+      );
       await tryChmod(this.path, 0o600);
     });
   }
 
+  private async deleteField(field: Field): Promise<void> {
+    await withFileLock(`${this.path}#mutate`, async () => {
+      const current = await this.readFileObject().catch(() => null);
+      if (current === null) return void (await rm(this.path, { force: true }));
+      delete current[field];
+      const left = Object.keys(current).filter((k) => usable(current[k]));
+      if (left.length === 0) return void (await rm(this.path, { force: true }));
+      await lockedAtomicWrite(this.path, JSON.stringify(current, null, 2) + "\n", 0o600);
+      await tryChmod(this.path, 0o600);
+    });
+  }
+
+  /** The effective admin client key (environment first), or null. */
+  async get(): Promise<string | null> {
+    return this.envKey("apiKey") ?? (await this.fileKey("apiKey"));
+  }
+
+  /** Where the effective key comes from; the key itself is never revealed by this. */
+  async source(): Promise<"env" | "file" | null> {
+    if (this.envKey("apiKey")) return "env";
+    return (await this.fileKey("apiKey")) ? "file" : null;
+  }
+
+  async set(key: string): Promise<void> {
+    return this.setField("apiKey", key);
+  }
+
   async delete(): Promise<void> {
-    await withFileLock(`${this.path}#mutate`, () => rm(this.path, { force: true }));
+    return this.deleteField("apiKey");
+  }
+
+  /** The effective api-only agent key for claude-agent (environment first), or null. */
+  async getAgent(): Promise<string | null> {
+    return this.envKey("agentKey") ?? (await this.fileKey("agentKey"));
+  }
+
+  async agentSource(): Promise<"env" | "file" | null> {
+    if (this.envKey("agentKey")) return "env";
+    return (await this.fileKey("agentKey")) ? "file" : null;
+  }
+
+  async setAgent(key: string): Promise<void> {
+    return this.setField("agentKey", key);
+  }
+
+  async deleteAgent(): Promise<void> {
+    return this.deleteField("agentKey");
   }
 
   /** Bring an existing file to 0600 and its directory to 0700 (a restored copy may be looser). */
