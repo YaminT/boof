@@ -41,13 +41,14 @@ export class TaskNotRunningError extends Error {
 /** Append an injected-prompt entry to the task's `## Injected` section (in memory, no write). */
 export function appendInjectedEntry(
   task: Task,
-  entry: { text: string; by?: string; mode?: InjectMode },
+  entry: { text: string; by?: string; mode?: InjectMode; model?: string },
 ): void {
   const formatted = formatInjectedEntry({
     at: nowIso(),
     by: entry.by ?? "user",
     text: entry.text,
     ...(entry.mode ? { mode: entry.mode } : {}),
+    ...(entry.model ? { model: entry.model } : {}),
   });
   task.body.injected = task.body.injected.trim()
     ? `${task.body.injected.trimEnd()}\n\n${formatted}`

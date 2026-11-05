@@ -11,6 +11,8 @@ export interface InjectedEntry {
   mode?: InjectMode;
   /** ISO-8601 time the prompt reached the agent (the next step started, or the steered step reran). */
   appliedAt?: string;
+  /** Model requested for an in-place steer. */
+  model?: string;
 }
 
 export type InjectMode = "next-step" | "now";
@@ -32,6 +34,7 @@ export function formatInjectedEntry(entry: InjectedEntry): string {
   const meta = [
     entry.mode ? `mode=${entry.mode}` : "",
     entry.appliedAt ? `applied=${entry.appliedAt}` : "",
+    entry.model ? `model=${entry.model}` : "",
   ].filter(Boolean);
   const head = `### ${entry.at} — ${by}\n\n`;
   return meta.length > 0 ? `${head}<!-- boof: ${meta.join(" ")} -->\n${text}` : `${head}${text}`;
@@ -53,6 +56,7 @@ export function parseInjected(md: string): InjectedEntry[] {
         const [k, v] = part.split("=");
         if (k === "mode" && (v === "now" || v === "next-step")) entry.mode = v;
         if (k === "applied" && v) entry.appliedAt = v;
+        if (k === "model" && v) entry.model = v;
       }
     }
     entry.text = lines.join("\n").trim();

@@ -219,6 +219,7 @@ export const HealthResultSchema = z.object({
   status: z.enum(["available", "unavailable"]),
   message: z.string(),
   version: z.string().optional(),
+  unavailableReason: z.string().optional(),
   checkedAt: z
     .string()
     .optional()
@@ -244,6 +245,7 @@ export const ModelDetailsSchema = z.object({
     z.string(),
     z.object({
       displayName: z.string(),
+      unavailableReason: z.string().optional(),
       health: HealthResultSchema.extend({
         checkedAt: z.string().meta({
           description: "ISO-8601 time the health check ran in this server process.",

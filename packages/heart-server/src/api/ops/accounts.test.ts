@@ -118,6 +118,53 @@ async function configure(withKey = true) {
   seen = [];
 }
 
+describe("runner status gateway eligibility", () => {
+  it("checks once for four projects using the gateway", async () => {
+    await configure();
+    for (let n = 0; n < 4; n += 1) {
+      await service.projects.create({
+        id: `status-${n}`,
+        name: `Status ${n}`,
+        path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+      });
+    }
+    const settings = await service.loadSettings();
+    settings.roles.developer = { tool: "claude-agent", model: "default" };
+    await service.settingsStore.save(settings);
+    seen = [];
+    const status = await run("runner.status", LOCAL_PRINCIPAL);
+    expect(status.agentAuth).toHaveLength(4);
+    expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(1);
+  });
+
+  it("reports a catalog unavailable reason without checking the gateway", async () => {
+    await configure();
+    await service.projects.create({
+      id: "desktop-status",
+      name: "Desktop status",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const settings = await service.loadSettings();
+    settings.roles.developer = { tool: "claude-agent", model: "default" };
+    await service.settingsStore.save(settings);
+    const unavailable = Object.assign(new MockTool(), {
+      id: "claude-agent",
+      displayName: "Claude Agent SDK",
+      unavailableReason: "desktop app excludes Claude Agent SDK",
+    });
+    service = new TaskService(root, new ToolRegistry([unavailable]));
+    seen = [];
+    expect((await run("runner.status", LOCAL_PRINCIPAL)).agentAuth).toEqual([
+      expect.objectContaining({
+        allowed: false,
+        via: null,
+        reason: "desktop app excludes Claude Agent SDK",
+      }),
+    ]);
+    expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(0);
+  });
+});
+
 describe("registration", () => {
   it("six operations with REST, MCP and the scopes the design names", () => {
     const table: [string, string, string, string, Scope][] = [

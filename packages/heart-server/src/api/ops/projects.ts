@@ -91,6 +91,7 @@ export const projectsUpdate = defineOp({
     anthropicApiKey: z.string().regex(ANTHROPIC_API_KEY_PATTERN).nullable().optional().meta({
       description:
         "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it",
+      writeOnly: true,
     }),
   }),
   output: ProjectSchema.extend({ anthropicApiKeySet: z.boolean() }),

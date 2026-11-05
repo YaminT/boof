@@ -99,6 +99,7 @@ type JsonSchema = {
   oneOf?: JsonSchema[];
   items?: JsonSchema;
   properties?: Record<string, JsonSchema>;
+  writeOnly?: boolean;
 };
 
 const alternatives = (node: JsonSchema): JsonSchema[] => {
@@ -136,13 +137,14 @@ function fieldKind(node: JsonSchema): FieldKind {
 interface Flag {
   key: string;
   field: FieldKind;
+  writeOnly?: boolean;
 }
 
 function flagsOf(op: AnyOperation): Map<string, Flag> {
   const schema = z.toJSONSchema(op.input, { io: "input", unrepresentable: "any" }) as JsonSchema;
   const out = new Map<string, Flag>();
   for (const [key, node] of Object.entries(schema.properties ?? {})) {
-    const flag = { key, field: fieldKind(node) };
+    const flag = { key, field: fieldKind(node), writeOnly: node.writeOnly === true };
     out.set(kebab(key), flag);
     if (key === "projectId") out.set("project", flag);
   }
@@ -163,7 +165,10 @@ function readJsonText(flag: string, text: string, cwd: string): unknown {
   if (text.startsWith("@")) {
     const path = text.slice(1);
     try {
-      raw = readFileSync(isAbsolute(path) ? path : resolve(cwd, path), "utf8");
+      raw =
+        path === "-"
+          ? readFileSync(0, "utf8")
+          : readFileSync(isAbsolute(path) ? path : resolve(cwd, path), "utf8");
     } catch (e) {
       throw new CliUsageError(`--${flag}: ${(e as Error).message}`);
     }
@@ -254,7 +259,21 @@ export function parseOpArgs(
       }
       const negated = name.startsWith("no-") && flags.get(name.slice(3))?.field.kind === "boolean";
       const flag = flags.get(negated ? name.slice(3) : name);
-      if (!flag) throw new CliUsageError(`unknown option --${name}`);
+      if (!flag) {
+        if (
+          [...flags.values()].some(
+            (candidate) => kebab(candidate.key) === name && candidate.writeOnly,
+          )
+        )
+          throw new CliUsageError(
+            `--${name} is write-only; pass it with --input @file.json or --input - using stdin`,
+          );
+        throw new CliUsageError(`unknown option --${name}`);
+      }
+      if (flag.writeOnly)
+        throw new CliUsageError(
+          `--${name} is write-only; pass it with --input @file.json or --input - using stdin`,
+        );
       const f = flag.field;
       if (op.rest.kind === "multipart" && flag.key === "file") {
         const path = takeValue(name);
@@ -348,9 +367,10 @@ function helpFor(op: AnyOperation): string[] {
   ];
   for (const [key, node] of Object.entries(schema.properties ?? {})) {
     const description = (node as { description?: string }).description ?? "";
-    lines.push(
-      `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}  ${description}`.trimEnd(),
-    );
+    if (node.writeOnly !== true)
+      lines.push(
+        `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}  ${description}`.trimEnd(),
+      );
   }
   lines.push(
     "  --input <json|@file>  the whole input as JSON (flags override its keys). Put a secret (a",

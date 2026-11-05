@@ -721,13 +721,8 @@ export class ProjectService {
           text,
           by: actor && actor.kind === "client" ? actor.name : "user",
           mode,
+          ...(model ? { model } : {}),
         });
-        if (model) {
-          const marker = `<!-- boof: mode=${mode} -->`;
-          const index = t.body.injected.lastIndexOf(marker);
-          if (index >= 0)
-            t.body.injected = `${t.body.injected.slice(0, index)}<!-- boof: mode=${mode} model=${model} -->${t.body.injected.slice(index + marker.length)}`;
-        }
       },
     );
     return { ok: true, mode, applied: "pending" };
@@ -922,6 +917,7 @@ export class TaskService {
   async agentAuthStatus(authorized: (projectId: string) => boolean) {
     const settings = await this.loadSettings();
     const result = [];
+    let gatewayEligibility: AgentSdkEligibility | null | undefined;
     for (const project of await this.listProjects()) {
       if (!authorized(project.id) || project.archived) continue;
       const effective = effectiveSettings(settings, project);
@@ -929,10 +925,7 @@ export class TaskService {
         (role) => effective.roles[role]?.tool === "claude-agent",
       );
       if (!roles.length) continue;
-      const unavailable = (
-        this.catalog.get("claude-agent") as
-          (typeof this.catalog extends never ? never : { unavailableReason?: string }) | undefined
-      )?.unavailableReason;
+      const unavailable = this.catalog.get("claude-agent")?.unavailableReason;
       if (unavailable) {
         result.push({
           projectId: project.id,
@@ -945,7 +938,10 @@ export class TaskService {
       }
       const hasProjectKey = await this.hasProjectKey(project.id);
       const gateway = settings.owlish;
-      const eligibility = gateway ? await this.agentSdkEligibility() : null;
+      const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
+      if (gateway && useGateway && gatewayEligibility === undefined)
+        gatewayEligibility = await this.agentSdkEligibility();
+      const eligibility = gateway && useGateway ? (gatewayEligibility ?? null) : null;
       const decision = decideAgentAuth({
         projectName: project.name,
         choice: project.claudeAgent?.auth ?? "gateway",

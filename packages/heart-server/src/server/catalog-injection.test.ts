@@ -16,9 +16,23 @@ const health: CachedHealth = {
 };
 function stubCatalog(calls: string[]): ToolCatalog {
   return {
-    list: () => [{ id: "stub", displayName: "Stub tool", defaultModels: ["stub-1"] }],
+    list: () => [
+      {
+        id: "stub",
+        displayName: "Stub tool",
+        defaultModels: ["stub-1"],
+        unavailableReason: "desktop unavailable",
+      },
+    ],
     get: (id) =>
-      id === "stub" ? { id, displayName: "Stub tool", defaultModels: ["stub-1"] } : undefined,
+      id === "stub"
+        ? {
+            id,
+            displayName: "Stub tool",
+            defaultModels: ["stub-1"],
+            unavailableReason: "desktop unavailable",
+          }
+        : undefined,
     healthAll: async () => (
       calls.push("healthAll"),
       { stub: { status: "available", message: "stub ok" } }
@@ -52,11 +66,13 @@ describe("the injected tool catalog", () => {
     const details = await get("/models/details");
     expect(Object.keys(details.tools)).toEqual(["stub"]);
     expect(details.tools.stub.displayName).toBe("Stub tool");
+    expect(details.tools.stub.unavailableReason).toBe("desktop unavailable");
     expect(details.tools.stub.health).toMatchObject({ message: "stub ok" });
 
     expect((await get("/health/check", "POST")).tools).toMatchObject({
-      stub: { message: "stub ok" },
+      stub: { message: "stub ok", unavailableReason: "desktop unavailable" },
     });
+    expect((await get("/health")).tools.stub.unavailableReason).toBe("desktop unavailable");
     expect((await get("/models/refresh", "POST")).models.stub).toEqual(
       expect.arrayContaining(["stub-1", "stub-2"]),
     );

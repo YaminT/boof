@@ -1864,7 +1864,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_health`
 - CLI: `boof-runner settings health`
 - What it does: Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.
-- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
+- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", unavailableReason?: string, version?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 #### `POST /api/v1/health/check` (Check tool health)
@@ -1874,7 +1874,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_check_health`
 - CLI: `boof-runner settings check-health`
 - What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Spawns each tool and sends it a short prompt (a paid model call per tool). Concurrent calls share one check, and a check less than a minute old is not repeated. Needs settings:write.
-- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
+- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", unavailableReason?: string, version?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/models` (List models)
@@ -1906,7 +1906,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_model_details`
 - CLI: `boof-runner models details`
 - What it does: Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no tool (it uses the lists settings.refreshModels last fetched).
-- Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[] } } }`.
+- Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[], unavailableReason?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 ### Usage

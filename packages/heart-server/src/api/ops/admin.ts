@@ -82,6 +82,7 @@ export const settingsUpdate = defineOp({
       .meta({
         description:
           "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
+        writeOnly: true,
       }),
   }),
   output: PublicSettingsSchema,
@@ -113,7 +114,19 @@ export const settingsHealth = defineOp({
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.status}`)
       .join(", "),
-  handler: async (ctx) => ({ tools: ctx.services.cachedHealth() }),
+  handler: async (ctx) => ({
+    tools: Object.fromEntries(
+      Object.entries(ctx.services.cachedHealth()).map(([id, health]) => [
+        id,
+        {
+          ...health,
+          ...(ctx.services.catalog.get(id)?.unavailableReason
+            ? { unavailableReason: ctx.services.catalog.get(id)!.unavailableReason }
+            : {}),
+        },
+      ]),
+    ),
+  }),
 });
 
 export const settingsCheckHealth = defineOp({
@@ -133,7 +146,19 @@ export const settingsCheckHealth = defineOp({
       .join(", "),
   handler: async (ctx) => {
     await ctx.services.health();
-    return { tools: ctx.services.cachedHealth() };
+    return {
+      tools: Object.fromEntries(
+        Object.entries(ctx.services.cachedHealth()).map(([id, health]) => [
+          id,
+          {
+            ...health,
+            ...(ctx.services.catalog.get(id)?.unavailableReason
+              ? { unavailableReason: ctx.services.catalog.get(id)!.unavailableReason }
+              : {}),
+          },
+        ]),
+      ),
+    };
   },
 });
 

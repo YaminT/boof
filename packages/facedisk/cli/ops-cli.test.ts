@@ -118,6 +118,26 @@ describe("parseOpArgs", () => {
     );
   });
 
+  it("refuses write-only secrets as flags and accepts them in --input", () => {
+    expect(() =>
+      parseOpArgs(
+        op("projects.update"),
+        ["--project-id", "p", "--anthropic-api-key", "secret"],
+        dir,
+      ),
+    ).toThrow(/write-only.*--input @file/);
+    expect(
+      parseOpArgs(
+        op("projects.update"),
+        ["--input", '{"projectId":"p","anthropicApiKey":"secret"}'],
+        dir,
+      ).input.anthropicApiKey,
+    ).toBe("secret");
+    expect(() => parseOpArgs(op("settings.update"), ["--owlish-api-key", "secret"], dir)).toThrow(
+      /write-only/,
+    );
+  });
+
   it("--input gives the whole object and flags override its keys", () => {
     const r = parseOpArgs(
       op("tasks.create"),

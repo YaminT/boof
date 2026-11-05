@@ -3926,6 +3926,9 @@
                             ],
                             "type": "string"
                           },
+                          "unavailableReason": {
+                            "type": "string"
+                          },
                           "version": {
                             "type": "string"
                           }
@@ -3998,6 +4001,9 @@
                               "available",
                               "unavailable"
                             ],
+                            "type": "string"
+                          },
+                          "unavailableReason": {
                             "type": "string"
                           },
                           "version": {
@@ -4135,6 +4141,9 @@
                                     ],
                                     "type": "string"
                                   },
+                                  "unavailableReason": {
+                                    "type": "string"
+                                  },
                                   "version": {
                                     "type": "string"
                                   }
@@ -4189,6 +4198,9 @@
                               "type": "object"
                             },
                             "type": "array"
+                          },
+                          "unavailableReason": {
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -5387,7 +5399,8 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it"
+                    "description": "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it",
+                    "writeOnly": true
                   },
                   "archived": {
                     "type": "boolean"
@@ -12588,7 +12601,8 @@
                         "type": "null"
                       }
                     ],
-                    "description": "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)."
+                    "description": "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
+                    "writeOnly": true
                   },
                   "projectsRoot": {
                     "anyOf": [
