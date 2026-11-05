@@ -336,8 +336,9 @@ export class Pipeline {
     if (early.texts.length > 0) {
       steerTexts.push(...early.texts.filter((t) => !opts.prompt.includes(t)));
       await this.log(id, `\n### Steered\n${early.texts.join("\n\n")}`);
-      if (early.model) stepModel = early.model;
     }
+    if (early.model)
+      await this.log(id, "\nDropped model switch from a steer that arrived after its step ended");
     this.deps.store.markInjectedApplied(id).catch(() => {});
     const compose = (interruptedBy: string | null): string => {
       let text = opts.prompt;
@@ -384,6 +385,22 @@ export class Pipeline {
             }
             await this.assertBudget(id, tool.id);
             let decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+            if (!decision.ok && "unreachable" in decision && decision.unreachable) {
+              const waitMs = retrySettings(this.deps.settings).poolWaitMs;
+              const started = Date.now();
+              const deadline = started + waitMs;
+              await this.log(id, "\n### Waiting for the better-ccflare gateway (unreachable)");
+              while (!decision.ok && "unreachable" in decision && decision.unreachable) {
+                const left = deadline - Date.now();
+                if (left <= 0)
+                  throw new PoolExhaustedError(
+                    "better-ccflare gateway is unreachable",
+                    Date.now() - started,
+                  );
+                await this.backoff(id, Math.min(1000, left));
+                decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+              }
+            }
             if (
               decision.ok &&
               decision.via === "gateway" &&

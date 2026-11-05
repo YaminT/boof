@@ -39,6 +39,8 @@ let hits: number;
 let healthy: boolean;
 let accountOAuth = false;
 let accountRequests = 0;
+let accountOutageFrom = Number.POSITIVE_INFINITY;
+let accountOutageThrough = Number.POSITIVE_INFINITY;
 let clock: number;
 let sleeps: number[];
 let onSleep: (n: number) => Promise<void>;
@@ -167,6 +169,9 @@ async function configure(gateValue: "pause" | "warn" | "off" = "pause", extra: o
 beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-owgate-data-"));
   hits = 0;
+  accountRequests = 0;
+  accountOutageFrom = Number.POSITIVE_INFINITY;
+  accountOutageThrough = Number.POSITIVE_INFINITY;
   healthy = true;
   clock = Date.parse("2026-11-03T10:00:00Z");
   sleeps = [];
@@ -175,6 +180,10 @@ beforeEach(async () => {
   server = createServer((req, res) => {
     if (req.url === "/api/accounts") {
       accountRequests += 1;
+      if (accountRequests >= accountOutageFrom && accountRequests <= accountOutageThrough)
+        return void res
+          .writeHead(503, { "content-type": "application/json" })
+          .end("gateway unavailable");
       return void res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify([
           {
@@ -208,6 +217,44 @@ afterEach(async () => {
 });
 
 describe("selection", () => {
+  it("keeps Agent SDK tasks pending when eligibility is unreachable", async () => {
+    await configure();
+    accountOutageFrom = 1;
+    const auth = new AgentAuthResolver({
+      root: dataRoot,
+      loadSettings: () => settingsStore.load(),
+      readGatewayKey: async () => "client-key",
+    });
+    const agent = new MockTool();
+    const registry = new ToolRegistry([
+      new MockTool(),
+      {
+        id: "claude-agent",
+        displayName: "Claude Agent",
+        defaultModels: ["default"],
+        needsAgentAuth: true,
+        detect: async () => ({ status: "available", message: "test" }),
+        listModels: async () => ["default"],
+        run: (opts) => agent.run(opts),
+      },
+    ]);
+    await tasks(main).create(
+      newTask(
+        fm("t-outage-pending", "mock", {
+          tools: {
+            planner: { tool: "mock", model: "mock-default" },
+            developer: { tool: "claude-agent", model: "default" },
+            reviewer: { tool: "mock", model: "mock-default" },
+          },
+        }),
+        "Work.",
+      ),
+    );
+    engine = new RunnerEngine({ root: dataRoot, registry, pool: gate(), agentAuth: auth });
+    expect((await engine.tick()).kind).toBe("idle");
+    expect(await status("t-outage-pending")).toBe("pending");
+  });
+
   it("desktop unavailability wins before auth even with a project key and configured gateway", async () => {
     await configure();
     await new ProjectKeyStore(dataRoot).set(main.id, "sk-ant-api03-abcdefghijklmnop");
@@ -328,6 +375,100 @@ describe("selection", () => {
     expect(retried.kind).toBe("ran");
     expect(await status("t-auth-flip")).toBe("done");
     expect(toolRuns).toHaveLength(1);
+  });
+
+  it("waits through an eligibility 5xx, then runs after gateway recovery", async () => {
+    await configure();
+    accountOutageFrom = 2;
+    accountOutageThrough = 2;
+    const toolRuns: RunOptions[] = [];
+    const agent = new MockTool();
+    const registry = new ToolRegistry([
+      new MockTool(),
+      {
+        id: "claude-agent",
+        displayName: "Claude Agent",
+        defaultModels: ["default"],
+        needsAgentAuth: true,
+        detect: async () => ({ status: "available", message: "test" }),
+        listModels: async () => ["default"],
+        run: async (opts) => {
+          toolRuns.push(opts);
+          return agent.run(opts);
+        },
+      },
+    ]);
+    const auth = new AgentAuthResolver({
+      root: dataRoot,
+      loadSettings: () => settingsStore.load(),
+      readGatewayKey: async () => "client-key",
+    });
+    await tasks(main).create(
+      newTask(
+        fm("t-outage-recovery", "mock", {
+          tools: {
+            planner: { tool: "mock", model: "mock-default" },
+            developer: { tool: "claude-agent", model: "default" },
+            reviewer: { tool: "mock", model: "mock-default" },
+          },
+        }),
+        "Work.",
+      ),
+    );
+    engine = new RunnerEngine({ root: dataRoot, registry, pool: gate(), agentAuth: auth });
+    const result = await engine.tick();
+    expect(result.kind).toBe("ran");
+    expect(await status("t-outage-recovery")).toBe("done");
+    expect(accountRequests).toBe(3);
+    expect(toolRuns).toHaveLength(1);
+    expect((await tasks(main).get("t-outage-recovery"))?.body.log).toContain(
+      "Waiting for the better-ccflare gateway (unreachable)",
+    );
+  });
+
+  it("fails a running Agent SDK task after the gateway stays unreachable through poolWaitMs", async () => {
+    await configure();
+    accountOutageFrom = 2;
+    accountOutageThrough = Number.POSITIVE_INFINITY;
+    await settingsStore.save({
+      ...(await settingsStore.load()),
+      retries: { ...(await settingsStore.load()).retries, poolWaitMs: 1000 },
+    });
+    const agent = new MockTool();
+    const registry = new ToolRegistry([
+      new MockTool(),
+      {
+        id: "claude-agent",
+        displayName: "Claude Agent",
+        defaultModels: ["default"],
+        needsAgentAuth: true,
+        detect: async () => ({ status: "available", message: "test" }),
+        listModels: async () => ["default"],
+        run: (opts) => agent.run(opts),
+      },
+    ]);
+    const auth = new AgentAuthResolver({
+      root: dataRoot,
+      loadSettings: () => settingsStore.load(),
+      readGatewayKey: async () => "client-key",
+    });
+    await tasks(main).create(
+      newTask(
+        fm("t-outage-timeout", "mock", {
+          tools: {
+            planner: { tool: "mock", model: "mock-default" },
+            developer: { tool: "claude-agent", model: "default" },
+            reviewer: { tool: "mock", model: "mock-default" },
+          },
+        }),
+        "Work.",
+      ),
+    );
+    engine = new RunnerEngine({ root: dataRoot, registry, pool: gate(), agentAuth: auth });
+    const result = await engine.tick();
+    expect(result.kind).toBe("ran");
+    expect(await status("t-outage-timeout")).toBe("failed");
+    expect((await tasks(main).get("t-outage-timeout"))?.body.log).toContain("pool exhausted");
   });
 
   it("without settings.owlish nothing changes: a pooled task runs, no gateway, no request", async () => {

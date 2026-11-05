@@ -5,8 +5,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { access, readFile, realpath, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Options as SdkOptions, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { AgentAuthRefusedError, claudeAgentEnv } from "../agent-auth.js";
-import { agentEnv } from "../agent-env.js";
+import { AgentAuthRefusedError } from "../agent-auth.js";
 import { StreamRenderer } from "./claude-code.js";
 import { ToolRunError } from "./errors.js";
 import { withQuestions } from "./questions.js";
@@ -74,6 +73,7 @@ export function usageFromSdkResult(
     typeof r.total_cost_usd === "number" &&
     Number.isFinite(r.total_cost_usd) &&
     !models.some((v) => v.costBasis === "unknown");
+  let deltaApplied = false;
   if (
     baseline &&
     inputTokens >= baseline.inputTokens &&
@@ -83,17 +83,17 @@ export function usageFromSdkResult(
     inputTokens -= baseline.inputTokens;
     outputTokens -= baseline.outputTokens;
     costUsd -= baseline.costUsd;
+    deltaApplied = true;
   }
-  // A resumed SDK process may restart cumulative totals without telling us. Keep the
-  // best-effort delta, but never claim it is complete when a resume baseline was used.
-  return { inputTokens, outputTokens, costUsd, known: known && (baseline ? false : true) };
+  // A resumed SDK process may restart cumulative totals. In that case these remain
+  // the attempt's own totals; valid cumulative deltas remain known.
+  return { inputTokens, outputTokens, costUsd, known: known && (!baseline || deltaApplied) };
 }
 
 export interface ClaudeAgentToolOptions {
   loadSdk?: () => Promise<AgentSdk>;
   resolveExecutable?: typeof resolveClaudeAgentExecutable;
   spawn?: Spawn;
-  clientApp?: string;
   signalPollMs?: number;
   unavailableReason?: string;
 }
@@ -110,7 +110,6 @@ export class ClaudeAgentTool implements Tool {
   private readonly loadSdk: () => Promise<AgentSdk>;
   private readonly resolveExecutable: typeof resolveClaudeAgentExecutable;
   private readonly spawn: Spawn;
-  private readonly clientApp: string;
   private readonly signalPollMs: number;
 
   constructor(options: ClaudeAgentToolOptions = {}) {
@@ -118,12 +117,27 @@ export class ClaudeAgentTool implements Tool {
     this.loadSdk = options.loadSdk ?? loadAgentSdk;
     this.resolveExecutable = options.resolveExecutable ?? resolveClaudeAgentExecutable;
     this.spawn = options.spawn ?? nodeSpawn;
-    this.clientApp = options.clientApp ?? `boof-runner/${SDK_VERSION}`;
     this.signalPollMs = options.signalPollMs ?? 500;
   }
 
   async listModels(): Promise<string[]> {
     return ["default", "opus", "sonnet", "haiku"];
+  }
+  /** Selection-time availability check; it never starts Claude Code or sends a prompt. */
+  async checkAvailableForSelection(): Promise<string | null> {
+    if (this.unavailableReason) return this.unavailableReason;
+    try {
+      await this.loadSdk();
+    } catch (error) {
+      return (error as Error).message;
+    }
+    const executable = await this.resolveExecutable();
+    if (!executable.path && executable.source !== "sdk")
+      return (
+        executable.reason ??
+        "Claude Code native binary not found (set BOOF_RUNNER_CLAUDE_AGENT_BIN or install claude)"
+      );
+    return null;
   }
   async detect(_opts: DetectOptions = {}): Promise<HealthResult> {
     if (this.unavailableReason) return { status: "unavailable", message: this.unavailableReason };
@@ -194,14 +208,11 @@ export class ClaudeAgentTool implements Tool {
     const abortController = new AbortController();
     const queue = new InputQueue();
     const uuid = queue.push(opts.prompt);
-    const env =
-      opts.env ??
-      claudeAgentEnv(
-        agentEnv(process.env, opts.agentEnv),
-        auth,
-        this.clientApp,
-        opts.claudeConfigDir,
+    if (!opts.env)
+      throw new AgentAuthRefusedError(
+        "claude-agent cannot start: explicit child environment is missing",
       );
+    const env = opts.env;
     const claudeMd = await readRepoFile(opts.cwd, "CLAUDE.md");
     const permissions = await readRepoPermissions(opts.cwd);
     const childEnv = { ...env };
@@ -283,12 +294,39 @@ export class ClaudeAgentTool implements Tool {
         query.close();
       }
     };
-    const renderer = new StreamRenderer((text) => opts.onChunk?.(scrub(text)));
+    let streamCarry = "";
+    const maxSecretLength = Math.max(0, ...secrets.map((secret) => secret.length));
+    const streamRedact = (text: string, flush = false) => {
+      streamCarry += text;
+      if (flush) {
+        const safe = scrub(streamCarry);
+        streamCarry = "";
+        if (safe) opts.onChunk?.(safe);
+        return;
+      }
+      let cutoff = Math.max(0, streamCarry.length - maxSecretLength);
+      for (const secret of secrets) {
+        let from = 0;
+        while (secret.length && (from = streamCarry.indexOf(secret, from)) !== -1) {
+          const end = from + secret.length;
+          if (from < cutoff && end > cutoff) cutoff = from;
+          from = end;
+        }
+      }
+      if (cutoff > 0) {
+        const safe = scrub(streamCarry.slice(0, cutoff));
+        streamCarry = streamCarry.slice(cutoff);
+        if (safe) opts.onChunk?.(safe);
+      }
+    };
+    const renderer = new StreamRenderer((text) => streamRedact(text));
     let sessionId: string | undefined;
     let lastUsage: TokenUsage | undefined;
     let result: Record<string, unknown> | undefined;
     let latestUuid = uuid;
     let steerPending = false;
+    let finalResultSeen = false;
+    let boundarySteerPending = false;
     let polling = false;
     let steerInFlight = false;
     let resultsSincePush = 0;
@@ -318,7 +356,16 @@ export class ClaudeAgentTool implements Tool {
     };
     resetIdle();
     const poll = setInterval(async () => {
-      if (polling || stopped || timedOut || stalled || steerPending) return;
+      if (
+        polling ||
+        stopped ||
+        timedOut ||
+        stalled ||
+        result ||
+        (finalResultSeen && !boundarySteerPending) ||
+        steerPending
+      )
+        return;
       polling = true;
       try {
         if (opts.stopSignalPath) {
@@ -356,6 +403,10 @@ export class ClaudeAgentTool implements Tool {
         }
         let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
+          if (result || (finalResultSeen && !boundarySteerPending)) {
+            steerPending = false;
+            return;
+          }
           await Promise.race([
             query.interrupt(),
             new Promise<never>((_, reject) => {
@@ -379,6 +430,10 @@ export class ClaudeAgentTool implements Tool {
         } finally {
           if (timeout) clearTimeout(timeout);
         }
+        if (result || (finalResultSeen && !boundarySteerPending)) {
+          steerPending = false;
+          return;
+        }
         try {
           steerInFlight = true;
           const request = await opts.onSteer();
@@ -390,6 +445,8 @@ export class ClaudeAgentTool implements Tool {
               : "Continue the same task from where you stopped.",
           );
           resultsSincePush = 0;
+          finalResultSeen = false;
+          boundarySteerPending = false;
           lastSteer = request.last;
         } catch (error) {
           steerFailure =
@@ -416,30 +473,34 @@ export class ClaudeAgentTool implements Tool {
       }
     }, this.signalPollMs);
     let forceClose: ReturnType<typeof setTimeout> | undefined;
+    let sawApiKeyInit = false;
     try {
       for await (const message of query) {
         resetIdle();
         const m = (message ?? {}) as unknown as Record<string, unknown>;
         renderer.push(JSON.stringify(message) + "\n");
         if (typeof m.session_id === "string") sessionId = m.session_id;
-        if (m.type === "system" && m.subtype === "init" && m.apiKeySource !== "ANTHROPIC_API_KEY") {
-          closeQuery();
-          void killChildGroup();
-          const source =
-            typeof m.apiKeySource === "string"
-              ? m.apiKeySource.replace(/[^a-zA-Z_ /-]/g, "").slice(0, 40)
-              : "unknown";
-          throw new ToolRunError(
-            this.id,
-            1,
-            false,
-            false,
-            `claude-agent refused: the session did not authenticate with the project's API key (apiKeySource=${source})`,
-            "",
-            false,
-            0,
-            { sessionId },
-          );
+        if (m.type === "system" && m.subtype === "init") {
+          sawApiKeyInit = m.apiKeySource === "ANTHROPIC_API_KEY";
+          if (!sawApiKeyInit) {
+            closeQuery();
+            void killChildGroup();
+            const source =
+              typeof m.apiKeySource === "string"
+                ? m.apiKeySource.replace(/[^a-zA-Z_ /-]/g, "").slice(0, 40)
+                : "unknown";
+            throw new ToolRunError(
+              this.id,
+              1,
+              false,
+              false,
+              `claude-agent refused: the session did not authenticate with the project's API key (apiKeySource=${source})`,
+              "",
+              false,
+              0,
+              { sessionId },
+            );
+          }
         }
         if (m.type === "result") {
           resultsSincePush++;
@@ -450,6 +511,7 @@ export class ClaudeAgentTool implements Tool {
               ? [m.user_message_uuid]
               : undefined;
           if (answered?.includes(latestUuid)) {
+            if (!steerInFlight) finalResultSeen = true;
             if (opts.stopSignalPath) {
               try {
                 await access(opts.stopSignalPath);
@@ -465,6 +527,7 @@ export class ClaudeAgentTool implements Tool {
             if (opts.steerSignalPath && opts.onSteer && !lastSteer) {
               try {
                 await access(opts.steerSignalPath);
+                if (!steerInFlight) boundarySteerPending = true;
                 continue;
               } catch {
                 /* no pending steer */
@@ -472,7 +535,23 @@ export class ClaudeAgentTool implements Tool {
             }
           }
           if (!steerInFlight && resultsSincePush > 0 && answered?.includes(latestUuid)) {
+            if (!sawApiKeyInit) {
+              closeQuery();
+              void killChildGroup();
+              throw new ToolRunError(
+                this.id,
+                1,
+                false,
+                false,
+                "claude-agent refused: the session did not authenticate with the project's API key (apiKeySource=unknown)",
+                "",
+                false,
+                0,
+                { sessionId },
+              );
+            }
             result = m;
+            boundarySteerPending = false;
             queue.end();
             forceClose = setTimeout(closeQuery, 5000);
           }
@@ -493,6 +572,8 @@ export class ClaudeAgentTool implements Tool {
         { sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
       );
     } finally {
+      renderer.flush();
+      streamRedact("", true);
       clearInterval(poll);
       if (deadline) clearTimeout(deadline);
       if (idleTimer) clearTimeout(idleTimer);
@@ -503,7 +584,6 @@ export class ClaudeAgentTool implements Tool {
         await killChildGroup();
       if (childClosed) await childClosed;
     }
-    renderer.flush();
     const output = scrub(
       `$ claude-agent (Agent SDK ${SDK_VERSION}) --model ${opts.model} [auth: ${auth.kind === "gateway" ? "better-ccflare gateway" : "project API key"}]\n${renderer.transcript}`,
     );

@@ -1,14 +1,12 @@
 import type { AgentSdk } from "./claude-agent-sdk.js";
 
-export type FakeStep =
-  "emit" | "waitForPush" | "hang" | { emit: unknown } | { interruptResult: unknown };
+export type FakeStep = "hang" | { emit: unknown } | { interruptResult: unknown };
 
 /** Small deterministic SDK double. It contains no transport and never opens a socket. */
 export function fakeSdk(script: FakeStep[]): {
   sdk: AgentSdk;
   calls: {
     options: Record<string, any>[];
-    pushed: any[];
     interrupts: number;
     setModel: (string | undefined)[];
     closed: number;
@@ -16,7 +14,6 @@ export function fakeSdk(script: FakeStep[]): {
 } {
   const calls = {
     options: [] as Record<string, any>[],
-    pushed: [] as any[],
     interrupts: 0,
     setModel: [] as (string | undefined)[],
     closed: 0,
@@ -26,19 +23,26 @@ export function fakeSdk(script: FakeStep[]): {
     calls.options.push(options);
     let ended = false;
     let interrupted = false;
-    const pending: any[] = [];
     let wake: (() => void) | undefined;
     const q = {
       async *[Symbol.asyncIterator]() {
         const input = params.prompt as AsyncIterable<any>;
         const first = await input[Symbol.asyncIterator]().next();
         const initialUuid = first.value?.uuid;
+        if (
+          !script.some(
+            (step) =>
+              typeof step === "object" &&
+              "emit" in step &&
+              (step.emit as any)?.type === "system" &&
+              (step.emit as any)?.subtype === "init",
+          )
+        )
+          yield { type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" };
         for (const step of script) {
           if (ended) break;
           if (step === "hang")
             while (!ended && !interrupted) await new Promise<void>((r) => (wake = r));
-          if (step === "waitForPush")
-            while (!pending.length && !ended) await new Promise<void>((r) => (wake = r));
           if (typeof step === "object" && "emit" in step) {
             const emitted = step.emit as any;
             yield emitted?.type === "result" &&
@@ -47,11 +51,7 @@ export function fakeSdk(script: FakeStep[]): {
             !("user_message_uuids" in emitted)
               ? { ...emitted, user_message_uuid: initialUuid }
               : emitted;
-          } else if (step === "emit") yield undefined;
-        }
-        while (pending.length && !ended) {
-          calls.pushed.push(pending.shift());
-          await Promise.resolve();
+          }
         }
       },
       async interrupt() {
@@ -71,12 +71,6 @@ export function fakeSdk(script: FakeStep[]): {
       },
       async setModel(model?: string) {
         calls.setModel.push(model);
-      },
-      async streamInput(stream: AsyncIterable<unknown>) {
-        for await (const item of stream) {
-          pending.push(item);
-          wake?.();
-        }
       },
       async close() {
         ended = true;

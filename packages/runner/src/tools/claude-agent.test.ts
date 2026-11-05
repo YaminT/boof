@@ -17,6 +17,10 @@ const base = {
   claudeConfigDir: "/tmp/boof-data/claude-agent-config/project",
   autoApprove: false,
   agentAuth: { kind: "gateway" as const, url: "http://127.0.0.1:0", apiKey: "fake-gateway-key" },
+  env: {
+    ANTHROPIC_API_KEY: "fake-gateway-key",
+    CLAUDE_CONFIG_DIR: "/tmp/boof-data/claude-agent-config/project",
+  },
 };
 const msg = (type: string, data: Record<string, unknown> = {}) => ({ type, ...data });
 
@@ -172,13 +176,13 @@ describe("ClaudeAgentTool", () => {
         { total_cost_usd: 1, modelUsage },
         { inputTokens: 0, outputTokens: 0, costUsd: 0.4, known: true },
       ).known,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       usageFromSdkResult(
         { total_cost_usd: 0.3, modelUsage: {} },
         { inputTokens: 10, outputTokens: 5, costUsd: 0.4, known: true },
       ),
-    ).toMatchObject({ costUsd: 0.3, inputTokens: 0, outputTokens: 0 });
+    ).toMatchObject({ costUsd: 0.3, inputTokens: 0, outputTokens: 0, known: false });
   });
 
   it("does not charge a resumed session baseline before its first result", async () => {
@@ -357,6 +361,7 @@ describe("ClaudeAgentTool", () => {
         return {
           async *[Symbol.asyncIterator]() {
             const first = await prompt[Symbol.asyncIterator]().next();
+            yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
             yield msg("result", {
               subtype: "success",
               result: "ok",
@@ -661,6 +666,7 @@ describe("ClaudeAgentTool", () => {
     const result = await tool.run({
       ...base,
       agentAuth: { kind: "project-key", apiKey: key },
+      env: { ANTHROPIC_API_KEY: key, CLAUDE_CONFIG_DIR: base.claudeConfigDir },
       onChunk: (s) => streamed.push(s),
     });
     expect(streamed.join("")).not.toContain(key);

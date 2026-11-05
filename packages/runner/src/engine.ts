@@ -204,12 +204,33 @@ export class RunnerEngine {
         const authTool = resolved.find((tool) => tool.needsAgentAuth);
         let agentDecision;
         if (authTool) {
+          const check = (
+            authTool as typeof authTool & {
+              checkAvailableForSelection?: () => Promise<string | null>;
+            }
+          ).checkAvailableForSelection;
+          const unavailableReason = await check?.call(authTool);
+          if (unavailableReason) {
+            try {
+              await this.refuseBeforeStart(project, task, unavailableReason);
+              await this.noteGoalTaskStatus(project, task, "failed");
+            } catch (error) {
+              console.error(`could not refuse task ${task.frontmatter.id}:`, error);
+            }
+            continue;
+          }
           agentDecision = agentDecisions.get(project.id);
           if (!agentDecision) {
             agentDecision = await this.agentAuth.decide(project);
             agentDecisions.set(project.id, agentDecision);
           }
           if (!agentDecision.ok) {
+            if ("unreachable" in agentDecision && agentDecision.unreachable) {
+              // Gateway outages are temporary pool waits. Keep the task pending for
+              // the next selection pass instead of permanently refusing it.
+              poolSkipped = true;
+              continue;
+            }
             try {
               await this.refuseBeforeStart(project, task, agentDecision.reason);
               await this.noteGoalTaskStatus(project, task, "failed");

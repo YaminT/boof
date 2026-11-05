@@ -32,6 +32,9 @@ export interface AgentAuthResolverOptions {
   now?: () => number;
 }
 
+export type AgentAuthResolution =
+  AgentAuthDecision | { ok: false; unreachable: true; reason: string };
+
 const CACHE_MS = 30_000;
 
 export class AgentAuthResolver {
@@ -60,7 +63,7 @@ export class AgentAuthResolver {
   async decide(
     project: Project,
     options: { fresh?: boolean } | boolean = {},
-  ): Promise<AgentAuthDecision> {
+  ): Promise<AgentAuthResolution> {
     const fresh = typeof options === "boolean" ? options : options.fresh === true;
     try {
       const settings = await this.options.loadSettings();
@@ -124,6 +127,16 @@ export class AgentAuthResolver {
             if (eligibility.allowed) this.cache.set(cacheKey, { at: this.now(), eligibility });
           }
         }
+      }
+      if (
+        eligibility?.reason.includes("(unreachable)") ||
+        /\(HTTP 5\d\d\)/.test(eligibility?.reason ?? "")
+      ) {
+        return {
+          ok: false,
+          unreachable: true,
+          reason: refusal(project, "the better-ccflare gateway is unreachable"),
+        };
       }
       const decision = decideAgentAuth({
         projectName: project.name,
