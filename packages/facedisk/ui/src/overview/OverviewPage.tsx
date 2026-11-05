@@ -56,6 +56,7 @@ export function OverviewPage({
           projectPaused={!!project?.paused}
           groups={groups}
           settings={data.settings}
+          project={project}
           navigate={navigate}
           onChange={() => data.refresh()}
         />

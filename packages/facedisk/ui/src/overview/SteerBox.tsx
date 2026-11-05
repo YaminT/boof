@@ -4,6 +4,7 @@ import { Input } from "@/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/ui/toggle-group";
 import { api } from "../api.js";
 import { act } from "../lib/act.js";
+import { SteerModelSelect } from "./SteerModelSelect.js";
 
 type Mode = "next-step" | "now";
 
@@ -12,30 +13,41 @@ export function SteerBox({
   pid,
   taskId,
   onSent,
+  modelChoices = [],
   children,
 }: {
   pid: string;
   taskId: string;
   onSent?: () => void;
+  /** Models "Switch model" offers for the running step's tool; empty hides it. */
+  modelChoices?: string[];
   /** Extra controls placed after the send button. */
   children?: React.ReactNode;
 }) {
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<Mode>("next-step");
+  const [model, setModel] = useState("");
   const [sending, setSending] = useState(false);
 
   const send = async () => {
     const text = prompt.trim();
     if (!text || sending) return;
     setSending(true);
-    const ok = await act(() => api.injectPrompt(pid, taskId, text, mode), {
-      success:
-        mode === "now" ? "Sent. The agent picks it up now." : "Sent. It applies at the next step.",
-      failure: "Could not send",
-    });
+    const ok = await act(
+      () =>
+        api.injectPrompt(pid, taskId, text, mode, mode === "now" ? model || undefined : undefined),
+      {
+        success:
+          mode === "now"
+            ? "Sent. The agent picks it up now."
+            : "Sent. It applies at the next step.",
+        failure: "Could not send",
+      },
+    );
     setSending(false);
     if (ok) {
       setPrompt("");
+      setModel("");
       onSent?.();
     }
   };
@@ -53,7 +65,7 @@ export function SteerBox({
         onChange={(e) => setPrompt(e.target.value)}
         aria-label="Prompt for the agent"
         placeholder="Tell the agent something"
-        className="min-w-[12rem] flex-1 text-[length:var(--text-row)]"
+        className="w-full basis-full text-[length:var(--text-row)]"
       />
       <ToggleGroup
         variant="outline"
@@ -76,6 +88,7 @@ export function SteerBox({
           Now
         </ToggleGroupItem>
       </ToggleGroup>
+      <SteerModelSelect mode={mode} choices={modelChoices} value={model} onChange={setModel} />
       <Button type="submit" disabled={sending || !prompt.trim()}>
         Send to agent
       </Button>

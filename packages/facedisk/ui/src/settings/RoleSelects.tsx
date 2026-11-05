@@ -11,6 +11,7 @@ export function RoleSelects({
   allowNone,
   onChange,
   onAddModel,
+  toolLabel = (t) => t,
 }: {
   role: string;
   value: RoleAssignment | undefined;
@@ -19,6 +20,8 @@ export function RoleSelects({
   allowNone: boolean;
   onChange: (next: RoleAssignment | undefined) => void;
   onAddModel: (tool: string) => void;
+  /** The text of a tool in the tool select (a tool that cannot run here says so). */
+  toolLabel?: (tool: string) => string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -34,7 +37,7 @@ export function RoleSelects({
         {allowNone && <option value="">None</option>}
         {tools.map((t) => (
           <option key={t} value={t}>
-            {t}
+            {toolLabel(t)}
           </option>
         ))}
       </NativeSelect>

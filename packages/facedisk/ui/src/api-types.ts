@@ -1,5 +1,5 @@
 // UI-only response shapes that have no counterpart in the shared schema.
-import type { Scope } from "@boof/heart/schema";
+import type { Project, Role, Scope } from "@boof/heart/schema";
 export type PoolState = "absent" | "unreachable" | "ok" | "degraded" | "unhealthy";
 export interface PoolStatus {
   status: PoolState;
@@ -46,6 +46,8 @@ export interface HealthResult {
   status: "available" | "unavailable";
   message: string;
   version?: string;
+  /** Why the tool cannot run in this install at all (the desktop app and claude-agent). */
+  unavailableReason?: string;
 }
 
 /** One model of a tool as GET /api/v1/models/details reports it. */
@@ -59,6 +61,8 @@ export interface ModelDetail {
 
 export interface ToolModelDetails {
   displayName: string;
+  /** Set when the tool cannot be chosen in this install; the UI lists it as unavailable. */
+  unavailableReason?: string;
   /** Last health check of this server process, or null when none ran. */
   health: (HealthResult & { checkedAt: string }) | null;
   models: ModelDetail[];
@@ -132,4 +136,40 @@ export interface Whoami {
     expiresAt?: string;
   };
   server: { version: string; authMode: "local-trust" | "required"; mcpEnabled: boolean };
+}
+
+/** A project as the project operations return it: the stored project plus whether a key is stored. */
+export type ProjectView = Project & {
+  /** True when this project has its own Anthropic API key. The key itself is never returned. */
+  anthropicApiKeySet?: boolean;
+};
+
+/** GET /accounts/agent-sdk: may claude-agent use the gateway? */
+export interface AgentSdkEligibility {
+  gateway: "absent" | "checked";
+  allowed: boolean;
+  reason: string;
+  blocking: {
+    id: string;
+    name: string;
+    provider: string | null;
+    why: "subscription" | "oauth-token" | "unknown-type";
+  }[];
+  checkedAt?: string;
+}
+
+/** One project of `runner.status.agentAuth`: may its claude-agent roles start, and how. */
+export interface AgentAuthEntry {
+  projectId: string;
+  roles: Role[];
+  allowed: boolean;
+  via: "gateway" | "project-key" | null;
+  reason: string | null;
+}
+
+/** GET /runner (the part the UI reads). */
+export interface RunnerStatus {
+  enabled: boolean;
+  concurrency: number;
+  agentAuth: AgentAuthEntry[];
 }

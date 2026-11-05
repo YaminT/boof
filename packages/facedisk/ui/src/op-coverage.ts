@@ -107,7 +107,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "usage.budget": {
     where: "budget \u2014 useAppData (budget status for the banner and spend bar)",
   },
-  "runner.status": { none: "the shell reads the runner state from settings.get and usage.budget" },
+  "runner.status": {
+    where:
+      "runnerStatus \u2014 AgentsPage, useAgentAuth (the claude-agent ready or refused line; the shell still reads the runner state from settings.get)",
+  },
   "runner.overview": {
     none: "the shell reads the runner state from settings.get and usage.budget",
   },
@@ -124,7 +127,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
   "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
   "accounts.list": { where: "listAccounts — AccountsPage (pool account list)" },
-  "accounts.agentSdk": { none: "UI in 8b Task 9" }, // UI in 8b Task 9
+  "accounts.agentSdk": {
+    where:
+      "agentSdkEligibility \u2014 AccountsPage, ProjectPage (Agent SDK badges and the eligibility line)",
+  },
   "accounts.health": { where: "accountsHealth — AccountsPage (pool status and gate)" },
   "accounts.pause": { where: "accountAction — AccountsPage (pause an account)" },
   "accounts.resume": { where: "accountAction — AccountsPage (resume an account)" },

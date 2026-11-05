@@ -161,6 +161,7 @@ export function App() {
             data={data}
             navigate={navigate}
             previous={previous.current}
+            project={selected}
           />
         )}
         {routeReady && route.name === "plans" && (

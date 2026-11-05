@@ -5,6 +5,13 @@ import type {
   Settings,
   SettingsPatch,
 } from "@boof/heart/schema";
+import {
+  CLAUDE_AGENT,
+  CLAUDE_AGENT_NOTE,
+  toolUnavailableProblem,
+  toolUnavailableReason,
+  type ToolAvailability,
+} from "./claude-agent.js";
 import { parseCount } from "./form-numbers.js";
 import { changedKeys, sameValue, type PageModel, type PageValues } from "./settings-draft.js";
 
@@ -26,7 +33,30 @@ export function roleModelOptions(
 
 /** A newly selected tool starts with a usable model; Codex resolves its empty model itself. */
 export function roleToolAssignment(tool: string, models: Record<string, string[]>): RoleAssignment {
-  return { tool, model: tool === "codex" ? "" : (models[tool]?.[0] ?? "") };
+  // claude-agent's "default" means "let Claude Code choose": always valid, even before any list loads.
+  const fallback = tool === CLAUDE_AGENT ? "default" : "";
+  return { tool, model: tool === "codex" ? "" : (models[tool]?.[0] ?? fallback) };
+}
+
+/** True when choosing this tool needs the authentication explanation (claude-agent). */
+export const needsAuthNote = (tool: string): boolean => tool === CLAUDE_AGENT;
+
+/**
+ * The note under a role set to this tool: the fixed desktop (or `unavailableReason`) note when the
+ * tool cannot run here, the authentication note for claude-agent, nothing for other tools.
+ */
+export function roleToolNote(
+  tool: string,
+  env: ToolAvailability,
+): { kind: "unavailable" | "auth"; text: string } | null {
+  const reason = toolUnavailableReason(tool, env);
+  if (reason) return { kind: "unavailable", text: reason };
+  return needsAuthNote(tool) ? { kind: "auth", text: CLAUDE_AGENT_NOTE } : null;
+}
+
+/** The label of a tool in a tool select; a tool that cannot run here says so. */
+export function toolOptionLabel(tool: string, env: ToolAvailability): string {
+  return toolUnavailableReason(tool, env) ? `${tool} (unavailable)` : tool;
 }
 
 type OnDone = "keep-branch" | "keep" | "delete";
@@ -79,7 +109,8 @@ const countValue = (t: string): number | undefined => {
 
 const num = (n: number | undefined) => (n === undefined ? null : String(n));
 
-export const agentsPage: PageModel<AgentsValues> = {
+/** The page model; `env` says which tools cannot run in this install (the desktop app, claude-agent). */
+export const makeAgentsPage = (env: ToolAvailability = {}): PageModel<AgentsValues> => ({
   values: (s, p) => ({
     global: {
       concurrency: String(s.runner.concurrency),
@@ -114,6 +145,14 @@ export const agentsPage: PageModel<AgentsValues> = {
       out.push("Fix rounds for this project: use a whole number of 0 or more.");
     if (v.project.transient !== null && !parseCount(v.project.transient, 0).ok)
       out.push("Retries for this project: use a whole number of 0 or more.");
+    const assigned = [
+      ...ROLES.map((r) => v.global.roles[r]),
+      ...ROLES.map((r) => v.project.roles[r]),
+    ];
+    for (const a of assigned) {
+      const problem = a && toolUnavailableProblem(a.tool, env);
+      if (problem && !out.includes(problem)) out.push(problem);
+    }
     return out;
   },
 
@@ -201,7 +240,9 @@ export const agentsPage: PageModel<AgentsValues> = {
       ...(Object.keys(project).length > 0 ? { project } : {}),
     };
   },
-};
+});
+
+export const agentsPage = makeAgentsPage();
 
 /** "checked just now" or "checked N min ago" for a health check time; null when there is none. */
 export function checkedAgo(iso: string | undefined, now: number): string | null {

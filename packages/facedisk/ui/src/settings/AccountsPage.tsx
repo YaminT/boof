@@ -3,7 +3,15 @@ import { toast } from "sonner";
 import type { Scope, Settings } from "@boof/heart/schema";
 import type { AccountsGlobal } from "../lib/settings-accounts.js";
 import { api } from "../api.js";
-import type { AccountSummary, AccountsHealth, PoolState, Thresholds } from "../api-types.js";
+import type {
+  AccountSummary,
+  AccountsHealth,
+  AgentSdkEligibility,
+  PoolState,
+  Thresholds,
+} from "../api-types.js";
+import { agentSdkBadge, agentSdkSummary } from "../lib/claude-agent.js";
+import { AgentSdkBadge, AgentSdkSummaryLine } from "./AgentSdkBadge.js";
 import { gatePauses } from "../lib/accounts-page.js";
 import { heldScopes } from "../lib/clients.js";
 import { Button } from "../ui/button.js";
@@ -75,6 +83,7 @@ export function AccountsPage({
   const [now, setNow] = useState(Date.now());
   const [health, setHealth] = useState<AccountsHealth | null>(null);
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [eligibility, setEligibility] = useState<AgentSdkEligibility | null>(null);
   const [error, setError] = useState("");
   const [listError, setListError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,7 +93,13 @@ export function AccountsPage({
   const refresh = useCallback(async (force = false) => {
     setError("");
     try {
-      const [h, a] = await Promise.allSettled([api.accountsHealth(force), api.listAccounts()]);
+      const [h, a, e] = await Promise.allSettled([
+        api.accountsHealth(force),
+        api.listAccounts(),
+        api.agentSdkEligibility(force),
+      ]);
+      // A failed eligibility check only hides the badges; they must not say "allowed" without it.
+      setEligibility(e.status === "fulfilled" ? e.value : null);
       if (h.status === "fulfilled") setHealth(h.value);
       if (a.status === "fulfilled") setAccounts(a.value.accounts);
       setListError(a.status === "rejected" ? inputErrorLines(a.reason).join("; ") : "");
@@ -306,6 +321,7 @@ export function AccountsPage({
         <section className={cardClass}>
           <h2 className="m-0 mb-3 text-lg font-semibold">Accounts</h2>
           {listError && <Alert>Could not load accounts: {listError}</Alert>}
+          <AgentSdkSummaryLine text={agentSdkSummary(eligibility)} />
           {accounts.length === 0 && !listError ? (
             <p className="text-sm text-ink-muted">No accounts returned by the gateway.</p>
           ) : (
@@ -317,6 +333,7 @@ export function AccountsPage({
                   canWrite={canWrite}
                   expanded={advancedOpen}
                   error={rowErrors[account.id] ?? ""}
+                  agentBadge={agentSdkBadge(account.id, eligibility)}
                   run={runAccount}
                 />
               ))}
@@ -379,9 +396,11 @@ function AccountRow({
   canWrite,
   expanded,
   error,
+  agentBadge,
   run,
 }: {
   account: AccountSummary;
+  agentBadge: { allowed: boolean; text: string } | null;
   canWrite: boolean;
   expanded: boolean;
   error: string;
@@ -405,21 +424,24 @@ function AccountRow({
             {account.provider ? ` · ${account.provider}` : ""}
           </p>
         </div>
-        <TonePill
-          tone={
-            account.paused
-              ? "attention"
-              : account.rateLimitStatus === "rate_limited"
-                ? "failed"
-                : "done"
-          }
-        >
-          {account.paused
-            ? "Paused"
-            : (account.rateLimitStatus ?? account.tokenStatus ?? "Ready")
-                .replaceAll("_", " ")
-                .replace(/^\w/, (c) => c.toUpperCase())}
-        </TonePill>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <AgentSdkBadge badge={agentBadge} />
+          <TonePill
+            tone={
+              account.paused
+                ? "attention"
+                : account.rateLimitStatus === "rate_limited"
+                  ? "failed"
+                  : "done"
+            }
+          >
+            {account.paused
+              ? "Paused"
+              : (account.rateLimitStatus ?? account.tokenStatus ?? "Ready")
+                  .replaceAll("_", " ")
+                  .replace(/^\w/, (c) => c.toUpperCase())}
+          </TonePill>
+        </div>
       </div>
       {canWrite && (
         <div className="mt-3 flex flex-wrap gap-2">

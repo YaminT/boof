@@ -8,8 +8,9 @@ import {
   NEEDS_SETTINGS_READ,
   settingsPageAccess,
 } from "../lib/settings-access.js";
-import { projectPage } from "../lib/settings-project.js";
-import { agentsPage } from "../lib/settings-agents.js";
+import { isDesktop } from "../desktop.js";
+import { makeProjectPage } from "../lib/settings-project.js";
+import { makeAgentsPage } from "../lib/settings-agents.js";
 import { budgetsPage } from "../lib/settings-budgets.js";
 import type { AppData } from "../useAppData.js";
 import { AgentsPage } from "./AgentsPage.js";
@@ -24,6 +25,9 @@ import { SettingsNav } from "./SettingsNav.js";
 import { useSettingsPage } from "./useSettingsPage.js";
 import { AccountsPage } from "./AccountsPage.js";
 import { accountsPage } from "../lib/settings-accounts.js";
+
+/** The desktop app has no Claude Agent SDK: its project page makes no claudeAgent or key patch. */
+const projectPage = makeProjectPage({ isDesktop });
 
 /**
  * Every settings route of one project. It holds each form page's draft, so moving between pages
@@ -51,8 +55,11 @@ function SettingsForms({
 }) {
   const onSaved = useMemo(() => () => data.refresh(), [data]);
   const focus = useFocusMode("settings");
+  // Tools the API lists as unavailable (the Agents page reports them once it has loaded them).
+  const [unavailable, setUnavailable] = useState<Record<string, string>>({});
+  const agentsModel = useMemo(() => makeAgentsPage({ isDesktop, unavailable }), [unavailable]);
   const proj = useSettingsPage(projectPage, settings, project, pid, onSaved);
-  const agents = useSettingsPage(agentsPage, settings, project, pid, onSaved);
+  const agents = useSettingsPage(agentsModel, settings, project, pid, onSaved);
   const budgets = useSettingsPage(budgetsPage, settings, project, pid, onSaved);
   const accounts = useSettingsPage(accountsPage, settings, project, pid, onSaved);
 
@@ -144,6 +151,7 @@ function SettingsForms({
             set={agents.set}
             project={project}
             advancedOpen={focus.expanded || agents.dirty}
+            onUnavailable={setUnavailable}
           />
           <SettingsFooter
             dirty={agents.dirty}

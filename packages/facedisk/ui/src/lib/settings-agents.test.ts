@@ -3,6 +3,10 @@ import type { Project, Settings } from "@boof/heart/schema";
 import {
   agentsPage,
   checkedAgo,
+  makeAgentsPage,
+  needsAuthNote,
+  roleToolNote,
+  toolOptionLabel,
   roleModelLabel,
   roleModelOptions,
   roleToolAssignment,
@@ -227,5 +231,60 @@ describe("helpers", () => {
   it("usageLabel", () => {
     expect(usageLabel("planner")).toBe("planner");
     expect(usageLabel("project:alpha:developer")).toBe("alpha: developer");
+  });
+});
+
+describe("claude-agent in the role editor", () => {
+  const agentRoles = { ...roles, developer: { tool: "claude-agent", model: "default" } };
+
+  it("needs the authentication note for claude-agent only", () => {
+    expect(needsAuthNote("claude-agent")).toBe(true);
+    expect(needsAuthNote("claude-code")).toBe(false);
+    expect(needsAuthNote("codex")).toBe(false);
+  });
+
+  it("gives claude-agent the default model when the list has not loaded", () => {
+    expect(roleToolAssignment("claude-agent", {})).toEqual({
+      tool: "claude-agent",
+      model: "default",
+    });
+  });
+
+  it("says why a role cannot use claude-agent on the desktop app", () => {
+    expect(roleToolNote("claude-agent", {})?.kind).toBe("auth");
+    expect(roleToolNote("claude-agent", { isDesktop: true })).toMatchObject({
+      kind: "unavailable",
+      text: expect.stringContaining("Not available in the desktop app."),
+    });
+    expect(roleToolNote("claude-code", { isDesktop: true })).toBeNull();
+    expect(toolOptionLabel("claude-agent", { isDesktop: true })).toBe("claude-agent (unavailable)");
+    expect(toolOptionLabel("claude-agent", { unavailable: { "claude-agent": "no SDK" } })).toBe(
+      "claude-agent (unavailable)",
+    );
+    expect(toolOptionLabel("claude-agent", {})).toBe("claude-agent");
+  });
+
+  it("blocks Save with a page problem for a role on claude-agent in the desktop app", () => {
+    const desktop = makeAgentsPage({ isDesktop: true });
+    const v = desktop.values(settings({ roles: agentRoles }), project());
+    expect(desktop.problems(v)).toEqual(["claude-agent is not available in the desktop app."]);
+    const own = desktop.values(settings(), project({ roles: { reviewer: agentRoles.developer } }));
+    expect(desktop.problems(own)).toEqual(["claude-agent is not available in the desktop app."]);
+    // Elsewhere the same roles are fine.
+    expect(
+      agentsPage.problems(agentsPage.values(settings({ roles: agentRoles }), project())),
+    ).toEqual([]);
+    // A tool whose listing carries unavailableReason blocks the same way.
+    const server = makeAgentsPage({ unavailable: { "claude-agent": "no SDK" } });
+    expect(server.problems(server.values(settings({ roles: agentRoles }), project()))).toEqual([
+      "claude-agent is not available: no SDK",
+    ]);
+  });
+
+  it("saves a role choice of claude-agent as an ordinary roles patch", () => {
+    const base = agentsPage.values(settings(), project());
+    const form = { ...base, global: { ...base.global, roles: agentRoles } };
+    const patch = agentsPage.patches(form, base, { settings: settings(), project: project() });
+    expect(patch.settings?.roles?.developer).toEqual({ tool: "claude-agent", model: "default" });
   });
 });

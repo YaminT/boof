@@ -20,6 +20,9 @@ import type {
   Whoami,
   AccountsHealth,
   AccountsList,
+  AgentSdkEligibility,
+  ProjectView,
+  RunnerStatus,
 } from "./api-types.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
@@ -244,10 +247,12 @@ export const api = {
     id: string,
     prompt: string,
     mode: "next-step" | "now" = "next-step",
+    /** Switch the running step to this model; only with mode "now". */
+    model?: string,
   ) =>
     http<{ ok: true; mode: "next-step" | "now"; applied: "pending" }>(`${T(pid, id)}/inject`, {
       method: "POST",
-      body: JSON.stringify({ prompt, mode }),
+      body: JSON.stringify(model && mode === "now" ? { prompt, mode, model } : { prompt, mode }),
     }),
   submitAnswers: (pid: string, id: string, answers: string) =>
     httpTask(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
@@ -292,6 +297,11 @@ export const api = {
   accountsHealth: (refresh = false) =>
     http<AccountsHealth>(`${V1}/accounts/health${refresh ? "?refresh=true" : ""}`),
   listAccounts: () => http<AccountsList>(`${V1}/accounts`),
+  /** May claude-agent use the gateway, and which accounts block it. */
+  agentSdkEligibility: (refresh = false) =>
+    http<AgentSdkEligibility>(`${V1}/accounts/agent-sdk${refresh ? "?refresh=true" : ""}`),
+  /** Runner state, with the claude-agent authentication result per project. */
+  runnerStatus: () => http<RunnerStatus>(`${V1}/runner`),
   accountAction: (verb: "pause" | "resume", accountId: string) =>
     http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/${verb}`, {
       method: "POST",
@@ -324,14 +334,14 @@ export const api = {
   projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
 
   listProjects: (includeArchived = false) =>
-    http<{ projects: Project[] }>(
+    http<{ projects: ProjectView[] }>(
       `${V1}/projects${includeArchived ? "?includeArchived=1" : ""}`,
     ).then((r) => r.projects),
-  getProject: (pid: string) => http<Project>(P(pid)),
+  getProject: (pid: string) => http<ProjectView>(P(pid)),
   createProject: (input: CreateProjectInput) =>
     http<Project>(`${V1}/projects`, { method: "POST", body: JSON.stringify(input) }),
-  updateProject: (pid: string, patch: ProjectPatch) =>
-    http<Project>(P(pid), { method: "PUT", body: JSON.stringify(patch) }),
+  updateProject: (pid: string, patch: ProjectPatch & { anthropicApiKey?: string | null }) =>
+    http<ProjectView>(P(pid), { method: "PUT", body: JSON.stringify(patch) }),
   archiveProject: (pid: string) => http<Project>(`${P(pid)}/archive`, { method: "POST" }),
   unarchiveProject: (pid: string) => http<Project>(`${P(pid)}/unarchive`, { method: "POST" }),
   pauseProject: (pid: string) => http<Project>(`${P(pid)}/pause`, { method: "POST" }),

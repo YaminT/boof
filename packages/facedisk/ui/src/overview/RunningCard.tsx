@@ -1,4 +1,6 @@
 import { useState } from "react";
+import type { Project, Settings } from "@boof/heart/schema";
+import { effectiveTool, stepRole, switchModelChoices } from "../lib/claude-agent.js";
 import { Button } from "@/ui/button";
 import { api, type TaskView } from "../api.js";
 import { act } from "../lib/act.js";
@@ -10,14 +12,29 @@ import { SteerBox } from "./SteerBox.js";
 import { useElapsed } from "./useElapsed.js";
 import { useLiveLog } from "./useLiveLog.js";
 
+/** The tool of the role whose step the task is in (from its last step entry), or null. */
+export function runningTool(
+  task: TaskView,
+  project: Project | null | undefined,
+  settings: Settings | null | undefined,
+): string | null {
+  const steps = task.frontmatter.steps;
+  const role = stepRole(steps?.[steps.length - 1]?.label);
+  return role ? effectiveTool(role, task.frontmatter.tools, project, settings) : null;
+}
+
 /** One running task: step, elapsed time, the tail of its log, a steer box and Stop. */
 export function RunningCard({
   pid,
   task,
+  settings = null,
+  project = null,
   onChange,
 }: {
   pid: string;
   task: TaskView;
+  settings?: Settings | null;
+  project?: Project | null;
   onChange: () => void;
 }) {
   const id = task.frontmatter.id;
@@ -63,7 +80,12 @@ export function RunningCard({
       </pre>
 
       <div className="mt-3">
-        <SteerBox pid={pid} taskId={id} onSent={onChange}>
+        <SteerBox
+          pid={pid}
+          taskId={id}
+          onSent={onChange}
+          modelChoices={switchModelChoices(runningTool(task, project, settings), settings?.models)}
+        >
           <Button type="button" variant="destructive" onClick={() => setConfirmStop(true)}>
             Stop
           </Button>
