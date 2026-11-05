@@ -69,7 +69,16 @@ The optional client key can be set once using `settings.update` input `owlishApi
 
 Routed agents receive the gateway key in their environment and can call ccflare `/api/*` endpoints directly, outside boof's account-operation authorization. See [Agents are not sandboxed](boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](superpowers/specs/2026-10-29-boof-roadmap.md).
 
-This is the 8a HTTP integration only. The Accounts settings tab and Agent SDK adapter (8b) are not included.
+### claude-agent and the compliance gate
+
+The opt-in `claude-agent` tool (Claude Agent SDK) may use the gateway only when every account in it, paused ones included, is an API-key provider with no refresh token. Anthropic allows the Agent SDK only with API-key authentication, so subscription (OAuth) accounts stay on `claude-code`. The check needs a better-ccflare **admin** client key; an api-only key gets HTTP 401 and keeps the gate closed. See [The claude-agent tool](boof-runner.md#the-claude-agent-tool) for the full rules, bare mode, the per-project config folder and the known limits.
+
+- `accounts.agentSdk` (`GET /api/v1/accounts/agent-sdk`, MCP `boof_get_agent_sdk_eligibility`, CLI `boof-runner accounts agent-sdk`): scope `settings:read`; input `{ refresh? }`; returns `{ gateway: "absent" | "checked", allowed, reason, blocking: [{ id, name, provider, why }], checkedAt }`. `why` is `subscription`, `oauth-token` or `unknown-type`. With no `settings.owlish` it answers `gateway: "absent"`, `allowed: false` and makes no request.
+- `projects.update` input `anthropicApiKey` (`string | null`): the project's own Anthropic API key, write-only. It is stored in `<data>/owlish/project-keys.json` (mode 0600), never returned, and `null` removes it. Only `sk-ant-api…` keys match; OAuth (`sk-ant-oat…`) and admin (`sk-ant-admin…`) keys give 400 without echoing the value. A `review-trust` or `local-mcp` principal gets 403 `forbidden_trust`. `projects.get` and `projects.list` show only `anthropicApiKeySet: boolean`, and `claudeAgent.auth` (`gateway` or `project-key`) is set through the same operation. The audit log records `set` or `removed`, never the value. The CLI accepts the key only through `--input @file` or stdin, never as a flag.
+- `runner.status` and `runner.overview` carry `agentAuth`: for each active project whose roles use `claude-agent`, `{ projectId, roles, allowed, via: "gateway" | "project-key" | null, reason }`. In the desktop app every entry is `allowed: false` with the unavailable reason.
+- `tasks.inject` input `model`: optional, only with `mode: "now"` (otherwise 400 `model needs mode now`). It switches the model for the rest of the step. `claude-agent` steers in place; the other tools rerun the step.
+
+Cost reported by `claude-agent` is an estimate; usage whose model entry has `costBasis: "unknown"` is recorded with `known: false`.
 
 ## Versioning
 

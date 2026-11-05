@@ -329,6 +329,7 @@ The mock tool can simulate both: `[[mock-transient developer=1]]` fails the firs
 
 - `onExceed: "pause"` keeps the worktree and branch whatever `worktree.onFailure` says; `"fail"` follows it. Both fail the task; a day budget that is spent blocks new work in its scope until midnight (in the budget zone) for both.
 - Usage with `known: false` counts as 0 and increments `unknownSteps`; a tool without cost reporting is therefore unlimited. Codex reports token counts but no price, so its steps are unknown and `perToolDayUsd` cannot limit it; ledgers written before this change keep what they recorded.
+- The cost that `claude-agent` reports is the SDK's own estimate, not a bill. When any model entry has `costBasis: "unknown"` (a guessed price), the usage is recorded with `known: false`, so it counts as 0 and increments `unknownSteps`. A resumed session continues from the cumulative total the SDK reports, so boof records only what the new attempt added.
 - Spent means `spent >= limit`. Per-task cost counts the current pipeline run only.
 - Read side: `evaluateBudget` (shared) powers `GET /api/v1/usage/budget`, the `budgetExceeded` list in `runner.status` and `runner.overview`, and the UI.
 - The mock tool takes `[[mock-cost 0.5]]` (every step costs $0.50) or `[[mock-cost unknown]]` (no usage reported); the default is $0.01.
@@ -343,7 +344,17 @@ Account operations are generated from the same registry as REST and MCP: `boof-r
 
 Routed agents receive the gateway client key in their process environment and can call ccflare's `/api/*` endpoints directly with it, bypassing boof's account-operation authorization. See [Agents are not sandboxed](#agents-are-not-sandboxed) and the [agent-containment goal](superpowers/specs/2026-10-29-boof-roadmap.md).
 
-This documents the 8a HTTP integration. The later Accounts settings tab and Agent SDK adapter (8b) are not included.
+**Compliance gate for `claude-agent`.** Anthropic allows the Agent SDK only with API-key authentication. `claude-agent` therefore uses the gateway only when the gateway's account list could be read and **every** pool account, paused ones included (routing can unpause them or fall back to them), is one of the API-key providers and has no refresh token. The providers are `claude-console-api`, `bedrock`, `vertex-ai`, `zai`, `minimax`, `deepseek`, `anthropic-compatible`, `openai-compatible`, `nanogpt`, `kilo`, `openrouter`, `alibaba-coding-plan`, `ollama`, `ollama-cloud` and `meta` (better-ccflare's own API-key set at v3.6.3). The gate closes, and fails closed, for `anthropic` (subscription OAuth, or an ambiguous legacy console account), `codex`, `codebuddy`, `qwen`, `xai`, an unknown or missing provider, an account with a refresh token, an empty list, an HTTP error or a malformed answer. The decision is made again before every step.
+
+| Project choice | Gateway gate         | Project key | Result                                  |
+| -------------- | -------------------- | ----------- | --------------------------------------- |
+| `project-key`  | not asked            | set         | uses the project's key                  |
+| `project-key`  | not asked            | not set     | task does not start                     |
+| `gateway`      | open                 | any         | uses the gateway                        |
+| `gateway`      | closed or no gateway | set         | uses the project's key, with a log note |
+| `gateway`      | closed or no gateway | not set     | task does not start                     |
+
+The check needs a better-ccflare **admin** client key; an api-only key gets HTTP 401 and keeps the gate closed. `accounts.agentSdk` (`boof-runner accounts agent-sdk`, MCP `boof_get_agent_sdk_eligibility`, `GET /api/v1/accounts/agent-sdk`) shows the verdict and the blocking accounts without starting anything. A `claude-agent` step routed through the gateway counts as pool-routed for the pool gate above; a step on the project's own key does not. The Accounts tab shows an "Agent SDK" badge per account. Subscription accounts stay on `claude-code`.
 
 Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Hostnames must use ASCII DNS labels (IDNA/punycode is allowed) or a bracketed IPv6 literal. Credentials, query strings and fragments are rejected. Routed agents receive the gateway client key in their process environment and can use it to call the gateway API directly.
 
@@ -361,7 +372,8 @@ Tools are behind a shared `Tool` interface. The pipeline does not know how Claud
 
 Built-in tools:
 
-- `claude-code`: runs the `claude` CLI in non-interactive mode.
+- `claude-code`: runs the `claude` CLI in non-interactive mode. This stays the default tool for every role.
+- `claude-agent`: opt-in. Runs Claude Code through the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`, pinned to 0.3.318), so a running step can be steered in place. See [The claude-agent tool](#the-claude-agent-tool) for the rules that gate it.
 - `codex`: runs the `codex` CLI in non-interactive mode.
 - `opencode`: runs `opencode run --dir <worktree> -m <model>` (adding `--auto` in auto mode) with the prompt on stdin. Models come from `opencode models`; default `opencode-go/kimi-k3`. Override the binary with `BOOF_RUNNER_OPENCODE_BIN`.
 - `mock`: deterministic offline tool used by tests.
@@ -376,7 +388,32 @@ Each tool can:
 - optionally return questions
 - return best-effort token usage
 
-The Settings page refreshes available models from the tools and uses a smoke prompt to confirm Claude, Codex and OpenCode are authenticated, not just installed.
+The Settings page refreshes available models from the tools and uses a smoke prompt to confirm Claude, Codex and OpenCode are authenticated, not just installed. `claude-agent` has no paid health probe: its health check sends no prompt. It only loads the SDK, finds the Claude Code binary and runs `--version`. Authentication is decided per project when a task starts.
+
+### The claude-agent tool
+
+`claude-agent` is opt-in per role (or per task through `tools`). `defaultSettings().roles` does not change, so `claude-code` stays the default. Its model list is `default` (the built-in default: boof omits `model` and Claude Code chooses), `opus`, `sonnet` and `haiku`. Its cost is reported by the SDK and is an estimate (see [Budget Limits](#budget-limits)).
+
+**Install.** The SDK exists only in the CLI/server install, where it is a normal npm dependency and is loaded lazily. The install pulls the SDK's platform binary (an optional dependency, about 322 to 337 MB) plus the SDK packages. `npm install --omit=optional` skips the binary. The agent then uses the `claude` found on `PATH` (`BOOF_RUNNER_CLAUDE_BIN` wins) or the file named by `BOOF_RUNNER_CLAUDE_AGENT_BIN`. The SDK is licensed under Anthropic's Commercial Terms and is not open source; see `THIRD_PARTY_NOTICES`.
+
+**Not in the desktop app.** The desktop app does not offer `claude-agent`. The Agent SDK is under Anthropic's Commercial Terms (not open source) and its binary is about 330 MB, so the desktop installers neither bundle nor stage it, and the desktop process never loads it. The role editor and the project page show the tool as unavailable, and any task that would select it fails at selection with that reason. Use `claude-code` there.
+
+**Authentication.** Anthropic allows the Agent SDK only with API-key authentication, so subscription (OAuth) accounts stay on the `claude-code` CLI. Each project chooses (`project.claudeAgent.auth`):
+
+- `gateway` (the default): the step goes through the better-ccflare gateway from `settings.owlish`, but only when the compliance gate is open (see [Optional account pool](#optional-account-pool-better-ccflare)). The gateway needs the better-ccflare client key, and it must be an **admin** key: with an api-only key the gate stays closed (HTTP 401).
+- `project-key`: the project's own Anthropic API key. It is set write-only through `projects.update` (`anthropicApiKey`; `null` removes it) and stored only in `<data>/owlish/project-keys.json` (mode 0600). It never goes into settings, project.json, task files, events, audit, logs, error messages or process arguments, and no operation returns it. Only `sk-ant-api…` keys are accepted; OAuth tokens (`sk-ant-oat…`) and admin keys (`sk-ant-admin…`) are rejected with 400. The CLI takes the key only through `--input @file` or stdin, never as a flag, so it does not appear in the process list.
+
+When the project chose `gateway` and the gate is closed, the project's key is used if one is set, and the log says why. Otherwise the task does not start. It fails at selection (or, if the accounts changed mid-run, at the step) with the reason in its log and in `runner.status.agentAuth`, and spends nothing.
+
+**Explicit credentials only.** Only the gateway (with boof's client key) or the project's stored key counts. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, Bedrock, Vertex and Foundry variables in the server's environment are not compliant authentication, and they are stripped from the child's environment before the chosen credential is added. In gateway mode the gateway host is added to `NO_PROXY` so a proxy in the environment cannot divert the request.
+
+**Bare mode.** The tool runs Claude Code with `--bare` and `settingSources: []`. Claude Code then never reads OAuth, the Keychain or Anthropic profiles, and accepts only `ANTHROPIC_API_KEY` (gateway mode sends the better-ccflare client key in that variable). It passes only the repo's `.claude` permission rules. Hooks, plugins and user settings do not apply, and boof adds the repo's `CLAUDE.md` to the system prompt itself. Each project gets its own Claude config folder under the data root, `claude-agent-config/<project-id>`, so the user's `~/.claude` login and settings never apply.
+
+**Exact key check.** The session's `system/init` message must report `apiKeySource` `ANTHROPIC_API_KEY`, in both modes. Any other value closes the query at once and fails the step with a non-transient error (`claude-agent refused: the session did not authenticate with the project's API key`).
+
+**Known limit: the key is visible to the agent.** In project-key mode the agent can read its own key from its process environment, so it could write it into files or commits. Output redaction replaces the key in logs, streamed text and reports, but does not cover files. This is the same as `claude-code` with an API key. See [Agents are not sandboxed](#agents-are-not-sandboxed).
+
+**Permissions** match `claude-code`: with auto-approve the step runs with `bypassPermissions`; without it, every prompt is denied, as `--print` does. The step ends with the first result that answers the latest message sent to the session. A stop file closes the query; timeouts and stalls are detected as for the other tools. The log header is `$ claude-agent (Agent SDK <version>) --model <m> [auth: ...]` and never contains a key.
 
 ## Runtime Controls
 
@@ -411,9 +448,12 @@ The prompt has a mode:
 - `next-step` (the default): the prompt is picked up before the next pipeline step and included in later prompts under a dedicated injected-prompts section. The step that is running is not touched.
 - `now`: the same, and the runner also interrupts the running step. It writes a steer request (`control/steer`, one JSON line per prompt); `exec` sees it, kills the tool process group like a stop and reports `steered` (distinct from `stopped`). The pipeline removes the request, logs a `### Steered` block with the prompt and runs the same step again. The task is not stopped, no retry is used, and the usage of the interrupted attempt is still recorded.
 
+A `now` prompt may also carry a `model` (`^[A-Za-z0-9._:\[\]\/-]{1,100}$`). It is accepted only with `mode: "now"`, otherwise 400 `model needs mode now`. The steer line carries it, the `## Injected` entry records `model=<m>` in its comment, and the rest of the step runs with that model (the last model given wins). For `claude-agent` the model is switched inside the running session; for the other tools it applies to the rerun.
+
 How the step continues depends on the tool:
 
 - A tool that supports session resume gets the same session back: Claude Code `--resume <session id>`, Codex `codex exec resume <thread id>`, OpenCode `run --session <id>`. The new message is "The user sent new instructions while you were working. Continue the same task from where you stopped and apply them:" followed by the prompt. The session id is read from the output of the interrupted attempt (stream-json `session_id`, `thread.started.thread_id`, `sessionID`).
+- `claude-agent` steers in place. The runner interrupts the running turn through the SDK (`interrupt()`, 10 s limit) and sends the new instructions into the same open session, with the same "The user sent new instructions..." message. The process is not killed and the session keeps its memory. If the interrupt fails or times out, the runner falls back to the kill-and-resume path above and the steer file is taken from there. The step ends only with the result for the latest message, so the result of the interrupted turn never ends it.
 - A tool without resume, or an interrupted attempt that printed no session id, restarts the step: the original step prompt, the new instructions and the "Previous attempt interrupted" note that tells the agent to inspect `git status` and `git diff` and continue.
 
 Limits of `now`:
@@ -421,6 +461,7 @@ Limits of `now`:
 - Resume depends on the tool CLI. A session that the CLI cannot find, or one that is cut before the tool saved it, ends the rerun with a tool failure like any other.
 - The interrupted step may leave partial changes. A restarted step has to work from them; a resumed one has its own memory of them.
 - It costs extra tokens: the interrupted attempt is paid for, and a restart re-reads the step prompt.
+- `next-step` keeps its meaning for every tool, `claude-agent` included: it is read before the next pipeline step and is never sent into a running SDK session. Only `now` steers in place.
 - A step takes at most 5 steers. Later `now` prompts then wait for the next step, as `next-step` prompts do.
 - A steer that arrives between two steps kills nothing: the next step simply includes the prompt.
 - A stop request that arrives with a steer wins.

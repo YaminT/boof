@@ -160,7 +160,7 @@ Exactly what happens:
 
 ### Optional account pool (better-ccflare)
 
-Boof can route supported task tools through the better-ccflare HTTP gateway. **Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; it does not include the later Accounts settings tab or the Agent SDK adapter (8b).
+Boof can route supported task tools through the better-ccflare HTTP gateway. **Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; the opt-in `claude-agent` tool (Claude Agent SDK) can use the gateway only when every pool account is an API-key account; see [The claude-agent tool](docs/boof-runner.md#the-claude-agent-tool).
 
 Configure `settings.owlish` in `settings.json` (or through `settings.update`) with the gateway `url` and `healthGate: "pause" | "warn" | "off"` (default `pause`). With `pause`, selection of work using a pool-routed tool pauses when the configured gateway is degraded, unhealthy or unreachable; the reason is visible in runner pool status. `warn` reports health without blocking and `off` disables the gate. With no `settings.owlish`, there is no gateway request or gate.
 
@@ -467,6 +467,8 @@ All pipeline tests drive the **mock** tool, so CI never makes network calls or b
 ## Credits
 
 Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.
+
+The `claude-agent` tool uses Anthropic's Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), © Anthropic PBC, used under Anthropic's Commercial Terms of Service; it is not open source. See [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
 
 ## License
 

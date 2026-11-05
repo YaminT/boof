@@ -1,0 +1,26 @@
+Third-party notices
+
+Boof Runner is licensed under the Apache License 2.0 (see LICENSE). It uses
+the software below.
+
+
+better-ccflare
+
+Account pooling by better-ccflare (https://github.com/tombii/better-ccflare),
+MIT, (c) 2025 snipeship & tombii, a fork of ccflare by snipeship. Boof calls
+its optional gateway over HTTP and does not bundle it.
+
+
+Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
+
+Used by the opt-in `claude-agent` tool. It is not open source. It ships only
+with the npm CLI/server install of boof-runner (version 0.3.318, loaded
+lazily, together with the platform binary it brings as an optional
+dependency). The desktop app does not include it and this notice is not
+staged into the desktop app.
+
+Legal agreements: https://code.claude.com/docs/en/legal-and-compliance
+
+LICENSE.md of the package, verbatim:
+
+© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance.
