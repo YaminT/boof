@@ -1,5 +1,5 @@
 import * as React from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "../lib/utils.js";
 
 /** A native select styled like the kit's input. */
 function NativeSelect({ className, ...props }: React.ComponentProps<"select">) {

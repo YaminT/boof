@@ -88,5 +88,5 @@ function matches(a: RoleAssignment | undefined, tool: string, model: string): bo
 }
 
 function unique(values: string[]): string[] {
-  return [...new Set(values)];
+  return [...new Set(values.filter((value) => value.length > 0))];
 }

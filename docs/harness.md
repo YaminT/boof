@@ -452,7 +452,7 @@ Observer and reviewer reports end with exactly one line: `VERDICT: APPROVE`, `VE
 - `REJECT`, a missing or invalid verdict, or spent fix rounds fail the task. The log then contains `review not approved: <role> <verdict>`.
 - Questions from the developer or reviewer go to the planner. They never reach you.
 
-Which tool and model run each role is set in `settings.roles` (default planner `claude-code`/`opus`, developer `codex`/Codex CLI default, reviewer `claude-code`/`sonnet`; `opencode` with ids like `opencode-go/kimi-k3` is also available). An empty Codex model leaves model selection to the Codex CLI. A project may override roles. The agent tools must be installed on the boof machine (`GET /api/v1/health` shows their status).
+Which tool and model run each role is set in `settings.roles` (default planner `claude-code`/`opus`, developer `codex`/Codex CLI default, reviewer `claude-code`/`sonnet`; `opencode` with ids like `opencode-go/kimi-k3` is also available). An empty Codex model uses the Codex CLI built-in default. By default Boof passes `--ignore-user-config`, so a `model` in `$CODEX_HOME/config.toml` is ignored; it applies when `runner.inheritMcpServers` is enabled. A project may override roles. The agent tools must be installed on the boof machine (`GET /api/v1/health` shows their status).
 
 ### Worktrees and branches
 

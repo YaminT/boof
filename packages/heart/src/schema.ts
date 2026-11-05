@@ -39,10 +39,15 @@ export const IsoDatetimeSchema = isoDatetime;
 export const RoleAssignmentSchema = z
   .object({
     tool: z.string().min(1),
-    model: z.string().meta({
-      description:
-        "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
-    }),
+    model: z
+      .string()
+      .refine((model) => model.trim().length > 0 || model.length === 0, {
+        message: "Model must not contain only whitespace",
+      })
+      .meta({
+        description:
+          "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+      }),
   })
   .refine((assignment) => assignment.tool === "codex" || assignment.model.length > 0, {
     message: "Model is required for tools other than codex",

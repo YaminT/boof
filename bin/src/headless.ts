@@ -60,10 +60,11 @@ export async function toolOverride(
 ): Promise<TaskTools | undefined> {
   if (!tool) return undefined;
   const t = registry.get(tool);
-  // Without --model: the first model the tool offers now. The built-in default list is static and
-  // can name a model the account refuses.
+  // Codex resolves an empty model through its own CLI default. Other tools use
+  // the live list, then their built-in default.
   const listed = model || !t ? undefined : await t.listModels().catch(() => undefined);
-  const m = model ?? listed?.[0] ?? t?.defaultModels[0] ?? "default";
+  const m =
+    model ?? (t?.defaultModels.length === 0 ? "" : (listed?.[0] ?? t?.defaultModels[0] ?? ""));
   const a = { tool, model: m };
   return {
     planner: a,

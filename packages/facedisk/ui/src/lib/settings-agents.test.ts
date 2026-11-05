@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Project, Settings } from "@boof/heart/schema";
-import { agentsPage, checkedAgo, roleModelLabel, usageLabel } from "./settings-agents.js";
+import {
+  agentsPage,
+  checkedAgo,
+  roleModelLabel,
+  roleModelOptions,
+  roleToolAssignment,
+  usageLabel,
+} from "./settings-agents.js";
 
 const roles = {
   planner: { tool: "claude-code", model: "opus" },
@@ -57,6 +64,33 @@ describe("agentsPage patches", () => {
       agentsPage.patches(form, base, { settings: s, project: project() }).settings?.roles
         ?.developer,
     ).toEqual({ tool: "codex", model: "" });
+  });
+
+  it("offers Codex default for a saved model and saves the empty selection", () => {
+    const s = settings({ roles: { ...roles, developer: { tool: "codex", model: "gpt-5.5" } } });
+    const options = roleModelOptions("codex", { codex: ["gpt-5.5"] }, "gpt-5.5");
+    expect(options[0]).toBe("");
+    expect(roleModelLabel("codex", options[0]!)).toBe("Codex default (from the codex CLI)");
+    const base = agentsPage.values(s, project());
+    const form = {
+      ...base,
+      global: {
+        ...base.global,
+        roles: { ...base.global.roles, developer: { tool: "codex", model: options[0]! } },
+      },
+    };
+    expect(
+      agentsPage.patches(form, base, { settings: s, project: project() }).settings?.roles
+        ?.developer,
+    ).toEqual({ tool: "codex", model: "" });
+  });
+
+  it("switches an empty Codex role to a valid Claude model and back to Codex default", () => {
+    const models = { codex: ["gpt-5.5"], "claude-code": ["opus", "sonnet"] };
+    const claude = roleToolAssignment("claude-code", models);
+    expect(claude).toEqual({ tool: "claude-code", model: "opus" });
+    expect(roleToolAssignment("codex", models)).toEqual({ tool: "codex", model: "" });
+    expect(roleModelOptions("codex", models, "gpt-5.5")).toContain("");
   });
 
   it("a clean form sends nothing", () => {

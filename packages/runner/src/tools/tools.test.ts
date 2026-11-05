@@ -386,6 +386,22 @@ describe("CodexTool report", () => {
     expect(health.status).toBe("available");
   });
 
+  it("health probe uses the CLI default without naming the first listed model", async () => {
+    const tool = await setup(
+      [
+        'printf \'CALL %s\\n\' "$*" >> "$(dirname "$0")/health-args"',
+        'case "$1" in --version) echo "codex-cli 0.0.0"; exit 0;; debug) echo \'{"models":[{"slug":"first-listed"}]}\'; exit 0;; esac',
+        'for a in "$@"; do [ "$a" = "--skip-git-repo-check" ] && { echo hi; exit 0; }; done',
+        "exit 1",
+      ].join("\n"),
+    );
+    expect((await tool.detect()).status).toBe("available");
+    const args = (await readFile(join(dir, "health-args"), "utf8")).trim();
+    expect(args).toContain("--skip-git-repo-check");
+    expect(args).not.toContain("--model");
+    expect(args).not.toContain("first-listed");
+  });
+
   it("parses --json events: report, usage, readable stream", async () => {
     const tool = await setup(`cat "${fixture("codex-json-stdout.jsonl")}"`);
     const chunks: string[] = [];
@@ -776,9 +792,11 @@ describe("session resume", () => {
   });
 
   it("codex passes an explicitly selected model", () => {
-    expect(new CodexTool().buildArgs({ ...opts, model: "gpt-5.5" }, "/tmp/last")).toContain(
+    const args = new CodexTool().buildArgs({ ...opts, model: "gpt-5.5" }, "/tmp/last");
+    expect(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2)).toEqual([
       "--model",
-    );
+      "gpt-5.5",
+    ]);
   });
 
   it("opencode captures sessionID and resumes with --session and only the new prompt", async () => {

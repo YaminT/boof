@@ -144,6 +144,22 @@ describe("models.details operation", () => {
     expect(model(out, "fake", "fake-custom").source).toBe("settings");
   });
 
+  it("omits the empty Codex default identifier from model details", async () => {
+    ctx = {
+      ...ctx,
+      services: new TaskService(
+        root,
+        new ToolRegistry([new MockTool(), fakeTool({ id: "codex" })]),
+      ),
+    };
+    const current = await ctx.services.loadSettings();
+    await ctx.services.updateSettings({
+      roles: { ...current.roles, developer: { tool: "codex", model: "" } },
+    });
+    const out = await details();
+    expect(out.tools.codex.models.some((entry) => entry.id === "")).toBe(false);
+  });
+
   it("lists the roles that use a tool and model, and project overrides", async () => {
     await configure();
     await ctx.services.createProject({

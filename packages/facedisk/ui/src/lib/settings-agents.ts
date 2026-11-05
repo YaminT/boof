@@ -15,6 +15,20 @@ export function roleModelLabel(tool: string, model: string): string {
   return tool === "codex" && model === "" ? "Codex default (from the codex CLI)" : model;
 }
 
+/** Model dropdown values, including the reversible Codex default choice. */
+export function roleModelOptions(
+  tool: string,
+  models: Record<string, string[]>,
+  current: string,
+): string[] {
+  return [...new Set([...(tool === "codex" ? [""] : []), ...(models[tool] ?? []), current])];
+}
+
+/** A newly selected tool starts with a usable model; Codex resolves its empty model itself. */
+export function roleToolAssignment(tool: string, models: Record<string, string[]>): RoleAssignment {
+  return { tool, model: tool === "codex" ? "" : (models[tool]?.[0] ?? "") };
+}
+
 type OnDone = "keep-branch" | "keep" | "delete";
 type OnFailure = "keep" | "delete";
 

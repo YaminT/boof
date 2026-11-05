@@ -14,6 +14,7 @@ import {
   ProjectResolutionError,
 } from "@boof/heart";
 import { MockTool, ToolRegistry, mockState, resetMock } from "@boof/runner";
+import { CodexTool } from "../../packages/runner/src/tools/codex.js";
 import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
 import { firstPositional, runCommand } from "./boof-runner.js";
 
@@ -294,6 +295,45 @@ describe("toolOverride", () => {
 });
 
 describe("toolOverride model choice", () => {
+  it("leaves Codex model resolution to the CLI when no model is given", async () => {
+    const previous = process.env.BOOF_RUNNER_CODEX_BIN;
+    process.env.BOOF_RUNNER_CODEX_BIN = "/missing/codex-for-test";
+    try {
+      const tool = new CodexTool();
+      const tools = await toolOverride(new ToolRegistry([tool]), defaultSettings(), "codex");
+      expect(tools?.developer).toEqual({ tool: "codex", model: "" });
+      const base = {
+        role: "developer" as const,
+        model: tools!.developer!.model,
+        systemPrompt: "",
+        prompt: "",
+        cwd: "/tmp",
+        autoApprove: true,
+      };
+      expect(tool.buildArgs(base, "/tmp/last")).not.toContain("--model");
+
+      const explicit = await toolOverride(
+        new ToolRegistry([tool]),
+        defaultSettings(),
+        "codex",
+        "X",
+      );
+      expect(
+        tool.buildArgs({ ...base, model: explicit!.developer!.model }, "/tmp/last").slice(0, 6),
+      ).toEqual([
+        "exec",
+        "--json",
+        "--model",
+        "X",
+        "--ignore-user-config",
+        "--dangerously-bypass-approvals-and-sandbox",
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
+      else process.env.BOOF_RUNNER_CODEX_BIN = previous;
+    }
+  });
+
   // The static default list can name a model the account refuses (codex: gpt-5.5 on a ChatGPT
   // login); the tool's own list is what it offers now.
   class LiveListTool extends MockTool {

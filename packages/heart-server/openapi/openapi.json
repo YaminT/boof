@@ -1326,7 +1326,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1344,7 +1344,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1362,7 +1362,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1380,7 +1380,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1632,7 +1632,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1650,7 +1650,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1668,7 +1668,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -1686,7 +1686,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -2383,7 +2383,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -2401,7 +2401,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -2419,7 +2419,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -2437,7 +2437,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                     "type": "string"
                   },
                   "tool": {
@@ -4337,7 +4337,7 @@
                                 "additionalProperties": false,
                                 "properties": {
                                   "model": {
-                                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                     "type": "string"
                                   },
                                   "tool": {
@@ -4355,7 +4355,7 @@
                                 "additionalProperties": false,
                                 "properties": {
                                   "model": {
-                                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                     "type": "string"
                                   },
                                   "tool": {
@@ -4373,7 +4373,7 @@
                                 "additionalProperties": false,
                                 "properties": {
                                   "model": {
-                                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                     "type": "string"
                                   },
                                   "tool": {
@@ -4391,7 +4391,7 @@
                                 "additionalProperties": false,
                                 "properties": {
                                   "model": {
-                                    "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                    "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                     "type": "string"
                                   },
                                   "tool": {
@@ -4678,7 +4678,7 @@
                       "developer": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -4695,7 +4695,7 @@
                       "observer": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -4712,7 +4712,7 @@
                       "planner": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -4729,7 +4729,7 @@
                       "reviewer": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -5049,7 +5049,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "model": {
-                              "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                               "type": "string"
                             },
                             "tool": {
@@ -5067,7 +5067,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "model": {
-                              "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                               "type": "string"
                             },
                             "tool": {
@@ -5085,7 +5085,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "model": {
-                              "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                               "type": "string"
                             },
                             "tool": {
@@ -5103,7 +5103,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "model": {
-                              "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                               "type": "string"
                             },
                             "tool": {
@@ -5361,7 +5361,7 @@
                           "developer": {
                             "properties": {
                               "model": {
-                                "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                 "type": "string"
                               },
                               "tool": {
@@ -5378,7 +5378,7 @@
                           "observer": {
                             "properties": {
                               "model": {
-                                "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                 "type": "string"
                               },
                               "tool": {
@@ -5395,7 +5395,7 @@
                           "planner": {
                             "properties": {
                               "model": {
-                                "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                 "type": "string"
                               },
                               "tool": {
@@ -5412,7 +5412,7 @@
                           "reviewer": {
                             "properties": {
                               "model": {
-                                "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                                "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                                 "type": "string"
                               },
                               "tool": {
@@ -12070,7 +12070,7 @@
                       "developer": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -12087,7 +12087,7 @@
                       "observer": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -12104,7 +12104,7 @@
                       "planner": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {
@@ -12121,7 +12121,7 @@
                       "reviewer": {
                         "properties": {
                           "model": {
-                            "description": "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+                            "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
                             "type": "string"
                           },
                           "tool": {

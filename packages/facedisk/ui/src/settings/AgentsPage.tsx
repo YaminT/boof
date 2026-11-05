@@ -17,6 +17,7 @@ import { AdvancedSection } from "./AdvancedSection.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { AddModelDialog } from "./AddModelDialog.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
+import { RoleSelects } from "./RoleSelects.js";
 
 const h2 = "m-0 text-[length:var(--text-section)] font-semibold";
 const SOURCE: Record<string, { label: string; title: string }> = {
@@ -33,66 +34,6 @@ const ON_FAILURE = [
   ["keep", "Keep branch and directory"],
   ["delete", "Delete both"],
 ] as const;
-
-function RoleSelects({
-  role,
-  value,
-  tools,
-  models,
-  allowNone,
-  onChange,
-  onAddModel,
-}: {
-  role: string;
-  value: RoleAssignment | undefined;
-  tools: string[];
-  models: Record<string, string[]>;
-  allowNone: boolean;
-  onChange: (next: RoleAssignment | undefined) => void;
-  onAddModel: (tool: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <NativeSelect
-        aria-label={`${role} tool`}
-        className="w-full"
-        value={value?.tool ?? ""}
-        onChange={(e) => {
-          const tool = e.target.value;
-          onChange(
-            tool ? { tool, model: tool === "codex" ? "" : (models[tool]?.[0] ?? "") } : undefined,
-          );
-        }}
-      >
-        {allowNone && <option value="">None</option>}
-        {tools.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-      </NativeSelect>
-      {value && (
-        <span className="flex gap-2">
-          <NativeSelect
-            aria-label={`${role} model`}
-            className="min-w-0 flex-1"
-            value={value.model}
-            onChange={(e) => onChange({ ...value, model: e.target.value })}
-          >
-            {[...new Set([...(models[value.tool] ?? []), value.model])].map((m) => (
-              <option key={m} value={m}>
-                {roleModelLabel(value.tool, m)}
-              </option>
-            ))}
-          </NativeSelect>
-          <Button type="button" variant="outline" size="sm" onClick={() => onAddModel(value.tool)}>
-            Add…
-          </Button>
-        </span>
-      )}
-    </div>
-  );
-}
 
 const countInput = (value: string, onChange: (v: string) => void, label: string, min: number) => (
   <Input
@@ -207,7 +148,7 @@ export function AgentsPage({
               )
             }
             inheritedText={
-              g.roles[role] ? `${g.roles[role]!.tool}, ${g.roles[role]!.model}` : "none"
+              g.roles[role] ? roleModelLabel(g.roles[role]!.tool, g.roles[role]!.model) : "none"
             }
             global={
               <RoleSelects

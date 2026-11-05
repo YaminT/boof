@@ -2,7 +2,9 @@
 
 ## 0.3.0 (unreleased)
 
-- Codex now uses the model selected by the Codex CLI by default; existing settings keep their saved model.
+### Runner and agent workflow
+
+- An empty Codex model uses the CLI built-in default; Boof ignores `config.toml` model by default and honors it when `runner.inheritMcpServers` is enabled. Existing saved models remain unchanged.
 
 ### Fixes
 

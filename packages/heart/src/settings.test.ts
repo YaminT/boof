@@ -53,6 +53,15 @@ describe("settings compatibility", () => {
     expect(RoleAssignmentSchema.safeParse({ tool: "codex", model: "" }).success).toBe(true);
     expect(RoleAssignmentSchema.safeParse({ tool: "mock", model: "" }).success).toBe(false);
   });
+  it("rejects whitespace-only models", () => {
+    expect(RoleAssignmentSchema.safeParse({ tool: "codex", model: "  gpt-5.5  " }).success).toBe(
+      true,
+    );
+    expect(RoleAssignmentSchema.safeParse({ tool: "codex", model: "  " }).success).toBe(false);
+    expect(RoleAssignmentSchema.safeParse({ tool: "claude-code", model: "  " }).success).toBe(
+      false,
+    );
+  });
   it("reports invalid gateway URLs as settings validation errors when loading", async () => {
     const path = dataRootPaths(root).settings;
     await mkdir(dirname(path), { recursive: true });

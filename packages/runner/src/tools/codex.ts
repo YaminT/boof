@@ -36,7 +36,7 @@ export class CodexTool implements Tool {
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
     }
-    const model = (await this.listModels())[0] ?? "";
+    const model = "";
     const probe = await execCommand(
       this.bin,
       // The probe runs outside any repository (the server's cwd); codex refuses
