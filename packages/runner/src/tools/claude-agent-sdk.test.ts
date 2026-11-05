@@ -120,6 +120,7 @@ describe("Claude Agent SDK loading", () => {
     const sdkEntry = createRequire(import.meta.url).resolve("@anthropic-ai/claude-agent-sdk");
     const sdkRequire = createRequire(sdkEntry);
     let binaryInstalled = false;
+    let binaryPath: string | undefined;
     const platform = process.platform;
     const libcVariants =
       platform === "linux"
@@ -134,7 +135,10 @@ describe("Claude Agent SDK loading", () => {
           const path = sdkRequire.resolve(
             `${packageName}/${platform === "win32" ? "claude.exe" : "claude"}`,
           );
-          if (existsSync(path)) binaryInstalled = true;
+          if (existsSync(path)) {
+            binaryInstalled = true;
+            binaryPath = path;
+          }
         } catch {
           // A package for a different libc may be the installed optional binary.
         }
@@ -143,7 +147,7 @@ describe("Claude Agent SDK loading", () => {
     if (!binaryInstalled)
       ctx.skip("optional platform binary is genuinely not installed in this node_modules tree");
     const result = await resolveClaudeAgentExecutable({ PATH: "" });
-    expect(result).toEqual({ path: undefined, source: "sdk" });
+    expect(result).toEqual({ path: binaryPath, source: "sdk" });
   });
 
   it("tries musl then glibc when musl is detected", async () => {

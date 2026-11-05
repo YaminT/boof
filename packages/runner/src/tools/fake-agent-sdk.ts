@@ -25,13 +25,15 @@ export function fakeSdk(script: FakeStep[]): {
     const options = params.options ?? {};
     calls.options.push(options);
     let ended = false;
+    let interrupted = false;
     const pending: any[] = [];
     let wake: (() => void) | undefined;
     const q = {
       async *[Symbol.asyncIterator]() {
         for (const step of script) {
           if (ended) break;
-          if (step === "hang") while (!ended) await new Promise<void>((r) => (wake = r));
+          if (step === "hang")
+            while (!ended && !interrupted) await new Promise<void>((r) => (wake = r));
           if (step === "waitForPush")
             while (!pending.length && !ended) await new Promise<void>((r) => (wake = r));
           if (typeof step === "object" && "emit" in step) yield step.emit;
@@ -49,8 +51,12 @@ export function fakeSdk(script: FakeStep[]): {
         );
         if (configured && typeof configured === "object" && "interruptResult" in configured) {
           if (configured.interruptResult instanceof Error) throw configured.interruptResult;
+          interrupted = true;
+          wake?.();
           return configured.interruptResult;
         }
+        interrupted = true;
+        wake?.();
         return undefined;
       },
       async setModel(model?: string) {

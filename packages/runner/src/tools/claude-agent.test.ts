@@ -4,7 +4,7 @@ import { fakeSdk } from "./fake-agent-sdk.js";
 import { AgentAuthRefusedError } from "../agent-auth.js";
 import { DESKTOP_CLAUDE_AGENT_REASON } from "../index.js";
 import { ToolRunError, isTransientToolError } from "./errors.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -159,6 +159,408 @@ describe("ClaudeAgentTool", () => {
     expect(f.calls.options[0].model).toBe("opus");
   });
 
+  it("subtracts resumed cumulative usage, but keeps totals when the baseline is larger", () => {
+    const modelUsage = { m: { inputTokens: 20, cacheReadInputTokens: 10, outputTokens: 8 } };
+    expect(
+      usageFromSdkResult(
+        { total_cost_usd: 1, modelUsage },
+        { inputTokens: 0, outputTokens: 0, costUsd: 0.4, known: true },
+      ),
+    ).toMatchObject({ costUsd: 0.6, inputTokens: 30, outputTokens: 8 });
+    expect(
+      usageFromSdkResult(
+        { total_cost_usd: 0.3, modelUsage: {} },
+        { inputTokens: 10, outputTokens: 5, costUsd: 0.4, known: true },
+      ),
+    ).toMatchObject({ costUsd: 0.3, inputTokens: 0, outputTokens: 0 });
+  });
+
+  it("does not charge a resumed session baseline before its first result", async () => {
+    const fake = fakeSdk([
+      { emit: msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" }) },
+      "hang",
+    ]);
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-baseline-stop-"));
+    const stopSignalPath = join(dir, "stop");
+    try {
+      const running = tool.run({
+        ...base,
+        stopSignalPath,
+        resumeSessionId: "s1",
+        resumeBaseline: { inputTokens: 1000, outputTokens: 500, costUsd: 0.4, known: true },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      await writeFile(stopSignalPath, "stop");
+      const error = await running.catch((value) => value as ToolRunError);
+      expect(error.stopped).toBe(true);
+      expect(error.usage).not.toMatchObject({ inputTokens: 1000, outputTokens: 500, costUsd: 0.4 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses assistant usage as an unknown per-turn fallback before a resumed result", async () => {
+    const fake = fakeSdk([
+      {
+        emit: msg("assistant", {
+          message: { id: "m1", usage: { input_tokens: 12, output_tokens: 4 } },
+        }),
+      },
+      "hang",
+    ]);
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-assistant-usage-"));
+    const stopSignalPath = join(dir, "stop");
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      signalPollMs: 5,
+    });
+    try {
+      const running = tool.run({
+        ...base,
+        stopSignalPath,
+        resumeSessionId: "s1",
+        resumeBaseline: { inputTokens: 900, outputTokens: 500, costUsd: 0.4, known: true },
+      });
+      const outcome = running.catch((error) => error as ToolRunError);
+      await new Promise((r) => setTimeout(r, 20));
+      await writeFile(stopSignalPath, "stop");
+      const error = await outcome;
+      expect(error.stopped).toBe(true);
+      expect(error.usage).toMatchObject({ inputTokens: 12, outputTokens: 4, known: false });
+      expect(error.usage.costUsd).not.toBe(0.4);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes SDK environment additions and only the resolved credential to the child", async () => {
+    const { EventEmitter } = await import("node:events");
+    let childRef: any;
+    const spawn = vi.fn(
+      (_command: string, _args: string[], options: { env: Record<string, string> }) => {
+        capturedEnv = options.env;
+        const child = new EventEmitter() as any;
+        childRef = child;
+        child.pid = undefined;
+        child.exitCode = 0;
+        child.signalCode = null;
+        child.kill = vi.fn();
+        return child;
+      },
+    );
+    let capturedEnv: Record<string, string> = {};
+    const sdk = {
+      query: ({ options }: any) => {
+        options.spawnClaudeCodeProcess({
+          command: "/fake",
+          args: ["--sdk-protocol"],
+          cwd: "/tmp",
+          env: {
+            ...options.env,
+            CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
+            CLAUDE_AGENT_SDK_VERSION: "0.3.318",
+            CLAUDE_CODE_SDK_READS_SESSION_STATE: "1",
+          },
+          signal: options.abortController.signal,
+        });
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+            yield msg("result", { subtype: "success", result: "ok" });
+          },
+          async close() {
+            childRef.emit("close");
+          },
+        };
+      },
+    } as any;
+    // The fake's SDK spawn hook is inspected without starting any executable.
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      spawn: spawn as any,
+    });
+    await tool.run({ ...base, env: { ANTHROPIC_API_KEY: "fake-gateway-key" } });
+    expect(capturedEnv).toMatchObject({
+      ANTHROPIC_API_KEY: "fake-gateway-key",
+      CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
+      CLAUDE_AGENT_SDK_VERSION: "0.3.318",
+      CLAUDE_CODE_SDK_READS_SESSION_STATE: "1",
+    });
+    expect(capturedEnv).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(spawn).toHaveBeenCalledWith(
+      "/fake",
+      ["--sdk-protocol"],
+      expect.objectContaining({ env: capturedEnv }),
+    );
+  });
+
+  it("does not treat server environment credentials or cloud modes as authentication", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "server-secret-must-not-pass");
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-must-not-pass");
+    vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
+    vi.stubEnv("CLAUDE_CODE_USE_VERTEX", "1");
+    vi.stubEnv("BOOF_SERVER_SECRET", "boof-secret-must-not-pass");
+    try {
+      const fake = fakeSdk([{ emit: msg("result", { subtype: "success", result: "ok" }) }]);
+      const tool = new ClaudeAgentTool({
+        loadSdk: async () => fake.sdk,
+        resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      });
+      await tool.run({ ...base });
+      const env = fake.calls.options[0].env;
+      expect(env.ANTHROPIC_API_KEY).toBe("fake-gateway-key");
+      expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+      expect(env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");
+      expect(env).not.toHaveProperty("CLAUDE_CODE_USE_VERTEX");
+      expect(env).not.toHaveProperty("BOOF_SERVER_SECRET");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("keeps the pid file until the spawned child closes", async () => {
+    const { EventEmitter } = await import("node:events");
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-pid-file-"));
+    const pidFilePath = join(dir, "control", "pid");
+    let childRef: any;
+    const sdk = {
+      query: ({ options }: any) => {
+        childRef = new EventEmitter();
+        Object.assign(childRef, { pid: 4242, exitCode: 0, signalCode: null, kill: vi.fn() });
+        options.spawnClaudeCodeProcess({
+          command: "/fake",
+          args: [],
+          cwd: dir,
+          env: options.env,
+          signal: options.abortController.signal,
+        });
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield msg("result", { subtype: "success", result: "ok" });
+          },
+          async close() {},
+        };
+      },
+    } as any;
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => sdk,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      spawn: (() => childRef) as any,
+    });
+    try {
+      const running = tool.run({ ...base, cwd: dir, pidFilePath });
+      for (let i = 0; i < 100 && !childRef; i++) await new Promise((r) => setTimeout(r, 1));
+      for (
+        let i = 0;
+        i < 100 &&
+        !(await access(pidFilePath).then(
+          () => true,
+          () => false,
+        ));
+        i++
+      )
+        await new Promise((r) => setTimeout(r, 1));
+      await access(pidFilePath);
+      await new Promise((r) => setTimeout(r, 20));
+      await access(pidFilePath);
+      childRef.emit("close", 0, null);
+      await running;
+      await expect(access(pidFilePath)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects with the same resolver and never sends a prompt", async () => {
+    const { EventEmitter } = await import("node:events");
+    const child = new EventEmitter() as any;
+    child.stdout = new EventEmitter();
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("Claude Code 2.1.test"));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    const query = vi.fn();
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => ({ query }) as any,
+      resolveExecutable: async () => ({ path: "/resolved/claude", source: "sdk" }),
+      spawn: spawn as any,
+    });
+    await expect(tool.detect()).resolves.toMatchObject({
+      status: "available",
+      version: "Claude Code 2.1.test",
+    });
+    expect(spawn).toHaveBeenCalledWith("/resolved/claude", ["--version"], expect.any(Object));
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("passes only repository permission lists through settings", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "claude-agent-permissions-"));
+    try {
+      await mkdir(join(cwd, ".claude"));
+      await writeFile(
+        join(cwd, ".claude/settings.json"),
+        JSON.stringify({
+          permissions: {
+            deny: ["Bash(git push:*)"],
+            allow: ["Read(./src/**)"],
+            ask: ["Write(./.env)"],
+          },
+          apiKeyHelper: "echo do-not-run",
+          env: { ANTHROPIC_API_KEY: "ignored" },
+          hooks: { PreToolUse: [] },
+        }),
+      );
+      const fake = fakeSdk([{ emit: msg("result", { subtype: "success", result: "ok" }) }]);
+      const tool = new ClaudeAgentTool({
+        loadSdk: async () => fake.sdk,
+        resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      });
+      await tool.run({ ...base, cwd });
+      expect(fake.calls.options[0].settings).toEqual({
+        permissions: {
+          deny: ["Bash(git push:*)"],
+          allow: ["Read(./src/**)"],
+          ask: ["Write(./.env)"],
+        },
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("does not read CLAUDE.md through a symlink outside the worktree", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "claude-agent-symlink-"));
+    const outside = await mkdtemp(join(tmpdir(), "claude-agent-outside-"));
+    try {
+      await writeFile(join(outside, "secret"), "private instructions");
+      await symlink(join(outside, "secret"), join(cwd, "CLAUDE.md"));
+      const fake = fakeSdk([{ emit: msg("result", { subtype: "success", result: "ok" }) }]);
+      const tool = new ClaudeAgentTool({
+        loadSdk: async () => fake.sdk,
+        resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      });
+      await tool.run({ ...base, cwd });
+      expect(fake.calls.options[0].systemPrompt.append).not.toContain("private instructions");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["stop", "timeout", "stall"] as const)(
+    "kills the full process group and retains its pid record until exit on %s",
+    async (cause) => {
+      const dir = await mkdtemp(join(tmpdir(), "claude-agent-process-group-"));
+      const marker = join(dir, "grandchild.pid");
+      const pidFilePath = join(dir, "control", "pid");
+      const stopSignalPath = join(dir, "stop");
+      let wake!: () => void;
+      let ended = false;
+      let child: any;
+      const tool = new ClaudeAgentTool({
+        resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+        signalPollMs: 5,
+        loadSdk: async () =>
+          ({
+            query: ({ options }: any) => {
+              child = options.spawnClaudeCodeProcess({
+                command: process.execPath,
+                args: [
+                  "-e",
+                  `const fs=require('node:fs'); const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e','setTimeout(()=>{},300000)']); c.on('spawn',()=>fs.writeFileSync(${JSON.stringify(marker)},String(c.pid))); setTimeout(()=>{},300000);`,
+                ],
+                cwd: dir,
+                env: options.env,
+                signal: options.abortController.signal,
+              });
+              return {
+                async *[Symbol.asyncIterator]() {
+                  yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+                  while (!ended) await new Promise<void>((resolve) => (wake = resolve));
+                },
+                async close() {
+                  ended = true;
+                  wake?.();
+                },
+              };
+            },
+          }) as any,
+      });
+      try {
+        const running = tool.run({
+          ...base,
+          cwd: dir,
+          pidFilePath,
+          resumeSessionId: "prior",
+          resumeBaseline: { inputTokens: 1000, outputTokens: 500, costUsd: 0.4, known: true },
+          ...(cause === "stop" ? { stopSignalPath } : {}),
+          ...(cause === "timeout" ? { timeoutMs: 100 } : {}),
+          ...(cause === "stall" ? { idleTimeoutMs: 100 } : {}),
+        });
+        const outcome = running.then(
+          () => undefined,
+          (error) => error,
+        );
+        let markerReady = false;
+        for (let i = 0; i < 100 && !markerReady; i++) {
+          markerReady = await access(marker).then(
+            () => true,
+            () => false,
+          );
+          if (!markerReady) await new Promise((r) => setTimeout(r, 10));
+        }
+        if (!markerReady) throw await outcome;
+        expect(child?.pid).toBeTruthy();
+        await access(pidFilePath);
+        const grandchild = Number(await readFile(marker, "utf8"));
+        if (cause === "stop") await writeFile(stopSignalPath, "stop");
+        const error = await outcome;
+        expect(error).toMatchObject(
+          cause === "stop"
+            ? { stopped: true }
+            : cause === "timeout"
+              ? { timedOut: true }
+              : { stalled: true },
+        );
+        expect(error.usage).not.toMatchObject({
+          inputTokens: 1000,
+          outputTokens: 500,
+          costUsd: 0.4,
+        });
+        expect(
+          await access(pidFilePath).then(
+            () => true,
+            () => false,
+          ),
+        ).toBe(false);
+        let state = "";
+        try {
+          state = (await readFile(`/proc/${grandchild}/stat`, "utf8")).split(" ")[2] ?? "";
+        } catch {
+          /* gone */
+        }
+        expect(state === "" || state === "Z").toBe(true);
+      } finally {
+        try {
+          if (child?.pid) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("fails closed on unavailable mode without loading the SDK", async () => {
     const loadSdk = vi.fn();
     const resolveExecutable = vi.fn();
@@ -210,7 +612,7 @@ describe("ClaudeAgentTool", () => {
         agentAuth: { kind: "project-key", apiKey: "sk-ant-api03-abcdefghijklmnop" },
       }),
     ).rejects.toMatchObject({
-      output: expect.stringContaining("explicit ANTHROPIC_API_KEY"),
+      output: expect.stringContaining("apiKeySource=none"),
     });
     expect(fake.calls.closed).toBe(1);
   });

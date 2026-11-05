@@ -83,7 +83,7 @@ export async function resolveClaudeAgentExecutable(
           const binary = (deps.requireResolve ?? ((specifier) => sdkRequire.resolve(specifier)))(
             `${packageName}/${platform === "win32" ? "claude.exe" : "claude"}`,
           );
-          if (existsSync(binary)) return { path: undefined, source: "sdk" };
+          if (existsSync(binary)) return { path: binary, source: "sdk" };
         } catch {
           // Try the other libc variant, then PATH.
         }

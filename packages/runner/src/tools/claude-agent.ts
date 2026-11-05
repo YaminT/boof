@@ -1,9 +1,9 @@
 import type { TokenUsage } from "@boof/heart";
-import { writePidFile } from "@boof/heart";
+import { killGroup, writePidFile } from "@boof/heart";
 import { redactSecrets } from "@boof/owlish";
 import { spawn as nodeSpawn } from "node:child_process";
-import { access, readFile, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { access, readFile, realpath, rm } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Options as SdkOptions, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AgentAuthRefusedError, claudeAgentEnv } from "../agent-auth.js";
 import { agentEnv } from "../agent-env.js";
@@ -138,7 +138,7 @@ export class ClaudeAgentTool implements Tool {
           exe.reason ??
           "Claude Code native binary not found (set BOOF_RUNNER_CLAUDE_AGENT_BIN or install claude)",
       };
-    const path = exe.path ?? (await bundledExecutable());
+    const path = exe.path;
     if (!path)
       return {
         status: "unavailable",
@@ -200,9 +200,8 @@ export class ClaudeAgentTool implements Tool {
         this.clientApp,
         opts.claudeConfigDir,
       );
-    const claudeMd = await readFile(`${opts.cwd}/CLAUDE.md`, "utf8")
-      .then((text) => text.slice(0, 64 * 1024))
-      .catch(() => "");
+    const claudeMd = await readRepoFile(opts.cwd, "CLAUDE.md");
+    const permissions = await readRepoPermissions(opts.cwd);
     const childEnv = { ...env };
     const queryOptions: SdkOptions = {
       cwd: opts.cwd,
@@ -218,6 +217,8 @@ export class ClaudeAgentTool implements Tool {
         : { permissionMode: "default", permissionPrompts: "none" }),
       settingSources: [],
       extraArgs: { bare: null },
+      // Project hooks and plugins remain unsupported in claude-agent; only Claude permission rules are copied below.
+      ...(permissions ? { settings: { permissions } } : {}),
       resume: opts.resumeSessionId,
       includePartialMessages: true,
       env: childEnv,
@@ -227,19 +228,51 @@ export class ClaudeAgentTool implements Tool {
         stderr += data;
       },
       spawnClaudeCodeProcess: (o) => {
-        const command = executable.path ?? o.command;
-        const child = this.spawn(command, o.args, {
-          cwd: opts.cwd,
-          env: childEnv,
+        const child = this.spawn(o.command, o.args, {
+          cwd: o.cwd ?? opts.cwd,
+          env: o.env ?? childEnv,
           stdio: ["pipe", "pipe", "pipe"],
           detached: process.platform !== "win32",
         });
         if (opts.pidFilePath && child.pid)
-          void writePidFile(opts.pidFilePath, { pgid: child.pid, command: "claude" });
+          pidWritten = writePidFile(opts.pidFilePath, { pgid: child.pid, command: "claude" }).catch(
+            () => {},
+          );
+        childClosed = new Promise((resolveClosed) =>
+          child.once("close", () => {
+            void (async () => {
+              await pidWritten;
+              if (groupKill) await groupKill;
+              if (opts.pidFilePath) await rm(opts.pidFilePath, { force: true }).catch(() => {});
+              resolveClosed();
+            })();
+          }),
+        );
+        const forwardAbort = () => {
+          void killChildGroup();
+        };
+        o.signal?.addEventListener("abort", forwardAbort, { once: true });
+        child.once("close", () => o.signal?.removeEventListener("abort", forwardAbort));
+        spawnedChild = child;
         return child as never;
       },
     };
     let stderr = "";
+    let spawnedChild: ReturnType<Spawn> | undefined;
+    let pidWritten: Promise<void> = Promise.resolve();
+    let groupKill: Promise<unknown> | undefined;
+    let childClosed: Promise<void> | undefined;
+    const killChildGroup = () => {
+      if (!spawnedChild?.pid || process.platform === "win32") {
+        try {
+          spawnedChild?.kill("SIGTERM");
+        } catch {
+          /* already exited */
+        }
+        return Promise.resolve();
+      }
+      return (groupKill ??= killGroup(spawnedChild.pid, { termWaitMs: 1500, killWaitMs: 1000 }));
+    };
     const query = sdk.query({ prompt: queue, options: queryOptions });
     let queryClosed = false;
     const closeQuery = () => {
@@ -264,6 +297,7 @@ export class ClaudeAgentTool implements Tool {
           timedOut = true;
           abortController.abort();
           closeQuery();
+          void killChildGroup();
         }, opts.timeoutMs)
       : undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -274,6 +308,7 @@ export class ClaudeAgentTool implements Tool {
           stalled = true;
           abortController.abort();
           closeQuery();
+          void killChildGroup();
         }, opts.idleTimeoutMs);
     };
     resetIdle();
@@ -285,6 +320,7 @@ export class ClaudeAgentTool implements Tool {
           stopped = true;
           abortController.abort();
           closeQuery();
+          void killChildGroup();
           return;
         } catch {
           /* absent */
@@ -304,6 +340,7 @@ export class ClaudeAgentTool implements Tool {
           stopped = true;
           abortController.abort();
           closeQuery();
+          void killChildGroup();
           steerPending = false;
           return;
         } catch {
@@ -329,7 +366,7 @@ export class ClaudeAgentTool implements Tool {
           scrub(stderr),
           false,
           0,
-          { steered: true, sessionId, usage: lastUsage },
+          { steered: true, sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
         );
         return;
       } finally {
@@ -358,7 +395,7 @@ export class ClaudeAgentTool implements Tool {
                 scrub(stderr),
                 false,
                 0,
-                { sessionId, usage: lastUsage },
+                { sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
               );
         closeQuery();
       } finally {
@@ -374,12 +411,17 @@ export class ClaudeAgentTool implements Tool {
         if (typeof m.session_id === "string") sessionId = m.session_id;
         if (m.type === "system" && m.subtype === "init" && m.apiKeySource !== "ANTHROPIC_API_KEY") {
           closeQuery();
+          void killChildGroup();
+          const source =
+            typeof m.apiKeySource === "string"
+              ? m.apiKeySource.replace(/[^a-zA-Z_ /-]/g, "").slice(0, 40)
+              : "unknown";
           throw new ToolRunError(
             this.id,
             1,
             false,
             false,
-            "claude-agent refused: the session did not authenticate with an explicit ANTHROPIC_API_KEY",
+            `claude-agent refused: the session did not authenticate with the project's API key (apiKeySource=${source})`,
             "",
             false,
             0,
@@ -400,6 +442,7 @@ export class ClaudeAgentTool implements Tool {
                 stopped = true;
                 abortController.abort();
                 closeQuery();
+                void killChildGroup();
                 continue;
               } catch {
                 /* no stop */
@@ -433,7 +476,7 @@ export class ClaudeAgentTool implements Tool {
         scrub(stderr),
         false,
         0,
-        { sessionId, usage: lastUsage },
+        { sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
       );
     } finally {
       clearInterval(poll);
@@ -442,7 +485,9 @@ export class ClaudeAgentTool implements Tool {
       if (forceClose) clearTimeout(forceClose);
       queue.end();
       closeQuery();
-      if (opts.pidFilePath) await rm(opts.pidFilePath, { force: true }).catch(() => {});
+      if (spawnedChild && spawnedChild.exitCode === null && spawnedChild.signalCode === null)
+        await killChildGroup();
+      if (childClosed) await childClosed;
     }
     renderer.flush();
     const output = scrub(
@@ -466,7 +511,7 @@ export class ClaudeAgentTool implements Tool {
         scrub(stderr),
         stalled,
         opts.idleTimeoutMs,
-        { sessionId, usage: lastUsage },
+        { sessionId, usage: lastUsage ?? assistantUsage(renderer.usage) },
       );
     return withQuestions({
       output,
@@ -479,20 +524,42 @@ export class ClaudeAgentTool implements Tool {
   }
 }
 
-async function bundledExecutable(): Promise<string | undefined> {
+function assistantUsage(usage?: TokenUsage): TokenUsage | undefined {
+  return usage ? { ...usage, known: false } : undefined;
+}
+
+async function readRepoFile(cwd: string, name: string): Promise<string> {
   try {
-    const require = createRequire(import.meta.url);
-    const sdkEntry = require.resolve("@anthropic-ai/claude-agent-sdk");
-    const sdkRequire = createRequire(sdkEntry);
-    const report = process.report?.getReport() as
-      { header?: { glibcVersionRuntime?: string } } | undefined;
-    const variant =
-      process.platform === "linux" && !report?.header?.glibcVersionRuntime ? "-musl" : "";
-    const packageName = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}${variant}`;
-    return sdkRequire.resolve(
-      `${packageName}/${process.platform === "win32" ? "claude.exe" : "claude"}`,
-    );
+    const root = await realpath(cwd);
+    const target = await realpath(resolve(root, name));
+    const rel = relative(root, target);
+    if (rel.startsWith("..") || isAbsolute(rel)) return "";
+    return (await readFile(target, "utf8")).slice(0, 64 * 1024);
   } catch {
-    return undefined;
+    return "";
   }
+}
+
+async function readRepoPermissions(cwd: string): Promise<Record<string, string[]> | undefined> {
+  const permissions: Record<string, string[]> = {};
+  for (const name of [".claude/settings.json", ".claude/settings.local.json"]) {
+    const text = await readRepoFile(cwd, name);
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(text) as { permissions?: Record<string, unknown> };
+      for (const key of ["allow", "deny", "ask"] as const) {
+        const value = parsed.permissions?.[key];
+        if (Array.isArray(value))
+          permissions[key] = [
+            ...new Set([
+              ...(permissions[key] ?? []),
+              ...value.filter((v): v is string => typeof v === "string"),
+            ]),
+          ];
+      }
+    } catch {
+      /* malformed project settings are ignored */
+    }
+  }
+  return Object.keys(permissions).length ? permissions : undefined;
 }
