@@ -60,6 +60,8 @@ export interface DataRootPaths {
   webhookSecrets: string;
   /** boof's better-ccflare client key, mode 0600. */
   owlishSecrets: string;
+  /** Project Anthropic API keys, mode 0600. */
+  owlishProjectKeys: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -77,6 +79,7 @@ export function dataRootPaths(root: string): DataRootPaths {
     webhooks: join(root, "webhooks"),
     webhookSecrets: join(root, "webhooks", "secrets.json"),
     owlishSecrets: join(root, "owlish", "secrets.json"),
+    owlishProjectKeys: join(root, "owlish", "project-keys.json"),
   };
 }
 

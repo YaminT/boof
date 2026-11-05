@@ -49,6 +49,12 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 });
 
 describe("settings compatibility", () => {
+  it("adds the claude-agent model without changing default role tools", () => {
+    const settings = defaultSettings();
+    expect(settings.models["claude-agent"]).toEqual(["default"]);
+    expect(settings.roles.planner.tool).toBe("claude-code");
+    expect(settings.roles.reviewer.tool).toBe("claude-code");
+  });
   it("allows an empty model only for Codex role assignments", () => {
     expect(RoleAssignmentSchema.safeParse({ tool: "codex", model: "" }).success).toBe(true);
     expect(RoleAssignmentSchema.safeParse({ tool: "mock", model: "" }).success).toBe(false);
@@ -269,6 +275,13 @@ describe("effectiveSettings", () => {
     expect(e.workingDirectory).toBe("/repos/app");
     expect(e.roles).toEqual(g.roles);
     expect(e.runner).toEqual(g.runner);
+  });
+
+  it("passes the project claudeAgent auth choice through unchanged", () => {
+    const projectSettings = project({ claudeAgent: { auth: "project-key" } });
+    expect(effectiveSettings(defaultSettings(), projectSettings).claudeAgent).toEqual({
+      auth: "project-key",
+    });
   });
 
   it("merges roles, review, worktree and retries per key with the project winning", () => {

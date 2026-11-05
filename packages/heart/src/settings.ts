@@ -41,6 +41,7 @@ export function defaultSettings(): Settings {
       "claude-code": ["opus", "sonnet", "haiku"],
       codex: [],
       opencode: ["opencode-go/kimi-k3"],
+      "claude-agent": ["default"],
       mock: ["mock-default"],
     },
   };
@@ -187,7 +188,10 @@ export function securitySettings(settings: Settings): SecuritySettings {
 }
 
 /** Settings of one project: the global settings with the project's overrides and working directory. */
-export type EffectiveSettings = Settings & { workingDirectory: string };
+export type EffectiveSettings = Settings & {
+  workingDirectory: string;
+  claudeAgent?: Project["claudeAgent"];
+};
 
 /**
  * Merge a project over the global settings. `roles`, `review`, `worktree`, `retries` and `budget` merge
@@ -195,6 +199,7 @@ export type EffectiveSettings = Settings & { workingDirectory: string };
  */
 export function effectiveSettings(global: Settings, project: Project): EffectiveSettings {
   const merged: EffectiveSettings = { ...global, workingDirectory: project.workingDirectory };
+  if (project.claudeAgent) merged.claudeAgent = project.claudeAgent;
   if (project.roles) merged.roles = { ...global.roles, ...definedOnly(project.roles) };
   if (project.review) merged.review = { ...global.review, ...definedOnly(project.review) } as never;
   if (project.worktree) {

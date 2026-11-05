@@ -49,6 +49,7 @@ describe("data root layout v2 paths", () => {
       projects: "/d/projects",
       auth: "/d/auth",
       audit: "/d/audit",
+      owlishProjectKeys: "/d/owlish/project-keys.json",
     });
     expect(projectPaths("/d", "app")).toEqual({
       dir: "/d/projects/app",

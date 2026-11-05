@@ -578,6 +578,18 @@ export const ProjectOriginSchema = z.object({
 });
 export type ProjectOrigin = z.infer<typeof ProjectOriginSchema>;
 
+/** Per-project authentication choice for the opt-in Claude Agent SDK tool. */
+export const ClaudeAgentProjectSchema = z.strictObject({
+  auth: z.enum(["gateway", "project-key"]).default("gateway"),
+});
+export type ClaudeAgentProject = z.infer<typeof ClaudeAgentProjectSchema>;
+
+export const ANTHROPIC_API_KEY_PATTERN = /^sk-ant-api\d{2}-[\x21-\x7e]{16,500}$/;
+
+export function isAnthropicApiKey(v: unknown): v is string {
+  return typeof v === "string" && ANTHROPIC_API_KEY_PATTERN.test(v);
+}
+
 /** projects/<id>/project.json. */
 export const ProjectSchema = z.object({
   /** Directory name under projects/. */
@@ -590,6 +602,7 @@ export const ProjectSchema = z.object({
   workingDirectory: z.string(),
   /** What the project is for; given to every agent prompt as `## Project`. Absent on projects created before 0.3. */
   brief: z.string().optional(),
+  claudeAgent: ClaudeAgentProjectSchema.optional(),
   /** The runner skips a paused project. */
   paused: z.boolean().default(false),
   archived: z.boolean().default(false),
@@ -615,6 +628,7 @@ export const ProjectPatchSchema = z
     name: z.string().trim().min(1).max(200),
     workingDirectory: z.string().min(1),
     brief: z.string().trim().max(20_000).nullable(),
+    claudeAgent: ClaudeAgentProjectSchema.nullable(),
     paused: z.boolean(),
     archived: z.boolean(),
     defaultBase: z.string().min(1).nullable(),
