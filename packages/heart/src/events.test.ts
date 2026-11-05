@@ -43,6 +43,21 @@ describe("events", () => {
     expect(parsePos("nonsense")).toBeNull();
   });
 
+  it("validates Agent SDK auth refusal events", async () => {
+    const event = {
+      type: "runner.agent_auth_refused" as const,
+      projectId: "p1",
+      taskId: "t1",
+      reason: "refused",
+    };
+    expect(BoofEventSchema.safeParse({ ...event, ts: "2026-11-05T00:00:00.000Z" }).success).toBe(
+      true,
+    );
+    await appendEvent(dir, event);
+    expect((await readEvents(dir, null))[0]?.event.type).toBe(event.type);
+    expect(EVENT_TYPES).toContain(event.type);
+  });
+
   it("rotates on the first append of a new month and keeps positions valid", async () => {
     await appendEvent(dir, runner(true), new Date("2026-09-30T23:00:00Z"));
     const [first] = await readEvents(dir, null);

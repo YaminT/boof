@@ -21,6 +21,8 @@ export interface RunOptions {
   cwd: string;
   /** Per-project Claude configuration directory under the boof data root. */
   claudeConfigDir?: string;
+  /** Explicit, credential-scrubbed environment prepared for claude-agent. */
+  env?: Record<string, string>;
   /** Auto mode: pass non-interactive / no-permission-prompt flags. */
   autoApprove: boolean;
   /**

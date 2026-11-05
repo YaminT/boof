@@ -181,7 +181,9 @@ describe("isExternalUrl", () => {
       const src = await readFile(new URL("./main.ts", import.meta.url), "utf8");
       const boot = await readFile(new URL("../../../bin/src/boot.ts", import.meta.url), "utf8");
       expect(src).toContain('import { boot } from "@boof/boof/boot"');
-      expect(boot).toContain("catalog: new ToolRegistry()");
+      expect(boot).toContain("const registry = new ToolRegistry(");
+      expect(boot).toContain("defaultTools(");
+      expect(boot).toContain("claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON");
     });
   });
 });

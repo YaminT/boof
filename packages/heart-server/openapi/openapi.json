@@ -465,6 +465,37 @@
           {
             "additionalProperties": false,
             "properties": {
+              "projectId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "taskId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "runner.agent_auth_refused",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "projectId",
+              "taskId",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "by": {
                 "minLength": 1,
                 "type": "string"

@@ -89,6 +89,15 @@ export const RunnerPoolExhaustedEventSchema = z.object({
   by,
 });
 
+/** A pending task was refused before its worktree was created because Agent SDK auth was unsafe. */
+export const RunnerAgentAuthRefusedEventSchema = z.object({
+  type: z.literal("runner.agent_auth_refused"),
+  ts: z.string(),
+  projectId: project,
+  taskId: project,
+  reason: z.string(),
+});
+
 /** A task changed epic or parent (a move, a detach on delete). */
 export const TaskMovedEventSchema = z.object({
   type: z.literal("task.moved"),
@@ -117,6 +126,7 @@ export const BoofEventSchema = z.discriminatedUnion("type", [
   RunnerEnabledEventSchema,
   RunnerBudgetExceededEventSchema,
   RunnerPoolExhaustedEventSchema,
+  RunnerAgentAuthRefusedEventSchema,
   TaskMovedEventSchema,
   EpicUpdatedEventSchema,
 ]);
@@ -131,6 +141,7 @@ export const EVENT_TYPES = [
   "runner.enabled",
   "runner.budget_exceeded",
   "runner.pool_exhausted",
+  "runner.agent_auth_refused",
   "task.moved",
   "epic.updated",
 ] as const satisfies readonly BoofEventType[];

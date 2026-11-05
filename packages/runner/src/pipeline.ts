@@ -39,6 +39,7 @@ import type { Gateway } from "./gateway-env.js";
 import type { PoolGate } from "./pool-gate.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
+import { AgentAuthRefusedError, claudeAgentEnv, type AgentAuthResolver } from "./agent-auth.js";
 import { announceBudgetExceeded } from "./budget.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 import {
@@ -67,6 +68,7 @@ export interface PipelineDeps {
   gateway?: Gateway;
   /** The fail-safe pool gate: a pool-routed step waits in place while the pool is unusable. */
   pool?: PoolGate;
+  agentAuth?: AgentAuthResolver;
 }
 
 const VERDICT_PROTOCOL =
@@ -321,7 +323,7 @@ export class Pipeline {
   ): Promise<RunResult> {
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
-    await this.awaitPool(id, tool);
+    if (!tool.needsAgentAuth) await this.awaitPool(id, tool);
     await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
     await this.deps.store.appendStep(id, label).catch(() => {});
@@ -361,13 +363,39 @@ export class Pipeline {
         : { ...result, usage: sumUsage([...interrupted, ...(result.usage ? [result.usage] : [])]) };
     let steers = 0;
     let failures = 0;
+    let authNoteLogged = false;
+    let authViaGateway = false;
     try {
       for (;;) {
         const canSteer = steers < MAX_STEERS_PER_STEP;
+        authViaGateway = false;
         try {
+          let authOptions: Partial<RunOptions> = {};
+          if (tool.needsAgentAuth) {
+            if (!this.deps.agentAuth || !this.deps.project)
+              throw new AgentAuthRefusedError(
+                "claude-agent cannot start: no authentication resolver",
+              );
+            const decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+            if (!decision.ok) throw new AgentAuthRefusedError(decision.reason);
+            const auth = await this.deps.agentAuth.credentials(this.deps.project, decision);
+            const claudeConfigDir = await this.deps.agentAuth.configDir(this.deps.project);
+            authViaGateway = decision.via === "gateway";
+            if (decision.note && !authNoteLogged) {
+              await this.log(id, `\n${decision.note}`);
+              authNoteLogged = true;
+            }
+            authOptions = {
+              agentAuth: auth,
+              claudeConfigDir,
+              env: claudeAgentEnv(process.env, auth, "boof-runner", claudeConfigDir),
+            };
+            if (authViaGateway) await this.awaitPool(id, { ...tool, acceptsPool: true });
+          }
           const result = await tool.run({
             ...opts,
             model: stepModel,
+            ...authOptions,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             agentEnv: this.deps.settings.runner.agentEnv,
             ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
@@ -441,12 +469,19 @@ export class Pipeline {
           const reason = transientReason(err);
           // A failure that looks like the pool's (proxy 5xx) while the pool is unusable is not the
           // step's fault: wait for the pool instead of spending a retry, then run the step again.
-          if (reason !== null && (await this.poolDown(tool))) {
+          if (
+            reason !== null &&
+            (await this.poolDown(tool, tool.needsAgentAuth && authViaGateway))
+          ) {
             await this.log(
               id,
               `\nTransient failure in ${label}: ${reason}; the account pool is not usable`,
             );
-            await this.awaitPool(id, tool, true);
+            await this.awaitPool(
+              id,
+              tool.needsAgentAuth && authViaGateway ? { ...tool, acceptsPool: true } : tool,
+              true,
+            );
             await this.assertBudget(id, tool.id);
             await this.log(id, `\n### ${label} (after the pool recovered)`);
             prompt = compose("a transient error (API or network failure, or a stalled stream)");
@@ -551,9 +586,9 @@ export class Pipeline {
   }
 
   /** Is the pool unusable right now (a fresh look)? False for tools it does not serve. */
-  private async poolDown(tool: Tool): Promise<boolean> {
+  private async poolDown(tool: Tool, agentGateway = false): Promise<boolean> {
     const pool = this.deps.pool;
-    if (!pool || !tool.acceptsPool) return false;
+    if (!pool || (!tool.acceptsPool && !agentGateway)) return false;
     return (await pool.check({ fresh: true })).blocked;
   }
 
@@ -1084,8 +1119,9 @@ export class Pipeline {
       }
       const overBudget = err instanceof BudgetExceededError;
       const poolExhausted = err instanceof PoolExhaustedError;
+      const authRefused = err instanceof AgentAuthRefusedError;
       const message =
-        err instanceof ReviewNotApprovedError || overBudget || poolExhausted
+        err instanceof ReviewNotApprovedError || overBudget || poolExhausted || authRefused
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -1107,7 +1143,8 @@ export class Pipeline {
         if (
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
           !stopped &&
-          !keepForBudget
+          !keepForBudget &&
+          !authRefused
         ) {
           for (const line of await discardWorktree(workingDirectory, worktree)) {
             await appendLog(line).catch(() => {});

@@ -192,12 +192,14 @@ export class ClaudeAgentTool implements Tool {
     const abortController = new AbortController();
     const queue = new InputQueue();
     const uuid = queue.push(opts.prompt);
-    const env = claudeAgentEnv(
-      agentEnv(process.env, opts.agentEnv),
-      auth,
-      this.clientApp,
-      opts.claudeConfigDir,
-    );
+    const env =
+      opts.env ??
+      claudeAgentEnv(
+        agentEnv(process.env, opts.agentEnv),
+        auth,
+        this.clientApp,
+        opts.claudeConfigDir,
+      );
     const claudeMd = await readFile(`${opts.cwd}/CLAUDE.md`, "utf8")
       .then((text) => text.slice(0, 64 * 1024))
       .catch(() => "");

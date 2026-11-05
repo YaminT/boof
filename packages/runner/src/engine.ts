@@ -27,6 +27,7 @@ import {
   pruneStaleWorktrees,
   syncPlan,
   taskStatusForPlan,
+  appendEvent,
 } from "@boof/heart";
 import { announceBudgetExceeded } from "./budget.js";
 import { reapOrphan } from "@boof/heart";
@@ -34,6 +35,8 @@ import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline
 import { ToolRegistry } from "./tools/registry.js";
 import { PoolGate, type PoolCheck } from "./pool-gate.js";
 import { OwlishSecretStore } from "@boof/owlish";
+import { ProjectKeyStore } from "@boof/owlish";
+import { AgentAuthResolver } from "./agent-auth.js";
 
 export interface EngineOptions {
   root: string;
@@ -43,6 +46,8 @@ export interface EngineOptions {
   onlyProject?: string;
   /** The account pool gate; default: built from settings.owlish and the stored client key. */
   pool?: PoolGate;
+  /** Compliance resolver; injectable so engine tests can use a fake gateway. */
+  agentAuth?: AgentAuthResolver;
 }
 
 const INTERRUPTED_NOTE =
@@ -87,6 +92,8 @@ export class RunnerEngine {
   /** The pool, while it keeps routed work from starting (visible reason); null otherwise. */
   private poolBlocked: PoolCheck["pool"] | null = null;
   readonly pool: PoolGate;
+  readonly agentAuth: AgentAuthResolver;
+  private readonly authRefusalEvents = new Set<string>();
   private looping = false;
   private stopRequested = false;
   /** `project/id` keys already asked to stop (or being asked) in the current shutdown. */
@@ -98,6 +105,14 @@ export class RunnerEngine {
     this.projects = new ProjectStore(opts.root, { isGitRepo });
     this.settingsStore = new SettingsStore(opts.root);
     this.registry = opts.registry ?? new ToolRegistry();
+    this.agentAuth =
+      opts.agentAuth ??
+      new AgentAuthResolver({
+        root: opts.root,
+        loadSettings: () => this.settingsStore.load(),
+        readGatewayKey: () => new OwlishSecretStore(opts.root).get(),
+        projectKeys: new ProjectKeyStore(opts.root),
+      });
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;
     this.onlyProject = opts.onlyProject;
     this.pool =
@@ -152,13 +167,14 @@ export class RunnerEngine {
     selection: Selection | null;
     blocked: BudgetScope[];
   }> {
-    const poolCheck = await this.pool.check();
+    let poolCheck: PoolCheck | undefined;
     let poolSkipped = false;
     const settings = await this.settingsStore.load();
     const projects = await this.runnableProjects();
     const limited = settings.budget !== undefined || projects.some((p) => p.budget !== undefined);
     const status = limited ? await evaluateBudget(this.root, settings, projects) : null;
     const blocked = new Map<string, BudgetScope>();
+    const agentDecisions = new Map<string, Awaited<ReturnType<AgentAuthResolver["decide"]>>>();
     const global = status?.exceeded.find((s) => s.scope === "global");
     if (global) blocked.set(global.scope, global);
     let best: Selection | null = null;
@@ -170,8 +186,30 @@ export class RunnerEngine {
         const tools = (["planner", "developer", "reviewer", "observer"] as const)
           .map((role) => resolveRole(eff, task, role as "observer")?.tool)
           .filter((t): t is string => t !== undefined);
+        const resolved = tools.map((id) => this.registry.get(id)).filter((t) => t !== undefined);
+        const unavailable = resolved.find((tool) => tool.unavailableReason);
+        if (unavailable) {
+          await this.refuseBeforeStart(project, task, unavailable.unavailableReason!);
+          continue;
+        }
+        const authTool = resolved.find((tool) => tool.needsAgentAuth);
+        let agentDecision;
+        if (authTool) {
+          agentDecision = agentDecisions.get(project.id);
+          if (!agentDecision) {
+            agentDecision = await this.agentAuth.decide(project);
+            agentDecisions.set(project.id, agentDecision);
+          }
+          if (!agentDecision.ok) {
+            await this.refuseBeforeStart(project, task, agentDecision.reason);
+            continue;
+          }
+        }
         // The pool gate: a task that needs a pool-routed tool waits; the others run as usual.
-        if (poolCheck.blocked && tools.some((t) => this.registry.get(t)?.acceptsPool)) {
+        const gatewayRouted = agentDecision?.ok && agentDecision.via === "gateway";
+        const poolRouted = tools.some((t) => this.registry.get(t)?.acceptsPool) || gatewayRouted;
+        if (poolRouted) poolCheck ??= await this.pool.check();
+        if (poolCheck?.blocked && poolRouted) {
           poolSkipped = true;
           continue;
         }
@@ -188,9 +226,31 @@ export class RunnerEngine {
     if (status) {
       for (const scope of blocked.values()) await announceBudgetExceeded(this.root, status, scope);
     }
-    this.poolBlocked = poolSkipped ? poolCheck.pool : null;
-    if (poolSkipped) await this.pool.announceIfBlocked(poolCheck);
+    this.poolBlocked = poolSkipped ? (poolCheck?.pool ?? null) : null;
+    if (poolSkipped && poolCheck) await this.pool.announceIfBlocked(poolCheck);
     return { selection: best, blocked: [...blocked.values()] };
+  }
+
+  private async refuseBeforeStart(project: Project, task: Task, reason: string): Promise<void> {
+    const store = this.storeFor(project);
+    const id = task.frontmatter.id;
+    await store.transition(
+      id,
+      "failed",
+      (t) => {
+        t.body.log += `${t.body.log ? "\n" : ""}### Not started\n${reason}`;
+      },
+      { by: "runner", reason },
+    );
+    const key = `${project.id}\0${id}\0${reason}`;
+    if (this.authRefusalEvents.has(key)) return;
+    this.authRefusalEvents.add(key);
+    await appendEvent(this.root, {
+      type: "runner.agent_auth_refused",
+      projectId: project.id,
+      taskId: id,
+      reason,
+    });
   }
 
   /**
@@ -440,6 +500,7 @@ export class RunnerEngine {
         dataRoot: this.root,
         pool: this.pool,
         gateway: await this.pool.gateway(),
+        agentAuth: this.agentAuth,
       });
       const outcome = await pipeline.run(running!);
       await this.finalize(project, store, outcome);

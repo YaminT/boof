@@ -160,6 +160,7 @@ async function startComposition(): Promise<void> {
   });
   const composition = await boot({
     root,
+    claudeAgent: "unavailable",
     port: PORT,
     uiDir: uiDir(),
     version: app.getVersion(),

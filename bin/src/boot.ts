@@ -1,9 +1,15 @@
-import { RunnerEngine, ToolRegistry } from "@boof/runner";
+import {
+  DESKTOP_CLAUDE_AGENT_REASON,
+  RunnerEngine,
+  ToolRegistry,
+  defaultTools,
+} from "@boof/runner";
 import { startServer, type RunningServer, type StartServerOptions } from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
 
 export interface BootOptions extends Omit<StartServerOptions, "catalog" | "runnerRunning"> {
   runner?: boolean;
+  claudeAgent?: "enabled" | "unavailable";
   guard?: RunnerGuard;
   /** Root-specific server settings such as desktop operator clients. */
   serverOptions?: Partial<StartServerOptions>;
@@ -25,19 +31,25 @@ export function isRunnerStartFailure(error: unknown): boolean {
 
 /** Compose the shared server and runner lifecycle used by the CLI and Electron. */
 export async function boot(opts: BootOptions): Promise<Booted> {
-  const { runner, guard, serverOptions, onServer, onRunner, ...commonServerOptions } = opts;
+  const { runner, guard, serverOptions, onServer, onRunner, claudeAgent, ...commonServerOptions } =
+    opts;
+  const registry = new ToolRegistry(
+    defaultTools(
+      claudeAgent === "unavailable" ? { claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON } : {},
+    ),
+  );
   let engine: RunnerEngine | null = null;
   const server = await startServer({
     ...commonServerOptions,
     ...serverOptions,
     root: opts.root,
-    catalog: new ToolRegistry(),
+    catalog: registry,
     runnerRunning: () => engine !== null,
   });
   await onServer?.(server);
   try {
     if (runner !== false && (!guard || (await guard.acquire()))) {
-      engine = new RunnerEngine({ root: opts.root });
+      engine = new RunnerEngine({ root: opts.root, registry });
       onRunner?.(engine);
       void engine.loop();
     } else {
