@@ -14,14 +14,15 @@ import {
   type RoleName,
 } from "../lib/settings-agents.js";
 
-export function inheritedRoleLabel(tool: string, model: string): string {
-  return `${tool}, ${roleModelLabel(tool, model)}`;
-}
 import { AdvancedSection } from "./AdvancedSection.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { AddModelDialog } from "./AddModelDialog.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
 import { RoleSelects } from "./RoleSelects.js";
+
+export function inheritedRoleLabel(tool: string, model: string): string {
+  return `${tool}, ${roleModelLabel(tool, model)}`;
+}
 
 const h2 = "m-0 text-[length:var(--text-section)] font-semibold";
 const SOURCE: Record<string, { label: string; title: string }> = {
