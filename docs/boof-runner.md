@@ -456,6 +456,7 @@ How the step continues depends on the tool:
 
 - A tool that supports session resume gets the same session back: Claude Code `--resume <session id>`, Codex `codex exec resume <thread id>`, OpenCode `run --session <id>`. The new message is "The user sent new instructions while you were working. Continue the same task from where you stopped and apply them:" followed by the prompt. The session id is read from the output of the interrupted attempt (stream-json `session_id`, `thread.started.thread_id`, `sessionID`).
 - `claude-agent` steers in place. The runner interrupts the running turn through the SDK (`interrupt()`, 10 s limit) and sends the new instructions into the same open session, with the same "The user sent new instructions..." message. The process is not killed and the session keeps its memory. If the interrupt fails or times out, the runner kills the process and falls back to the kill-and-resume path above, and the steer file is taken from there. The step ends only with the result for the latest message, so the result of the interrupted turn never ends it.
+- A steer applied in place continues the running session without a new auth check; any new process (fallback, retry or next step) goes through the full check again.
 - A tool without resume, or an interrupted attempt that printed no session id, restarts the step: the original step prompt, the new instructions and the "Previous attempt interrupted" note that tells the agent to inspect `git status` and `git diff` and continue.
 
 Limits of `now`:

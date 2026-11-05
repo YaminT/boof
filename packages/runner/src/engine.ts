@@ -195,6 +195,7 @@ export class RunnerEngine {
         if (unavailable) {
           try {
             await this.refuseBeforeStart(project, task, unavailable.unavailableReason!);
+            await this.noteGoalTaskStatus(project, task, "failed");
           } catch (error) {
             console.error(`could not refuse task ${task.frontmatter.id}:`, error);
           }

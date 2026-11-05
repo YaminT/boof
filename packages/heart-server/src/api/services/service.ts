@@ -9,7 +9,7 @@ import {
   type AgentSdkEligibility,
   type PoolStatus,
 } from "@boof/owlish";
-import { appendFile, readFile, realpath, rm } from "node:fs/promises";
+import { appendFile, readFile, realpath, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
@@ -847,6 +847,10 @@ export class TaskService {
   /** The tools, injected by the composition root (bin, desktop): Heart never builds one. */
   readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
+  private readonly pendingAgentRoleCache = new Map<
+    string,
+    { signature: string; roles: Set<string> }
+  >();
 
   constructor(
     readonly root: string,
@@ -922,15 +926,9 @@ export class TaskService {
     for (const project of await this.listProjects()) {
       if (!authorized(project.id) || project.archived) continue;
       const effective = effectiveSettings(settings, project);
-      const taskList = await new TaskStore(this.projects.dir(project.id)).list();
+      const pendingRoles = await this.pendingAgentRoles(project.id);
       const roles = (["planner", "developer", "observer", "reviewer"] as const).filter(
-        (role) =>
-          effective.roles[role]?.tool === "claude-agent" ||
-          taskList.some(
-            (task) =>
-              task.frontmatter.status === "pending" &&
-              task.frontmatter.tools?.[role]?.tool === "claude-agent",
-          ),
+        (role) => effective.roles[role]?.tool === "claude-agent" || pendingRoles.has(role),
       );
       if (!roles.length) continue;
       const unavailable = this.catalog.get("claude-agent")?.unavailableReason;
@@ -944,31 +942,64 @@ export class TaskService {
         });
         continue;
       }
-      const hasProjectKey = await this.hasProjectKey(project.id);
+      let hasProjectKey = false;
+      try {
+        hasProjectKey = await this.hasProjectKey(project.id);
+      } catch {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: agentAuthRefusalMessage(
+            project.name,
+            "authentication settings or credentials could not be read",
+          ),
+        });
+        continue;
+      }
       const gateway = settings.owlish;
       const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
+      let gatewayKeyReadError = false;
       let missingClientKey = false;
       if (gateway && useGateway) {
-        if (!(await this.owlishSecrets.get())) missingClientKey = true;
-        else if (gatewayEligibility === undefined)
-          gatewayEligibility = await this.agentSdkEligibility();
+        try {
+          if (!(await this.owlishSecrets.get())) missingClientKey = true;
+          else if (gatewayEligibility === undefined)
+            gatewayEligibility = await this.agentSdkEligibility();
+        } catch {
+          gatewayKeyReadError = true;
+        }
       }
+      if (gatewayKeyReadError) {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: agentAuthRefusalMessage(
+            project.name,
+            "authentication settings or credentials could not be read",
+          ),
+        });
+        continue;
+      }
+      if (missingClientKey)
+        gatewayEligibility = {
+          gateway: "checked",
+          allowed: false,
+          reason: "no better-ccflare client key is configured",
+          blocking: [],
+          checkedAt: new Date().toISOString(),
+        };
       const eligibility = gateway && useGateway ? (gatewayEligibility ?? null) : null;
-      const decision = missingClientKey
-        ? {
-            ok: false as const,
-            reason: agentAuthRefusalMessage(
-              project.name,
-              "no better-ccflare client key is configured",
-            ),
-          }
-        : decideAgentAuth({
-            projectName: project.name,
-            choice: project.claudeAgent?.auth ?? "gateway",
-            gatewayConfigured: !!gateway,
-            eligibility,
-            hasProjectKey,
-          });
+      const decision = decideAgentAuth({
+        projectName: project.name,
+        choice: project.claudeAgent?.auth ?? "gateway",
+        gatewayConfigured: !!gateway,
+        eligibility,
+        hasProjectKey,
+      });
       result.push({
         projectId: project.id,
         roles: [...roles],
@@ -978,6 +1009,38 @@ export class TaskService {
       });
     }
     return result;
+  }
+
+  /**
+   * Pending task overrides are needed for the status summary. Fingerprint the pending filenames
+   * and their mtimes first; unchanged task lists then avoid parsing every task on each poll.
+   */
+  private async pendingAgentRoles(projectId: string): Promise<Set<string>> {
+    const pendingDir = join(this.projects.dir(projectId), "tasks", "pending");
+    let signature = "";
+    try {
+      const names = (await readdir(pendingDir)).filter((name) => name.endsWith(".md")).sort();
+      const entries = await Promise.all(
+        names.map(async (name) => {
+          const info = await stat(join(pendingDir, name), { bigint: true });
+          return `${name}:${info.size}:${info.mtimeNs}`;
+        }),
+      );
+      signature = entries.join("|");
+    } catch {
+      // A missing pending directory is an empty list; TaskStore.list handles other read errors.
+    }
+    const cached = this.pendingAgentRoleCache.get(projectId);
+    if (cached?.signature === signature) return cached.roles;
+    const tasks = await new TaskStore(this.projects.dir(projectId)).list();
+    const roles = new Set<string>();
+    for (const task of tasks) {
+      if (task.frontmatter.status !== "pending") continue;
+      for (const [role, tool] of Object.entries(task.frontmatter.tools ?? {}))
+        if (tool?.tool === "claude-agent") roles.add(role);
+    }
+    this.pendingAgentRoleCache.set(projectId, { signature, roles });
+    return roles;
   }
 
   /** The pool right now: `absent` (no request) without `settings.owlish`; never throws. */

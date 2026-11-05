@@ -523,7 +523,7 @@ describe("ClaudeAgentTool", () => {
           resumeBaseline: { inputTokens: 1000, outputTokens: 500, costUsd: 0.4, known: true },
           ...(cause === "stop" ? { stopSignalPath } : {}),
           ...(cause === "timeout" ? { timeoutMs: 100 } : {}),
-          ...(cause === "stall" ? { idleTimeoutMs: 100 } : {}),
+          ...(cause === "stall" ? { idleTimeoutMs: 1000 } : {}),
         });
         const outcome = running.then(
           () => undefined,

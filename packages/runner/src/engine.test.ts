@@ -199,12 +199,14 @@ describe("RunnerEngine integration (mock tool)", () => {
         "Unavailable.",
       ),
     );
+    const noteGoalStatus = vi.spyOn(engine as any, "noteGoalTaskStatus");
     const result = await engine.tick();
     expect(result.kind).toBe("idle");
     expect((await store.get("t1"))?.body.log).toContain(
       `### Not started\n${DESKTOP_CLAUDE_AGENT_REASON}`,
     );
     expect(decide).not.toHaveBeenCalled();
+    expect(noteGoalStatus).toHaveBeenCalledWith(project, expect.anything(), "failed");
     expect(await exists(wtPath("t1"))).toBe(false);
   });
 

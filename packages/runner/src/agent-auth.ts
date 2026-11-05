@@ -81,35 +81,48 @@ export class AgentAuthResolver {
       let eligibility: AgentSdkEligibility | null = null;
       let checkedKey = "";
       if (gateway) {
-        const key = await this.options.readGatewayKey();
-        if (!key)
-          return {
-            ok: false,
-            reason: refusal(project, "no better-ccflare client key is configured"),
+        // A missing/unreadable gateway key closes the gateway route, but a project's
+        // explicitly stored key remains an independent compliant credential.
+        let key: string | null = null;
+        try {
+          key = await this.options.readGatewayKey();
+        } catch {
+          // Treat key-store read errors like a closed gateway; decideAgentAuth will
+          // either fall back to the project key or refuse with a key-free reason.
+        }
+        if (!key) {
+          eligibility = {
+            gateway: "checked",
+            allowed: false,
+            reason: "no better-ccflare client key is configured",
+            blocking: [],
+            checkedAt: new Date(this.now()).toISOString(),
           };
-        checkedKey = key;
-        const cacheKey = `${gateway.url}:${createHash("sha256").update(key).digest("hex")}`;
-        const cached = this.cache.get(cacheKey);
-        if (!fresh && cached && this.now() - cached.at < CACHE_MS && cached.eligibility.allowed)
-          eligibility = cached.eligibility;
-        else {
-          let request = this.inFlight.get(cacheKey);
-          if (!request || fresh) {
-            const client = new OwlishClient({
-              url: gateway.url,
-              apiKey: key,
-              fetch: this.fetcher,
-              now: this.now,
-            });
-            request = client.agentSdkEligibility();
-            if (!fresh) this.inFlight.set(cacheKey, request);
+        } else {
+          checkedKey = key;
+          const cacheKey = `${gateway.url}:${createHash("sha256").update(key).digest("hex")}`;
+          const cached = this.cache.get(cacheKey);
+          if (!fresh && cached && this.now() - cached.at < CACHE_MS && cached.eligibility.allowed)
+            eligibility = cached.eligibility;
+          else {
+            let request = this.inFlight.get(cacheKey);
+            if (!request || fresh) {
+              const client = new OwlishClient({
+                url: gateway.url,
+                apiKey: key,
+                fetch: this.fetcher,
+                now: this.now,
+              });
+              request = client.agentSdkEligibility();
+              if (!fresh) this.inFlight.set(cacheKey, request);
+            }
+            try {
+              eligibility = await request;
+            } finally {
+              if (this.inFlight.get(cacheKey) === request) this.inFlight.delete(cacheKey);
+            }
+            if (eligibility.allowed) this.cache.set(cacheKey, { at: this.now(), eligibility });
           }
-          try {
-            eligibility = await request;
-          } finally {
-            if (this.inFlight.get(cacheKey) === request) this.inFlight.delete(cacheKey);
-          }
-          if (eligibility.allowed) this.cache.set(cacheKey, { at: this.now(), eligibility });
         }
       }
       const decision = decideAgentAuth({

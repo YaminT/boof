@@ -205,6 +205,42 @@ describe("AgentAuthResolver", () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
+  it("falls back to the project key when gateway mode has no client key", async () => {
+    const projectKeys = {
+      has: async () => true,
+      get: async () => "sk-ant-api03-1234567890123456",
+    } as never;
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings("http://127.0.0.1:8089"),
+      readGatewayKey: async () => null,
+      projectKeys,
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({
+      ok: true,
+      via: "project-key",
+      note: expect.stringContaining("no better-ccflare client key is configured"),
+    });
+    if (decision.ok)
+      await expect(resolver.credentials(makeProject(), decision)).resolves.toMatchObject({
+        kind: "project-key",
+      });
+  });
+  it("refuses without a project key when the gateway has no client key", async () => {
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings("http://127.0.0.1:8089"),
+      readGatewayKey: async () => null,
+      projectKeys: { has: async () => false } as never,
+    });
+    await expect(resolver.decide(makeProject())).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(
+        /no better-ccflare client key is configured.*Set an Anthropic API key/,
+      ),
+    });
+  });
   it("fails closed if a chosen project key vanished before credentials are read", async () => {
     const keys = { has: async () => true, get: async () => null } as never;
     const resolver = new AgentAuthResolver({

@@ -1,10 +1,10 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore, LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof/heart";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthStore, LOCAL_PRINCIPAL, TaskStore, type Principal, type Scope } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { LOCAL_MCP_PRINCIPAL } from "../local-principal.js";
 import type { OpContext } from "../define-op.js";
@@ -142,6 +142,74 @@ describe("runner status gateway eligibility", () => {
         'claude-agent cannot start: no better-ccflare client key is configured. Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI. Set an Anthropic API key for project "No client key" (Settings › Project), or use claude-code for this role.',
     });
     expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(0);
+  });
+
+  it("reports project-key fallback when the gateway client key is missing", async () => {
+    await configure(false);
+    const project = await service.projects.create({
+      id: "project-key-fallback",
+      name: "Project key fallback",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    await service.projectKeys.set(project.id, "sk-ant-api03-1234567890123456");
+    const tasks = service.forProject(project.id);
+    const task = await tasks.create({ title: "Task override", status: "pending" });
+    await tasks.tasks.modify(task.frontmatter.id, (current) => {
+      current.frontmatter.tools = {
+        developer: { tool: "claude-agent", model: "default" },
+      } as never;
+    });
+    const status = await run("runner.status", LOCAL_PRINCIPAL);
+    expect(status.agentAuth[0]).toMatchObject({
+      allowed: true,
+      via: "project-key",
+      reason: null,
+    });
+  });
+
+  it("keeps status alive and hides credentials when the client-key file is corrupt", async () => {
+    await configure();
+    const project = await service.projects.create({
+      id: "corrupt-client-key",
+      name: "Corrupt client key",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const tasks = service.forProject(project.id);
+    const task = await tasks.create({ title: "Task override", status: "pending" });
+    await tasks.tasks.modify(task.frontmatter.id, (current) => {
+      current.frontmatter.tools = {
+        developer: { tool: "claude-agent", model: "default" },
+      } as never;
+    });
+    await writeFile(join(root, "owlish", "secrets.json"), "secret-file-content-corrupt");
+    const status = await run("runner.status", LOCAL_PRINCIPAL);
+    expect(status.agentAuth[0]).toMatchObject({ allowed: false, via: null });
+    expect(status.agentAuth[0].reason).toContain(
+      "authentication settings or credentials could not be read",
+    );
+    expect(JSON.stringify(status.agentAuth)).not.toContain("secret-file-content");
+  });
+
+  it("does not reread pending task files when status is polled unchanged", async () => {
+    await configure(false);
+    await service.projects.create({
+      id: "status-cache",
+      name: "Status cache",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const tasks = service.forProject("status-cache");
+    const task = await tasks.create({ title: "Task override", status: "pending" });
+    await tasks.tasks.modify(task.frontmatter.id, (current) => {
+      current.frontmatter.tools = {
+        developer: { tool: "claude-agent", model: "default" },
+      } as never;
+    });
+    const list = vi.spyOn(TaskStore.prototype, "list");
+    await run("runner.status", LOCAL_PRINCIPAL);
+    const firstCallCount = list.mock.calls.length;
+    await run("runner.status", LOCAL_PRINCIPAL);
+    expect(firstCallCount).toBeGreaterThan(0);
+    expect(list).toHaveBeenCalledTimes(firstCallCount);
   });
 
   it("checks once for four projects using the gateway", async () => {
