@@ -36,10 +36,18 @@ export const KebabIdSchema = kebab;
 export const IsoDatetimeSchema = isoDatetime;
 
 /** A tool+model assignment for a single role. */
-export const RoleAssignmentSchema = z.object({
-  tool: z.string().min(1),
-  model: z.string().min(1),
-});
+export const RoleAssignmentSchema = z
+  .object({
+    tool: z.string().min(1),
+    model: z.string().meta({
+      description:
+        "Model identifier. For the codex tool, an empty string selects the model configured by the Codex CLI.",
+    }),
+  })
+  .refine((assignment) => assignment.tool === "codex" || assignment.model.length > 0, {
+    message: "Model is required for tools other than codex",
+    path: ["model"],
+  });
 export type RoleAssignment = z.infer<typeof RoleAssignmentSchema>;
 
 /** Optional per-task override of the global role assignments. */

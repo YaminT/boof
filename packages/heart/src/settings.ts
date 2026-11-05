@@ -32,14 +32,14 @@ export function defaultSettings(): Settings {
     defaultProject: null,
     roles: {
       planner: { tool: "claude-code", model: "opus" },
-      developer: { tool: "codex", model: "gpt-5.5" },
+      developer: { tool: "codex", model: "" },
       reviewer: { tool: "claude-code", model: "sonnet" },
     },
     models: {
       // claude CLI --model aliases (map to the latest of each tier). Full IDs
       // like "claude-opus-4-8" also work; aliases survive model bumps.
       "claude-code": ["opus", "sonnet", "haiku"],
-      codex: ["gpt-5.5"],
+      codex: [],
       opencode: ["opencode-go/kimi-k3"],
       mock: ["mock-default"],
     },

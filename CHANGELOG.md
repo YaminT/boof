@@ -2,6 +2,8 @@
 
 ## 0.3.0 (unreleased)
 
+- Codex now uses the model selected by the Codex CLI by default; existing settings keep their saved model.
+
 ### Fixes
 
 - Handle CLI stop signals received during startup and release the runner guard cleanly.

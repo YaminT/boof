@@ -11,6 +11,10 @@ import { changedKeys, sameValue, type PageModel, type PageValues } from "./setti
 export type RoleName = "planner" | "developer" | "observer" | "reviewer";
 export const ROLES: readonly RoleName[] = ["planner", "developer", "observer", "reviewer"];
 
+export function roleModelLabel(tool: string, model: string): string {
+  return tool === "codex" && model === "" ? "Codex default (from the codex CLI)" : model;
+}
+
 type OnDone = "keep-branch" | "keep" | "delete";
 type OnFailure = "keep" | "delete";
 

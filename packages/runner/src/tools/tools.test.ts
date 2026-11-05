@@ -764,6 +764,23 @@ describe("session resume", () => {
     expect(res.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
   });
 
+  it("codex omits the model option for the CLI default on new and resumed runs", () => {
+    const tool = new CodexTool();
+    for (const model of ["", undefined]) {
+      const base = { ...opts, model } as typeof opts;
+      expect(tool.buildArgs(base, "/tmp/last")).not.toContain("--model");
+      expect(tool.buildArgs({ ...base, resumeSessionId: "thread-9" }, "/tmp/last")).not.toContain(
+        "--model",
+      );
+    }
+  });
+
+  it("codex passes an explicitly selected model", () => {
+    expect(new CodexTool().buildArgs({ ...opts, model: "gpt-5.5" }, "/tmp/last")).toContain(
+      "--model",
+    );
+  });
+
   it("opencode captures sessionID and resumes with --session and only the new prompt", async () => {
     const dir = await fake("BOOF_RUNNER_OPENCODE_BIN", "opencode", "opencode-json.jsonl");
     const tool = new OpencodeTool();

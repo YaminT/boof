@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Project, Settings } from "@boof/heart/schema";
-import { agentsPage, checkedAgo, usageLabel } from "./settings-agents.js";
+import { agentsPage, checkedAgo, roleModelLabel, usageLabel } from "./settings-agents.js";
 
 const roles = {
   planner: { tool: "claude-code", model: "opus" },
@@ -41,6 +41,23 @@ describe("agentsPage values", () => {
 
 describe("agentsPage patches", () => {
   const review = { gate: true, maxFixRounds: 2, maxInlineDiffBytes: 5000 };
+
+  it("renders and saves the Codex CLI default model choice", () => {
+    expect(roleModelLabel("codex", "")).toBe("Codex default (from the codex CLI)");
+    const s = settings({ roles: { ...roles, developer: { tool: "codex", model: "gpt" } } });
+    const base = agentsPage.values(s, project());
+    const form = {
+      ...base,
+      global: {
+        ...base.global,
+        roles: { ...base.global.roles, developer: { tool: "codex", model: "" } },
+      },
+    };
+    expect(
+      agentsPage.patches(form, base, { settings: s, project: project() }).settings?.roles
+        ?.developer,
+    ).toEqual({ tool: "codex", model: "" });
+  });
 
   it("a clean form sends nothing", () => {
     const v = agentsPage.values(settings(), project());

@@ -22,7 +22,7 @@ export function codexProviderConfig(url: string): string {
 export class CodexTool implements Tool {
   readonly id = "codex";
   readonly displayName = "Codex";
-  readonly defaultModels = ["gpt-5.5"];
+  readonly defaultModels: string[] = [];
   private readonly bin = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
 
   async detect(detect: DetectOptions = {}): Promise<HealthResult> {
@@ -36,7 +36,7 @@ export class CodexTool implements Tool {
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
     }
-    const model = (await this.listModels())[0] ?? this.defaultModels[0];
+    const model = (await this.listModels())[0] ?? "";
     const probe = await execCommand(
       this.bin,
       // The probe runs outside any repository (the server's cwd); codex refuses
@@ -44,8 +44,7 @@ export class CodexTool implements Tool {
       [
         "exec",
         "--skip-git-repo-check",
-        "--model",
-        model,
+        ...(model ? ["--model", model] : []),
         // Like a run: not the user's config.toml (where the MCP servers are).
         ...(detect.inheritMcpServers ? [] : ["--ignore-user-config"]),
         "Reply with exactly: hi",
@@ -66,7 +65,7 @@ export class CodexTool implements Tool {
     }
     return {
       status: "available",
-      message: `codex CLI authenticated via smoke prompt (${model})`,
+      message: `codex CLI authenticated via smoke prompt${model ? ` (${model})` : " (CLI default model)"}`,
       version: res.stdout.trim(),
     };
   }
@@ -102,10 +101,11 @@ export class CodexTool implements Tool {
   buildArgs(opts: RunOptions, lastMessageFile: string): string[] {
     // --json: stdout becomes a JSONL event stream (structured usage and messages).
     const args = opts.resumeSessionId
-      ? ["exec", "resume", opts.resumeSessionId, "--json", "--model", opts.model]
-      : ["exec", "--json", "--model", opts.model];
+      ? ["exec", "resume", opts.resumeSessionId, "--json"]
+      : ["exec", "--json"];
+    if (opts.model) args.push("--model", opts.model);
     // $CODEX_HOME/config.toml is where Codex keeps the user's MCP servers; auth still comes from
-    // CODEX_HOME. The run needs nothing else from it: the model is passed above, and approval and
+    // CODEX_HOME. An explicit model is passed only when selected; approval and
     // sandbox below (a user's model_provider or base_url is lost: set inheritMcpServers for that).
     if (!opts.inheritMcpServers) args.push("--ignore-user-config");
     if (opts.gateway) {

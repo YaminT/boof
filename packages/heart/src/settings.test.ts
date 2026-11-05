@@ -16,7 +16,12 @@ import {
 } from "./settings.js";
 import { defaultSettings } from "./settings.js";
 import { newTask, parseTask, serializeTask } from "./task-file.js";
-import { SettingsPatchSchema, type Project, type TaskFrontmatter } from "./schema.js";
+import {
+  RoleAssignmentSchema,
+  SettingsPatchSchema,
+  type Project,
+  type TaskFrontmatter,
+} from "./schema.js";
 
 let root: string;
 beforeEach(async () => {
@@ -44,6 +49,10 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 });
 
 describe("settings compatibility", () => {
+  it("allows an empty model only for Codex role assignments", () => {
+    expect(RoleAssignmentSchema.safeParse({ tool: "codex", model: "" }).success).toBe(true);
+    expect(RoleAssignmentSchema.safeParse({ tool: "mock", model: "" }).success).toBe(false);
+  });
   it("reports invalid gateway URLs as settings validation errors when loading", async () => {
     const path = dataRootPaths(root).settings;
     await mkdir(dirname(path), { recursive: true });
@@ -279,7 +288,8 @@ describe("effectiveSettings", () => {
     expect(retrySettings(e).backoffMs).toEqual([1]);
     expect(resolveWorktreeRoot(worktreeSettings(e), e.workingDirectory)).toBe("/project/wt");
     // The global settings object is not mutated.
-    expect(g.roles.developer.model).toBe("gpt-5.5");
+    expect(g.roles.developer).toEqual({ tool: "codex", model: "" });
+    expect(g.models.codex).toEqual([]);
   });
 
   it("falls back to <workingDirectory>/.boof-runner-worktrees per project", () => {

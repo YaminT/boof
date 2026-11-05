@@ -7,6 +7,7 @@ import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
 import {
   checkedAgo,
+  roleModelLabel,
   ROLES,
   usageLabel,
   type AgentsValues,
@@ -58,7 +59,9 @@ function RoleSelects({
         value={value?.tool ?? ""}
         onChange={(e) => {
           const tool = e.target.value;
-          onChange(tool ? { tool, model: models[tool]?.[0] ?? "" } : undefined);
+          onChange(
+            tool ? { tool, model: tool === "codex" ? "" : (models[tool]?.[0] ?? "") } : undefined,
+          );
         }}
       >
         {allowNone && <option value="">None</option>}
@@ -78,7 +81,7 @@ function RoleSelects({
           >
             {[...new Set([...(models[value.tool] ?? []), value.model])].map((m) => (
               <option key={m} value={m}>
-                {m}
+                {roleModelLabel(value.tool, m)}
               </option>
             ))}
           </NativeSelect>
