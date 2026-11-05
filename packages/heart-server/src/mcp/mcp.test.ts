@@ -232,6 +232,7 @@ describe("tools generated from the registry", () => {
         "boof_revoke_client",
         "boof_rotate_client",
         "boof_list_accounts",
+        "boof_get_agent_sdk_eligibility",
         "boof_get_pool_health",
         "boof_pause_account",
         "boof_resume_account",
@@ -249,7 +250,7 @@ describe("tools generated from the registry", () => {
       (o) => !o.rest.kind || o.rest.kind === "json",
     );
     expect(names).toHaveLength(jsonOps.length);
-    expect(names).toHaveLength(79);
+    expect(names).toHaveLength(80);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("../api/index.js").then((m) => m.registry)).map((o) => [
         o.mcp.name,
@@ -262,6 +263,7 @@ describe("tools generated from the registry", () => {
       boof_stop_task: "tasks:control",
       boof_wait_task: "tasks:read",
       boof_runner_status: "settings:read",
+      boof_get_agent_sdk_eligibility: "settings:read",
       boof_set_runner: "runner:control|settings:write",
       boof_revoke_client: "auth:admin",
       boof_create_webhook: "admin",

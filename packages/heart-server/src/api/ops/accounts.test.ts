@@ -84,13 +84,18 @@ beforeEach(async () => {
         return;
       }
       if (req.url === "/api/accounts") {
-        return void res
-          .writeHead(accountStatus)
-          .end(
-            JSON.stringify([
-              { id: "a1", name: "Main", provider: "claude-oauth", priority: 0, paused: false },
-            ]),
-          );
+        return void res.writeHead(accountStatus).end(
+          JSON.stringify([
+            {
+              id: "a1",
+              name: "Main",
+              provider: "anthropic",
+              hasRefreshToken: true,
+              priority: 0,
+              paused: false,
+            },
+          ]),
+        );
       }
       res.writeHead(accountStatus).end("{}");
     });
@@ -102,6 +107,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await new Promise<void>((r) => server.close(() => r()));
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(`${root}-workspaces`, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 async function configure(withKey = true) {
@@ -154,6 +160,85 @@ describe("registration", () => {
       expect(op!.scopes).toEqual([scope]);
       expect(op!.projectScoped).toBe(false);
     }
+  });
+});
+
+describe("accounts.agentSdk", () => {
+  it("fails closed for mixed accounts and returns an absent gateway without a request", async () => {
+    await configure();
+    // SDK eligibility must not infer that the gateway has only the currently routable account.
+    const result = await run("accounts.agentSdk", admin);
+    expect(result.allowed).toBe(false);
+    expect(result.blocking).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "Main" })]),
+    );
+    await run("settings.update", LOCAL_PRINCIPAL, { owlish: null });
+    seen = [];
+    expect(await run("accounts.agentSdk", admin)).toMatchObject({
+      gateway: "absent",
+      allowed: false,
+      reason: "no better-ccflare gateway is configured",
+      blocking: [],
+    });
+    expect(seen).toHaveLength(0);
+  });
+});
+
+describe("project API key operation", () => {
+  it("stores keys write-only, reports only presence and rejects OAuth credentials", async () => {
+    await service.projects.create({
+      id: "key-project",
+      name: "Key project",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const settings = await service.loadSettings();
+    settings.roles.developer = { tool: "claude-agent", model: "default" };
+    await service.settingsStore.save(settings);
+    const status = await run("runner.status", LOCAL_PRINCIPAL);
+    expect(status.agentAuth).toEqual([
+      expect.objectContaining({
+        projectId: "key-project",
+        roles: ["developer"],
+        allowed: false,
+        via: null,
+        reason: expect.stringContaining(
+          "subscription (OAuth) accounts stay on the claude-code CLI",
+        ),
+      }),
+    ]);
+    const secret = "sk-ant-api03-1234567890abcdef";
+    const projectWriter = client(["projects:write"], "trusted", ["key-project"]);
+    const reviewWriter = client(["projects:write"], "review", ["key-project"]);
+    await expect(
+      run("projects.update", reviewWriter, {
+        projectId: "key-project",
+        anthropicApiKey: secret,
+      }),
+    ).rejects.toMatchObject({ status: 403, code: "forbidden_trust" });
+    const out = await run("projects.update", projectWriter, {
+      projectId: "key-project",
+      anthropicApiKey: secret,
+    });
+    expect(out.anthropicApiKeySet).toBe(true);
+    expect(JSON.stringify(out)).not.toContain(secret);
+    const keyFile = join(root, "owlish", "project-keys.json");
+    expect(await readFile(keyFile, "utf8")).toContain(secret);
+    if (process.platform !== "win32") {
+      const { mode } = await import("node:fs/promises").then(({ stat }) => stat(keyFile));
+      expect(mode & 0o777).toBe(0o600);
+    }
+    await expect(
+      run("projects.update", projectWriter, {
+        projectId: "key-project",
+        anthropicApiKey: "sk-ant-oat01-1234567890abcdef",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(await service.projectKeys.get("key-project")).toBe(secret);
+    const removed = await run("projects.update", projectWriter, {
+      projectId: "key-project",
+      anthropicApiKey: null,
+    });
+    expect(removed.anthropicApiKeySet).toBe(false);
   });
 });
 
@@ -343,7 +428,16 @@ describe("with a gateway", () => {
     const out = await run("accounts.list", admin);
     expect(out).toMatchObject({
       configured: true,
-      accounts: [{ id: "a1", name: "Main", provider: "claude-oauth", priority: 0, paused: false }],
+      accounts: [
+        {
+          id: "a1",
+          name: "Main",
+          provider: "anthropic",
+          hasRefreshToken: true,
+          priority: 0,
+          paused: false,
+        },
+      ],
     });
     expect(seen).toEqual([
       expect.objectContaining({ method: "GET", url: "/api/accounts", key: KEY }),

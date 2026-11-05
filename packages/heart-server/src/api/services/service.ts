@@ -3,6 +3,9 @@ import {
   OwlishClient,
   OwlishError,
   OwlishSecretStore,
+  ProjectKeyStore,
+  decideAgentAuth,
+  type AgentSdkEligibility,
   type PoolStatus,
 } from "@boof/owlish";
 import { appendFile, readFile, realpath, rm } from "node:fs/promises";
@@ -681,6 +684,7 @@ export class ProjectService {
     prompt: string,
     actor?: Principal,
     mode: InjectMode = "next-step",
+    model?: string,
   ): Promise<{ ok: true; mode: InjectMode; applied: "pending" }> {
     const text = prompt.trim();
     if (!text) throw new OpError(400, "Prompt is required");
@@ -701,7 +705,7 @@ export class ProjectService {
           // The pipeline interrupts the running step on this file and consumes (removes) it.
           await appendFile(
             taskSteerRequestPath(this.root, id),
-            JSON.stringify({ at: now, text }) + "\n",
+            JSON.stringify({ at: now, text, ...(model ? { model } : {}) }) + "\n",
             "utf8",
           );
         }
@@ -712,12 +716,19 @@ export class ProjectService {
         ).catch(() => {});
       },
       // Durable copy: the control directory is deleted when the task leaves `running`.
-      (t) =>
+      (t) => {
         appendInjectedEntry(t, {
           text,
           by: actor && actor.kind === "client" ? actor.name : "user",
           mode,
-        }),
+        });
+        if (model) {
+          const marker = `<!-- boof: mode=${mode} -->`;
+          const index = t.body.injected.lastIndexOf(marker);
+          if (index >= 0)
+            t.body.injected = `${t.body.injected.slice(0, index)}<!-- boof: mode=${mode} model=${model} -->${t.body.injected.slice(index + marker.length)}`;
+        }
+      },
     );
     return { ok: true, mode, applied: "pending" };
   }
@@ -836,6 +847,7 @@ export class TaskService {
   readonly webhookSecrets: WebhookSecretStore;
   /** boof's one better-ccflare client key (file or BOOF_OWLISH_API_KEY); never part of settings. */
   readonly owlishSecrets: OwlishSecretStore;
+  readonly projectKeys: ProjectKeyStore;
   /** The tools, injected by the composition root (bin, desktop): Heart never builds one. */
   readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
@@ -849,6 +861,7 @@ export class TaskService {
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
     this.owlishSecrets = new OwlishSecretStore(root);
+    this.projectKeys = new ProjectKeyStore(root);
     void this.owlishSecrets.tighten().catch(() => {
       console.error("could not secure Owlish secret storage");
     });
@@ -877,6 +890,78 @@ export class TaskService {
       url: owlish.url,
       healthGate: owlish.healthGate,
     };
+  }
+
+  async hasProjectKey(projectId: string): Promise<boolean> {
+    return this.projectKeys.has(projectId).catch(() => false);
+  }
+
+  async agentSdkEligibility(): Promise<AgentSdkEligibility> {
+    const owlish = (await this.loadSettings()).owlish;
+    if (!owlish) {
+      const now = new Date().toISOString();
+      return {
+        gateway: "absent",
+        allowed: false,
+        reason: "no better-ccflare gateway is configured",
+        blocking: [],
+        checkedAt: now,
+      };
+    }
+    try {
+      const key = await this.owlishSecrets.get();
+      return await new OwlishClient({
+        url: owlish.url,
+        apiKey: key ?? undefined,
+      }).agentSdkEligibility();
+    } catch {
+      return new OwlishClient({ url: owlish.url }).agentSdkEligibility();
+    }
+  }
+
+  async agentAuthStatus(authorized: (projectId: string) => boolean) {
+    const settings = await this.loadSettings();
+    const result = [];
+    for (const project of await this.listProjects()) {
+      if (!authorized(project.id) || project.archived) continue;
+      const effective = effectiveSettings(settings, project);
+      const roles = (["planner", "developer", "observer", "reviewer"] as const).filter(
+        (role) => effective.roles[role]?.tool === "claude-agent",
+      );
+      if (!roles.length) continue;
+      const unavailable = (
+        this.catalog.get("claude-agent") as
+          (typeof this.catalog extends never ? never : { unavailableReason?: string }) | undefined
+      )?.unavailableReason;
+      if (unavailable) {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: unavailable,
+        });
+        continue;
+      }
+      const hasProjectKey = await this.hasProjectKey(project.id);
+      const gateway = settings.owlish;
+      const eligibility = gateway ? await this.agentSdkEligibility() : null;
+      const decision = decideAgentAuth({
+        projectName: project.name,
+        choice: project.claudeAgent?.auth ?? "gateway",
+        gatewayConfigured: !!gateway,
+        eligibility,
+        hasProjectKey,
+      });
+      result.push({
+        projectId: project.id,
+        roles: [...roles],
+        allowed: decision.ok,
+        via: decision.ok ? decision.via : null,
+        reason: decision.ok ? null : decision.reason,
+      });
+    }
+    return result;
   }
 
   /** The pool right now: `absent` (no request) without `settings.owlish`; never throws. */

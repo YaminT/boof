@@ -541,7 +541,7 @@ export const tasksInject = defineOp({
   name: "tasks.inject",
   title: "Inject a prompt into a running task",
   description:
-    "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
+    "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). Optional model (only with mode now) switches the model for the continuation. The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
   scope: "tasks:control",
   projectScoped: true,
   input: z.strictObject({ projectId: projectIdParam, taskId: taskIdParam, ...InjectBody.shape }),
@@ -555,6 +555,7 @@ export const tasksInject = defineOp({
       input.prompt,
       ctx.principal,
       input.mode,
+      input.model,
     ),
 });
 

@@ -2915,6 +2915,111 @@
         "x-mcp-tool": "boof_set_account_thresholds"
       }
     },
+    "/accounts/agent-sdk": {
+      "get": {
+        "description": "Checks whether every better-ccflare account uses API-key authentication. Input: optional refresh. No side effects.",
+        "operationId": "accounts.agentSdk",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "blocking": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "why": {
+                            "enum": [
+                              "subscription",
+                              "oauth-token",
+                              "unknown-type"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "provider",
+                          "why"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "checkedAt": {
+                      "type": "string"
+                    },
+                    "gateway": {
+                      "enum": [
+                        "absent",
+                        "checked"
+                      ],
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "gateway",
+                    "allowed",
+                    "reason",
+                    "blocking",
+                    "checkedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Claude Agent SDK eligibility",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_agent_sdk_eligibility"
+      }
+    },
     "/accounts/health": {
       "get": {
         "description": "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
@@ -4205,6 +4310,9 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "anthropicApiKeySet": {
+                            "type": "boolean"
+                          },
                           "archived": {
                             "default": false,
                             "type": "boolean"
@@ -4487,6 +4595,7 @@
                           "origin",
                           "created",
                           "updated",
+                          "anthropicApiKeySet",
                           "currentBranch"
                         ],
                         "type": "object"
@@ -4934,6 +5043,9 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "anthropicApiKeySet": {
+                      "type": "boolean"
+                    },
                     "archived": {
                       "default": false,
                       "type": "boolean"
@@ -5216,6 +5328,7 @@
                     "origin",
                     "created",
                     "updated",
+                    "anthropicApiKeySet",
                     "currentBranch"
                   ],
                   "type": "object"
@@ -5264,6 +5377,18 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "anthropicApiKey": {
+                    "anyOf": [
+                      {
+                        "pattern": "^sk-ant-api\\d{2}-[\\x21-\\x7e]{16,500}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it"
+                  },
                   "archived": {
                     "type": "boolean"
                   },
@@ -5554,7 +5679,289 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Project"
+                  "additionalProperties": false,
+                  "properties": {
+                    "anthropicApiKeySet": {
+                      "type": "boolean"
+                    },
+                    "archived": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "brief": {
+                      "type": "string"
+                    },
+                    "budget": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "onExceed": {
+                          "enum": [
+                            "pause",
+                            "fail"
+                          ],
+                          "type": "string"
+                        },
+                        "perProjectDayUsd": {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        "perTaskUsd": {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        "perToolDayUsd": {
+                          "additionalProperties": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "propertyNames": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "claudeAgent": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "auth": {
+                          "default": "gateway",
+                          "enum": [
+                            "gateway",
+                            "project-key"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "auth"
+                      ],
+                      "type": "object"
+                    },
+                    "created": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "defaultBase": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "labels": {
+                      "default": [],
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "origin": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "cli",
+                            "api",
+                            "migration"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "paused": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "planWriteBack": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "retries": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "backoffMs": {
+                          "items": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": "array"
+                        },
+                        "idleTimeoutMs": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "transient": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "review": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gate": {
+                          "type": "boolean"
+                        },
+                        "maxFixRounds": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxInlineDiffBytes": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "roles": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "developer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "observer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "planner": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "reviewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "updated": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "workingDirectory": {
+                      "type": "string"
+                    },
+                    "worktree": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "onDone": {
+                          "enum": [
+                            "keep-branch",
+                            "keep",
+                            "delete"
+                          ],
+                          "type": "string"
+                        },
+                        "onFailure": {
+                          "enum": [
+                            "keep",
+                            "delete"
+                          ],
+                          "type": "string"
+                        },
+                        "root": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "workingDirectory",
+                    "paused",
+                    "archived",
+                    "planWriteBack",
+                    "labels",
+                    "origin",
+                    "created",
+                    "updated",
+                    "anthropicApiKeySet"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -10233,7 +10640,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/inject": {
       "post": {
-        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
+        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). Optional model (only with mode now) switches the model for the continuation. The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
         "operationId": "tasks.inject",
         "parameters": [
           {
@@ -10272,6 +10679,10 @@
                       "next-step",
                       "now"
                     ],
+                    "type": "string"
+                  },
+                  "model": {
+                    "pattern": "^[A-Za-z0-9._:\\[\\]/-]{1,100}$",
                     "type": "string"
                   },
                   "prompt": {
@@ -11424,6 +11835,60 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "agentAuth": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "projectId": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "roles": {
+                            "items": {
+                              "enum": [
+                                "planner",
+                                "developer",
+                                "observer",
+                                "reviewer"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "via": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "gateway",
+                                  "project-key"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "projectId",
+                          "roles",
+                          "allowed",
+                          "via",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "budgetExceeded": {
                       "items": {
                         "additionalProperties": false,
@@ -11573,7 +12038,8 @@
                     "enabled",
                     "concurrency",
                     "budgetExceeded",
-                    "pool"
+                    "pool",
+                    "agentAuth"
                   ],
                   "type": "object"
                 }
@@ -11684,6 +12150,60 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "agentAuth": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "projectId": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "roles": {
+                            "items": {
+                              "enum": [
+                                "planner",
+                                "developer",
+                                "observer",
+                                "reviewer"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "via": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "gateway",
+                                  "project-key"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "projectId",
+                          "roles",
+                          "allowed",
+                          "via",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "budgetExceeded": {
                       "items": {
                         "additionalProperties": false,
@@ -11872,6 +12392,7 @@
                     "concurrency",
                     "budgetExceeded",
                     "pool",
+                    "agentAuth",
                     "projects"
                   ],
                   "type": "object"

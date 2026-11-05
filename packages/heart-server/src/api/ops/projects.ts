@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { authorizeProject, ProjectPatchSchema, type Project, currentBranch } from "@boof/heart";
+import {
+  authorizeProject,
+  ProjectPatchSchema,
+  ANTHROPIC_API_KEY_PATTERN,
+  type Project,
+  currentBranch,
+} from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { CreateProjectBody } from "../validation.js";
+import { OpError } from "../errors.js";
 import { OkSchema, ProjectSchema, ProjectViewSchema, TokenUsageSchema } from "../schemas.js";
 import { DESTRUCTIVE, IDEMPOTENT_WRITE, projectIdParam, READ, WRITE } from "./common.js";
 
@@ -9,6 +16,13 @@ import { DESTRUCTIVE, IDEMPOTENT_WRITE, projectIdParam, READ, WRITE } from "./co
 const withBranch = async (p: Project) => ({
   ...p,
   currentBranch: p.workingDirectory ? await currentBranch(p.workingDirectory) : null,
+});
+const projectView = async (
+  ctx: { services: { hasProjectKey(id: string): Promise<boolean> } },
+  p: Project,
+) => ({
+  ...(await withBranch(p)),
+  anthropicApiKeySet: await ctx.services.hasProjectKey(p.id),
 });
 
 const byProject = z.strictObject({ projectId: projectIdParam });
@@ -29,7 +43,7 @@ export const projectsList = defineOp({
     projects: await Promise.all(
       (await ctx.services.listProjects({ includeArchived: input.includeArchived === true }))
         .filter((p) => authorizeProject(ctx.principal, p.id))
-        .map(withBranch),
+        .map((p) => projectView(ctx, p)),
     ),
   }),
 });
@@ -61,7 +75,7 @@ export const projectsGet = defineOp({
   rest: { method: "GET", path: "/projects/{projectId}" },
   mcp: { expose: true, name: "boof_get_project", annotations: READ },
   summary: (p) => `Project ${p.id}: ${p.name}${p.paused ? " (paused)" : ""}`,
-  handler: async (ctx, input) => withBranch(await ctx.services.getProject(input.projectId)),
+  handler: async (ctx, input) => projectView(ctx, await ctx.services.getProject(input.projectId)),
 });
 
 export const projectsUpdate = defineOp({
@@ -71,13 +85,37 @@ export const projectsUpdate = defineOp({
     "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
   scope: "projects:write",
   projectScoped: true,
-  input: z.strictObject({ projectId: projectIdParam, ...ProjectPatchSchema.shape }),
-  output: ProjectSchema,
+  input: z.strictObject({
+    projectId: projectIdParam,
+    ...ProjectPatchSchema.shape,
+    anthropicApiKey: z.string().regex(ANTHROPIC_API_KEY_PATTERN).nullable().optional().meta({
+      description:
+        "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it",
+    }),
+  }),
+  output: ProjectSchema.extend({ anthropicApiKeySet: z.boolean() }),
   rest: { method: "PUT", path: "/projects/{projectId}" },
   mcp: { expose: true, name: "boof_update_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Updated project ${p.id}`,
-  handler: (ctx, { projectId, ...patch }) =>
-    ctx.services.updateProject(projectId, patch, ctx.principal),
+  audit: ({ anthropicApiKey }) =>
+    anthropicApiKey === undefined
+      ? {}
+      : { anthropicApiKey: anthropicApiKey === null ? "removed" : "set" },
+  handler: async (ctx, { projectId, anthropicApiKey, ...patch }) => {
+    if (anthropicApiKey !== undefined) {
+      if (
+        ctx.principal.kind === "client" &&
+        (ctx.principal.trust === "review" || ctx.principal.id === "local-mcp")
+      ) {
+        throw new OpError(403, "forbidden", "forbidden_trust");
+      }
+    }
+    const project = await ctx.services.updateProject(projectId, patch, ctx.principal);
+    if (typeof anthropicApiKey === "string")
+      await ctx.services.projectKeys.set(projectId, anthropicApiKey);
+    else if (anthropicApiKey === null) await ctx.services.projectKeys.delete(projectId);
+    return { ...project, anthropicApiKeySet: await ctx.services.hasProjectKey(projectId) };
+  },
 });
 
 export const projectsArchive = defineOp({

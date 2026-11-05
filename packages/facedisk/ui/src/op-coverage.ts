@@ -124,6 +124,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
   "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
   "accounts.list": { where: "listAccounts — AccountsPage (pool account list)" },
+  "accounts.agentSdk": { none: "UI in 8b Task 9" }, // UI in 8b Task 9
   "accounts.health": { where: "accountsHealth — AccountsPage (pool status and gate)" },
   "accounts.pause": { where: "accountAction — AccountsPage (pause an account)" },
   "accounts.resume": { where: "accountAction — AccountsPage (resume an account)" },

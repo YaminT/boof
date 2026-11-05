@@ -20,6 +20,7 @@ import {
   PublicClientSchema,
   BudgetExceededListSchema,
   BudgetStatusSchema,
+  AgentAuthStatusSchema,
   PoolStatusSchema,
   PublicSettingsSchema,
   TaskViewSchema,
@@ -247,6 +248,7 @@ export const runnerStatus = defineOp({
     budgetExceeded: BudgetExceededListSchema,
     /** The account pool (absent when settings.owlish is not set). */
     pool: PoolStatusSchema,
+    agentAuth: AgentAuthStatusSchema,
   }),
   rest: { method: "GET", path: "/runner" },
   mcp: { expose: true, name: "boof_get_runner", annotations: READ },
@@ -259,6 +261,9 @@ export const runnerStatus = defineOp({
       concurrency: runner.concurrency,
       budgetExceeded: budget.exceeded,
       pool: await ctx.services.poolStatus(),
+      agentAuth: await ctx.services.agentAuthStatus((pid: string) =>
+        authorizeProject(ctx.principal, pid),
+      ),
     };
   },
 });
@@ -278,6 +283,7 @@ export const runnerOverview = defineOp({
     budgetExceeded: BudgetExceededListSchema,
     /** The account pool (absent when settings.owlish is not set). */
     pool: PoolStatusSchema,
+    agentAuth: AgentAuthStatusSchema,
     projects: z.array(
       z.object({
         id: z.string(),
@@ -321,6 +327,9 @@ export const runnerOverview = defineOp({
       concurrency: runner.concurrency,
       budgetExceeded: budget.exceeded,
       pool: await ctx.services.poolStatus(),
+      agentAuth: await ctx.services.agentAuthStatus((pid: string) =>
+        authorizeProject(ctx.principal, pid),
+      ),
       projects,
     };
   },

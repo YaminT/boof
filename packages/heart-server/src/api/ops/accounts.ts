@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { defineOp } from "../define-op.js";
-import { AccountSchema, OkSchema, PoolStatusSchema } from "../schemas.js";
+import {
+  AccountSchema,
+  AgentSdkEligibilitySchema,
+  OkSchema,
+  PoolStatusSchema,
+} from "../schemas.js";
 import { accountIdParam, IDEMPOTENT_WRITE, READ } from "./common.js";
 import { assertMayWriteSettings } from "./admin.js";
 
@@ -28,6 +33,21 @@ export const accountsList = defineOp({
     if (!(await ctx.services.owlishClient())) return { configured: false, accounts: [] };
     return { configured: true, accounts: await ctx.services.withPool((c) => c.accounts()) };
   },
+});
+
+export const accountsAgentSdk = defineOp({
+  name: "accounts.agentSdk",
+  title: "Claude Agent SDK eligibility",
+  description:
+    "Checks whether every better-ccflare account uses API-key authentication. Input: optional refresh. No side effects.",
+  scope: "settings:read",
+  projectScoped: false,
+  input: z.strictObject({ refresh: z.boolean().optional() }),
+  output: AgentSdkEligibilitySchema,
+  rest: { method: "GET", path: "/accounts/agent-sdk" },
+  mcp: { expose: true, name: "boof_get_agent_sdk_eligibility", annotations: READ },
+  summary: (r) => (r.allowed ? "Claude Agent SDK gateway eligible" : r.reason),
+  handler: (ctx) => ctx.services.agentSdkEligibility(),
 });
 
 export const accountsHealth = defineOp({
@@ -163,6 +183,7 @@ export const accountsThresholds = defineOp({
 
 export const accountOps = [
   accountsList,
+  accountsAgentSdk,
   accountsHealth,
   accountsPause,
   accountsResume,

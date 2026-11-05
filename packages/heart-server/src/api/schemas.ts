@@ -104,11 +104,36 @@ export const PlanViewSchema = PlanSchema.extend({
 
 /** A project as `projects.get` and `projects.list` show it: the stored project plus the live branch. */
 export const ProjectViewSchema = ProjectSchema.extend({
+  anthropicApiKeySet: z.boolean(),
   currentBranch: z.string().nullable().meta({
     description:
       "Branch checked out in the working directory (git symbolic-ref); null when detached or not a repository.",
   }),
 });
+
+export const AgentSdkEligibilitySchema = z.object({
+  gateway: z.enum(["absent", "checked"]),
+  allowed: z.boolean(),
+  reason: z.string(),
+  blocking: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      provider: z.string().nullable(),
+      why: z.enum(["subscription", "oauth-token", "unknown-type"]),
+    }),
+  ),
+  checkedAt: z.string(),
+});
+export const AgentAuthStatusSchema = z.array(
+  z.object({
+    projectId: z.string(),
+    roles: z.array(z.enum(["planner", "developer", "observer", "reviewer"])),
+    allowed: z.boolean(),
+    via: z.enum(["gateway", "project-key"]).nullable(),
+    reason: z.string().nullable(),
+  }),
+);
 
 /** An epic with its derived progress: non-archived top-level tasks and how many are done. */
 export const EpicViewSchema = EpicSchema.extend({

@@ -56,7 +56,19 @@ export const InjectModeSchema = z.enum(["next-step", "now"]).meta({
     "`next-step` (default): the prompt is picked up before the next pipeline step. `now`: also interrupts the running step, which is resumed (or rerun) with the prompt.",
 });
 export const InjectBody = z
-  .object({ prompt: z.string().max(100_000), mode: InjectModeSchema.default("next-step") })
+  .object({
+    prompt: z.string().max(100_000),
+    mode: InjectModeSchema.default("next-step"),
+    model: z
+      .string()
+      .regex(/^[A-Za-z0-9._:\[\]/-]{1,100}$/)
+      .optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.model !== undefined && v.mode !== "now") {
+      ctx.addIssue({ code: "custom", path: ["model"], message: "model needs mode now" });
+    }
+  })
   .strict();
 export const AnswersBody = z.object({ answers: z.string().max(200_000) }).strict();
 export const CommandBody = z

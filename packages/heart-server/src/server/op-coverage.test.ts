@@ -93,6 +93,7 @@ describe("UI coverage of the operations", () => {
         "settings.models",
         "runner.status",
         "runner.overview",
+        "accounts.agentSdk",
       ]
     `);
   });
