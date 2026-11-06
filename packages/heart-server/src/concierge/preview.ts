@@ -132,10 +132,28 @@ export async function previewChange(
 }
 
 function capDetails(details: Detail[]): string[] {
-  const lines = details.map((detail) => ({ kind: detail.kind, text: sanitize(detail.text) }));
+  const lines = details
+    .map((detail) => ({ kind: detail.kind, text: sanitize(detail.text) }))
+    .sort((a, b) => {
+      const rank = (line: Detail) =>
+        line.kind === "warning"
+          ? 0
+          : line.text.startsWith("status:")
+            ? 1
+            : KIND_ORDER.indexOf(line.kind) + 2;
+      return rank(a) - rank(b);
+    });
   if (lines.length <= DETAIL_CAP) return lines.map((line) => line.text);
-  const head = lines.slice(0, DETAIL_CAP - 1);
-  const rest = lines.slice(DETAIL_CAP - 1);
+  const critical = lines.filter(
+    (line) => line.kind === "warning" || line.text.startsWith("status:"),
+  );
+  const ordinary = lines.filter(
+    (line) => line.kind !== "warning" && !line.text.startsWith("status:"),
+  );
+  const room = Math.max(0, DETAIL_CAP - critical.length - 1);
+  const kept = [...critical, ...ordinary.slice(0, room)];
+  const rest = ordinary.slice(room);
+  if (rest.length === 0) return kept.map((line) => line.text);
   const counts = new Map<string, number>();
   for (const line of rest) counts.set(line.kind, (counts.get(line.kind) ?? 0) + 1);
   const parts: string[] = [];
@@ -156,7 +174,7 @@ function capDetails(details: Detail[]): string[] {
     if (seen.has(kind)) continue;
     parts.push(`${n} more ${label(kind, n)}`);
   }
-  return [...head.map((line) => line.text), `…and ${rest.length} more (${parts.join(", ")})`];
+  return [...kept.map((line) => line.text), `…and ${rest.length} more (${parts.join(", ")})`];
 }
 
 async function buildPreview(
@@ -216,7 +234,17 @@ function changeTitle(
 }
 
 function quoteLine(line: string): string {
-  return `"${cleanText(line, PART_MAX)}"`;
+  return `"${cleanText(maskSecrets(line), PART_MAX)}"`;
+}
+
+function maskSecrets(value: string): string {
+  return value
+    .replace(/sk-ant-[A-Za-z0-9_-]{12,}/g, "[REDACTED]")
+    .replace(/github_pat_[A-Za-z0-9_]{12,}/g, "[REDACTED]")
+    .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, "[REDACTED]")
+    .replace(/xox[abp]-[A-Za-z0-9-]{12,}/g, "[REDACTED]")
+    .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]")
+    .replace(/\b(?:[A-Fa-f0-9]{40,}|[A-Za-z0-9+/]{40,}={0,2})\b/g, "[REDACTED]");
 }
 
 function proseLines(body: string): string[] {
@@ -229,13 +257,35 @@ function proseLines(body: string): string[] {
 function proseDiff(before: string, after: string): string[] {
   const oldLines = before.split("\n");
   const newLines = after.split("\n");
-  const changed: { old: string; neu: string }[] = [];
-  const count = Math.max(oldLines.length, newLines.length);
-  for (let i = 0; i < count; i += 1) {
-    const oldLine = oldLines[i] ?? "";
-    const newLine = newLines[i] ?? "";
-    if (oldLine !== newLine) changed.push({ old: oldLine, neu: newLine });
+  const lcs = Array.from({ length: oldLines.length + 1 }, () =>
+    Array<number>(newLines.length + 1).fill(0),
+  );
+  for (let i = oldLines.length - 1; i >= 0; i -= 1) {
+    for (let j = newLines.length - 1; j >= 0; j -= 1) {
+      lcs[i][j] =
+        oldLines[i] === newLines[j]
+          ? lcs[i + 1][j + 1] + 1
+          : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
   }
+  const removed: string[] = [];
+  const added: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < oldLines.length || j < newLines.length) {
+    if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+      i += 1;
+      j += 1;
+    } else if (j < newLines.length && (i === oldLines.length || lcs[i][j + 1] >= lcs[i + 1][j])) {
+      added.push(newLines[j++]);
+    } else {
+      removed.push(oldLines[i++]);
+    }
+  }
+  const changed = Array.from({ length: Math.max(removed.length, added.length) }, (_, index) => ({
+    old: removed[index] ?? "",
+    neu: added[index] ?? "",
+  }));
   if (changed.length === 0) return [];
   const shown = changed
     .slice(0, PROSE_LINES)
@@ -253,15 +303,15 @@ function sameValue(before: unknown, after: unknown): boolean {
 function showValue(value: unknown): string {
   if (value === null || value === undefined) return "(none)";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "string") return `"${cleanText(value, PART_MAX)}"`;
+  if (typeof value === "string") return `"${cleanText(maskSecrets(value), PART_MAX)}"`;
   if (
     Array.isArray(value) &&
     value.every((item) => ["string", "number", "boolean"].includes(typeof item))
   ) {
     if (value.length === 0) return "(none)";
-    return cleanText(value.map(String).join(", "), PART_MAX);
+    return cleanText(maskSecrets(value.map(String).join(", ")), PART_MAX);
   }
-  return `"${cleanText(JSON.stringify(value) ?? "", PART_MAX)}"`;
+  return `"${cleanText(maskSecrets(JSON.stringify(value) ?? ""), PART_MAX)}"`;
 }
 
 function pushField(
@@ -462,7 +512,11 @@ async function removeGoal(
   const dependents = dependentIds(plan.goals, goalId);
   const doomed = new Set([goalId, ...(cascade ? dependents : [])]);
   const byId = new Map(plan.goals.map((item) => [item.id, item]));
-  const names = dependents.map((id) => goalLabel(byId.get(id)!)).join(", ");
+  const names = dependents
+    .slice(0, 5)
+    .map((id) => goalLabel(byId.get(id)!))
+    .join(", ");
+  const moreNames = dependents.length > 5 ? `, +${dependents.length - 5} more` : "";
   const title = `Remove goal "${cleanTitle(goal.title)}" from plan "${cleanTitle(plan.title)}"`;
   const guard: PendingChange["guard"] = {
     kind: "plan",
@@ -476,7 +530,7 @@ async function removeGoal(
       details: [
         {
           kind: "warning",
-          text: `Confirming will fail with 409 goal_has_dependents: ${names}`,
+          text: `Confirming will fail with 409 goal_has_dependents: ${names}${moreNames}`,
         },
       ],
       destructive,
@@ -485,7 +539,7 @@ async function removeGoal(
   }
   const details: Detail[] = [];
   if (cascade && dependents.length > 0) {
-    details.push({ kind: "removed", text: `Also removes goals: ${names}` });
+    details.push({ kind: "removed", text: `Also removes goals: ${names}${moreNames}` });
   }
   // No mayArchive or mayStop filter: that narrowing is the user's, and apply does it.
   // Listing every task here overstates a review-trust user; it never hides an effect.
