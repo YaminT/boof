@@ -90,6 +90,43 @@ export function usageFromSdkResult(
   return { inputTokens, outputTokens, costUsd, known: known && (!baseline || deltaApplied) };
 }
 
+/**
+ * Redacts a streamed string, holding back a suffix so a secret split across chunks is not emitted
+ * until it can be replaced whole.
+ */
+export function createStreamRedactor(
+  secrets: readonly string[],
+  emit: (text: string) => void,
+): { push(text: string): void; flush(): void } {
+  let streamCarry = "";
+  const scrub = (text: string) => redactSecrets(text, secrets);
+  const maxSecretLength = Math.max(0, ...secrets.map((secret) => secret.length));
+  return {
+    push(text: string) {
+      streamCarry += text;
+      let cutoff = Math.max(0, streamCarry.length - maxSecretLength);
+      for (const secret of secrets) {
+        let from = 0;
+        while (secret.length && (from = streamCarry.indexOf(secret, from)) !== -1) {
+          const end = from + secret.length;
+          if (from < cutoff && end > cutoff) cutoff = from;
+          from = end;
+        }
+      }
+      if (cutoff > 0) {
+        const safe = scrub(streamCarry.slice(0, cutoff));
+        streamCarry = streamCarry.slice(cutoff);
+        if (safe) emit(safe);
+      }
+    },
+    flush() {
+      const safe = scrub(streamCarry);
+      streamCarry = "";
+      if (safe) emit(safe);
+    },
+  };
+}
+
 export interface ClaudeAgentToolOptions {
   loadSdk?: () => Promise<AgentSdk>;
   resolveExecutable?: typeof resolveClaudeAgentExecutable;
@@ -294,32 +331,8 @@ export class ClaudeAgentTool implements Tool {
         query.close();
       }
     };
-    let streamCarry = "";
-    const maxSecretLength = Math.max(0, ...secrets.map((secret) => secret.length));
-    const streamRedact = (text: string, flush = false) => {
-      streamCarry += text;
-      if (flush) {
-        const safe = scrub(streamCarry);
-        streamCarry = "";
-        if (safe) opts.onChunk?.(safe);
-        return;
-      }
-      let cutoff = Math.max(0, streamCarry.length - maxSecretLength);
-      for (const secret of secrets) {
-        let from = 0;
-        while (secret.length && (from = streamCarry.indexOf(secret, from)) !== -1) {
-          const end = from + secret.length;
-          if (from < cutoff && end > cutoff) cutoff = from;
-          from = end;
-        }
-      }
-      if (cutoff > 0) {
-        const safe = scrub(streamCarry.slice(0, cutoff));
-        streamCarry = streamCarry.slice(cutoff);
-        if (safe) opts.onChunk?.(safe);
-      }
-    };
-    const renderer = new StreamRenderer((text) => streamRedact(text));
+    const redactor = createStreamRedactor(secrets, (text) => opts.onChunk?.(text));
+    const renderer = new StreamRenderer((text) => redactor.push(text));
     let sessionId: string | undefined;
     let lastUsage: TokenUsage | undefined;
     let result: Record<string, unknown> | undefined;
@@ -573,7 +586,7 @@ export class ClaudeAgentTool implements Tool {
       );
     } finally {
       renderer.flush();
-      streamRedact("", true);
+      redactor.flush();
       clearInterval(poll);
       if (deadline) clearTimeout(deadline);
       if (idleTimer) clearTimeout(idleTimer);
