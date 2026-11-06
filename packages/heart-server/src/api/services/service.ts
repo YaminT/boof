@@ -8,6 +8,7 @@ import {
   decideAgentAuth,
   withAgentKey,
   agentAuthRefusalMessage,
+  agentKeyIsSeparate,
   type AgentSdkEligibility,
   type PoolStatus,
 } from "@boof/owlish";
@@ -987,10 +988,11 @@ export class TaskService {
       }
       const gateway = settings.owlish;
       const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
-      let hasAgentKey = false;
+      let agentKey: string | null = null;
+      let adminKey: string | null = null;
       try {
-        hasAgentKey = Boolean(await this.owlishSecrets.getAgent());
-        await this.owlishSecrets.get();
+        agentKey = await this.owlishSecrets.getAgent();
+        adminKey = await this.owlishSecrets.get();
       } catch {
         result.push({
           projectId: project.id,
@@ -1004,11 +1006,19 @@ export class TaskService {
         });
         continue;
       }
-      if (gateway && useGateway && hasAgentKey && gatewayEligibility === undefined)
+      const hasAgentKey = Boolean(agentKey);
+      const keysAreSeparate = agentKeyIsSeparate(adminKey, agentKey);
+      if (
+        gateway &&
+        useGateway &&
+        hasAgentKey &&
+        keysAreSeparate &&
+        gatewayEligibility === undefined
+      )
         gatewayEligibility = await this.agentSdkEligibility();
       const eligibility =
         gateway && useGateway
-          ? hasAgentKey
+          ? hasAgentKey && keysAreSeparate
             ? (gatewayEligibility ?? null)
             : {
                 gateway: "checked" as const,
@@ -1026,8 +1036,9 @@ export class TaskService {
         hasProjectKey,
         // agentSdkEligibility() already applied the agent-key rule: `allowed` implies a key.
         hasAgentKey,
+        keysAreSeparate,
       });
-      const waiting = hasAgentKey && !!eligibility?.failure;
+      const waiting = hasAgentKey && keysAreSeparate && !!eligibility?.failure;
       result.push({
         projectId: project.id,
         roles: [...roles],

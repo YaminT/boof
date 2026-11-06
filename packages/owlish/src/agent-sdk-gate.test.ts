@@ -143,4 +143,29 @@ describe("decideAgentAuth", () => {
         'claude-agent cannot start: no better-ccflare gateway is configured. Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI. Set an Anthropic API key for project "My project" (Settings › Project), or use claude-code for this role.',
     });
   });
+  it("refuses or falls back when the admin and agent keys are equal", () => {
+    const equalKeysAreSeparate = false;
+    for (const hasProjectKey of [false, true]) {
+      expect(
+        decideAgentAuth({
+          projectName: "p",
+          choice: "gateway",
+          gatewayConfigured: true,
+          eligibility: allowed,
+          hasProjectKey,
+          hasAgentKey: true,
+          keysAreSeparate: equalKeysAreSeparate,
+        }),
+      ).toMatchObject(
+        hasProjectKey
+          ? { ok: true, via: "project-key" }
+          : {
+              ok: false,
+              reason: expect.stringContaining(
+                "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+              ),
+            },
+      );
+    }
+  });
 });

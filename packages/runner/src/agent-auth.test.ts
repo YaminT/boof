@@ -238,6 +238,41 @@ describe("AgentAuthResolver", () => {
     expect(fallback).toMatchObject({ ok: true, via: "project-key" });
     server.close();
   });
+  it("treats env-equal admin and agent keys as an unusable gateway", async () => {
+    const { server, url } = await listen(
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    );
+    const base = {
+      root: "/tmp/unused",
+      loadSettings: async () => settings(url),
+      readGatewayKey: async () => "SAME-ENV-KEY",
+      readAgentKey: async () => "SAME-ENV-KEY",
+    };
+    const fallback = await new AgentAuthResolver({
+      ...base,
+      projectKeys: {
+        has: async () => true,
+        get: async () => "sk-ant-api03-1234567890123456",
+      } as never,
+    }).decide(makeProject());
+    expect(fallback).toMatchObject({ ok: true, via: "project-key" });
+    expect(JSON.stringify(fallback)).not.toContain("SAME-ENV-KEY");
+
+    const refused = await new AgentAuthResolver({
+      ...base,
+      projectKeys: { has: async () => false } as never,
+    }).decide(makeProject());
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+      ),
+    });
+    expect(JSON.stringify(refused)).not.toContain("SAME-ENV-KEY");
+    server.close();
+  });
   it("does not request eligibility without an agent key, even during gateway outage", async () => {
     const fetcher = vi.fn(fetch);
     const projectKeys = { has: async () => false } as never;
@@ -273,23 +308,19 @@ describe("AgentAuthResolver", () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it("refuses credentials when the agent key equals the admin key", async () => {
-    const { server, url } = await listen(
-      JSON.stringify([
-        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
-      ]),
-    );
+  it("refuses the gateway decision when the agent key equals the admin key", async () => {
     const resolver = new AgentAuthResolver({
       root: "/tmp/unused",
-      loadSettings: async () => settings(url),
+      loadSettings: async () => settings("http://127.0.0.1:8089"),
       readGatewayKey: async () => "same-secret",
       readAgentKey: async () => "same-secret",
     });
-    const decision = await resolver.decide(makeProject());
-    await expect(resolver.credentials(makeProject(), decision as never)).rejects.toThrow(
-      "the agent key must be a separate api-only better-ccflare key, not the admin client key",
-    );
-    server.close();
+    await expect(resolver.decide(makeProject())).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+      ),
+    });
   });
   it("does not classify a refusal by an account name containing unreachable", async () => {
     const { server, url } = await listen(

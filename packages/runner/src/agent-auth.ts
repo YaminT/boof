@@ -4,6 +4,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   agentAuthRefusalMessage,
+  agentKeyIsSeparate,
   decideAgentAuth,
   OwlishClient,
   ProjectKeyStore,
@@ -12,7 +13,7 @@ import {
   type AgentSdkEligibility,
 } from "@boof/owlish";
 import { gatewayEnv } from "./gateway-env.js";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 
 const refusal = (project: Project, why: string) => agentAuthRefusalMessage(project.name, why);
 
@@ -92,9 +93,18 @@ export class AgentAuthResolver {
         return decision;
       }
 
-      // A gateway cannot serve the Agent SDK without the separate child credential.
+      // A gateway cannot serve the Agent SDK without a distinct child credential.
       // Decide locally so outages never turn this definite refusal/fallback into a wait.
-      if (choice === "gateway" && gateway && !agentKey) {
+      let gatewayKey: string | null = null;
+      if (choice === "gateway" && gateway) {
+        try {
+          gatewayKey = await this.options.readGatewayKey();
+        } catch {
+          // Handled below as unavailable.
+        }
+      }
+      const keysAreSeparate = agentKeyIsSeparate(gatewayKey, agentKey);
+      if (choice === "gateway" && gateway && (!agentKey || !keysAreSeparate)) {
         return decideAgentAuth({
           projectName: project.name,
           choice,
@@ -108,6 +118,7 @@ export class AgentAuthResolver {
           },
           hasProjectKey,
           hasAgentKey: false,
+          keysAreSeparate,
         });
       }
 
@@ -116,13 +127,7 @@ export class AgentAuthResolver {
       if (gateway) {
         // A missing/unreadable gateway key closes the gateway route, but a project's
         // explicitly stored key remains an independent compliant credential.
-        let key: string | null = null;
-        try {
-          key = await this.options.readGatewayKey();
-        } catch {
-          // Treat key-store read errors like a closed gateway; decideAgentAuth will
-          // either fall back to the project key or refuse with a key-free reason.
-        }
+        const key = gatewayKey;
         if (!key) {
           eligibility = {
             gateway: "checked",
@@ -172,6 +177,7 @@ export class AgentAuthResolver {
         eligibility,
         hasProjectKey,
         hasAgentKey: Boolean(agentKey),
+        keysAreSeparate,
       });
       if (decision.ok && decision.via === "gateway")
         this.checked.set(decision, {
@@ -210,18 +216,6 @@ export class AgentAuthResolver {
       const settings = await this.options.loadSettings();
       const key = await this.options.readGatewayKey();
       const agentKey = await this.options.readAgentKey();
-      if (
-        key &&
-        agentKey &&
-        key.length === agentKey.length &&
-        timingSafeEqual(Buffer.from(key), Buffer.from(agentKey))
-      )
-        throw new AgentAuthRefusedError(
-          refusal(
-            project,
-            "the agent key must be a separate api-only better-ccflare key, not the admin client key",
-          ),
-        );
       if (
         !checked ||
         !settings.owlish ||

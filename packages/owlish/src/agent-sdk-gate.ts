@@ -1,4 +1,5 @@
 import type { AccountSummary } from "./owlish.js";
+import { timingSafeEqual } from "node:crypto";
 
 export const AGENT_SDK_API_KEY_PROVIDERS: ReadonlySet<string> = new Set([
   "claude-console-api",
@@ -114,6 +115,14 @@ export function agentAuthRefusalMessage(projectName: string, why: string): strin
 /** Why a gateway without an agent key cannot serve claude-agent. */
 export const AGENT_KEY_REQUIRED =
   "set an api-only better-ccflare agent key (Settings › Accounts) or a project API key";
+export const AGENT_KEY_MUST_BE_SEPARATE =
+  "the agent key must be a separate api-only better-ccflare key, not the admin client key";
+
+/** Compare effective secrets without exposing them or leaking a length-dependent comparison. */
+export function agentKeyIsSeparate(adminKey: string | null, agentKey: string | null): boolean {
+  if (!adminKey || !agentKey || adminKey.length !== agentKey.length) return true;
+  return !timingSafeEqual(Buffer.from(adminKey), Buffer.from(agentKey));
+}
 
 /**
  * The gateway is usable for claude-agent only with an agent key: boof's admin key never goes to
@@ -122,7 +131,10 @@ export const AGENT_KEY_REQUIRED =
 export function withAgentKey(
   eligibility: AgentSdkEligibility,
   hasAgentKey: boolean,
+  keysAreSeparate = true,
 ): AgentSdkEligibility {
+  if (!keysAreSeparate)
+    return { ...eligibility, allowed: false, reason: AGENT_KEY_MUST_BE_SEPARATE };
   return eligibility.allowed && !hasAgentKey
     ? { ...eligibility, allowed: false, reason: AGENT_KEY_REQUIRED }
     : eligibility;
@@ -136,6 +148,8 @@ export function decideAgentAuth(input: {
   hasProjectKey: boolean;
   /** An api-only agent key is stored; gateway mode needs it (default: none). */
   hasAgentKey?: boolean;
+  /** Effective admin and child keys must be distinct. */
+  keysAreSeparate?: boolean;
 }): AgentAuthDecision {
   const refuse = (why: string): AgentAuthDecision => ({
     ok: false,
@@ -146,7 +160,7 @@ export function decideAgentAuth(input: {
       ? { ok: true, via: "project-key", note: null }
       : refuse("the project uses its own API key, but none is set");
   const eligibility = input.eligibility
-    ? withAgentKey(input.eligibility, input.hasAgentKey === true)
+    ? withAgentKey(input.eligibility, input.hasAgentKey === true, input.keysAreSeparate !== false)
     : null;
   const why = !input.gatewayConfigured
     ? "no better-ccflare gateway is configured"
