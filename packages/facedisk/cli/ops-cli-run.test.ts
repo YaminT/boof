@@ -391,6 +391,23 @@ describe("generated commands", () => {
       });
     });
 
+    it("does not record a rejected project id", async () => {
+      await seed();
+      const secret = "sk-ant-api03-OPSSECRET XX";
+      const before = (await auditLines()).length;
+      expect(await run(["epics", "create", "--project", secret, "--title", "T"])).not.toBe(0);
+      const lines = (await auditLines()).slice(before);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        action: "cli:epics.create",
+        via: "cli",
+        outcome: "error",
+        error: "invalid_input",
+      });
+      expect(lines[0]).not.toHaveProperty("project");
+      expect(JSON.stringify(lines)).not.toMatch(/sk-ant-api03/i);
+    });
+
     it("writes nothing when security.audit.enabled is false", async () => {
       await seed();
       const settings = await new SettingsStore(root).load();

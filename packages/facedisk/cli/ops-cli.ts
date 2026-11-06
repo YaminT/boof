@@ -2,7 +2,7 @@
  * The generated CLI: every operation of the registry as `boof-runner <area> <verb>`. This half is
  * pure: command paths and argument parsing. Execution is in the second half of the file.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
@@ -519,17 +519,22 @@ export async function opsCommand(
     // One audit line per operation run, the same log and settings as the web server's: who, what,
     // project, outcome, timing; never the arguments.
     const startedAt = Date.now();
-    const audited = (ok: boolean, code?: string) =>
-      auditOperation(root, {
+    const audited = (ok: boolean, code?: string) => {
+      // Same rule as the hand-written commands: no line into a data root that is not there,
+      // and a rejected project id (a pasted key) is not a project.
+      if (!existsSync(root)) return Promise.resolve();
+      const projectId = input.projectId;
+      return auditOperation(root, {
         principal: ctx.principal,
         action: `cli:${op.name}`,
         via: "cli",
-        project: typeof input.projectId === "string" ? input.projectId : undefined,
+        project: typeof projectId === "string" && isKebabId(projectId) ? projectId : undefined,
         ok,
         code,
         ms: Date.now() - startedAt,
         at: startedAt,
       });
+    };
     let result: unknown;
     try {
       result = (await op.execute(ctx, input)) as unknown;

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   EpicError,
   HierarchyError,
@@ -11,6 +12,7 @@ import {
   ProjectResolutionError,
   TaskNotFoundError,
   auditOperation,
+  isKebabId,
   LOCAL_PRINCIPAL,
 } from "@boof/heart";
 import { ZodError } from "zod";
@@ -45,16 +47,27 @@ export interface CliAudit {
   failCode(code: string, project?: string): Promise<void>;
 }
 
+/** A project id safe to store. Anything else, including a pasted key, is omitted. */
+function storedProject(id: string | undefined): string | undefined {
+  return isKebabId(id) ? id : undefined;
+}
+
 /**
  * Start a timer for one hand-written CLI write. Call `ok`, `fail` or `failCode` once when the
  * write finishes. The line is `auditOperation` with `via: "cli"` and action `cli:<command>`
  * (`cli:project.add`): principal, action, project, outcome, timing. Usage checks that return
  * before this stay unaudited, same as the generated CLI.
+ *
+ * The project field keeps a kebab-case id only. A missing data root writes nothing and is not
+ * created: a refusal must not leave `./data` behind. Commands that scaffold a root do that
+ * themselves before they record success.
  */
 export function beginCliAudit(root: string, action: string, project?: string): CliAudit {
   const at = Date.now();
   const write = (ok: boolean, code: string | undefined, projectOverride?: string) => {
-    const chosen = projectOverride ?? project;
+    if (!existsSync(root)) return Promise.resolve();
+    const chosen =
+      projectOverride !== undefined ? storedProject(projectOverride) : storedProject(project);
     return auditOperation(root, {
       principal: CLI_PRINCIPAL,
       action,
@@ -71,4 +84,21 @@ export function beginCliAudit(root: string, action: string, project?: string): C
     fail: (e, projectOverride) => write(false, cliAuditCode(e), projectOverride),
     failCode: (code, projectOverride) => write(false, code, projectOverride),
   };
+}
+
+/**
+ * Audit a write that failed while resolving `--project`. An unknown or invalid project is an
+ * error inside the command, so it writes one line, as the generated CLI does. A missing flag
+ * (`projectOpt` undefined) is a usage error and writes none.
+ */
+export async function auditProjectRefusal(
+  root: string,
+  action: string,
+  projectOpt: string | undefined,
+  e: unknown,
+): Promise<void> {
+  if (projectOpt === undefined) return;
+  const audit = beginCliAudit(root, action, projectOpt);
+  if (e instanceof InvalidIdError || e instanceof ProjectResolutionError) await audit.fail(e);
+  else await audit.failCode("project_resolution");
 }

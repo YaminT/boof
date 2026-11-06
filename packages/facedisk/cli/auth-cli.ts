@@ -135,7 +135,11 @@ export async function authCommand(
           ? "*"
           : values.projects.split(",").map((p) => p.trim());
       const audit = beginCliAudit(root, "cli:auth.add");
+      // Load before create. A failure here means the key was not written. Once create returns,
+      // the write has happened: a later step records success, not an error.
+      let created = false;
       try {
+        const mode = securitySettings(await new SettingsStore(root).load()).auth.mode;
         const { client, key } = await store.create({
           name: values.name.trim(),
           kind: kind.data,
@@ -144,12 +148,12 @@ export async function authCommand(
           trust: trust.data,
           expiresAt,
         });
+        created = true;
         out(`Created client "${client.id}" (${client.trust} trust).`);
         out("");
         out(`  ${key}`);
         out("");
         out("Store this key now; it is shown once and cannot be recovered.");
-        const mode = securitySettings(await new SettingsStore(root).load()).auth.mode;
         if (mode !== "required") {
           out(
             'Note: security.auth.mode is "local-trust"; set it to "required" in settings.json before using --host.',
@@ -158,7 +162,8 @@ export async function authCommand(
         await audit.ok();
         return 0;
       } catch (e) {
-        await audit.fail(e);
+        if (created) await audit.ok();
+        else await audit.fail(e);
         throw e;
       }
     }

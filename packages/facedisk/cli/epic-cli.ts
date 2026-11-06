@@ -13,7 +13,7 @@ import {
   scaffoldDataRoot,
 } from "@boof/heart";
 import { ZodError } from "zod";
-import { beginCliAudit } from "./cli-audit.js";
+import { auditProjectRefusal, beginCliAudit } from "./cli-audit.js";
 
 export const EPIC_HELP = `boof-runner epic — manage the epics (named groups of tasks) of a project
 
@@ -112,7 +112,22 @@ export async function epicCommand(
   await scaffoldDataRoot(root);
 
   try {
-    const { id: projectId, dir } = await resolveProjectDir(root, values.project);
+    let projectId: string;
+    let dir: string;
+    try {
+      ({ id: projectId, dir } = await resolveProjectDir(root, values.project));
+    } catch (e) {
+      if (sub === "add" || sub === "archive" || sub === "remove") {
+        const action =
+          sub === "add"
+            ? "cli:epic.add"
+            : sub === "archive"
+              ? "cli:epic.archive"
+              : "cli:epic.remove";
+        await auditProjectRefusal(root, action, values.project, e);
+      }
+      throw e;
+    }
     const epics = new EpicStore(dir);
     switch (sub) {
       case "add": {

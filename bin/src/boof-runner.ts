@@ -284,8 +284,20 @@ export async function serve(argv: string[]): Promise<void> {
   if (pendingSignal) void shutdown(pendingSignal);
 }
 
-/** `run` subcommand. Returns a process exit code. */
-export async function runCommand(argv: string[]): Promise<number> {
+/**
+ * Signal for a long `run`. Tests pass their own. Otherwise SIGINT aborts it so the process can
+ * still write the audit line (a bare Ctrl-C would die inside the agent and leave none).
+ */
+function trackInterrupts(signal?: AbortSignal): { signal: AbortSignal; stop: () => void } {
+  if (signal) return { signal, stop: () => {} };
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once("SIGINT", onSigint);
+  return { signal: controller.signal, stop: () => process.removeListener("SIGINT", onSigint) };
+}
+
+/** `run` subcommand. Returns a process exit code. `signal` stands in for SIGINT in tests. */
+export async function runCommand(argv: string[], signal?: AbortSignal): Promise<number> {
   const dataOpt = getOpt(argv, ["--data", "-d"]);
   const root = dataOpt ? absPath(dataOpt) : defaultDataRoot();
   const repo = getOpt(argv, ["--repo"]);
@@ -297,14 +309,29 @@ export async function runCommand(argv: string[]): Promise<number> {
 
   if (hasFlag(argv, ["--all"])) {
     const audit = beginCliAudit(root, "cli:run", project);
+    const held = trackInterrupts(signal);
     try {
-      const { failed } = await drainQueue({ root, ...(project ? { project } : {}) });
+      const { failed } = await drainQueue({
+        root,
+        ...(project ? { project } : {}),
+        signal: held.signal,
+      });
+      if (held.signal.aborted) {
+        await audit.failCode("interrupted");
+        return 130;
+      }
       if (failed > 0) await audit.failCode("not_done");
       else await audit.ok();
       return failed > 0 ? 1 : 0;
     } catch (e) {
+      if (held.signal.aborted) {
+        await audit.failCode("interrupted");
+        return 130;
+      }
       await audit.fail(e);
       throw e;
+    } finally {
+      held.stop();
     }
   }
 
@@ -324,6 +351,7 @@ export async function runCommand(argv: string[]): Promise<number> {
     return 1;
   }
   const audit = beginCliAudit(root, "cli:run", project);
+  const held = trackInterrupts(signal);
   try {
     const summary = await runTask({
       root,
@@ -337,13 +365,24 @@ export async function runCommand(argv: string[]): Promise<number> {
       ...(runsOpt ? { runs: Number(runsOpt) } : {}),
       ...(epic ? { epicId: epic } : {}),
       ...(parent ? { parentId: parent } : {}),
+      signal: held.signal,
     });
+    if (held.signal.aborted) {
+      await audit.failCode("interrupted", summary.projectId);
+      return 130;
+    }
     if (summary.ok) await audit.ok(summary.projectId);
     else await audit.failCode("not_done", summary.projectId);
     return summary.ok ? 0 : 1;
   } catch (e) {
+    if (held.signal.aborted) {
+      await audit.failCode("interrupted");
+      return 130;
+    }
     await audit.fail(e);
     throw e;
+  } finally {
+    held.stop();
   }
 }
 

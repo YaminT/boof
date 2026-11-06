@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -869,13 +870,28 @@ describe("hand-written CLI audit", () => {
     });
     failOn = null;
 
-    const name = `unit-${SECRET}`;
-    expect(await run(["uninstall", "--name", name, "-d", root])).toBe(0);
+    const elsewhere = await scratch();
+    const said: string[] = [];
+    const beforeUninstall = (await auditLines(root)).length;
+    expect(
+      await serviceCommand(
+        ["uninstall"],
+        () => elsewhere,
+        (l) => said.push(l),
+        () => {},
+        env,
+      ),
+    ).toBe(0);
+    expect(said.join("\n")).toContain("Removed boof-runner.service. Task data was not removed.");
+    expect((await auditLines(root)).length).toBe(beforeUninstall + 1);
     assertLine((await auditLines(root)).at(-1)!, {
       action: "cli:service.uninstall",
       outcome: "ok",
     });
-    expect(await run(["uninstall", "--name", name, "-d", root], { platform: "darwin" })).toBe(1);
+    expect(await auditLines(elsewhere)).toEqual([]);
+
+    expect(await run(["install", "-d", root])).toBe(0);
+    expect(await run(["uninstall"], { platform: "darwin" })).toBe(1);
     assertLine((await auditLines(root)).at(-1)!, {
       action: "cli:service.uninstall",
       outcome: "error",
@@ -885,7 +901,218 @@ describe("hand-written CLI audit", () => {
     await disableAudit(root);
     const frozen = (await auditLines(root)).length;
     expect(await run(["install", "-d", root, "--env", `API_TOKEN=${SECRET}`])).toBe(0);
-    expect(await run(["uninstall", "--name", name, "-d", root], { platform: "darwin" })).toBe(1);
+    expect(await run(["uninstall"], { platform: "darwin" })).toBe(1);
     expect(await auditLines(root)).toHaveLength(frozen);
+  });
+
+  it("does not record a rejected project id", async () => {
+    const root = await scratch();
+    const parent = await scratch();
+    const repo = await gitRepo(parent, "repo");
+    const addSecret = "sk-ant-api03-ADDSECRET XX";
+    const removeSecret = "sk-ant-api03-RMSECRET";
+    expect(
+      await projectCommand(
+        ["add", repo, "--id", addSecret, "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:project.add",
+      outcome: "error",
+      error: "invalid_id",
+    });
+    expect(
+      await projectCommand(
+        ["remove", removeSecret, "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:project.remove",
+      outcome: "error",
+      error: "invalid_id",
+    });
+    expect(JSON.stringify(await auditLines(root))).not.toMatch(/sk-ant-api03/i);
+
+    await addProject(root, repo);
+    const before = (await auditLines(root)).length;
+    expect(
+      await epicCommand(
+        ["add", "Title", "--project", "ghost", "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:epic.add",
+      outcome: "error",
+      project: "ghost",
+      error: "project_resolution",
+    });
+    expect(
+      await epicCommand(
+        ["list", "--project", "ghost", "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    expect(
+      await taskCommand(
+        ["move", "job", "--epic", "none", "--project", addSecret, "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:task.move",
+      outcome: "error",
+      error: "invalid_id",
+    });
+    expect(
+      await planCommand(
+        ["import", "--project", "ghost", "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:plan.import",
+      outcome: "error",
+      project: "ghost",
+      error: "project_resolution",
+    });
+    expect(
+      await planCommand(
+        [
+          "export",
+          "--project",
+          addSecret,
+          "--plan",
+          "repo",
+          "--out",
+          join(parent, "out"),
+          "-d",
+          root,
+        ],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    const written = (await auditLines(root)).slice(before);
+    expect(written.map((l) => l.action)).toEqual([
+      "cli:epic.add",
+      "cli:task.move",
+      "cli:plan.import",
+    ]);
+    expect(JSON.stringify(written)).not.toMatch(/sk-ant-api03/i);
+  });
+
+  it("remote setup that creates a key does not log the key", async () => {
+    const root = await scratch();
+    const out: string[] = [];
+    expect(
+      await remoteCommand(
+        ["setup", "--hostname", "example.com", "--name", "Harness", "-d", root],
+        () => root,
+        (l) => out.push(l),
+        () => {},
+      ),
+    ).toBe(0);
+    const key = out.find((l) => l.includes("boof_"))?.trim();
+    expect(key).toMatch(/^boof_/);
+    const lines = await auditLines(root);
+    expect(lines).toHaveLength(1);
+    assertLine(lines[0]!, { action: "cli:remote.setup", outcome: "ok" });
+    expect(JSON.stringify(lines)).not.toContain(key!);
+  });
+
+  it("an unwritable audit log does not fail the command", async () => {
+    const root = await scratch();
+    const parent = await scratch();
+    await addProject(root, await gitRepo(parent, "repo"));
+    await rm(join(root, "audit"), { recursive: true, force: true });
+    await writeFile(join(root, "audit"), "not-a-directory\n");
+    const errors: string[] = [];
+    const orig = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+    let code = 1;
+    try {
+      code = await epicCommand(
+        ["add", "Title", "--id", "ship", "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      );
+    } finally {
+      console.error = orig;
+    }
+    expect(code).toBe(0);
+    expect(errors.join("\n")).toContain("audit write failed");
+  });
+
+  it("a missing data root is not created to audit a refusal", async () => {
+    const cwd = await realpath(await scratch());
+    const prev = process.cwd();
+    process.chdir(cwd);
+    const missing = join(process.cwd(), "data");
+    const home = await scratch();
+    const env: ServiceEnv = {
+      platform: "darwin",
+      home,
+      user: "tester",
+      path: "/usr/bin",
+      nodePath: "/usr/bin/node",
+      scriptPath: join(home, "missing.js"),
+      run: async () => ({ code: 0, stdout: "", stderr: "" }),
+      stream: async () => 0,
+      health: async () => ({ ok: true, summary: "ok" }),
+    };
+    const rootOf = () => join(process.cwd(), "data");
+    try {
+      expect(
+        await remoteCommand(
+          ["disable"],
+          rootOf,
+          () => {},
+          () => {},
+        ),
+      ).toBe(1);
+      expect(existsSync(missing)).toBe(false);
+      expect(
+        await serviceCommand(
+          ["install"],
+          rootOf,
+          () => {},
+          () => {},
+          env,
+        ),
+      ).toBe(1);
+      expect(existsSync(missing)).toBe(false);
+      expect(
+        await serviceCommand(
+          ["uninstall"],
+          rootOf,
+          () => {},
+          () => {},
+          env,
+        ),
+      ).toBe(1);
+      expect(existsSync(missing)).toBe(false);
+      expect(await auditLines(missing)).toEqual([]);
+    } finally {
+      process.chdir(prev);
+    }
   });
 });

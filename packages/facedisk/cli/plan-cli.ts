@@ -22,7 +22,7 @@ import {
   ProjectResolutionError,
   resolveProject,
 } from "@boof/heart";
-import { beginCliAudit } from "./cli-audit.js";
+import { auditProjectRefusal, beginCliAudit } from "./cli-audit.js";
 
 export const PLAN_HELP = `boof-runner plan — import, sync and export a project's plans
 
@@ -114,11 +114,22 @@ export async function planCommand(
 
   try {
     await scaffoldDataRoot(root);
-    const project = await resolveProject(
-      root,
-      values.project ? { project: values.project } : {},
-      (c) => out(c.replace(/\n$/, "")),
-    );
+    let project;
+    try {
+      project = await resolveProject(root, values.project ? { project: values.project } : {}, (c) =>
+        out(c.replace(/\n$/, "")),
+      );
+    } catch (e) {
+      if (sub !== "export") {
+        await auditProjectRefusal(
+          root,
+          sub === "import" ? "cli:plan.import" : "cli:plan.sync",
+          values.project,
+          e,
+        );
+      }
+      throw e;
+    }
     const projectDir = projectPaths(root, project.id).dir;
     const store = new PlanStore(projectDir);
 

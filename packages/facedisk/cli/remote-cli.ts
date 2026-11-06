@@ -260,23 +260,24 @@ async function setup(
   const store = new AuthStore(root);
   const audit = beginCliAudit(root, "cli:remote.setup");
 
-  // Check the client name before touching anything, so a refusal leaves settings unchanged.
-  if (!noKey) {
-    const id = toKebabId(name);
-    const taken = (await store.list()).find(
-      (c) => !c.revokedAt && (c.id === id || c.name.toLowerCase() === name.toLowerCase()),
-    );
-    if (taken) {
-      err(
-        `remote setup: a client named "${name}" already exists (id "${taken.id}"). Settings were not changed.\n` +
-          `Run "boof-runner auth rotate ${taken.id}" for a new key, pass --name <other>, or --no-key to only update settings.`,
-      );
-      await audit.failCode("client_exists");
-      return 1;
-    }
-  }
-
   try {
+    // Check the client name before touching anything, so a refusal leaves settings unchanged.
+    // Listing sits inside the audit so an unreadable clients file still leaves a line.
+    if (!noKey) {
+      const id = toKebabId(name);
+      const taken = (await store.list()).find(
+        (c) => !c.revokedAt && (c.id === id || c.name.toLowerCase() === name.toLowerCase()),
+      );
+      if (taken) {
+        err(
+          `remote setup: a client named "${name}" already exists (id "${taken.id}"). Settings were not changed.\n` +
+            `Run "boof-runner auth rotate ${taken.id}" for a new key, pass --name <other>, or --no-key to only update settings.`,
+        );
+        await audit.failCode("client_exists");
+        return 1;
+      }
+    }
+
     const raw = await readRawSettings(root);
     const sec = securityBlock(raw);
     const roots = ((v["allowed-root"] as string[] | undefined) ?? []).map(normaliseRoot);

@@ -8,7 +8,6 @@ import { parseArgs } from "node:util";
 import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof/heart";
 import { assertBindAllowed } from "@boof/heart-server";
 import { beginCliAudit } from "./cli-audit.js";
-import { dataRootOf } from "./epic-cli.js";
 
 export const SERVICE_HELP = `boof-runner service — run boof-runner as a systemd user service (Linux)
 
@@ -537,13 +536,12 @@ export async function serviceCommand(
     err(`service: invalid --name "${name}" (letters, digits, _ . @ -)`);
     return 1;
   }
-  const root = dataRootOf(typeof v.data === "string" ? v.data : undefined, defaultRoot);
   try {
     switch (sub) {
       case "install":
         return await install(v, name, defaultRoot, out, err, env);
       case "uninstall":
-        return await uninstall(name, out, err, env, root);
+        return await uninstall(name, out, err, env);
       case "status":
         return await status(name, out, err, env);
       case "logs":
@@ -801,17 +799,37 @@ async function install(
   }
 }
 
+/** Data root recorded in the unit the command is removing. Never `$PWD/data`. */
+async function servedDataRoot(env: ServiceEnv, name: string): Promise<string | undefined> {
+  const file = unitPath(env, name);
+  if (!existsSync(file)) return undefined;
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const saved = inspectInstallOptions(text);
+  if (saved.kind === "ok") return saved.options.data;
+  return readLegacyUnitOptions(text)?.data;
+}
+
 async function uninstall(
   name: string,
   out: (l: string) => void,
   err: (l: string) => void,
   env: ServiceEnv,
-  root: string,
 ): Promise<number> {
-  const audit = beginCliAudit(root, "cli:service.uninstall");
+  // The line goes to the data root the unit served, and only when that directory is already
+  // there. A missing unit has no recorded root, so uninstall does not create `$PWD/data`.
+  const served = await servedDataRoot(env, name);
+  const audit =
+    served !== undefined && existsSync(served)
+      ? beginCliAudit(served, "cli:service.uninstall")
+      : undefined;
   try {
     if (!(await requireSystemd(env, err))) {
-      await audit.failCode("no_systemd");
+      await audit?.failCode("no_systemd");
       return 1;
     }
     const file = unitPath(env, name);
@@ -821,15 +839,15 @@ async function uninstall(
     const r = await env.run("systemctl", ["--user", "daemon-reload"]);
     if (r.code !== 0) {
       err(`service uninstall: daemon-reload failed: ${r.stderr.trim() || `exit ${r.code}`}`);
-      await audit.failCode("systemctl");
+      await audit?.failCode("systemctl");
       return 1;
     }
     await env.run("systemctl", ["--user", "reset-failed", unitName(name)]);
-    out(`Removed ${unitName(name)}. Data was not touched.`);
-    await audit.ok();
+    out(`Removed ${unitName(name)}. Task data was not removed.`);
+    await audit?.ok();
     return 0;
   } catch (e) {
-    await audit.fail(e);
+    await audit?.fail(e);
     throw e;
   }
 }

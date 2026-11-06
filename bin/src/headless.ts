@@ -141,6 +141,8 @@ export interface RunTaskOptions {
   parentId?: string;
   registry?: ToolRegistry;
   out?: Out;
+  /** When aborted, stop between ticks. The caller records the audit line. */
+  signal?: AbortSignal;
 }
 
 export interface RunResultSummary {
@@ -207,6 +209,9 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   // Drive until our task leaves the active states. One tick fully runs the
   // highest-priority pending task (ours), so this normally loops once.
   for (;;) {
+    if (opts.signal?.aborted) {
+      return { id, projectId: project.id, status: "stopped", ok: false };
+    }
     const located = await store.locate(id);
     const status = located?.status;
     if (!status || ["done", "failed", "stopped", "action", "archived"].includes(status)) break;
@@ -237,6 +242,8 @@ export async function drainQueue(opts: {
   project?: string;
   registry?: ToolRegistry;
   out?: Out;
+  /** When aborted, stop between ticks. The caller records the audit line. */
+  signal?: AbortSignal;
 }): Promise<{ ran: number; failed: number }> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
@@ -253,12 +260,14 @@ export async function drainQueue(opts: {
   let failed = 0;
   let stopped = 0;
   for (;;) {
+    if (opts.signal?.aborted) return { ran, failed: failed + stopped };
     const res = await streamTick(engine, out);
     if (res.kind !== "ran") break;
     ran += 1;
     if (res.outcome.kind === "failed") failed += 1;
     if (res.outcome.kind === "stopped") stopped += 1;
   }
+  if (opts.signal?.aborted) return { ran, failed: failed + stopped };
   out(
     `\nqueue drained: ${ran} task(s) ran, ${failed} failed` +
       `${stopped > 0 ? `, ${stopped} stopped` : ""}\n`,

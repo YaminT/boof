@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execCommand, SecuritySettingsSchema, SettingsStore, scaffoldDataRoot } from "@boof/heart";
+import { mockState, resetMock } from "@boof/runner";
 import { runCommand, scanCommand } from "./boof-runner.js";
 
 const SECRET = "sk-ant-api03-SECRETKEY";
@@ -134,11 +135,58 @@ describe("run and scan audit", () => {
     expect(await runCommand(["--data", root])).toBe(1);
     expect(await auditLines(root)).toHaveLength(2);
 
+    const runSecret = "sk-ant-api03-RUNSECRET";
+    await expect(
+      runCommand(["--data", root, "--project", runSecret, "--tool", "mock", "Build it"]),
+    ).rejects.toThrow(/Invalid id/);
+    expect(JSON.stringify(await auditLines(root))).not.toMatch(/sk-ant-api03/i);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:run",
+      outcome: "error",
+      error: "invalid_id",
+    });
+
     await disableAudit(root);
     await expect(
       runCommand(["--data", root, "--project", "missing", `Build ${SECRET}`]),
     ).rejects.toThrow(/Project not found/);
-    expect(await auditLines(root)).toHaveLength(2);
+    expect(await auditLines(root)).toHaveLength(3);
+  }, 60_000);
+
+  it("SIGINT after the task is created still writes a line", async () => {
+    const root = await scratch();
+    const parent = await scratch();
+    const repo = await gitRepo(parent, "shop", true);
+    const controller = new AbortController();
+    mockState.onRun = async () => {
+      controller.abort();
+    };
+    let text = "";
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      text += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    let code = 0;
+    try {
+      code = await runCommand(
+        ["--data", root, "--repo", repo, "--tool", "mock", "Build it"],
+        controller.signal,
+      );
+    } finally {
+      process.stdout.write = write;
+      resetMock();
+    }
+    expect(code).toBe(130);
+    expect(text).toContain("shop/");
+    const lines = await auditLines(root);
+    expect(lines).toHaveLength(1);
+    assertLine(lines[0]!, {
+      action: "cli:run",
+      outcome: "error",
+      project: "shop",
+      error: "interrupted",
+    });
   }, 60_000);
 
   it("scan writes one line when it creates tasks, and none for a dry run or an empty repo", async () => {
@@ -192,10 +240,21 @@ describe("run and scan audit", () => {
     expect(await scanCommand(["--data", root])).toBe(1);
     expect(await auditLines(root)).toHaveLength(2);
 
+    const scanSecret = "sk-ant-api03-SCANSECRET";
+    await expect(scanCommand(["--data", root, "--project", scanSecret, repo])).rejects.toThrow(
+      /Invalid id/,
+    );
+    expect(JSON.stringify(await auditLines(root))).not.toMatch(/sk-ant-api03/i);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:scan",
+      outcome: "error",
+      error: "invalid_id",
+    });
+
     await disableAudit(root);
     await expect(
       scanCommand(["--data", root, "--project", "shop", "--model", SECRET, other]),
     ).rejects.toThrow(/not /);
-    expect(await auditLines(root)).toHaveLength(2);
+    expect(await auditLines(root)).toHaveLength(3);
   });
 });

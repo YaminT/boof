@@ -158,7 +158,7 @@ export async function projectCommand(
           await audit.ok(project.id);
           return 0;
         } catch (e) {
-          await audit.fail(e, values.id);
+          await audit.fail(e);
           throw e;
         }
       }

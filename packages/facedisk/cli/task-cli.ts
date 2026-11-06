@@ -12,7 +12,7 @@ import {
   scaffoldDataRoot,
 } from "@boof/heart";
 import { ZodError } from "zod";
-import { beginCliAudit } from "./cli-audit.js";
+import { auditProjectRefusal, beginCliAudit } from "./cli-audit.js";
 import { CliUsageError, dataRootOf, isExpectedCliError, resolveProjectDir } from "./epic-cli.js";
 
 export const TASK_HELP = `boof-runner task — list tasks with their epics and subtasks, and move them
@@ -68,7 +68,14 @@ export async function taskCommand(
   await scaffoldDataRoot(root);
 
   try {
-    const { id: projectId, dir } = await resolveProjectDir(root, values.project);
+    let projectId: string;
+    let dir: string;
+    try {
+      ({ id: projectId, dir } = await resolveProjectDir(root, values.project));
+    } catch (e) {
+      if (sub === "move") await auditProjectRefusal(root, "cli:task.move", values.project, e);
+      throw e;
+    }
     const store = new TaskStore(dir);
     switch (sub) {
       case "list": {
