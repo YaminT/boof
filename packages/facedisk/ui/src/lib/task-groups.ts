@@ -7,6 +7,7 @@ export type NeedsYouItem =
 
 export interface TaskGroups {
   needsYou: NeedsYouItem[];
+  proposed: TaskView[];
   running: TaskView[];
   /** Pending, not skipped, in run order. */
   queued: TaskView[];
@@ -63,9 +64,9 @@ export function groupTasks(
   return {
     needsYou: [
       ...questions.map((task) => ({ kind: "question" as const, task })),
-      ...proposed.map((task) => ({ kind: "proposed" as const, task })),
       ...draftPlans.map((plan) => ({ kind: "draft-plan" as const, plan })),
     ],
+    proposed,
     running: by("running"),
     queued: by("pending")
       .filter((t) => !t.frontmatter.skip)

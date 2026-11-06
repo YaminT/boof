@@ -35,6 +35,21 @@ describe("startedAtMs", () => {
 });
 
 describe("stepStrip", () => {
+  it("counts the answering window once, using the reviewer’s step times", () => {
+    const t = task({
+      steps: steps(
+        ["Planner", 0],
+        ["Developer", 10],
+        ["Planner (answering developer question)", 30],
+        ["Developer (with answers)", 50],
+      ),
+    });
+    const r = byRole(stepStrip(t, T0 + 60_000));
+    expect(r.planner.seconds).toBe(30);
+    expect(r.developer.seconds).toBe(30);
+    expect((r.planner.seconds ?? 0) + (r.developer.seconds ?? 0)).toBe(60);
+  });
+
   it("collapses planner and refinement, times done and current roles", () => {
     const t = task({
       steps: steps(["Planner", 0], ["Planner (refinement)", 20], ["Developer", 50]),
@@ -276,15 +291,14 @@ describe("stepStrip", () => {
     expect(r.planner.state).toBe("done");
   });
 
-  it("keeps counting the current role while the planner answers a developer question", () => {
+  it("closes the developer visit when the planner starts answering", () => {
     const t = task({
       steps: steps(["Planner", 0], ["Developer", 10], ["Planner (answering developer)", 30]),
     });
     const r = byRole(stepStrip(t, T0 + 40_000));
-    // Developer started at 10s and is still the current role at 40s. The answering entry
-    // does not close that visit, and it is not added to the planner.
-    expect(r.developer).toMatchObject({ state: "current", seconds: 30 });
-    expect(r.planner).toMatchObject({ state: "done", seconds: 10 });
+    // The developer visit ends at 30s; the planner's answer runs from 30s to now.
+    expect(r.developer).toMatchObject({ state: "current", seconds: 20 });
+    expect(r.planner).toMatchObject({ state: "done", seconds: 20 });
   });
 
   it("counts only the last iteration of a multi-run task", () => {

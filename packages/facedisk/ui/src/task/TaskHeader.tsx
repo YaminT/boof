@@ -13,7 +13,12 @@ import { formatDuration } from "../lib/run-timing.js";
 import { StatusPill } from "../shell/StatusPill.js";
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import type { TaskActions } from "../tasks/useTaskActions.js";
-import { stopDisabled } from "../lib/stop-request.js";
+import {
+  clearStopPending,
+  isStopPending,
+  markStopPending,
+  stopDisabled,
+} from "../lib/stop-request.js";
 import { shownSubtasks } from "../lib/task-delete.js";
 import { DeleteTaskDialog } from "./DeleteTaskDialog.js";
 
@@ -43,13 +48,16 @@ export function TaskHeader({
 }) {
   const f = task.frontmatter;
   const [confirmStop, setConfirmStop] = useState(false);
-  const [stopping, setStopping] = useState(false);
+  const [stopping, setStopping] = useState(() => isStopPending(task.projectId, f.id));
   const [confirmDelete, setConfirmDelete] = useState(false);
   // The server found subtasks the page did not know of; kept until the list shows them.
   const [refused, setRefused] = useState<{ count: number | null } | null>(null);
   useEffect(() => setRefused(null), [subtasks]);
   // A stop request returns before the task leaves running. Hold Stop until it does, or the request fails.
-  useEffect(() => setStopping((on) => stopDisabled(f.status, on)), [f.status]);
+  useEffect(() => {
+    if (f.status !== "running") clearStopPending(task.projectId, f.id);
+    setStopping((on) => stopDisabled(f.status, on || isStopPending(task.projectId, f.id)));
+  }, [f.status, task.projectId, f.id]);
   const running = f.status === "running";
 
   return (
@@ -74,8 +82,8 @@ export function TaskHeader({
           {running && (
             <Button
               variant="outline"
-              disabled={stopDisabled(f.status, stopping)}
-              onClick={() => setConfirmStop(true)}
+              disabled={stopDisabled(f.status, stopping || isStopPending(task.projectId, f.id))}
+              onClick={() => !isStopPending(task.projectId, f.id) && setConfirmStop(true)}
             >
               Stop
             </Button>
@@ -117,8 +125,12 @@ export function TaskHeader({
         onConfirm={() => {
           setConfirmStop(false);
           setStopping(true);
+          markStopPending(task.projectId, f.id);
           void Promise.resolve(actions.stop(f.id)).then((ok) => {
-            if (!ok) setStopping(false);
+            if (!ok) {
+              clearStopPending(task.projectId, f.id);
+              setStopping(false);
+            }
           });
         }}
       />

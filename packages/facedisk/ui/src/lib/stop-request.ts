@@ -7,3 +7,17 @@
 export function stopDisabled(status: string, requested: boolean): boolean {
   return requested && status === "running";
 }
+const pending = new Set<string>();
+const key = (pid: string, id: string) => `${pid}/${id}`;
+
+export function isStopPending(pid: string, id: string): boolean {
+  return pending.has(key(pid, id));
+}
+
+export function markStopPending(pid: string, id: string): void {
+  pending.add(key(pid, id));
+}
+
+export function clearStopPending(pid: string, id: string): void {
+  pending.delete(key(pid, id));
+}

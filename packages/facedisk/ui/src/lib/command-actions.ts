@@ -127,9 +127,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     }
 
     const groups = groupTasks(ctx.tasks, ctx.plans);
-    const proposed = new Set(
-      groups.needsYou.flatMap((n) => (n.kind === "proposed" ? [n.task.frontmatter.id] : [])),
-    );
+    const proposed = new Set(groups.proposed.map((t) => t.frontmatter.id));
     add({
       id: "new-task",
       label: "New task",

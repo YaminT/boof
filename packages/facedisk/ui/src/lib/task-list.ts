@@ -14,9 +14,10 @@ const FINISHED = new Set(["done", "failed", "stopped", "archived"]);
 export function filterTasks(tasks: TaskView[], f: TaskFilter): TaskView[] {
   const q = f.query.trim().toLowerCase();
   const g = groupTasks(tasks);
-  const needsYou = new Set(
-    g.needsYou.flatMap((i) => (i.kind === "draft-plan" ? [] : [i.task.frontmatter.id])),
-  );
+  const needsYou = new Set([
+    ...g.needsYou.flatMap((i) => (i.kind === "draft-plan" ? [] : [i.task.frontmatter.id])),
+    ...g.proposed.map((t) => t.frontmatter.id),
+  ]);
   const drafts = new Set(g.drafts.map((t) => t.frontmatter.id));
 
   const inState = (t: TaskView): boolean => {

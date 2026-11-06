@@ -10,6 +10,7 @@ import { toggleRunner } from "./RunnerSwitch.js";
 import type { Epics } from "../tasks/useEpics.js";
 import { withQuery } from "../lib/task-links.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
+import { isStopPending, markStopPending, clearStopPending } from "../lib/stop-request.js";
 
 interface PendingStop {
   task: TaskView;
@@ -69,7 +70,9 @@ export function useCommandActions({
       selectProject: onSelectProject,
       setTheme: setPref,
       requestStop: (task) =>
-        new Promise<void>((resolve, reject) => setStopping({ task, resolve, reject })),
+        stopping || isStopPending(pid ?? "", task.frontmatter.id)
+          ? undefined
+          : new Promise<void>((resolve, reject) => setStopping({ task, resolve, reject })),
       activatePlan: (id, plan) =>
         mutate(
           () => api.updatePlan(id, plan, { status: "active" }),
@@ -116,9 +119,13 @@ export function useCommandActions({
         setStopping(null);
         if (!s || !pid) return s?.reject(new Error("no project selected"));
         const id = s.task.frontmatter.id;
+        markStopPending(pid, id);
         mutate(() => api.stopTask(pid, id), "Stop requested", "Could not stop").then(
           s.resolve,
-          s.reject,
+          (err) => {
+            clearStopPending(pid, id);
+            s.reject(err);
+          },
         );
       }}
     />

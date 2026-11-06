@@ -41,15 +41,13 @@ export function runLabel(task: TaskView): string | null {
   return `run ${Math.min(completedRuns + 1, runs)} of ${runs}`;
 }
 
-/** A planner answering a developer question does not end the visit it interrupts. */
-const answering = (label: string) => /^Planner \(answering/.test(label);
-
 function activeSeconds(
   entries: Entry[],
   role: StepRole,
   state: StepSegment["state"],
   now: number,
   closingMs: number,
+  taskIsRunning: boolean,
 ): number | null {
   if (state === "upcoming" || state === "skipped") return null;
   let total = 0;
@@ -57,15 +55,11 @@ function activeSeconds(
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     if (e.role !== role || e.ms === null) continue;
-    // An answering entry is not a new pipeline step. Closing the current role on it froze
-    // that timer while the planner wrote the answer; the time stays on the current role.
-    const next = entries.slice(i + 1).find((x) => {
-      if (x.ms === null) return false;
-      return !(state === "current" && answering(x.label));
-    });
+    const next = entries.slice(i + 1).find((x) => x.ms !== null);
     let end: number | null = null;
     if (next?.ms != null) end = next.ms;
-    else if (state === "current") end = now;
+    else if (state === "current" || (taskIsRunning && /^Planner \(answering/.test(e.label)))
+      end = now;
     else if (!Number.isNaN(closingMs)) end = closingMs;
     if (end !== null && end >= e.ms) {
       total += end - e.ms;
@@ -137,7 +131,7 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
     else state = idx < maxIdx ? "skipped" : "upcoming";
     // Active time: each visit to this role, not the wall clock from its first start (a fix round
     // would otherwise count the reviews that ran between two developer visits).
-    const seconds = activeSeconds(entries, role, state, now, closingMs);
+    const seconds = activeSeconds(entries, role, state, now, closingMs, running);
 
     let round = 1;
     if (role === "developer") {

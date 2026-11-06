@@ -43,6 +43,7 @@ import { useEpics } from "./useEpics.js";
 import { TaskSection } from "./TaskSection.js";
 import { TasksToolbar } from "./TasksToolbar.js";
 import { useTaskActions } from "./useTaskActions.js";
+import { clearStopPending, isStopPending, markStopPending } from "../lib/stop-request.js";
 
 const NO_FILTER: TaskFilter = { query: "", state: "all", label: null, epic: null };
 const FINISHED = new Set(["done", "failed", "stopped", "archived"]);
@@ -116,23 +117,30 @@ export function TasksPage({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showFinished, setShowFinished] = useState(false);
   const [stopId, setStopId] = useState<string | null>(null);
-  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(
+    () =>
+      new Set(
+        data.tasks.filter((t) => isStopPending(pid, t.frontmatter.id)).map((t) => t.frontmatter.id),
+      ),
+  );
   const { tasks, plans } = data;
   // Drop a stop latch once that task is no longer running (the request outlives the HTTP call).
   useEffect(() => {
     const running = new Set(
       tasks.filter((t) => t.frontmatter.status === "running").map((t) => t.frontmatter.id),
     );
+    for (const t of tasks)
+      if (t.frontmatter.status !== "running") clearStopPending(pid, t.frontmatter.id);
     setStoppingIds((prev) => {
       let changed = false;
       const next = new Set<string>();
       for (const id of prev) {
-        if (running.has(id)) next.add(id);
+        if (running.has(id) && isStopPending(pid, id)) next.add(id);
         else changed = true;
       }
       return changed ? next : prev;
     });
-  }, [tasks]);
+  }, [tasks, pid]);
   // The queue order while a reorder is in flight; null shows the server's order.
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
   const inFlight = useRef(0);
@@ -168,11 +176,10 @@ export function TasksPage({
         : [];
     const task = (kind: Task["kind"], t: TaskView): Task =>
       ({ key: `task:${t.frontmatter.id}`, kind, task: t }) as Task;
-    // Same items as Overview's "Needs you": questions, proposed drafts, then draft plans.
+    // Same items as Overview's "Needs you"; proposed drafts have their own section.
     const needs: RowEntry[] = [
       ...groups.needsYou.flatMap((i) => {
         if (i.kind === "question") return [task("question", i.task)];
-        if (i.kind === "proposed") return [task("proposed", i.task)];
         return [];
       }),
       ...plansShown.map((p): RowEntry => ({ key: `plan:${p.id}`, kind: "plan", plan: p })),
@@ -242,6 +249,7 @@ export function TasksPage({
     const count = <E,>(gs: EpicGroup<E>[]) => gs.reduce((n, g) => n + g.entries.length, 0);
     return {
       needs: withHierarchy(needs),
+      proposed: withHierarchy(groups.proposed.map((t) => task("proposed", t))),
       running: withHierarchy(groups.running.map((t) => task("running", t))),
       queued: shownRows(queuedGroups) as RowEntry[],
       queuedGroups,
@@ -355,7 +363,8 @@ export function TasksPage({
     if (action === "open") return actions.open(id);
     if (action === "queue" && (selected.kind === "draft" || selected.kind === "proposed"))
       return actions.queue(id);
-    if (action === "stop" && selected.kind === "running") return setStopId(id);
+    if (action === "stop" && selected.kind === "running" && !isStopPending(pid, id))
+      return setStopId(id);
     if (
       (action === "move-up" || action === "move-down") &&
       selected.kind === "queued" &&
@@ -466,6 +475,11 @@ export function TasksPage({
           {list(rows.needs)}
         </TaskSection>
       )}
+      {rows.proposed.length > 0 && (
+        <TaskSection title="Proposed" count={rows.proposed.length}>
+          {list(rows.proposed)}
+        </TaskSection>
+      )}
       {rows.running.length > 0 && (
         <TaskSection title="Running" count={rows.running.length}>
           {list(rows.running)}
@@ -550,8 +564,10 @@ export function TasksPage({
           setStopId(null);
           if (!id) return;
           setStoppingIds((prev) => new Set(prev).add(id));
+          markStopPending(pid, id);
           void Promise.resolve(actions.stop(id)).then((ok) => {
             if (ok) return;
+            clearStopPending(pid, id);
             setStoppingIds((prev) => {
               const next = new Set(prev);
               next.delete(id);
