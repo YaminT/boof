@@ -21,6 +21,7 @@ import {
   scaffoldDataRoot,
 } from "@boof/heart";
 import { assertBindAllowed } from "@boof/heart-server";
+import { beginCliAudit } from "./cli-audit.js";
 
 /** The "full harness" scope set from docs/harness.md: everything except settings writes, clients and webhooks. */
 export const FULL_HARNESS_SCOPES =
@@ -257,6 +258,7 @@ async function setup(
 
   await scaffoldDataRoot(root);
   const store = new AuthStore(root);
+  const audit = beginCliAudit(root, "cli:remote.setup");
 
   // Check the client name before touching anything, so a refusal leaves settings unchanged.
   if (!noKey) {
@@ -269,108 +271,117 @@ async function setup(
         `remote setup: a client named "${name}" already exists (id "${taken.id}"). Settings were not changed.\n` +
           `Run "boof-runner auth rotate ${taken.id}" for a new key, pass --name <other>, or --no-key to only update settings.`,
       );
+      await audit.failCode("client_exists");
       return 1;
     }
   }
 
-  const raw = await readRawSettings(root);
-  const sec = securityBlock(raw);
-  const roots = ((v["allowed-root"] as string[] | undefined) ?? []).map(normaliseRoot);
-  const next = {
-    ...withAuthMode(sec, "required"),
-    allowedHosts: dedupe([...strings(sec.allowedHosts), hostname]),
-    allowedProjectRoots: dedupe([...strings(sec.allowedProjectRoots), ...roots]),
-  };
-  await writeRawSettings(root, { ...raw, security: next });
-  out(`Settings updated in ${dataRootPaths(root).settings}`);
-  out(`  security.auth.mode           = required`);
-  out(`  security.allowedHosts        = ${JSON.stringify(next.allowedHosts)}`);
-  out(`  security.allowedProjectRoots = ${JSON.stringify(next.allowedProjectRoots)}`);
-  if (next.allowedProjectRoots.length === 0) {
-    out(
-      "  (no allowed roots: the harness cannot register projects; add some with --allowed-root <dir>)",
-    );
-  }
+  try {
+    const raw = await readRawSettings(root);
+    const sec = securityBlock(raw);
+    const roots = ((v["allowed-root"] as string[] | undefined) ?? []).map(normaliseRoot);
+    const next = {
+      ...withAuthMode(sec, "required"),
+      allowedHosts: dedupe([...strings(sec.allowedHosts), hostname]),
+      allowedProjectRoots: dedupe([...strings(sec.allowedProjectRoots), ...roots]),
+    };
+    await writeRawSettings(root, { ...raw, security: next });
+    out(`Settings updated in ${dataRootPaths(root).settings}`);
+    out(`  security.auth.mode           = required`);
+    out(`  security.allowedHosts        = ${JSON.stringify(next.allowedHosts)}`);
+    out(`  security.allowedProjectRoots = ${JSON.stringify(next.allowedProjectRoots)}`);
+    if (next.allowedProjectRoots.length === 0) {
+      out(
+        "  (no allowed roots: the harness cannot register projects; add some with --allowed-root <dir>)",
+      );
+    }
 
-  const projectsRoot = resolveProjectsRoot({
-    projectsRoot: typeof raw.projectsRoot === "string" ? raw.projectsRoot : undefined,
-  });
-  if (!next.allowedProjectRoots.some((r) => isInsidePath(expandHome(r), projectsRoot))) {
-    out(
-      "  (to let the key create projects automatically, add settings.projectsRoot too: --allowed-root ~/boof-projects)",
-    );
-  }
-
-  const mode = await modeOf(root);
-  if (mode !== null && mode & 0o077) {
-    await chmod(root, 0o700);
-    out(
-      `Data root ${root} was accessible to other users (mode ${mode.toString(8)}); ran chmod 700.`,
-    );
-  }
-
-  let key: string | undefined;
-  if (!noKey) {
-    const created = await store.create({
-      name,
-      kind: "harness",
-      scopes,
-      projects: "*",
-      trust: trust.success ? trust.data : "review",
-      expiresAt,
+    const projectsRoot = resolveProjectsRoot({
+      projectsRoot: typeof raw.projectsRoot === "string" ? raw.projectsRoot : undefined,
     });
-    key = created.key;
-    out("");
-    out(`Created client "${created.client.id}" (${created.client.trust} trust).`);
-    out("");
-    out(`  ${key}`);
-    out("");
-    out("Store this key now; it is shown once and cannot be recovered (auth rotate replaces it).");
-  } else {
-    out(
-      "No client created (--no-key). Create one with: boof-runner auth add --name <name> --scopes <list>",
-    );
-  }
+    if (!next.allowedProjectRoots.some((r) => isInsidePath(expandHome(r), projectsRoot))) {
+      out(
+        "  (to let the key create projects automatically, add settings.projectsRoot too: --allowed-root ~/boof-projects)",
+      );
+    }
 
-  const dataFlag = process.env.BOOF_RUNNER_DATA_ROOT === root ? "" : ` -d ${quote(root)}`;
-  out("");
-  out("Next steps");
-  out("");
-  out("1. Make the server reachable. Pick one:");
-  out("");
-  out("   a) TLS directly (you hold a certificate for the host name):");
-  out(
-    `      boof-runner serve${dataFlag} --host 0.0.0.0 -p ${port} --tls-cert <cert.pem> --tls-key <key.pem>`,
-  );
-  out("");
-  out("   b) Tunnel or reverse proxy (keeps boof on loopback; the proxy terminates TLS):");
-  out(`      boof-runner serve${dataFlag} --host 127.0.0.1 -p ${port}`);
-  out(
-    `      Forward https://${hostname} to http://127.0.0.1:${port} and keep the original Host header.`,
-  );
-  out("      Caddy (Caddyfile):");
-  out(`        ${hostname} {`);
-  out(`          reverse_proxy 127.0.0.1:${port}`);
-  out("        }");
-  out(`      Cloudflare named tunnel (routes ${hostname} to boof):`);
-  out(`        cloudflared tunnel route dns <tunnel-name> ${hostname}`);
-  out(`        cloudflared tunnel run --url http://127.0.0.1:${port} <tunnel-name>`);
-  out(
-    "      A quick tunnel (cloudflared tunnel --url ...) gets a random *.trycloudflare.com name;",
-  );
-  out(
-    "      add that name with: boof-runner remote setup --no-key --hostname <random-name>.trycloudflare.com",
-  );
-  out(
-    `      The public host name must be in security.allowedHosts (done: ${hostname}); any other Host answers 421.`,
-  );
-  out("");
-  out("2. Give the AI harness:");
-  out(`   BOOF_URL=https://${hostname}`);
-  out(`   the key${key ? " printed above" : " (create one with auth add)"}`);
-  out(`   the guide: ${GUIDE_URL}`);
-  out(`   e.g. "Read ${GUIDE_URL} and use it to operate my boof server at https://${hostname}."`);
-  return 0;
+    const mode = await modeOf(root);
+    if (mode !== null && mode & 0o077) {
+      await chmod(root, 0o700);
+      out(
+        `Data root ${root} was accessible to other users (mode ${mode.toString(8)}); ran chmod 700.`,
+      );
+    }
+
+    let key: string | undefined;
+    if (!noKey) {
+      const created = await store.create({
+        name,
+        kind: "harness",
+        scopes,
+        projects: "*",
+        trust: trust.success ? trust.data : "review",
+        expiresAt,
+      });
+      key = created.key;
+      out("");
+      out(`Created client "${created.client.id}" (${created.client.trust} trust).`);
+      out("");
+      out(`  ${key}`);
+      out("");
+      out(
+        "Store this key now; it is shown once and cannot be recovered (auth rotate replaces it).",
+      );
+    } else {
+      out(
+        "No client created (--no-key). Create one with: boof-runner auth add --name <name> --scopes <list>",
+      );
+    }
+
+    const dataFlag = process.env.BOOF_RUNNER_DATA_ROOT === root ? "" : ` -d ${quote(root)}`;
+    out("");
+    out("Next steps");
+    out("");
+    out("1. Make the server reachable. Pick one:");
+    out("");
+    out("   a) TLS directly (you hold a certificate for the host name):");
+    out(
+      `      boof-runner serve${dataFlag} --host 0.0.0.0 -p ${port} --tls-cert <cert.pem> --tls-key <key.pem>`,
+    );
+    out("");
+    out("   b) Tunnel or reverse proxy (keeps boof on loopback; the proxy terminates TLS):");
+    out(`      boof-runner serve${dataFlag} --host 127.0.0.1 -p ${port}`);
+    out(
+      `      Forward https://${hostname} to http://127.0.0.1:${port} and keep the original Host header.`,
+    );
+    out("      Caddy (Caddyfile):");
+    out(`        ${hostname} {`);
+    out(`          reverse_proxy 127.0.0.1:${port}`);
+    out("        }");
+    out(`      Cloudflare named tunnel (routes ${hostname} to boof):`);
+    out(`        cloudflared tunnel route dns <tunnel-name> ${hostname}`);
+    out(`        cloudflared tunnel run --url http://127.0.0.1:${port} <tunnel-name>`);
+    out(
+      "      A quick tunnel (cloudflared tunnel --url ...) gets a random *.trycloudflare.com name;",
+    );
+    out(
+      "      add that name with: boof-runner remote setup --no-key --hostname <random-name>.trycloudflare.com",
+    );
+    out(
+      `      The public host name must be in security.allowedHosts (done: ${hostname}); any other Host answers 421.`,
+    );
+    out("");
+    out("2. Give the AI harness:");
+    out(`   BOOF_URL=https://${hostname}`);
+    out(`   the key${key ? " printed above" : " (create one with auth add)"}`);
+    out(`   the guide: ${GUIDE_URL}`);
+    out(`   e.g. "Read ${GUIDE_URL} and use it to operate my boof server at https://${hostname}."`);
+    await audit.ok();
+    return 0;
+  } catch (e) {
+    await audit.fail(e);
+    throw e;
+  }
 }
 
 function quote(p: string): string {
@@ -416,16 +427,24 @@ async function disable(
   out: (l: string) => void,
   err: (l: string) => void,
 ): Promise<number> {
+  const audit = beginCliAudit(root, "cli:remote.disable");
   if (!existsSync(dataRootPaths(root).settings)) {
     err(`remote disable: no settings.json in ${root}; nothing to disable`);
+    await audit.failCode("not_configured");
     return 1;
   }
-  const raw = await readRawSettings(root);
-  await writeRawSettings(root, {
-    ...raw,
-    security: withAuthMode(securityBlock(raw), "local-trust"),
-  });
-  out('security.auth.mode is now "local-trust". Allowed hosts, roots and clients were kept.');
+  try {
+    const raw = await readRawSettings(root);
+    await writeRawSettings(root, {
+      ...raw,
+      security: withAuthMode(securityBlock(raw), "local-trust"),
+    });
+    out('security.auth.mode is now "local-trust". Allowed hosts, roots and clients were kept.');
+    await audit.ok();
+  } catch (e) {
+    await audit.fail(e);
+    throw e;
+  }
   out(
     "Existing keys still work for loopback clients; the server will refuse non-loopback binds until you run remote setup again.",
   );

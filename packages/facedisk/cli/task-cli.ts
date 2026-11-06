@@ -12,6 +12,7 @@ import {
   scaffoldDataRoot,
 } from "@boof/heart";
 import { ZodError } from "zod";
+import { beginCliAudit } from "./cli-audit.js";
 import { CliUsageError, dataRootOf, isExpectedCliError, resolveProjectDir } from "./epic-cli.js";
 
 export const TASK_HELP = `boof-runner task — list tasks with their epics and subtasks, and move them
@@ -67,7 +68,7 @@ export async function taskCommand(
   await scaffoldDataRoot(root);
 
   try {
-    const { dir } = await resolveProjectDir(root, values.project);
+    const { id: projectId, dir } = await resolveProjectDir(root, values.project);
     const store = new TaskStore(dir);
     switch (sub) {
       case "list": {
@@ -133,17 +134,24 @@ export async function taskCommand(
         }
         const clear = (v: string | undefined) =>
           v === undefined ? undefined : v === HIERARCHY_NONE ? null : v;
-        const task = await moveTask(
-          dir,
-          id,
-          { epicId: clear(values.epic), parentId: clear(values.parent) },
-          { by: "cli" },
-        );
-        const f = task.frontmatter;
-        out(
-          `Moved task '${id}'${f.parentId ? ` under '${f.parentId}'` : ""}${f.epicId ? ` into epic '${f.epicId}'` : ""}`,
-        );
-        return 0;
+        const audit = beginCliAudit(root, "cli:task.move", projectId);
+        try {
+          const task = await moveTask(
+            dir,
+            id,
+            { epicId: clear(values.epic), parentId: clear(values.parent) },
+            { by: "cli" },
+          );
+          const f = task.frontmatter;
+          out(
+            `Moved task '${id}'${f.parentId ? ` under '${f.parentId}'` : ""}${f.epicId ? ` into epic '${f.epicId}'` : ""}`,
+          );
+          await audit.ok();
+          return 0;
+        } catch (e) {
+          await audit.fail(e);
+          throw e;
+        }
       }
       default:
         err(`task: unknown subcommand "${sub}"\n`);

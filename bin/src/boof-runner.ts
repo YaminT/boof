@@ -22,6 +22,7 @@ import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
+import { beginCliAudit } from "@boof/facedisk/cli/cli-audit.js";
 
 interface ServeArgs {
   dataRoot: string;
@@ -295,8 +296,16 @@ export async function runCommand(argv: string[]): Promise<number> {
   const project = getOpt(argv, ["--project"]);
 
   if (hasFlag(argv, ["--all"])) {
-    const { failed } = await drainQueue({ root, ...(project ? { project } : {}) });
-    return failed > 0 ? 1 : 0;
+    const audit = beginCliAudit(root, "cli:run", project);
+    try {
+      const { failed } = await drainQueue({ root, ...(project ? { project } : {}) });
+      if (failed > 0) await audit.failCode("not_done");
+      else await audit.ok();
+      return failed > 0 ? 1 : 0;
+    } catch (e) {
+      await audit.fail(e);
+      throw e;
+    }
   }
 
   const file = getOpt(argv, ["--file", "-f"]);
@@ -314,20 +323,28 @@ export async function runCommand(argv: string[]): Promise<number> {
     console.error("run: give --epic or --parent, not both: a subtask takes its parent's epic.");
     return 1;
   }
-  const summary = await runTask({
-    root,
-    prompt,
-    ...(project ? { project } : {}),
-    ...(repo ? { repo } : {}),
-    ...(base ? { base } : {}),
-    ...(title ? { title } : {}),
-    ...(tool ? { tool } : {}),
-    ...(model ? { model } : {}),
-    ...(runsOpt ? { runs: Number(runsOpt) } : {}),
-    ...(epic ? { epicId: epic } : {}),
-    ...(parent ? { parentId: parent } : {}),
-  });
-  return summary.ok ? 0 : 1;
+  const audit = beginCliAudit(root, "cli:run", project);
+  try {
+    const summary = await runTask({
+      root,
+      prompt,
+      ...(project ? { project } : {}),
+      ...(repo ? { repo } : {}),
+      ...(base ? { base } : {}),
+      ...(title ? { title } : {}),
+      ...(tool ? { tool } : {}),
+      ...(model ? { model } : {}),
+      ...(runsOpt ? { runs: Number(runsOpt) } : {}),
+      ...(epic ? { epicId: epic } : {}),
+      ...(parent ? { parentId: parent } : {}),
+    });
+    if (summary.ok) await audit.ok(summary.projectId);
+    else await audit.failCode("not_done", summary.projectId);
+    return summary.ok ? 0 : 1;
+  } catch (e) {
+    await audit.fail(e);
+    throw e;
+  }
 }
 
 /** `scan` subcommand. Returns a process exit code. */
@@ -343,17 +360,26 @@ export async function scanCommand(argv: string[]): Promise<number> {
   const tool = getOpt(argv, ["--tool"]);
   const model = getOpt(argv, ["--model"]);
   const project = getOpt(argv, ["--project"]);
-  const summary = await scanRepoToTasks({
-    root: dataOpt ? absPath(dataOpt) : defaultDataRoot(),
-    repo,
-    ...(project ? { project } : {}),
-    dryRun: hasFlag(argv, ["--dry-run"]),
-    bumpTo: bump === "review" ? "review" : bump === "done" ? "done" : undefined,
-    ...(tool ? { tool } : {}),
-    ...(model ? { model } : {}),
-  });
-  void summary;
-  return 0;
+  const root = dataOpt ? absPath(dataOpt) : defaultDataRoot();
+  const dryRun = hasFlag(argv, ["--dry-run"]);
+  // A dry run and a scan that finds nothing do not write, so they leave no line.
+  const audit = dryRun ? undefined : beginCliAudit(root, "cli:scan", project);
+  try {
+    const summary = await scanRepoToTasks({
+      root,
+      repo,
+      ...(project ? { project } : {}),
+      dryRun,
+      bumpTo: bump === "review" ? "review" : bump === "done" ? "done" : undefined,
+      ...(tool ? { tool } : {}),
+      ...(model ? { model } : {}),
+    });
+    if (summary.projectId) await audit?.ok(summary.projectId);
+    return 0;
+  } catch (e) {
+    await audit?.fail(e);
+    throw e;
+  }
 }
 
 /** First token that is not a flag and not consumed as an option value. */
