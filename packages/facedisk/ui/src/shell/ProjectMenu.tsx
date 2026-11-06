@@ -41,8 +41,12 @@ export function ProjectMenu({
               >
                 <span className="text-[length:var(--text-row)] font-medium">
                   {p.name}
-                  {p.paused ? " (paused)" : ""}
-                  {p.id === selected?.id ? " (current)" : ""}
+                  {(p.paused || p.id === selected?.id) && (
+                    <span className="font-normal text-ink-muted">
+                      {p.paused ? " (paused)" : ""}
+                      {p.id === selected?.id ? " (current)" : ""}
+                    </span>
+                  )}
                 </span>
                 <span className="w-full truncate font-mono text-[length:var(--text-meta)] text-ink-muted">
                   <bdi>{p.workingDirectory}</bdi>

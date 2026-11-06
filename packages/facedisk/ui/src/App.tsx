@@ -16,7 +16,13 @@ import { TasksPage } from "./tasks/TasksPage.js";
 import { TokenGate } from "./components/TokenGate.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
-import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
+import {
+  correctedRoute,
+  nextPrevious,
+  routeForProject,
+  routePid,
+  type Route,
+} from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
 import { epicFromSearch, manageEpicsFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
@@ -59,12 +65,7 @@ export function App() {
   const current = useRef<Route | null>(route);
   const previous = useRef<Route | null>(null);
   if (current.current !== route) {
-    const sameTask =
-      current.current?.name === "task" &&
-      route?.name === "task" &&
-      current.current.pid === route.pid &&
-      current.current.taskId === route.taskId;
-    if (!sameTask) previous.current = current.current;
+    previous.current = nextPrevious(previous.current, current.current, route);
     current.current = route;
   }
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);

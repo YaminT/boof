@@ -70,6 +70,9 @@ describe("stepStrip", () => {
     const r = byRole(segs);
     expect(r.reviewer).toMatchObject({ round: 2, state: "current" });
     expect(r.developer.state).toBe("done");
+    // Two developer visits (10s, then 10s), and two reviewer visits. Not wall-clock from the first.
+    expect(r.developer.seconds).toBe(20);
+    expect(r.reviewer.seconds).toBe(20);
   });
 
   it("keeps reviewed roles done during a fix round", () => {
@@ -88,7 +91,7 @@ describe("stepStrip", () => {
     const segs = stepStrip(t, T0 + 50_000);
     const r = byRole(segs);
     expect(r.planner.state).toBe("done");
-    expect(r.developer.state).toBe("current");
+    expect(r.developer).toMatchObject({ state: "current", seconds: 20 });
     expect(r.observer.state).toBe("done");
     expect(r.reviewer).toMatchObject({ state: "done", verdict: "REJECT" });
     for (const s of segs) if (s.seconds !== null) expect(s.seconds).toBeGreaterThanOrEqual(0);

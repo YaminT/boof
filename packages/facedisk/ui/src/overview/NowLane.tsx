@@ -8,6 +8,7 @@ import type { TaskGroups } from "../lib/task-groups.js";
 import { toggleRunner } from "../shell/RunnerSwitch.js";
 import { NeedsYouList } from "./NeedsYouList.js";
 import { RunningCard } from "./RunningCard.js";
+import { idleQueueNote } from "./idle-note.js";
 import { UpNext } from "./UpNext.js";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -39,6 +40,7 @@ export function NowLane({
 }) {
   const paused = settings ? !settings.runner.enabled : false;
   const queueEmpty = groups.queued.length === 0;
+  const queueNote = idleQueueNote(groups.queued.length, paused, projectPaused);
   const agentAuth = useAgentAuth(
     pid,
     !queueEmpty,
@@ -87,6 +89,8 @@ export function NowLane({
                   Turn runner on
                 </Button>
               </>
+            ) : queueNote ? (
+              <p className="mt-1 mb-0 text-[length:var(--text-row)] text-ink-muted">{queueNote}</p>
             ) : null}
           </section>
         )}

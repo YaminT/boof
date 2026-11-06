@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { appPathOf, basePath, isPlainLeftClick, locationKey, routeFromLocation } from "./location";
 import { blockedByGuard, routeOfPath } from "./leave-guard";
-import { formatRoute, type Route } from "./route";
+import { formatRoute, sameRoute, type Route } from "./route";
 
 const readRoute = (): Route | null =>
   routeFromLocation(window.location.pathname, basePath(document.baseURI));
@@ -15,7 +15,11 @@ export function useRoute(): {
   const [route, setRoute] = useState<Route | null>(readRoute);
 
   useEffect(() => {
-    const sync = () => setRoute(readRoute());
+    const sync = () => {
+      const next = readRoute();
+      // Keep the same object when the URL did not change, so a popstate does not re-render.
+      setRoute((prev) => (sameRoute(prev, next) ? prev : next));
+    };
     window.addEventListener("popstate", sync);
     sync();
     return () => window.removeEventListener("popstate", sync);

@@ -40,6 +40,7 @@ export function RunningCard({
   const id = task.frontmatter.id;
   const { log, failed: logFailed } = useLiveLog(pid, id, true);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const elapsed = useElapsed(pid, task, true);
 
   const step = currentStep(log);
@@ -86,7 +87,12 @@ export function RunningCard({
           onSent={onChange}
           modelChoices={switchModelChoices(runningTool(task, project, settings), settings?.models)}
         >
-          <Button type="button" variant="destructive" onClick={() => setConfirmStop(true)}>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={stopping}
+            onClick={() => setConfirmStop(true)}
+          >
             Stop
           </Button>
         </SteerBox>
@@ -97,10 +103,13 @@ export function RunningCard({
         onOpenChange={setConfirmStop}
         onConfirm={() => {
           setConfirmStop(false);
+          setStopping(true);
           void act(() => api.stopTask(pid, id), {
             success: "Stop requested",
             failure: "Could not stop",
-          }).then(onChange);
+          })
+            .then(onChange)
+            .finally(() => setStopping(false));
         }}
       />
     </section>

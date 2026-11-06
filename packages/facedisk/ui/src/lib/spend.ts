@@ -16,6 +16,7 @@ export function spendFor(budget: BudgetStatus | null, projectId: string | null):
     (projectId !== null && budget.scopes.find((s) => s.scope === `project:${projectId}`)) ||
     budget.scopes.find((s) => s.scope === "global");
   if (!scope) return null;
+  // No limit, or a limit of zero (there is no bar to fill): the fraction stays null.
   const fraction =
     scope.limitUsd === null || scope.limitUsd <= 0
       ? null

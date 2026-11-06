@@ -19,7 +19,17 @@ export interface TaskGroups {
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** `updated` uses localeCompare, the same order the runner selects tasks with. */
+const byUpdated = (a: string, b: string) => a.localeCompare(b);
 const byCreated = (a: { created: string }, b: { created: string }) => cmp(a.created, b.created);
+
+/** Newest finished first; equal timestamps tie-break by id so the order is stable. */
+export function compareFinished(a: TaskView, b: TaskView): number {
+  return (
+    byUpdated(b.frontmatter.updated, a.frontmatter.updated) ||
+    cmp(a.frontmatter.id, b.frontmatter.id)
+  );
+}
 
 function isProposed(t: TaskView): boolean {
   const kind = t.frontmatter.origin?.kind;
@@ -30,7 +40,7 @@ function isProposed(t: TaskView): boolean {
 export function runOrder(a: TaskView, b: TaskView): number {
   const fa = a.frontmatter;
   const fb = b.frontmatter;
-  return fb.priority - fa.priority || cmp(fa.updated, fb.updated) || cmp(fa.id, fb.id);
+  return fb.priority - fa.priority || byUpdated(fa.updated, fb.updated) || cmp(fa.id, fb.id);
 }
 
 export function groupTasks(
@@ -47,7 +57,7 @@ export function groupTasks(
 
   const recent = tasks
     .filter((t) => ["done", "failed", "stopped"].includes(t.frontmatter.status))
-    .sort((a, b) => cmp(b.frontmatter.updated, a.frontmatter.updated))
+    .sort(compareFinished)
     .slice(0, Math.max(0, recentLimit));
 
   return {

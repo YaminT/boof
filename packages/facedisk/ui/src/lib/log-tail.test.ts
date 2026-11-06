@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, stepHeaders, tailLines } from "./log-tail.js";
+import { currentStep, liveFollowKey, stepHeaders, tailLines } from "./log-tail.js";
 
 describe("log-tail", () => {
   it("finds the last step header", () => {
@@ -16,6 +16,14 @@ describe("log-tail", () => {
       "Reviewer (round 1)",
     ]);
     expect(stepHeaders("none")).toEqual([]);
+  });
+
+  it("changes when a partial line grows without a newline", () => {
+    const partial = "line one\nhel";
+    const grown = "line one\nhello";
+    expect(partial.split("\n").length).toBe(grown.split("\n").length);
+    expect(liveFollowKey(partial)).not.toBe(liveFollowKey(grown));
+    expect(liveFollowKey("done\n")).toBe(liveFollowKey("done"));
   });
 
   it("returns the last non-empty lines, right-trimmed", () => {

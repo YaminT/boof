@@ -3,7 +3,7 @@ import { api, type TaskView } from "../api.js";
 import { Button } from "@/ui/button";
 import { act } from "../lib/act.js";
 import type { Route } from "../lib/route.js";
-import { failedTasksVisible, groupTasks, runOrder } from "../lib/task-groups.js";
+import { compareFinished, failedTasksVisible, groupTasks, runOrder } from "../lib/task-groups.js";
 import {
   allLabels,
   filterTasks,
@@ -165,7 +165,7 @@ export function TasksPage({
     });
     const finished = filtered
       .filter((t) => FINISHED.has(t.frontmatter.status))
-      .sort((a, b) => (a.frontmatter.updated < b.frontmatter.updated ? 1 : -1));
+      .sort(compareFinished);
     // Subtasks follow their parent inside a section; the queue keeps its order (it is draggable)
     // and only names the parent.
     const withHierarchy = (entries: RowEntry[], nest = true): RowEntry[] => {
@@ -385,15 +385,30 @@ export function TasksPage({
         focusMode={focus.mode}
         onFocusToggle={focus.toggle}
       />
-      {data.tasksLoaded && tasks.length === 0 && plans.every((p) => p.status !== "draft") && (
+      {data.tasksError && (
         <div className="py-8">
-          <p className="mt-0 mb-3 text-ink-muted">
-            No tasks yet. Add one, or let a harness submit a plan.
-          </p>
-          <Button onClick={newTask}>New task</Button>
+          <p className="mt-0 mb-3 text-ink-muted">Could not load tasks.</p>
+          <Button variant="outline" onClick={() => void data.refresh()}>
+            Try again
+          </Button>
         </div>
       )}
-      {data.tasksLoaded && total === 0 && tasks.length > 0 && (
+      {!data.tasksError && !data.tasksLoaded && (
+        <p className="m-0 py-8 text-ink-muted">Loading tasks…</p>
+      )}
+      {data.tasksLoaded &&
+        !data.tasksError &&
+        tasks.length === 0 &&
+        !filtering &&
+        plans.every((p) => p.status !== "draft") && (
+          <div className="py-8">
+            <p className="mt-0 mb-3 text-ink-muted">
+              No tasks yet. Add one, or let a harness submit a plan.
+            </p>
+            <Button onClick={newTask}>New task</Button>
+          </div>
+        )}
+      {data.tasksLoaded && !data.tasksError && total === 0 && (filtering || tasks.length > 0) && (
         <div className="py-8">
           <p className="mt-0 mb-3 text-ink-muted">
             No tasks match. Clear the search or the filters.

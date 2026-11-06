@@ -9,13 +9,13 @@ import {
   CommandList,
 } from "@/ui/command";
 import { Kbd } from "@/ui/kbd";
-import { isPaletteShortcut } from "../lib/palette-shortcut.js";
+import { isMacUserAgent, isPaletteShortcut } from "../lib/palette-shortcut.js";
 import type { ActionGroup, CommandAction } from "../lib/command-actions.js";
 
 const GROUP_ORDER: ActionGroup[] = ["Go to", "Projects", "Tasks", "Actions"];
 
 export function isMac(): boolean {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  return typeof navigator !== "undefined" && isMacUserAgent(navigator.userAgent || "");
 }
 
 /** The shortcut as shown to the user: "⌘K" on macOS, "Ctrl K" elsewhere. */

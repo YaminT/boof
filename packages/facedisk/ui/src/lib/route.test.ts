@@ -4,9 +4,11 @@ import {
   correctedRoute,
   formatRoute,
   listRouteFor,
+  nextPrevious,
   parseRoute,
   routeForProject,
   routePid,
+  sameRoute,
   type Route,
 } from "./route";
 
@@ -148,6 +150,10 @@ describe("formatRoute", () => {
     for (const r of routes) expect(formatRoute(r)).not.toMatch(/^[/#]/);
   });
 
+  it("drops a goal id that has no plan id", () => {
+    expect(formatRoute({ name: "plans", pid: "boof", goalId: "g" })).toBe("p/boof/plans");
+  });
+
   it("formats specific shapes", () => {
     expect(formatRoute({ name: "overview", pid: "my proj" })).toBe("p/my%20proj");
     expect(formatRoute({ name: "inbox" })).toBe("inbox");
@@ -238,6 +244,37 @@ describe("correctedRoute", () => {
       name: "tasks",
       pid: "sel",
     });
+  });
+});
+
+describe("sameRoute", () => {
+  it("treats a fresh parse of the same URL as the same route", () => {
+    const a = parseRoute("p/boof/tasks/fix");
+    const b = parseRoute("p/boof/tasks/fix");
+    expect(a).not.toBe(b);
+    expect(sameRoute(a, b)).toBe(true);
+    expect(sameRoute(a, parseRoute("p/boof/tasks"))).toBe(false);
+  });
+});
+
+describe("nextPrevious", () => {
+  const overview: Route = { name: "overview", pid: "a" };
+  const creating: Route = { name: "task", pid: "a", taskId: "__new__", view: "edit" };
+  const created: Route = { name: "task", pid: "a", taskId: "real", view: "edit" };
+
+  it("keeps the screen the user left when a new task gets its id", () => {
+    expect(nextPrevious(overview, creating, created)).toBe(overview);
+  });
+
+  it("keeps the origin when only the task tab changes", () => {
+    const edit: Route = { name: "task", pid: "a", taskId: "real", view: "edit" };
+    const changes: Route = { name: "task", pid: "a", taskId: "real", view: "changes" };
+    expect(nextPrevious(overview, edit, changes)).toBe(overview);
+  });
+
+  it("remembers the route that was just left", () => {
+    const tasks: Route = { name: "tasks", pid: "a" };
+    expect(nextPrevious(null, overview, tasks)).toBe(overview);
   });
 });
 

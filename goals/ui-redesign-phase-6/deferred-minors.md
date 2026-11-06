@@ -1,25 +1,78 @@
 # Deferred minors from the UI redesign, phases 1-3
 
-Collected from the controller ledgers (2026-10-27 phase 1-2, 2026-10-29 phase 3) before the workspaces were deleted. Some may already be fixed; check each against the code.
+Triaged against `boof-ui-phase6-rest` on 2026-11-06. Each line is fixed (with the code), obsolete, or deferred.
 
-- Phase 1-2 Task 1: legacy --bg/--panel/--text/--inset/--muted are fixed light values, so dark mode only partly themes old screens.
-- Phase 1-2 Task 1: Actions and Settings screens not visually checked (no hash routes until Task 5).
-- Phase 1-2 Task 2: useRoute sets a fresh route object on every sync (extra re-renders); navigating to the current hash pushes a duplicate history entry; formatRoute drops goalId without planId; untested edges (extra segments, doubled slashes, unknown view, task id "changes").
-- Phase 1-2 Task 3: cmp uses code-unit order vs runner localeCompare for `updated`; default recentLimit (5) untested; spendFor limitUsd<=0 branch untested and undocumented (fraction null); by(status) typed as string.
-- Phase 1-2 Task 4: mirrored selectedId gives a one-render flash of old tasks after a project switch; plans-list errors swallowed (same as tasks); reset effect runs on mount (no-op).
-- Phase 1-2 Task 5: system theme listener never unbinds and ignores other tabs; no explicit focus-visible styles on nav/tabs/switch; ProjectMenu/RunnerSwitch/ThemeMenu mounted twice (rail + sheet); More button name "More 3 in inbox", no aria-haspopup; `__new__` in hash opens a missing task after reload; "(current)"/"(paused)" plain text in project menu.
-- Phase 1-2 Task 5: no regression test for the A->B stale-render case; fix report did not paste command output lines; TaskList may flash empty for one frame after a switch.
-- Phase 1-2 Task 6: legacy --muted / global input CSS overridden with !important inside the palette (remove with legacy styles); "Go to Settings" and "Go to Project settings" both go to page project (FIXED in phase 5: five "Go to Settings › …" items); navigator.platform deprecated; otherProjects misnamed (includes current); Tasks group lists every task uncapped; no per-item Kbd (no per-command shortcuts exist).
-- Phase 1-2 Task 6: Stop confirm dialog never render-checked live (no running task on the --no-runner server) — controller checks it in Task 8 on the runner server; "inside palette" shortcut case tests the caller's boolean, the DOM closest('[cmdk-root]') check stays untested; fix report did not paste vitest output; data.refresh() runs after a failed act(); queue from palette has no confirm (by ruling).
-- Phase 1-2 Task 7: OverviewPage recomputes groupTasks that App already computes; NowStrip polls liveLog every 5 s on Tasks where LivePanel polls the same log; "Nothing running." alone when runner on + queue non-empty; SpendBar aria-valuenow can exceed 100; Stop button not disabled while a stop is in flight; Up next shows priority as "P50" (spec wireframe writes "p50").
-- Phase 1-2 Task 7: first render of a new running card shows 0 s before the layout effect records the start (harmless); runningKey joins ids on "\n".
-- Phase 1-2 Task 8: after-overview-phone.png is viewport-high and stops at the Recent heading (not full page); after-palette.png shot on the 4396 "boof-ui" project, not the seeded one, and "Go to Inbox" sorts first; Recent failed rows lack the wireframe's retry; committed shots show legacy all-caps (PENDING, ACTIVE, "P50") on Tasks/Plans and Tasks/Settings overflow at 420 px — legacy screens, phase 3 (Settings overflow FIXED in phase 5: the page stacks at 420 px).
-- Phase 1-2 Task 8: roving-tabindex widgets that focus tabindex="-1" items would get no ring from the global rule (Base UI menus move tabindex 0 to the active item, so likely fine).
-- Phase 3 Task 2: developer segment's duration runs from its first start through review rounds (wall time, not active time) during fix rounds.
-- Phase 3 Task 3: no RED run captured (tests and code written together); report lacks per-check output lines.
-- Phase 3 Task 4: `void act(...).then(() => data.refresh())` without catch (refresh no longer rejects since the final fix wave); Finished heading has no count; dnd-kit screen-reader instructions mention space bar without a KeyboardSensor; held Alt+↓ sends a reorder per key repeat (ignore e.repeat); Finished sort comparator not three-way on ties; blank page when only draft plans exist and a search hides them; NowStrip "Needs you: N" counts proposed drafts while the Tasks page shows them under Proposed; shownPending memo calls non-memoised byStatus.
-- Phase 3 Task 5: non-404 load errors leave a blank main area (no message/retry); setBase(form) stores untrimmed title → possible false "changed elsewhere" while typing during a save; changed-elsewhere notice cannot clear itself after undoing edits; tab links and "← Tasks" underlined (legacy a rule vs no-underline); CheckIcon lacks role="img"; TaskForm.tsx 288 lines; back target becomes the **new** route after creating a task.
-- Phase 3 Task 5: out-of-order and post-404 polling fixes not reproduced live; TasksToolbar selects not re-screenshotted after NativeSelect (Task 8 covers).
-- Phase 3 Task 6: following only re-scrolls when the line count changes (a streamed partial line that grows without a newline does not re-scroll); report-rounds re-parses round headers the server also parses into task.reviews (needed for the text; no value import from shared allowed); the detail page fetches getTask with the full log every 5 s while running on top of the 1.2 s live-log poll.
-- Phase 3 Task 7: ChangesTab opens its own useLive subscription for the diff tick (as the old Editor did); "Your answers" is a div + aria-labelledby, not a <label>, to dodge the legacy label style; "has not asked anything" empty state not scripted; underlined links come from the global `a` rule in index.css (Task 8).
-- Phase 3 Task 8: Questions textarea narrower than its column; legacy Plans table still all-caps (phase 4); on phone the header's overflow button wraps to its own line.
+- Phase 1-2 Task 1: legacy `--bg`/`--panel`/`--text`/`--inset`/`--muted` light values — **fixed**. `styles.css` is gone (`26dd72d`). `packages/facedisk/ui/src/index.css` themes `--page`, `--surface`, `--ink` and `--muted` under `.dark`.
+- Phase 1-2 Task 1: Actions and Settings not visually checked — **obsolete**. Hash routes are gone; Settings is a real page and is in the README shots.
+- Phase 1-2 Task 2: `useRoute` made a fresh route object on every sync — **fixed**. `sameRoute` in `lib/route.ts` keeps the previous object when the URL did not change (`lib/useRoute.ts`).
+- Phase 1-2 Task 2: navigating to the current URL pushed a duplicate history entry — **fixed**. `useRoute` returns before `pushState` when the location already matches (`lib/useRoute.ts`).
+- Phase 1-2 Task 2: `formatRoute` drops `goalId` without `planId` — **fixed** (by design). The URL is `plans/<planId>/<goalId>`. Covered in `route.test.ts`.
+- Phase 1-2 Task 2: untested edges (extra segments, doubled slashes, unknown view, task id "changes") — **fixed**. `route.test.ts` covers over-long paths, empty and dot segments, an unknown view falling back to edit, and decoding.
+- Phase 1-2 Task 3: `cmp` used code-unit order for `updated` — **fixed**. `runOrder` and `compareFinished` use `localeCompare` for `updated`, matching the runner (`lib/task-groups.ts`).
+- Phase 1-2 Task 3: default `recentLimit` (5) untested — **fixed**. `task-groups.test.ts`.
+- Phase 1-2 Task 3: `spendFor` `limitUsd <= 0` untested — **fixed**. The fraction stays null (no bar). Comment in `lib/spend.ts`, test in `spend.test.ts`.
+- Phase 1-2 Task 3: `by(status)` typed as string — **obsolete**. It filters `frontmatter.status` inside `groupTasks`; callers pass status names and the result is `TaskView[]`.
+- Phase 1-2 Task 4: one-render flash of the previous project's tasks — **fixed**. Lists are tagged with `pid` and a switch clears them (`useAppData.ts`). The Tasks page shows "Loading tasks…" until `tasksLoaded`.
+- Phase 1-2 Task 4: plan-list errors swallowed — **fixed**. A failed load sets `plansError` and Plans and Overview offer "Try again" (`lib/list-load.ts`, `PlansPage.tsx`, `OverviewPage.tsx`).
+- Phase 1-2 Task 4: reset effect runs on mount (no-op) — **obsolete**. The switch effect is what drops the previous lists. The mount run is the first load.
+- Phase 1-2 Task 5: system theme listener never unbinds and ignores other tabs — **fixed**. The listener is removed when the last `useTheme` subscriber leaves, and a `storage` event applies another tab's preference (`lib/theme.ts`).
+- Phase 1-2 Task 5: no explicit focus-visible styles on nav, tabs and the switch — **fixed**. Nav items use `focus-ring` (`Rail.tsx`); buttons, tabs and switches use `focus-visible:ring` (`index.css`, `ui/button.tsx`).
+- Phase 1-2 Task 5: ProjectMenu, RunnerSwitch and ThemeMenu mounted twice (rail and sheet) — **deferred**. The phone sheet needs its own copies; the rail is `hidden` below 720px. Sharing one instance would be a shell redesign.
+- Phase 1-2 Task 5: More button name "More 3 in inbox", no `aria-haspopup` — **fixed**. The button is `aria-haspopup="dialog"` and `aria-label` is "More, N in inbox" (`BottomBar.tsx`).
+- Phase 1-2 Task 5: `__new__` in the URL opened a missing task — **fixed**. `TaskDetailPage` treats `__new__` as the new-task form.
+- Phase 1-2 Task 5: "(current)" and "(paused)" were plain text in the project menu — **fixed**. They are a muted span (`ProjectMenu.tsx`).
+- Phase 1-2 Task 5: no regression test for the A→B stale render — **fixed** for the data rule. `settleList` drops the other project's rows on a failed load (`list-load.test.ts`). The hook tags every list with `pid`.
+- Phase 1-2 Task 5: fix report did not paste command output — **obsolete**. Process note from the old ledger.
+- Phase 1-2 Task 5: TaskList may flash empty for one frame — **fixed**. `tasksLoaded` is false until the new project's list arrives, and the page says "Loading tasks…".
+- Phase 1-2 Task 6: legacy `--muted` and global input CSS overridden with `!important` in the palette — **obsolete**. The palette no longer uses that override. The only `!important` left is the reduced-motion rule in `index.css`.
+- Phase 1-2 Task 6: "Go to Settings" and "Go to Project settings" both went to the project page — **fixed** in phase 5. `command-actions.ts` has a "Go to Settings › …" item per settings page.
+- Phase 1-2 Task 6: `navigator.platform` deprecated — **fixed**. The shortcut label uses `navigator.userAgent` (`isMacUserAgent` in `lib/palette-shortcut.ts`).
+- Phase 1-2 Task 6: `otherProjects` misnamed (included the current project) — **obsolete**. The palette action is "Switch to {name}" and marks the current one with `meta: "current"` (`command-actions.ts`).
+- Phase 1-2 Task 6: Tasks group lists every task uncapped — **deferred**. The palette filters client-side, so a cap would hide matches. No per-command shortcut exists to hang a cap on.
+- Phase 1-2 Task 6: no per-item `Kbd` — **obsolete**. There are no per-command shortcuts. The palette shortcut itself is shown.
+- Phase 1-2 Task 6: Stop confirm dialog never render-checked live — **obsolete**. Process note. `StopTaskDialog` is the confirm for the palette, Overview and the task page.
+- Phase 1-2 Task 6: the "inside palette" shortcut case tests the caller's boolean, not `closest('[cmdk-root]')` — **obsolete**. `isPaletteShortcut` is the decision under test; the DOM check is one line in `CommandPalette.tsx` and vitest runs in node.
+- Phase 1-2 Task 6: fix report did not paste vitest output — **obsolete**. Process note.
+- Phase 1-2 Task 6: `data.refresh()` runs after a failed `act()` — **fixed**. `refresh` does not reject (`useAppData.ts`), and a failed reorder clears the optimistic order in `finally` (`TasksPage.tsx`). Refreshing after a failure shows the server's order.
+- Phase 1-2 Task 6: queue from the palette has no confirm — **obsolete**. By the original ruling.
+- Phase 1-2 Task 7: OverviewPage recomputes `groupTasks` that App already computes — **deferred**. A duplicate `useMemo` over the same lists. Not user-visible; threading the groups through would touch every page.
+- Phase 1-2 Task 7: NowStrip polls `liveLog` every 5s where the running card also polls — **deferred**. The strip only needs the current step name. Sharing one poll would couple the strip to the card.
+- Phase 1-2 Task 7: "Nothing running." alone when the runner is on and the queue is not empty — **fixed**. `idleQueueNote` (`overview/idle-note.ts`, `NowLane.tsx`).
+- Phase 1-2 Task 7: SpendBar `aria-valuenow` can exceed 100 — **fixed**. `pct` is clamped to 0–100 (`SpendBar.tsx`), and `spendFor` clamps the fraction to 1.
+- Phase 1-2 Task 7: Stop stays enabled while a stop is in flight — **fixed**. The Overview card and the task header disable Stop until the request settles (`RunningCard.tsx`, `TaskHeader.tsx`).
+- Phase 1-2 Task 7: Up next showed "P50" — **fixed**. `UpNext.tsx` renders `p{priority}`.
+- Phase 1-2 Task 7: a new running card shows 0s before the layout effect — **obsolete**. Harmless; the layout effect records the start before paint of the elapsed text's next frame.
+- Phase 1-2 Task 7: `runningKey` joins ids on a newline — **obsolete**. An internal key in `App.tsx`, split again before `markRunning`.
+- Phase 1-2 Task 8: screenshot framing and legacy all-caps in old shots — **obsolete**. Those shots were ledger evidence. Status pills are lowercase (`lib/status.ts`). README shots replace them.
+- Phase 1-2 Task 8: Recent failed rows lacked Retry — **fixed**. `RecentList.tsx` shows Retry for failed and stopped.
+- Phase 1-2 Task 8: Settings overflow at 420px — **fixed** in phase 5. The settings page stacks. The phone README shot is the check.
+- Phase 1-2 Task 8: roving-tabindex items with `tabindex="-1"` got no ring — **fixed**. Task rows draw `focus-visible:outline-ring` on the row itself (`TaskRow.tsx`). The global rule still skips `tabindex="-1"` so programmatic focus on notices does not grow a second ring.
+- Phase 3 Task 2: developer duration was wall time from the first start through later reviews — **fixed**. `activeSeconds` sums each visit (`lib/run-timing.ts`, `run-timing.test.ts`).
+- Phase 3 Task 3: no RED run captured; report lacks per-check output — **obsolete**. Process note.
+- Phase 3 Task 4: `void act(...).then(() => data.refresh())` without catch — **fixed**. `refresh` catches its own failures. Reorder uses `finally` (`TasksPage.tsx`).
+- Phase 3 Task 4: Finished heading has no count — **fixed**. `TaskSection title="Finished" count={…}` (`TasksPage.tsx`).
+- Phase 3 Task 4: dnd-kit instructions mention the space bar without a KeyboardSensor — **fixed**. `SortableList.tsx` uses `KeyboardSensor`.
+- Phase 3 Task 4: held Alt+↓ reorders once per key repeat — **fixed**. `TasksPage.tsx` and `PlanPage.tsx` ignore `e.repeat`.
+- Phase 3 Task 4: Finished sort was not three-way on ties — **fixed**. `compareFinished` returns 0 on a tie and breaks ties by id (`task-groups.ts`).
+- Phase 3 Task 4: blank page when a search hides the only draft plans — **fixed**. A filter that matches nothing shows "No tasks match" (`TasksPage.tsx`).
+- Phase 3 Task 4: NowStrip "Needs you" counts proposed drafts, which Tasks shows under Proposed — **obsolete**. The strip matches the Overview "Needs you" list (questions, proposed drafts and draft plans). Tasks splits Proposed into its own section on purpose.
+- Phase 3 Task 4: `shownPending` calls non-memoised `byStatus` — **obsolete**. The memo depends on `filtered`, which is what `byStatus` closes over.
+- Phase 3 Task 5: non-404 load errors left a blank main area — **fixed**. Task and plan pages already retry. Task and plan lists now set `tasksError` / `plansError` and show "Try again" (`useAppData.ts`, `TasksPage.tsx`, `PlansPage.tsx`, `OverviewPage.tsx`).
+- Phase 3 Task 5: `setBase(form)` stored the untrimmed title — **fixed**. `afterSave` stores the trimmed title that was sent (`lib/task-form-sync.ts`, `TaskForm.tsx`).
+- Phase 3 Task 5: the changed-elsewhere notice could not clear after undoing edits — **fixed**. `undoElsewhere` adopts the server copy when the form matches its base again.
+- Phase 3 Task 5: tab links and "← Tasks" underlined by the legacy `a` rule — **fixed**. `index.css` leaves links plain until hover or focus. Back links add `no-underline`.
+- Phase 3 Task 5: CheckIcon lacks `role="img"` — **fixed**. `StepStrip.tsx` sets `role="img"`.
+- Phase 3 Task 5: `TaskForm.tsx` is long — **deferred**. Length is not a defect. Splitting the form would be a rewrite.
+- Phase 3 Task 5: Back became the new task after create — **fixed**. `nextPrevious` keeps the screen the user left when `__new__` gains an id (`lib/route.ts`, `App.tsx`).
+- Phase 3 Task 5: out-of-order and post-404 polling fixes not reproduced live — **obsolete**. Process note. `useTask` drops a stale reply and treats 404 as missing.
+- Phase 3 Task 5: TasksToolbar selects not re-screenshotted after NativeSelect — **obsolete**. The selects are `NativeSelect`. README shots show the Tasks page.
+- Phase 3 Task 6: following did not re-scroll when a partial line grew — **fixed**. The follower watches `liveFollowKey` (the whole log), not the line count (`lib/log-tail.ts`, `LiveLog.tsx`).
+- Phase 3 Task 6: report rounds are parsed again from text the server also parses — **deferred**. The report body is what the page shows. `task.reviews` has the verdict, not the text. Importing server code into the UI bundle is the thing the note forbids.
+- Phase 3 Task 6: the detail page fetched the full log every 5s on top of the live poll — **obsolete**. `useTask` refetches when the list row changes, not on a timer (`useTask.ts`).
+- Phase 3 Task 7: ChangesTab opens its own `useLive` subscription — **deferred**. Each `useLive` is its own event stream (`useLive.ts`). Sharing one stream is a live-bus change, and the tab already updates.
+- Phase 3 Task 7: "Your answers" is a div plus `aria-labelledby`, not a label — **fixed**. The textarea's accessible name is that div (`AnswerBox.tsx`). A `<label>` would restyle under the field layout.
+- Phase 3 Task 7: "has not asked anything" empty state not scripted — **fixed**. `QuestionsTab.tsx` renders "The planner has not asked anything for this task."
+- Phase 3 Task 7: underlined links from the global `a` rule — **fixed**. Same as the Task 5 link rule. `index.css`.
+- Phase 3 Task 8: Questions textarea narrower than its column — **fixed**. `AnswerBox` is `w-full` with no `max-w-[80ch]`, so the textarea fills the column.
+- Phase 3 Task 8: legacy Plans table still all-caps — **obsolete**. Plan rows use `TonePill` and the plan's own status word (`PlansPage.tsx`), not an all-caps table.
+- Phase 3 Task 8: on a phone the task header's overflow button wrapped onto its own line — **fixed**. The title flexes and the status, action and overflow stay in one shrink-wrapped cluster (`TaskHeader.tsx`).

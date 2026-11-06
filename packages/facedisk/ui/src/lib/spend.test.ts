@@ -48,6 +48,7 @@ describe("spendFor", () => {
       limitUsd: null,
       fraction: null,
     });
+    expect(spendFor(budget([scope("global", 3, 0)]), null)?.fraction).toBeNull();
   });
 });
 

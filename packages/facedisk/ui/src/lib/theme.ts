@@ -18,10 +18,15 @@ function systemPrefersDark(): boolean {
   }
 }
 
+/** A stored theme value. Anything else, including a cleared key, is system. */
+export function themePrefFromStorage(value: string | null): ThemePref {
+  return value === "light" || value === "dark" || value === "system" ? value : "system";
+}
+
 export function readThemePref(): ThemePref {
   try {
     const v = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-    return v === "light" || v === "dark" || v === "system" ? v : "system";
+    return themePrefFromStorage(v);
   } catch {
     return "system";
   }
@@ -47,6 +52,9 @@ function storePref(pref: ThemePref): void {
 let currentPref: ThemePref | null = null;
 let currentSystemDark: boolean | null = null;
 let mediaBound = false;
+let mediaQuery: MediaQueryList | null = null;
+let onMedia: (() => void) | null = null;
+let onStorage: ((e: StorageEvent) => void) | null = null;
 const listeners = new Set<() => void>();
 
 function getPref(): ThemePref {
@@ -66,20 +74,45 @@ function bindSystemListener(): void {
   mediaBound = true;
   try {
     const mq = window.matchMedia(DARK_QUERY);
-    mq.addEventListener("change", () => {
+    mediaQuery = mq;
+    onMedia = () => {
       currentSystemDark = mq.matches;
       if (getPref() === "system") applyTheme("system");
       notify();
-    });
+    };
+    mq.addEventListener("change", onMedia);
   } catch {
     // matchMedia unavailable: the system preference is treated as light
+    mediaQuery = null;
+    onMedia = null;
   }
+  // Other tabs write the same key. This tab does not hear its own writes.
+  onStorage = (e: StorageEvent) => {
+    if (e.key !== STORAGE_KEY) return;
+    currentPref = themePrefFromStorage(e.newValue);
+    applyTheme(currentPref);
+    notify();
+  };
+  window.addEventListener("storage", onStorage);
+}
+
+function unbindSystemListener(): void {
+  if (!mediaBound || typeof window === "undefined") return;
+  if (mediaQuery && onMedia) mediaQuery.removeEventListener("change", onMedia);
+  if (onStorage) window.removeEventListener("storage", onStorage);
+  mediaQuery = null;
+  onMedia = null;
+  onStorage = null;
+  mediaBound = false;
 }
 
 function subscribe(listener: () => void): () => void {
   bindSystemListener();
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) unbindSystemListener();
+  };
 }
 
 function setPref(p: ThemePref): void {

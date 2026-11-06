@@ -5,6 +5,7 @@ import type { BudgetStatus } from "./api-types.js";
 import { onUnauthorized } from "./token.js";
 import { useLive } from "./useLive.js";
 import { latestGuard } from "./lib/latest.js";
+import { emptyList, settleList, type ListState } from "./lib/list-load.js";
 
 export interface AppData {
   settings: Settings | null;
@@ -13,8 +14,12 @@ export interface AppData {
   tasks: TaskView[];
   /** True once the selected project's task list has loaded (false right after a switch). */
   tasksLoaded: boolean;
+  /** The task list request failed. Rows already on screen stay; an empty list shows a retry. */
+  tasksError: boolean;
   actions: TaskView[];
   plans: PlanSummary[];
+  /** The plan list request failed. */
+  plansError: boolean;
   budget: BudgetStatus | null;
   /** Bumped on each `plan.*` event for the selected project; plan views reload on it. */
   planTick: number;
@@ -36,25 +41,20 @@ export function useAppData(
   const [settingsDenied, setSettingsDenied] = useState(false);
   // Lists are tagged with the project they belong to, so a render right after a project switch
   // never shows the previous project's tasks or plans.
-  const [taskState, setTasks] = useState<{
-    pid: string | null;
-    items: TaskView[];
-    loaded: boolean;
-  }>({ pid: null, items: [], loaded: false });
+  const [taskState, setTasks] = useState<ListState<TaskView>>(emptyList);
   const [actions, setActions] = useState<TaskView[]>([]);
-  const [planState, setPlans] = useState<{ pid: string | null; items: PlanSummary[] }>({
-    pid: null,
-    items: [],
-  });
+  const [planState, setPlans] = useState<ListState<PlanSummary>>(emptyList);
   const tasks = useMemo(
     () => (taskState.pid === selectedId ? taskState.items : []),
     [taskState, selectedId],
   );
   const tasksLoaded = taskState.pid === selectedId && taskState.loaded;
+  const tasksError = taskState.pid === selectedId && taskState.error;
   const plans = useMemo(
     () => (planState.pid === selectedId ? planState.items : []),
     [planState, selectedId],
   );
+  const plansError = planState.pid === selectedId && planState.error;
   const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const [planTick, setPlanTick] = useState(0);
   const [needsToken, setNeedsToken] = useState(false);
@@ -68,19 +68,30 @@ export function useAppData(
   const actionGuard = useRef(latestGuard());
 
   const loadTasks = useCallback(async (pid: string | null) => {
-    if (!pid) return setTasks({ pid: null, items: [], loaded: false });
+    if (!pid) return setTasks(emptyList());
     const seq = taskGuard.current.begin();
-    const t = await api.listTasks(pid);
-    // Ignore a stale reply, and one for a project the user has already switched away from.
-    if (taskGuard.current.accept(seq) && selectedRef.current === pid)
-      setTasks({ pid, items: t, loaded: true });
+    try {
+      const t = await api.listTasks(pid);
+      // Ignore a stale reply, and one for a project the user has already switched away from.
+      if (taskGuard.current.accept(seq) && selectedRef.current === pid)
+        setTasks((cur) => settleList(cur, pid, { ok: true, items: t }));
+    } catch {
+      if (taskGuard.current.accept(seq) && selectedRef.current === pid)
+        setTasks((cur) => settleList(cur, pid, { ok: false }));
+    }
   }, []);
 
   const loadPlans = useCallback(async (pid: string | null) => {
-    if (!pid) return setPlans({ pid: null, items: [] });
+    if (!pid) return setPlans(emptyList());
     const seq = planGuard.current.begin();
-    const p = await api.listPlans(pid);
-    if (planGuard.current.accept(seq) && selectedRef.current === pid) setPlans({ pid, items: p });
+    try {
+      const p = await api.listPlans(pid);
+      if (planGuard.current.accept(seq) && selectedRef.current === pid)
+        setPlans((cur) => settleList(cur, pid, { ok: true, items: p }));
+    } catch {
+      if (planGuard.current.accept(seq) && selectedRef.current === pid)
+        setPlans((cur) => settleList(cur, pid, { ok: false }));
+    }
   }, []);
 
   const refreshTasks = useCallback(
@@ -181,8 +192,8 @@ export function useAppData(
 
   // Switching project: drop the old lists, then load the new ones.
   useEffect(() => {
-    setTasks({ pid: selectedId, items: [], loaded: false });
-    setPlans({ pid: selectedId, items: [] });
+    setTasks({ pid: selectedId, items: [], loaded: false, error: false });
+    setPlans({ pid: selectedId, items: [], loaded: false, error: false });
     void loadTasks(selectedId).catch(() => {});
     void loadPlans(selectedId).catch(() => {});
   }, [selectedId, loadTasks, loadPlans]);
@@ -192,8 +203,10 @@ export function useAppData(
     settingsDenied,
     tasks,
     tasksLoaded,
+    tasksError,
     actions,
     plans,
+    plansError,
     budget,
     planTick,
     refresh,

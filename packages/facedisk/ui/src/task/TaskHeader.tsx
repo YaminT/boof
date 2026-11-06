@@ -42,6 +42,7 @@ export function TaskHeader({
 }) {
   const f = task.frontmatter;
   const [confirmStop, setConfirmStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // The server found subtasks the page did not know of; kept until the list shows them.
   const [refused, setRefused] = useState<{ count: number | null } | null>(null);
@@ -56,55 +57,60 @@ export function TaskHeader({
       >
         {backLabel}
       </a>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 className="m-0 min-w-0 flex-1 basis-60 text-[length:var(--text-section)] leading-snug font-semibold break-words">
+      <div className="flex items-start gap-3">
+        <h1 className="m-0 min-w-0 flex-1 text-[length:var(--text-section)] leading-snug font-semibold break-words">
           {f.title}
         </h1>
-        <StatusPill status={f.status} />
-        {elapsed !== null && (
-          <span className="text-[length:var(--text-row)] text-ink-muted tabular-nums">
-            {formatDuration(elapsed)}
-          </span>
-        )}
-        {running && (
-          <Button variant="outline" onClick={() => setConfirmStop(true)}>
-            Stop
-          </Button>
-        )}
-        {f.status === "draft" && <Button onClick={onQueue}>Queue</Button>}
-        {(f.status === "failed" || f.status === "stopped") && (
-          <Button onClick={onRetry}>Retry</Button>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            aria-label="More actions"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            <EllipsisIcon className="size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            {f.status === "archived" ? (
-              <DropdownMenuItem onClick={() => actions.unarchive(f.id)}>Unarchive</DropdownMenuItem>
-            ) : (
-              !running && (
-                <DropdownMenuItem onClick={() => actions.archive(f.id)}>Archive</DropdownMenuItem>
-              )
-            )}
-            <DropdownMenuItem onClick={() => actions.duplicate(task)}>Duplicate</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => actions.copyId(f.id)}>Copy id</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={running} onClick={() => setConfirmDelete(true)}>
-              Delete…
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <StatusPill status={f.status} />
+          {elapsed !== null && (
+            <span className="text-[length:var(--text-row)] text-ink-muted tabular-nums">
+              {formatDuration(elapsed)}
+            </span>
+          )}
+          {running && (
+            <Button variant="outline" disabled={stopping} onClick={() => setConfirmStop(true)}>
+              Stop
+            </Button>
+          )}
+          {f.status === "draft" && <Button onClick={onQueue}>Queue</Button>}
+          {(f.status === "failed" || f.status === "stopped") && (
+            <Button onClick={onRetry}>Retry</Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label="More actions"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <EllipsisIcon className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {f.status === "archived" ? (
+                <DropdownMenuItem onClick={() => actions.unarchive(f.id)}>
+                  Unarchive
+                </DropdownMenuItem>
+              ) : (
+                !running && (
+                  <DropdownMenuItem onClick={() => actions.archive(f.id)}>Archive</DropdownMenuItem>
+                )
+              )}
+              <DropdownMenuItem onClick={() => actions.duplicate(task)}>Duplicate</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => actions.copyId(f.id)}>Copy id</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={running} onClick={() => setConfirmDelete(true)}>
+                Delete…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
       <StopTaskDialog
         open={confirmStop}
         onOpenChange={setConfirmStop}
         onConfirm={() => {
           setConfirmStop(false);
-          actions.stop(f.id);
+          setStopping(true);
+          void Promise.resolve(actions.stop(f.id)).finally(() => setStopping(false));
         }}
       />
       <DeleteTaskDialog

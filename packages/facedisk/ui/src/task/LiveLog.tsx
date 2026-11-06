@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Button } from "@/ui/button";
+import { liveFollowKey } from "../lib/log-tail.js";
 import { useLiveLog } from "../overview/useLiveLog.js";
 
 const LINE_PX = 17;
@@ -40,10 +41,11 @@ export function LiveLog({
     if (lines.length > 0) virtualizer.scrollToIndex(lines.length - 1, { align: "end" });
   };
 
+  const followKey = liveFollowKey(log);
   useEffect(() => {
     if (following.current) toEnd();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines.length]);
+  }, [followKey]);
 
   const onScroll = () => {
     const el = scroller.current;

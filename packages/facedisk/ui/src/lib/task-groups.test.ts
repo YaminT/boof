@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlanSummary, TaskView } from "../api.js";
-import { failedTasksVisible, groupTasks } from "./task-groups.js";
+import { compareFinished, failedTasksVisible, groupTasks } from "./task-groups.js";
 
 function task(p: {
   id: string;
@@ -128,5 +128,20 @@ describe("groupTasks", () => {
     expect(g.finished.counts).toEqual({ done: 2, failed: 1, stopped: 1, archived: 1 });
     expect(ids(g.finished.recent)).toEqual(["d2", "f", "s"]);
     expect(groupTasks([task({ id: "x", status: "done" })]).finished.recent).toHaveLength(1);
+  });
+
+  it("keeps five recent finished tasks unless a limit is given", () => {
+    const tasks = [1, 2, 3, 4, 5, 6].map((n) =>
+      task({ id: `d${n}`, status: "done", updated: `2026-01-0${n}T00:00:00Z` }),
+    );
+    expect(groupTasks(tasks).finished.recent).toHaveLength(5);
+    expect(groupTasks(tasks).finished.recent[0].frontmatter.id).toBe("d6");
+  });
+
+  it("orders equal finished timestamps by id", () => {
+    const a = task({ id: "b", status: "done", updated: "2026-01-01T00:00:00Z" });
+    const b = task({ id: "a", status: "done", updated: "2026-01-01T00:00:00Z" });
+    expect(compareFinished(a, b)).toBeGreaterThan(0);
+    expect(compareFinished(a, a)).toBe(0);
   });
 });

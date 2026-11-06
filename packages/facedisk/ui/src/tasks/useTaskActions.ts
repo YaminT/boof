@@ -6,7 +6,7 @@ import type { AppData } from "../useAppData.js";
 /** The things a row can do; each reports through a toast and refreshes the list. */
 export function useTaskActions(pid: string, data: AppData, navigate: (to: Route) => void) {
   const run = (fn: () => Promise<unknown>, success: string | undefined, failure: string) =>
-    void act(fn, { success, failure }).then(() => data.refresh());
+    act(fn, { success, failure }).then(() => data.refresh());
   const go = (taskId: string, view: RouteView = "edit") =>
     navigate({ name: "task", pid, taskId, view });
 
