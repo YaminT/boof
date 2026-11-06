@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_SDK_API_KEY_PROVIDERS,
+  agentKeyIsSeparate,
   agentSdkEligibility,
   decideAgentAuth,
   withAgentKey,
@@ -13,6 +14,12 @@ const account = (id: string, provider?: string, extra = {}) => ({
   ...extra,
 });
 const now = new Date("2026-11-05T00:00:00.000Z");
+
+describe("agentKeyIsSeparate", () => {
+  it("treats equal string lengths with different UTF-8 byte lengths as separate", () => {
+    expect(agentKeyIsSeparate("é-padding", "e-padding")).toBe(true);
+  });
+});
 
 describe("agentSdkEligibility", () => {
   it("allows only known API-key providers without refresh tokens", () => {

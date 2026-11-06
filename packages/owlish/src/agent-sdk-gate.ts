@@ -120,8 +120,11 @@ export const AGENT_KEY_MUST_BE_SEPARATE =
 
 /** Compare effective secrets without exposing them or leaking a length-dependent comparison. */
 export function agentKeyIsSeparate(adminKey: string | null, agentKey: string | null): boolean {
-  if (!adminKey || !agentKey || adminKey.length !== agentKey.length) return true;
-  return !timingSafeEqual(Buffer.from(adminKey), Buffer.from(agentKey));
+  if (!adminKey || !agentKey) return true;
+  const adminBytes = Buffer.from(adminKey);
+  const agentBytes = Buffer.from(agentKey);
+  if (adminBytes.length !== agentBytes.length) return true;
+  return !timingSafeEqual(adminBytes, agentBytes);
 }
 
 /**
