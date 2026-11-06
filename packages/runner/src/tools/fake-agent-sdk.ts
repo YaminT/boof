@@ -18,6 +18,7 @@ export type McpCallRecord = {
 
 type McpClient = {
   connect(transport: unknown): Promise<void>;
+  listTools(): Promise<unknown>;
   callTool(params: { name: string; arguments?: Record<string, unknown> }): Promise<unknown>;
   close(): Promise<void>;
 };
@@ -77,6 +78,9 @@ async function callMcpInstance(
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([instance.connect(serverTransport), client.connect(clientTransport)]);
   try {
+    // A real client lists tools first; that caches each output schema, and callTool then
+    // validates structuredContent against it.
+    await client.listTools();
     return await client.callTool({ name: tool, arguments: args });
   } finally {
     await client.close().catch(() => {});
