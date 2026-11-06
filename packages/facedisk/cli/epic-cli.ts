@@ -113,6 +113,16 @@ export async function epicCommand(
 
   try {
     if (sub === "add" && !positionals[0]?.trim()) throw new CliUsageError("a title is required");
+    if ((sub === "archive" || sub === "remove") && !positionals[0]) {
+      throw new CliUsageError("an epic id is required");
+    }
+    if (
+      sub === "add" &&
+      values.priority !== undefined &&
+      !Number.isInteger(Number(values.priority))
+    ) {
+      throw new CliUsageError("--priority must be an integer");
+    }
     let projectId: string;
     let dir: string;
     try {
@@ -137,7 +147,6 @@ export async function epicCommand(
         let priority: number | undefined;
         if (values.priority !== undefined) {
           priority = Number(values.priority);
-          if (!Number.isInteger(priority)) throw new CliUsageError("--priority must be an integer");
         }
         const audit = beginCliAudit(root, "cli:epic.add", projectId);
         try {

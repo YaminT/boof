@@ -449,6 +449,30 @@ describe("hand-written CLI audit", () => {
     expect(await auditLines(root)).toHaveLength(frozen);
   });
 
+  it("epic usage errors with unresolved projects do not write audit lines", async () => {
+    const root = await scratch();
+    const before = (await auditLines(root)).length;
+    for (const sub of ["archive", "remove"]) {
+      expect(
+        await epicCommand(
+          [sub, "--project", "ghost", "-d", root],
+          () => root,
+          () => {},
+          () => {},
+        ),
+      ).toBe(1);
+    }
+    expect(
+      await epicCommand(
+        ["add", "title", "--priority", "invalid", "--project", "ghost", "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    expect(await auditLines(root)).toHaveLength(before);
+  });
+
   it("plan import and sync are audited; export, dry-run and a missing flag are not", async () => {
     const root = await scratch();
     const parent = await scratch();
