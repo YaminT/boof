@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   agentStatus,
+  AuthStore,
   appendEvent,
   AttachmentStore,
   evaluateBudget,
@@ -95,6 +96,8 @@ import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
+import { ConciergeService } from "../../concierge/service.js";
+import type { ConciergeAgent } from "@boof/heart";
 
 export interface CreateTaskInput {
   title: string;
@@ -851,6 +854,8 @@ export class TaskService {
   /** The tools, injected by the composition root (bin, desktop): Heart never builds one. */
   readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
+  readonly conciergeAgent: ConciergeAgent | null;
+  private conciergeService?: ConciergeService;
   private readonly pendingAgentRoleCache = new Map<
     string,
     { signature: string; roles: Set<string> }
@@ -859,6 +864,7 @@ export class TaskService {
   constructor(
     readonly root: string,
     catalog: ToolCatalog,
+    opts: { conciergeAgent?: ConciergeAgent | null } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
@@ -870,6 +876,7 @@ export class TaskService {
       console.error("could not secure Owlish secret storage");
     });
     this.catalog = catalog;
+    this.conciergeAgent = opts.conciergeAgent ?? null;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1574,6 +1581,18 @@ export class TaskService {
   }
 
   // --- Settings / health ---
+
+  concierge(): ConciergeService {
+    if (!this.conciergeService) {
+      this.conciergeService = new ConciergeService({
+        root: this.root,
+        services: this,
+        authStore: new AuthStore(this.root),
+        agent: this.conciergeAgent,
+      });
+    }
+    return this.conciergeService;
+  }
 
   loadSettings(): Promise<Settings> {
     return this.settingsStore.load();

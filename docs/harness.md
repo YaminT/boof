@@ -599,6 +599,13 @@ Every error has this shape:
 | `host_not_allowed`         | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                  |
 | `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                               |
 | `unsupported_media_type`   | 415    | Send the body with `Content-Type: application/json`.                                                                                                            |
+| `concierge_unavailable`    | 409    | The assistant cannot run in this process. Read the message for the reason; use console commands while unavailable.                                              |
+| `concierge_busy`           | 409    | Another assistant reply is still running. Wait for it to finish.                                                                                                |
+| `concierge_limit`          | 409    | The conversation reached its cost cap. Start a new conversation.                                                                                                |
+| `budget_exceeded`          | 409    | A daily budget that covers the assistant is used up. Check the listed scopes and `resetsAt`.                                                                    |
+| `change_not_found`         | 404    | The pending change is missing, belongs to another user, or was already used. Read the conversation again.                                                       |
+| `change_stale`             | 409    | The target changed after the proposal. Ask the assistant to propose it again.                                                                                   |
+| `change_expired`           | 409    | The proposal expired. Ask the assistant to propose it again.                                                                                                    |
 | `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                   |
 | `not_configured`           | 409    | No account pool (better-ccflare) is set up. Tell the user to set `settings.owlish`; do not retry.                                                               |
 | `gateway_error`            | 502    | The account pool gateway failed or is unreachable. Check `accounts.health`; retry later.                                                                        |

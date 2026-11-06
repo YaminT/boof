@@ -133,6 +133,13 @@
                   "host_not_allowed",
                   "payload_too_large",
                   "unsupported_media_type",
+                  "concierge_unavailable",
+                  "concierge_busy",
+                  "concierge_limit",
+                  "budget_exceeded",
+                  "change_not_found",
+                  "change_stale",
+                  "change_expired",
                   "rate_limited",
                   "not_configured",
                   "gateway_error",
@@ -13845,6 +13852,34 @@
     "branch_not_found": {
       "description": "The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).",
       "status": 404
+    },
+    "budget_exceeded": {
+      "description": "A daily budget that covers the assistant is used up.",
+      "status": 409
+    },
+    "change_expired": {
+      "description": "The pending change expired.",
+      "status": 409
+    },
+    "change_not_found": {
+      "description": "The pending change does not exist or is no longer available.",
+      "status": 404
+    },
+    "change_stale": {
+      "description": "The target changed since the assistant proposed this change.",
+      "status": 409
+    },
+    "concierge_busy": {
+      "description": "A message to the assistant is still being answered.",
+      "status": 409
+    },
+    "concierge_limit": {
+      "description": "The conversation reached its cost limit; start a new one.",
+      "status": 409
+    },
+    "concierge_unavailable": {
+      "description": "The assistant cannot run here; the message says why.",
+      "status": 409
     },
     "conflict": {
       "description": "The change conflicts with the current state.",
