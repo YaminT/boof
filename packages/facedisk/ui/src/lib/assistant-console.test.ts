@@ -6,9 +6,12 @@ import {
   mergeLines,
   planUnknownInput,
   refusalText,
+  restoredChangesHeader,
   runConfirm,
   stopReasonText,
   unavailableLine,
+  WAITING_HEADER,
+  EARLIER_HEADER,
 } from "./assistant-console.js";
 import type { ConsoleLine } from "./console-session.js";
 
@@ -124,6 +127,26 @@ describe("mergeLines", () => {
 });
 
 describe("pending row state", () => {
+  it("uses the review header only when a restored row is pending", () => {
+    expect(restoredChangesHeader([change()])).toBe(WAITING_HEADER);
+    expect(restoredChangesHeader([change({ status: "failed", error: "interrupted" })])).toBe(
+      EARLIER_HEADER,
+    );
+  });
+  it("uses words for known failures and preserves unknown failure codes", () => {
+    for (const [code, label] of [
+      ["change_stale", "the item changed since this was proposed"],
+      ["change_expired", "expired"],
+      ["interrupted", "interrupted"],
+      ["change_not_found", "no longer exists"],
+      ["other_code", "failed: other_code"],
+    ]) {
+      expect(changeRowView({ ...line, state: "failed", detail: code }, [], now)).toEqual({
+        kind: "done",
+        label,
+      });
+    }
+  });
   const now = Date.parse("2026-11-06T12:00:00.000Z");
   const line: ConsoleLine = { kind: "pending", text: "t", changeId: "chg-1" };
 
@@ -153,7 +176,7 @@ describe("pending row state", () => {
     });
     expect(changeRowView({ ...line, state: "failed", detail: "interrupted" }, [], now)).toEqual({
       kind: "done",
-      label: "Failed: interrupted",
+      label: "interrupted",
     });
     expect(changeRowView(line, [change({ status: "failed" })], now)).toEqual({
       kind: "done",
@@ -161,7 +184,7 @@ describe("pending row state", () => {
     });
     expect(changeRowView(line, [change({ status: "failed", error: "interrupted" })], now)).toEqual({
       kind: "done",
-      label: "Failed: interrupted",
+      label: "interrupted",
     });
   });
 

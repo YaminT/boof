@@ -99,7 +99,7 @@ describe("proposed changes", () => {
       expect(html).not.toContain("Discard");
     }
     expect(rows({ state: "applied" })).toContain("Applied");
-    expect(rows({ state: "failed", detail: "interrupted" })).toContain("Failed: interrupted");
+    expect(rows({ state: "failed", detail: "interrupted" })).toContain("interrupted");
     expect(rows({ state: "expired" })).toContain("Expired");
   });
 
@@ -130,7 +130,7 @@ describe("row accessibility and restored rows", () => {
       render([{ kind: "pending", text: c.title, changeId: c.id }], [c]);
     expect(rows(pending({ status: "applying" }))).toContain("Applying…");
     const failed = rows(pending({ status: "failed", error: "interrupted" }));
-    expect(failed).toContain("Failed: interrupted");
+    expect(failed).toContain("interrupted");
     expect(failed).not.toContain("Review: ");
   });
 

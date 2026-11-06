@@ -171,9 +171,15 @@ export class ConciergeService {
       };
       const id = live.owners?.[owner];
       if (!id || !/^cnv-[0-9a-f]{8}$/.test(id)) return null;
-      const conversation = JSON.parse(
-        await readFile(join(dir, "conversations", `${id}.json`), "utf8"),
-      ) as ConciergeConversation;
+      const conversation = await (
+        this.store as unknown as {
+          readConversation(
+            projectId: string,
+            id: string,
+          ): Promise<ConciergeConversation | null | "corrupt">;
+        }
+      ).readConversation(projectId, id);
+      if (!conversation || conversation === "corrupt") return null;
       if (
         conversation.id !== id ||
         conversation.projectId !== projectId ||

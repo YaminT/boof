@@ -15,6 +15,21 @@ export const WAITING_HEADER = "Waiting for your review (from earlier):";
 export const EARLIER_HEADER = "Changes from earlier in this conversation:";
 export const CONFIRM_NOTE = "Proposed by the assistant. It runs with your permissions.";
 
+export function restoredChangesHeader(pending: PendingChangeView[]): string {
+  return pending.some((item) => item.status === "pending") ? WAITING_HEADER : EARLIER_HEADER;
+}
+
+function failedLabel(code?: string): string {
+  if (!code) return "Failed";
+  const words: Record<string, string> = {
+    change_stale: "the item changed since this was proposed",
+    change_expired: "expired",
+    interrupted: "interrupted",
+    change_not_found: "no longer exists",
+  };
+  return words[code] ?? `failed: ${code}`;
+}
+
 /** The one line shown when the assistant cannot run. The reason is the server's, word for word. */
 export function unavailableLine(reason: string | null): string {
   const why = (reason ?? "The assistant is not available.").trim();
@@ -84,7 +99,7 @@ export function changeRowView(
   if (line.state === "discarded") return { kind: "done", label: "Discarded" };
   if (line.state === "expired") return { kind: "done", label: "Expired" };
   if (line.state === "failed") {
-    return { kind: "done", label: line.detail ? `Failed: ${line.detail}` : "Failed" };
+    return { kind: "done", label: failedLabel(line.detail) };
   }
   const change = pending.find((c) => c.id === line.changeId) ?? null;
   if (change) {
@@ -92,7 +107,7 @@ export function changeRowView(
     if (change.status === "applied") return { kind: "done", label: "Applied" };
     if (change.status === "discarded") return { kind: "done", label: "Discarded" };
     if (change.status === "failed") {
-      return { kind: "done", label: change.error ? `Failed: ${change.error}` : "Failed" };
+      return { kind: "done", label: failedLabel(change.error) };
     }
     if (change.status === "expired" || Date.parse(change.expiresAt) <= now) {
       return { kind: "done", label: "Expired" };

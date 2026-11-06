@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +12,7 @@ import {
   execCommand,
   readDailyLedger,
   budgetTimeZone,
+  conciergeDir,
 } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { TaskService } from "../api/services/service.js";
@@ -63,6 +64,17 @@ async function expectCode(promise: Promise<unknown>, code: string) {
 }
 
 describe("ConciergeService", () => {
+  it("treats a parseable but schema-invalid stored conversation as corrupt", async () => {
+    await ask("hello");
+    const dir = join(conciergeDir(root, "demo"), "conversations");
+    const files = await readdir(dir);
+    const file = join(dir, files[0]!);
+    const conversation = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
+    conversation.messages = "damaged";
+    await writeFile(file, JSON.stringify(conversation));
+    expect((await concierge.status(LOCAL_PRINCIPAL, "demo")).conversation).toBeNull();
+  });
+
   it("creates a draft task and records spend", async () => {
     agent = scriptedAgent([taskCall("Fix X"), { text: "Created a draft." }]);
     concierge = new ConciergeService({ root, services, authStore, agent });

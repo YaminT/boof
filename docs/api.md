@@ -463,7 +463,7 @@ It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:con
 `projects:write`. No key is stored. New client ids that would start with `concierge-` are issued
 as `client-concierge…` instead. A leftover `concierge-*` row in `auth/clients.json` still appears
 in the client list, but `get`, revoke and rotate return 404 for that id and the key cannot
-authenticate. The assistant then answers `409 concierge_unavailable` and names the file: remove
+authenticate. For the user whose id matches that row, the assistant answers `409 concierge_unavailable` and names the file: remove
 the entry from `auth/clients.json`.
 
 **Tools** the concierge may call, on the pinned project only. Reads run. Writes run only where
