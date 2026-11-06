@@ -33,7 +33,7 @@ export function AnswerBox({
     }
   };
   return (
-    <div className="flex w-full flex-col gap-2">
+    <div className="flex w-full flex-col items-start gap-2">
       <div id={labelId} className="text-[length:var(--text-body)] font-medium">
         Your answers
       </div>

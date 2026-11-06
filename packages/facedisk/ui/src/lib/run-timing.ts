@@ -41,6 +41,9 @@ export function runLabel(task: TaskView): string | null {
   return `run ${Math.min(completedRuns + 1, runs)} of ${runs}`;
 }
 
+/** A planner answering a developer question does not end the visit it interrupts. */
+const answering = (label: string) => /^Planner \(answering/.test(label);
+
 function activeSeconds(
   entries: Entry[],
   role: StepRole,
@@ -54,7 +57,12 @@ function activeSeconds(
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     if (e.role !== role || e.ms === null) continue;
-    const next = entries.slice(i + 1).find((x) => x.ms !== null);
+    // An answering entry is not a new pipeline step. Closing the current role on it froze
+    // that timer while the planner wrote the answer; the time stays on the current role.
+    const next = entries.slice(i + 1).find((x) => {
+      if (x.ms === null) return false;
+      return !(state === "current" && answering(x.label));
+    });
     let end: number | null = null;
     if (next?.ms != null) end = next.ms;
     else if (state === "current") end = now;

@@ -72,9 +72,13 @@ function notify(): void {
 function bindSystemListener(): void {
   if (mediaBound || typeof window === "undefined") return;
   mediaBound = true;
+  // Re-read on every bind. The cache survives the gap after the last subscriber left, and an OS
+  // or other-tab change in that gap would otherwise stick until the next event.
+  let systemDark = false;
   try {
     const mq = window.matchMedia(DARK_QUERY);
     mediaQuery = mq;
+    systemDark = mq.matches;
     onMedia = () => {
       currentSystemDark = mq.matches;
       if (getPref() === "system") applyTheme("system");
@@ -85,7 +89,12 @@ function bindSystemListener(): void {
     // matchMedia unavailable: the system preference is treated as light
     mediaQuery = null;
     onMedia = null;
+    systemDark = false;
   }
+  currentSystemDark = systemDark;
+  currentPref = readThemePref();
+  applyTheme(currentPref);
+  notify();
   // Other tabs write the same key. This tab does not hear its own writes.
   onStorage = (e: StorageEvent) => {
     if (e.key !== STORAGE_KEY) return;
@@ -104,6 +113,15 @@ function unbindSystemListener(): void {
   onMedia = null;
   onStorage = null;
   mediaBound = false;
+}
+
+/**
+ * Keep the theme store listening for the life of the page. Theme controls unmount behind the
+ * token gate and the add-project gate; without this, an OS or other-tab change in that gap is
+ * missed until the next one.
+ */
+export function retainThemeStore(): () => void {
+  return subscribe(() => {});
 }
 
 function subscribe(listener: () => void): () => void {

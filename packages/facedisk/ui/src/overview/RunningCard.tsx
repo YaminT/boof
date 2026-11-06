@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Project, Settings } from "@boof/heart/schema";
 import { effectiveTool, stepRole, switchModelChoices } from "../lib/claude-agent.js";
 import { Button } from "@/ui/button";
@@ -7,6 +7,7 @@ import { act } from "../lib/act.js";
 import { currentStep, tailLines } from "../lib/log-tail.js";
 import { formatRoute } from "../lib/route.js";
 import { formatDuration } from "../lib/run-timing.js";
+import { stopDisabled } from "../lib/stop-request.js";
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import { SteerBox } from "./SteerBox.js";
 import { useElapsed } from "./useElapsed.js";
@@ -41,6 +42,9 @@ export function RunningCard({
   const { log, failed: logFailed } = useLiveLog(pid, id, true);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const status = task.frontmatter.status;
+  // A stop request returns before the task leaves running. Hold Stop until it does, or the request fails.
+  useEffect(() => setStopping((on) => stopDisabled(status, on)), [status]);
   const elapsed = useElapsed(pid, task, true);
 
   const step = currentStep(log);
@@ -90,7 +94,7 @@ export function RunningCard({
           <Button
             type="button"
             variant="destructive"
-            disabled={stopping}
+            disabled={stopDisabled(status, stopping)}
             onClick={() => setConfirmStop(true)}
           >
             Stop
@@ -107,9 +111,10 @@ export function RunningCard({
           void act(() => api.stopTask(pid, id), {
             success: "Stop requested",
             failure: "Could not stop",
-          })
-            .then(onChange)
-            .finally(() => setStopping(false));
+          }).then((result) => {
+            if (result === undefined) setStopping(false);
+            onChange();
+          });
         }}
       />
     </section>

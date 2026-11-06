@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { PlanSummary, TaskView } from "../api.js";
-import { compareFinished, failedTasksVisible, groupTasks } from "./task-groups.js";
+import {
+  compareFinished,
+  failedTasksVisible,
+  finishedSectionTasks,
+  finishedStatusCounts,
+  groupTasks,
+} from "./task-groups.js";
 
 function task(p: {
   id: string;
@@ -136,6 +142,23 @@ describe("groupTasks", () => {
     );
     expect(groupTasks(tasks).finished.recent).toHaveLength(5);
     expect(groupTasks(tasks).finished.recent[0].frontmatter.id).toBe("d6");
+  });
+
+  it("builds the Finished summary from the same tasks as the Finished count", () => {
+    const done = task({ id: "shipped", status: "done" });
+    const failed = task({ id: "export", status: "failed" });
+    const shown = finishedSectionTasks([done, failed], false);
+    expect(ids(shown)).toEqual(["shipped"]);
+    expect(shown).toHaveLength(1);
+    expect(finishedStatusCounts(shown)).toEqual({ done: 1, failed: 0, stopped: 0, archived: 0 });
+    // Expanded view lists the failed task under Finished, so the summary counts it too.
+    const expanded = finishedSectionTasks([done, failed], true);
+    expect(finishedStatusCounts(expanded)).toEqual({
+      done: 1,
+      failed: 1,
+      stopped: 0,
+      archived: 0,
+    });
   });
 
   it("orders equal finished timestamps by id", () => {

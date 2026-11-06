@@ -8,6 +8,7 @@ import {
   parseRoute,
   routeForProject,
   routePid,
+  routeAfterNavigation,
   sameRoute,
   type Route,
 } from "./route";
@@ -254,6 +255,26 @@ describe("sameRoute", () => {
     expect(a).not.toBe(b);
     expect(sameRoute(a, b)).toBe(true);
     expect(sameRoute(a, parseRoute("p/boof/tasks"))).toBe(false);
+  });
+});
+
+describe("routeAfterNavigation", () => {
+  const tasks = () => parseRoute("p/demo/tasks");
+
+  it("keeps the previous object when the path and the query are unchanged", () => {
+    const prev = tasks();
+    const next = tasks();
+    expect(next).not.toBe(prev);
+    expect(routeAfterNavigation(prev, next, "?epic=alpha", "?epic=alpha")).toBe(prev);
+  });
+
+  it("returns a new route when only the query string changes", () => {
+    const prev = tasks();
+    const next = tasks();
+    expect(sameRoute(prev, next)).toBe(true);
+    expect(routeAfterNavigation(prev, next, "", "?epic=alpha")).toBe(next);
+    expect(routeAfterNavigation(prev, next, "?epic=alpha", "?manage=epics")).toBe(next);
+    expect(routeAfterNavigation(prev, next, "?epic=alpha", "")).toBe(next);
   });
 });
 

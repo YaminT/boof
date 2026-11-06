@@ -4,6 +4,7 @@ import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "../lib/run-timing.js";
+import { stopDisabled } from "../lib/stop-request.js";
 import { StatusPill } from "../shell/StatusPill.js";
 import { useElapsed } from "../overview/useElapsed.js";
 import { TaskRowMenu } from "./TaskRowMenu.js";
@@ -28,6 +29,8 @@ export interface RowContext {
   tabbableKey: string | null;
   onSelect: (key: string) => void;
   onStop: (id: string) => void;
+  /** Tasks whose stop has been requested and that are still running. */
+  stoppingIds: ReadonlySet<string>;
   /** The project's epics by id, to name the epic chips. */
   epics: ReadonlyMap<string, EpicView>;
 }
@@ -230,7 +233,18 @@ export function TaskRow({
       )}
       <span className="flex shrink-0 justify-end min-[720px]:w-24">
         {action && (
-          <Button size="sm" variant="outline" onClick={action.run}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={
+              entry.kind === "running" &&
+              stopDisabled(
+                entry.task.frontmatter.status,
+                ctx.stoppingIds.has(entry.task.frontmatter.id),
+              )
+            }
+            onClick={action.run}
+          >
             {action.label}
           </Button>
         )}

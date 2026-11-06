@@ -87,3 +87,24 @@ export function groupTasks(
 export function failedTasksVisible(expanded: boolean, finished: TaskView[]): TaskView[] {
   return expanded ? [] : finished.filter((task) => task.frontmatter.status === "failed");
 }
+
+/** Tasks listed under Finished. The heading count and the "done N, failed N" line both use this. */
+export function finishedSectionTasks(finished: TaskView[], expanded: boolean): TaskView[] {
+  const aside = new Set(failedTasksVisible(expanded, finished).map((t) => t.frontmatter.id));
+  return finished.filter((t) => !aside.has(t.frontmatter.id));
+}
+
+export function finishedStatusCounts(tasks: TaskView[]): {
+  done: number;
+  failed: number;
+  stopped: number;
+  archived: number;
+} {
+  const counts = { done: 0, failed: 0, stopped: 0, archived: 0 };
+  for (const t of tasks) {
+    const status = t.frontmatter.status;
+    if (status === "done" || status === "failed" || status === "stopped" || status === "archived")
+      counts[status]++;
+  }
+  return counts;
+}

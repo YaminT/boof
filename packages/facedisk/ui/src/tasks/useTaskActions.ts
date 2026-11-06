@@ -27,7 +27,14 @@ export function useTaskActions(pid: string, data: AppData, navigate: (to: Route)
         skip ? "Skipped" : "Unskipped",
         skip ? "Could not skip" : "Could not unskip",
       ),
-    stop: (id: string) => run(() => api.stopTask(pid, id), "Stop requested", "Could not stop"),
+    stop: (id: string) =>
+      act(() => api.stopTask(pid, id), {
+        success: "Stop requested",
+        failure: "Could not stop",
+      }).then(async (result) => {
+        await data.refresh();
+        return result !== undefined;
+      }),
     duplicate: (task: TaskView) =>
       run(
         async () => {

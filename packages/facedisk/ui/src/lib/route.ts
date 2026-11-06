@@ -154,6 +154,20 @@ export function sameRoute(a: Route | null, b: Route | null): boolean {
 }
 
 /**
+ * The route object to store after a location change. A fresh parse of the same path is the same
+ * route, so callers keep `prev` and skip a render. The query string is part of that identity:
+ * `?epic=` and `?manage=` are not on the route, and a change that only touches them must render.
+ */
+export function routeAfterNavigation(
+  prev: Route | null,
+  next: Route | null,
+  prevSearch: string,
+  search: string,
+): Route | null {
+  return sameRoute(prev, next) && prevSearch === search ? prev : next;
+}
+
+/**
  * The route to remember as "where the user came from" when `current` becomes `next`.
  * Switching tabs of one task keeps the origin. Saving a new task (the id replaces `__new__`)
  * keeps it too, so Back still returns to the list the user left.

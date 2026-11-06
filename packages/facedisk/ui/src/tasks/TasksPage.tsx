@@ -3,7 +3,14 @@ import { api, type TaskView } from "../api.js";
 import { Button } from "@/ui/button";
 import { act } from "../lib/act.js";
 import type { Route } from "../lib/route.js";
-import { compareFinished, failedTasksVisible, groupTasks, runOrder } from "../lib/task-groups.js";
+import {
+  compareFinished,
+  failedTasksVisible,
+  finishedSectionTasks,
+  finishedStatusCounts,
+  groupTasks,
+  runOrder,
+} from "../lib/task-groups.js";
 import {
   allLabels,
   filterTasks,
@@ -109,11 +116,27 @@ export function TasksPage({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showFinished, setShowFinished] = useState(false);
   const [stopId, setStopId] = useState<string | null>(null);
+  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const { tasks, plans } = data;
+  // Drop a stop latch once that task is no longer running (the request outlives the HTTP call).
+  useEffect(() => {
+    const running = new Set(
+      tasks.filter((t) => t.frontmatter.status === "running").map((t) => t.frontmatter.id),
+    );
+    setStoppingIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (running.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks]);
   // The queue order while a reorder is in flight; null shows the server's order.
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
   const inFlight = useRef(0);
 
-  const { tasks, plans } = data;
   const filtered = useMemo(() => filterTasks(tasks, filter), [tasks, filter]);
   const groups = useMemo(() => groupTasks(filtered), [filtered]);
   const labels = useMemo(() => allLabels(tasks), [tasks]);
@@ -145,13 +168,15 @@ export function TasksPage({
         : [];
     const task = (kind: Task["kind"], t: TaskView): Task =>
       ({ key: `task:${t.frontmatter.id}`, kind, task: t }) as Task;
+    // Same items as Overview's "Needs you": questions, proposed drafts, then draft plans.
     const needs: RowEntry[] = [
-      ...groups.needsYou.flatMap((i) => (i.kind === "question" ? [task("question", i.task)] : [])),
+      ...groups.needsYou.flatMap((i) => {
+        if (i.kind === "question") return [task("question", i.task)];
+        if (i.kind === "proposed") return [task("proposed", i.task)];
+        return [];
+      }),
       ...plansShown.map((p): RowEntry => ({ key: `plan:${p.id}`, kind: "plan", plan: p })),
     ];
-    const proposed = groups.needsYou.flatMap((i) =>
-      i.kind === "proposed" ? [task("proposed", i.task)] : [],
-    );
     const byId = new Map(shownPending.map((t) => [t.frontmatter.id, t]));
     let n = 0;
     const queued = queuedOrder.map((id): Extract<RowEntry, { kind: "queued" }> => {
@@ -217,7 +242,6 @@ export function TasksPage({
     const count = <E,>(gs: EpicGroup<E>[]) => gs.reduce((n, g) => n + g.entries.length, 0);
     return {
       needs: withHierarchy(needs),
-      proposed: withHierarchy(proposed),
       running: withHierarchy(groups.running.map((t) => task("running", t))),
       queued: shownRows(queuedGroups) as RowEntry[],
       queuedGroups,
@@ -272,11 +296,16 @@ export function TasksPage({
   const failedRows = focus.expanded
     ? []
     : rows.finished.filter((r) => failedIds.has(r.task.frontmatter.id));
-  const finishedHistory = rows.finished.filter((r) => !failedIds.has(r.task.frontmatter.id));
+  const sectionIds = new Set(
+    finishedSectionTasks(
+      rows.finished.map((r) => r.task),
+      focus.expanded,
+    ).map((t) => t.frontmatter.id),
+  );
+  const finishedHistory = rows.finished.filter((r) => sectionIds.has(r.task.frontmatter.id));
   const finishedOpen = showFinished || filtering || focus.expanded;
   const visible: RowEntry[] = [
     ...rows.needs,
-    ...rows.proposed,
     ...rows.running,
     ...rows.queued,
     ...rows.drafts,
@@ -357,6 +386,7 @@ export function TasksPage({
     tabbableKey: (selected ?? visible[0])?.key ?? null,
     onSelect: setSelectedKey,
     onStop: setStopId,
+    stoppingIds,
     epics,
   };
   const list = (entries: RowEntry[]) => (
@@ -367,8 +397,7 @@ export function TasksPage({
     </ul>
   );
   const newTask = () => navigate({ name: "task", pid, taskId: "__new__", view: "edit" });
-  const counts = { done: 0, failed: 0, stopped: 0, archived: 0 };
-  for (const r of rows.finished) counts[r.task.frontmatter.status as keyof typeof counts]++;
+  const counts = finishedStatusCounts(finishedHistory.map((r) => r.task));
 
   return (
     <div>
@@ -385,10 +414,18 @@ export function TasksPage({
         focusMode={focus.mode}
         onFocusToggle={focus.toggle}
       />
-      {data.tasksError && (
+      {data.tasksError && tasks.length === 0 && (
         <div className="py-8">
           <p className="mt-0 mb-3 text-ink-muted">Could not load tasks.</p>
           <Button variant="outline" onClick={() => void data.refresh()}>
+            Try again
+          </Button>
+        </div>
+      )}
+      {data.tasksError && tasks.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <p className="m-0 text-[length:var(--text-row)] text-ink-muted">Could not load tasks.</p>
+          <Button variant="outline" size="sm" onClick={() => void data.refresh()}>
             Try again
           </Button>
         </div>
@@ -427,11 +464,6 @@ export function TasksPage({
       {rows.needs.length > 0 && (
         <TaskSection title="Needs you" count={rows.needs.length}>
           {list(rows.needs)}
-        </TaskSection>
-      )}
-      {rows.proposed.length > 0 && (
-        <TaskSection title="Proposed" count={rows.proposed.length}>
-          {list(rows.proposed)}
         </TaskSection>
       )}
       {rows.running.length > 0 && (
@@ -514,8 +546,18 @@ export function TasksPage({
         open={stopId !== null}
         onOpenChange={(open) => !open && setStopId(null)}
         onConfirm={() => {
-          if (stopId) actions.stop(stopId);
+          const id = stopId;
           setStopId(null);
+          if (!id) return;
+          setStoppingIds((prev) => new Set(prev).add(id));
+          void Promise.resolve(actions.stop(id)).then((ok) => {
+            if (ok) return;
+            setStoppingIds((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          });
         }}
       />
     </div>

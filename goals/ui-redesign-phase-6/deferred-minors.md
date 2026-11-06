@@ -15,7 +15,7 @@ Triaged against `boof-ui-phase6-rest` on 2026-11-06. Each line is fixed (with th
 - Phase 1-2 Task 4: one-render flash of the previous project's tasks — **fixed**. Lists are tagged with `pid` and a switch clears them (`useAppData.ts`). The Tasks page shows "Loading tasks…" until `tasksLoaded`.
 - Phase 1-2 Task 4: plan-list errors swallowed — **fixed**. A failed load sets `plansError` and Plans and Overview offer "Try again" (`lib/list-load.ts`, `PlansPage.tsx`, `OverviewPage.tsx`).
 - Phase 1-2 Task 4: reset effect runs on mount (no-op) — **obsolete**. The switch effect is what drops the previous lists. The mount run is the first load.
-- Phase 1-2 Task 5: system theme listener never unbinds and ignores other tabs — **fixed**. The listener is removed when the last `useTheme` subscriber leaves, and a `storage` event applies another tab's preference (`lib/theme.ts`).
+- Phase 1-2 Task 5: system theme listener never unbinds and ignores other tabs — **fixed**. `retainThemeStore` in `main.tsx` keeps the listener up while no theme control is mounted (the token gate, the add-project gate). Binding again re-reads the OS and the stored preference. A `storage` event applies another tab's preference (`lib/theme.ts`).
 - Phase 1-2 Task 5: no explicit focus-visible styles on nav, tabs and the switch — **fixed**. Nav items use `focus-ring` (`Rail.tsx`); buttons, tabs and switches use `focus-visible:ring` (`index.css`, `ui/button.tsx`).
 - Phase 1-2 Task 5: ProjectMenu, RunnerSwitch and ThemeMenu mounted twice (rail and sheet) — **deferred**. The phone sheet needs its own copies; the rail is `hidden` below 720px. Sharing one instance would be a shell redesign.
 - Phase 1-2 Task 5: More button name "More 3 in inbox", no `aria-haspopup` — **fixed**. The button is `aria-haspopup="dialog"` and `aria-label` is "More, N in inbox" (`BottomBar.tsx`).
@@ -39,9 +39,9 @@ Triaged against `boof-ui-phase6-rest` on 2026-11-06. Each line is fixed (with th
 - Phase 1-2 Task 7: NowStrip polls `liveLog` every 5s where the running card also polls — **deferred**. The strip only needs the current step name. Sharing one poll would couple the strip to the card.
 - Phase 1-2 Task 7: "Nothing running." alone when the runner is on and the queue is not empty — **fixed**. `idleQueueNote` (`overview/idle-note.ts`, `NowLane.tsx`).
 - Phase 1-2 Task 7: SpendBar `aria-valuenow` can exceed 100 — **fixed**. `pct` is clamped to 0–100 (`SpendBar.tsx`), and `spendFor` clamps the fraction to 1.
-- Phase 1-2 Task 7: Stop stays enabled while a stop is in flight — **fixed**. The Overview card and the task header disable Stop until the request settles (`RunningCard.tsx`, `TaskHeader.tsx`).
+- Phase 1-2 Task 7: Stop stays enabled while a stop is in flight — **fixed**. Stop stays disabled from the request until the task leaves running, or the request fails (`lib/stop-request.ts`, `RunningCard.tsx`, `TaskHeader.tsx`, the Tasks row).
 - Phase 1-2 Task 7: Up next showed "P50" — **fixed**. `UpNext.tsx` renders `p{priority}`.
-- Phase 1-2 Task 7: a new running card shows 0s before the layout effect — **obsolete**. Harmless; the layout effect records the start before paint of the elapsed text's next frame.
+- Phase 1-2 Task 7: a new running card shows 0s before the layout effect — **won't fix (not visible)**. The layout effect records the start before paint of the elapsed text's next frame.
 - Phase 1-2 Task 7: `runningKey` joins ids on a newline — **obsolete**. An internal key in `App.tsx`, split again before `markRunning`.
 - Phase 1-2 Task 8: screenshot framing and legacy all-caps in old shots — **obsolete**. Those shots were ledger evidence. Status pills are lowercase (`lib/status.ts`). README shots replace them.
 - Phase 1-2 Task 8: Recent failed rows lacked Retry — **fixed**. `RecentList.tsx` shows Retry for failed and stopped.
@@ -55,7 +55,7 @@ Triaged against `boof-ui-phase6-rest` on 2026-11-06. Each line is fixed (with th
 - Phase 3 Task 4: held Alt+↓ reorders once per key repeat — **fixed**. `TasksPage.tsx` and `PlanPage.tsx` ignore `e.repeat`.
 - Phase 3 Task 4: Finished sort was not three-way on ties — **fixed**. `compareFinished` returns 0 on a tie and breaks ties by id (`task-groups.ts`).
 - Phase 3 Task 4: blank page when a search hides the only draft plans — **fixed**. A filter that matches nothing shows "No tasks match" (`TasksPage.tsx`).
-- Phase 3 Task 4: NowStrip "Needs you" counts proposed drafts, which Tasks shows under Proposed — **obsolete**. The strip matches the Overview "Needs you" list (questions, proposed drafts and draft plans). Tasks splits Proposed into its own section on purpose.
+- Phase 3 Task 4: NowStrip "Needs you" counts proposed drafts, which Tasks shows under Proposed — **fixed**. Both counts use Overview's list (questions, proposed drafts and draft plans). Tasks lists those proposed drafts under Needs you, so the strip and the heading match (`NowStrip.tsx`, `TasksPage.tsx`).
 - Phase 3 Task 4: `shownPending` calls non-memoised `byStatus` — **obsolete**. The memo depends on `filtered`, which is what `byStatus` closes over.
 - Phase 3 Task 5: non-404 load errors left a blank main area — **fixed**. Task and plan pages already retry. Task and plan lists now set `tasksError` / `plansError` and show "Try again" (`useAppData.ts`, `TasksPage.tsx`, `PlansPage.tsx`, `OverviewPage.tsx`).
 - Phase 3 Task 5: `setBase(form)` stored the untrimmed title — **fixed**. `afterSave` stores the trimmed title that was sent (`lib/task-form-sync.ts`, `TaskForm.tsx`).
