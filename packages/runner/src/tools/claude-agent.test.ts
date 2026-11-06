@@ -24,6 +24,86 @@ const base = {
 };
 const msg = (type: string, data: Record<string, unknown> = {}) => ({ type, ...data });
 
+/** Poll until `path` exists. The bound is only a failure deadline, not the behavior under test. */
+async function waitForFile(path: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    if (
+      await access(path).then(
+        () => true,
+        () => false,
+      )
+    )
+      return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+async function procState(pid: number): Promise<string> {
+  try {
+    return (await readFile(`/proc/${pid}/stat`, "utf8")).split(" ")[2] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Keep ClaudeAgentTool's kill timer (timeout or idle) from firing until `arm` resolves.
+ * Those timers are scheduled as soon as `run()` starts, which is before the detached
+ * child has spawned its grandchild. Other timers, including process-group polling, stay real.
+ */
+function holdAgentKillTimer(delayMs: number, arm: Promise<void>) {
+  const origSet = globalThis.setTimeout;
+  const origClear = globalThis.clearTimeout;
+  let armed = false;
+  const pending = new Map<
+    number,
+    { fn: TimerHandler; args: unknown[]; timer?: ReturnType<typeof setTimeout> }
+  >();
+  let seq = 1;
+  let skipped = "";
+  const matches = (ms: number | undefined) => {
+    if (armed || ms !== delayMs) return false;
+    const stack = new Error().stack ?? "";
+    const fromAgent = stack.includes("/claude-agent.ts") || stack.includes("claude-agent.ts:");
+    if (!fromAgent) skipped = stack;
+    return fromAgent;
+  };
+  globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (!matches(ms)) return origSet(fn as (...a: unknown[]) => void, ms, ...(args as []));
+    const id = seq++;
+    pending.set(id, { fn, args });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+    if (typeof id === "number" && pending.has(id)) {
+      const rec = pending.get(id);
+      pending.delete(id);
+      if (rec?.timer) origClear(rec.timer);
+      return;
+    }
+    origClear(id as never);
+  }) as typeof clearTimeout;
+  void arm.then(() => {
+    armed = true;
+    for (const [id, rec] of [...pending]) {
+      if (!pending.has(id) || rec.timer) continue;
+      rec.timer = origSet(rec.fn as (...a: unknown[]) => void, delayMs, ...(rec.args as []));
+    }
+  });
+  return {
+    pending: () => pending.size,
+    skipped: () => skipped,
+    restore() {
+      globalThis.setTimeout = origSet;
+      globalThis.clearTimeout = origClear;
+      for (const rec of pending.values()) if (rec.timer) origClear(rec.timer);
+      pending.clear();
+    },
+  };
+}
+
 describe("ClaudeAgentTool", () => {
   it("maps model, permission, resume, MCP and system prompt options", async () => {
     const fake = fakeSdk([{ emit: msg("result", { subtype: "success", result: "ok" }) }]);
@@ -379,18 +459,13 @@ describe("ClaudeAgentTool", () => {
     });
     try {
       const running = tool.run({ ...base, cwd: dir, pidFilePath });
-      for (let i = 0; i < 100 && !childRef; i++) await new Promise((r) => setTimeout(r, 1));
-      for (
-        let i = 0;
-        i < 100 &&
-        !(await access(pidFilePath).then(
-          () => true,
-          () => false,
-        ));
-        i++
-      )
+      const ready = Date.now() + 10_000;
+      while (!childRef) {
+        if (Date.now() > ready) throw new Error("spawn hook did not run");
         await new Promise((r) => setTimeout(r, 1));
-      await access(pidFilePath);
+      }
+      // writePidFile fsyncs. A short poll loses to that under load, before the child closes.
+      await waitForFile(pidFilePath);
       await new Promise((r) => setTimeout(r, 20));
       await access(pidFilePath);
       childRef.emit("close", 0, null);
@@ -480,32 +555,43 @@ describe("ClaudeAgentTool", () => {
     }
   });
 
-  it.each(["stop", "timeout", "stall"] as const)(
+  it.each(["stop", "timeout", "stall", "abort"] as const)(
     "kills the full process group and retains its pid record until exit on %s",
     async (cause) => {
       const dir = await mkdtemp(join(tmpdir(), "claude-agent-process-group-"));
       const marker = join(dir, "grandchild.pid");
       const pidFilePath = join(dir, "control", "pid");
       const stopSignalPath = join(dir, "stop");
+      const killAfterMs = 50;
       let wake!: () => void;
       let ended = false;
       let child: any;
+      let abortRun!: () => void;
       const tool = new ClaudeAgentTool({
         resolveExecutable: async () => ({ path: "/fake", source: "env" }),
         signalPollMs: 5,
         loadSdk: async () =>
           ({
             query: ({ options }: any) => {
+              abortRun = () => options.abortController.abort();
               child = options.spawnClaudeCodeProcess({
                 command: process.execPath,
                 args: [
                   "-e",
-                  `const fs=require('node:fs'); const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e','setTimeout(()=>{},300000)']); c.on('spawn',()=>fs.writeFileSync(${JSON.stringify(marker)},String(c.pid))); setTimeout(()=>{},300000);`,
+                  `const fs=require('node:fs'); const {spawn}=require('node:child_process'); const marker=${JSON.stringify(marker)}; const c=spawn(process.execPath,['-e','setTimeout(()=>{},300000)']); c.on('spawn',()=>{ const tmp=marker+'.tmp'; fs.writeFileSync(tmp, String(c.pid)); fs.renameSync(tmp, marker); }); setTimeout(()=>{},300000);`,
                 ],
                 cwd: dir,
                 env: options.env,
                 signal: options.abortController.signal,
               });
+              options.abortController.signal.addEventListener(
+                "abort",
+                () => {
+                  ended = true;
+                  wake?.();
+                },
+                { once: true },
+              );
               return {
                 async *[Symbol.asyncIterator]() {
                   yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
@@ -519,6 +605,12 @@ describe("ClaudeAgentTool", () => {
             },
           }) as any,
       });
+      let armKill!: () => void;
+      const killArmed = new Promise<void>((resolve) => (armKill = resolve));
+      const held =
+        cause === "timeout" || cause === "stall"
+          ? holdAgentKillTimer(killAfterMs, killArmed)
+          : undefined;
       try {
         const running = tool.run({
           ...base,
@@ -527,33 +619,37 @@ describe("ClaudeAgentTool", () => {
           resumeSessionId: "prior",
           resumeBaseline: { inputTokens: 1000, outputTokens: 500, costUsd: 0.4, known: true },
           ...(cause === "stop" ? { stopSignalPath } : {}),
-          ...(cause === "timeout" ? { timeoutMs: 100 } : {}),
-          ...(cause === "stall" ? { idleTimeoutMs: 1000 } : {}),
+          ...(cause === "timeout" ? { timeoutMs: killAfterMs } : {}),
+          ...(cause === "stall" ? { idleTimeoutMs: killAfterMs } : {}),
         });
         const outcome = running.then(
           () => undefined,
           (error) => error,
         );
-        let markerReady = false;
-        for (let i = 0; i < 100 && !markerReady; i++) {
-          markerReady = await access(marker).then(
-            () => true,
-            () => false,
-          );
-          if (!markerReady) await new Promise((r) => setTimeout(r, 10));
-        }
-        if (!markerReady) throw await outcome;
+        await waitForFile(marker);
+        await waitForFile(pidFilePath);
         expect(child?.pid).toBeTruthy();
-        await access(pidFilePath);
         const grandchild = Number(await readFile(marker, "utf8"));
-        if (cause === "stop") await writeFile(stopSignalPath, "stop");
+        expect(Number.isInteger(grandchild) && grandchild > 1).toBe(true);
+        const live = await procState(grandchild);
+        expect(live === "" || live === "Z").toBe(false);
+        if (held) {
+          expect(held.pending(), held.skipped()).toBeGreaterThan(0);
+          armKill();
+        } else if (cause === "stop") {
+          await writeFile(stopSignalPath, "stop");
+        } else {
+          abortRun();
+        }
         const error = await outcome;
         expect(error).toMatchObject(
           cause === "stop"
             ? { stopped: true }
             : cause === "timeout"
               ? { timedOut: true }
-              : { stalled: true },
+              : cause === "stall"
+                ? { stalled: true }
+                : { timedOut: false, stopped: false, stalled: false },
         );
         expect(error.usage).not.toMatchObject({
           inputTokens: 1000,
@@ -566,20 +662,16 @@ describe("ClaudeAgentTool", () => {
             () => false,
           ),
         ).toBe(false);
-        let state = "";
-        try {
-          state = (await readFile(`/proc/${grandchild}/stat`, "utf8")).split(" ")[2] ?? "";
-        } catch {
-          /* gone */
-        }
+        const state = await procState(grandchild);
         expect(state === "" || state === "Z").toBe(true);
       } finally {
+        held?.restore();
         try {
           if (child?.pid) process.kill(-child.pid, "SIGKILL");
         } catch {
           /* already gone */
         }
-        await rm(dir, { recursive: true, force: true });
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }
     },
   );
