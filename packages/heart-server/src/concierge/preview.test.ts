@@ -83,8 +83,8 @@ describe("previewChange", () => {
     );
     expect(deleted.title).toBe(`Delete task "Fix readme" (${id})`);
     expect(deleted.details).toEqual([
-      "status: draft",
       "has 1 subtasks; deleting is refused unless detach is set",
+      "status: draft",
     ]);
     expect(deleted.destructive).toBe(true);
     expect(deleted.guard).toEqual({ kind: "task", id, stamp: task.frontmatter.updated });
@@ -94,7 +94,7 @@ describe("previewChange", () => {
       { projectId: "demo", taskId: id, detach: true },
       project,
     );
-    expect(detached.details).toEqual(["status: draft", "1 subtasks will be detached"]);
+    expect(detached.details).toEqual(["1 subtasks will be detached", "status: draft"]);
 
     const archived = await previewChange(
       op("tasks.archive"),
@@ -223,8 +223,8 @@ describe("previewChange", () => {
     );
     expect(activated.title).toBe('Change plan "Ship": status');
     expect(activated.details).toEqual([
-      "status: draft → active",
       "its goals become tasks the runner may start",
+      "status: draft → active",
     ]);
     expect(activated.guard).toEqual({ kind: "plan", id: plan.id, stamp: String(plan.version) });
 
@@ -242,7 +242,7 @@ describe("previewChange", () => {
       project,
     );
     expect(created.title).toBe('Change task "Draft me": title, prompt, status');
-    expect(created.details).toEqual(['title: "Draft me"', 'prompt: "p"', "status: draft"]);
+    expect(created.details).toEqual(["status: draft", 'title: "Draft me"', 'prompt: "p"']);
     expect(created.guard).toBeNull();
 
     const listed = await previewChange(
@@ -397,6 +397,51 @@ describe("previewChange", () => {
     expect((await project.get(task.frontmatter.id))!.body.prompt).toBe(after);
   });
 
+  it("diffs inserted prompt lines without marking unchanged lines", async () => {
+    const task = await project.create({ title: "Insert", prompt: "one\ntwo\nthree" });
+    const preview = await previewChange(
+      op("tasks.update"),
+      { projectId: "demo", taskId: task.frontmatter.id, prompt: "one\ninserted\ntwo\nthree" },
+      project,
+    );
+    expect(preview.details).toEqual(['prompt: "" → "inserted"']);
+  });
+
+  it("masks common key shapes in excerpts and old/new values", async () => {
+    const task = await project.create({ title: "Keys", prompt: "safe" });
+    const secret = "sk-ant-api03-abcdefghijklmnop ghp_abcdefghijklmnopqrstuvwx";
+    const preview = await previewChange(
+      op("tasks.update"),
+      { projectId: "demo", taskId: task.frontmatter.id, prompt: secret },
+      project,
+    );
+    expect(preview.details.join("\n")).not.toContain("sk-ant-api03");
+    expect(preview.details.join("\n")).not.toContain("ghp_");
+    expect(preview.details.join("\n")).toContain("[REDACTED]");
+  });
+
+  it("keeps a pending status warning visible after many earlier input fields", async () => {
+    const task = await project.create({ title: "Many fields", prompt: "old" });
+    const preview = await previewChange(
+      op("tasks.update"),
+      {
+        projectId: "demo",
+        taskId: task.frontmatter.id,
+        title: "New",
+        prompt: "one\ntwo\nthree\nfour\nfive",
+        priority: 3,
+        labels: ["a"],
+        runs: 4,
+        skip: ["x"],
+        status: "pending",
+      },
+      project,
+    );
+    expect(preview.details).toContain(
+      "status: draft → pending (the runner may start it and spend budget)",
+    );
+  });
+
   it("shows a project brief rewrite and what confirming stores", async () => {
     await service.updateProject("demo", { brief: "old line\nkeep" }, LOCAL_PRINCIPAL);
     const next = "new line\nkeep\nextra";
@@ -431,8 +476,8 @@ describe("previewChange", () => {
       project,
     );
     expect(preview.details).toEqual([
-      "autoSync: false → true",
       "tasks will be created and may run",
+      "autoSync: false → true",
     ]);
     await project.plans.updatePlan(live.id, { autoSync: true }, live.version, LOCAL_PRINCIPAL);
     expect((await project.plans.get(live.id)).autoSync).toBe(true);
@@ -492,6 +537,20 @@ describe("previewChange", () => {
     expect(preview.details[0]).toBe("tasks will be created and may run");
     expect(preview.details).toContain('Added "Beta"');
     expect(preview.destructive).toBe(false);
+  });
+
+  it("keeps the auto-sync warning visible when removing many goals", async () => {
+    const goals = Array.from({ length: 9 }, (_, i) => goal(`old${i}`, `Old ${i}`));
+    const plan = await project.plans.createPlan(
+      { id: "sync-many", title: "Sync many", status: "active", autoSync: true, goals },
+      LOCAL_PRINCIPAL,
+    );
+    const preview = await previewChange(
+      op("plans.replaceGoals"),
+      { projectId: "demo", planId: plan.id, goals: [goal("new", "New")] },
+      project,
+    );
+    expect(preview.details).toContain("tasks will be created and may run");
   });
 
   it("shows the removal when nine goals are added and one is removed", async () => {
