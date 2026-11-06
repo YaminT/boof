@@ -96,6 +96,9 @@ type ReadConversation = ConciergeConversation | null | "corrupt";
  * cannot drop each other's pending changes.
  */
 export class ConciergeStore {
+  /** Corrupt ids already reported, so a scan does not log the same file on every pass. */
+  private readonly reportedUnreadable = new Set<string>();
+
   constructor(
     private readonly root: string,
     private readonly now: () => number = () => Date.now(),
@@ -145,10 +148,15 @@ export class ConciergeStore {
       if (!current || current === "corrupt") {
         throw new Error(`Conversation not found: ${conversationId}`);
       }
+      // Expire under the lock before the edit. A change can cross expiresAt between
+      // findChange and this write; saving it must not leave that change pending.
+      this.expire(current);
       fn(current);
       current.updatedAt = this.iso();
       const parsed = ConversationSchema.safeParse(current);
-      if (!parsed.success) throw new Error(`Conversation not found: ${conversationId}`);
+      if (!parsed.success) {
+        throw new Error(`Invalid concierge conversation: ${conversationId}`);
+      }
       await this.writeConversation(projectId, parsed.data);
       return parsed.data;
     });
@@ -311,7 +319,10 @@ export class ConciergeStore {
       .map((name) => name.slice(0, -".json".length));
   }
 
-  private reportUnreadable(id: string): void {
+  private reportUnreadable(projectId: string, id: string): void {
+    const key = `${projectId}\0${id}`;
+    if (this.reportedUnreadable.has(key)) return;
+    this.reportedUnreadable.add(key);
     console.error(`Unreadable concierge conversation ${id}`);
   }
 
@@ -322,19 +333,19 @@ export class ConciergeStore {
       text = await readFile(this.conversationPath(projectId, id), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-      this.reportUnreadable(id);
+      this.reportUnreadable(projectId, id);
       return "corrupt";
     }
     let raw: unknown;
     try {
       raw = JSON.parse(text);
     } catch {
-      this.reportUnreadable(id);
+      this.reportUnreadable(projectId, id);
       return "corrupt";
     }
     const parsed = ConversationSchema.safeParse(raw);
     if (!parsed.success) {
-      this.reportUnreadable(id);
+      this.reportUnreadable(projectId, id);
       return "corrupt";
     }
     return parsed.data;
@@ -358,19 +369,19 @@ export class ConciergeStore {
       text = await readFile(this.indexPath(projectId), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return { owners: {} };
-      this.reportUnreadable("index");
+      this.reportUnreadable(projectId, "index");
       return { owners: {} };
     }
     let raw: unknown;
     try {
       raw = JSON.parse(text);
     } catch {
-      this.reportUnreadable("index");
+      this.reportUnreadable(projectId, "index");
       return { owners: {} };
     }
     const parsed = LiveSchema.safeParse(raw);
     if (!parsed.success) {
-      this.reportUnreadable("index");
+      this.reportUnreadable(projectId, "index");
       return { owners: {} };
     }
     return parsed.data;
