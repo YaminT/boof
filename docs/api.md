@@ -131,6 +131,13 @@ internals; validation errors list `details: [{ path, message }]`.
 | `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                               |
 | `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                 |
 | `unsupported_media_type`   | 415    | A JSON operation needs Content-Type: application/json.                                                   |
+| `concierge_unavailable`    | 409    | The assistant cannot run here; the message says why.                                                     |
+| `concierge_busy`           | 409    | A message to the assistant is still being answered.                                                      |
+| `concierge_limit`          | 409    | The conversation reached its cost limit; start a new one.                                                |
+| `budget_exceeded`          | 409    | A daily budget that covers the assistant is used up.                                                     |
+| `change_not_found`         | 404    | The pending change does not exist, belongs to another caller, or is no longer pending.                   |
+| `change_stale`             | 409    | The target changed since the assistant proposed this change.                                             |
+| `change_expired`           | 409    | The pending change expired (15 minutes).                                                                 |
 | `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                                                   |
 | `internal`                 | 500    | Unexpected server error; details are in the server log.                                                  |
 
@@ -420,6 +427,92 @@ curl -s http://127.0.0.1:4319/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boof_list_projects","arguments":{}}}'
 ```
+
+## Console assistant (concierge)
+
+Free text in the bottom console that is not a command goes to the concierge, one project at a
+time (the project being viewed). It does not answer across projects, and it does not propose
+project descriptions. The same five operations are REST and CLI. They are not MCP tools.
+
+| Operation           | Method and path                                                   | CLI                             |
+| ------------------- | ----------------------------------------------------------------- | ------------------------------- |
+| `concierge.status`  | `GET /projects/{projectId}/concierge`                             | `boof-runner concierge status`  |
+| `concierge.ask`     | `POST /projects/{projectId}/concierge/messages`                   | `boof-runner concierge ask`     |
+| `concierge.apply`   | `POST /projects/{projectId}/concierge/changes/{changeId}/apply`   | `boof-runner concierge apply`   |
+| `concierge.discard` | `POST /projects/{projectId}/concierge/changes/{changeId}/discard` | `boof-runner concierge discard` |
+| `concierge.reset`   | `POST /projects/{projectId}/concierge/reset`                      | `boof-runner concierge reset`   |
+
+Each needs `tasks:read` and is project-scoped. `ask` takes `{ text }` (1–4000 characters after
+trim), and optionally `context` (`screen`, and `taskId`, `planId`, `goalId`) and `conversationId`.
+The audit line stores a fingerprint of the text, not the text. `apply` returns `{ change, result }`
+and runs the stored operation **as the caller** (the caller's scopes, trust and projects), after
+the stale-guard check. A second apply, another caller, or a change that is no longer pending is
+`404 change_not_found`. A changed target is `409 change_stale`. `discard` runs nothing.
+
+`POST /api/v1/projects/{projectId}/concierge/messages/stream` (and the unversioned path, because
+the other SSE routes have one) takes the same body, the same scope and `authorizeProject`. It
+answers `text/event-stream` with `X-Accel-Buffering: no`. Events, in the order the turn produces
+them: `conversation`, `text`, `tool` (`start` / `end`), `change`, `pending`, `done`, `error`.
+Validation and refusals that happen before a model call answer as normal JSON, with the same
+codes, before the stream opens.
+
+**Principal.** Each request builds an in-memory principal `concierge-<userId>` (`trust: "review"`,
+`alwaysReview`). Its scopes are {`projects:read`, `plans:read`, `plans:write`, `tasks:read`,
+`tasks:write`} ∩ the user's scopes. Its projects are {the pinned project} ∩ the user's projects.
+It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:control` or
+`projects:write`. No key is stored. New client ids that would start with `concierge-` are issued
+as `client-concierge…` instead. A leftover `concierge-*` row in `auth/clients.json` still appears
+in the client list, but `get`, revoke and rotate return 404 for that id and the key cannot
+authenticate. The assistant then answers `409 concierge_unavailable` and names the file: remove
+the entry from `auth/clients.json`.
+
+**Tools** the concierge may call, on the pinned project only. Reads run. Writes run only where
+review trust already allows them (its own drafts). A `confirm` tool, or a `write` that boof
+refuses with `forbidden_trust`, does not run: the server stores a pending change (validated
+input, a preview computed from the store, a stale-guard) and tells the model it is waiting.
+The user sees the title and details. A change the operation will refuse is marked `blocked`
+with the reason and the dialog offers no Confirm, only Discard and Close.
+
+| Mode      | Operations                                                                                                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`    | `projects.get`, `plans.list`, `plans.get`, `tasks.list`, `tasks.get`, `tasks.liveLog`, `epics.list`, `epics.get`, `usage.budget`, `commands.list`                             |
+| `write`   | `tasks.create`, `tasks.update`, `tasks.move`, `epics.create`, `epics.update`, `plans.create`, `plans.update`, `plans.upsertGoal`, `plans.reorderGoals`, `plans.setGoalStatus` |
+| `confirm` | `tasks.delete`, `tasks.archive`, `tasks.queue`, `epics.delete`, `plans.removeGoal`, `plans.replaceGoals`                                                                      |
+
+Not offered: `tasks.diff`, `plans.import`, the `*.wait` polls, `tasks.stop`, `tasks.inject`,
+`tasks.answers`, `tasks.retry`, `tasks.skip`, `plans.sync`, project writes, settings, accounts,
+the runner, auth, webhooks, command writes and attachments. One message stores at most 5 pending
+changes; a conversation holds at most 20. A pending change stays appliable for 15 minutes
+(`change_expired` after that). `concierge.reset` (the console's `/new`) ends the live
+conversation and leaves pending changes appliable until they expire or are discarded.
+
+**Caps** come from `settings.concierge`, which is file-only: it is not in `PUT /settings`. An
+invalid block fails settings load. `"enabled": false` is how you turn the assistant off
+(`The assistant is turned off (settings.concierge.enabled is false).`). Bounds and defaults:
+
+| Key                  | Default   | Allowed                     |
+| -------------------- | --------- | --------------------------- |
+| `enabled`            | `true`    | boolean                     |
+| `model`              | `default` | 1–100 of `A-Za-z0-9._:[]/-` |
+| `perMessageUsd`      | `0.25`    | `> 0` and `≤ 50`            |
+| `perConversationUsd` | `2`       | `> 0` and `≤ 500`           |
+| `messagesPerMinute`  | `6`       | integer 1–60, per user      |
+| `maxTurns`           | `8`       | integer 1–20                |
+| `timeoutMs`          | `120000`  | integer 10 000–600 000      |
+| `idleMinutes`        | `30`      | integer 5–240               |
+
+One message is in flight per (user, project) (`409 concierge_busy`). A message counts toward
+`messagesPerMinute` once availability has passed, including when a later check refuses it
+(`concierge_busy`, `budget_exceeded`, `concierge_limit`, an unknown conversation). Turned off,
+not wired, a reserved-id collision and an unavailable model do not count. The CLI builds a new
+service per invocation, so the per-minute window and the busy flag start empty each time; the
+daily budgets and the conversation cost cap are on disk and still apply. Spend is `tool:concierge`
+(`tool:concierge` and `project:<id>/tool:concierge`). A spent day scope is `409 budget_exceeded`
+before any model call. The conversation cap is `409 concierge_limit`.
+
+**No MCP tools.** `mcp.expose` is false because an MCP host is itself a model: driving the
+assistant would spend budget model-to-model and could confirm its own proposals. The operations
+the concierge uses are already MCP tools.
 
 ## Operations
 
