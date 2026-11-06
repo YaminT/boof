@@ -3,7 +3,14 @@ import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStore, conciergeDir, defaultSettings, execCommand, SettingsStore } from "@boof/heart";
+import {
+  AuthStore,
+  ConciergeStore,
+  conciergeDir,
+  defaultSettings,
+  execCommand,
+  SettingsStore,
+} from "@boof/heart";
 import { ClaudeConcierge, DESKTOP_CLAUDE_AGENT_REASON, MockTool, ToolRegistry } from "@boof/runner";
 import { scriptedAgent } from "../concierge/fake-agent.js";
 import { createApp } from "./app.js";
@@ -41,6 +48,59 @@ afterEach(async () => {
 });
 
 describe("concierge API", () => {
+  it("restores blocked, failed, and applying changes through status", async () => {
+    const parent = await service.forProject("shop").create({ title: "Parent" });
+    await service.forProject("shop").create({ title: "Child", parentId: parent.frontmatter.id });
+    const agent = scriptedAgent([
+      { call: "boof_delete_task", args: { projectId: "shop", taskId: parent.frontmatter.id } },
+    ]);
+    service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
+    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+
+    const asked = await request(
+      "/api/v1/projects/shop/concierge/messages",
+      json("POST", { text: "delete parent" }),
+    );
+    expect(asked.status).toBe(200);
+    const changeId = (await asked.json()).pending[0].id as string;
+    let status = await request("/api/v1/projects/shop/concierge");
+    let pending = (await status.json()).conversation.pending;
+    expect(pending).toContainEqual(
+      expect.objectContaining({
+        id: changeId,
+        status: "pending",
+        blocked: expect.stringContaining("has 1 subtask"),
+      }),
+    );
+
+    const applied = await request(
+      `/api/v1/projects/shop/concierge/changes/${changeId}/apply`,
+      json("POST", {}),
+    );
+    expect(applied.status).toBe(409);
+    status = await request("/api/v1/projects/shop/concierge");
+    const failedStatus = await status.json();
+    pending = failedStatus.conversation.pending;
+    expect(pending).toContainEqual(
+      expect.objectContaining({ id: changeId, status: "failed", error: "has_children" }),
+    );
+
+    await new ConciergeStore(root).update("shop", failedStatus.conversation.id, (conversation) => {
+      const failed = conversation.changes.find((change) => change.id === changeId)!;
+      conversation.changes.push({
+        ...failed,
+        id: "chg-aaaaaaaa",
+        status: "applying",
+        error: undefined,
+      });
+    });
+    status = await request("/api/v1/projects/shop/concierge");
+    pending = (await status.json()).conversation.pending;
+    expect(pending).toContainEqual(
+      expect.objectContaining({ id: "chg-aaaaaaaa", status: "applying" }),
+    );
+  });
+
   it('"create a task to fix X" yields a draft task', async () => {
     const agent = scriptedAgent([
       { text: "I drafted a task." },

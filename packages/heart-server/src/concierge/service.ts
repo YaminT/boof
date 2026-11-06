@@ -1,9 +1,12 @@
 import { z } from "zod";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   AuthStore,
   CHANGE_TTL_MS,
   CONCIERGE_TOOL_ID,
   ConciergeStore,
+  conciergeDir,
   ConciergeTurnError,
   MAX_PENDING_PER_CONVERSATION,
   auditOperation,
@@ -136,7 +139,11 @@ export class ConciergeService {
         via: null,
       };
     else if (this.opts.agent) availability = await this.opts.agent.availability(project);
-    const conversation = await this.store.current(projectId, user.id, cfg.idleMinutes * 60_000);
+    const conversation = await this.readStatusConversation(
+      projectId,
+      user.id,
+      cfg.idleMinutes * 60_000,
+    );
     return {
       ...availability,
       model: cfg.model,
@@ -145,13 +152,39 @@ export class ConciergeService {
         perConversationUsd: cfg.perConversationUsd,
         messagesPerMinute: cfg.messagesPerMinute,
       },
-      conversation: {
+      conversation: conversation && {
         id: conversation.id,
         spentUsd: conversation.spentUsd,
         messages: conversation.messages,
         pending: statusViews(conversation),
       },
     };
+  }
+
+  /** Read the live conversation without creating, expiring, or otherwise changing it. */
+  private async readStatusConversation(projectId: string, owner: string, idleMs: number) {
+    const dir = conciergeDir(this.opts.root, projectId);
+    try {
+      const live = JSON.parse(await readFile(join(dir, "live.json"), "utf8")) as {
+        owners?: Record<string, string>;
+      };
+      const id = live.owners?.[owner];
+      if (!id || !/^cnv-[0-9a-f]{8}$/.test(id)) return null;
+      const conversation = JSON.parse(
+        await readFile(join(dir, "conversations", `${id}.json`), "utf8"),
+      ) as ConciergeConversation;
+      if (
+        conversation.id !== id ||
+        conversation.projectId !== projectId ||
+        conversation.owner !== owner ||
+        this.now() - Date.parse(conversation.updatedAt) >= idleMs ||
+        this.now() < Date.parse(conversation.updatedAt)
+      )
+        return null;
+      return conversation;
+    } catch {
+      return null;
+    }
   }
 
   async ask(
