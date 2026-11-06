@@ -193,4 +193,59 @@ describe("ConciergeStore", () => {
     expect((await store.get(PID, live.id))?.id).toBe(live.id);
     expect((await store.current(PID, OWNER, IDLE)).id).toBe(live.id);
   });
+
+  it("expires a due change under the update lock before the edit", async () => {
+    root = await scratch();
+    let now = Date.parse("2026-11-06T12:00:00.000Z");
+    const store = new ConciergeStore(root, () => now);
+    const conv = await store.current(PID, OWNER, IDLE);
+    const pending = change("chg-99887766", now);
+    await store.update(PID, conv.id, (c) => {
+      c.changes.push(pending);
+    });
+    now += CHANGE_TTL_MS;
+    await store.update(PID, conv.id, (c) => {
+      expect(c.changes[0]?.status).toBe("expired");
+      c.messages += 1;
+    });
+    const got = await store.get(PID, conv.id);
+    expect(got?.changes[0]?.status).toBe("expired");
+    expect(got?.messages).toBe(1);
+  });
+
+  it("rejects an invalid conversation without claiming it is missing", async () => {
+    root = await scratch();
+    const store = new ConciergeStore(root, () => Date.parse("2026-11-06T12:00:00.000Z"));
+    const conv = await store.current(PID, OWNER, IDLE);
+    await expect(store.update(PID, "cnv-00000000", () => {})).rejects.toThrow(
+      "Conversation not found: cnv-00000000",
+    );
+    const before = await store.get(PID, conv.id);
+    const rejected = store.update(PID, conv.id, (c) => {
+      c.spentUsd = -1;
+    });
+    await expect(rejected).rejects.toThrow(`Invalid concierge conversation: ${conv.id}`);
+    await expect(rejected).rejects.not.toThrow(/not found/);
+    const after = await store.get(PID, conv.id);
+    expect(after?.spentUsd).toBe(0);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
+  });
+
+  it("logs an unreadable conversation once across scans", async () => {
+    root = await scratch();
+    const store = new ConciergeStore(root, () => Date.parse("2026-11-06T12:00:00.000Z"));
+    const conv = await store.current(PID, OWNER, IDLE);
+    const file = join(conciergeDir(root, PID), "conversations", `${conv.id}.json`);
+    await writeFile(file, "not json");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await store.findChange(PID, OWNER, "chg-aabbccdd")).toBeNull();
+      expect(await store.findChange(PID, OWNER, "chg-aabbccdd")).toBeNull();
+      const logs = spy.mock.calls.map((args) => args.map(String).join(" "));
+      expect(logs.filter((line) => line.includes(conv.id))).toHaveLength(1);
+      expect(logs.join("\n")).not.toContain("not json");
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

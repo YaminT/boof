@@ -1,9 +1,16 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   EpicError,
+  ProjectSchema,
+  archiveRemovedGoalTasks,
   sameGoalContent,
   type Goal,
   type GoalSpec,
   type PendingChange,
+  type Plan,
+  type Project,
+  type Task,
 } from "@boof/heart";
 import type { AnyOperation } from "../api/define-op.js";
 import { OpError } from "../api/errors.js";
@@ -17,12 +24,18 @@ export interface ChangePreview {
 }
 
 const DETAIL_CAP = 8;
+/** Titles and single values. The id, the warnings and the field list stay outside this cap. */
+const PART_MAX = 80;
+const PROSE_LINES = 3;
+
+const RUNNER_QUEUE = "the runner may start it and spend budget";
+const RUNNER_ACTIVATION = "its goals become tasks the runner may start";
+const RUNNER_SYNC = "tasks will be created and may run";
 
 const SKIP_FIELDS = new Set([
   "projectId",
   "taskId",
   "planId",
-  "epicId",
   "goalId",
   "expectedUpdated",
   "expectedVersion",
@@ -30,7 +43,7 @@ const SKIP_FIELDS = new Set([
 ]);
 
 /** Write ops whose preview is `Change <kind> "<title>": <field list>`. */
-const CHANGE_KIND: Record<string, "task" | "plan" | "epic" | "goal"> = {
+const CHANGE_KIND: Record<string, "task" | "plan" | "epic" | "goal" | "project"> = {
   "tasks.create": "task",
   "tasks.update": "task",
   "tasks.move": "task",
@@ -41,7 +54,24 @@ const CHANGE_KIND: Record<string, "task" | "plan" | "epic" | "goal"> = {
   "plans.upsertGoal": "goal",
   "plans.reorderGoals": "plan",
   "plans.setGoalStatus": "goal",
+  "projects.update": "project",
 };
+
+const PROSE_FIELDS = new Set(["prompt", "brief", "description", "spec"]);
+
+type DetailKind = "removed" | "changed" | "added" | "stopped" | "archived" | "warning" | "field";
+
+interface Detail {
+  kind: DetailKind;
+  text: string;
+}
+
+interface Built {
+  title: string;
+  details: Detail[];
+  destructive: boolean;
+  guard: PendingChange["guard"];
+}
 
 interface GoalLike {
   id: string;
@@ -52,17 +82,37 @@ interface GoalLike {
   status?: string;
 }
 
+const KIND_ORDER: DetailKind[] = [
+  "removed",
+  "changed",
+  "added",
+  "stopped",
+  "archived",
+  "warning",
+  "field",
+];
+
 /**
- * Strip control characters, collapse whitespace, and cap the result (default 120) with "…".
+ * Strip control and format characters, collapse whitespace, and cap the result
+ * (default 120) with "…". Format characters are removed so a title cannot reverse
+ * or hide the id that follows it.
  */
 export function cleanText(value: string, max = 120): string {
-  const cleaned = value
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const cleaned = sanitize(value);
   if (cleaned.length <= max) return cleaned;
   if (max < 1) return "";
   return `${cleaned.slice(0, max - 1)}…`;
+}
+
+function sanitize(value: string): string {
+  return value
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanTitle(value: string): string {
+  return cleanText(value, PART_MAX);
 }
 
 /** A server-computed preview. A missing target throws that operation's 404 code. */
@@ -71,13 +121,42 @@ export async function previewChange(
   input: Record<string, unknown>,
   project: ProjectService,
 ): Promise<ChangePreview> {
-  const destructive = op.mcp.annotations?.destructiveHint === true;
-  const preview = await buildPreview(op, input, project, destructive);
+  const hinted = op.mcp.annotations?.destructiveHint === true;
+  const preview = await buildPreview(op, input, project, hinted);
   return {
-    ...preview,
-    title: cleanText(preview.title),
-    details: preview.details.slice(0, DETAIL_CAP).map((line) => cleanText(line)),
+    title: sanitize(preview.title),
+    details: capDetails(preview.details),
+    destructive: preview.destructive,
+    guard: preview.guard,
   };
+}
+
+function capDetails(details: Detail[]): string[] {
+  const lines = details.map((detail) => ({ kind: detail.kind, text: sanitize(detail.text) }));
+  if (lines.length <= DETAIL_CAP) return lines.map((line) => line.text);
+  const head = lines.slice(0, DETAIL_CAP - 1);
+  const rest = lines.slice(DETAIL_CAP - 1);
+  const counts = new Map<string, number>();
+  for (const line of rest) counts.set(line.kind, (counts.get(line.kind) ?? 0) + 1);
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  const label = (kind: string, n: number) => {
+    if (n === 1) return kind;
+    if (kind === "warning") return "warnings";
+    if (kind === "field") return "fields";
+    return kind;
+  };
+  for (const kind of KIND_ORDER) {
+    const n = counts.get(kind);
+    if (!n) continue;
+    seen.add(kind);
+    parts.push(`${n} more ${label(kind, n)}`);
+  }
+  for (const [kind, n] of counts) {
+    if (seen.has(kind)) continue;
+    parts.push(`${n} more ${label(kind, n)}`);
+  }
+  return [...head.map((line) => line.text), `…and ${rest.length} more (${parts.join(", ")})`];
 }
 
 async function buildPreview(
@@ -85,20 +164,14 @@ async function buildPreview(
   input: Record<string, unknown>,
   project: ProjectService,
   destructive: boolean,
-): Promise<ChangePreview> {
+): Promise<Built> {
   switch (op.name) {
     case "tasks.delete":
       return deleteTask(input, project, destructive);
     case "tasks.archive":
       return taskLine(input, project, destructive, "Archive task");
     case "tasks.queue":
-      return taskLine(
-        input,
-        project,
-        destructive,
-        "Queue task",
-        ": the runner may start it and spend budget",
-      );
+      return taskLine(input, project, destructive, "Queue task", `: ${RUNNER_QUEUE}`);
     case "epics.delete":
       return deleteEpic(input, project, destructive);
     case "plans.removeGoal":
@@ -113,10 +186,17 @@ async function buildPreview(
   return { title: op.title, details: [], destructive, guard: null };
 }
 
-function fieldList(input: Record<string, unknown>): string {
+function fieldList(name: string, input: Record<string, unknown>): string {
   return Object.keys(input)
-    .filter((key) => !SKIP_FIELDS.has(key) && input[key] !== undefined)
+    .filter((key) => !isSkipped(name, key) && input[key] !== undefined)
     .join(", ");
+}
+
+function isSkipped(name: string, key: string): boolean {
+  if (SKIP_FIELDS.has(key)) return true;
+  // epicId names the epic being edited. On a task it is the epic being assigned.
+  if (key === "epicId" && name.startsWith("epics.")) return true;
+  return false;
 }
 
 function text(input: Record<string, unknown>, key: string): string {
@@ -124,10 +204,124 @@ function text(input: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function changeTitle(kind: string, title: string, input: Record<string, unknown>): string {
-  const fields = fieldList(input);
-  const name = cleanText(title);
-  return fields ? `Change ${kind} "${name}": ${fields}` : `Change ${kind} "${name}"`;
+function changeTitle(
+  kind: string,
+  title: string,
+  name: string,
+  input: Record<string, unknown>,
+): string {
+  const fields = fieldList(name, input);
+  const label = cleanTitle(title);
+  return fields ? `Change ${kind} "${label}": ${fields}` : `Change ${kind} "${label}"`;
+}
+
+function quoteLine(line: string): string {
+  return `"${cleanText(line, PART_MAX)}"`;
+}
+
+function proseLines(body: string): string[] {
+  const lines = body.split("\n");
+  const shown = lines.slice(0, PROSE_LINES).map(quoteLine);
+  if (lines.length > PROSE_LINES) shown.push(`…and ${lines.length - PROSE_LINES} more lines`);
+  return shown;
+}
+
+function proseDiff(before: string, after: string): string[] {
+  const oldLines = before.split("\n");
+  const newLines = after.split("\n");
+  const changed: { old: string; neu: string }[] = [];
+  const count = Math.max(oldLines.length, newLines.length);
+  for (let i = 0; i < count; i += 1) {
+    const oldLine = oldLines[i] ?? "";
+    const newLine = newLines[i] ?? "";
+    if (oldLine !== newLine) changed.push({ old: oldLine, neu: newLine });
+  }
+  if (changed.length === 0) return [];
+  const shown = changed
+    .slice(0, PROSE_LINES)
+    .map((line) => `${quoteLine(line.old)} → ${quoteLine(line.neu)}`);
+  if (changed.length > PROSE_LINES) {
+    shown.push(`…and ${changed.length - PROSE_LINES} more changed lines`);
+  }
+  return shown;
+}
+
+function sameValue(before: unknown, after: unknown): boolean {
+  return JSON.stringify(before ?? null) === JSON.stringify(after ?? null);
+}
+
+function showValue(value: unknown): string {
+  if (value === null || value === undefined) return "(none)";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string") return `"${cleanText(value, PART_MAX)}"`;
+  if (
+    Array.isArray(value) &&
+    value.every((item) => ["string", "number", "boolean"].includes(typeof item))
+  ) {
+    if (value.length === 0) return "(none)";
+    return cleanText(value.map(String).join(", "), PART_MAX);
+  }
+  return `"${cleanText(JSON.stringify(value) ?? "", PART_MAX)}"`;
+}
+
+function pushField(
+  details: Detail[],
+  field: string,
+  before: unknown,
+  after: unknown,
+  mode: "create" | "update",
+): void {
+  if (field === "anthropicApiKey") {
+    details.push({
+      kind: "field",
+      text: after === null ? "anthropicApiKey: removed" : "anthropicApiKey: set",
+    });
+    return;
+  }
+  if (mode === "update" && sameValue(before, after)) return;
+  if (PROSE_FIELDS.has(field)) {
+    const next =
+      typeof after === "string"
+        ? after
+        : after === undefined || after === null
+          ? ""
+          : JSON.stringify(after, null, 2);
+    const prev =
+      typeof before === "string"
+        ? before
+        : before === undefined || before === null
+          ? ""
+          : JSON.stringify(before, null, 2);
+    const lines = mode === "create" ? proseLines(next) : proseDiff(prev, next);
+    for (const line of lines) details.push({ kind: "field", text: `${field}: ${line}` });
+    return;
+  }
+  if (field === "status" && typeof after === "string") {
+    const next = sanitize(after);
+    const warn = next === "pending" ? ` (${RUNNER_QUEUE})` : "";
+    const from = typeof before === "string" ? sanitize(before) : "";
+    const text = mode === "create" ? `status: ${next}${warn}` : `status: ${from} → ${next}${warn}`;
+    details.push({ kind: "field", text });
+    return;
+  }
+  const text =
+    mode === "create"
+      ? `${field}: ${showValue(after)}`
+      : `${field}: ${showValue(before)} → ${showValue(after)}`;
+  details.push({ kind: "field", text });
+}
+
+function eachField(
+  details: Detail[],
+  name: string,
+  input: Record<string, unknown>,
+  mode: "create" | "update",
+  current: (key: string) => unknown,
+): void {
+  for (const key of Object.keys(input)) {
+    if (isSkipped(name, key) || input[key] === undefined) continue;
+    pushField(details, key, current(key), input[key], mode);
+  }
 }
 
 async function requireTask(project: ProjectService, id: string) {
@@ -147,8 +341,27 @@ async function requireEpic(project: ProjectService, id: string) {
   }
 }
 
+async function readProject(project: ProjectService): Promise<Project> {
+  const path = join(project.root, "project.json");
+  let body: string;
+  try {
+    body = await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new OpError(404, `Project not found: ${project.projectId}`, "project_not_found");
+    }
+    throw err;
+  }
+  return ProjectSchema.parse(JSON.parse(body));
+}
+
 function taskGuard(task: { frontmatter: { id: string; updated: string } }): PendingChange["guard"] {
   return { kind: "task", id: task.frontmatter.id, stamp: task.frontmatter.updated };
+}
+
+function taskValue(task: Task, key: string): unknown {
+  if (key === "prompt") return task.body.prompt;
+  return (task.frontmatter as unknown as Record<string, unknown>)[key];
 }
 
 async function taskLine(
@@ -157,9 +370,9 @@ async function taskLine(
   destructive: boolean,
   verb: string,
   suffix = "",
-): Promise<ChangePreview> {
+): Promise<Built> {
   const task = await requireTask(project, text(input, "taskId"));
-  const title = cleanText(task.frontmatter.title);
+  const title = cleanTitle(task.frontmatter.title);
   return {
     title: `${verb} "${title}" (${task.frontmatter.id})${suffix}`,
     details: [],
@@ -172,21 +385,22 @@ async function deleteTask(
   input: Record<string, unknown>,
   project: ProjectService,
   destructive: boolean,
-): Promise<ChangePreview> {
+): Promise<Built> {
   const task = await requireTask(project, text(input, "taskId"));
   const id = task.frontmatter.id;
   const kids = (await project.list()).filter((item) => item.frontmatter.parentId === id);
-  const details = [`status: ${task.frontmatter.status}`];
+  const details: Detail[] = [{ kind: "field", text: `status: ${task.frontmatter.status}` }];
   if (kids.length > 0) {
-    details.push(
-      input.detach === true
-        ? `${kids.length} subtasks will be detached`
-        : `has ${kids.length} subtasks; deleting is refused unless detach is set`,
-    );
+    details.push({
+      kind: "warning",
+      text:
+        input.detach === true
+          ? `${kids.length} subtasks will be detached`
+          : `has ${kids.length} subtasks; deleting is refused unless detach is set`,
+    });
   }
-  const title = cleanText(task.frontmatter.title);
   return {
-    title: `Delete task "${title}" (${id})`,
+    title: `Delete task "${cleanTitle(task.frontmatter.title)}" (${id})`,
     details,
     destructive,
     guard: taskGuard(task),
@@ -197,58 +411,104 @@ async function deleteEpic(
   input: Record<string, unknown>,
   project: ProjectService,
   destructive: boolean,
-): Promise<ChangePreview> {
+): Promise<Built> {
   const id = text(input, "epicId");
   const epic = await requireEpic(project, id);
   const count = (await project.list()).filter((task) => task.frontmatter.epicId === id).length;
+  let line: string;
+  if (count === 0) line = "0 tasks in it";
+  else if (input.detach === true) line = `${count} tasks will lose their epic`;
+  else line = `has ${count} tasks; deleting is refused unless detach is set`;
   return {
-    title: `Delete epic "${cleanText(epic.title)}"`,
-    details: [`${count} tasks in it`],
+    title: `Delete epic "${cleanTitle(epic.title)}"`,
+    details: [{ kind: "warning", text: line }],
     destructive,
     guard: { kind: "epic", id: epic.id, stamp: epic.updated },
   };
 }
 
-function doomedGoalIds(goals: Goal[], goalId: string, cascade: boolean): Set<string> {
+/** Downstream ids in the order removeGoal discovers them, which is the 409's order. */
+function dependentIds(goals: Goal[], goalId: string): string[] {
   const doomed = new Set([goalId]);
-  if (!cascade) return doomed;
+  const found: string[] = [];
   let grew = true;
   while (grew) {
     grew = false;
     for (const goal of goals) {
       if (!doomed.has(goal.id) && goal.dependsOn.some((dep) => doomed.has(dep))) {
         doomed.add(goal.id);
+        found.push(goal.id);
         grew = true;
       }
     }
   }
-  return doomed;
+  return found;
+}
+
+function goalLabel(goal: Goal): string {
+  return `"${cleanTitle(goal.title)}" (${goal.id})`;
 }
 
 async function removeGoal(
   input: Record<string, unknown>,
   project: ProjectService,
   destructive: boolean,
-): Promise<ChangePreview> {
+): Promise<Built> {
   const plan = await project.plans.get(text(input, "planId"));
   const goalId = text(input, "goalId");
   const goal = plan.goals.find((item) => item.id === goalId);
   if (!goal) throw new OpError(404, `Goal not found: ${goalId}`, "goal_not_found");
-  const doomed = doomedGoalIds(plan.goals, goalId, input.cascade === true);
-  const details: string[] = [];
-  for (const task of await project.list()) {
-    const ref = task.frontmatter.planRef;
-    if (!ref || ref.planId !== plan.id || !doomed.has(ref.goalId)) continue;
-    const status = task.frontmatter.status;
-    if (status !== "draft" && status !== "pending") continue;
-    details.push(`Archives task "${cleanText(task.frontmatter.title)}" (${task.frontmatter.id})`);
-  }
-  return {
-    title: `Remove goal "${cleanText(goal.title)}" from plan "${cleanText(plan.title)}"`,
-    details,
-    destructive,
-    guard: { kind: "plan", id: plan.id, stamp: String(plan.version) },
+  const cascade = input.cascade === true;
+  const dependents = dependentIds(plan.goals, goalId);
+  const doomed = new Set([goalId, ...(cascade ? dependents : [])]);
+  const byId = new Map(plan.goals.map((item) => [item.id, item]));
+  const names = dependents.map((id) => goalLabel(byId.get(id)!)).join(", ");
+  const title = `Remove goal "${cleanTitle(goal.title)}" from plan "${cleanTitle(plan.title)}"`;
+  const guard: PendingChange["guard"] = {
+    kind: "plan",
+    id: plan.id,
+    stamp: String(plan.version),
   };
+  // The operation throws before it archives anything.
+  if (!cascade && dependents.length > 0) {
+    return {
+      title,
+      details: [
+        {
+          kind: "warning",
+          text: `Confirming will fail with 409 goal_has_dependents: ${names}`,
+        },
+      ],
+      destructive,
+      guard,
+    };
+  }
+  const details: Detail[] = [];
+  if (cascade && dependents.length > 0) {
+    details.push({ kind: "removed", text: `Also removes goals: ${names}` });
+  }
+  // No mayArchive or mayStop filter: that narrowing is the user's, and apply does it.
+  // Listing every task here overstates a review-trust user; it never hides an effect.
+  const tasks = await project.list();
+  const nextPlan: Plan = { ...plan, goals: plan.goals.filter((item) => !doomed.has(item.id)) };
+  const effects = await archiveRemovedGoalTasks({
+    projectDir: project.root,
+    plan: nextPlan,
+    tasks,
+    stopRunning: input.stopRunning === true,
+    dryRun: true,
+  });
+  const titled = new Map(tasks.map((task) => [task.frontmatter.id, task.frontmatter.title]));
+  const labelOf = (taskId: string) => `"${cleanTitle(titled.get(taskId) ?? taskId)}" (${taskId})`;
+  for (const effect of effects) {
+    if (effect.action !== "stop-requested") continue;
+    details.push({ kind: "stopped", text: `Stops running task ${labelOf(effect.taskId)}` });
+  }
+  for (const effect of effects) {
+    if (effect.action !== "archived") continue;
+    details.push({ kind: "archived", text: `Archives task ${labelOf(effect.taskId)}` });
+  }
+  return { title, details, destructive, guard };
 }
 
 function asGoals(input: Record<string, unknown>): GoalLike[] {
@@ -295,59 +555,102 @@ async function replaceGoals(
   input: Record<string, unknown>,
   project: ProjectService,
   destructive: boolean,
-): Promise<ChangePreview> {
+): Promise<Built> {
   const plan = await project.plans.get(text(input, "planId"));
   const next = asGoals(input);
   const before = new Map(plan.goals.map((goal) => [goal.id, goal]));
   const afterIds = new Set(next.map((goal) => goal.id));
-  const details: string[] = [];
-  for (const goal of next) {
-    if (!before.has(goal.id)) details.push(`Added "${cleanText(goal.title)}"`);
-  }
+  const details: Detail[] = [];
   for (const goal of plan.goals) {
-    if (!afterIds.has(goal.id)) details.push(`Removed "${cleanText(goal.title)}"`);
+    if (!afterIds.has(goal.id)) {
+      details.push({ kind: "removed", text: `Removed "${cleanTitle(goal.title)}"` });
+    }
+  }
+  if (plan.status === "active" && plan.autoSync) {
+    details.push({ kind: "warning", text: RUNNER_SYNC });
   }
   for (const goal of next) {
     const old = before.get(goal.id);
-    if (old && goalChanged(old, goal)) details.push(`Changed "${cleanText(goal.title)}"`);
+    if (old && goalChanged(old, goal)) {
+      details.push({ kind: "changed", text: `Changed "${cleanTitle(goal.title)}"` });
+    }
   }
+  for (const goal of next) {
+    if (!before.has(goal.id)) {
+      details.push({ kind: "added", text: `Added "${cleanTitle(goal.title)}"` });
+    }
+  }
+  const removed = plan.goals.filter((goal) => !afterIds.has(goal.id)).length;
   return {
-    title: `Replace the goals of plan "${cleanText(plan.title)}"`,
+    title: `Replace the goals of plan "${cleanTitle(plan.title)}"`,
     details,
-    destructive,
+    destructive: destructive || removed > 0,
     guard: { kind: "plan", id: plan.id, stamp: String(plan.version) },
   };
 }
 
+function syncWarning(plan: Plan): Detail | null {
+  return plan.status === "active" && plan.autoSync ? { kind: "warning", text: RUNNER_SYNC } : null;
+}
+
 async function changeOp(
-  kind: "task" | "plan" | "epic" | "goal",
+  kind: "task" | "plan" | "epic" | "goal" | "project",
   name: string,
   input: Record<string, unknown>,
   project: ProjectService,
   destructive: boolean,
-): Promise<ChangePreview> {
+): Promise<Built> {
   if (name === "tasks.create" || name === "epics.create" || name === "plans.create") {
+    const details: Detail[] = [];
+    eachField(details, name, input, "create", () => undefined);
     return {
-      title: changeTitle(kind, text(input, "title"), input),
-      details: [],
+      title: changeTitle(kind, text(input, "title"), name, input),
+      details,
+      destructive,
+      guard: null,
+    };
+  }
+  if (name === "projects.update") {
+    const record = await readProject(project);
+    const details: Detail[] = [];
+    eachField(
+      details,
+      name,
+      input,
+      "update",
+      (key) => (record as unknown as Record<string, unknown>)[key],
+    );
+    return {
+      title: changeTitle("project", record.name, name, input),
+      details,
       destructive,
       guard: null,
     };
   }
   if (kind === "task") {
     const task = await requireTask(project, text(input, "taskId"));
+    const details: Detail[] = [];
+    eachField(details, name, input, "update", (key) => taskValue(task, key));
     return {
-      title: changeTitle("task", task.frontmatter.title, input),
-      details: [],
+      title: changeTitle("task", task.frontmatter.title, name, input),
+      details,
       destructive,
       guard: taskGuard(task),
     };
   }
   if (kind === "epic") {
     const epic = await requireEpic(project, text(input, "epicId"));
+    const details: Detail[] = [];
+    eachField(
+      details,
+      name,
+      input,
+      "update",
+      (key) => (epic as unknown as Record<string, unknown>)[key],
+    );
     return {
-      title: changeTitle("epic", epic.title, input),
-      details: [],
+      title: changeTitle("epic", epic.title, name, input),
+      details,
       destructive,
       guard: { kind: "epic", id: epic.id, stamp: epic.updated },
     };
@@ -364,15 +667,38 @@ async function changeOp(
     if (name === "plans.setGoalStatus" && !goal) {
       throw new OpError(404, `Goal not found: ${goalId}`, "goal_not_found");
     }
+    const details: Detail[] = [];
+    const warning = syncWarning(plan);
+    if (warning) details.push(warning);
+    const current = (key: string): unknown =>
+      goal ? (goal as unknown as Record<string, unknown>)[key] : undefined;
+    eachField(details, name, input, goal ? "update" : "create", current);
     const title = goal?.title ?? text(input, "title");
-    return { title: changeTitle("goal", title, input), details: [], destructive, guard };
+    return { title: changeTitle("goal", title, name, input), details, destructive, guard };
   }
-  const details: string[] = [];
+  const details: Detail[] = [];
+  if (name === "plans.reorderGoals") {
+    const warning = syncWarning(plan);
+    if (warning) details.push(warning);
+  }
+  eachField(details, name, input, "update", (key) => {
+    if (key === "order") return [...plan.goals].sort((a, b) => a.order - b.order).map((g) => g.id);
+    return (plan as unknown as Record<string, unknown>)[key];
+  });
   if (name === "plans.update" && input.status === "active" && plan.status !== "active") {
-    details.push("its goals become tasks the runner may start");
+    details.push({ kind: "warning", text: RUNNER_ACTIVATION });
+  }
+  const resultStatus = typeof input.status === "string" ? input.status : plan.status;
+  if (
+    name === "plans.update" &&
+    input.autoSync === true &&
+    plan.autoSync !== true &&
+    resultStatus === "active"
+  ) {
+    details.push({ kind: "warning", text: RUNNER_SYNC });
   }
   return {
-    title: changeTitle("plan", plan.title, input),
+    title: changeTitle(kind === "goal" ? "goal" : "plan", plan.title, name, input),
     details,
     destructive,
     guard,
