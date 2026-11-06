@@ -22,7 +22,12 @@ export function ConfirmChangeBody({ change }: { change: PendingChangeView }) {
           ))}
         </ul>
       )}
-      {change.op === "tasks.delete" && (
+      {change.blocked && (
+        <p data-testid="change-blocked" className="m-0 break-words text-failed">
+          {change.blocked}
+        </p>
+      )}
+      {change.op === "tasks.delete" && !change.blocked && (
         <p data-testid="change-delete-warning" className="m-0 text-failed">
           {DELETE_TASK_WARNING}
         </p>

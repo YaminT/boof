@@ -45,6 +45,7 @@ export function ConsoleLog({
                   <button
                     type="button"
                     disabled={!view.change}
+                    aria-label={`Review: ${l.text}`}
                     onClick={() => view.change && onReview(view.change)}
                     className="h-6 rounded-md border border-line px-2 text-ink hover:bg-accent disabled:opacity-50"
                   >
@@ -52,6 +53,7 @@ export function ConsoleLog({
                   </button>
                   <button
                     type="button"
+                    aria-label={`Discard: ${l.text}`}
                     onClick={() => l.changeId && onDiscard(l.changeId)}
                     className="h-6 rounded-md px-2 text-ink-muted hover:bg-accent hover:text-ink"
                   >

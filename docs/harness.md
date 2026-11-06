@@ -2238,7 +2238,7 @@ Path parameters (all required):
 - MCP tool: none (REST only)
 - CLI: `boof-runner concierge ask`
 - What it does: Sends a message to the assistant for the selected project. Inputs: projectId, text and optional page context or conversationId. May create drafts and pending changes, and records model spend.
-- Success: HTTP 200 with `{ changes: { op: string, summary: string, target: object | null }[], conversationId: string, costUsd: number | null, pending: { destructive: boolean, details: string[], expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }[], stopReason: "done" | "max_turns" | "max_budget", text: string }`.
+- Success: HTTP 200 with `{ changes: { op: string, summary: string, target: object | null }[], conversationId: string, costUsd: number | null, pending: { blocked?: string, destructive: boolean, details: string[], error?: string, expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }[], stopReason: "done" | "max_turns" | "max_budget", text: string }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -2258,7 +2258,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: none (REST only)
 - CLI: `boof-runner concierge apply`
 - What it does: Applies a pending assistant change with the caller's own rights. Inputs: projectId and changeId. Changes one project item once.
-- Success: HTTP 200 with `{ change: { destructive: boolean, details: string[], expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }, result: any }`.
+- Success: HTTP 200 with `{ change: { blocked?: string, destructive: boolean, details: string[], error?: string, expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }, result: any }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -2273,7 +2273,7 @@ Path parameters (all required):
 - MCP tool: none (REST only)
 - CLI: `boof-runner concierge discard`
 - What it does: Discards a pending assistant change. Inputs: projectId and changeId. The proposed change is not applied.
-- Success: HTTP 200 with `{ change: { destructive: boolean, details: string[], expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string } }`.
+- Success: HTTP 200 with `{ change: { blocked?: string, destructive: boolean, details: string[], error?: string, expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string } }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):

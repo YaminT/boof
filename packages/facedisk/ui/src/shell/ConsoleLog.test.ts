@@ -111,6 +111,59 @@ describe("proposed changes", () => {
   });
 });
 
+describe("row accessibility and restored rows", () => {
+  it("names each row's buttons by its change", () => {
+    const html = render(
+      [
+        { kind: "pending", text: "Queue A", changeId: "chg-1" },
+        { kind: "pending", text: "Queue B", changeId: "chg-2" },
+      ],
+      [pending({ title: "Queue A" }), pending({ id: "chg-2", title: "Queue B" })],
+    );
+    for (const label of ["Review: Queue A", "Discard: Queue A", "Review: Queue B"]) {
+      expect(html).toContain(`aria-label="${label}"`);
+    }
+  });
+
+  it("shows applying and interrupted changes the status read restored", () => {
+    const rows = (c: PendingChangeView) =>
+      render([{ kind: "pending", text: c.title, changeId: c.id }], [c]);
+    expect(rows(pending({ status: "applying" }))).toContain("Applying…");
+    const failed = rows(pending({ status: "failed", error: "interrupted" }));
+    expect(failed).toContain("Failed: interrupted");
+    expect(failed).not.toContain("Review: ");
+  });
+
+  it("keeps restored failed rows when an answer arrives", () => {
+    const restored = pending({ id: "chg-9", status: "failed", error: "interrupted" });
+    const start = { ...initialConciergeUi("demo"), pending: [restored] };
+    const done = reduceConcierge(start, {
+      type: "done",
+      answer: {
+        conversationId: "c1",
+        text: "",
+        changes: [],
+        pending: [pending()],
+        costUsd: null,
+        stopReason: "done",
+      },
+    });
+    expect(done.pending.map((c) => c.id)).toEqual(["chg-9", "chg-1"]);
+  });
+});
+
+describe("blocked changes", () => {
+  const blocked = pending({
+    blocked: "This task has 1 subtask, so it cannot be deleted as proposed.",
+  });
+
+  it("shows the reason in the dialog body and not the delete warning", () => {
+    const html = renderToStaticMarkup(createElement(ConfirmChangeBody, { change: blocked }));
+    expect(html).toContain("This task has 1 subtask, so it cannot be deleted as proposed.");
+    expect(html).not.toContain("This cannot be undone");
+  });
+});
+
 describe("confirm dialog content", () => {
   const html = renderToStaticMarkup(createElement(ConfirmChangeBody, { change: pending() }));
   const at = (s: string) => html.indexOf(s);

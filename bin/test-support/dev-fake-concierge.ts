@@ -1,19 +1,18 @@
 import type { ConciergeAgent, ConciergeTurnInput } from "@boof/heart";
-import { scriptedAgent, type ScriptStep } from "@boof/heart-server";
+import {
+  scriptedAgent,
+  type ScriptStep,
+} from "../../packages/heart-server/src/concierge/fake-agent.js";
 
 /**
  * Dev-only stand-in for the assistant, so the console can be tried and photographed without a
- * model. It is chosen only by `BOOF_DEV_FAKE_CONCIERGE` and never in production. It answers a few
+ * model. It lives outside every build: only `dev-serve.mts` (run with tsx) loads it. It answers a few
  * fixed requests through the real MCP gate (so pending changes are real):
- *   "delete <taskId>", "queue <taskId>", "create <title>", anything else gets a canned answer.
- * `BOOF_DEV_FAKE_CONCIERGE=unavailable` makes it report that it cannot run.
+ *   "delete <taskId> [detach]", "queue <taskId>", "create <title>", anything else gets a canned answer.
+ * With `unavailable` it reports that it cannot run.
  */
-export function devFakeConcierge(
-  env: Record<string, string | undefined> = process.env,
-): ConciergeAgent | undefined {
-  const flag = env.BOOF_DEV_FAKE_CONCIERGE;
-  if (!flag || env.NODE_ENV === "production") return undefined;
-  const unavailable = flag === "unavailable";
+export function devFakeConcierge(mode: "available" | "unavailable"): ConciergeAgent {
+  const unavailable = mode === "unavailable";
   return {
     async availability() {
       return unavailable
@@ -32,8 +31,13 @@ export function devFakeConcierge(
       let say: string;
       const calls: ScriptStep[] = [];
       if (verb === "delete" && arg) {
-        say = `That would delete task ${arg}. Please review and confirm the change.`;
-        calls.push({ call: "boof_delete_task", args: { projectId, taskId: arg } });
+        const detach = arg.endsWith(" detach");
+        const taskId = detach ? arg.slice(0, -" detach".length) : arg;
+        say = `That would delete task ${taskId}. Please review and confirm the change.`;
+        calls.push({
+          call: "boof_delete_task",
+          args: { projectId, taskId, ...(detach ? { detach: true } : {}) },
+        });
       } else if (verb === "queue" && arg) {
         say = `I can queue task ${arg} once you apply the change.`;
         calls.push({ call: "boof_queue_task", args: { projectId, taskId: arg } });

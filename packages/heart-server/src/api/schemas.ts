@@ -221,9 +221,11 @@ const ConciergePendingChangeSchema = z.object({
   title: z.string(),
   details: z.array(z.string()),
   destructive: z.boolean(),
+  blocked: z.string().optional(),
   reason: z.enum(["confirm", "needs-approval"]),
   status: z.enum(["pending", "applying", "applied", "discarded", "expired", "failed"]),
   expiresAt: z.string(),
+  error: z.string().optional(),
 });
 const ConciergeTargetSchema = z
   .object({ kind: z.enum(["task", "plan", "epic"]), id: z.string() })

@@ -87,6 +87,7 @@ describe("previewChange", () => {
       "status: draft",
     ]);
     expect(deleted.destructive).toBe(true);
+    expect(deleted.blocked).toContain("has 1 subtask,");
     expect(deleted.guard).toEqual({ kind: "task", id, stamp: task.frontmatter.updated });
 
     const detached = await previewChange(
@@ -95,6 +96,7 @@ describe("previewChange", () => {
       project,
     );
     expect(detached.details).toEqual(["1 subtasks will be detached", "status: draft"]);
+    expect(detached.blocked).toBeUndefined();
 
     const archived = await previewChange(
       op("tasks.archive"),
@@ -127,6 +129,13 @@ describe("previewChange", () => {
     expect(epicGone.title).toBe('Delete epic "Billing"');
     expect(epicGone.details).toEqual(["has 1 tasks; deleting is refused unless detach is set"]);
     expect(epicGone.destructive).toBe(true);
+    expect(epicGone.blocked).toContain("has 1 task,");
+    const epicDetached = await previewChange(
+      op("epics.delete"),
+      { projectId: "demo", epicId: epic.id, detach: true },
+      project,
+    );
+    expect(epicDetached.blocked).toBeUndefined();
     expect(epicGone.guard).toEqual({ kind: "epic", id: epic.id, stamp: epic.updated });
   });
 
@@ -714,6 +723,13 @@ describe("previewChange", () => {
     expect(preview.details).toEqual([
       'Confirming will fail with 409 goal_has_dependents: "Beta" (beta)',
     ]);
+    expect(preview.blocked).toContain('Other goals depend on this goal ("Beta" (beta))');
+    const cascaded = await previewChange(
+      op("plans.removeGoal"),
+      { projectId: "demo", planId: plan.id, goalId: "alpha", cascade: true },
+      project,
+    );
+    expect(cascaded.blocked).toBeUndefined();
     await expect(project.plans.removeGoal(plan.id, "alpha", plan.version)).rejects.toMatchObject({
       status: 409,
       code: "goal_has_dependents",

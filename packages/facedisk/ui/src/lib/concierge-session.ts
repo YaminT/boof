@@ -113,7 +113,15 @@ export function reduceConcierge(state: ConciergeUiState, e: ConciergeUiEvent): C
         ...state,
         busy: false,
         conversationId: e.answer.conversationId,
-        pending: e.answer.pending,
+        // Keep running and failed changes the status read restored; the answer lists only waiting ones.
+        pending: [
+          ...state.pending.filter(
+            (item) =>
+              (item.status === "applying" || item.status === "failed") &&
+              !e.answer.pending.some((p) => p.id === item.id),
+          ),
+          ...e.answer.pending,
+        ],
         lines: stop ? appendOutput(state.lines, { kind: "system", text: stop }) : state.lines,
       };
     }

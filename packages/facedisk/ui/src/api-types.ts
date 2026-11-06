@@ -193,6 +193,10 @@ export interface PendingChangeView {
   title: string;
   details: string[];
   destructive: boolean;
+  /** Why confirming can only fail. The dialog shows it and offers no Confirm or Apply. */
+  blocked?: string;
+  /** Why a failed change failed (for example "interrupted"). */
+  error?: string;
   reason: "confirm" | "needs-approval";
   status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed";
   expiresAt: string;

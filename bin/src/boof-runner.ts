@@ -21,6 +21,7 @@ import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
+import type { ConciergeAgent } from "@boof/heart";
 import { AuthStore, MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
@@ -248,10 +249,9 @@ export async function serve(argv: string[]): Promise<void> {
   const uiDir = resolveUiDir();
   const guard = new RunnerGuard(root);
   try {
-    // Dev only: a scripted assistant (BOOF_DEV_FAKE_CONCIERGE), ignored when NODE_ENV=production.
-    const devAgent = process.env.BOOF_DEV_FAKE_CONCIERGE
-      ? (await import("./dev-fake-concierge.js")).devFakeConcierge()
-      : undefined;
+    // A scripted assistant can be injected only by bin/test-support/dev-serve.mts, in-process.
+    // No environment variable or flag selects it, and its code is not part of this bundle.
+    const devAgent = (globalThis as { __boofDevConcierge?: ConciergeAgent }).__boofDevConcierge;
     const composition = await boot({
       root,
       port: args.port,

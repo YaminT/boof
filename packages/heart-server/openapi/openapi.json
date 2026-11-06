@@ -6205,6 +6205,9 @@
                               "items": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "blocked": {
+                                    "type": "string"
+                                  },
                                   "destructive": {
                                     "type": "boolean"
                                   },
@@ -6213,6 +6216,9 @@
                                       "type": "string"
                                     },
                                     "type": "array"
+                                  },
+                                  "error": {
+                                    "type": "string"
                                   },
                                   "expiresAt": {
                                     "type": "string"
@@ -6390,6 +6396,9 @@
                     "change": {
                       "additionalProperties": false,
                       "properties": {
+                        "blocked": {
+                          "type": "string"
+                        },
                         "destructive": {
                           "type": "boolean"
                         },
@@ -6398,6 +6407,9 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "error": {
+                          "type": "string"
                         },
                         "expiresAt": {
                           "type": "string"
@@ -6508,6 +6520,9 @@
                     "change": {
                       "additionalProperties": false,
                       "properties": {
+                        "blocked": {
+                          "type": "string"
+                        },
                         "destructive": {
                           "type": "boolean"
                         },
@@ -6516,6 +6531,9 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "error": {
+                          "type": "string"
                         },
                         "expiresAt": {
                           "type": "string"
@@ -6730,6 +6748,9 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "blocked": {
+                            "type": "string"
+                          },
                           "destructive": {
                             "type": "boolean"
                           },
@@ -6738,6 +6759,9 @@
                               "type": "string"
                             },
                             "type": "array"
+                          },
+                          "error": {
+                            "type": "string"
                           },
                           "expiresAt": {
                             "type": "string"

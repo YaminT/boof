@@ -32,6 +32,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx bin/src/boof-runner.ts",
+    "dev:fake-concierge": "tsx bin/test-support/dev-serve.mts",
     "desktop:build": "npm run build -w @boof/facedisk && npm run build -w @boof/desktop",
     "desktop": "npm run desktop:build && npm run start -w @boof/desktop",
     "desktop:dist": "npm run desktop:build && npm run dist -w @boof/desktop",

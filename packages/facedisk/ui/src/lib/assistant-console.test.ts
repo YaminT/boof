@@ -159,6 +159,18 @@ describe("pending row state", () => {
       kind: "done",
       label: "Failed",
     });
+    expect(changeRowView(line, [change({ status: "failed", error: "interrupted" })], now)).toEqual({
+      kind: "done",
+      label: "Failed: interrupted",
+    });
+  });
+
+  it("shows applying instead of a Review button, and a row the server dropped as settled", () => {
+    expect(changeRowView(line, [change({ status: "applying" })], now)).toEqual({
+      kind: "done",
+      label: "Applying…",
+    });
+    expect(changeRowView(line, [], now)).toEqual({ kind: "done", label: "No longer waiting" });
   });
 });
 
@@ -169,6 +181,11 @@ describe("confirm button", () => {
       variant: "destructive",
     });
     expect(confirmButton({ destructive: false })).toEqual({ label: "Apply", variant: "default" });
+  });
+
+  it("offers no Confirm or Apply for a change that can only fail", () => {
+    expect(confirmButton({ destructive: true, blocked: "Has subtasks." })).toBeNull();
+    expect(confirmButton({ destructive: false, blocked: "Has subtasks." })).toBeNull();
   });
 });
 

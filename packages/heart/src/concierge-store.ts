@@ -25,6 +25,8 @@ export interface PendingChange {
   /** At most 8 lines. */
   details: string[];
   destructive: boolean;
+  /** Why confirming can only fail; set by the preview. */
+  blocked?: string;
   reason: "confirm" | "needs-approval";
   /** Task `updated`, plan `version`, or epic `updated`. */
   guard: { kind: "task" | "plan" | "epic"; id: string; stamp: string } | null;
@@ -63,6 +65,7 @@ const ChangeSchema = z.object({
   title: z.string(),
   details: z.array(z.string()),
   destructive: z.boolean(),
+  blocked: z.string().optional(),
   reason: z.enum(["confirm", "needs-approval"]),
   guard: GuardSchema.nullable(),
   status: z.enum(["pending", "applying", "applied", "discarded", "expired", "failed"]),

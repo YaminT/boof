@@ -20,6 +20,8 @@ export interface ChangePreview {
   title: string;
   details: string[];
   destructive: boolean;
+  /** Why confirming can only fail (a refusal the operation will make); the UI offers no Confirm. */
+  blocked?: string;
   guard: PendingChange["guard"];
 }
 
@@ -70,6 +72,7 @@ interface Built {
   title: string;
   details: Detail[];
   destructive: boolean;
+  blocked?: string;
   guard: PendingChange["guard"];
 }
 
@@ -127,6 +130,7 @@ export async function previewChange(
     title: sanitize(preview.title),
     details: capDetails(preview.details),
     destructive: preview.destructive,
+    ...(preview.blocked ? { blocked: sanitize(preview.blocked) } : {}),
     guard: preview.guard,
   };
 }
@@ -453,6 +457,11 @@ async function deleteTask(
     title: `Delete task "${cleanTitle(task.frontmatter.title)}" (${id})`,
     details,
     destructive,
+    ...(kids.length > 0 && input.detach !== true
+      ? {
+          blocked: `This task has ${kids.length} ${kids.length === 1 ? "subtask" : "subtasks"}, so it cannot be deleted as proposed. Detaching subtasks is your decision: delete the task yourself from its page.`,
+        }
+      : {}),
     guard: taskGuard(task),
   };
 }
@@ -473,6 +482,11 @@ async function deleteEpic(
     title: `Delete epic "${cleanTitle(epic.title)}"`,
     details: [{ kind: "warning", text: line }],
     destructive,
+    ...(count > 0 && input.detach !== true
+      ? {
+          blocked: `This epic has ${count} ${count === 1 ? "task" : "tasks"}, so it cannot be deleted as proposed. Detaching them is your decision: delete the epic yourself.`,
+        }
+      : {}),
     guard: { kind: "epic", id: epic.id, stamp: epic.updated },
   };
 }
@@ -534,6 +548,7 @@ async function removeGoal(
         },
       ],
       destructive,
+      blocked: `Other goals depend on this goal (${names}${moreNames}), so it cannot be removed as proposed. Removing them too is your decision: edit the plan yourself.`,
       guard,
     };
   }

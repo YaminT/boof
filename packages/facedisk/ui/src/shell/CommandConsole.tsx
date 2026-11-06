@@ -228,6 +228,7 @@ export function CommandConsole({
       <ConfirmChangeDialog
         change={reviewing}
         onConfirm={(id) => assistant!.apply(id)}
+        onDiscard={(id) => void Promise.resolve(assistant?.discard(id)).catch(() => {})}
         onCancel={() => setReviewing(null)}
       />
     </section>

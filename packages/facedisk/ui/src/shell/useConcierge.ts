@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api.js";
 import type { ConciergeContext, ConciergeStatus } from "../api-types.js";
+import { EARLIER_HEADER, WAITING_HEADER } from "../lib/assistant-console.js";
 import { errorMessage } from "../lib/act.js";
 import {
   initialConciergeUi,
@@ -71,11 +72,22 @@ export function useConcierge(
             ...current,
             conversationId: conversation.id,
             pending: conversation.pending,
-            lines: conversation.pending.map((item) => ({
-              kind: "pending" as const,
-              text: item.title,
-              changeId: item.id,
-            })),
+            lines:
+              conversation.pending.length === 0
+                ? []
+                : [
+                    {
+                      kind: "system" as const,
+                      text: conversation.pending.some((item) => item.status === "pending")
+                        ? WAITING_HEADER
+                        : EARLIER_HEADER,
+                    },
+                    ...conversation.pending.map((item) => ({
+                      kind: "pending" as const,
+                      text: item.title,
+                      changeId: item.id,
+                    })),
+                  ],
           };
         });
       },

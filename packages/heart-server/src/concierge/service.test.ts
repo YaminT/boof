@@ -104,6 +104,24 @@ describe("ConciergeService", () => {
     await expectCode(concierge.apply(LOCAL_PRINCIPAL, "demo", changeId), "change_not_found");
   });
 
+  it("marks a delete with subtasks as blocked and lists failed changes after a reload", async () => {
+    const project = await services.requireProject("demo");
+    const parent = await project.create({ title: "Parent", prompt: "p" });
+    await project.create({ title: "Kid", prompt: "p", parentId: parent.frontmatter.id });
+    agent = scriptedAgent([deleteCall(parent.frontmatter.id)]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("delete the parent");
+    expect(answer.pending[0]?.blocked).toContain("has 1 subtask,");
+    const changeId = answer.pending[0]!.id;
+    await expect(concierge.apply(LOCAL_PRINCIPAL, "demo", changeId)).rejects.toMatchObject({
+      code: "has_children",
+    });
+    const status = await concierge.status(LOCAL_PRINCIPAL, "demo");
+    expect(status.conversation?.pending).toMatchObject([
+      { id: changeId, status: "failed", error: "has_children" },
+    ]);
+  });
+
   it("rejects malformed confirm input before the confirmation gate runs", async () => {
     agent = scriptedAgent([{ call: "boof_delete_task", args: {} }]);
     concierge = new ConciergeService({ root, services, authStore, agent });

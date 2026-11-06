@@ -21,10 +21,12 @@ import { ConfirmChangeBody } from "./ConfirmChangeBody.js";
 export function ConfirmChangeDialog({
   change,
   onConfirm,
+  onDiscard,
   onCancel,
 }: {
   change: PendingChangeView | null;
   onConfirm: (id: string) => Promise<void>;
+  onDiscard: (id: string) => void;
   onCancel: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +36,7 @@ export function ConfirmChangeDialog({
   const cancel = useRef<HTMLButtonElement>(null);
   const id = change?.id ?? null;
   const destructive = change?.destructive ?? false;
-  const button = confirmButton({ destructive });
+  const button = change ? confirmButton(change) : null;
 
   useEffect(() => {
     setError(null);
@@ -48,8 +50,12 @@ export function ConfirmChangeDialog({
   }, [id, destructive]);
 
   return (
-    <Dialog open={change !== null} onOpenChange={(open) => !open && !running && onCancel()}>
-      <DialogContent showCloseButton={false} initialFocus={cancel}>
+    <Dialog
+      open={change !== null}
+      disablePointerDismissal
+      onOpenChange={(open) => !open && !running && onCancel()}
+    >
+      <DialogContent role="alertdialog" showCloseButton={false} initialFocus={cancel}>
         <DialogHeader>
           <DialogTitle>Review proposed change</DialogTitle>
           <DialogDescription className="sr-only">
@@ -64,26 +70,39 @@ export function ConfirmChangeDialog({
         )}
         <DialogFooter>
           <Button ref={cancel} variant="outline" disabled={running} onClick={onCancel}>
-            Cancel
+            {button ? "Cancel" : "Close"}
           </Button>
-          <Button
-            variant={button.variant}
-            disabled={!armed || running || !change}
-            onClick={() =>
-              change &&
-              void runConfirm(() => onConfirm(change.id), {
-                running: () => runningRef.current,
-                setRunning: (on) => {
-                  runningRef.current = on;
-                  setRunning(on);
-                },
-                setError,
-                close: onCancel,
-              })
-            }
-          >
-            {button.label}
-          </Button>
+          {change && !button && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                onDiscard(change.id);
+                onCancel();
+              }}
+            >
+              Discard
+            </Button>
+          )}
+          {button && (
+            <Button
+              variant={button.variant}
+              disabled={!armed || running || !change}
+              onClick={() =>
+                change &&
+                void runConfirm(() => onConfirm(change.id), {
+                  running: () => runningRef.current,
+                  setRunning: (on) => {
+                    runningRef.current = on;
+                    setRunning(on);
+                  },
+                  setError,
+                  close: onCancel,
+                })
+              }
+            >
+              {button.label}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

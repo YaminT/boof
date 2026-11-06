@@ -11,6 +11,8 @@ export interface AssistantAvailability {
 export const NO_PROJECT_LINE = "Choose a project to ask the assistant.";
 export const PLACEHOLDER_COMMAND = "Command, e.g. /queue fix login";
 export const PLACEHOLDER_ASSISTANT = "Command or question, e.g. create a task to fix the login";
+export const WAITING_HEADER = "Waiting for your review (from earlier):";
+export const EARLIER_HEADER = "Changes from earlier in this conversation:";
 export const CONFIRM_NOTE = "Proposed by the assistant. It runs with your permissions.";
 
 /** The one line shown when the assistant cannot run. The reason is the server's, word for word. */
@@ -86,13 +88,18 @@ export function changeRowView(
   }
   const change = pending.find((c) => c.id === line.changeId) ?? null;
   if (change) {
+    if (change.status === "applying") return { kind: "done", label: "Applying…" };
     if (change.status === "applied") return { kind: "done", label: "Applied" };
     if (change.status === "discarded") return { kind: "done", label: "Discarded" };
-    if (change.status === "failed") return { kind: "done", label: "Failed" };
+    if (change.status === "failed") {
+      return { kind: "done", label: change.error ? `Failed: ${change.error}` : "Failed" };
+    }
     if (change.status === "expired" || Date.parse(change.expiresAt) <= now) {
       return { kind: "done", label: "Expired" };
     }
   }
+  // A row the server no longer lists has nothing to review or discard.
+  if (!change) return { kind: "done", label: "No longer waiting" };
   return { kind: "waiting", change };
 }
 
@@ -150,10 +157,12 @@ export async function runConfirm(
 }
 
 /** A destructive change gets a red "Confirm"; every other change gets "Apply". */
-export function confirmButton(change: Pick<PendingChangeView, "destructive">): {
+export function confirmButton(change: Pick<PendingChangeView, "destructive" | "blocked">): {
   label: "Confirm" | "Apply";
   variant: "destructive" | "default";
-} {
+} | null {
+  // A change the operation will refuse has nothing to confirm: only Discard and Close.
+  if (change.blocked) return null;
   return change.destructive
     ? { label: "Confirm", variant: "destructive" }
     : { label: "Apply", variant: "default" };

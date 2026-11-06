@@ -64,7 +64,16 @@ export type ConciergeEvent =
   | { type: "error"; code: string; message: string };
 export type PendingChangeView = Pick<
   PendingChange,
-  "id" | "op" | "title" | "details" | "destructive" | "reason" | "status" | "expiresAt"
+  | "id"
+  | "op"
+  | "title"
+  | "details"
+  | "destructive"
+  | "blocked"
+  | "reason"
+  | "status"
+  | "expiresAt"
+  | "error"
 >;
 export interface ConciergeAnswer {
   conversationId: string;
@@ -140,7 +149,7 @@ export class ConciergeService {
         id: conversation.id,
         spentUsd: conversation.spentUsd,
         messages: conversation.messages,
-        pending: pendingViews(conversation),
+        pending: statusViews(conversation),
       },
     };
   }
@@ -283,6 +292,7 @@ export class ConciergeService {
               title: preview.title,
               details: preview.details,
               destructive: preview.destructive,
+              ...(preview.blocked ? { blocked: preview.blocked } : {}),
               reason: "confirm",
               guard: preview.guard,
               status: "pending",
@@ -354,6 +364,7 @@ export class ConciergeService {
               title: preview.title,
               details: preview.details,
               destructive: preview.destructive,
+              ...(preview.blocked ? { blocked: preview.blocked } : {}),
               reason: "needs-approval",
               guard: preview.guard,
               status: "pending",
@@ -747,13 +758,19 @@ function toView(change: PendingChange): PendingChangeView {
     title: change.title,
     details: change.details,
     destructive: change.destructive,
+    ...(change.blocked ? { blocked: change.blocked } : {}),
+    ...(change.error ? { error: change.error } : {}),
     reason: change.reason,
     status: change.status,
     expiresAt: change.expiresAt,
   };
 }
-function pendingViews(conversation: ConciergeConversation): PendingChangeView[] {
-  return conversation.changes.filter((change) => change.status === "pending").map(toView);
+/** What the console shows again after a reload: waiting and running changes, and recent failures. */
+function statusViews(conversation: ConciergeConversation): PendingChangeView[] {
+  const failed = conversation.changes.filter((c) => c.status === "failed").slice(-3);
+  return conversation.changes
+    .filter((c) => c.status === "pending" || c.status === "applying" || failed.includes(c))
+    .map(toView);
 }
 function targetOf(
   op: string,
