@@ -18,6 +18,7 @@
         <version number="2" status="plan">D8 (owner, 2026-10-29): ship 0.3.0 without the desktop end-to-end check; an agent prepares the version bump and changelog; the owner pushes the tag.</version>
         <version number="3" status="plan">Prepared on 2026-11-05 on branch release-0.3.0: bump, changelog, README link; owner tags v0.3.0; site deploy after main has the release.</version>
         <version number="4" status="review">Release PR #4 open; owner merges and tags v0.3.0.</version>
+        <version number="5" status="done">Released 2026-11-06: PR #4 merged into main as 0f01003 (merge commit); annotated tag v0.3.0 on 0f01003; Release Desktop run 42235756033 succeeded on macOS and Windows; GitHub release v0.3.0 (not a prerelease) with Boof.Runner-0.3.0 mac-arm64 dmg and zip, mac-x64 dmg and zip, and win-x64 exe.</version>
       </versions>
     </status>
     <tests>
