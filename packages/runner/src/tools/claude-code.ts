@@ -1,8 +1,10 @@
-import type { TokenUsage } from "@boof-runner/shared";
-import { commandExists, execCommand } from "../exec.js";
-import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import type { TokenUsage } from "@boof/heart";
+import { commandExists, execCommand, parseUsage } from "@boof/heart";
+import { agentEnv } from "../agent-env.js";
+import { gatewayEnv } from "../gateway-env.js";
+import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { ToolRunError } from "./errors.js";
-import { parseUsage } from "./usage.js";
+import { withQuestions } from "./questions.js";
 
 export { ToolRunError };
 
@@ -20,7 +22,7 @@ export class ClaudeCodeTool implements Tool {
   readonly defaultModels = ["opus", "sonnet", "haiku"];
   private readonly bin = process.env.BOOF_RUNNER_CLAUDE_BIN ?? "claude";
 
-  async detect(): Promise<HealthResult> {
+  async detect(detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
@@ -34,8 +36,17 @@ export class ClaudeCodeTool implements Tool {
     const model = (await this.listModels()).find((m) => m === "sonnet") ?? this.defaultModels[1];
     const probe = await execCommand(
       this.bin,
-      ["--print", "--output-format", "text", "--model", model, "Reply with exactly: hi"],
-      { cwd: process.cwd(), timeoutMs: 45000 },
+      [
+        "--print",
+        "--output-format",
+        "text",
+        "--model",
+        model,
+        // The probe, too, stays away from the user's MCP servers.
+        ...(detect.inheritMcpServers ? [] : ["--strict-mcp-config"]),
+        "Reply with exactly: hi",
+      ],
+      { cwd: process.cwd(), timeoutMs: 45000, env: agentEnv() },
     );
     if (probe.code !== 0 || probe.timedOut || !probe.stdout.trim()) {
       return {
@@ -62,6 +73,7 @@ export class ClaudeCodeTool implements Tool {
   }
 
   readonly supportsResume = true;
+  readonly acceptsPool = true;
 
   /** Argument vector for `claude --print`; the prompt goes to stdin. */
   buildArgs(opts: RunOptions): string[] {
@@ -78,6 +90,9 @@ export class ClaudeCodeTool implements Tool {
       "--append-system-prompt",
       opts.systemPrompt,
     ];
+    // Without --mcp-config, --strict-mcp-config means no MCP servers at all: the user's
+    // ~/.claude.json and the repository's .mcp.json are ignored.
+    if (!opts.inheritMcpServers) args.push("--strict-mcp-config");
     // Continue an earlier session (a steered step); the stdin prompt is the new message.
     if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
     if (opts.autoApprove) {
@@ -89,14 +104,28 @@ export class ClaudeCodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
+    const childEnv = agentEnv(process.env, opts.agentEnv);
+    if (opts.gateway) {
+      delete childEnv.ANTHROPIC_API_KEY;
+      delete childEnv.ANTHROPIC_AUTH_TOKEN;
+      delete childEnv.CLAUDE_CODE_USE_BEDROCK;
+      delete childEnv.CLAUDE_CODE_USE_VERTEX;
+      delete childEnv.ANTHROPIC_CUSTOM_HEADERS;
+      for (const key of Object.keys(childEnv)) {
+        if (key.startsWith("CLAUDE_CODE_USE_") || key.startsWith("ANTHROPIC_FOUNDRY_"))
+          delete childEnv[key];
+      }
+    }
 
     const render = new StreamRenderer((text) => opts.onChunk?.(text));
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
+      env: { ...childEnv, ...gatewayEnv("anthropic", opts.gateway) },
       input: opts.prompt,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
       steerSignalPath: opts.steerSignalPath,
+      pidFilePath: opts.pidFilePath,
       idleTimeoutMs: opts.idleTimeoutMs,
       onData: (chunk) => render.push(chunk),
     });
@@ -117,12 +146,12 @@ export class ClaudeCodeTool implements Tool {
         { steered: res.steered, sessionId: render.sessionId, usage: render.usage },
       );
     }
-    return {
+    return withQuestions({
       output,
       report: render.report || render.transcript.trim(),
       usage: render.usage ?? parseUsage(res.stdout),
       sessionId: render.sessionId,
-    };
+    });
   }
 }
 
@@ -236,7 +265,7 @@ export class StreamRenderer {
       typeof message?.id === "string" ? message.id : `#${this.messageUsage.size}`,
       u,
     );
-    this.usage = sumClaudeUsages([...this.messageUsage.values()], 0);
+    this.usage = sumClaudeUsages([...this.messageUsage.values()], 0, false);
   }
 
   private streamEvent(ev?: Record<string, unknown>): void {
@@ -307,7 +336,11 @@ function num(v: unknown): number {
 }
 
 /** Claude splits input into fresh, cache-creation and cache-read tokens; all count as input. */
-function sumClaudeUsages(usages: Record<string, unknown>[], costUsd: number): TokenUsage {
+function sumClaudeUsages(
+  usages: Record<string, unknown>[],
+  costUsd: number,
+  known: boolean,
+): TokenUsage {
   let fresh = 0;
   let created = 0;
   let read = 0;
@@ -322,12 +355,12 @@ function sumClaudeUsages(usages: Record<string, unknown>[], costUsd: number): To
     inputTokens: fresh + created + read,
     outputTokens,
     costUsd,
-    known: true,
+    known,
   };
 }
 
 function usageFromResult(obj: Record<string, unknown>): TokenUsage | undefined {
   const u = obj.usage as Record<string, unknown> | undefined;
   if (!u) return undefined;
-  return sumClaudeUsages([u], num(obj.total_cost_usd));
+  return sumClaudeUsages([u], num(obj.total_cost_usd), typeof obj.total_cost_usd === "number");
 }

@@ -1,0 +1,453 @@
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Button } from "@/ui/button";
+import { Input } from "@/ui/input";
+import { NativeSelect } from "@/ui/native-select";
+import { Textarea } from "@/ui/textarea";
+import { api, type TaskView } from "../api.js";
+import type { CommandTemplate } from "../api-types.js";
+import { conflictOf, overwriteStatus } from "../lib/conflict.js";
+import { act } from "../lib/act.js";
+import { relativeTime } from "../lib/time.js";
+import { TaskAttachments } from "./TaskAttachments.js";
+
+interface Values {
+  title: string;
+  prompt: string;
+  priority: number;
+  runs: number;
+  labels: string;
+  command: string | null;
+}
+
+const EMPTY: Values = { title: "", prompt: "", priority: 50, runs: 1, labels: "", command: null };
+
+const toValues = (t: TaskView): Values => ({
+  title: t.frontmatter.title,
+  prompt: t.body.prompt,
+  priority: t.frontmatter.priority,
+  runs: t.frontmatter.runs,
+  labels: t.frontmatter.labels.join(", "),
+  command: t.frontmatter.command,
+});
+
+const parseLabels = (s: string) =>
+  s
+    .split(",")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+/** Equal ignoring how the labels are spaced. */
+const key = (v: Values) => JSON.stringify({ ...v, labels: parseLabels(v.labels) });
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <label className="mb-0 flex flex-col gap-1 text-[length:var(--text-row)] font-normal text-ink">
+      <span className="font-medium">{label}</span>
+      {children}
+      {hint && <span className="font-normal text-ink-muted">{hint}</span>}
+    </label>
+  );
+}
+
+/** What the page reads from the form: unsaved edits, and a way to save them (with a status). */
+export interface FormHandle {
+  dirty: boolean;
+  save(status?: "pending"): Promise<boolean>;
+}
+
+/**
+ * The task's fields. They are edited locally and compared with the last server value; when the
+ * server copy changes while they are dirty the edits are kept and the user chooses to reload.
+ * `task` is null for a new task.
+ */
+export function TaskForm({
+  pid,
+  task,
+  locked,
+  reload,
+  onCreated,
+  handle,
+  parentId,
+  onAttention,
+}: {
+  pid: string;
+  task: TaskView | null;
+  locked: boolean;
+  reload: () => Promise<void>;
+  /** A new task was saved (or got its first attachment) under this id. */
+  onCreated: (id: string) => void;
+  handle?: RefObject<FormHandle | null>;
+  /** A new task is created as a subtask of this task. */
+  parentId?: string;
+  /** Told whenever the form holds something that must not be hidden (edits, a conflict). */
+  onAttention?: (needs: boolean) => void;
+}) {
+  const isNew = task === null;
+  const server = useMemo(() => (task ? toValues(task) : EMPTY), [task]);
+  const [base, setBase] = useState(server);
+  const [form, setForm] = useState(server);
+  const [elsewhere, setElsewhere] = useState(false);
+  // The `updated` the base values came from; sent with a save so a newer copy is refused.
+  const baseUpdated = useRef<string | undefined>(task?.frontmatter.updated);
+  const [conflict, setConflict] = useState(false);
+  // What a 409 told us: the `updated` now on the server, and the status the failed save carried
+  // (so Overwrite finishes the same action, for example Queue).
+  const conflictUpdated = useRef<string | undefined>(undefined);
+  const conflictStatus = useRef<"pending" | undefined>(undefined);
+  const [conflictTick, setConflictTick] = useState(0);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const noticeId = useId();
+
+  /** End the conflict: forget what the refused save carried, and keep focus out of the void. */
+  const clearConflict = (moveFocus = true) => {
+    setConflict(false);
+    conflictStatus.current = undefined;
+    conflictUpdated.current = undefined;
+    if (!moveFocus) return;
+    // Focus that sat in the notice, or fell to the page when the pressed button went away.
+    const a = document.activeElement;
+    const lost =
+      !a || a === document.body || a === noticeRef.current || !!noticeRef.current?.contains(a);
+    if (lost) titleRef.current?.focus();
+  };
+  // The prompt the user had typed when a run started, kept so it can be copied.
+  const [lost, setLost] = useState<{ prompt: string | null } | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+  const [commands, setCommands] = useState<CommandTemplate[]>([]);
+  const busy = useRef(false);
+  const [isBusy, setBusy] = useState(false);
+  const createdId = useRef<string | null>(null);
+  const dirty = key(form) !== key(base);
+
+  useEffect(() => {
+    void api
+      .listCommands()
+      .then(setCommands)
+      .catch(() => {});
+  }, []);
+
+  // The server copy moved: follow it while the form is clean, otherwise keep the edits and say so.
+  useEffect(() => {
+    if (!task) return;
+    if (key(server) === key(base)) {
+      // The server copy matches what the form started from again: nothing to warn about.
+      baseUpdated.current = task.frontmatter.updated;
+      setElsewhere(false);
+      // Only a notice that is going away has focus to hand back; on load nothing should be focused.
+      clearConflict(conflict);
+      return;
+    }
+    if (dirty) setElsewhere(true);
+    else {
+      setBase(server);
+      setForm(server);
+      baseUpdated.current = task.frontmatter.updated;
+    }
+  }, [server]);
+
+  // A run started: the form is locked, so show the server copy, never unsaved values.
+  useEffect(() => {
+    if (!locked) return;
+    if (dirty) setLost({ prompt: form.prompt !== server.prompt ? form.prompt : null });
+    setBase(server);
+    setForm(server);
+    setElsewhere(false);
+    // The form is locked: its fields cannot take focus, so leave focus where it is.
+    clearConflict(false);
+    baseUpdated.current = task?.frontmatter.updated;
+  }, [locked]);
+
+  // Keep "Saved 2m ago" current.
+  useEffect(() => {
+    if (!savedAt) return;
+    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, [savedAt]);
+
+  const set = <K extends keyof Values>(k: K, v: Values[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const payload = () => ({
+    title: form.title.trim(),
+    prompt: form.prompt,
+    priority: form.priority,
+    runs: form.runs,
+    labels: parseLabels(form.labels),
+    command: form.command,
+  });
+
+  const save = async (status?: "pending", overwrite = false): Promise<boolean> => {
+    if (!task || busy.current) return false;
+    busy.current = true;
+    setBusy(true);
+    try {
+      const ok = await act(
+        async () => {
+          // Overwrite: write over the copy that is there now. The base only moves once it worked.
+          let expected = baseUpdated.current;
+          if (overwrite) {
+            expected =
+              conflictUpdated.current ??
+              (await api.getTask(pid, task.frontmatter.id)).frontmatter.updated;
+          }
+          return api.updateTask(pid, task.frontmatter.id, {
+            ...payload(),
+            ...(status ? { status } : {}),
+            ...(expected ? { expectedUpdated: expected } : {}),
+          });
+        },
+        {
+          failure: "Could not save",
+          onError: (e) => {
+            if (conflictOf(e) !== "task") return false;
+            const current = (e as { details?: { currentUpdated?: string } }).details
+              ?.currentUpdated;
+            conflictUpdated.current = current;
+            conflictStatus.current = status;
+            setConflict(true);
+            setConflictTick((n) => n + 1);
+            return true;
+          },
+        },
+      );
+      if (!ok) return false;
+      baseUpdated.current = ok.frontmatter.updated;
+      setBase(form);
+      setElsewhere(false);
+      clearConflict();
+      setSavedAt(new Date().toISOString());
+      await reload();
+      return true;
+    } finally {
+      busy.current = false;
+      setBusy(false);
+    }
+  };
+  if (handle) handle.current = { dirty, save };
+  const attention = dirty || conflict || elsewhere;
+  useEffect(() => onAttention?.(attention), [attention]);
+
+  const create = async (status: "draft" | "pending") => {
+    if (busy.current) return;
+    busy.current = true;
+    setBusy(true);
+    const made = await act(
+      () =>
+        createdId.current
+          ? api.updateTask(pid, createdId.current, { ...payload(), status })
+          : api.createTask(pid, { ...payload(), status, ...(parentId ? { parentId } : {}) }),
+      { success: status === "pending" ? "Queued" : "Saved as draft", failure: "Could not save" },
+    );
+    if (made) onCreated(made.frontmatter.id);
+    else {
+      busy.current = false;
+      setBusy(false);
+    }
+  };
+
+  // A new task gets a draft the first time a file is attached, so there is a task to attach to.
+  const ensureId = async () => {
+    if (task) return task.frontmatter.id;
+    if (createdId.current) return createdId.current;
+    const made = await api.createTask(pid, {
+      ...payload(),
+      title: form.title.trim() || "Untitled task",
+      status: "draft",
+      ...(parentId ? { parentId } : {}),
+    });
+    createdId.current = made.frontmatter.id;
+    return made.frontmatter.id;
+  };
+
+  // Each refused save moves focus to the notice, so the choice is announced and one key away.
+  useEffect(() => {
+    if (conflictTick > 0) noticeRef.current?.focus();
+  }, [conflictTick]);
+
+  const discard = () => {
+    setBase(server);
+    setForm(server);
+    setElsewhere(false);
+    clearConflict();
+    baseUpdated.current = task?.frontmatter.updated;
+  };
+
+  return (
+    <form
+      className="flex flex-col gap-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!isNew && dirty && !locked) void save();
+      }}
+    >
+      {locked && (
+        <p className="m-0 rounded-md border border-line bg-surface px-3 py-2 text-[length:var(--text-row)] text-ink-muted">
+          Editing is locked while the task runs. Stop it or wait for it to finish.
+        </p>
+      )}
+      {lost && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention"
+        >
+          <span>The task started running, so your unsaved edits were not saved.</span>
+          {lost.prompt !== null && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() =>
+                void act(() => navigator.clipboard.writeText(lost.prompt ?? ""), {
+                  success: "Copied",
+                  failure: "Could not copy",
+                })
+              }
+            >
+              Copy unsaved prompt
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="xs" onClick={() => setLost(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
+      {/* Always mounted, so a change of its text is announced; focus lands here after a refused save. */}
+      <div
+        ref={noticeRef}
+        tabIndex={-1}
+        role={conflict ? "alert" : "status"}
+        aria-labelledby={noticeId}
+        className={
+          elsewhere || conflict
+            ? "flex flex-wrap items-center gap-2 rounded-md border border-attention/40 bg-surface px-3 py-2 text-[length:var(--text-row)] text-attention outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            : "sr-only"
+        }
+      >
+        {(elsewhere || conflict) && (
+          <>
+            <span id={noticeId}>
+              This task changed after you opened it.
+              {conflict && " Your changes were not saved."}
+            </span>
+            <Button type="button" variant="outline" size="xs" onClick={discard} disabled={isBusy}>
+              Reload
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={isBusy || !form.title.trim()}
+              onClick={() => void save(overwriteStatus(conflict, conflictStatus.current), true)}
+            >
+              Overwrite
+            </Button>
+          </>
+        )}
+      </div>
+      <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
+        <Field label="Title">
+          <Input
+            ref={titleRef}
+            className="mt-0 font-normal"
+            value={form.title}
+            onChange={(e) => set("title", e.target.value)}
+            placeholder="Task title"
+          />
+        </Field>
+        <Field label="Labels" hint="Separate with commas.">
+          <Input
+            className="mt-0 font-normal"
+            value={form.labels}
+            onChange={(e) => set("labels", e.target.value)}
+            placeholder="e.g. backend, auth"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Priority">
+            <Input
+              className="mt-0 font-normal"
+              type="number"
+              value={form.priority}
+              onChange={(e) => set("priority", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Runs">
+            <Input
+              className="mt-0 font-normal"
+              type="number"
+              min={1}
+              value={form.runs}
+              onChange={(e) => set("runs", Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+            />
+          </Field>
+        </div>
+        <p className="-mt-2 mb-0 text-[length:var(--text-meta)] text-ink-muted">
+          Runs is how many times the pipeline runs. Each run after the first reviews and refines the
+          one before it.
+        </p>
+        <Field label="Command template">
+          <NativeSelect
+            className="w-full"
+            value={form.command ?? ""}
+            onChange={(e) => set("command", e.target.value || null)}
+          >
+            <option value="">None</option>
+            {commands.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </Field>
+        <Field label="Prompt">
+          <Textarea
+            className="mt-0 min-h-48 font-sans font-normal"
+            value={form.prompt}
+            onChange={(e) => set("prompt", e.target.value)}
+            placeholder="Describe what you want done."
+          />
+        </Field>
+        <TaskAttachments
+          pid={pid}
+          taskId={task?.frontmatter.id ?? null}
+          attachments={task?.frontmatter.attachments ?? []}
+          locked={locked}
+          ensureId={ensureId}
+          onChanged={(id) => (isNew ? onCreated(id) : void reload())}
+        />
+      </fieldset>
+      <div className="flex flex-wrap items-center gap-2">
+        {isNew ? (
+          <>
+            <Button
+              type="button"
+              disabled={isBusy || !form.title.trim()}
+              onClick={() => void create("pending")}
+            >
+              Queue
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isBusy || !form.title.trim()}
+              onClick={() => void create("draft")}
+            >
+              Save as draft
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button type="submit" disabled={isBusy || locked || !dirty || !form.title.trim()}>
+              Save changes
+            </Button>
+            {savedAt && !dirty && (
+              <span className="text-[length:var(--text-row)] text-ink-muted">
+                Saved {relativeTime(savedAt)}
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    </form>
+  );
+}

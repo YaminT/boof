@@ -15,9 +15,11 @@ import {
   reviewSettings,
   taskAssetPath,
   taskPromptInjectionsPath,
+  taskPidPath,
   taskSteerRequestPath,
   taskStopRequestPath,
   TaskStore,
+  EpicStore,
   workingAreaDir,
   worktreeSettings,
   type EffectiveSettings,
@@ -25,21 +27,25 @@ import {
   type Task,
   type TokenUsage,
   type Verdict,
-} from "@boof-runner/shared";
+  branchHead,
+  currentBranch,
+  isGitRepo,
+  sumUsage,
+  UsageStore,
+} from "@boof/heart";
 import { ToolRunError, transientReason } from "./tools/errors.js";
-import { sumUsage } from "./tools/usage.js";
+import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
+import type { Gateway } from "./gateway-env.js";
+import type { PoolGate } from "./pool-gate.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import { announceBudgetExceeded } from "./budget.js";
-import { UsageStore } from "./usage-store.js";
+import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 import {
-  branchHead,
-  currentBranch,
   diffAgainstBase,
   discardWorktree,
   ensureWorktree,
   finalizeWorktree,
-  isGitRepo,
   type Worktree,
 } from "./worktree.js";
 
@@ -54,6 +60,13 @@ export interface PipelineDeps {
   project?: Project;
   /** The data root: set it (with `project`) to record the daily spend ledger and enforce budgets. */
   dataRoot?: string;
+  /**
+   * The account pool, when one is configured: tools with `acceptsPool` are routed through it by
+   * environment. Absent: every tool runs as before.
+   */
+  gateway?: Gateway;
+  /** The fail-safe pool gate: a pool-routed step waits in place while the pool is unusable. */
+  pool?: PoolGate;
 }
 
 const VERDICT_PROTOCOL =
@@ -111,12 +124,12 @@ const BASE_SYSTEM_PROMPTS = {
 } as const;
 
 export const SYSTEM_PROMPTS = {
-  planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${NON_INTERACTIVE}`,
+  planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
   refine: `${BASE_SYSTEM_PROMPTS.refine}\n\n${NON_INTERACTIVE}`,
-  developer: `${BASE_SYSTEM_PROMPTS.developer}\n\n${NON_INTERACTIVE}`,
-  developerFix: `${BASE_SYSTEM_PROMPTS.developerFix}\n\n${NON_INTERACTIVE}`,
-  observer: `${BASE_SYSTEM_PROMPTS.observer}\n\n${NON_INTERACTIVE}`,
-  reviewer: `${BASE_SYSTEM_PROMPTS.reviewer}\n\n${NON_INTERACTIVE}`,
+  developer: `${BASE_SYSTEM_PROMPTS.developer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  developerFix: `${BASE_SYSTEM_PROMPTS.developerFix}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  observer: `${BASE_SYSTEM_PROMPTS.observer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  reviewer: `${BASE_SYSTEM_PROMPTS.reviewer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
 } as const;
 
 /** Current iteration number for a task (1-based). */
@@ -134,6 +147,11 @@ export function isFinalIteration(task: Task): boolean {
  * run's work is present in the same worktree, so later runs are told to treat
  * it as another AI's solution and rigorously review/adjust it (runs feature).
  */
+/** The planner's answers, as the asking role reads them in its next run. */
+function answersSection(answers: string): string {
+  return `## Answers from the planner to your questions\n${answers}`;
+}
+
 function iterationFraming(task: Task): string | null {
   const iteration = currentIteration(task);
   if (iteration <= 1) return null;
@@ -180,6 +198,18 @@ class ReviewNotApprovedError extends Error {
 }
 
 /**
+ * Thrown when the planner, asked to answer another role's questions, needs the owner: the run
+ * stops and the task parks. On resume the whole pipeline runs again, so the role that asked
+ * (and every other step) gets the owner's answers under "Answers to earlier questions".
+ */
+class ParkForOwner extends Error {
+  constructor(readonly questions: string[]) {
+    super("planner needs the owner");
+    this.name = "ParkForOwner";
+  }
+}
+
+/**
  * Thrown before a step starts when a budget is spent. A step that is running is never
  * interrupted for budget: the check runs between steps, on the cost recorded so far.
  */
@@ -194,11 +224,22 @@ class BudgetExceededError extends Error {
   }
 }
 
+/**
+ * Thrown when a step waited the whole `retries.poolWaitMs` for the account pool and it did not
+ * recover. The work is kept like a budget stop with `onExceed: pause`.
+ */
+class PoolExhaustedError extends Error {
+  constructor(reason: string, waitedMs: number) {
+    super(`pool exhausted: ${reason} (waited ${+(waitedMs / 60000).toFixed(1)} min)`);
+    this.name = "PoolExhaustedError";
+  }
+}
+
 /** Outcome of running the pipeline for a single task. */
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true }
+  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true }
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
@@ -212,6 +253,9 @@ const RESUME_PROMPT_PREFIX =
 /** First word of a stop-request file written by RunnerEngine.shutdown. */
 export const SHUTDOWN_STOP_MARKER = "shutdown";
 
+/** Labels of the closing `steps[]` entry a run ends with (a parked run has none). */
+export const CLOSING_STEP_LABELS = ["Finished", "Failed", "Stopped"] as const;
+
 export class Pipeline {
   private readonly usageStore: UsageStore;
   /** Cost of this run's steps so far, per task id (the per-task budget). */
@@ -220,8 +264,16 @@ export class Pipeline {
   private readonly previousFindings = new Map<string, string>();
   /** Per task id: what the agent is told about the earlier run (stopped, injected prompts). */
   private readonly resumeNotes = new Map<string, string>();
+  /** Per task id: usage of failed attempts that returned no result, folded in by persistUsage. */
+  private readonly lostUsages = new Map<string, TokenUsage[]>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
+  }
+
+  private closeSteps(id: string, label: (typeof CLOSING_STEP_LABELS)[number]): Promise<void> {
+    return this.deps.store.appendStep(id, label).catch((err) => {
+      console.error(`could not write the closing "${label}" entry for task ${id}:`, err);
+    });
   }
 
   private areaDir(id: string): string {
@@ -269,7 +321,10 @@ export class Pipeline {
   ): Promise<RunResult> {
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
+    await this.awaitPool(id, tool);
+    await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
+    await this.deps.store.appendStep(id, label).catch(() => {});
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
     // Prompts the user steered in, accumulated for a rerun that cannot resume the tool session.
     const steerTexts: string[] = [];
@@ -304,63 +359,93 @@ export class Pipeline {
         : { ...result, usage: sumUsage([...interrupted, ...(result.usage ? [result.usage] : [])]) };
     let steers = 0;
     let failures = 0;
-    for (;;) {
-      const canSteer = steers < MAX_STEERS_PER_STEP;
-      try {
-        const result = await tool.run({
-          ...opts,
-          prompt,
-          resumeSessionId,
-          idleTimeoutMs,
-          stopSignalPath: taskStopRequestPath(this.deps.root, id),
-          steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
-          onChunk: (c) => void this.streamChunk(id, c),
-        });
-        await this.recordStepCost(id, tool.id, result.usage);
-        return finish(result);
-      } catch (err) {
-        if (err instanceof ToolRunError && err.steered) {
-          if (err.usage) {
-            interrupted.push(err.usage);
+    try {
+      for (;;) {
+        const canSteer = steers < MAX_STEERS_PER_STEP;
+        try {
+          const result = await tool.run({
+            ...opts,
+            inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
+            agentEnv: this.deps.settings.runner.agentEnv,
+            ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
+            prompt,
+            resumeSessionId,
+            idleTimeoutMs,
+            stopSignalPath: taskStopRequestPath(this.deps.root, id),
+            pidFilePath: taskPidPath(this.deps.root, id),
+            steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
+            onChunk: (c) => void this.streamChunk(id, c),
+          });
+          await this.recordStepCost(id, tool.id, result.usage);
+          return finish(result);
+        } catch (err) {
+          if (err instanceof ToolRunError && err.usage) {
             await this.recordStepCost(id, tool.id, err.usage);
+            if (err.steered) interrupted.push(err.usage);
+            else this.lostUsages.set(id, [...(this.lostUsages.get(id) ?? []), err.usage]);
           }
-          // A stop request that arrived together with the steer wins.
-          await this.assertNotStopped(id);
-          const texts = await this.takeSteer(id);
-          steers++;
-          steerTexts.push(...texts);
-          this.deps.store.markInjectedApplied(id).catch(() => {});
-          await this.log(id, `\n### Steered\n${texts.join("\n\n")}`);
-          if (err.sessionId && tool.supportsResume) {
-            resumeSessionId = err.sessionId;
-            prompt = RESUME_PROMPT_PREFIX + texts.join("\n\n");
-          } else {
-            resumeSessionId = undefined;
-            prompt = compose("new instructions from the user");
+          if (err instanceof ToolRunError && err.steered) {
+            // A stop request that arrived together with the steer wins.
+            await this.assertNotStopped(id);
+            // A steered rerun is paid like a retry: never start it on a spent budget.
+            await this.assertBudget(id, tool.id);
+            const texts = await this.takeSteer(id);
+            steers++;
+            steerTexts.push(...texts);
+            this.deps.store.markInjectedApplied(id).catch(() => {});
+            await this.log(id, `\n### Steered\n${texts.join("\n\n")}`);
+            if (err.sessionId && tool.supportsResume) {
+              resumeSessionId = err.sessionId;
+              prompt = RESUME_PROMPT_PREFIX + texts.join("\n\n");
+            } else {
+              resumeSessionId = undefined;
+              prompt = compose("new instructions from the user");
+            }
+            if (steers >= MAX_STEERS_PER_STEP) {
+              await this.log(
+                id,
+                `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
+              );
+            }
+            await this.log(id, `\n### ${label} (steer ${steers})`);
+            continue;
           }
-          if (steers >= MAX_STEERS_PER_STEP) {
+          resumeSessionId = undefined;
+          const reason = transientReason(err);
+          // A failure that looks like the pool's (proxy 5xx) while the pool is unusable is not the
+          // step's fault: wait for the pool instead of spending a retry, then run the step again.
+          if (reason !== null && (await this.poolDown(tool))) {
             await this.log(
               id,
-              `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
+              `\nTransient failure in ${label}: ${reason}; the account pool is not usable`,
             );
+            await this.awaitPool(id, tool, true);
+            await this.assertBudget(id, tool.id);
+            await this.log(id, `\n### ${label} (after the pool recovered)`);
+            prompt = compose("a transient error (API or network failure, or a stalled stream)");
+            continue;
           }
-          await this.log(id, `\n### ${label} (steer ${steers})`);
-          continue;
+          if (reason === null || failures >= transient) throw err;
+          const attempt = failures++;
+          // A retry never starts on a spent budget.
+          await this.assertBudget(id, tool.id);
+          const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
+          await this.log(
+            id,
+            `\nTransient failure in ${label} (attempt ${attempt + 1}/${transient}): ${reason}; ` +
+              `retrying in ${+(delay / 1000).toFixed(1)}s in the same worktree`,
+          );
+          await this.backoff(id, delay);
+          await this.log(id, `\n### ${label} (retry ${attempt + 1})`);
+          prompt = compose("a transient error (API or network failure, or a stalled stream)");
         }
-        resumeSessionId = undefined;
-        const reason = transientReason(err);
-        if (reason === null || failures >= transient) throw err;
-        const attempt = failures++;
-        const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 0;
-        await this.log(
-          id,
-          `\nTransient failure in ${label} (attempt ${attempt + 1}/${transient}): ${reason}; ` +
-            `retrying in ${+(delay / 1000).toFixed(1)}s in the same worktree`,
-        );
-        await this.backoff(id, delay);
-        await this.log(id, `\n### ${label} (retry ${attempt + 1})`);
-        prompt = compose("a transient error (API or network failure, or a stalled stream)");
       }
+    } catch (err) {
+      // Steered attempts were paid for: a later failure, stop or budget stop must not lose them.
+      if (interrupted.length > 0) {
+        this.lostUsages.set(id, [...(this.lostUsages.get(id) ?? []), ...interrupted]);
+      }
+      throw err;
     }
   }
 
@@ -433,6 +518,35 @@ export class Pipeline {
     if (!hit) return;
     await announceBudgetExceeded(dataRoot, status, hit, project.id);
     throw new BudgetExceededError(hit.scope, hit.spentUsd, hit.limitUsd!);
+  }
+
+  /** Is the pool unusable right now (a fresh look)? False for tools it does not serve. */
+  private async poolDown(tool: Tool): Promise<boolean> {
+    const pool = this.deps.pool;
+    if (!pool || !tool.acceptsPool) return false;
+    return (await pool.check({ fresh: true })).blocked;
+  }
+
+  /**
+   * Before a pool-routed step, and again before re-running one that failed: while the pool is
+   * unusable wait in place (the task stays `running`, the log says why), for at most
+   * `retries.poolWaitMs`; then fail with "pool exhausted". Never a tight loop; a stop request ends
+   * the wait.
+   */
+  private async awaitPool(id: string, tool: Tool, fresh = false): Promise<void> {
+    const pool = this.deps.pool;
+    if (!pool || !tool.acceptsPool) return;
+    if (!(await pool.check({ fresh })).blocked) return;
+    const maxMs = retrySettings(this.deps.settings).poolWaitMs;
+    const started = Date.now();
+    const res = await pool.waitHealthy({
+      maxMs,
+      log: (line) => this.log(id, line),
+      beforeEachWait: () => this.assertNotStopped(id),
+    });
+    if (!res.ok) {
+      throw new PoolExhaustedError(res.pool.reason ?? res.pool.status, Date.now() - started);
+    }
   }
 
   /** Wait `ms`, checking the stop signal every 250 ms; a stop request throws like any other stop. */
@@ -539,8 +653,26 @@ export class Pipeline {
     );
   }
 
+  /** The `## Hierarchy` section; any failure reading the hierarchy leaves it out of the prompt. */
+  private async hierarchySection(task: Task): Promise<string | null> {
+    try {
+      const [tasks, epics] = await Promise.all([
+        this.deps.store.list(),
+        new EpicStore(this.deps.root).list({ includeArchived: true }),
+      ]);
+      return hierarchyPromptSection(task, tasks, epics);
+    } catch {
+      return null;
+    }
+  }
+
   private async buildPrompt(task: Task, extra: string): Promise<string> {
-    const parts = [`# Task: ${task.frontmatter.title}`, `## Prompt\n${task.body.prompt}`];
+    const parts = [`# Task: ${task.frontmatter.title}`];
+    const brief = this.deps.project?.brief?.trim();
+    if (brief) parts.push(`## Project\n${brief}`);
+    const hierarchy = await this.hierarchySection(task);
+    if (hierarchy) parts.push(hierarchy);
+    parts.push(`## Prompt\n${task.body.prompt}`);
     if (task.body.command.trim()) parts.push(`## Command\n${task.body.command}`);
     const origin = task.frontmatter.origin;
     if (origin?.client) {
@@ -675,17 +807,10 @@ export class Pipeline {
       record(planResult);
       recordBody(`### Planner\n${planResult.output}`);
 
-      // Park if the planner raised questions (and they aren't already answered).
-      if (
-        planResult.questions &&
-        planResult.questions.length > 0 &&
-        task.frontmatter.questions !== "answered"
-      ) {
-        // Keep the worktree: the task will resume here, and any prior-iteration
-        // work must survive until the task finally completes.
-        await this.mirrorLiveLog(task).catch(() => {});
-        await this.persistUsage(task, usages);
-        return { kind: "parked", task, questions: planResult.questions };
+      // Park if the planner raised questions.
+      // A planner that asks again on a resumed run parks the task again.
+      if (planResult.questions && planResult.questions.length > 0) {
+        return this.park(task, usages, planResult.questions);
       }
 
       await writeFile(join(this.areaDir(id), "plan.md"), planResult.report + "\n", "utf8");
@@ -702,6 +827,9 @@ export class Pipeline {
       });
       record(refineResult);
       recordBody(`### Planner (refinement)\n${refineResult.output}`);
+      if (refineResult.questions && refineResult.questions.length > 0) {
+        return this.park(task, usages, refineResult.questions);
+      }
       await writeFile(join(this.areaDir(id), "plan.md"), refineResult.report + "\n", "utf8");
       await this.writeReport(
         task,
@@ -712,14 +840,15 @@ export class Pipeline {
 
       // --- Step 3: Developer ---
       const developer = this.tool(task, "developer");
-      let devResult = await this.runStep(id, "Developer", developer.tool, {
-        role: "developer",
+      const devOpts = {
+        role: "developer" as const,
         model: developer.model,
         systemPrompt: SYSTEM_PROMPTS.developer,
         prompt: await this.buildPrompt(task, `## Plan\n${finalPlan}`),
         cwd: stepCwd,
         autoApprove: true,
-      });
+      };
+      let devResult = await this.runStep(id, "Developer", developer.tool, devOpts);
       record(devResult);
       recordBody(`### Developer\n${devResult.output}`);
 
@@ -733,6 +862,18 @@ export class Pipeline {
           stepCwd,
           finalPlan,
           usages,
+          async (answers) => {
+            const again = await this.runStep(id, "Developer (with answers)", developer.tool, {
+              ...devOpts,
+              prompt: await this.buildPrompt(
+                task,
+                `## Plan\n${finalPlan}\n\n${answersSection(answers)}`,
+              ),
+            });
+            record(again);
+            recordBody(`### Developer (with answers)\n${again.output}`);
+            return again;
+          },
         );
       }
       await this.writeReport(task, "developer", devResult.report);
@@ -745,7 +886,7 @@ export class Pipeline {
         const who = role === "observer" ? observer! : reviewer;
         const label = role === "observer" ? "Observer" : "Reviewer";
         const diff = await this.inlineDiff(id, worktree);
-        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, {
+        const checkOpts = {
           role,
           model: who.model,
           systemPrompt: SYSTEM_PROMPTS[role],
@@ -755,14 +896,15 @@ export class Pipeline {
           ),
           cwd: stepCwd,
           autoApprove: true,
-        });
+        };
+        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, checkOpts);
         record(result);
         recordBody(`### ${label} (round ${round})\n${result.output}`);
         // Parse before the planner dialogue is appended, so only the agent's own
         // final line counts.
-        const verdict = parseVerdict(result.report);
+        let verdict = parseVerdict(result.report);
         if (result.questions && result.questions.length > 0) {
-          result = await this.answerViaPlanner(
+          const answered = await this.answerViaPlanner(
             task,
             planner,
             role,
@@ -770,7 +912,27 @@ export class Pipeline {
             stepCwd,
             finalPlan,
             usages,
+            async (answers) => {
+              const again = await this.runStep(
+                id,
+                `${label} (round ${round}, with answers)`,
+                who.tool,
+                {
+                  ...checkOpts,
+                  prompt: await this.buildPrompt(
+                    task,
+                    `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
+                  ),
+                },
+              );
+              record(again);
+              recordBody(`### ${label} (round ${round}, with answers)\n${again.output}`);
+              return again;
+            },
           );
+          // The verdict that counts is the one the role gave after it got its answers.
+          result = answered;
+          verdict = parseVerdict(answered.ownReport ?? answered.report);
         }
         await this.appendRoundReport(task, role, round, verdict, result.report);
         await appendLog(`${label} verdict (round ${round}): ${verdict ?? "INVALID"}`);
@@ -783,23 +945,23 @@ export class Pipeline {
         findings: string,
       ) => {
         const diff = await this.inlineDiff(id, worktree);
+        const fixBase =
+          `## Plan\n${finalPlan}\n\n## Findings (${role} round ${sourceRound})\n${findings}\n\n` +
+          `## Instructions\nFix each real finding with a test, or rebut it with evidence.\n\n` +
+          `## Current diff\n${diff}`;
+        const fixOpts = {
+          role: "developer" as const,
+          model: developer.model,
+          systemPrompt: SYSTEM_PROMPTS.developerFix,
+          prompt: await this.buildPrompt(task, fixBase),
+          cwd: stepCwd,
+          autoApprove: true,
+        };
         let fixResult = await this.runStep(
           id,
           `Developer (fix round ${fixRound}, ${role})`,
           developer.tool,
-          {
-            role: "developer",
-            model: developer.model,
-            systemPrompt: SYSTEM_PROMPTS.developerFix,
-            prompt: await this.buildPrompt(
-              task,
-              `## Plan\n${finalPlan}\n\n## Findings (${role} round ${sourceRound})\n${findings}\n\n` +
-                `## Instructions\nFix each real finding with a test, or rebut it with evidence.\n\n` +
-                `## Current diff\n${diff}`,
-            ),
-            cwd: stepCwd,
-            autoApprove: true,
-          },
+          fixOpts,
         );
         record(fixResult);
         recordBody(`### Developer (fix round ${fixRound}, ${role})\n${fixResult.output}`);
@@ -812,6 +974,22 @@ export class Pipeline {
             stepCwd,
             finalPlan,
             usages,
+            async (answers) => {
+              const again = await this.runStep(
+                id,
+                `Developer (fix round ${fixRound}, ${role}, with answers)`,
+                developer.tool,
+                {
+                  ...fixOpts,
+                  prompt: await this.buildPrompt(task, `${fixBase}\n\n${answersSection(answers)}`),
+                },
+              );
+              record(again);
+              recordBody(
+                `### Developer (fix round ${fixRound}, ${role}, with answers)\n${again.output}`,
+              );
+              return again;
+            },
           );
         }
         await this.writeReport(
@@ -866,11 +1044,18 @@ export class Pipeline {
       }
       await this.mirrorLiveLog(task);
       await this.persistUsage(task, usages);
+      // Last: both calls above can still throw, and the catch then closes the run as Failed.
+      await this.closeSteps(id, "Finished");
       return { kind: "done", task };
     } catch (err) {
+      if (err instanceof ParkForOwner) {
+        await this.log(id, `Planner needs the owner to answer; parking the task.`).catch(() => {});
+        return this.park(task, usages, err.questions);
+      }
       const overBudget = err instanceof BudgetExceededError;
+      const poolExhausted = err instanceof PoolExhaustedError;
       const message =
-        err instanceof ReviewNotApprovedError || overBudget
+        err instanceof ReviewNotApprovedError || overBudget || poolExhausted
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -887,7 +1072,7 @@ export class Pipeline {
       if (worktree) {
         // A budget stop with onExceed "pause" keeps the work too, so a retry resumes it.
         const keepForBudget =
-          overBudget &&
+          (overBudget || poolExhausted) &&
           projectTaskBudget(this.deps.settings, this.deps.project).onExceed === "pause";
         if (
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
@@ -904,6 +1089,7 @@ export class Pipeline {
           ).catch(() => {});
         }
       }
+      await this.closeSteps(id, stopped ? "Stopped" : "Failed");
       await this.mirrorLiveLog(task).catch(() => {});
       await this.persistUsage(task, usages).catch(() => {});
       if (stopReason) return { kind: "stopped", task, reason: stopReason, note: stopNote };
@@ -912,8 +1098,23 @@ export class Pipeline {
         task,
         error: message,
         ...(overBudget ? { budget: true as const } : {}),
+        ...(poolExhausted ? { pool: true as const } : {}),
       };
     }
+  }
+
+  /**
+   * Park the task on planner questions. Keeps the worktree: the task will resume here, and any
+   * prior-iteration work must survive until the task finally completes.
+   */
+  private async park(
+    task: Task,
+    usages: TokenUsage[],
+    questions: string[],
+  ): Promise<PipelineOutcome> {
+    await this.mirrorLiveLog(task).catch(() => {});
+    await this.persistUsage(task, usages);
+    return { kind: "parked", task, questions };
   }
 
   /**
@@ -929,7 +1130,9 @@ export class Pipeline {
     cwd: string,
     plan: string,
     usages: TokenUsage[],
-  ): Promise<RunResult> {
+    /** Runs the asking role again with the planner's answers in its prompt. */
+    rerun: (answers: string) => Promise<RunResult>,
+  ): Promise<RunResult & { ownReport?: string }> {
     const id = task.frontmatter.id;
     const questions = result.questions ?? [];
     const answer = await this.runStep(id, `Planner (answering ${fromRole})`, planner.tool, {
@@ -947,6 +1150,13 @@ export class Pipeline {
       autoApprove: true,
     });
     if (answer.usage) usages.push(answer.usage);
+    if (answer.questions && answer.questions.length > 0) {
+      // The planner cannot answer: the owner must. Say which role asked what.
+      task.body.questions = task.body.questions.trim()
+        ? task.body.questions
+        : `### ${fromRole} asked\n${questions.join("\n")}`;
+      throw new ParkForOwner(answer.questions.map((q) => `(for the ${fromRole}) ${q}`));
+    }
     const dialogue = [
       `# ${fromRole} ↔ planner dialogue`,
       `## ${fromRole} asked`,
@@ -956,7 +1166,15 @@ export class Pipeline {
     ].join("\n\n");
     await writeFile(join(this.areaDir(id), `dialogue-${fromRole}.md`), dialogue + "\n", "utf8");
     await this.log(id, `Routed ${fromRole} questions to planner (resolved via file).`);
-    return { ...result, questions: undefined, report: `${result.report}\n\n${dialogue}` };
+    // The exchange belongs in the task's Questions section, next to any the planner parked on.
+    const exchange = `### ${fromRole} asked\n${questions.join("\n")}\n\n### planner answered\n${answer.report}`;
+    task.body.questions = task.body.questions.trim()
+      ? `${task.body.questions}\n\n${exchange}`
+      : exchange;
+    // The role gets its answers and works on: its next run is what the pipeline continues with.
+    const again = await rerun(answer.report);
+    const own = again.report;
+    return { ...again, questions: undefined, report: `${own}\n\n${dialogue}`, ownReport: own };
   }
 
   /**
@@ -1009,9 +1227,17 @@ export class Pipeline {
 
   /** Persist per-task token usage onto the task file and the global aggregate. */
   private async persistUsage(task: Task, usages: TokenUsage[]): Promise<void> {
-    const total = sumUsage(usages);
-    task.frontmatter.tokens = total;
-    await this.deps.store.save(task);
+    const id = task.frontmatter.id;
+    const total = sumUsage([...usages, ...(this.lostUsages.get(id) ?? [])]);
+    this.lostUsages.delete(id);
+    // Write only what the pipeline owns; edits made during the run stay on disk.
+    const saved = await this.deps.store.modify(task.frontmatter.id, (t) => {
+      t.frontmatter.tokens = total;
+      t.body.log = task.body.log;
+      t.body.reports = task.body.reports;
+      t.body.questions = task.body.questions;
+    });
+    task.frontmatter = saved.frontmatter;
     await this.usageStore.add(total);
   }
 

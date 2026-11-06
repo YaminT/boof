@@ -1,13 +1,14 @@
-import type { Role, TokenUsage } from "@boof-runner/shared";
+import type { HealthResult, Role, TokenUsage } from "@boof/heart";
+import type { Gateway } from "../gateway-env.js";
 
-export type HealthStatus = "available" | "unavailable";
+export type { Gateway } from "../gateway-env.js";
 
-export interface HealthResult {
-  status: HealthStatus;
-  /** Human-readable detail for the settings health-check UI. */
-  message: string;
-  /** Resolved version string when available. */
-  version?: string;
+// The health types are Heart's (tool-catalog.ts); Runner re-exports them so adapters do not change.
+export type { HealthResult, HealthStatus } from "@boof/heart";
+
+export interface DetectOptions {
+  /** As `RunOptions.inheritMcpServers`: false (default) keeps the probe away from the user's MCP servers. */
+  inheritMcpServers?: boolean;
 }
 
 export interface RunOptions {
@@ -19,6 +20,20 @@ export interface RunOptions {
   cwd: string;
   /** Auto mode: pass non-interactive / no-permission-prompt flags. */
   autoApprove: boolean;
+  /**
+   * Let the agent load the user's own MCP servers (`runner.inheritMcpServers`). Default false: the
+   * claude adapter then passes `--strict-mcp-config` and codex `--ignore-user-config`. opencode
+   * reads its own config and has no flag boof can rely on, so it is not isolated.
+   */
+  inheritMcpServers?: boolean;
+  /** Extra environment variable names the agent may inherit (`runner.agentEnv`); see `agentEnv()`. */
+  agentEnv?: readonly string[];
+  /**
+   * Route this run through the account pool: the tool adds the gateway's base URL and key to its
+   * child's environment. Set by the pipeline only for tools with `acceptsPool`, and only when a
+   * pool is configured.
+   */
+  gateway?: Gateway;
   /** Optional timeout for this run. */
   timeoutMs?: number;
   /**
@@ -33,6 +48,8 @@ export interface RunOptions {
   stopSignalPath?: string;
   /** File whose presence interrupts the tool process so the step can be rerun with new instructions. */
   steerSignalPath?: string;
+  /** File that holds the tool process group while it runs (see taskPidPath). */
+  pidFilePath?: string;
   /**
    * Continue the tool's earlier session (its id from `RunResult.sessionId` or
    * `ToolRunError.sessionId`); `prompt` is then only the new message. Used when a step is
@@ -62,9 +79,12 @@ export interface Tool {
   id: string;
   displayName: string;
   defaultModels: string[];
-  detect(): Promise<HealthResult>;
+  /** Check that the tool is installed and usable (sends a short, paid prompt). */
+  detect(opts?: DetectOptions): Promise<HealthResult>;
   listModels(): Promise<string[]>;
   /** True when `run` honours `resumeSessionId`; otherwise a steered step restarts. */
   readonly supportsResume?: boolean;
+  /** True when `run` honours `RunOptions.gateway` (the tool can be served by the account pool). */
+  readonly acceptsPool?: boolean;
   run(opts: RunOptions): Promise<RunResult>;
 }

@@ -1,9 +1,4 @@
-import {
-  appendEvent,
-  markBudgetNotified,
-  type BudgetScope,
-  type BudgetStatus,
-} from "@boof-runner/shared";
+import { appendEvent, markBudgetNotified, type BudgetScope, type BudgetStatus } from "@boof/heart";
 
 /**
  * Record a `runner.budget_exceeded` event the first time `scope` is seen spent on this day

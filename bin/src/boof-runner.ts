@@ -2,18 +2,26 @@ import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RunnerEngine } from "@boof-runner/runner";
-import { startServer } from "@boof-runner/web";
-import { scaffoldDataRoot } from "./scaffold.js";
+import { ToolRegistry } from "@boof/runner";
+import { boot, isRunnerStartFailure } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
-import { authCommand } from "./auth-cli.js";
-import { remoteCommand } from "./remote-cli.js";
-import { serviceCommand } from "./service-cli.js";
-import { projectCommand } from "./project-cli.js";
-import { planCommand } from "./plan-cli.js";
-import { mcpCommand } from "./mcp-cli.js";
-import { drainQueue, ProjectResolutionError, runTask, scanRepoToTasks } from "./headless.js";
-import { MigrationError } from "@boof-runner/shared";
+import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
+import { remoteCommand } from "@boof/facedisk/cli/remote-cli.js";
+import { serviceCommand } from "@boof/facedisk/cli/service-cli.js";
+import { TaskService } from "@boof/heart-server";
+import { epicCommand } from "@boof/facedisk/cli/epic-cli.js";
+import {
+  HAND_WRITTEN_COMMANDS,
+  isOpArea,
+  matchOpCommand,
+  opsCommand,
+} from "@boof/facedisk/cli/ops-cli.js";
+import { projectCommand } from "@boof/facedisk/cli/project-cli.js";
+import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
+import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
+import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
+import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
+import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
 
 interface ServeArgs {
   dataRoot: string;
@@ -57,12 +65,17 @@ Usage:
   boof-runner run --all [options]      Drive the pending queue of every project to completion
   boof-runner scan <repo> [options]    Turn a repo's not-done goal.boof.xml units into tasks
   boof-runner project <add|list|remove>  Manage projects (git repositories) served by this data root
+  boof-runner epic <add|list|archive|remove>  Manage a project's epics, named groups of tasks (see: epic --help)
+  boof-runner task <list|move>         List tasks with epics and subtasks, move a task (see: task --help)
   boof-runner plan <import|sync|export>  Import a repo's goal files into a plan, sync it to tasks, export XML (see: plan --help)
   boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access (see: auth --help)
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
+  boof-runner ops                      List the operation commands (every REST/MCP operation)
+  boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
   boof-runner --help                   Show this help
+  boof-runner --version                Print the version (also: -v)
 
 Common options:
   -d, --data <path>   Data root directory (default: ./data, or $BOOF_RUNNER_DATA_ROOT)
@@ -86,6 +99,8 @@ run options:
       --tool <id>     Force all roles to this tool (e.g. mock, claude-code, codex, opencode)
       --model <name>  Model for --tool
       --runs <n>      Run the pipeline N times for the task (default 1)
+      --epic <id>     Put the task in this epic of the project
+      --parent <id>   Make the task a subtask of this task (not with --epic)
 
 scan options:
       --project <id>  Project the tasks go to (default: the project of <repo>, registered if needed)
@@ -94,13 +109,13 @@ scan options:
       --tool <id>     Force all roles to this tool for the created tasks
       --model <name>  Model for --tool
 
-Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage.`;
+Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage; operation commands: 2 not found, 3 not allowed (identity, scope, project, trust), 130 interrupted.`;
 
 /** Locate the built UI directory shipped alongside this CLI, if present. */
 function resolveUiDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  // From bin/dist or bin/src → ../../packages/web/ui/dist
-  return resolve(here, "..", "..", "packages", "web", "ui", "dist");
+  // From bin/dist or bin/src → ../../packages/facedisk/ui/dist
+  return resolve(here, "..", "..", "packages", "facedisk", "ui", "dist");
 }
 
 /** Version from the package.json two levels above bin/src or bin/dist. */
@@ -112,6 +127,69 @@ function readVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+/** serve's own flags: the only tokens that may stand first without the `serve` word. */
+export const SERVE_FLAGS = [
+  "--data",
+  "-d",
+  "--port",
+  "-p",
+  "--no-runner",
+  "--host",
+  "--tls-cert",
+  "--tls-key",
+] as const;
+
+/** Flags that take a value, among the global ones that may stand before the command words. */
+const GLOBAL_VALUE_FLAGS = new Set([
+  "-d",
+  "--data",
+  "--client",
+  "--out",
+  "--input",
+  "-p",
+  "--port",
+  "--host",
+  "--tls-cert",
+  "--tls-key",
+]);
+const GLOBAL_BOOLEAN_FLAGS = new Set(["--json", "--no-runner", "--help", "-h", "--version", "-v"]);
+
+/**
+ * Global flags may come before the command words (`boof-runner -d ./data tasks list`,
+ * `boof-runner --client reader tasks list`). Move the leading flags behind the first word that is
+ * not a flag, so the command is routed exactly as without them. With no such word (`-d x`, `-p 4000`)
+ * the arguments stay as they are: the legacy flags-only form of `serve`.
+ */
+export function routeArgv(argv: string[]): string[] {
+  const lead: string[] = [];
+  let at = 0;
+  while (at < argv.length) {
+    const token = argv[at]!;
+    if (!token.startsWith("-")) break;
+    const flag = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+    if (GLOBAL_VALUE_FLAGS.has(flag)) {
+      const inline = token.includes("=");
+      if (!inline && at + 1 >= argv.length) return argv;
+      lead.push(...argv.slice(at, at + (inline ? 1 : 2)));
+      at += inline ? 1 : 2;
+    } else if (GLOBAL_BOOLEAN_FLAGS.has(flag)) {
+      lead.push(token);
+      at += 1;
+    } else {
+      return argv; // not one of ours: leave it to the command
+    }
+  }
+  if (at === 0 || at >= argv.length) return argv;
+  return [...argv.slice(at), ...lead];
+}
+
+export function isServeFlag(token: string): boolean {
+  return (
+    SERVE_FLAGS.includes(token as (typeof SERVE_FLAGS)[number]) ||
+    SERVE_FLAGS.some((f) => f.startsWith("--") && token.startsWith(`${f}=`))
+  );
 }
 
 function parseServeArgs(argv: string[]): ServeArgs {
@@ -127,68 +205,82 @@ function parseServeArgs(argv: string[]): ServeArgs {
   };
 }
 
+export function handleStartupSignal(
+  signal: string,
+  pendingSignal: string | undefined,
+  exit: (code: number) => never = process.exit,
+): string {
+  if (pendingSignal) {
+    console.log(`\n${signal} again: exiting now`);
+    exit(1);
+  }
+  return signal;
+}
+
 /** The original behavior: scaffold data, boot the web UI + background runner. */
 export async function serve(argv: string[]): Promise<void> {
   const args = parseServeArgs(argv);
   const root = args.dataRoot;
-  const { created } = await scaffoldDataRoot(root);
-  console.log(`${created ? "Scaffolded" : "Using"} data root: ${root}`);
-
-  const uiDir = resolveUiDir();
-  let running;
-  let engine: RunnerEngine | null = null;
-  try {
-    running = await startServer({
-      root,
-      port: args.port,
-      host: args.host,
-      uiDir,
-      version: readVersion(),
-      runnerRunning: () => engine !== null,
-      tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
-      tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
-    });
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : err);
-    process.exit(1);
-  }
-  const scheme = args.tlsCert ? "https" : "http";
-  const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
-  const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
-  console.log(`Web UI:  ${scheme}://${hostPart}:${running.port}`);
-  console.log(`API:     ${scheme}://${hostPart}:${running.port}/api`);
-
-  const guard = new RunnerGuard(root);
-  if (!args.noRunner) {
-    if (await guard.acquire()) {
-      engine = new RunnerEngine({ root });
-      console.log("Runner:  started (toggle on/off in the UI)");
-      void engine.loop();
-    } else {
-      console.log("Runner:  already running in another process — not starting a second one");
-    }
-  }
-
+  let starting = true;
+  let pendingSignal: string | undefined;
   let shuttingDown = false;
+  let stop: (() => Promise<void>) | undefined;
   const shutdown = async (signal: string) => {
+    if (starting) {
+      pendingSignal = handleStartupSignal(signal, pendingSignal);
+      return;
+    }
     if (shuttingDown) {
       console.log(`\n${signal} again: exiting now`);
       process.exit(1);
     }
     shuttingDown = true;
     console.log(`\nShutting down (${signal})…`);
-    const graceMs = Number(process.env.BOOF_RUNNER_SHUTDOWN_GRACE_MS ?? 30_000);
-    if (engine) {
-      const { stopped, timedOut } = await engine.shutdown(graceMs);
-      if (stopped.length > 0) console.log(`Stopped running task(s): ${stopped.join(", ")}`);
-      if (timedOut) console.log(`Grace period of ${graceMs} ms elapsed; exiting anyway`);
-    }
-    await guard.release();
-    await running.stop();
+    await stop?.();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  const { created } = await scaffoldDataRoot(root);
+  console.log(`${created ? "Scaffolded" : "Using"} data root: ${root}`);
+
+  const uiDir = resolveUiDir();
+  const guard = new RunnerGuard(root);
+  try {
+    const composition = await boot({
+      root,
+      port: args.port,
+      host: args.host,
+      uiDir,
+      version: readVersion(),
+      tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
+      tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
+      runner: !args.noRunner,
+      guard,
+      onServer: (server) => {
+        if (!server) return;
+        const scheme = args.tlsCert ? "https" : "http";
+        const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
+        const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
+        console.log(`Web UI:  ${scheme}://${hostPart}:${server.port}`);
+        console.log(`API:     ${scheme}://${hostPart}:${server.port}/api`);
+      },
+      onRunner: (engine) => {
+        if (engine) console.log("Runner:  started (toggle on/off in the UI)");
+        else if (!args.noRunner)
+          console.log("Runner:  already running in another process — not starting a second one");
+      },
+    });
+    stop = async () => {
+      const graceMs = Number(process.env.BOOF_RUNNER_SHUTDOWN_GRACE_MS ?? 30_000);
+      await composition.stop(graceMs);
+    };
+  } catch (err) {
+    console.error(isRunnerStartFailure(err) ? err : err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
+  starting = false;
+  if (pendingSignal) void shutdown(pendingSignal);
 }
 
 /** `run` subcommand. Returns a process exit code. */
@@ -216,6 +308,12 @@ export async function runCommand(argv: string[]): Promise<number> {
   }
 
   const runsOpt = getOpt(argv, ["--runs"]);
+  const epic = getOpt(argv, ["--epic"]);
+  const parent = getOpt(argv, ["--parent"]);
+  if (epic && parent) {
+    console.error("run: give --epic or --parent, not both: a subtask takes its parent's epic.");
+    return 1;
+  }
   const summary = await runTask({
     root,
     prompt,
@@ -226,6 +324,8 @@ export async function runCommand(argv: string[]): Promise<number> {
     ...(tool ? { tool } : {}),
     ...(model ? { model } : {}),
     ...(runsOpt ? { runs: Number(runsOpt) } : {}),
+    ...(epic ? { epicId: epic } : {}),
+    ...(parent ? { parentId: parent } : {}),
   });
   return summary.ok ? 0 : 1;
 }
@@ -270,6 +370,8 @@ export function firstPositional(argv: string[]): string | undefined {
     "--tool",
     "--model",
     "--runs",
+    "--epic",
+    "--parent",
     "--bump",
     "--port",
     "-p",
@@ -289,20 +391,25 @@ export function firstPositional(argv: string[]): string | undefined {
   return undefined;
 }
 
-export async function main(argv = process.argv.slice(2)): Promise<void> {
+export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
+  const argv = routeArgv(rawArgv);
   const [cmd, ...rest] = argv;
-  // Top-level --help (but let `run`/`scan --help` fall through to their handlers).
-  if (
-    hasFlag(argv, ["--help", "-h"]) &&
-    cmd !== "run" &&
-    cmd !== "scan" &&
-    cmd !== "auth" &&
-    cmd !== "remote" &&
-    cmd !== "service" &&
-    cmd !== "plan" &&
-    cmd !== "project" &&
-    cmd !== "mcp"
-  ) {
+  // --version also works after serve's own flags (`boof-runner -d x --version`).
+  if ((cmd === "serve" || isServeFlag(cmd ?? "")) && hasFlag(argv, ["--version", "-v"])) {
+    console.log(readVersion());
+    return;
+  }
+  // Top-level --help (but let the subcommands handle their own --help). An unknown first word is
+  // reported as unknown, even with --help.
+  const topLevel =
+    cmd === undefined ||
+    cmd === "serve" ||
+    cmd === "--help" ||
+    cmd === "-h" ||
+    cmd === "--version" ||
+    cmd === "-v" ||
+    isServeFlag(cmd);
+  if (hasFlag(argv, ["--help", "-h"]) && topLevel) {
     console.log(HELP);
     return;
   }
@@ -321,10 +428,45 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (code !== 0) process.exitCode = code;
 }
 
+/** The words in serve's arguments that are not a flag or a flag's value: serve takes none. */
+function strayWords(args: string[]): string[] {
+  const words: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    const flag = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
+    if (a.startsWith("-")) {
+      if (GLOBAL_VALUE_FLAGS.has(flag) && !a.includes("=")) i += 1;
+      continue;
+    }
+    words.push(a);
+  }
+  return words;
+}
+
+/** `boof-runner serve tasks list` must not start a server and ignore the words. */
+function refuseServe(args: string[]): number {
+  console.error(
+    `boof-runner: unknown command: ${strayWords(args).join(" ")} (see "boof-runner --help")`,
+  );
+  return 1;
+}
+
 /** Sentinel: the command (serve) keeps the process alive; main must not set an exit code. */
 const SERVE_FOREVER = -1;
 
 async function dispatch(cmd: string | undefined, rest: string[], argv: string[]): Promise<number> {
+  // Generated commands: every operation of the registry as `<area> <verb>`. The hand-written
+  // commands keep their words (`auth add|list|revoke|rotate`, `project`, `task`, ...).
+  if (
+    cmd !== undefined &&
+    (cmd === "ops" ||
+      matchOpCommand([cmd, ...rest]) !== undefined ||
+      (isOpArea(cmd) && !(cmd in HAND_WRITTEN_COMMANDS)))
+  ) {
+    return opsCommand([cmd, ...rest], defaultDataRoot, {
+      services: (root) => new TaskService(root, new ToolRegistry()),
+    });
+  }
   let code = 0;
   switch (cmd) {
     case "run":
@@ -350,20 +492,36 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
     case "project":
       code = await projectCommand(rest, defaultDataRoot);
       break;
+    case "epic":
+      code = await epicCommand(rest, defaultDataRoot);
+      break;
+    case "task":
+      code = await taskCommand(rest, defaultDataRoot);
+      break;
     case "mcp":
-      code = await mcpCommand(rest, defaultDataRoot);
+      code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());
+      break;
+    case "--version":
+    case "-v":
+      console.log(readVersion());
       break;
     case "serve":
+      if (strayWords(rest).length > 0) return refuseServe(rest);
       await serve(rest);
       return SERVE_FOREVER; // serve runs forever
     case undefined:
       await serve([]);
       return SERVE_FOREVER;
     default:
-      // Unknown first token → treat the whole invocation as serve options so
-      // existing `boof-runner -d ... -p ...` usage keeps working.
-      await serve(argv);
-      return SERVE_FOREVER;
+      // Only serve's own flags may stand first (the legacy `boof-runner -d ... -p ...`
+      // form); any other token is an unknown command, never a silent server start.
+      if (isServeFlag(cmd)) {
+        if (strayWords(argv).length > 0) return refuseServe(argv);
+        await serve(argv);
+        return SERVE_FOREVER;
+      }
+      console.error(`boof-runner: unknown command "${cmd}" (see "boof-runner --help")`);
+      return 1;
   }
   return code;
 }

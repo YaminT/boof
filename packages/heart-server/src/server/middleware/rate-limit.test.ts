@@ -1,0 +1,64 @@
+import { Hono } from "hono";
+import { describe, expect, it } from "vitest";
+import type { SecuritySettings } from "@boof/heart";
+import { SecuritySettingsSchema } from "@boof/heart";
+import { unauthenticatedRateLimit } from "./rate-limit.js";
+
+const security = async (): Promise<SecuritySettings> =>
+  SecuritySettingsSchema.parse({ rateLimit: { unauthenticatedPerMinute: 3 } });
+
+function setup(maxBuckets?: number) {
+  let clock = 1_000_000;
+  let peer = "10.0.0.1";
+  const mw = unauthenticatedRateLimit({
+    security,
+    peerAddress: () => peer,
+    now: () => clock,
+    maxBuckets,
+  });
+  const app = new Hono();
+  app.use("*", mw);
+  // A stand-in for `authenticate`: a failed authentication calls the hook.
+  app.use("*", async (c, next) => {
+    if (c.req.header("x-ok")) return next();
+    return c.get("authFailed")?.(c) ?? c.body(null, 401);
+  });
+  app.get("/", (c) => c.body(null, 200));
+  const hit = (ok = false) => app.request("/", ok ? { headers: { "x-ok": "1" } } : {});
+  return { mw, hit, at: (p: string) => (peer = p), tick: (ms: number) => (clock += ms) };
+}
+
+describe("unauthenticatedRateLimit", () => {
+  it("a parallel burst of bad keys is capped at the bucket size", async () => {
+    const { hit } = setup();
+    const res = await Promise.all(Array.from({ length: 8 }, () => hit()));
+    expect(res.filter((r) => r.status === 401)).toHaveLength(3);
+    expect(res.filter((r) => r.status === 429)).toHaveLength(5);
+  });
+
+  it("a valid request never draws; a valid key from a drained address still succeeds", async () => {
+    const { hit, tick } = setup();
+    for (let i = 0; i < 2; i += 1) await hit();
+    for (let i = 0; i < 10; i += 1) expect((await hit(true)).status).toBe(200); // never draws
+    expect((await hit()).status).toBe(401); // third charge
+    expect((await hit()).status).toBe(429); // drained: a bad key is refused with 429
+    expect((await hit(true)).status).toBe(200); // a valid key is never limited by this bucket
+    tick(60_000);
+    expect((await hit(true)).status).toBe(200);
+  });
+
+  it("keeps no state for successful requests and stays bounded under a flood", async () => {
+    const { mw, hit, at, tick } = setup(100);
+    for (let i = 0; i < 500; i += 1) {
+      at(`10.1.${i >> 8}.${i & 255}`);
+      expect((await hit(true)).status).toBe(200);
+    }
+    expect(mw.size()).toBe(0);
+    for (let i = 0; i < 500; i += 1) {
+      at(`10.2.${i >> 8}.${i & 255}`);
+      if (i % 50 === 0) tick(60_000);
+      await hit();
+    }
+    expect(mw.size()).toBeLessThanOrEqual(100);
+  });
+});

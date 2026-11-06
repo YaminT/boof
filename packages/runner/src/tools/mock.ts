@@ -1,8 +1,8 @@
-import type { Role } from "@boof-runner/shared";
+import type { Role } from "@boof/heart";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
-import { execCommand } from "../exec.js";
+import { execCommand, parseUsage } from "@boof/heart";
 import { ToolRunError } from "./errors.js";
-import { parseUsage } from "./usage.js";
+import { formatQuestions, withQuestions } from "./questions.js";
 
 /**
  * In-process control surface for the mock tool, used by tests to drive the
@@ -26,8 +26,12 @@ export interface MockState {
   calls: Role[];
   /** Every system prompt the mock has received, with its role. */
   systemPrompts: { role: Role; systemPrompt: string }[];
+  /** Questions the planner raises once in its refinement pass (the prompt has an existing plan). */
+  refinementQuestions: string[];
   /** Questions a non-planner role raises on its FIRST run (routed to the planner). */
   roleQuestions: Partial<Record<Role, string[]>>;
+  /** Questions the planner raises once when it is asked to answer another role's questions. */
+  answerQuestions: string[];
   /** Internal: simulated transient failures already thrown, per role. */
   transientCounts: Map<Role, number>;
   /** Internal: simulated stalls already run, per role. */
@@ -50,6 +54,8 @@ export const mockState: MockState = {
   calls: [],
   systemPrompts: [],
   roleQuestions: {},
+  answerQuestions: [],
+  refinementQuestions: [],
   transientCounts: new Map(),
   stallCounts: new Map(),
   resumeSupported: true,
@@ -67,6 +73,8 @@ export function resetMock(): void {
   mockState.calls = [];
   mockState.systemPrompts = [];
   mockState.roleQuestions = {};
+  mockState.answerQuestions = [];
+  mockState.refinementQuestions = [];
   mockState.transientCounts = new Map();
   mockState.stallCounts = new Map();
   mockState.resumeSupported = true;
@@ -192,7 +200,19 @@ export class MockTool implements Tool {
     const failed = mockState.transientCounts.get(opts.role) ?? 0;
     if (failed < failFirst) {
       mockState.transientCounts.set(opts.role, failed + 1);
-      throw new ToolRunError("mock", 1, false, false, "API Error: 503 Service Unavailable");
+      throw new ToolRunError(
+        "mock",
+        1,
+        false,
+        false,
+        "API Error: 503 Service Unavailable",
+        "",
+        false,
+        0,
+        {
+          usage: parseUsage(usageLineFor(opts.prompt)),
+        },
+      );
     }
     const stallFirst = markerCount(opts.prompt, STALL_MARKER, opts.role);
     const stalls = mockState.stallCounts.get(opts.role) ?? 0;
@@ -203,6 +223,7 @@ export class MockTool implements Tool {
         idleTimeoutMs: opts.idleTimeoutMs,
         stopSignalPath: opts.stopSignalPath,
         steerSignalPath: opts.steerSignalPath,
+        pidFilePath: opts.pidFilePath,
       });
       throw new ToolRunError(
         "mock",
@@ -228,17 +249,51 @@ export class MockTool implements Tool {
       mockState.roundCounts.delete(`${opts.cwd}|reviewer`);
     }
 
+    // The planner, asked to answer another role, can need the owner itself (once).
+    if (
+      opts.role === "planner" &&
+      mockState.answerQuestions.length > 0 &&
+      opts.systemPrompt.includes("Answer the following questions from the")
+    ) {
+      const qs = [...mockState.answerQuestions];
+      mockState.answerQuestions = [];
+      const output = `MOCK planner needs the owner\n${usageLineFor(opts.prompt)}`;
+      return withQuestions({
+        output,
+        sessionId,
+        report: `I cannot answer this myself.\n\n${formatQuestions(qs)}`,
+        usage: parseUsage(output),
+      });
+    }
+
+    // The refinement pass asks its configured questions once.
+    if (
+      opts.role === "planner" &&
+      mockState.refinementQuestions.length > 0 &&
+      opts.prompt.includes("## Existing plan")
+    ) {
+      const qs = [...mockState.refinementQuestions];
+      mockState.refinementQuestions = [];
+      const output = `MOCK planner refinement questions\n${usageLineFor(opts.prompt)}`;
+      return withQuestions({
+        output,
+        sessionId,
+        report: `Refinement needs clarification.\n\n${formatQuestions(qs)}`,
+        usage: parseUsage(output),
+      });
+    }
+
     // Planner asks its configured questions exactly once (ask-once-then-resume).
     if (opts.role === "planner" && mockState.plannerQuestions.length > 0 && !mockState.hasAsked) {
       mockState.hasAsked = true;
       const output = `MOCK planner questions\n${usageLineFor(opts.prompt)}`;
-      return {
+      const qs = [...mockState.plannerQuestions];
+      return withQuestions({
         output,
         sessionId,
-        report: "Planner needs clarification before producing a plan.",
-        questions: [...mockState.plannerQuestions],
+        report: `Planner needs clarification before producing a plan.\n\n${formatQuestions(qs)}`,
         usage: parseUsage(output),
-      };
+      });
     }
 
     // A non-planner role raises its configured questions once.
@@ -246,13 +301,12 @@ export class MockTool implements Tool {
     if (opts.role !== "planner" && asked && asked.length > 0) {
       delete mockState.roleQuestions[opts.role];
       const output = `MOCK ${opts.role} questions\n${usageLineFor(opts.prompt)}`;
-      return {
+      return withQuestions({
         output,
         sessionId,
-        report: reportFor(opts.role),
-        questions: [...asked],
+        report: `${reportFor(opts.role)}\n\n${formatQuestions([...asked])}`,
         usage: parseUsage(output),
-      };
+      });
     }
 
     let report = reportFor(opts.role);

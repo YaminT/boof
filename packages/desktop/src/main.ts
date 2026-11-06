@@ -1,16 +1,25 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
-import { RunnerEngine } from "@boof-runner/runner";
-import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof-runner/shared";
-import { startServer, type RunningServer } from "@boof-runner/web";
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
+import { RunnerEngine } from "@boof/runner";
+import { boot } from "@boof/boof/boot";
+import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof/heart";
+import type { RunningServer } from "@boof/heart-server";
+import {
+  createQuitHandler,
+  isAppUrl,
+  isExternalUrl,
+  operatorClientId,
+  shutdownGraceMs,
+} from "./lifecycle.js";
 
 // Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
 // window/menu. Must run before any getPath("userData") call.
 app.setName("Boof Runner");
 
 const PORT = Number(process.env.BOOF_RUNNER_PORT ?? 4319);
+const SHUTDOWN_GRACE_MS = shutdownGraceMs();
 
 let server: RunningServer | null = null;
 let engine: RunnerEngine | null = null;
@@ -59,19 +68,24 @@ async function ensureDesktopToken(root: string): Promise<string | undefined> {
 }
 
 // The preload script reads the key synchronously before the page's scripts run.
+// Only the app's own pages get the key; a foreign page that got into the window sees null.
+let appOrigin = "";
+const fromApp = (event: { senderFrame?: { url: string } | null }): boolean =>
+  !!event.senderFrame && isAppUrl(event.senderFrame.url, appOrigin);
+
 ipcMain.on("boof-runner:get-token", (event) => {
-  event.returnValue = desktopToken ?? null;
+  event.returnValue = fromApp(event) ? (desktopToken ?? null) : null;
 });
 
 /**
  * Built React UI, served by the in-process server.
  * - Packaged (asar:false): main.js sits at <Resources>/app and the UI is staged
  *   beside it as ./ui, so serveStatic reads it as plain files on disk.
- * - Dev (`electron .`): dist/main.js resolves to the sibling @boof-runner/web package.
+ * - Dev (`electron .`): dist/main.js resolves the UI from packages/facedisk/ui/dist.
  */
 function uiDir(): string {
   if (app.isPackaged) return join(__dirname, "ui");
-  return resolve(__dirname, "..", "..", "web", "ui", "dist");
+  return resolve(__dirname, "..", "..", "facedisk", "ui", "dist");
 }
 
 /**
@@ -102,36 +116,64 @@ function createWindow(port: number): void {
   });
   // Open external links (e.g. docs) in the default browser, not a chrome-less
   // Electron window.
+  const openExternal = (url: string) => {
+    if (isExternalUrl(url)) void shell.openExternal(url);
+  };
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternal(url);
     return { action: "deny" };
   });
-  void win.loadURL(`http://127.0.0.1:${port}`);
+  // The window never leaves the app origin: other URLs go to the system browser instead.
+  const guard = (event: { preventDefault(): void }, url: string) => {
+    if (isAppUrl(url, appOrigin)) return;
+    event.preventDefault();
+    openExternal(url);
+  };
+  win.webContents.on("will-navigate", (event, url) => guard(event, url));
+  win.webContents.on("will-redirect", (event, url) => guard(event, url));
+  appOrigin = `http://127.0.0.1:${port}`;
+  void win.loadURL(appOrigin);
   win.on("closed", () => {
     win = null;
   });
 }
 
-ipcMain.handle("boof-runner:pick-directory", async (_event, current?: string) => {
-  const result = await dialog.showOpenDialog({
-    title: "Choose working directory",
-    properties: ["openDirectory", "createDirectory"],
-    defaultPath: current && existsSync(current) ? current : undefined,
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
+ipcMain.handle(
+  "boof-runner:pick-directory",
+  async (event, current?: string, opts?: { title?: string }) => {
+    if (!fromApp(event)) return null;
+    const result = await dialog.showOpenDialog({
+      title: opts?.title ?? "Choose working directory",
+      properties: ["openDirectory", "createDirectory"],
+      defaultPath: current && existsSync(current) ? current : undefined,
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  },
+);
 
-async function boot(): Promise<void> {
+async function startComposition(): Promise<void> {
   const root = await ensureDataRoot();
   desktopToken = await ensureDesktopToken(root).catch((err) => {
     console.error("desktop auth setup failed; using local-trust:", err);
     return undefined;
   });
-  server = await startServer({ root, port: PORT, uiDir: uiDir() });
-  engine = new RunnerEngine({ root });
-  void engine.loop();
-  createWindow(server.port);
+  const composition = await boot({
+    root,
+    port: PORT,
+    uiDir: uiDir(),
+    version: app.getVersion(),
+    serverOptions: operatorClientId(desktopToken)
+      ? { operatorClients: new Set([operatorClientId(desktopToken)!]) }
+      : {},
+    onServer: (activeServer) => {
+      server = activeServer;
+    },
+    onRunner: (activeEngine) => {
+      engine = activeEngine;
+    },
+  });
+  createWindow(composition.server.port);
 }
 
 // Single-instance: a second launch focuses the existing window instead of
@@ -147,7 +189,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app
     .whenReady()
-    .then(boot)
+    .then(startComposition)
     .catch((err) => {
       console.error("Boof Runner failed to start:", err);
       dialog.showErrorBox("Boof Runner failed to start", String(err?.stack ?? err));
@@ -162,18 +204,17 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== "darwin") app.quit();
   });
 
-  let shuttingDown = false;
-  app.on("before-quit", (event) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    event.preventDefault();
-    void (async () => {
-      try {
-        engine?.stop();
-        await server?.stop();
-      } finally {
-        app.exit(0);
-      }
-    })();
+  const quit = createQuitHandler({
+    engine: () => engine,
+    server: () => server,
+    exit: (code) => app.exit(code),
+    graceMs: SHUTDOWN_GRACE_MS,
+    log: console.log,
+    notify: (message) => {
+      win?.setTitle(`Boof Runner — ${message}`);
+      if (Notification.isSupported())
+        new Notification({ title: "Boof Runner", body: message }).show();
+    },
   });
+  app.on("before-quit", (event) => void quit(event));
 }

@@ -10,10 +10,10 @@ import {
   TaskStore,
   testGoal,
   type Goal,
-} from "@boof-runner/shared";
+  createIntegrationBranch,
+} from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "./exec.js";
-import { createIntegrationBranch } from "./plan-base.js";
+import { execCommand } from "@boof/heart";
 import { mockState, resetMock } from "./tools/mock.js";
 
 let dataRoot: string;
@@ -63,8 +63,8 @@ beforeEach(async () => {
   };
 });
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
-  await rm(workDir, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 

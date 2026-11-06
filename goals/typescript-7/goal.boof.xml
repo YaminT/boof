@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>TypeScript 7 needs "types": ["node"] in tsconfig.base.json and a fix for a vitest 5 typing error in bin/src/headless.test.ts (Assertion.not). Switch once tsc -b passes on all workspaces.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">TypeScript 7.0.2 is published (npm dist-tags on 2026-11-02: latest 7.0.2, rc 7.0.1-rc, beta 7.1.0-beta, next 7.1.0-dev.20261102.1; @typescript/native-preview is the older preview package). Switched: package.json typescript ^7.0.2 (bun.lock updated, `bun install --frozen-lockfile` clean). TS 7 no longer loads @types by default, so tsconfig.base.json gets "types": ["node"], and the UI tsconfig loses the removed "baseUrl" (its "paths" resolve from the tsconfig). The vitest 5 `Assertion.not` typing error named in the goal did not appear with 7.0.2. `tsc -b` passes on all workspaces and `tsc -p packages/web/ui`; prettier, `npx vitest run` (135 files, 1883 passed, 1 skipped), `npm run build:server`, the UI vite build and the desktop tsup build are green. Nothing in the repo uses the TypeScript JS API (tsup and tsup-desktop run with dts: false), which TS 7's native compiler does not provide.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests with vitest for the changed module; an integration test through the Hono app or CLI where the behaviour is observable there.</strategy>
+      <technology>vitest</technology>
+      <run>npm run typecheck &amp;&amp; npm test</run>
+    </tests>
+  </progress>
+</boof>

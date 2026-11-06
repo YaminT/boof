@@ -1,12 +1,19 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commandExists, execCommand } from "../exec.js";
+import { commandExists, execCommand, parseUsage } from "@boof/heart";
 import { ToolRunError } from "./errors.js";
-import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { agentEnv } from "../agent-env.js";
+import { gatewayEnv, gatewayUrl } from "../gateway-env.js";
+import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
-import { parseUsage } from "./usage.js";
-import type { TokenUsage } from "@boof-runner/shared";
+import { withQuestions } from "./questions.js";
+import type { TokenUsage } from "@boof/heart";
+
+/** Build the inline TOML provider table; JSON's string quoting is valid TOML basic-string syntax. */
+export function codexProviderConfig(url: string): string {
+  return `model_providers.boofpool={ name = "boof pool", base_url = ${JSON.stringify(url)}, env_key = "OPENAI_API_KEY", wire_api = "responses" }`;
+}
 
 /**
  * Adapter for the `codex` CLI. Runs non-interactively via `exec`; in auto mode
@@ -15,10 +22,10 @@ import type { TokenUsage } from "@boof-runner/shared";
 export class CodexTool implements Tool {
   readonly id = "codex";
   readonly displayName = "Codex";
-  readonly defaultModels = ["gpt-5.5"];
+  readonly defaultModels: string[] = [];
   private readonly bin = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
 
-  async detect(): Promise<HealthResult> {
+  async detect(detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
@@ -29,14 +36,22 @@ export class CodexTool implements Tool {
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
     }
-    const model = (await this.listModels())[0] ?? this.defaultModels[0];
+    const model = "";
     const probe = await execCommand(
       this.bin,
       // The probe runs outside any repository (the server's cwd); codex refuses
       // that without --skip-git-repo-check. Empty stdin so it never waits for input.
-      ["exec", "--skip-git-repo-check", "--model", model, "Reply with exactly: hi"],
+      [
+        "exec",
+        "--skip-git-repo-check",
+        ...(model ? ["--model", model] : []),
+        // Like a run: not the user's config.toml (where the MCP servers are).
+        ...(detect.inheritMcpServers ? [] : ["--ignore-user-config"]),
+        "Reply with exactly: hi",
+      ],
       {
         cwd: process.cwd(),
+        env: agentEnv(),
         input: "",
         timeoutMs: 60000,
       },
@@ -50,7 +65,7 @@ export class CodexTool implements Tool {
     }
     return {
       status: "available",
-      message: `codex CLI authenticated via smoke prompt (${model})`,
+      message: `codex CLI authenticated via smoke prompt${model ? ` (${model})` : " (CLI default model)"}`,
       version: res.stdout.trim(),
     };
   }
@@ -76,17 +91,27 @@ export class CodexTool implements Tool {
   }
 
   readonly supportsResume = true;
+  readonly acceptsPool = true;
 
   /**
-   * Argument vector for `codex exec`, last entry the prompt. With `resumeSessionId` it is
+   * Argument vector for `codex exec`, last entry `-`: the prompt is read from stdin. With `resumeSessionId` it is
    * `codex exec resume <thread id> ...`, which takes the same flags and a message only (the
    * resumed thread already holds the system prompt).
    */
   buildArgs(opts: RunOptions, lastMessageFile: string): string[] {
     // --json: stdout becomes a JSONL event stream (structured usage and messages).
     const args = opts.resumeSessionId
-      ? ["exec", "resume", opts.resumeSessionId, "--json", "--model", opts.model]
-      : ["exec", "--json", "--model", opts.model];
+      ? ["exec", "resume", opts.resumeSessionId, "--json"]
+      : ["exec", "--json"];
+    if (opts.model) args.push("--model", opts.model);
+    // $CODEX_HOME/config.toml is where Codex keeps the user's MCP servers; auth still comes from
+    // CODEX_HOME. An explicit model is passed only when selected; approval and
+    // sandbox below (a user's model_provider or base_url is lost: set inheritMcpServers for that).
+    if (!opts.inheritMcpServers) args.push("--ignore-user-config");
+    if (opts.gateway) {
+      const url = `${gatewayUrl(opts.gateway.url)}/v1`;
+      args.push("-c", "model_provider=boofpool", "-c", codexProviderConfig(url));
+    }
     if (opts.autoApprove) {
       // Full auto-approval, no sandbox — the runner's equivalent of claude's
       // --dangerously-skip-permissions. Mutually exclusive with --full-auto
@@ -96,8 +121,13 @@ export class CodexTool implements Tool {
     // Ask codex to write its final message to a file outside cwd: stdout also
     // carries progress and usage noise that would break verdict parsing.
     args.push("-o", lastMessageFile);
-    args.push(opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`);
+    args.push("-");
     return args;
+  }
+
+  /** The text fed on stdin: the new message alone on resume, else system prompt + prompt. */
+  promptText(opts: RunOptions): string {
+    return opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
@@ -110,9 +140,12 @@ export class CodexTool implements Tool {
       const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
+        env: { ...agentEnv(process.env, opts.agentEnv), ...gatewayEnv("openai", opts.gateway) },
+        input: this.promptText(opts),
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,
         steerSignalPath: opts.steerSignalPath,
+        pidFilePath: opts.pidFilePath,
         idleTimeoutMs: opts.idleTimeoutMs,
         onData: opts.onChunk ? (c) => live.push(c) : undefined,
       });
@@ -141,7 +174,7 @@ export class CodexTool implements Tool {
       // Structured usage from turn.completed; fall back to scanning plain text
       // ("tokens used" on stderr) when no JSON events were emitted.
       const usage = summary.usage ?? parseUsage(res.stdout + res.stderr);
-      return { output, report, usage, sessionId: summary.sessionId };
+      return withQuestions({ output, report, usage, sessionId: summary.sessionId });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -244,7 +277,7 @@ export function summarizeCodexStream(stdout: string): {
   }
   return {
     lastMessage: lastMessage.trim(),
-    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: 0, known: true } : null,
+    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: 0, known: false } : null,
     rendered: r.text.trimEnd(),
     sessionId,
   };

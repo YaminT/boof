@@ -1,23 +1,21 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentStatus,
   defaultSettings,
   parseGoal,
+  PlanStore,
   ProjectStore,
   SettingsStore,
   TaskStore,
-} from "@boof-runner/shared";
-import { ToolRegistry, execCommand, mockState, resetMock } from "@boof-runner/runner";
-import {
-  drainQueue,
+  execCommand,
   ProjectResolutionError,
-  runTask,
-  scanRepoToTasks,
-  toolOverride,
-} from "./headless.js";
+} from "@boof/heart";
+import { MockTool, ToolRegistry, mockState, resetMock } from "@boof/runner";
+import { CodexTool } from "../../packages/runner/src/tools/codex.js";
+import { drainQueue, runTask, scanRepoToTasks, toolOverride } from "./headless.js";
 import { firstPositional, runCommand } from "./boof-runner.js";
 
 let dataRoot: string;
@@ -69,9 +67,10 @@ beforeEach(async () => {
   resetMock();
 });
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
-  await rm(repo, { recursive: true, force: true });
-  for (const d of extraRepos.splice(0)) await rm(d, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const d of extraRepos.splice(0))
+    await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 
@@ -133,6 +132,22 @@ describe("runTask (headless)", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.status).toBe("failed");
+  });
+});
+
+describe("run --parent and --epic", () => {
+  it("creates the task as a subtask of the given parent, and refuses an unknown parent or epic", async () => {
+    const base = { root: dataRoot, repo, tool: "mock", registry: registry(), out: silent };
+    const parent = await runTask({ ...base, prompt: "Parent task." });
+    const child = await runTask({ ...base, prompt: "Child task.", parentId: parent.id });
+    const task = await tasksOf(child.projectId).get(child.id);
+    expect(task!.frontmatter.parentId).toBe(parent.id);
+    await expect(runTask({ ...base, prompt: "Orphan.", parentId: "ghost" })).rejects.toThrow(
+      ProjectResolutionError,
+    );
+    await expect(runTask({ ...base, prompt: "Lost.", epicId: "ghost" })).rejects.toThrow(
+      /Epic not found/,
+    );
   });
 });
 
@@ -262,20 +277,109 @@ describe("scanRepoToTasks (scan mode)", () => {
 });
 
 describe("toolOverride", () => {
-  it("overrides the observer only when one is configured", () => {
+  it("overrides the observer only when one is configured", async () => {
     const withObserver = defaultSettings();
     withObserver.roles.observer = { tool: "claude-code", model: "sonnet" };
     const a = { tool: "mock", model: "mock-default" };
-    expect(toolOverride(registry(), withObserver, "mock")).toEqual({
+    expect(await toolOverride(registry(), withObserver, "mock")).toEqual({
       planner: a,
       developer: a,
       reviewer: a,
       observer: a,
     });
-    const without = toolOverride(registry(), defaultSettings(), "mock");
+    const without = await toolOverride(registry(), defaultSettings(), "mock");
     expect(without).toEqual({ planner: a, developer: a, reviewer: a });
     expect(without).not.toHaveProperty("observer");
-    expect(toolOverride(registry(), withObserver)).toBeUndefined();
+    expect(await toolOverride(registry(), withObserver)).toBeUndefined();
+  });
+});
+
+describe("toolOverride model choice", () => {
+  it("leaves Codex model resolution to the CLI when no model is given", async () => {
+    const previous = process.env.BOOF_RUNNER_CODEX_BIN;
+    process.env.BOOF_RUNNER_CODEX_BIN = "/missing/codex-for-test";
+    try {
+      const tool = new CodexTool();
+      const listModels = vi.spyOn(tool, "listModels");
+      const tools = await toolOverride(new ToolRegistry([tool]), defaultSettings(), "codex");
+      expect(listModels).not.toHaveBeenCalled();
+      expect(tools?.developer).toEqual({ tool: "codex", model: "" });
+      const base = {
+        role: "developer" as const,
+        model: tools!.developer!.model,
+        systemPrompt: "",
+        prompt: "",
+        cwd: "/tmp",
+        autoApprove: true,
+      };
+      expect(tool.buildArgs(base, "/tmp/last")).not.toContain("--model");
+
+      const explicit = await toolOverride(
+        new ToolRegistry([tool]),
+        defaultSettings(),
+        "codex",
+        "X",
+      );
+      expect(
+        tool.buildArgs({ ...base, model: explicit!.developer!.model }, "/tmp/last").slice(0, 6),
+      ).toEqual([
+        "exec",
+        "--json",
+        "--model",
+        "X",
+        "--ignore-user-config",
+        "--dangerously-bypass-approvals-and-sandbox",
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
+      else process.env.BOOF_RUNNER_CODEX_BIN = previous;
+    }
+  });
+
+  // The static default list can name a model the account refuses (codex: gpt-5.5 on a ChatGPT
+  // login); the tool's own list is what it offers now.
+  class LiveListTool extends MockTool {
+    override readonly defaultModels = ["stale-default"];
+    override async listModels(): Promise<string[]> {
+      return ["live-first", "live-second"];
+    }
+  }
+  const a = (model: string) => ({ tool: "mock", model });
+
+  it("takes the first model the tool lists when --model is not given", async () => {
+    const tools = await toolOverride(
+      new ToolRegistry([new LiveListTool()]),
+      defaultSettings(),
+      "mock",
+    );
+    expect(tools?.developer).toEqual(a("live-first"));
+  });
+
+  it("uses --model as given", async () => {
+    const tools = await toolOverride(
+      new ToolRegistry([new LiveListTool()]),
+      defaultSettings(),
+      "mock",
+      "mine",
+    );
+    expect(tools?.developer).toEqual(a("mine"));
+  });
+
+  it("falls back to the default list when listing fails or is empty", async () => {
+    class Broken extends LiveListTool {
+      override async listModels(): Promise<string[]> {
+        throw new Error("no cli");
+      }
+    }
+    class Empty extends LiveListTool {
+      override async listModels(): Promise<string[]> {
+        return [];
+      }
+    }
+    for (const T of [Broken, Empty]) {
+      const tools = await toolOverride(new ToolRegistry([new T()]), defaultSettings(), "mock");
+      expect(tools?.developer).toEqual(a("stale-default"));
+    }
   });
 });
 
@@ -406,6 +510,31 @@ describe("multi-project run and scan", () => {
       out: (c) => (output += c),
     });
     expect(output).not.toContain("runner.enabled");
+  });
+
+  it("scan leaves an approved active plan, and a re-scan approves one that lost its approval", async () => {
+    await mkdir(join(repo, "core"), { recursive: true });
+    await writeFile(join(repo, "core", "goal.boof.xml"), goalXml("Core", "plan"), "utf8");
+    const first = await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+    const plans = new PlanStore(projectsOf().dir(first.projectId!));
+    const plan = await plans.require("repo");
+    expect(plan.status).toBe("active");
+    expect(plan.approvedBy).toMatchObject({ principalId: "local" });
+    const approval = plan.approvedBy;
+
+    // a re-scan of an approved plan keeps the original approval
+    await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+    expect((await plans.require("repo")).approvedBy).toEqual(approval);
+
+    // an archived plan that a re-scan forces active is approved again
+    await plans.modify("repo", (p) => {
+      const { approvedBy: _drop, ...rest } = p;
+      return { ...rest, status: "archived" as const };
+    });
+    await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+    const again = await plans.require("repo");
+    expect(again.status).toBe("active");
+    expect(again.approvedBy).toMatchObject({ principalId: "local" });
   });
 
   it("scan registers the repository if needed and reuses it; --project must match the repo", async () => {

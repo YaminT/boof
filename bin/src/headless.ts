@@ -8,31 +8,29 @@
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  createTaskInHierarchy,
+  HierarchyError,
   newTask,
   PlanStore,
   ProjectStore,
   SettingsStore,
   TaskStore,
-  uniqueKebabId,
   workingAreaDir,
   type BoofGoalRef,
-  type Project,
   type Settings,
   type Status,
   type TaskTools,
-} from "@boof-runner/shared";
-import {
-  isGitRepo,
-  RunnerEngine,
-  ToolRegistry,
+  withApproval,
+  scaffoldDataRoot,
+  ProjectResolutionError,
+  resolveProject,
   importFromRepo,
   mergeImportedGoals,
   selectActionableUnits,
   syncPlan,
   type ScannedUnit,
-  type TickResult,
-} from "@boof-runner/runner";
-import { scaffoldDataRoot } from "./scaffold.js";
+} from "@boof/heart";
+import { RunnerEngine, ToolRegistry, type TickResult } from "@boof/runner";
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";
@@ -54,15 +52,22 @@ function sleep(ms: number): Promise<void> {
  * observer is overridden only when one is configured, so --tool never switches
  * a disabled observer on.
  */
-export function toolOverride(
+export async function toolOverride(
   registry: ToolRegistry,
   settings: Settings,
   tool?: string,
   model?: string,
-): TaskTools | undefined {
+): Promise<TaskTools | undefined> {
   if (!tool) return undefined;
   const t = registry.get(tool);
-  const m = model ?? t?.defaultModels[0] ?? "default";
+  // Codex resolves an empty model through its own CLI default. Other tools use
+  // the live list, then their built-in default.
+  const listed =
+    model || !t || t.defaultModels.length === 0
+      ? undefined
+      : await t.listModels().catch(() => undefined);
+  const m =
+    model ?? (t?.defaultModels.length === 0 ? "" : (listed?.[0] ?? t?.defaultModels[0] ?? ""));
   const a = { tool, model: m };
   return {
     planner: a,
@@ -110,67 +115,6 @@ async function streamTick(engine: RunnerEngine, out: Out): Promise<TickResult> {
   return res;
 }
 
-/** Which project a command acts on: an id, a repository directory, or the data root's default. */
-export interface ProjectRef {
-  /** Project id. */
-  project?: string;
-  /** Repository directory: the project with this realpath, registered on first use. */
-  repo?: string;
-}
-
-/** Thrown for a bad project reference; the message is for the user. */
-export class ProjectResolutionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProjectResolutionError";
-  }
-}
-
-/**
- * Resolve the project for a headless command. `project` wins, then `repo` (realpath lookup;
- * an unknown repository is registered and its new id printed), then
- * `settings.defaultProject`. Never touches settings.json.
- */
-export async function resolveProject(
-  root: string,
-  ref: ProjectRef,
-  out: Out = stdoutWrite,
-): Promise<Project> {
-  const projects = new ProjectStore(root, { isGitRepo });
-  let project: Project | null = null;
-  if (ref.project) {
-    project = await projects.get(ref.project);
-    if (!project) throw new ProjectResolutionError(`Project not found: ${ref.project}`);
-  } else if (ref.repo) {
-    const dir = abs(ref.repo);
-    project = await projects.findByDirectory(dir);
-    if (!project) {
-      try {
-        project = await projects.create({ workingDirectory: dir, origin: { kind: "cli" } });
-      } catch (err) {
-        throw new ProjectResolutionError(err instanceof Error ? err.message : String(err));
-      }
-      out(`Registered project '${project.id}' for ${project.workingDirectory}\n`);
-    }
-  } else {
-    const id = (await new SettingsStore(root).load()).defaultProject;
-    if (!id) {
-      throw new ProjectResolutionError(
-        "No project: pass --project <id> or --repo <dir>, or set a default with `project add <dir> --default`.",
-      );
-    }
-    project = await projects.get(id);
-    if (!project) throw new ProjectResolutionError(`Default project not found: ${id}`);
-  }
-  if (project.archived) throw new ProjectResolutionError(`Project '${project.id}' is archived.`);
-  if (!project.workingDirectory) {
-    throw new ProjectResolutionError(
-      `Project '${project.id}' has no working directory; set one with the UI or PUT /api/projects/${project.id}.`,
-    );
-  }
-  return project;
-}
-
 /** Turn the runner on (the only global setting headless commands change), logging the change. */
 async function ensureRunnerEnabled(root: string, out: Out): Promise<void> {
   const store = new SettingsStore(root);
@@ -192,6 +136,9 @@ export interface RunTaskOptions {
   tool?: string;
   model?: string;
   runs?: number;
+  /** Put the task in this epic of the project, or make it a subtask of this task (not both). */
+  epicId?: string;
+  parentId?: string;
   registry?: ToolRegistry;
   out?: Out;
 }
@@ -220,32 +167,41 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   await ensureRunnerEnabled(opts.root, out);
 
   const registry = opts.registry ?? new ToolRegistry();
-  const existing = (await store.list()).map((t) => t.frontmatter.id);
   const title = opts.title ?? firstLine(opts.prompt);
-  const id = uniqueKebabId(title, existing);
-  const tools = toolOverride(registry, settings, opts.tool, opts.model);
-  await store.create(
-    newTask(
-      {
-        id,
-        title,
-        status: "pending",
-        priority: 1000, // ahead of any pre-existing queue so it runs first
-        skip: false,
-        labels: ["cli-run"],
-        command: null,
-        attachments: [],
-        questions: "none",
-        runs: Math.max(1, Math.floor(opts.runs ?? 1)),
-        completedRuns: 0,
-        ...(opts.base ? { base: opts.base } : {}),
-        ...(tools ? { tools } : {}),
-        created: "",
-        updated: "",
-      },
-      opts.prompt,
-    ),
-  );
+  const tools = await toolOverride(registry, settings, opts.tool, opts.model);
+  let created;
+  try {
+    created = await createTaskInHierarchy(
+      new ProjectStore(opts.root).dir(project.id),
+      newTask(
+        {
+          id: "pending-id",
+          title,
+          status: "pending",
+          priority: 1000, // ahead of any pre-existing queue so it runs first
+          skip: false,
+          labels: ["cli-run"],
+          command: null,
+          attachments: [],
+          questions: "none",
+          runs: Math.max(1, Math.floor(opts.runs ?? 1)),
+          completedRuns: 0,
+          ...(opts.base ? { base: opts.base } : {}),
+          ...(tools ? { tools } : {}),
+          ...(opts.epicId ? { epicId: opts.epicId } : {}),
+          ...(opts.parentId ? { parentId: opts.parentId } : {}),
+          created: "",
+          updated: "",
+        },
+        opts.prompt,
+      ),
+      { by: "cli" },
+    );
+  } catch (err) {
+    if (err instanceof HierarchyError) throw new ProjectResolutionError(err.message);
+    throw err;
+  }
+  const id = created.frontmatter.id;
 
   const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
   // Drive until our task leaves the active states. One tick fully runs the
@@ -366,7 +322,7 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
   const settings = await new SettingsStore(opts.root).load();
 
   const registry = opts.registry ?? new ToolRegistry();
-  const tools = toolOverride(registry, settings, opts.tool, opts.model);
+  const tools = await toolOverride(registry, settings, opts.tool, opts.model);
   const bumpTo = opts.bumpTo ?? "done";
 
   // scan = import the repo into the plan `repo` (merging into it on a re-scan), then sync it.
@@ -379,18 +335,27 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
       id: SCAN_PLAN_ID,
       title: `boof scan of ${project.name}`,
       status: "active",
+      // The CLI runs as the local owner, so the plan it activates is approved at once.
+      approvedBy: { principalId: "local", at: new Date().toISOString(), version: 1 },
       autoSync: true,
       bumpTo,
       source: { kind: "repo-import", importedFrom: project.workingDirectory },
       goals: imported.goals,
     });
   } else {
-    await plans.modify(SCAN_PLAN_ID, (p) => ({
-      ...p,
-      status: "active",
-      bumpTo: opts.bumpTo ?? p.bumpTo,
-      goals: mergeImportedGoals(p.goals, imported.goals).goals,
-    }));
+    await plans.modify(SCAN_PLAN_ID, (p) =>
+      // activating (or keeping active) as the local owner approves the plan, as the API does
+      withApproval(
+        p,
+        {
+          ...p,
+          status: "active",
+          bumpTo: opts.bumpTo ?? p.bumpTo,
+          goals: mergeImportedGoals(p.goals, imported.goals).goals,
+        },
+        "local",
+      ),
+    );
   }
   const synced = await syncPlan({
     projectDir,

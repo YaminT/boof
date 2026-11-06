@@ -4,7 +4,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 APP_NAME="boof-runner"
-DEFAULT_REPO="git@github.com:YaminT/boof.git"
+DEFAULT_REPO="https://github.com/YaminT/boof.git"
 DEFAULT_DIR="${XDG_DATA_HOME:-"$HOME/.local/share"}/boof-runner/source"
 
 REPO_URL="${BOOF_RUNNER_REPO:-$DEFAULT_REPO}"
@@ -36,7 +36,9 @@ Environment:
   BOOF_RUNNER_DIR           Install/update directory for cloned source.
   BOOF_RUNNER_BRANCH        Branch/tag to checkout before building.
   BOOF_RUNNER_SKIP_UPDATE   Set to 1 to build/link without pulling.
-  BOOF_RUNNER_INSTALL_MODE  link or copy. Default: link.
+  BOOF_RUNNER_INSTALL_MODE  link (npm link) or copy (npm install -g <checkout>; npm 7+ links the
+                            directory too, so both resolve dependencies from the checkout).
+                            Default: link.
   BOOF_RUNNER_SKIP_DESKTOP  1: do not download Electron or build the desktop app (web UI + CLI only).
                             0: always build everything. Default: 1 on Linux without DISPLAY or
                             WAYLAND_DISPLAY (a headless server), otherwise 0.
@@ -49,7 +51,7 @@ An existing checkout with uncommitted changes is never touched unless BOOF_RUNNE
 Examples:
   ./scripts/install-or-update-boof-runner.sh
   BOOF_RUNNER_BRANCH=main bash scripts/install-or-update-boof-runner.sh
-  BOOF_RUNNER_REPO=https://github.com/YaminT/boof.git bash scripts/install-or-update-boof-runner.sh
+  BOOF_RUNNER_REPO=git@github.com:YaminT/boof.git bash scripts/install-or-update-boof-runner.sh   # SSH, to push with your key
 EOF
 }
 
@@ -57,11 +59,43 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+# The engines.node range of the checkout's package.json, e.g. ">=22.22".
+node_floor() {
+  node -p 'const e = require(require("path").resolve(process.argv[1], "package.json")).engines; (e && e.node) || ""' "$1" 2>/dev/null
+}
+
+# node_version_ok <version> <range>: exit 0 when <version> (with or without a leading v) satisfies
+# a ">=X.Y[.Z]" range, comparing major, minor and patch numerically (missing parts are 0).
+node_version_ok() {
+  node -e '
+    const [version, range] = process.argv.slice(1);
+    const m = /^>=\s*(\d+(?:\.\d+){0,2})$/.exec(range);
+    if (!m) process.exit(2);
+    const parse = (s) => {
+      const p = s.replace(/^v/, "").split(".").map(Number);
+      return [p[0] || 0, p[1] || 0, p[2] || 0];
+    };
+    const have = parse(version);
+    const want = parse(m[1]);
+    for (let i = 0; i < 3; i++) {
+      if (have[i] !== want[i]) process.exit(have[i] > want[i] ? 0 : 1);
+    }
+    process.exit(0);
+  ' "$1" "$2"
+}
+
+# Needs the checkout (its package.json), so it runs after source_dir.
 check_node() {
+  local checkout="$1" floor
   need_cmd node
-  local major
-  major="$(node -p "Number(process.versions.node.split('.')[0])")"
-  [[ "$major" -ge 20 ]] || die "Node.js >= 20 is required; found $(node --version)"
+  floor="$(node_floor "$checkout")" || floor=""
+  local status=0
+  if [[ -n "$floor" ]]; then node_version_ok "$(node --version)" "$floor" || status=$?; else status=2; fi
+  case "$status" in
+    0) ;;
+    2) log "warning: cannot check the Node.js requirement (engines.node: '${floor:-none}'); continuing" ;;
+    *) die "Node.js $floor is required (package.json engines); found $(node --version)" ;;
+  esac
 }
 
 script_checkout_root() {
@@ -190,7 +224,8 @@ install_dependencies() {
     (cd "$dir" && bun install --frozen-lockfile)
   else
     log "Installing dependencies with npm"
-    (cd "$dir" && npm install)
+    # npm (no bun): package-lock.json is git-ignored, so the checkout stays clean for the next update.
+    (cd "$dir" && npm install --no-audit --no-fund)
   fi
 }
 
@@ -214,6 +249,7 @@ install_command() {
       ;;
     copy)
       log "Installing boof-runner globally"
+      # npm 7+ symlinks a directory install, so the CLI's external dependencies resolve from $dir.
       npm install -g "$dir"
       ;;
     *)
@@ -224,7 +260,7 @@ install_command() {
 
 verify_install() {
   command -v boof-runner >/dev/null 2>&1 || die "boof-runner is not on PATH after install"
-  log "Installed $(boof-runner --help | sed -n '1p')"
+  log "Installed boof-runner $(boof-runner --version)"
   log "Command path: $(command -v boof-runner)"
 }
 
@@ -236,17 +272,23 @@ main() {
 
   need_cmd git
   need_cmd npm
-  check_node
+  # Before source_dir too: is_boof_runner_checkout runs node.
+  need_cmd node
 
   local dir
   dir="$(source_dir)"
   is_boof_runner_checkout "$dir" || die "$dir is not a boof-runner checkout"
+  check_node "$dir"
 
   update_checkout "$dir"
+  # The update may have raised engines.node.
+  check_node "$dir"
   install_dependencies "$dir"
   build_app "$dir"
   install_command "$dir"
   verify_install
 }
 
-main "$@"
+# Run main only when executed, not when sourced (the tests source the functions). A script piped
+# to bash has no BASH_SOURCE[0], so it still runs.
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

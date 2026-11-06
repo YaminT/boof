@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>`startServer` always started a WebhookDispatcher, so two `serve` processes on one data root (for example a second serve next to a runner-owning one, or a `--no-runner` one) both read the event feed and POSTed every event: double delivery, and they overwrote each other's cursors and retry state in webhooks/state.json. Run the dispatcher only in the server that holds a pid lock on &lt;data&gt;/webhooks/.dispatcher.lock; a second server retries periodically and takes over when the holder exits or dies. Not tied to the runner guard, because a lone --no-runner serve must still deliver. Found in the review of runner-guard-identity (2026-11-02).</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono, vitest</stack>
+    <rules>
+      <do>Read packages/web/src/server.ts, packages/web/src/webhooks.ts and packages/heart/src/process-lock.ts (tryAcquireProcessLock) before changing code.</do>
+      <do>Write a failing test first: two server processes on one data root and one receiver, each event delivered exactly once, and after the holder is killed the other delivers.</do>
+      <dont>Do not change public API or MCP shapes.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Filed from the runner-guard-identity review (I2, 2026-11-02); not started.</version>
+        <version number="2" status="done">runDispatcherWhileHolding (packages/web/src/webhooks.ts) starts the dispatcher only while the process holds webhooks/.dispatcher.lock and retries the lock every 5 s (webhookLockRetryMs); startServer uses it and stop() releases it. Tests: in-process gates (one holder at a time, takeover on stop, stop before or during the first attempt), and two real servers (startServer in tsx children, webhooks-process.test.ts) with one receiver: 8 events delivered once each, the holder SIGKILLed after the first 5 and the other server delivers the last 3. Without the gate the same test sees every event twice.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Child-process servers on one scratch data root and an HTTP receiver in the test.</strategy>
+      <technology>vitest</technology>
+      <run>npm run typecheck &amp;&amp; npm test</run>
+    </tests>
+  </progress>
+</boof>

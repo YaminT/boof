@@ -1,6 +1,6 @@
 {
-  "name": "@boof-runner/desktop",
-  "version": "0.2.0",
+  "name": "@boof/desktop",
+  "version": "0.3.0",
   "private": true,
   "description": "Boof Runner desktop app (Electron) \u2014 runs the server and UI in one window",
   "main": "dist/main.js",
@@ -14,10 +14,11 @@
     "dist:win": "npm run stage && electron-builder --win --publish never"
   },
   "dependencies": {
+    "@boof/boof": "*",
+    "@boof/runner": "*",
+    "@boof/heart": "*",
+    "@boof/heart-server": "*",
     "@hono/node-server": "^2.0.0",
-    "@boof-runner/runner": "workspace:*",
-    "@boof-runner/shared": "workspace:*",
-    "@boof-runner/web": "workspace:*",
     "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.13",

@@ -1,0 +1,19 @@
+{
+  "name": "@boof/owlish",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/owlish-index.ts",
+      "default": "./src/owlish-index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@boof/heart": "*",
+    "zod": "^4.6.7"
+  }
+}

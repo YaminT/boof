@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Run task agents isolated from boof. Today an agent (claude, codex or opencode) runs as the user&#x27;s OS user, in the task&#x27;s worktree, with every permission prompt skipped. It can read the data root and any file the user can, and under `security.auth.mode = local-trust` it can call boof&#x27;s API on 127.0.0.1 with no key and act as the local administrator (queue tasks, create keys and webhooks, flip settings). Boof limits what an agent inherits (an allowlisted environment, no user MCP servers) but does not contain it. Contain it: no route to the boof port, no access to the data root or to the user&#x27;s credentials, write access to the task&#x27;s worktree only. The first step is to investigate each option and report: the Claude Code sandbox (its settings and what it covers on Linux, macOS and Windows), the Codex sandbox (workspace-write needs bubblewrap and does not run on a host without it; this machine has none), a separate OS user for the runner, or a container per task. Compare what each blocks (network to loopback, files outside the worktree), what it costs (setup, platform support, the desktop app), and how it fits the worktree and git model. Then plan and build the chosen one, with a test that an agent cannot reach the boof port or read the data root.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md (Security model) and docs/boof-runner.md (Agents are not sandboxed) before changing anything.</do>
+      <do>Write the investigation up as docs/superpowers/specs/&lt;date&gt;-agent-containment-design.md and get the owner&#x27;s choice before building.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <dont>Do not describe an allowlisted environment or MCP isolation as a sandbox; say what is and is not blocked.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Raised by the security review on 2026-11-02 (a task agent can call the local API as the administrator under local-trust); not started. Step 1 is the investigation of the four options.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>An agent started by the runner cannot connect to the boof port and cannot read the data root, and can still write its worktree and reach its model API; checked per platform the chosen option supports.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/runner</run>
+    </tests>
+  </progress>
+</boof>

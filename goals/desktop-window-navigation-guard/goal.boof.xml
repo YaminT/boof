@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>The desktop window has no navigation guard. packages/desktop/src/main.ts guards only setWindowOpenHandler; there is no webContents will-navigate handler, and the preload (packages/desktop/src/preload.ts) gives window.boofRunnerDesktop.token to whatever page the window shows. A same-window link to an external origin (for example in rendered agent output) would hand that page the desktop's admin key, which also acts as the local operator for project registration. The Origin and Host guards and CORS stop such a page from calling the API with an Authorization header, so this is not known to be exploitable, but the key should never reach a foreign page. Add win.webContents.on(&#x27;will-navigate&#x27;) and will-redirect handlers that allow only the app origin (http://127.0.0.1:&lt;port&gt;) and send other URLs to the system browser, and make the get-token IPC handler return the key only when event.senderFrame.url is on the app origin.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, Electron, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Keep the origin check in a pure function in packages/desktop/src/lifecycle.ts and write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server &amp;&amp; npm run build -w @boof/desktop` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Found in the Task 6 review (2026-11-02), outside that task: the window can navigate to a foreign origin and the preload hands the key to any page.</version>
+        <version number="2" status="done">Shipped: will-navigate and will-redirect keep the window on the app origin (others open in the system browser, http(s) only); the get-token and folder-picker IPC answer only frames of the app origin; isAppUrl and isExternalUrl are pure and tested.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>A unit test of the origin predicate (app origin yes; other host, other port, other scheme, file:, malformed URL no) and of the token handler's refusal for a foreign sender frame.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/desktop</run>
+    </tests>
+  </progress>
+</boof>

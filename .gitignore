@@ -9,10 +9,13 @@ data/commands/
 data/settings.json
 data/.runner.pid
 *.log
+package-lock.json
 .boof-runner-worktrees/
 
 # Local planning notes (never committed)
 plans/
+# ...but the UI's Plans screen lives in src/plans
+!packages/facedisk/ui/src/plans/
 
 # Agent tooling and spec documents (local only)
 .claude/

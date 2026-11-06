@@ -1,0 +1,24 @@
+{
+  "name": "@boof/heart-server",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@boof/heart": "*",
+    "@boof/owlish": "*",
+    "@modelcontextprotocol/sdk": "~1.32.2",
+    "@hono/node-server": "^2.0.0",
+    "chokidar": "^6.0.0",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  }
+}

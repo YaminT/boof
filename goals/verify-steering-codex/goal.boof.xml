@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Steering was verified live with Claude Code and OpenCode. Run the same check with Codex: a task that runs `sleep 45` then creates a.txt, inject now 'also create b.txt', confirm `codex exec resume` is used and both files land on the branch. Fix whatever breaks and record the result in docs/boof-runner.md.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">Verified live with codex-cli 0.164.0 on 2026-11-02, scratch data root and throwaway repo under /tmp, no real data. Setup: `BOOF_RUNNER_DATA_ROOT=$S/data boof-runner run --file prompt.txt --repo $S/repo --tool codex --model gpt-6-luna --title steer-codex` (prompt: run `sleep 45`, then create a.txt containing a). While the sleep ran: `boof-runner tasks inject -d $S/data --project-id repo --task-id steer-codex --mode now --prompt "also create b.txt in the repository root containing the single line: b"` answered applied: pending. Run 1 steered the planner step, run 2 the developer step (injected at 18:04:03). Both: the log shows `### Steered` then `### Planner (steer 1)` / `### Developer (steer 1)`, the agent says the wait was interrupted, runs `sleep 45` again and `printf 'a\n' > a.txt && printf 'b\n' > b.txt`; the reviewer approved. Resume confirmed in ~/.codex/sessions: one rollout file holds the original prompt and the steer text and has two task_started turns, so `codex exec resume <thread id>` was used. Landing: the agent left the files uncommitted, so the runner committed a.txt and b.txt to boof-runner/steer-codex2--leftovers (6fbf022); the task branch itself stays at the base. Run 1 had told the agent to commit nothing and the reviewer deleted the untracked files, so only run 2 is evidence for the files. Found and fixed: `run --tool codex` without `--model` used the static default gpt-5.5, which this ChatGPT account refuses (model_not_found, the first attempt failed in the planner); toolOverride now takes the first model the tool lists (codex debug models), falling back to the default list; tests with a tool whose listModels differs from defaultModels. Not a defect: codex logs `ERROR codex_core::util: Custom tool call output is missing` after a steer (the killed command never returned).</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Manual live run against the codex CLI plus a unit test for the codex resume argument building.</strategy>
+      <technology>vitest + manual</technology>
+      <run>npm test</run>
+    </tests>
+  </progress>
+</boof>

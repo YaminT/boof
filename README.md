@@ -13,9 +13,9 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 - **Worktrees** — every task runs on its own branch `boof-runner/<task-id>`. Branches are kept; failed or stopped work is never discarded.
 - **Web UI** — React and Vite over a Hono server, with live updates and agent output streaming.
 - **Desktop app** — Electron wrapper that runs server, runner and UI in one window.
-- **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, no web server needed.
+- **CLI** — headless `run`, `scan`, `project`, `plan`, `auth` and `mcp` commands, plus `boof-runner <area> <verb>` for every API operation, no web server needed.
 - **REST API** — versioned `/api/v1` generated from one operations registry, with an OpenAPI 3.1 document, ETags, idempotency keys and paging.
-- **MCP** — the same operations as 34 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
+- **MCP** — the same operations as 79 tools over stdio and Streamable HTTP (`/mcp`), plus resources and prompts.
 - **Events and webhooks** — replayable server-sent events and HMAC-signed webhooks.
 - **Security** — loopback by default; API keys with scopes, project restrictions and trust levels; Host guard, rate limit and audit log.
 
@@ -43,7 +43,7 @@ Open the URL it prints (default <http://127.0.0.1:4319>). A fresh data root (`./
 boof-runner project add /path/to/repo --default
 ```
 
-**First task.** In the UI open the Tasks tab, add a task with a prompt and queue it, then switch the runner on with the toggle next to the project picker. Or run one prompt headless and watch it finish:
+**First task.** In the UI open Tasks, add a task with a prompt and queue it, then switch the runner on with the runner switch at the bottom of the left rail (under More on a phone). Or run one prompt headless and watch it finish:
 
 ```bash
 boof-runner run "Add a rate limiter to the API" --repo /path/to/repo
@@ -59,7 +59,9 @@ npm run desktop      # build the UI + Electron bundle, then launch the window
 
 The desktop app boots the same Hono server and runner in its main process and opens the UI in a native window. Its data root lives in the per-user app-data directory, so settings persist across launches.
 
-On first launch it asks for the first project's **working directory** (a full-screen picker that opens a native folder dialog). The project is saved in the data root and never asked again; change the directory any time via the folder icon in the top-right header.
+On first launch it asks for the first project's **working directory** (a full-screen picker that opens a native folder dialog). The project is saved in the data root and never asked again; change the directory any time from the project's Settings page (its Browse… button opens the same folder dialog).
+
+A release is built from a `v<version>` tag: the installers carry that version (`BOOF_RUNNER_APP_VERSION`), the GitHub release is a prerelease only when the tag has a `-` part, and the tag's base version must match `package.json` (`scripts/release-version.sh`).
 
 ### Running the built CLI
 
@@ -73,9 +75,14 @@ boof-runner                      # after `npm install -g .`
 The runner can be driven entirely from the command line — no web UI required. All commands share `-d, --data <path>` (data root, or `$BOOF_RUNNER_DATA_ROOT`).
 
 ```bash
-boof-runner project add /path/to/repo [--id <kebab>] [--name <text>] [--default]
+boof-runner project add /path/to/repo [--id <kebab>] [--name <text>] [--default] [--brief <text>|--brief-file <file>]
+boof-runner project add /path/to/new-dir --new [--confirm] --brief <text>   # mkdir + git init + first commit
+boof-runner project add --auto --brief <text> [--name <text>]               # creates <settings.projectsRoot>/<id>
 boof-runner project list [--json]
 boof-runner project remove <id> [--purge]   # archive; --purge deletes the project's data, never the repo
+boof-runner epic add <title> [--priority <n>] [--description <text>]   # an epic groups tasks; also: list, archive, remove
+boof-runner task list [--epic <id>|none] [--parent <id>|none]          # subtasks are shown under their parent; also: move
+boof-runner run "<prompt>" --epic <id>      # or --parent <id> to make the task a subtask
 
 # Run a single prompt through the pipeline and stream progress.
 # Exits non-zero if the task fails or parks for answers.
@@ -106,6 +113,7 @@ boof-runner run --all -d ./data            # then drive them to completion
 | `--tls-cert <file>` | —                       | —         | PEM certificate; with `--tls-key` the server speaks HTTPS |
 | `--tls-key <file>`  | —                       | —         | PEM private key                                           |
 | `--no-runner`       | —                       | runner on | Start the web server only                                 |
+| `-v, --version`     | —                       | —         | Print the version                                         |
 | `-h, --help`        | —                       | —         | Show help                                                 |
 
 Run `boof-runner --help` for the full command reference.
@@ -122,6 +130,7 @@ Each task runs in its own git worktree on branch `boof-runner/<id>`. Task frontm
 | `retries.transient`     | `2`                                         | Retries per step after a transient API error (5xx, 429, 529, overloaded, ECONNRESET, ETIMEDOUT, ...).                                     |
 | `retries.backoffMs`     | `[30000, 120000]`                           | Delay before each retry; a stop request during the wait stops the task.                                                                   |
 | `retries.idleTimeoutMs` | `1200000`                                   | A step that prints nothing for this long is killed and retried as transient.                                                              |
+| `retries.poolWaitMs`    | `1800000`                                   | Maximum in-place wait (30 minutes) for an exhausted or unavailable configured account pool between steps.                                 |
 
 Nothing is deleted under the defaults. A done task's uncommitted leftovers never land on the task branch: they are saved on `boof-runner/<id>--leftovers`. With `runs > 1`, each iteration after the first sees the previous iteration's final observer and reviewer reports. See [docs/boof-runner.md](docs/boof-runner.md) for details.
 
@@ -129,25 +138,39 @@ Nothing is deleted under the defaults. A done task's uncommitted leftovers never
 
 Usage (tokens and `costUsd`) is recorded per step. Optional limits in `settings.budget` (and a per-project override in `project.json`) turn it into enforcement. Every key is optional; no `budget` means no limit and nothing changes.
 
-| Key                       | Meaning                                                                                           |
-| ------------------------- | ------------------------------------------------------------------------------------------------- |
-| `budget.perTaskUsd`       | Cost of one pipeline run of one task (a retry or the next iteration of `runs` starts at 0).       |
-| `budget.perDayUsd`        | Cost of all work in one day.                                                                      |
-| `budget.perProjectDayUsd` | Cost of one project's work in one day.                                                            |
-| `budget.perToolDayUsd`    | `{ "codex": 5, "claude-code": 10 }`: cost per tool id in one day, over all projects.              |
-| `budget.onExceed`         | `"pause"` (default) or `"fail"`, see below.                                                       |
-| `budget.timezone`         | IANA zone that defines a day, for example `Europe/Berlin`. Default: the server's local time zone. |
+| Key                       | Meaning                                                                                                                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `budget.perTaskUsd`       | Cost of one pipeline run of one task (a retry or the next iteration of `runs` starts at 0).                                                                                 |
+| `budget.perDayUsd`        | Cost of all work in one day.                                                                                                                                                |
+| `budget.perProjectDayUsd` | Cost of one project's work in one day.                                                                                                                                      |
+| `budget.perToolDayUsd`    | `{ "opencode": 5, "claude-code": 10 }`: cost per tool id in one day, over all projects (a tool that reports no price, such as codex, counts as unknown and is not limited). |
+| `budget.onExceed`         | `"pause"` (default) or `"fail"`, see below.                                                                                                                                 |
+| `budget.timezone`         | IANA zone that defines a day, for example `Europe/Berlin`. Default: the server's local time zone.                                                                           |
 
 A project overrides `perTaskUsd`, `perProjectDayUsd`, `onExceed` and its own `perToolDayUsd` (a cap on that project's spend per tool; the global per-tool limits still apply). `perDayUsd` and `timezone` are global only.
 
 Exactly what happens:
 
-- **Ledger.** Each finished step adds its cost to the daily ledger: `<data>/usage/daily/YYYY-MM-DD.json` (total, per project, per tool) and `<data>/projects/<id>/usage/daily/YYYY-MM-DD.json`. The date is the calendar day in `budget.timezone`. Steps with unknown usage (`known: false`) add 0 and are counted in `unknownSteps`, so a tool that reports no cost is not limited. The ledger is written even when no limit is set.
+- **Ledger.** Every attempt of a step adds its cost to the daily ledger: `<data>/usage/daily/YYYY-MM-DD.json` (total, per project, per tool) and `<data>/projects/<id>/usage/daily/YYYY-MM-DD.json`. The date is the calendar day in `budget.timezone`. Steps with unknown usage (`known: false`) add 0 and are counted in `unknownSteps`, so a tool that reports no cost is not limited. The ledger is written even when no limit is set.
 - **A limit is spent when spent >= limit.**
 - **Before a task starts**, the runner skips projects whose day limit is spent, and tasks that use a tool (of any role) whose day limit is spent. If the global day limit is spent it starts nothing. The tick result is `{ kind: "budget", scopes }` and the tasks stay `pending`; they start again after the reset. This holds for both `onExceed` values. The event `runner.budget_exceeded` (`scope`, `date`, `spentUsd`, `limitUsd`, `project?`) is recorded once per day and scope.
 - **Between steps**, before each step starts, the pipeline checks the run's cost against `perTaskUsd` and the day budgets that apply to the step (global, project, the step's tool, project plus tool). If one is spent the task fails with `budget exceeded: <scope> <spent>/<limit> USD` (scope `task:<id>`, `global`, `project:<id>`, `tool:<tool>` or `project:<id>/tool:<tool>`). A step that runs is **never** stopped for budget: a CLI step cannot be interrupted at a cost boundary, so it can finish above the limit. The cost of a task's last step is recorded but cannot fail the task.
 - **`onExceed`.** In both modes the task becomes `failed` with the reason above. `"pause"` always keeps the worktree and branch (even with `worktree.onFailure: "delete"`) so a retry continues the work; `"fail"` follows `worktree.onFailure`. After a day budget stops a task, the spent scope also blocks new tasks until the reset (above); other scopes keep running.
 - **See it.** `GET /api/v1/usage/budget` (scope `settings:read` or `tasks:read`) returns the limits, today's spend, remaining amount and `exceeded` flag per scope, `unknownSteps` and `resetsAt`. `GET /api/v1/runner` and `GET /api/v1/runner/status` (MCP `boof_runner_status`) carry `budgetExceeded`. The UI shows it under Settings (Budget, Token usage) and a banner while a budget is spent.
+
+### Optional account pool (better-ccflare)
+
+Boof can route supported task tools through the better-ccflare HTTP gateway. **Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; it does not include the later Accounts settings tab or the Agent SDK adapter (8b).
+
+Configure `settings.owlish` in `settings.json` (or through `settings.update`) with the gateway `url` and `healthGate: "pause" | "warn" | "off"` (default `pause`). With `pause`, selection of work using a pool-routed tool pauses when the configured gateway is degraded, unhealthy or unreachable; the reason is visible in runner pool status. `warn` reports health without blocking and `off` disables the gate. With no `settings.owlish`, there is no gateway request or gate.
+
+The optional better-ccflare client key is set once with `settings.update`'s write-only `owlishApiKey`, or supplied through `BOOF_OWLISH_API_KEY` (which takes precedence). The file store is `<data>/owlish/secrets.json` with mode 0600; the key is never returned after setting it. Boof does not store provider credentials. If the pool runs out between pipeline steps, the task stays running and waits in place for `retries.poolWaitMs` (default 30 minutes), then fails as pool exhausted.
+
+Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Credentials, query strings and fragments are rejected.
+
+Routed agents receive the gateway client key in their process environment. Agents run as the server's OS user and can call ccflare's `/api/*` endpoints directly with that key, outside boof's account-operation authorization; see [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](docs/superpowers/specs/2026-10-29-boof-roadmap.md).
+
+The registry-generated commands are `boof-runner accounts list`, `pause`, `resume`, `priority`, `thresholds` and `health`; run `boof-runner accounts --help` or `boof-runner accounts <command> --help` for inputs. Reads need `settings:read`; changes need `settings:write` and a trusted, project-unrestricted principal because the pool is shared. `review-trust` and `local-mcp` principals cannot change account state or gateway settings.
 
 ### Install or update from source
 
@@ -155,11 +178,11 @@ Exactly what happens:
 bash scripts/install-or-update-boof-runner.sh
 ```
 
-The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `git@github.com:YaminT/boof.git`.
+The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. Without bun it uses `npm install` (`package-lock.json` is git-ignored; `bun.lock` is the lockfile). A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `https://github.com/YaminT/boof.git`; set `BOOF_RUNNER_REPO=git@github.com:YaminT/boof.git` to clone over SSH.
 
 ## Run on a server
 
-To run boof on a headless Linux server (systemd service, nginx with TLS, API key for an AI harness), follow the runbook in [deploy/README.md](deploy/README.md). In short: install with the script (it skips Electron on a machine without a display), then `boof-runner project add`, `boof-runner remote setup --hostname <host>` and `boof-runner service install`. `GET /healthz` is a public liveness check. An nginx example is in [deploy/nginx-boof.conf.example](deploy/nginx-boof.conf.example).
+To run boof on a headless Linux server (systemd service, nginx with TLS, API key for an AI harness), follow the runbook in [deploy/README.md](deploy/README.md) or the [published server runbook](https://nodets.com/boof/server). In short: install with the script (it skips Electron on a machine without a display), then `boof-runner project add`, `boof-runner remote setup --hostname <host>` and `boof-runner service install`. `GET /healthz` is a public liveness check. An nginx example is in [deploy/nginx-boof.conf.example](deploy/nginx-boof.conf.example); to serve boof under a path of an existing site (`https://example.com/boof/`) include [deploy/nginx-boof-prefix.conf.example](deploy/nginx-boof-prefix.conf.example) in that site's server block (the web UI uses relative URLs, so no build option is needed).
 
 ## Using the web UI
 
@@ -169,7 +192,7 @@ Pick a project at the top (or add one); every tab works on that project. The run
 - **Plans** — create plans with goals and dependencies, edit them, import them from a repository's `goal.boof.xml` files or export them. **Approve** a draft plan to activate it, preview a sync (dry run), then **Sync to tasks**. Enable auto-sync to let the runner sync before it picks tasks.
 - **Actions** — tasks parked because the planner has questions. Answer them and the task resumes.
 - **Commands** — reusable instruction templates that any task can attach.
-- **Settings** — concurrency and default project, tool health and model lists, role assignments (planner, developer, observer, reviewer), review gate, worktree, retries, budget limits, token usage with today's spend, API clients (create, rotate, revoke keys) and per-project overrides.
+- **Settings** — five pages. **Project**: name, working directory, default base branch, brief, pause, archive, the default project and projects root, new projects, and archived projects (unarchive or delete). **Agents**: tasks at once, role assignments (planner, developer, observer, reviewer), review gate and fix rounds, retries, worktree retention and the tools and models with their health, each with a per-project override. **Budgets**: today's spend, token usage, and limits per task, day, project and tool with project overrides. **API keys**: create, rotate and revoke keys with every scope (a rotated or revoked key of this browser is handled), and the auth mode (set in `settings.json`). **Automation**: command templates and webhooks (the signing secret is shown once). The form pages keep unsaved edits across live updates, show "changed elsewhere" when someone else saves first, and save only the fields you changed.
 
 ## CLI reference
 
@@ -179,45 +202,72 @@ boof-runner run <prompt> [options]     Enqueue a prompt and drive it to completi
 boof-runner run --file <path> [...]    Same, reading the prompt from a file
 boof-runner run --all [options]        Drive the pending queue of every project to completion
 boof-runner scan <repo> [options]      Turn a repo's not-done goal.boof.xml units into tasks
-boof-runner project <add|list|remove>  Manage projects (git repositories) of this data root
+boof-runner epic <add|list|archive|remove>  Manage the epics (groups of tasks) of a project
+boof-runner task <list|move>            List tasks with epics and subtasks; move a task
+boof-runner project <add|list|remove>  Manage projects of this data root; `add --new|--auto --brief …` creates the repository
 boof-runner plan <import|sync|export>  Import goal files into a plan, sync it to tasks, export XML
 boof-runner auth <add|list|revoke|rotate>  Manage API clients for remote access
 boof-runner service <install|uninstall|status|logs>  Run as a systemd user service (Linux)
 boof-runner mcp [options]              Serve boof over MCP on stdin/stdout
+boof-runner ops                        List the operation commands (every REST/MCP operation)
+boof-runner <area> <verb> [flags]      Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
 boof-runner --help                     Show help (also: <command> --help)
+boof-runner --version                  Print the version (also: -v)
 ```
+
+Any other first word is an error (`unknown command`, exit 1); only serve's own flags (`-d`, `-p`, `--host`, `--no-runner`, `--tls-*`) may stand first without `serve`, and the global flags (`-d`, `--client`, `--json`) may stand before any command (`boof-runner --client reader tasks list`).
 
 Common option: `-d, --data <path>` (data root, default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
 
-| Command   | Options                                                                                                                                                                 |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `serve`   | `-p, --port`, `--host`, `--tls-cert`, `--tls-key`, `--no-runner` (see [Options](#options-serve--the-default-command))                                                   |
-| `run`     | `-f, --file`, `--all`, `--project <id>`, `--repo <dir>`, `--base <ref>`, `--title`, `--tool`, `--model`, `--runs <n>`                                                   |
-| `scan`    | `--project <id>`, `--dry-run`, `--bump review\|done`, `--tool`, `--model`                                                                                               |
-| `project` | `add <dir> [--id] [--name] [--default]`, `list [--json]`, `remove <id> [--purge]`                                                                                       |
-| `plan`    | `import --project <id> [--plan <id>]`, `sync --project <id> --plan <id> [--dry-run] [--stop-running]`, `export --project <id> --plan <id> --out <dir>`                  |
-| `auth`    | `add --name <text> --scopes <a,b,c> [--projects <id,id>\|*] [--trust trusted\|review] [--expires 30d] [--kind harness\|mcp\|cli]`, `list`, `revoke <id>`, `rotate <id>` |
-| `mcp`     | `--client <id>`, `--project <id>`                                                                                                                                       |
+| Command   | Options                                                                                                                                                                                                                                                    |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `serve`   | `-p, --port`, `--host`, `--tls-cert`, `--tls-key`, `--no-runner` (see [Options](#options-serve--the-default-command))                                                                                                                                      |
+| `run`     | `-f, --file`, `--all`, `--project <id>`, `--repo <dir>`, `--base <ref>`, `--title`, `--tool`, `--model`, `--runs <n>`                                                                                                                                      |
+| `scan`    | `--project <id>`, `--dry-run`, `--bump review\|done`, `--tool`, `--model`                                                                                                                                                                                  |
+| `project` | `add <dir> [--id] [--name] [--default]`, `list [--json]`, `remove <id> [--purge]`                                                                                                                                                                          |
+| `plan`    | `import --project <id> [--plan <id>]`, `sync --project <id> --plan <id> [--dry-run] [--stop-running]`, `export --project <id> --plan <id> --out <dir>`                                                                                                     |
+| `auth`    | `add --name <text> --scopes <a,b,c> [--projects <id,id>\|*] [--trust trusted\|review] [--expires 30d] [--kind harness\|mcp\|cli]`, `list`, `revoke <id>`, `rotate <id>`                                                                                    |
+| `remote`  | `setup --hostname <host> [--allowed-root <dir>]... [--name] [--scopes] [--trust review\|trusted] [--expires] [--no-key] [-p]`, `status`, `disable`                                                                                                         |
+| `service` | `install [--data] [--port] [--host] [--env KEY=VALUE]... [--env-file <path>] [--name] [--reset]`, `uninstall`, `status`, `logs [-f]` (Linux, systemd user unit; omitted options are kept from the existing unit, see [deploy/README.md](deploy/README.md)) |
+| `mcp`     | `--client <id>`, `--project <id>`, `--admin`                                                                                                                                                                                                               |
 
 Exit codes: 0 success; 1 a task failed, was stopped, parked, nothing was actionable, or bad usage.
+
+### Operation commands
+
+Every operation of the API is also a command, `boof-runner <area> <verb>`, generated from the same registry as the REST routes and the MCP tools (`boof-runner ops` lists them; `<area> <verb> --help` shows the flags and the scope). They run in-process, with no server.
+
+```bash
+boof-runner tasks create --project shop --title "Fix login" --prompt "The login form drops the redirect."
+boof-runner plans sync --project shop --plan-id q4 --json
+boof-runner auth clients create --name ci --scopes tasks:read,tasks:write
+```
+
+- **Flags** may stand before the command words too (`boof-runner -d ./data tasks list`, `boof-runner --client reader tasks list`). They are the input fields in kebab-case (`projectId` is `--project-id`, and `--project` also works). A value may start with `-` or contain `=`. Booleans are bare (`--dry-run`), `--dry-run=false` or `--no-dry-run`. Lists are comma-separated or repeated; objects and arrays of objects are JSON text or `@file.json`; `null` clears a nullable field. `--input '<json>'` or `--input @file.json` gives the whole input, and flags override its keys. A project-scoped command without `--project` uses `settings.defaultProject`.
+- **Output** is for people by default (the summary line). `--json` prints the result as JSON and nothing else, so `| jq` works; warnings (`warning (subtasks_open): ...`) go to stderr. A key or signing secret shown once (`auth clients create`, `auth clients rotate`, `webhooks create`) is printed as a `key:` or `secret:` line in human mode; keep it, it is not shown again. A download needs `--out <file>` (or `--out -`, refused on a terminal). A secret input such as a webhook URL belongs in a file: `--input @hook.json` (a flag shows in your shell history and in `ps`). `serve` refuses stray words (`boof-runner serve tasks list` is an error, not a server).
+- **Identity** is the local administrator under `security.auth.mode = "local-trust"`, the same as a command you type on the machine. With `required`, pass `--client <id>` (no key is needed: the OS user owns the data root); that client's scopes, projects and trust apply. A revoked client is refused on the next command. The hand-written commands (`auth add`, `task move`, `plan sync`, `run`) always act as the local administrator, even in `required` mode; only the generated operation commands refuse without `--client`.
+- **Exit codes** of these commands: 0 success; 1 bad usage or any other error; 2 not found; 3 not allowed (identity, scope, project, trust); 130 interrupted (Ctrl-C ends a `tasks wait` at once).
 
 ## Configuration
 
 Settings live in `<data>/settings.json` (created on first run, schema version 2). Edit it in the UI, with `PUT /api/v1/settings`, or by hand; the `security` and `webhooks` keys are edited by hand or through their own operations. All keys except the schema version are optional.
 
-| Key                  | Default                                                                                    | Meaning                                                                                                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runner.enabled`     | `false`                                                                                    | Whether the background runner picks tasks.                                                                                                                                         |
-| `runner.concurrency` | `1`                                                                                        | Tasks in flight at once. At most one task per project runs at a time.                                                                                                              |
-| `defaultProject`     | `null`                                                                                     | Project used by `run` without `--project` and by the legacy `/api/tasks` routes.                                                                                                   |
-| `roles`              | planner `claude-code`/`opus`, developer `codex`/`gpt-5.5`, reviewer `claude-code`/`sonnet` | `{ tool, model }` per role. Add `observer` to enable the observer step. Tools: `claude-code`, `codex`, `opencode` (e.g. `{ "tool": "opencode", "model": "opencode-go/kimi-k3" }`). |
-| `review`             | `gate: true`, `maxFixRounds: 2`, `maxInlineDiffBytes: 120000`                              | Verdict gate and fix loop (see [How it works](#how-it-works)).                                                                                                                     |
-| `worktree`           | `onDone: "keep-branch"`, `onFailure: "keep"`                                               | Worktree location and retention (see [Worktrees, retention and retries](#worktrees-retention-and-retries)).                                                                        |
-| `retries`            | `transient: 2`, `backoffMs: [30000, 120000]`                                               | Retry and stall handling.                                                                                                                                                          |
-| `budget`             | none (unlimited)                                                                           | Spending limits in USD, see [Budget limits](#budget-limits).                                                                                                                       |
-| `security`           | see [Security model](#security-model)                                                      | `auth.mode`, `allowedHosts`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.                                                                          |
-| `mcp.enabled`        | `true`                                                                                     | `false` switches MCP off (`/mcp` answers 404, `boof-runner mcp` refuses to start).                                                                                                 |
-| `webhooks`           | none                                                                                       | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations.                                                                                                     |
+| Key                        | Default                                                                                      | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runner.enabled`           | `false`                                                                                      | Whether the background runner picks tasks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `runner.concurrency`       | `1`                                                                                          | Tasks in flight at once. At most one task per project runs at a time.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `runner.inheritMcpServers` | `false`                                                                                      | Let task agents load the MCP servers of your own Claude Code config (`~/.claude.json`, the repository's `.mcp.json`). Off: boof starts `claude` with `--strict-mcp-config`, so an unattended agent (every permission prompt skipped) cannot reach your other MCP tools. Codex runs with `--ignore-user-config` (this also hides `model`, `model_provider` and `base_url` in its config.toml; an empty model uses the Codex CLI built-in default). With `inheritMcpServers` enabled, config.toml is loaded and its model applies; opencode reads its own MCP config and boof cannot isolate it. |
+| `runner.agentEnv`          | none                                                                                         | Extra environment variable names task agents may inherit. Agents get an allowlisted environment (basics, proxies, and `ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*`, `CODEX_*`, `OPENCODE_*`); `BOOF_*` is never passed.                                                                                                                                                                                                                                                                                                                                                                               |
+| `projectsRoot`             | `~/boof-projects`                                                                            | Where `project add --auto` and the UI's default location create project directories (`<projectsRoot>/<id>`); `~` is the server's home.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `defaultProject`           | `null`                                                                                       | Project used by `run` without `--project` and by the legacy `/api/tasks` routes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `roles`                    | planner `claude-code`/`opus`, developer `codex`/CLI default, reviewer `claude-code`/`sonnet` | `{ tool, model }` per role. An empty Codex model uses the Codex CLI built-in default. By default `--ignore-user-config` means `~/.codex/config.toml` model is ignored; it applies when `runner.inheritMcpServers` is enabled. Add `observer` to enable the observer step. Tools: `claude-code`, `codex`, `opencode` (e.g. `{ "tool": "opencode", "model": "opencode-go/kimi-k3" }`).                                                                                                                                                                                                           |
+| `review`                   | `gate: true`, `maxFixRounds: 2`, `maxInlineDiffBytes: 120000`                                | Verdict gate and fix loop (see [How it works](#how-it-works)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `worktree`                 | `onDone: "keep-branch"`, `onFailure: "keep"`                                                 | Worktree location and retention (see [Worktrees, retention and retries](#worktrees-retention-and-retries)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `retries`                  | `transient: 2`, `backoffMs: [30000, 120000]`                                                 | Retry and stall handling.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `budget`                   | none (unlimited)                                                                             | Spending limits in USD, see [Budget limits](#budget-limits).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `security`                 | see [Security model](#security-model)                                                        | `auth.mode`, `allowedHosts`, `trustedProxies`, `allowedPrivateWebhookHosts`, `allowedProjectRoots`, `externalTasksRequireApproval`, `rateLimit`, `audit`.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `mcp.enabled`              | `true`                                                                                       | `false` switches MCP off (`/mcp` answers 404, `boof-runner mcp` refuses to start).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `webhooks`                 | none                                                                                         | Event subscriptions; manage them with the admin `/api/v1/webhooks` operations. Secrets are kept in `webhooks/secrets.json` (0600).                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 A project can override `roles`, `review`, `worktree`, `retries` and `budget` per key in its `project.json`.
 
@@ -229,6 +279,7 @@ A project can override `roles`, `review`, `worktree`, `retries` and `budget` per
   commands/              # command templates, shared by all projects
   auth/  audit/          # API clients and the request audit log
   idempotency/           # stored responses of Idempotency-Key requests (24 h)
+  webhooks/secrets.json  # signing secrets, mode 0600
   events.jsonl           # global events (runner toggles, budget events)
   usage/daily/           # <YYYY-MM-DD>.json: cost per day, project and tool (budget ledger)
   projects/
@@ -250,15 +301,21 @@ A data root from before multi-project support is migrated automatically the firs
 
 ## Security model
 
-- The server binds `127.0.0.1` by default and rejects requests whose Host header is not a loopback name or listed in `security.allowedHosts`. This blocks DNS-rebinding attacks.
+- The server binds `127.0.0.1` by default and rejects requests whose Host header is not a loopback name or listed in `security.allowedHosts`. This blocks DNS-rebinding attacks. It is not a CSRF defence: that is the `Origin` check on `/api/*` and `/mcp` and the `Content-Type: application/json` requirement for JSON bodies.
 - Anyone who can reach the API can create a task, and every task runs coding agents with permission prompts disabled inside your repository. Treat API access as equivalent to running code as your user.
 - Ids are validated as kebab-case before they touch the filesystem. Request bodies are schema-validated and size-limited (1 MB JSON, 25 MB attachments).
 - Agents work in a git worktree on a `boof-runner/<id>` branch. Nothing is merged or pushed for you.
+- Clients with `review` trust (the default) control only their own work: they stop or steer only tasks they created, and removing a plan's goals archives only their own tasks. A review client can set back to draft only active plans it created; it may still edit a plan it created that a human has set back to draft, but only its own tasks are archived or stopped by that edit. A human approves everything else in the UI.
+- Client creation and rotation cannot escalate: a client may not create, rotate, revoke or list a client with scopes, trust, projects or an expiry beyond its own (rotating or revoking itself is always allowed). Rotating a client of equal or lesser reach hands over that client's key, so `auth:admin` over a client means being able to act as it.
+- Webhooks refuse loopback, link-local, private and other reserved addresses (by literal and by DNS answer, at creation and before every delivery) unless the host is listed in `security.allowedPrivateWebhookHosts`. Their signing secrets live in `webhooks/secrets.json` (0600), never in `settings.json`.
+- Command templates can be written only by trusted clients with access to every project; grant `settings:write` to trusted clients only, because `PUT /settings` does not check trust yet.
 - Do not expose the port to the public internet without keys and TLS.
 
 ### Remote access
 
 A request from a loopback peer with no `Authorization` header is the trusted `local` principal (while `security.auth.mode` is `"local-trust"`, the default). Anything else needs an API key.
+
+**Task agents are not sandboxed.** An agent runs as your OS user with every permission prompt skipped: it can read your files and the data root, and under `local-trust` it can call boof's own API on `127.0.0.1` with no key and act as the local administrator (queue tasks, create keys and webhooks, change settings). boof gives agents an allowlisted environment (no `BOOF_*`, no cloud credentials) and keeps your MCP servers away from them (claude and codex; not opencode), but this is not isolation. `security.auth.mode = "required"` closes the API route; a separate OS user or a container is the way to isolate the rest. See [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed).
 
 One command prepares the server for a remote AI harness:
 
@@ -282,12 +339,12 @@ boof-runner auth add --name ci-bot --scopes tasks:read,tasks:write --expires 30d
 boof-runner --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
 ```
 
-- Clients may be restricted to some projects (`--projects a,b`): other projects answer `403 forbidden_project`. A client with `projects:write` may register a project only when its real path is under `security.allowedProjectRoots`, is a git work tree, is not inside the data root and is not `/` or the home directory.
+- Clients may be restricted to some projects (`--projects a,b`): other projects answer `403 forbidden_project`. A client with `projects:write` may register a project only when its real path is under `security.allowedProjectRoots`, is a git work tree, is not inside the data root and is not `/` or the home directory. For `path.mode: "new"` the directory it will become must be under an allowed root; for `auto`, `settings.projectsRoot` itself must be. When boof runs as a service, `~` is the service user's home. A client that sets `worktree.root` (in settings or on a project) is held to the same roots: it must resolve under an allowed root, not be `/`, the home directory or the data root, else `403 project_root_not_allowed`.
 - Call the API with `Authorization: Bearer boof_<client>_<secret>`. The browser UI asks for the key once per tab. The desktop app manages its own key.
-- `boof-runner auth list | revoke <id> | rotate <id>` manage clients. Revoked and expired keys stop working within 5 seconds.
+- `boof-runner auth list | revoke <id> | rotate <id>` manage clients. Revoked and expired keys stop working within 5 seconds, open event streams included (they end with an `unauthorized` event at their next tick; up to about 7 s when the revoke runs in another process). Each principal may hold 16 event streams; the local principal shares that cap across all local tabs and CLI clients (each UI tab holds up to two).
 - **Keys are root-equivalent.** Scope them narrowly, set `--expires`, and keep the default `review` trust for anything you do not fully control: its tasks and plans land as drafts that a human approves in the UI. Use `--trust trusted` only for clients you would give your own shell.
 - Without TLS, keys travel in clear text; the server warns when you bind a non-loopback address without `--tls-cert`/`--tls-key`. Tailscale or a reverse proxy are fine alternatives. Requests carrying `X-Forwarded-For` never get local trust.
-- Every `/api` and `/mcp` call is appended to `<data>/audit/<day>.jsonl` (principal, action, status, timing, IP; never bodies, prompts or keys). Requests are rate limited per principal (`security.rateLimit`, default 600/min).
+- Tool calls of the stdio MCP server (`boof-runner mcp`, keyless `local-mcp`, `--admin` or `--client`) and the generated CLI commands (`boof-runner <area> <verb>`) append one line to the same log under the same `security.audit` settings: `{ts, principal, kind, action: "mcp:<tool>" | "cli:<operation>", via: "stdio-mcp" | "cli", project?, outcome: "ok" | "error", error?, ms}`, never arguments. The hand-written commands (`auth add`, `task move`, `plan sync`, `run`, ...) are not audited yet. Every `/api` and `/mcp` call is appended to `<data>/audit/<day>.jsonl` (principal, action, status, timing, the peer `ip` and, behind a proxy, `forwardedFor`; never bodies, prompts or keys). Requests are rate limited per principal (`security.rateLimit.perMinute`, default 600/min); failed authentications are limited per client address (`unauthenticatedPerMinute`, default 30/min): a request with a valid key is never limited by it, and a request that fails authentication answers `429` instead of `401` once the address has used its budget. `security.trustedProxies` defaults to `["loopback"]` (a reverse proxy on the same host): the last `X-Forwarded-For` entry (the one your proxy appended) then keys that limit, and `forwardedFor` is trustworthy only when the peer is listed there. A raw TCP forwarder on loopback (`ssh -R`, `socat`, frp, ngrok tcp) passes client headers through unchanged, so set it to `[]` in that setup. Set it to `[]` when nothing proxies, or list your proxy's address.
 
 The full REST reference, error codes and webhooks are in [docs/api.md](docs/api.md).
 
@@ -307,15 +364,15 @@ Boof speaks the Model Context Protocol with the same scopes, trust and audit as 
 **Local agent (stdio).** The agent host starts `boof-runner mcp`; no server and no key are needed.
 
 ```bash
+# everything the data root serves, limited to an API client's scopes and projects (recommended)
+claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1
 # one repository: the projectId argument is filled in and hidden
 claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --project pim
-# everything the data root serves, limited to an API client's scopes and projects
-claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1
 ```
 
-Without `--client` the agent is the local admin principal, which only works while `security.auth.mode` is `local-trust`. The server writes logs to stderr only.
+Give agent hosts `--client` with a narrow client. Without `--client` (and it only works while `security.auth.mode` is `local-trust`), **an MCP host acts like a review-trust client unless you add `--admin`**: its tasks and plans are drafts a human approves in the UI, it cannot queue, retry, answer, activate a plan or switch the runner, it cannot create a project or change a project beyond its name, labels and paused state, and it has no administration tools. `--admin` makes it the local administrator, with every tool. The same holds for `/mcp` over HTTP: a request on loopback without a key under `local-trust` is the `local-mcp` principal with the administration tools hidden (a key makes it that client). All keyless MCP hosts on a machine share the one `local-mcp` identity (it is not stored; the id is reserved, and a client of that id left from before makes the keyless server refuse to start). The boundary holds only for MCP-only hosts: **a host whose model also has a shell can approve its own drafts through `boof-runner` commands or `curl` to `127.0.0.1`** (a task agent can too, see [Task agents are not sandboxed](#security-model)); containing that is the goal `agent-containment`. The server writes logs to stderr only.
 
-**Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback) and point the client at `/mcp`:
+**Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback) and point the client at `/mcp`. Without a key, a loopback caller under `local-trust` is the review-trust `local-mcp` principal (its own rate-limit bucket and audit name, no administration tools, as on stdio), not the administrator the UI is; administration over `/mcp` needs a key. While `auth/clients.json` holds a stored client with the reserved id `local-mcp`, keyless `/mcp` answers `403`:
 
 ```bash
 claude mcp add --transport http boof https://boof.example.com/mcp \
@@ -347,7 +404,7 @@ drafts/ → pending/ → ongoing/ → done/
                   ↘ actions/ (awaiting your answers)  ↘ failed/ or stopped/
 ```
 
-The runner polls the `pending/` directory of every active, non-paused project, picks the highest-priority task (ties: oldest `updated`, then project id), and runs **planner → planner-refinement → developer → observer (optional) → reviewer**, writing a report at every step. If the planner raises clarifying questions, the task parks in `actions/` and the runner moves on; you answer in the **Actions** tab and it resumes. Developer and reviewer questions are routed back to the planner via file and never reach you.
+The runner polls the `pending/` directory of every active, non-paused project, picks the highest-priority task (ties: oldest `updated`, then project id), and runs **planner → planner-refinement → developer → observer (optional) → reviewer**, writing a report at every step. If the planner raises clarifying questions (a fenced ` ```questions ` block at the end of its report), the task parks in `actions/` and the runner moves on; you answer in the **Actions** tab and it resumes. Developer, observer and reviewer questions are answered by the planner, the role then runs again with the answers, and the exchange is recorded in the task's Questions section; they never reach you.
 
 Plans add a layer above tasks: a plan's goals become tasks when you sync, and a later sync brings those tasks in line with changed goals (pending prompts are rewritten, running tasks get an instruction, finished goals get a follow-up task). When a plan task finishes, the goal's status is recorded in the plan.
 
@@ -373,19 +430,23 @@ For offline tests the `mock` tool takes a marker in the prompt: `[[mock-verdicts
 
 ## Project layout
 
-```
-packages/shared    task-file format, schemas, projects, plans, auth store, events, v1→v2 migration, lifecycle
-packages/runner    tool adapters, git worktree isolation, plan sync, the pipeline engine
-packages/api       operations registry (defineOp), services, OpenAPI generator
-packages/mcp       MCP server (stdio + Streamable HTTP) generated from the registry
-packages/web       Hono server: security chain, REST routes, SSE, webhooks, /mcp; React UI under packages/web/ui
-packages/desktop   Electron app: boots the server + runner in-process, opens the UI window
-bin/               the `boof-runner` CLI: scaffolds data, boots web, ensures a single runner
-docs/              harness.md (guide for AI agents), api.md (REST and MCP), boof-runner.md (architecture)
-scripts/           install script and the harness guide generator
-```
+The seven workspaces are:
 
-The `@boof-runner/*` packages are consumed from source and bundled into a single self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
+| Workspace                                      | Role                                                                                    | Depends on                                                                |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `@boof/heart` (`packages/heart`)               | Core schemas, file stores, lifecycle, plans, projects, and shared process/git utilities | —                                                                         |
+| `@boof/owlish` (`packages/owlish`)             | Owlish client and secret store                                                          | `@boof/heart`                                                             |
+| `@boof/runner` (`packages/runner`)             | Execution engine, pipeline, tool adapters, and worktree lifecycle                       | `@boof/heart`, `@boof/owlish`                                             |
+| `@boof/heart-server` (`packages/heart-server`) | Operations, services, OpenAPI, MCP, and Hono server                                     | `@boof/heart`, `@boof/owlish`                                             |
+| `@boof/facedisk` (`packages/facedisk`)         | React UI (`ui/`) and CLI command implementations (`cli/`)                               | `@boof/heart`, `@boof/heart-server`                                       |
+| `@boof/boof` (`bin/`)                          | `boof-runner` composition root, CLI dispatch, scaffolding, and server startup           | `@boof/heart`, `@boof/runner`, `@boof/heart-server`, and `@boof/facedisk` |
+| `@boof/desktop` (`packages/desktop`)           | Electron app that boots the server and Runner in-process                                | `@boof/boof`, `@boof/heart`, `@boof/runner`, `@boof/heart-server`         |
+
+`@boof/facedisk` is the single workspace for both UI and CLI code; the UI is built by Vite and served by the Hono server. `@boof/boof` and `@boof/desktop` compose the lower-level workspaces. Imports point down only: heart ← owlish ← runner; heart, owlish ← heart-server; heart, heart-server ← facedisk (the UI as types only); bin and desktop compose everything. The boundary test enforces this. Heart server never imports Runner; Runner never imports Heart server or Facedisk; Facedisk CLI never imports Runner or Owlish; the UI imports Heart and Heart server as types only, except the browser-safe `@boof/heart/ids`; bin never imports desktop. The root package remains `boof-runner` and provides the unchanged `boof-runner` executable.
+
+The root devDependency on `@boof/runner` supports heart-server tests only.
+
+The `@boof/*` workspaces are consumed from source and bundled into the self-contained CLI by tsup; the React UI is built by Vite and served by the Hono server.
 
 For a deeper explanation of the architecture, see [docs/boof-runner.md](docs/boof-runner.md).
 
@@ -401,7 +462,11 @@ npm run build        # vite build (UI) + tsup bundle (CLI)
 npm run docs:gen     # regenerate the REST reference in docs/harness.md and its embedded copy
 ```
 
-All pipeline tests drive the **mock** tool, so CI never makes network calls or burns tokens. After changing an operation, run `UPDATE_OPENAPI=1 npx vitest run packages/api` and `npm run docs:gen`.
+All pipeline tests drive the **mock** tool, so CI never makes network calls or burns tokens. After changing an operation, run `UPDATE_OPENAPI=1 npx vitest run packages/heart-server/src/api/openapi.test.ts` and `npm run docs:gen`.
+
+## Credits
+
+Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.
 
 ## License
 

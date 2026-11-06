@@ -2,19 +2,19 @@
   "files": [],
   "references": [
     {
-      "path": "./packages/shared"
+      "path": "./packages/heart"
+    },
+    {
+      "path": "./packages/owlish"
     },
     {
       "path": "./packages/runner"
     },
     {
-      "path": "./packages/api"
+      "path": "./packages/heart-server"
     },
     {
-      "path": "./packages/mcp"
-    },
-    {
-      "path": "./packages/web"
+      "path": "./packages/facedisk"
     },
     {
       "path": "./packages/desktop"

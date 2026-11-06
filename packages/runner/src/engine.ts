@@ -14,18 +14,26 @@ import {
   SettingsStore,
   statusDir,
   TaskStore,
+  taskPidPath,
   workingAreaDir,
   type Project,
   type Status,
-  taskControlDir,
-  taskStopRequestPath,
+  TaskNotRunningError,
   type Task,
-} from "@boof-runner/shared";
+  atomicWrite,
+  clearMissingCommand,
+  CommandStore,
+  isGitRepo,
+  pruneStaleWorktrees,
+  syncPlan,
+  taskStatusForPlan,
+} from "@boof/heart";
 import { announceBudgetExceeded } from "./budget.js";
-import { syncPlan, taskStatusForPlan } from "./plan-sync.js";
+import { reapOrphan } from "@boof/heart";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { isGitRepo, pruneStaleWorktrees } from "./worktree.js";
+import { PoolGate, type PoolCheck } from "./pool-gate.js";
+import { OwlishSecretStore } from "@boof/owlish";
 
 export interface EngineOptions {
   root: string;
@@ -33,6 +41,8 @@ export interface EngineOptions {
   registry?: ToolRegistry;
   /** Only serve this project (headless `run --all --project`). */
   onlyProject?: string;
+  /** The account pool gate; default: built from settings.owlish and the stored client key. */
+  pool?: PoolGate;
 }
 
 const INTERRUPTED_NOTE =
@@ -44,7 +54,9 @@ export type TickResult =
   | { kind: "disabled" }
   | { kind: "blocked" }
   /** Nothing started because a day budget is spent (`scopes`); work resumes when it resets. */
-  | { kind: "budget"; scopes: string[] };
+  | { kind: "budget"; scopes: string[] }
+  /** Nothing started because the account pool is unusable (`healthGate: pause`); work resumes when it recovers. */
+  | { kind: "pool"; status: string; reason: string };
 
 /** The next task to run and the project it belongs to. */
 export interface Selection {
@@ -72,8 +84,14 @@ export class RunnerEngine {
   private readonly runningTasks = new Map<string, string>();
   /** Day-budget scopes that kept work from starting in the last selection. */
   private budgetBlocked: BudgetScope[] = [];
+  /** The pool, while it keeps routed work from starting (visible reason); null otherwise. */
+  private poolBlocked: PoolCheck["pool"] | null = null;
+  readonly pool: PoolGate;
   private looping = false;
   private stopRequested = false;
+  /** `project/id` keys already asked to stop (or being asked) in the current shutdown. */
+  private shutdownAsked = new Set<string>();
+  private shutdownStopped: string[] = [];
 
   constructor(opts: EngineOptions) {
     this.root = opts.root;
@@ -82,6 +100,23 @@ export class RunnerEngine {
     this.registry = opts.registry ?? new ToolRegistry();
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;
     this.onlyProject = opts.onlyProject;
+    this.pool =
+      opts.pool ??
+      new PoolGate({
+        root: opts.root,
+        loadSettings: () => this.settingsStore.load(),
+        readKey: () => new OwlishSecretStore(opts.root).get(),
+      });
+  }
+
+  /** Why routed work is not starting (the account pool), or null. For the Now lane and status. */
+  poolBlock(): { status: string; reason: string } | null {
+    return this.poolBlocked
+      ? {
+          status: this.poolBlocked.status,
+          reason: this.poolBlocked.reason ?? "the account pool is not usable",
+        }
+      : null;
   }
 
   /** Task store of a project. */
@@ -117,6 +152,8 @@ export class RunnerEngine {
     selection: Selection | null;
     blocked: BudgetScope[];
   }> {
+    const poolCheck = await this.pool.check();
+    let poolSkipped = false;
     const settings = await this.settingsStore.load();
     const projects = await this.runnableProjects();
     const limited = settings.budget !== undefined || projects.some((p) => p.budget !== undefined);
@@ -129,11 +166,16 @@ export class RunnerEngine {
       if (this.inflight.has(project.id)) continue;
       for (const task of await this.storeFor(project).list()) {
         if (task.frontmatter.status !== "pending" || task.frontmatter.skip) continue;
+        const eff = effectiveSettings(settings, project);
+        const tools = (["planner", "developer", "reviewer", "observer"] as const)
+          .map((role) => resolveRole(eff, task, role as "observer")?.tool)
+          .filter((t): t is string => t !== undefined);
+        // The pool gate: a task that needs a pool-routed tool waits; the others run as usual.
+        if (poolCheck.blocked && tools.some((t) => this.registry.get(t)?.acceptsPool)) {
+          poolSkipped = true;
+          continue;
+        }
         if (status) {
-          const eff = effectiveSettings(settings, project);
-          const tools = (["planner", "developer", "reviewer", "observer"] as const)
-            .map((role) => resolveRole(eff, task, role as "observer")?.tool)
-            .filter((t): t is string => t !== undefined);
           const hits = blockingScopes(status, project.id, tools);
           if (hits.length > 0) {
             for (const h of hits) blocked.set(h.scope, h);
@@ -146,6 +188,8 @@ export class RunnerEngine {
     if (status) {
       for (const scope of blocked.values()) await announceBudgetExceeded(this.root, status, scope);
     }
+    this.poolBlocked = poolSkipped ? poolCheck.pool : null;
+    if (poolSkipped) await this.pool.announceIfBlocked(poolCheck);
     return { selection: best, blocked: [...blocked.values()] };
   }
 
@@ -201,8 +245,9 @@ export class RunnerEngine {
     if (outcome.kind === "done") {
       // Count this completed run. If more runs were requested, re-queue the
       // task to pending for its next iteration; otherwise finish (runs feature).
-      const completed = outcome.task.frontmatter.completedRuns + 1;
-      const runs = outcome.task.frontmatter.runs;
+      const current = (await store.get(id)) ?? outcome.task;
+      const completed = current.frontmatter.completedRuns + 1;
+      const runs = current.frontmatter.runs;
       const next = completed < runs ? "pending" : "done";
       await store.transition(id, next, (t) => {
         t.frontmatter.completedRuns = completed;
@@ -221,7 +266,7 @@ export class RunnerEngine {
         id,
         "failed",
         undefined,
-        outcome.budget ? { reason: outcome.error } : undefined,
+        outcome.budget || outcome.pool ? { reason: outcome.error } : undefined,
       );
       await this.noteGoalTaskStatus(project, outcome.task, "failed");
     } else if (outcome.kind === "stopped") {
@@ -237,6 +282,10 @@ export class RunnerEngine {
       });
       await this.noteGoalTaskStatus(project, outcome.task, "action");
     }
+    // A template renamed or deleted during the run leaves the id dangling; the copy stays.
+    await clearMissingCommand(new CommandStore(this.root), store, id).catch((err) =>
+      console.error(`could not clear the missing command of ${id}:`, err),
+    );
   }
 
   /**
@@ -378,6 +427,8 @@ export class RunnerEngine {
       const id = sel.task.frontmatter.id;
       this.runningTasks.set(project.id, id);
       await this.startTask(project, store, dir, id);
+      // A shutdown that ran while the task was still starting found it pending: ask it now.
+      if (this.stopRequested) await this.askToStop(project.id, id);
       const running = await store.get(id);
       const settings = await this.settingsStore.load();
       const pipeline = new Pipeline({
@@ -387,6 +438,8 @@ export class RunnerEngine {
         settings: effectiveSettings(settings, project),
         project,
         dataRoot: this.root,
+        pool: this.pool,
+        gateway: await this.pool.gateway(),
       });
       const outcome = await pipeline.run(running!);
       await this.finalize(project, store, outcome);
@@ -410,7 +463,9 @@ export class RunnerEngine {
     if (!selection) {
       return blocked.length > 0
         ? { kind: "budget", scopes: blocked.map((b) => b.scope) }
-        : { kind: "idle" };
+        : this.poolBlock()
+          ? { kind: "pool", ...this.poolBlock()! }
+          : { kind: "idle" };
     }
     return this.start(selection);
   }
@@ -426,7 +481,8 @@ export class RunnerEngine {
     while (this.inflight.size < concurrency && !this.stopRequested) {
       const { selection: next, blocked } = await this.selectWithBudget();
       this.budgetBlocked = blocked;
-      if (!next) break;
+      // A shutdown may have begun while the selection was pending: start nothing more.
+      if (this.stopRequested || !next) break;
       const p = this.start(next);
       p.catch((err) => console.error("task failed to run:", err)); // runUntilIdle rethrows via race
       started.push(p);
@@ -467,7 +523,9 @@ export class RunnerEngine {
             ? { kind: "disabled" }
             : this.budgetBlocked.length > 0
               ? { kind: "budget", scopes: this.budgetBlocked.map((b) => b.scope) }
-              : { kind: "idle" },
+              : this.poolBlock()
+                ? { kind: "pool", ...this.poolBlock()! }
+                : { kind: "idle" },
         );
         return results;
       }
@@ -502,6 +560,9 @@ export class RunnerEngine {
             console.warn(`recovery: skipping ${project.id}/${id}: no task.md in ongoing/${id}`);
             continue;
           }
+          const reaped = await reapOrphan(taskPidPath(dir, id), (l) =>
+            console.warn(`recovery: ${project.id}/${id}: ${l}`),
+          );
           const live = await readFile(join(workingAreaDir(dir, id), "log.txt"), "utf8").catch(
             () => "",
           );
@@ -510,7 +571,27 @@ export class RunnerEngine {
             "failed",
             (t) => {
               if (live.trim()) t.body.log = live;
-              const block = `### Interrupted\n${INTERRUPTED_NOTE}`;
+              // An agent that is still running (it survived, its runner still owns it, or it
+              // cannot be verified): remember who it is, because the pid record goes with the
+              // working area and Retry must refuse while it runs.
+              if ((reaped.stillRunning || reaped.maybeRunning) && reaped.record) {
+                const r = reaped.record;
+                t.frontmatter.agentProcess = {
+                  pgid: r.pgid,
+                  command: r.command,
+                  bootId: r.bootId,
+                  startTicks: r.startTicks,
+                  startTime: r.startTime,
+                  recordedAt: new Date().toISOString(),
+                };
+              }
+              const block =
+                `### Interrupted\n${INTERRUPTED_NOTE}` +
+                (reaped.outcome === "killed"
+                  ? `\nThe agent process group ${reaped.record!.pgid} was still running and was killed.`
+                  : reaped.maybeRunning
+                    ? `\nWarning: the agent process (pid ${reaped.record!.pgid}${reaped.record!.command ? `, ${reaped.record!.command}` : ""}) may still be running; this platform cannot stop it automatically. Stop it before you Retry, or a second agent will work in the same worktree.`
+                    : "");
               t.body.log = t.body.log.trim() ? `${t.body.log.trimEnd()}\n\n${block}` : block;
             },
             { reason: "interrupted: runner stopped unexpectedly" },
@@ -536,7 +617,9 @@ export class RunnerEngine {
     await this.recoverInterrupted().catch((err) => console.error("task recovery failed:", err));
     for (const project of await this.projects.list().catch(() => [])) {
       if (project.workingDirectory) {
-        await pruneStaleWorktrees(project.workingDirectory).catch(() => {});
+        await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+          console.error(`could not prune worktrees of project ${project.id}:`, err),
+        );
       }
     }
     try {
@@ -573,34 +656,63 @@ export class RunnerEngine {
    */
   async shutdown(graceMs = 30_000): Promise<{ stopped: string[]; timedOut: boolean }> {
     this.stop();
-    const stopped: string[] = [];
-    for (const [projectId, id] of [...this.runningTasks]) {
-      const dir = this.projects.dir(projectId);
-      try {
-        await mkdir(taskControlDir(dir, id), { recursive: true });
-        await writeFile(
-          taskStopRequestPath(dir, id),
+    this.shutdownAsked = new Set();
+    const stopped = (this.shutdownStopped = []);
+    const deadline = Date.now() + graceMs;
+    for (;;) {
+      // A task can start while we drain (tick() does not check stopRequested): ask it too.
+      for (const [projectId, id] of [...this.runningTasks]) {
+        await this.askToStop(projectId, id);
+      }
+      if (this.inflight.size === 0) return { stopped, timedOut: false };
+      const left = deadline - Date.now();
+      if (left <= 0) return { stopped, timedOut: true };
+      const settled = Promise.race([...this.inflight.values()].map((p) => p.catch(() => {}))).then(
+        () => "settled" as const,
+      );
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<"timeout">((res) => {
+        timer = setTimeout(() => res("timeout"), left);
+      });
+      const result = await Promise.race([settled, timeout]);
+      if (timer) clearTimeout(timer);
+      if (result === "timeout") return { stopped, timedOut: true };
+    }
+  }
+
+  /**
+   * Ask a running task to stop once per shutdown. Ids are per project, so dedupe on both. A
+   * failed write is retried on a later pass.
+   */
+  private async askToStop(projectId: string, id: string): Promise<void> {
+    const key = `${projectId}/${id}`;
+    if (this.shutdownAsked.has(key)) return;
+    this.shutdownAsked.add(key);
+    if (await this.requestStop(projectId, id)) this.shutdownStopped.push(id);
+    else this.shutdownAsked.delete(key);
+  }
+
+  /** Write the shutdown stop request for a running task and note it in its log. */
+  private async requestStop(projectId: string, id: string): Promise<boolean> {
+    const dir = this.projects.dir(projectId);
+    try {
+      await this.storeFor(projectId).whileRunning(id, async ({ controlDir }) => {
+        await atomicWrite(
+          join(controlDir, "stop"),
           `${SHUTDOWN_STOP_MARKER} ${new Date().toISOString()}\n`,
-          "utf8",
         );
         await appendFile(
           join(workingAreaDir(dir, id), "log.txt"),
           `\n\n### Stop requested\nRunner shutting down at ${new Date().toISOString()}\n`,
           "utf8",
         ).catch(() => {});
-        stopped.push(id);
-      } catch (err) {
-        console.error(`could not request stop for ${id}:`, err);
-      }
+      });
+      return true;
+    } catch (err) {
+      if (err instanceof TaskNotRunningError) return false; // finished while we drained
+      console.error(`could not request stop for ${projectId}/${id}:`, err);
+      return false;
     }
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<"timeout">((res) => {
-      timer = setTimeout(() => res("timeout"), graceMs);
-    });
-    const drained = Promise.allSettled([...this.inflight.values()]).then(() => "drained" as const);
-    const result = await Promise.race([drained, timeout]);
-    if (timer) clearTimeout(timer);
-    return { stopped, timedOut: result === "timeout" };
   }
 
   private sleep(ms: number): Promise<void> {

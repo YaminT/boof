@@ -3,15 +3,15 @@ import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseVerdict } from "@boof-runner/shared";
-import { execCommand } from "../exec.js";
+import { parseVerdict, parseUsage, sumUsage, UNKNOWN_USAGE } from "@boof/heart";
+import { execCommand } from "@boof/heart";
 import { MockTool, mockState, resetMock } from "./mock.js";
-import { parseUsage, sumUsage, UNKNOWN_USAGE } from "./usage.js";
 import { ToolRegistry } from "./registry.js";
 import { ClaudeCodeTool, StreamRenderer } from "./claude-code.js";
 import { isTransientToolError, ToolRunError } from "./errors.js";
 import { CodexTool } from "./codex.js";
 import { OpencodeTool } from "./opencode.js";
+import { formatQuestions, parseQuestions } from "./questions.js";
 import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
@@ -75,6 +75,16 @@ describe("usage parsing", () => {
     expect(u).toEqual({ inputTokens: 100, outputTokens: 42, costUsd: 0.01, known: true });
   });
 
+  it("knows the cost only when a price was printed", () => {
+    expect(parseUsage("input_tokens: 7 output_tokens: 3")).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      costUsd: 0,
+      known: false,
+    });
+    expect(parseUsage("tokens used\n11,536")).toMatchObject({ inputTokens: 11536, known: false });
+  });
+
   it("returns unknown when no usage present", () => {
     expect(parseUsage("nothing here")).toEqual(UNKNOWN_USAGE);
   });
@@ -134,6 +144,7 @@ describe("claude usage (stream-json)", () => {
     const u = feed([msg("m1", 3, 100, 0, 1), msg("m1", 3, 100, 0, 20), msg("m2", 2, 0, 100, 30)]);
     expect(u?.inputTokens).toBe(3 + 100 + 2 + 100);
     expect(u?.outputTokens).toBe(50);
+    expect(u?.known).toBe(false);
   });
 
   it("prefers the result event over earlier per-message usage", () => {
@@ -307,7 +318,36 @@ describe("CodexTool report", () => {
   afterEach(async () => {
     if (prevBin === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
     else process.env.BOOF_RUNNER_CODEX_BIN = prevBin;
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it("parses a questions block out of the last message", async () => {
+    const tool = await setup(
+      [
+        "while [ $# -gt 0 ]; do",
+        '  if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. Which region?\\n\\`\\`\\`\\n" > "$2"; fi',
+        "  shift",
+        "done",
+      ].join("\n"),
+    );
+    const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
+    expect(res.questions).toEqual(["Which DB?", "Which region?"]);
+    expect(res.report).toBe("Need input.");
+  });
+
+  it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
+    const tool = await setup(
+      `cat > "$(dirname "$0")/stdin"\nprintf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'`,
+    );
+    const prompt = "x".repeat(300_000);
+    expect(tool.buildArgs({ ...baseOpts, prompt }, "/tmp/last").at(-1)).toBe("-");
+    expect(
+      tool.buildArgs({ ...baseOpts, prompt }, "/tmp/last").some((a) => a.includes("xxxx")),
+    ).toBe(false);
+    const res = await tool.run({ ...baseOpts, role: "developer", cwd: dir, prompt });
+    expect(res.report).toBe("ok");
+    expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
+    expect(tool.promptText({ ...baseOpts, prompt: "NEW", resumeSessionId: "t" })).toBe("NEW");
   });
 
   it("uses the --output-last-message file, not noisy stdout", async () => {
@@ -346,6 +386,22 @@ describe("CodexTool report", () => {
     expect(health.status).toBe("available");
   });
 
+  it("health probe uses the CLI default without naming the first listed model", async () => {
+    const tool = await setup(
+      [
+        'printf \'CALL %s\\n\' "$*" >> "$(dirname "$0")/health-args"',
+        'case "$1" in --version) echo "codex-cli 0.0.0"; exit 0;; debug) echo \'{"models":[{"slug":"first-listed"}]}\'; exit 0;; esac',
+        'for a in "$@"; do [ "$a" = "--skip-git-repo-check" ] && { echo hi; exit 0; }; done',
+        "exit 1",
+      ].join("\n"),
+    );
+    expect((await tool.detect()).status).toBe("available");
+    const args = (await readFile(join(dir, "health-args"), "utf8")).trim();
+    expect(args).toContain("--skip-git-repo-check");
+    expect(args).not.toContain("--model");
+    expect(args).not.toContain("first-listed");
+  });
+
   it("parses --json events: report, usage, readable stream", async () => {
     const tool = await setup(`cat "${fixture("codex-json-stdout.jsonl")}"`);
     const chunks: string[] = [];
@@ -357,7 +413,7 @@ describe("CodexTool report", () => {
     });
     expect(res.output).toContain("--json");
     expect(res.report).toBe("hi");
-    expect(res.usage).toEqual({ inputTokens: 11531, outputTokens: 5, costUsd: 0, known: true });
+    expect(res.usage).toEqual({ inputTokens: 11531, outputTokens: 5, costUsd: 0, known: false });
     const live = chunks.join("");
     expect(live).toContain("hi");
     expect(live).toContain("[warning]");
@@ -367,7 +423,7 @@ describe("CodexTool report", () => {
   it("parses the plain-mode `tokens used` total from stderr", async () => {
     const tool = await setup(`cat "${fixture("codex-plain-stderr.txt")}" >&2`);
     const res = await tool.run({ ...baseOpts, role: "reviewer", cwd: dir });
-    expect(res.usage).toEqual({ inputTokens: 11536, outputTokens: 0, costUsd: 0, known: true });
+    expect(res.usage).toEqual({ inputTokens: 11536, outputTokens: 0, costUsd: 0, known: false });
   });
 
   it("renders command and file events compactly", async () => {
@@ -488,7 +544,17 @@ describe("OpencodeTool", () => {
   afterEach(async () => {
     if (prevBin === undefined) delete process.env.BOOF_RUNNER_OPENCODE_BIN;
     else process.env.BOOF_RUNNER_OPENCODE_BIN = prevBin;
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it("parses a questions block out of the text events", async () => {
+    const text = "Need input.\n\n```questions\n- Which DB?\n```";
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "text", part: { text, messageID: "m1" } })}'`,
+    );
+    const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
+    expect(res.questions).toEqual(["Which DB?"]);
+    expect(res.report).toBe("Need input.");
   });
 
   it("builds args anchored to the worktree, with --auto only in auto mode", async () => {
@@ -502,17 +568,8 @@ describe("OpencodeTool", () => {
       prompt: "DO",
       autoApprove: true,
     });
-    expect(auto).toEqual([
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/tmp/wt",
-      "-m",
-      "p/m",
-      "--auto",
-      "SYS\n\nDO",
-    ]);
+    expect(auto).toEqual(["run", "--format", "json", "--dir", "/tmp/wt", "-m", "p/m", "--auto"]);
+    expect(tool.promptText({ ...baseOpts, systemPrompt: "SYS", prompt: "DO" })).toBe("SYS\n\nDO");
     const manual = tool.buildArgs({
       ...baseOpts,
       role: "developer",
@@ -530,6 +587,17 @@ describe("OpencodeTool", () => {
       "-m",
       "p/m",
     ]);
+  });
+
+  it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
+    const tool = await setup(
+      `cat > "$(dirname "$0")/stdin"\nprintf '%s\\n' '{"type":"text","part":{"text":"ok","messageID":"m1"}}'`,
+    );
+    const prompt = "x".repeat(300_000);
+    expect(tool.buildArgs({ ...baseOpts, prompt }).some((a) => a.includes("xxxx"))).toBe(false);
+    const res = await tool.run({ ...baseOpts, role: "developer", cwd: dir, prompt });
+    expect(res.report).toBe("ok");
+    expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
   });
 
   it("passes the worktree via --dir, streams chunks and returns the report", async () => {
@@ -644,7 +712,8 @@ describe("session resume", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
+    for (const d of dirs.splice(0))
+      await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
   /** A stand-in CLI that prints a fixture and records its argv next to itself. */
   const fake = async (envKey: string, name: string, fixtureName: string) => {
@@ -701,13 +770,33 @@ describe("session resume", () => {
       "--json",
       "--model",
       "m",
+      "--ignore-user-config",
       "--dangerously-bypass-approvals-and-sandbox",
       "-o",
       "/tmp/l",
-      "NEW",
+      "-",
     ]);
     const res = await tool.run({ ...opts, cwd: dir });
     expect(res.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
+  });
+
+  it("codex omits the model option for the CLI default on new and resumed runs", () => {
+    const tool = new CodexTool();
+    for (const model of ["", undefined]) {
+      const base = { ...opts, model } as typeof opts;
+      expect(tool.buildArgs(base, "/tmp/last")).not.toContain("--model");
+      expect(tool.buildArgs({ ...base, resumeSessionId: "thread-9" }, "/tmp/last")).not.toContain(
+        "--model",
+      );
+    }
+  });
+
+  it("codex passes an explicitly selected model", () => {
+    const args = new CodexTool().buildArgs({ ...opts, model: "gpt-5.5" }, "/tmp/last");
+    expect(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2)).toEqual([
+      "--model",
+      "gpt-5.5",
+    ]);
   });
 
   it("opencode captures sessionID and resumes with --session and only the new prompt", async () => {
@@ -732,7 +821,6 @@ describe("session resume", () => {
       "--session",
       "ses_1",
       "--auto",
-      "NEW",
     ]);
     const res = await tool.run({ ...opts, cwd: dir });
     expect(res.sessionId).toBe("ses_e883d9495ffeYJX7kHzp41UH09");
@@ -774,5 +862,145 @@ describe("session resume", () => {
     expect(mockState.resumes.map((r) => r.sessionId)).toEqual([first.sessionId]);
     mockState.resumeSupported = false;
     expect(tool.supportsResume).toBe(false);
+  });
+});
+
+describe("question protocol", () => {
+  it("takes the last questions block, strips markers and removes it from the report", () => {
+    const report = "Plan so far.\n\n```questions\n1. Which DB?\n- Which region?\n\n```\n";
+    expect(parseQuestions(report)).toEqual({
+      report: "Plan so far.",
+      questions: ["Which DB?", "Which region?"],
+    });
+    expect(parseQuestions(formatQuestions(["a", "b"])).questions).toEqual(["a", "b"]);
+  });
+  it("parks on nothing but a block, and keeps a verdict line last", () => {
+    const prose = "I have questions about style but can proceed.\nVERDICT: APPROVE";
+    expect(parseQuestions(prose)).toEqual({ report: prose, questions: [] });
+    const withBlock =
+      "Findings.\n\n```Questions\nIs the API frozen?\n```\n\nVERDICT: CHANGES_REQUESTED";
+    expect(parseQuestions(withBlock)).toEqual({
+      report: "Findings.\n\nVERDICT: CHANGES_REQUESTED",
+      questions: ["Is the API frozen?"],
+    });
+    expect(parseQuestions("```questions\n\n```").questions).toEqual([]);
+  });
+});
+
+describe("question protocol position", () => {
+  it("ignores a block followed by more prose", () => {
+    const report = "Example:\n```questions\n1. Q?\n```\nThat is how it works.";
+    expect(parseQuestions(report)).toEqual({ report, questions: [] });
+  });
+  it("accepts a block followed only by a VERDICT line, and keeps it", () => {
+    const r = parseQuestions("Notes.\n```questions\n1. Q?\n```\nVERDICT: CHANGES_REQUESTED");
+    expect(r).toEqual({ report: "Notes.\n\nVERDICT: CHANGES_REQUESTED", questions: ["Q?"] });
+  });
+  it("accepts the VERDICT forms parseVerdict accepts: bold, italic, backticked", () => {
+    for (const verdict of ["**VERDICT: APPROVE**", "`VERDICT: APPROVE`", "_VERDICT: APPROVE_"]) {
+      const r = parseQuestions(`Notes.\n\`\`\`questions\n1. Q?\n\`\`\`\n\n${verdict}`);
+      expect(r).toEqual({ report: `Notes.\n\n${verdict}`, questions: ["Q?"] });
+      expect(parseVerdict(r.report)).toBe("APPROVE");
+    }
+  });
+  it("accepts a block at the very end", () => {
+    expect(parseQuestions("Plan.\n\n```questions\n- Q?\n```\n\n")).toEqual({
+      report: "Plan.",
+      questions: ["Q?"],
+    });
+  });
+  it("with two blocks, only the one ending the report counts", () => {
+    const r = parseQuestions("```questions\n1. Old?\n```\nMore.\n\n```questions\n1. Real?\n```");
+    expect(r.questions).toEqual(["Real?"]);
+    expect(r.report).toContain("Old?");
+  });
+});
+
+describe("ClaudeCodeTool questions", () => {
+  let dir: string;
+  let prevBin: string | undefined;
+
+  const setup = async (script: string) => {
+    prevBin = process.env.BOOF_RUNNER_CLAUDE_BIN;
+    dir = await mkdtemp(join(tmpdir(), "boof-claude-test-"));
+    const bin = join(dir, "claude");
+    await writeFile(bin, `#!/bin/sh\n${script}\n`);
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_CLAUDE_BIN = bin;
+    return new ClaudeCodeTool();
+  };
+  afterEach(async () => {
+    if (prevBin === undefined) delete process.env.BOOF_RUNNER_CLAUDE_BIN;
+    else process.env.BOOF_RUNNER_CLAUDE_BIN = prevBin;
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it("parses a questions block out of the result event", async () => {
+    const result = "Need input.\n\n```questions\n1. Which DB?\n```";
+    const tool = await setup(`printf '%s\\n' '${JSON.stringify({ type: "result", result })}'`);
+    const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
+    expect(res.questions).toEqual(["Which DB?"]);
+    expect(res.report).toBe("Need input.");
+  });
+});
+
+describe("user MCP servers", () => {
+  const claude = new ClaudeCodeTool();
+  const withRole = { ...baseOpts, role: "developer" as const };
+
+  it("claude ignores the user's MCP servers unless the run opts back in", () => {
+    const args = claude.buildArgs(withRole);
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).not.toContain("--mcp-config");
+    expect(claude.buildArgs({ ...withRole, inheritMcpServers: false })).toContain(
+      "--strict-mcp-config",
+    );
+    expect(claude.buildArgs({ ...withRole, inheritMcpServers: true })).not.toContain(
+      "--strict-mcp-config",
+    );
+  });
+
+  it("codex ignores the user's config.toml (where its MCP servers live) unless the run opts back in", () => {
+    const codex = new CodexTool();
+    const off = codex.buildArgs(withRole, "/tmp/last");
+    expect(off).toContain("--ignore-user-config");
+    expect(off.indexOf("--ignore-user-config")).toBeLessThan(off.indexOf("-o"));
+    const resumed = codex.buildArgs({ ...withRole, resumeSessionId: "thread-1" }, "/tmp/last");
+    expect(resumed.slice(0, 3)).toEqual(["exec", "resume", "thread-1"]);
+    expect(resumed).toContain("--ignore-user-config");
+    // Everything the run needs is still passed explicitly: the model and the approval mode.
+    expect(off).toEqual(expect.arrayContaining(["--model", withRole.model]));
+    expect(off).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(codex.buildArgs({ ...withRole, inheritMcpServers: true }, "/tmp/last")).not.toContain(
+      "--ignore-user-config",
+    );
+  });
+
+  it("the health probes ignore the user's MCP servers too, unless asked not to", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-probe-"));
+    try {
+      const mk = async (name: string, varName: string) => {
+        const bin = join(dir, name);
+        await writeFile(bin, `#!/bin/sh\nprintf '%s\\n' "$@" >> "${dir}/${name}.argv"\necho hi\n`);
+        await chmod(bin, 0o755);
+        process.env[varName] = bin;
+      };
+      await mk("claude", "BOOF_RUNNER_CLAUDE_BIN");
+      await mk("codex", "BOOF_RUNNER_CODEX_BIN");
+      await new ClaudeCodeTool().detect();
+      await new CodexTool().detect();
+      expect(await readFile(join(dir, "claude.argv"), "utf8")).toContain("--strict-mcp-config");
+      expect(await readFile(join(dir, "codex.argv"), "utf8")).toContain("--ignore-user-config");
+      await rm(join(dir, "claude.argv"));
+      await rm(join(dir, "codex.argv"));
+      await new ClaudeCodeTool().detect({ inheritMcpServers: true });
+      await new CodexTool().detect({ inheritMcpServers: true });
+      expect(await readFile(join(dir, "claude.argv"), "utf8")).not.toContain("--strict-mcp-config");
+      expect(await readFile(join(dir, "codex.argv"), "utf8")).not.toContain("--ignore-user-config");
+    } finally {
+      delete process.env.BOOF_RUNNER_CLAUDE_BIN;
+      delete process.env.BOOF_RUNNER_CODEX_BIN;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

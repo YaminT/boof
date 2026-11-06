@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>bin/src/runner-guard.ts (the single-runner pidfile, `.runner.pid`) is a fifth pid lock that the process-lock work did not touch. It holds the pid alone, with no boot id, so after a crash and a reboot that reuses the pid `isHeld()` reports a live runner and the runner never starts; and `acquire()` is `isHeld()` followed by `writeFile`, which is not atomic, so two processes starting together can both believe they hold it. Make it a proper lock: either `withProcessLock`-style exclusive creation with the boot id (packages/heart/src/process-lock.ts), or reuse the identity of packages/runner/src/pid-file.ts (`bootId` plus `startTicks`, field 22 of /proc/&lt;pid&gt;/stat, which also detects pid reuse inside one boot). Keep reading old pid-only files, and keep the guard held for the whole life of the runner (it is not a short critical section like the task lock, so it needs its own acquire/release shape rather than a callback).</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), vitest</stack>
+    <rules>
+      <do>Read bin/src/runner-guard.ts, packages/runner/src/pid-file.ts, packages/heart/src/process-lock.ts and where the guard is used (serve, run, the desktop app, the systemd unit) before changing code.</do>
+      <do>Write a failing test first: two processes acquiring at once (child processes) must yield exactly one holder; a guard file naming a live pid but another boot (or another start time) must be taken over; a live holder must still refuse.</do>
+      <do>Prefer one shared boot-and-start identity helper over a third copy of the /proc reading code.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Filed from the re-review of the process-lock boot id change (M2, 2026-11-02); not started.</version>
+        <version number="2" status="done">RunnerGuard (bin/src/runner-guard.ts) is now tryAcquireProcessLock on .runner.pid: an exclusive create (no check-then-write), holding "&lt;pid&gt; &lt;boot uuid&gt; &lt;start ticks&gt;", released only if the file still names us. New shared helpers in process-lock.ts: tryAcquireProcessLock (non-blocking, held for the life of the process), inspectProcessLock (read-only, used by migrate's "is the runner alive" check, which no longer breaks on the new format) and processStartTicks (field 22 of /proc/&lt;pid&gt;/stat, now also written by withProcessLock, so a pid reused inside one boot is told apart on Linux). Taken over: a dead pid, another boot uuid with a live pid, another start time with a live pid; kept: a live holder with a matching identity or an old pid-only file. Tests: two child processes starting together, exactly one wins; SIGKILL while holding, the next start takes over; fake files for reboot-with-reused-pid and same-boot reuse; helper unit tests; migrate reads the new format. Checked with the built CLI on a scratch root: a second serve refuses to start a runner, after kill -9 of the first a third one takes over, a clean SIGTERM removes the file. pid-file.ts (the agent process group record) keeps its own /proc reading; it could use processStartTicks later. Review follow-ups: the two-process test asserts that the holders' intervals never overlap (it was flaky when tsx started late); the unreadable-start-time fallback is pinned by a test; the lock records the pid namespace as a fourth field and a pid or start time is judged only inside the same namespace (another namespace is waited for; only another boot overrides); docs say sharing a data root across pid namespaces and mixed versions are not supported and that the desktop app and headless run/scan start without the guard by design. The webhook dispatcher is its own goal, webhook-dispatcher-single.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Child processes racing to acquire the guard on one data root; a stale file with a live pid and another boot id; the old pid-only format.</strategy>
+      <technology>vitest</technology>
+      <run>npm run typecheck &amp;&amp; npm test</run>
+    </tests>
+  </progress>
+</boof>

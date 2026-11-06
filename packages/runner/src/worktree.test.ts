@@ -1,8 +1,14 @@
-import { mkdtemp, rm, writeFile, stat, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { execCommand } from "./exec.js";
+import {
+  execCommand,
+  initGitRepo,
+  isGitRepo,
+  pruneStaleWorktrees,
+  repoCommonDir,
+} from "@boof/heart";
 import {
   commitLeftovers,
   createWorktree as create,
@@ -10,7 +16,6 @@ import {
   discardWorktree,
   ensureWorktree as ensure,
   finalizeWorktree,
-  isGitRepo,
   NotAGitRepoError,
   UnknownBaseRefError,
   type WorktreeOptions,
@@ -48,16 +53,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(repo, { recursive: true, force: true });
-  await rm(nonRepo, { recursive: true, force: true });
+  await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await rm(nonRepo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("worktree isolation", () => {
-  it("detects git vs non-git directories", async () => {
-    expect(await isGitRepo(repo)).toBe(true);
-    expect(await isGitRepo(nonRepo)).toBe(false);
-  });
-
   it("refuses to create a worktree on a non-git dir", async () => {
     await expect(create(nonRepo, "t1", { root: rootOf() })).rejects.toBeInstanceOf(
       NotAGitRepoError,
@@ -95,13 +95,28 @@ describe("worktree isolation", () => {
     expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t3"])).code).toBe(0);
   });
 
-  it("captures untracked files in the diff", async () => {
+  it("captures the content of untracked files in the diff", async () => {
     const wt = await createWorktree(repo, "t2");
     await mkdir(join(wt.path, "sub"), { recursive: true });
     await writeFile(join(wt.path, "sub", "u.txt"), "untracked\n");
-    const diff = (await diffAgainstBase(wt)).text;
-    expect(diff).toContain("u.txt");
+    const res = await diffAgainstBase(wt);
+    expect(res.text).toContain("## Untracked files\nsub/u.txt");
+    expect(res.text).toContain("+++ b/sub/u.txt");
+    expect(res.text).toContain("+untracked");
+    expect(res.bytes).toBeGreaterThan(0);
+    expect(res.capped).toBe(false);
     await finalizeWorktree(repo, wt, "t");
+  });
+
+  it("untracked content counts toward the inline cap", async () => {
+    const wt = await createWorktree(repo, "cap-untracked");
+    await writeFile(join(wt.path, "big.txt"), "x".repeat(2000) + "\n");
+    const res = await diffAgainstBase(wt, 100);
+    expect(res.capped).toBe(true);
+    expect(res.bytes).toBeGreaterThan(2000);
+    expect(res.text).toContain("## Untracked files\nbig.txt");
+    expect(res.text).not.toContain("xxxxxxxxxx");
+    expect(res.text).toContain("git diff --no-index -- /dev/null <path>");
   });
 
   it("inlines the full diff when under the byte limit", async () => {
@@ -443,6 +458,102 @@ describe("worktree root exclusion", () => {
       expect(await excludeLines()).toEqual([]);
     } finally {
       await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("worktree add timeout and cleanup", () => {
+  let shimDir: string;
+  const savedPath = process.env.PATH;
+  /** A `git` that runs the real `worktree add`, deletes README.md from the new tree, then hangs or fails. */
+  const shim = async (mode: "hang" | "fail") => {
+    shimDir = await mkdtemp(join(tmpdir(), "boof-git-shim-"));
+    const real = (await execCommand("sh", ["-c", "command -v git"], { cwd: repo })).stdout.trim();
+    await writeFile(
+      join(shimDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = worktree ] && [ "$2" = add ]; then',
+        `  "${real}" "$@" 2>/dev/null || exit $?`,
+        '  for a in "$@"; do case "$a" in /*) rm -f "$a/README.md";; esac; done',
+        mode === "hang" ? "  sleep 60" : "  echo 'disk full' >&2; exit 128",
+        "fi",
+        `exec "${real}" "$@"`,
+        "",
+      ].join("\n"),
+    );
+    await chmod(join(shimDir, "git"), 0o755);
+    process.env.PATH = `${shimDir}:${savedPath}`;
+  };
+  afterEach(async () => {
+    process.env.PATH = savedPath;
+    if (shimDir)
+      await rm(shimDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  const clean = async (id: string) => {
+    expect(await exists(join(rootOf(), id))).toBe(false);
+    expect((await g(["worktree", "list", "--porcelain"])).stdout).not.toContain(join(rootOf(), id));
+    expect(
+      (await g(["rev-parse", "--verify", "--quiet", `refs/heads/boof-runner/${id}`])).code,
+    ).not.toBe(0);
+  };
+
+  it("a hung add is killed, its registration, tree and branch removed, and a retry starts clean", async () => {
+    await shim("hang");
+    await expect(create(repo, "slow", { root: rootOf(), checkoutTimeoutMs: 1000 })).rejects.toThrow(
+      /git worktree add timed out after 1s/,
+    );
+    process.env.PATH = savedPath;
+    await clean("slow");
+    const again = await create(repo, "slow", { root: rootOf() });
+    expect(again.reused).toBe(false);
+    expect(await exists(join(again.worktree.path, "README.md"))).toBe(true);
+  });
+
+  it("a failed add is cleaned up the same way", async () => {
+    await shim("fail");
+    await expect(create(repo, "broken", { root: rootOf() })).rejects.toThrow(
+      /git worktree add failed: disk full/,
+    );
+    process.env.PATH = savedPath;
+    await clean("broken");
+    expect((await create(repo, "broken", { root: rootOf() })).reused).toBe(false);
+  });
+
+  it("a failed add never removes a branch or worktree that existed before it", async () => {
+    // The task branch already exists, so the add reuses it and must not delete it.
+    await g(["branch", "boof-runner/old"]);
+    // Another worktree is registered under the root and must survive.
+    await g(["worktree", "add", "-b", "boof-runner/other", join(rootOf(), "other")]);
+    await shim("fail");
+    await expect(create(repo, "old", { root: rootOf() })).rejects.toThrow(
+      /git worktree add failed: disk full/,
+    );
+    process.env.PATH = savedPath;
+    expect(await exists(join(rootOf(), "old"))).toBe(false);
+    expect((await g(["rev-parse", "--verify", "--quiet", "refs/heads/boof-runner/old"])).code).toBe(
+      0,
+    );
+    expect(await exists(join(rootOf(), "other", "README.md"))).toBe(true);
+    expect((await g(["worktree", "list", "--porcelain"])).stdout).toContain(
+      join(rootOf(), "other"),
+    );
+  });
+});
+
+describe("initGitRepo then a worktree", () => {
+  it("a repository made by initGitRepo takes a worktree", async () => {
+    const base = await mkdtemp(join(tmpdir(), "boof-runner-init-"));
+    try {
+      const dir = join(base, "fresh");
+      await mkdir(dir, { recursive: true });
+      await initGitRepo(dir, {
+        env: { GIT_CONFIG_GLOBAL: join(base, "none"), GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      const wt = await create(dir, "t1", { root: join(base, "wts") });
+      expect(await exists(wt.worktree.path)).toBe(true);
+    } finally {
+      await rm(base, { recursive: true, force: true });
     }
   });
 });

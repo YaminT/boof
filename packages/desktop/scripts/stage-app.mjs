@@ -11,17 +11,15 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(here, "..");
 const distDir = join(desktopDir, "dist");
-const uiDistDir = resolve(desktopDir, "..", "web", "ui", "dist");
+const uiDistDir = resolve(desktopDir, "..", "facedisk", "ui", "dist");
 const appDir = join(desktopDir, "build", "app");
 
 const pkg = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
 
-// The released app carries a beta pre-release identifier so the artifact names
-// and the GitHub release tag (v<version>) line up: 0.2.0 -> 0.2.0-beta.
+// The release workflow sets BOOF_RUNNER_APP_VERSION from the tag (scripts/release-version.sh);
+// a local build stages package.json's version as is.
 const baseVersion = pkg.version ?? "0.0.0";
-const appVersion =
-  process.env.BOOF_RUNNER_APP_VERSION ??
-  (baseVersion.includes("-") ? baseVersion : `${baseVersion}-beta`);
+const appVersion = process.env.BOOF_RUNNER_APP_VERSION ?? baseVersion;
 
 function need(path, hint) {
   if (!existsSync(path)) {
@@ -30,9 +28,9 @@ function need(path, hint) {
   }
 }
 
-need(join(distDir, "main.js"), "run `npm run build -w @boof-runner/desktop` first");
-need(join(distDir, "preload.js"), "run `npm run build -w @boof-runner/desktop` first");
-need(join(uiDistDir, "index.html"), "run `npm run build -w @boof-runner/web` first");
+need(join(distDir, "main.js"), "run `npm run build -w @boof/desktop` first");
+need(join(distDir, "preload.js"), "run `npm run build -w @boof/desktop` first");
+need(join(uiDistDir, "index.html"), "run `npm run build -w @boof/facedisk` first");
 
 rmSync(appDir, { recursive: true, force: true });
 mkdirSync(appDir, { recursive: true });

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,13 +12,15 @@ import {
   readEvents,
   SettingsStore,
   TaskStore,
+  taskControlDir,
+  taskSteerRequestPath,
   budgetTimeZone,
   type BudgetSettings,
   type Project,
   type TaskFrontmatter,
-} from "@boof-runner/shared";
+} from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
-import { execCommand } from "./exec.js";
+import { execCommand } from "@boof/heart";
 import { mockState, resetMock } from "./tools/mock.js";
 
 let dataRoot: string;
@@ -83,8 +85,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(dataRoot, { recursive: true, force: true });
-  for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const d of dirs.splice(0))
+    await rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
 });
 
@@ -127,6 +130,19 @@ describe("per-task limit", () => {
     expect(t?.body.log).toContain("budget exceeded: task:t1 1.5000/1.2 USD");
     expect(existsSync(join(main.workingDirectory, ".boof-runner-worktrees", "t1"))).toBe(true);
     expect(results.at(-1)).toEqual({ kind: "idle" });
+  });
+
+  it("the planner's answer run and the rerun count, and the rerun does not start over the limit", async () => {
+    await useBudget({ perTaskUsd: 1.7, onExceed: "fail" });
+    mockState.roleQuestions = { developer: ["Which db?"] };
+    await addTask(main, "t1");
+    await engine.runUntilIdle();
+    const t = await tasksOf(main).get("t1");
+    // planner, refinement, developer (1.50), the planner's answer (2.00): the rerun is refused.
+    expect(mockState.calls).toEqual(["planner", "planner", "developer", "planner"]);
+    expect(t?.frontmatter.status).toBe("failed");
+    expect(t?.body.log).toContain("budget exceeded: task:t1 2.0000/1.7 USD");
+    expect(t?.frontmatter.tokens?.costUsd).toBeCloseTo(2);
   });
 
   it("with onExceed fail follows worktree.onFailure", async () => {
@@ -236,5 +252,75 @@ describe("day limits", () => {
     const results = await engine.runUntilIdle();
     expect(results.at(-1)).toEqual({ kind: "budget", scopes: ["tool:mock"] });
     expect((await tasksOf(main).get("t2"))?.frontmatter.status).toBe("pending");
+  });
+});
+
+describe("failed attempts", () => {
+  const retryFast = () => settings.update({ retries: { transient: 2, backoffMs: [0] } });
+  const today = async () => {
+    const tz = budgetTimeZone({});
+    return readDailyLedger(dataRoot, dayKey(new Date(), tz), tz);
+  };
+
+  it("records the cost of transient attempts in the ledger and on the task", async () => {
+    await retryFast();
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-transient developer=2]]"),
+    );
+    await engine.runUntilIdle();
+    // planner, refinement, two failed developer attempts, developer, reviewer
+    expect((await today()).costUsd).toBeCloseTo(3);
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("done");
+    expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(3);
+  });
+
+  it("records a step that finally fails, and the task fails", async () => {
+    await retryFast();
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-transient developer=3]]"),
+    );
+    await engine.runUntilIdle();
+    expect((await today()).costUsd).toBeCloseTo(2.5); // planner, refinement, 3 developer attempts
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("failed");
+    expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(2.5);
+  });
+
+  it("does not rerun a steered step once the per-task budget is spent", async () => {
+    await useBudget({ perTaskUsd: 1.2 });
+    const dir = projects.dir("main");
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer" || opts.resumeSessionId) return;
+      await mkdir(taskControlDir(dir, "t1"), { recursive: true });
+      await writeFile(
+        taskSteerRequestPath(dir, "t1"),
+        JSON.stringify({ at: new Date().toISOString(), text: "use tabs" }) + "\n",
+      );
+    };
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-stall developer=1]]"),
+    );
+    await engine.runUntilIdle();
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("failed");
+    expect(t.body.log).toContain("ERROR: budget exceeded: task:t1");
+    // planner, refinement, the steered developer attempt: no rerun started.
+    expect(mockState.calls.filter((r) => r === "developer")).toHaveLength(1);
+    expect(t.frontmatter.tokens?.costUsd).toBeCloseTo(1.5);
+  });
+
+  it("does not retry once the per-task budget is spent", async () => {
+    await retryFast();
+    await useBudget({ perTaskUsd: 1.2 });
+    await tasksOf(main).create(
+      newTask(fm("t1"), "Work. [[mock-cost 0.5]] [[mock-transient developer=2]]"),
+    );
+    await engine.runUntilIdle();
+    const t = (await tasksOf(main).get("t1"))!;
+    expect(t.frontmatter.status).toBe("failed");
+    expect(t.body.log).toContain("ERROR: budget exceeded: task:t1");
+    expect((await today()).costUsd).toBeCloseTo(1.5); // planner, refinement, one failed attempt
+    expect(mockState.calls.filter((r) => r === "developer")).toHaveLength(1);
   });
 });

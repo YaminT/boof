@@ -1,0 +1,66 @@
+import { useRef } from "react";
+import { EllipsisIcon } from "lucide-react";
+import type { TaskView } from "../api.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown-menu";
+import type { TaskActions } from "./useTaskActions.js";
+
+/** The overflow menu of a row: everything that is not its primary action. No Delete here. */
+export function TaskRowMenu({
+  task,
+  queued,
+  actions,
+}: {
+  task: TaskView;
+  queued: boolean;
+  actions: TaskActions;
+}) {
+  const f = task.frontmatter;
+  const trigger = useRef<HTMLButtonElement>(null);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        ref={trigger}
+        aria-label={`More actions for ${f.title}`}
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted outline-none hover:bg-accent hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        <EllipsisIcon className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-52"
+        // Closing the menu puts focus on the row, so j/k and Enter carry on from there.
+        finalFocus={() => trigger.current?.closest<HTMLElement>("li") ?? true}
+      >
+        {f.status === "archived" ? (
+          <DropdownMenuItem onClick={() => actions.unarchive(f.id)}>Unarchive</DropdownMenuItem>
+        ) : (
+          f.status !== "running" && (
+            <DropdownMenuItem onClick={() => actions.archive(f.id)}>Archive</DropdownMenuItem>
+          )
+        )}
+        {queued && (
+          <DropdownMenuItem onClick={() => actions.setSkip(f.id, !f.skip)}>
+            {f.skip ? "Unskip" : "Skip"}
+          </DropdownMenuItem>
+        )}
+        {task.parentMissing && (
+          <DropdownMenuItem onClick={() => actions.detachParent(f.id)}>
+            Detach from missing parent
+          </DropdownMenuItem>
+        )}
+        {task.epicMissing && f.epicId && (
+          <DropdownMenuItem onClick={() => actions.detachEpic(f.id)}>
+            Clear missing epic
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => actions.duplicate(task)}>Duplicate</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => actions.copyId(f.id)}>Copy id</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

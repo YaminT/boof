@@ -1,6 +1,6 @@
 {
-  "name": "@boof-runner/runner",
-  "version": "0.2.0",
+  "name": "@boof/runner",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,6 +13,7 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@boof-runner/shared": "workspace:*"
+    "@boof/heart": "*",
+    "@boof/owlish": "*"
   }
 }

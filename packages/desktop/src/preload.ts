@@ -11,6 +11,6 @@ contextBridge.exposeInMainWorld("boofRunnerDesktop", {
   ...(token ? { token } : {}),
   platform: process.platform,
   /** Open the native folder picker; resolves to the chosen path or null. */
-  pickDirectory: (current?: string): Promise<string | null> =>
-    ipcRenderer.invoke("boof-runner:pick-directory", current),
+  pickDirectory: (current?: string, opts?: { title?: string }): Promise<string | null> =>
+    ipcRenderer.invoke("boof-runner:pick-directory", current, opts),
 });

@@ -3,25 +3,34 @@
  *
  *  1. The REST reference inside docs/harness.md, between the markers
  *     `<!-- BEGIN GENERATED REFERENCE -->` and `<!-- END GENERATED REFERENCE -->`.
- *  2. packages/web/src/generated/harness.ts, the doc as a string constant the server embeds
+ *  2. packages/heart-server/src/server/generated/harness.ts, the doc as a string constant the server embeds
  *     (so it works unchanged under tsx, vitest, the tsup CLI bundle and the desktop bundle).
  *
  * Run `npx tsx scripts/gen-harness-reference.ts` after editing docs/harness.md or any operation.
- * `packages/web/src/harness.test.ts` fails when either output is stale.
+ * `packages/heart-server/src/server/harness.test.ts` fails when either output is stale.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as prettier from "prettier";
-import { buildOpenApi, getOp, registry } from "../packages/api/src/index.js";
-import { SCOPES } from "../packages/shared/src/index.js";
+import { buildOpenApi, getOp, registry } from "../packages/heart-server/src/api/index.js";
+import { SCOPES } from "../packages/heart/src/index.js";
+import { commandPath } from "../packages/facedisk/cli/ops-cli.js";
 
 export const BEGIN = "<!-- BEGIN GENERATED REFERENCE -->";
 export const END = "<!-- END GENERATED REFERENCE -->";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const HARNESS_MD = join(ROOT, "docs", "harness.md");
-export const HARNESS_TS = join(ROOT, "packages", "web", "src", "generated", "harness.ts");
+export const HARNESS_TS = join(
+  ROOT,
+  "packages",
+  "heart-server",
+  "src",
+  "server",
+  "generated",
+  "harness.ts",
+);
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -113,9 +122,24 @@ const EXTRA_ERRORS: Record<string, string[]> = {
     "403 project_root_not_allowed",
     "409 project_exists",
     "409 conflict",
+    "409 directory_not_empty",
+    "409 project_busy",
   ],
   "projects.update": ["400 not_a_git_repo", "403 project_root_not_allowed"],
   "projects.delete": ["409 project_busy"],
+  "epics.get": ["404 epic_not_found"],
+  "epics.create": ["409 conflict"],
+  "epics.update": ["404 epic_not_found", "409 epic_modified"],
+  "epics.delete": ["403 forbidden_trust", "404 epic_not_found", "409 has_tasks"],
+  "tasks.move": [
+    "403 forbidden_trust",
+    "404 not_found",
+    "404 epic_not_found",
+    "404 parent_not_found",
+    "409 invalid_hierarchy",
+    "409 has_children",
+  ],
+  "tasks.create": ["404 epic_not_found", "404 parent_not_found", "409 invalid_hierarchy"],
   "plans.create": ["409 plan_exists"],
   "plans.update": ["403 forbidden_trust"],
   "plans.replaceGoals": ["403 forbidden_trust"],
@@ -132,7 +156,12 @@ const EXTRA_ERRORS: Record<string, string[]> = {
   "tasks.unarchive": ["403 forbidden_trust", "404 not_found", "409 invalid_transition"],
   "tasks.archive": ["404 not_found", "409 invalid_transition"],
   "tasks.answers": ["403 forbidden_trust", "404 not_found", "409 invalid_transition"],
-  "tasks.delete": ["404 not_found", "400 invalid_input (the task is running)"],
+  "tasks.delete": [
+    "404 not_found",
+    "400 invalid_input (the task is running)",
+    "403 forbidden_trust",
+    "409 has_children",
+  ],
   "tasks.stop": ["404 not_found", "400 invalid_input (the task is not running)"],
   "tasks.inject": ["404 not_found", "400 invalid_input (the task is not running)"],
   "tasks.liveLog": ["404 not_found"],
@@ -156,7 +185,8 @@ function errorsFor(opName: string): string[] {
   const invalid = op.invalidInputCode ?? "invalid_input";
   if (Object.keys(shape).length > 0) list.push(`400 ${invalid}`);
   if (op.rest.ifMatch === "expectedVersion") list.push("409 plan_version_conflict");
-  if (op.rest.ifMatch === "expectedUpdated") list.push("409 task_modified");
+  if (op.rest.ifMatch === "expectedUpdated")
+    list.push(op.name === "settings.update" ? "409 settings_modified" : "409 task_modified");
   if (op.rest.idempotent) list.push("409 idempotency_conflict");
   list.push(...(EXTRA_ERRORS[op.name] ?? []));
   return [...new Set(list)];
@@ -181,6 +211,7 @@ function operationSection(opName: string, method: string, path: string, o: Json)
   out.push(`- Operation: ${code(opName)}`);
   out.push(`- Scope: ${scopeText(op)}`);
   out.push(`- MCP tool: ${op.mcp.expose ? code(op.mcp.name!) : "none (REST only)"}`);
+  out.push(`- CLI: ${code(`boof-runner ${commandPath(op).join(" ")}`)}`);
   out.push(`- What it does: ${op.description}`);
   const ok = Object.entries((o["responses"] ?? {}) as Json).find(([k]) => k !== "default");
   const okSchema = ok?.[1]?.["content"];
@@ -245,6 +276,7 @@ const AREA_TITLE: Record<string, string> = {
   usage: "Usage",
   commands: "Command templates",
   webhooks: "Webhooks (admin)",
+  accounts: "Account pool (better-ccflare)",
 };
 
 /** The generated reference as markdown (not yet formatted by prettier). */
@@ -330,7 +362,7 @@ export async function expectedHarnessMd(current: string): Promise<string> {
   return format(spliceReference(current, renderReference()));
 }
 
-/** The module text of packages/web/src/generated/harness.ts for the doc `md`. */
+/** The module text of packages/heart-server/src/server/generated/harness.ts for the doc `md`. */
 export function embeddedModule(md: string): string {
   return `// Generated by scripts/gen-harness-reference.ts from docs/harness.md. Do not edit.\nexport const HARNESS_MD = ${JSON.stringify(md)};\n`;
 }

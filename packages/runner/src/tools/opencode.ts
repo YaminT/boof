@@ -1,9 +1,11 @@
-import { commandExists, execCommand } from "../exec.js";
+import { commandExists, execCommand, parseUsage } from "@boof/heart";
 import { ToolRunError } from "./errors.js";
-import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { agentEnv } from "../agent-env.js";
+import { gatewayEnv } from "../gateway-env.js";
+import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str, stripAnsi } from "./jsonl.js";
-import { parseUsage } from "./usage.js";
-import type { TokenUsage } from "@boof-runner/shared";
+import { withQuestions } from "./questions.js";
+import type { TokenUsage } from "@boof/heart";
 
 /**
  * Adapter for the `opencode` CLI. Runs non-interactively via `opencode run`;
@@ -16,7 +18,7 @@ export class OpencodeTool implements Tool {
   readonly defaultModels = ["opencode-go/kimi-k3"];
   private readonly bin = process.env.BOOF_RUNNER_OPENCODE_BIN ?? "opencode";
 
-  async detect(): Promise<HealthResult> {
+  async detect(_detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
@@ -30,6 +32,7 @@ export class OpencodeTool implements Tool {
     const model = (await this.listModels())[0] ?? this.defaultModels[0];
     const probe = await execCommand(this.bin, ["run", "-m", model, "Reply with exactly: hi"], {
       cwd: process.cwd(),
+      env: agentEnv(),
       timeoutMs: 90000,
     });
     if (probe.code !== 0 || probe.timedOut || !probe.stdout.trim()) {
@@ -62,6 +65,7 @@ export class OpencodeTool implements Tool {
   }
 
   readonly supportsResume = true;
+  readonly acceptsPool = true;
 
   /** Argument vector for `opencode run`; exported through the class for tests. */
   buildArgs(opts: RunOptions): string[] {
@@ -76,24 +80,43 @@ export class OpencodeTool implements Tool {
       // runner's equivalent of codex's bypass flag.
       args.push("--auto");
     }
-    args.push(opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`);
     return args;
+  }
+
+  /** The text fed on stdin: the new message alone on resume, else system prompt + prompt. */
+  promptText(opts: RunOptions): string {
+    return opts.resumeSessionId ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
   }
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
+    const childEnv = agentEnv(process.env, opts.agentEnv);
+    if (opts.gateway) {
+      delete childEnv.ANTHROPIC_API_KEY;
+      delete childEnv.ANTHROPIC_AUTH_TOKEN;
+      delete childEnv.CLAUDE_CODE_USE_BEDROCK;
+      delete childEnv.CLAUDE_CODE_USE_VERTEX;
+      delete childEnv.ANTHROPIC_CUSTOM_HEADERS;
+      for (const key of Object.keys(childEnv)) {
+        if (key.startsWith("CLAUDE_CODE_USE_") || key.startsWith("ANTHROPIC_FOUNDRY_"))
+          delete childEnv[key];
+      }
+    }
     const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
+      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway) },
+      input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,
       steerSignalPath: opts.steerSignalPath,
+      pidFilePath: opts.pidFilePath,
       idleTimeoutMs: opts.idleTimeoutMs,
       onData: opts.onChunk ? (c) => live.push(c) : undefined,
     });
     live.flush();
     const summary = summarizeOpencodeStream(res.stdout);
-    const output = `$ ${this.bin} ${args.slice(0, -1).join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${stripAnsi(res.stderr)}`;
+    const output = `$ ${this.bin} ${args.join(" ")} <prompt>\n[exit ${res.code}]\n${summary.rendered}\n${stripAnsi(res.stderr)}`;
     if (res.code !== 0 || res.timedOut || res.stopped || res.steered || res.stalled) {
       throw new ToolRunError(
         this.id,
@@ -113,12 +136,12 @@ export class OpencodeTool implements Tool {
     }
     // No JSON events (older CLI, plain output): fall back to ANSI-stripped text.
     const plain = stripAnsi(res.stdout).trim();
-    return {
+    return withQuestions({
       output,
       report: summary.report || plain,
       usage: summary.usage ?? parseUsage(plain + "\n" + stripAnsi(res.stderr)),
       sessionId: summary.sessionId,
-    };
+    });
   }
 }
 
@@ -202,6 +225,7 @@ export function summarizeOpencodeStream(stdout: string): {
   let output = 0;
   let cost = 0;
   let seen = false;
+  let priced = false;
   for (const line of stdout.split("\n")) {
     const ev = parseJsonLine(line);
     if (!ev) continue;
@@ -216,6 +240,7 @@ export function summarizeOpencodeStream(stdout: string): {
       input += num(t.input) + num(cache.read) + num(cache.write);
       output += num(t.output) + num(t.reasoning);
       cost += num(part.cost);
+      priced ||= typeof part.cost === "number";
       seen = true;
     }
   }
@@ -227,7 +252,7 @@ export function summarizeOpencodeStream(stdout: string): {
     .trim();
   return {
     report,
-    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: cost, known: true } : null,
+    usage: seen ? { inputTokens: input, outputTokens: output, costUsd: cost, known: priced } : null,
     rendered: r.text.trimEnd(),
     sessionId,
   };

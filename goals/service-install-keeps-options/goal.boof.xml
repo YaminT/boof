@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>bin/src/service-cli.ts rebuilds the unit from the current argv only. The runbook's upgrade step is `service install --data $BOOF_DATA`, which silently drops a previous --env-file, --env, --port, --host and the recorded PATH, so agents start failing after upgrades. Persist the last install's options (sidecar JSON in the data root or a comment in the unit) and reuse them when flags are omitted; print what changed. Acceptance: test installs with --env-file, reinstalls with only --data, and the EnvironmentFile line survives.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md and docs/boof-runner.md for the intended behaviour before changing code.</do>
+      <do>Write a failing test first, then make it pass; keep the change focused on this goal.</do>
+      <do>Run `npm run typecheck &amp;&amp; npm test` and `npm run lint` before finishing.</do>
+      <dont>Do not change public API or MCP shapes without updating docs/api.md and the OpenAPI document.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
+        <version number="2" status="done">buildUnit records the install options as a "# boof-runner-options: {json}" comment line; install() reads the installed unit and reuses every omitted option (flag > previous > env var > default; --env merged per key, --env-file kept and re-checked, PATH = this shell's entries then the previous ones; node and CLI paths always current), prints one line per option (kept / old -> new / new) and --reset starts over; the unit is written 0600 because it records --env values, and the report never prints values; the acceptance test installs with --env-file, reinstalls with only --data and the EnvironmentFile line survives.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>Unit tests with vitest for the changed module; an integration test through the Hono app or CLI where the behaviour is observable there.</strategy>
+      <technology>vitest</technology>
+      <run>npm run typecheck &amp;&amp; npm test</run>
+    </tests>
+  </progress>
+</boof>
