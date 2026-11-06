@@ -5,6 +5,7 @@ import {
   CONCIERGE_SCOPES,
   CONCIERGE_TOOLS,
   conciergeAllowedTools,
+  assertConciergeIdAvailable,
   conciergeOps,
   conciergePrincipal,
 } from "./policy.js";
@@ -94,6 +95,7 @@ describe("concierge MCP policy", () => {
       kind: "client",
       clientKind: "mcp",
       trust: "review",
+      alwaysReview: true,
     });
     expect([...derived.scopes]).toEqual(expectedScopes);
     expect([...derived.projects]).toEqual(expectedProjects);
@@ -119,5 +121,37 @@ describe("concierge MCP policy", () => {
     expect(names.every((name) => CONCIERGE_TOOLS[byTool.get(name)!] === "read")).toBe(true);
     expect(names).not.toContain("mcp__boof__boof_delete_task");
     expect(names.every((name) => name.startsWith("mcp__boof__"))).toBe(true);
+  });
+
+  it("refuses a legacy stored client that collides with the concierge principal id", async () => {
+    const { mkdtemp, rm, readFile, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { AuthStore } = await import("@boof/heart");
+    const root = await mkdtemp(join(tmpdir(), "boof-concierge-collision-"));
+    try {
+      const store = new AuthStore(root);
+      const { client } = await store.create({ name: "old", scopes: ["tasks:read"] });
+      const path = join(root, "auth", "clients.json");
+      const raw = JSON.parse(await readFile(path, "utf8"));
+      raw.clients[0].id = `concierge-${client.id}`;
+      await writeFile(path, JSON.stringify(raw));
+      const legacy = new AuthStore(root);
+      await expect(
+        assertConciergeIdAvailable(
+          {
+            kind: "client",
+            id: client.id,
+            name: client.name,
+            scopes: new Set(client.scopes),
+            projects: "*",
+            trust: "review",
+          },
+          legacy,
+        ),
+      ).rejects.toThrow(/reserved id concierge-/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

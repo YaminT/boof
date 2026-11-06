@@ -149,6 +149,7 @@ export class PlanService {
   /** True for a review-trust client while `externalTasksRequireApproval` is on (the default). */
   private async restricted(actor?: Principal): Promise<boolean> {
     if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
+    if (actor.alwaysReview) return true;
     return securitySettings(await this.parent.loadSettings()).externalTasksRequireApproval;
   }
 

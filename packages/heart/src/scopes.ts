@@ -11,6 +11,8 @@ export interface Principal {
   scopes: ReadonlySet<Scope>;
   projects: "*" | ReadonlySet<string>;
   trust: Trust;
+  /** Forces review-trust restrictions even when server settings relax them. */
+  alwaysReview?: true;
   /** Client kind, for task provenance. Absent for the local principal. */
   clientKind?: ClientKind;
   /**

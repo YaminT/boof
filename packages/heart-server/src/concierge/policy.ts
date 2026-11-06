@@ -1,4 +1,5 @@
 import { authorize, authorizeProject, hasScope, type Principal, type Scope } from "@boof/heart";
+import type { AuthStore } from "@boof/heart";
 import type { AnyOperation } from "../api/index.js";
 
 export type ConciergeToolMode = "read" | "write" | "confirm";
@@ -40,6 +41,8 @@ export const CONCIERGE_SCOPES: readonly Scope[] = [
   "tasks:write",
 ];
 
+export const RESULT_TEXT_CAP = 20_000;
+
 /**
  * Deliberately absent: tasks.diff reads the git worktree outside the data root; plans.import reads
  * repository files; tasks.wait and plans.wait are long polls; tasks.stop and tasks.inject need
@@ -60,9 +63,24 @@ export function conciergePrincipal(user: Principal, projectId: string): Principa
     kind: "client",
     clientKind: "mcp",
     trust: "review",
+    alwaysReview: true,
     scopes: new Set(scopes),
     projects,
   };
+}
+
+/** Refuse legacy stored identities that collide with this in-memory principal. */
+export async function assertConciergeIdAvailable(
+  user: Principal,
+  authStore: AuthStore,
+): Promise<void> {
+  const id = `concierge-${user.id}`;
+  if ((await authStore.list()).some((client) => client.id === id)) {
+    throw new Error(
+      `clients.json holds a client with the reserved id ${id} (made before the id was reserved); ` +
+        "remove its entry from auth/clients.json before using the concierge",
+    );
+  }
 }
 
 export function conciergeAllowedTools(

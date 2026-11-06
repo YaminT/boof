@@ -21,6 +21,7 @@ import {
 import { authorize, BOOF_VERSION, type AuthStore, type Principal, type Scope } from "@boof/heart";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
+import { conciergeOps } from "../concierge/policy.js";
 
 export const SERVER_NAME = "boof-runner";
 
@@ -174,14 +175,20 @@ function inputSchemaFor(op: AnyOperation, project: string | undefined): JsonSche
 }
 
 /** Build the `tools/list` entry of an operation. */
-export function toolDefinition(op: AnyOperation, project?: string): Tool {
+export function toolDefinition(
+  op: AnyOperation,
+  project?: string,
+  includeOutputSchema = true,
+): Tool {
   const output = toJsonSchema(op.output, "output");
   return {
     name: op.mcp.name!,
     title: op.title,
     description: op.description,
     inputSchema: inputSchemaFor(op, project) as Tool["inputSchema"],
-    ...(output["type"] === "object" ? { outputSchema: output as Tool["outputSchema"] } : {}),
+    ...(includeOutputSchema && output["type"] === "object"
+      ? { outputSchema: output as Tool["outputSchema"] }
+      : {}),
     annotations: { title: op.title, ...op.mcp.annotations },
   };
 }
@@ -230,7 +237,9 @@ function gateResult(answer: GateAnswer): CallToolResult {
  * authorization, trust rules and error codes are exactly those of the REST API.
  */
 export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
-  const ops = exposedOps(options.ops ?? registry, {
+  // A gated server is a restricted surface. If its caller omits an explicit operation set,
+  // fail closed instead of silently exposing the complete registry.
+  const ops = exposedOps(options.ops ?? (options.gate ? [] : registry), {
     project: options.project,
     adminTools: options.adminTools,
   });
@@ -294,7 +303,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     return {
       tools: ops
         .filter((op) => op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s)))
-        .map((op) => toolDefinition(op, options.project)),
+        .map((op) => toolDefinition(op, options.project, options.gate === undefined)),
     };
   });
 
@@ -314,7 +323,22 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     const startedAt = Date.now();
     let gated = false;
     try {
-      const before = await options.gate?.before?.(op, raw as Record<string, unknown>, principal);
+      let before: GateAnswer | undefined;
+      try {
+        before = await options.gate?.before?.(op, raw as Record<string, unknown>, principal);
+      } catch (err) {
+        const opErr = toOpError(err);
+        options.onCall?.({
+          tool: op.mcp.name!,
+          principal,
+          projectId,
+          ok: false,
+          code: opErr.code,
+          startedAt,
+          ms: Date.now() - startedAt,
+        });
+        return errorResult(opErr);
+      }
       if (before) {
         gated = true;
         options.onCall?.({
@@ -330,10 +354,14 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
       }
       let result = await run(op, raw, extra.signal);
       if (options.gate?.after) {
-        const replaced = await options.gate.after(op, raw as Record<string, unknown>, result);
-        if (replaced !== undefined) {
-          result = replaced;
-          gated = true;
+        try {
+          const replaced = await options.gate.after(op, raw as Record<string, unknown>, result);
+          if (replaced !== undefined) {
+            result = replaced;
+            gated = true;
+          }
+        } catch {
+          // The operation already succeeded. Preserve its result so a caller will not retry it.
         }
       }
       options.onCall?.({
@@ -348,12 +376,17 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
       return successResult(op, result);
     } catch (err) {
       const opErr = toOpError(err);
-      const replacement = await options.gate?.refused?.(
-        op,
-        raw as Record<string, unknown>,
-        opErr,
-        principal,
-      );
+      let replacement: GateAnswer | undefined;
+      try {
+        replacement = await options.gate?.refused?.(
+          op,
+          raw as Record<string, unknown>,
+          opErr,
+          principal,
+        );
+      } catch {
+        // A broken refusal hook must not turn an operation error into a JSON-RPC failure.
+      }
       if (replacement) {
         options.onCall?.({
           tool: op.mcp.name!,
@@ -390,6 +423,20 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     });
   }
   return server;
+}
+
+/** Build the concierge's pinned, allowlisted MCP surface with resources and prompts disabled. */
+export function createConciergeMcpServer(
+  options: Omit<BoofMcpOptions, "ops" | "resources" | "project" | "gate"> & {
+    project: string;
+    gate: McpCallGate;
+  },
+): McpServer {
+  return createBoofMcpServer({
+    ...options,
+    ops: conciergeOps(registry),
+    resources: false,
+  });
 }
 
 export { McpError, ErrorCode };

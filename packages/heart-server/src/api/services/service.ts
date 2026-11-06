@@ -197,6 +197,7 @@ export class ProjectService {
   /** True when `actor` is a review-trust client and approval is required (the default). */
   private async needsApproval(actor?: Principal): Promise<boolean> {
     if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
+    if (actor.alwaysReview) return true;
     return securitySettings(await this.parent.loadSettings()).externalTasksRequireApproval;
   }
 
@@ -1234,7 +1235,8 @@ export class TaskService {
     const review =
       actor?.kind === "client" &&
       actor.trust === "review" &&
-      securitySettings(await this.loadSettings()).externalTasksRequireApproval;
+      (actor.alwaysReview ||
+        securitySettings(await this.loadSettings()).externalTasksRequireApproval);
     if (!review) return;
     if (creating) {
       throw new OpError(
