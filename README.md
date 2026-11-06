@@ -21,6 +21,22 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner â†
 
 > Boof Runner runs agents with permission prompts disabled inside your repositories. Treat access to it like access to your shell. See [Security model](#security-model).
 
+## Screenshots
+
+Simple view at desktop width. Dark versions: [Overview](docs/images/ui/overview-dark.png), [Tasks](docs/images/ui/tasks-dark.png), [a task](docs/images/ui/task-dark.png), [Settings](docs/images/ui/settings-dark.png).
+
+![Overview: a running task, questions, and the queue](docs/images/ui/overview-light.png)
+
+![Tasks: needs you, running, queued, drafts, and failed](docs/images/ui/tasks-light.png)
+
+![A running task, with its step strip and live log](docs/images/ui/task-light.png)
+
+![Project settings](docs/images/ui/settings-light.png)
+
+The same Overview at 420px:
+
+![Overview on a phone](docs/images/ui/overview-phone.png)
+
 ## Requirements
 
 - **Node.js â‰¥ 22.22** or **Bun** (the code runs on both)
