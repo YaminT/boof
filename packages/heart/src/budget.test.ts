@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   blockingScopes,
   dailyLedgerPath,
@@ -61,6 +61,31 @@ describe("ledger", () => {
     await recordSpend({ ...base, usage: { costUsd: 9, known: false }, now });
     const day = await readDailyLedger(root, "2026-10-26", "UTC");
     expect(day).toMatchObject({ costUsd: 0.5, unknownSteps: 1, tools: { codex: 0.5 } });
+  });
+
+  it("two recordSpend calls from distinct module instances add up", async () => {
+    // vi.resetModules() gives each import its own withFileLock map, the way two
+    // processes do not share an in-process mutex. The cross-process ledger lock
+    // is what keeps the sum.
+    const now = new Date("2026-10-26T12:00:00Z");
+    const spend = (mod: typeof import("./budget.js"), costUsd: number) =>
+      mod.recordSpend({
+        dataRoot: root,
+        projectId: "p",
+        tool: "concierge",
+        usage: { costUsd, known: true },
+        timezone: "UTC",
+        now,
+      });
+    vi.resetModules();
+    const a = await import("./budget.js");
+    vi.resetModules();
+    const b = await import("./budget.js");
+    await Promise.all([spend(a, 1), spend(b, 2)]);
+    const day = await readDailyLedger(root, "2026-10-26", "UTC");
+    expect(day.costUsd).toBe(3);
+    expect(day.tools.concierge).toBe(3);
+    expect(day.projects?.p).toBe(3);
   });
 
   it("announces a scope once per day", async () => {

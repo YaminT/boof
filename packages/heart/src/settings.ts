@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
 import {
+  ConciergeSettingsSchema,
   McpSettingsSchema,
   RetrySettingsSchema,
   ReviewSettingsSchema,
@@ -12,6 +13,7 @@ import {
   SettingsSchema,
   SETTINGS_SCHEMA_VERSION,
   WorktreeSettingsSchema,
+  type ConciergeSettings,
   type McpSettings,
   type Project,
   type RetrySettings,
@@ -180,6 +182,11 @@ export function retrySettings(settings: Settings): RetrySettings {
 /** MCP settings with defaults applied. */
 export function mcpSettings(settings: Settings): McpSettings {
   return McpSettingsSchema.parse(settings.mcp ?? {});
+}
+
+/** Concierge settings with defaults applied. `defaultSettings()` does not store this block. */
+export function conciergeSettings(s: Settings): ConciergeSettings {
+  return ConciergeSettingsSchema.parse(s.concierge ?? {});
 }
 
 /** Security settings with defaults applied. */

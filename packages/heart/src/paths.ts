@@ -91,6 +91,21 @@ export function claudeAgentConfigDir(root: string, projectId: string): string {
   return join(dataRootPaths(root).claudeAgentConfigs, assertKebabId(projectId));
 }
 
+/** `<root>/concierge/<projectId>`. Callers create it with mode 0700. */
+export function conciergeDir(root: string, projectId: string): string {
+  return join(root, "concierge", assertKebabId(projectId));
+}
+
+/** Claude config for the concierge, under {@link conciergeDir}. Callers create it with mode 0700. */
+export function conciergeConfigDir(root: string, projectId: string): string {
+  return join(conciergeDir(root, projectId), "claude-config");
+}
+
+/** Empty working directory for one concierge turn. Callers create it with mode 0700. */
+export function conciergeScratchDir(root: string, projectId: string): string {
+  return join(conciergeDir(root, projectId), "cwd");
+}
+
 /** Locations of one project; `dir` is the `root` to hand to TaskStore, AttachmentStore, UsageStore. */
 export interface ProjectPaths {
   dir: string;

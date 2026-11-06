@@ -19,8 +19,8 @@ export interface AuditedOperation {
   principal: { id: string; kind: string };
   /** `mcp:<tool>` for MCP, `cli:<operation>` for the generated CLI. */
   action: string;
-  /** The surface that is not the web server: `stdio-mcp` or `cli`. */
-  via: "stdio-mcp" | "cli";
+  /** The surface that is not the web server: `stdio-mcp`, `cli` or `concierge`. */
+  via: "stdio-mcp" | "cli" | "concierge";
   project?: string;
   ok: boolean;
   /** The error code when `ok` is false. */
@@ -32,8 +32,8 @@ export interface AuditedOperation {
 
 /**
  * One audit line for an operation that did not come through the web server (stdio MCP, the
- * generated CLI), subject to the same `security.audit` settings as the web middleware. It carries
- * who (principal id and kind), what (`action`), where (`project`), the outcome and the timing:
+ * generated CLI, the concierge), subject to the same `security.audit` settings as the web middleware.
+ * It carries who (principal id and kind), what (`action`), where (`project`), the outcome and the timing:
  * never arguments, prompts, bodies or keys. Never throws, so auditing cannot fail the operation.
  */
 export async function auditOperation(root: string, op: AuditedOperation): Promise<void> {

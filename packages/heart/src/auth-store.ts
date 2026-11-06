@@ -181,7 +181,10 @@ export class AuthStore {
     const secret = randomBytes(32).toString("base64url");
     return this.mutate((clients) => {
       const taken = new Set([...clients.map((c) => c.id), ...RESERVED_CLIENT_IDS]);
-      const base = uniqueKebabId(input.name, []);
+      // `concierge-` names the in-memory assistant principal. A stored client never gets it:
+      // a base id that starts with `concierge` is issued as `client-<base>`.
+      let base = uniqueKebabId(input.name, []);
+      if (base.startsWith("concierge")) base = `client-${base}`;
       let id = input.randomSuffix ? `${base}-${randomBytes(3).toString("hex")}` : base;
       // A taken id gets a random suffix, not "-2" (see `randomSuffix`).
       while (taken.has(id))

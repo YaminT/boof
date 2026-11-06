@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dataRootPaths } from "./paths.js";
 import {
+  conciergeSettings,
   effectiveSettings,
   resolveObserver,
   resolveRole,
@@ -17,9 +18,11 @@ import {
 import { defaultSettings } from "./settings.js";
 import { newTask, parseTask, serializeTask } from "./task-file.js";
 import {
+  ConciergeSettingsSchema,
   RoleAssignmentSchema,
   SettingsPatchSchema,
   type Project,
+  type Settings,
   type TaskFrontmatter,
 } from "./schema.js";
 
@@ -46,6 +49,30 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
   created: "2026-06-04T10:00:00.000Z",
   updated: "2026-06-04T10:00:00.000Z",
   ...over,
+});
+
+describe("concierge settings", () => {
+  const defaults = {
+    enabled: true,
+    model: "default",
+    perMessageUsd: 0.25,
+    perConversationUsd: 2,
+    messagesPerMinute: 6,
+    maxTurns: 8,
+    timeoutMs: 120_000,
+    idleMinutes: 30,
+  };
+
+  it("conciergeSettings({}) returns every default", () => {
+    expect(conciergeSettings({} as Settings)).toEqual(defaults);
+    // Scaffolded settings stay unchanged: the defaults are applied at read time.
+    expect(defaultSettings().concierge).toBeUndefined();
+  });
+
+  it("rejects a zero per-message cap and a model with a space", () => {
+    expect(ConciergeSettingsSchema.safeParse({ perMessageUsd: 0 }).success).toBe(false);
+    expect(ConciergeSettingsSchema.safeParse({ model: "a b" }).success).toBe(false);
+  });
 });
 
 describe("settings compatibility", () => {
