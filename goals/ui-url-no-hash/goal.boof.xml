@@ -17,6 +17,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-30; not started.</version>
+        <version number="2" status="done">501b7d1 replaces the hash router with path routes and redirects old #/ links; 93677e7 keeps that redirect inside the base. The server answers index.html for UI paths with a relative base (ui-document), so the same UI works at /, under a reverse-proxy prefix and in the desktop app.</version>
       </versions>
     </status>
     <tests>

@@ -98,8 +98,8 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 ## Product direction (owner, 2026-10-29)
 
 - [ ] [`owlish-accounts`](owlish-accounts/goal.boof.xml) — Bring better-ccflare's main features into boof: Claude, ChatGPT and other accounts, a harness boof controls (research first)
-- [ ] [`task-hierarchy`](task-hierarchy/goal.boof.xml) — Project → epic (optional) → task → subtask (optional), every level with a priority
-- [ ] [`ui-minimum-expandable-interface`](ui-minimum-expandable-interface/goal.boof.xml) — A simple panel first, expandable to the complex one; complexity stays in the backend
+- [x] [`task-hierarchy`](task-hierarchy/goal.boof.xml) — Project → epic (optional) → task → subtask (optional), every level with a priority
+- [x] [`ui-minimum-expandable-interface`](ui-minimum-expandable-interface/goal.boof.xml) — A simple panel first, expandable to the complex one; complexity stays in the backend
 - [x] [`project-create-with-path`](project-create-with-path/goal.boof.xml) — Create a project with a new, existing or automatic path, starting with a brief (after: chat-console)
 - [ ] [`chat-console`](chat-console/goal.boof.xml) — A terminal-like chat box at the bottom of every page that talks to the page (after: owlish-accounts)
 - [ ] [`n8n-pipelines`](n8n-pipelines/goal.boof.xml) — Low priority: n8n can run boof's process; boof works with or without it; each workflow edit adds a check task
@@ -113,7 +113,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
 - [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
 - [x] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
-- [ ] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
+- [x] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
 - [x] [`audit-stdio-and-cli-writes`](audit-stdio-and-cli-writes/goal.boof.xml) — Audit the writes made over stdio MCP and through the CLI (after: boof-split, with M3)
 - [ ] [`audit-handwritten-cli`](audit-handwritten-cli/goal.boof.xml) — Audit the hand-written CLI commands (they bypass op.execute; route them through ops or audit with the same line shape) (after: audit-stdio-and-cli-writes)
 - [ ] [`agent-containment`](agent-containment/goal.boof.xml) — Run task agents isolated from boof: no route to the boof port, no data root, no credentials (investigate the Claude and Codex sandboxes, a separate OS user, a container)

@@ -17,6 +17,7 @@
         <version number="1" status="plan">Identified during the 2026-10-27 review; not started.</version>
         <version number="2" status="plan">D8 (owner, 2026-10-29): ship 0.3.0 without the desktop end-to-end check; an agent prepares the version bump and changelog; the owner pushes the tag.</version>
         <version number="3" status="plan">Prepared on 2026-11-05 on branch release-0.3.0: bump, changelog, README link; owner tags v0.3.0; site deploy after main has the release.</version>
+        <version number="4" status="review">Release PR #4 open; owner merges and tags v0.3.0.</version>
       </versions>
     </status>
     <tests>

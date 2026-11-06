@@ -18,6 +18,7 @@
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
         <version number="2" status="plan">D5 (owner, 2026-10-29): go — simple Overview = Now lane + needs-you + the console; simple task detail = step strip + live log + steering, with the form collapsed; one remembered simple/expanded toggle per screen; never hide actionable items. Built in UI phase 6.</version>
+        <version number="3" status="done">01cbadb, 65efc31 and 18f8fdc add a remembered simple/expanded toggle on Overview, Tasks, task detail, Plans and Settings (99ce700, 80b8ac5; localStorage key boof:focus-mode:v1). Simple Overview keeps the Now lane and what needs attention, and the task form stays open while it needs attention (focus-views.ts).</version>
       </versions>
     </status>
     <tests>
