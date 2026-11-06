@@ -45,7 +45,22 @@ export function recall(
   return { state: { index, draft: state.draft }, text: history[index]! };
 }
 
-export function appendOutput(lines: string[], line: string, max = OUTPUT_MAX): string[] {
+/**
+ * One console row. `text` is shown as plain text: callers must not interpret it as markdown or HTML.
+ * `changeId` marks a pending change. `href` is an app-relative route for a change the assistant made.
+ */
+export type ConsoleLine = {
+  kind: "input" | "result" | "assistant" | "system" | "change" | "pending";
+  text: string;
+  changeId?: string;
+  href?: string;
+};
+
+export function appendOutput(
+  lines: ConsoleLine[],
+  line: ConsoleLine,
+  max = OUTPUT_MAX,
+): ConsoleLine[] {
   return [...lines, line].slice(-max);
 }
 
@@ -54,7 +69,7 @@ export async function submitConsole(
   input: string,
   actions: CommandAction[],
   held: ReadonlySet<Scope> | "all",
-): Promise<{ outcome: ConsoleOutcome; line: string }> {
+): Promise<{ outcome: ConsoleOutcome; line: ConsoleLine }> {
   const resolved = resolveConsoleCommand(input, availableActions(actions, held));
   let outcome: ConsoleOutcome;
   if (resolved.kind === "unknown") {
@@ -67,5 +82,5 @@ export async function submitConsole(
       outcome = { kind: "error", action: resolved.action, message: errorMessage(err) };
     }
   }
-  return { outcome, line: formatConsoleResult(outcome) };
+  return { outcome, line: { kind: "result", text: formatConsoleResult(outcome) } };
 }

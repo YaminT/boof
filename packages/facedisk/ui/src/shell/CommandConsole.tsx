@@ -7,6 +7,7 @@ import {
   pushHistory,
   recall,
   submitConsole,
+  type ConsoleLine,
   type Recall,
 } from "../lib/console-session.js";
 
@@ -28,7 +29,7 @@ export function CommandConsole({
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [recalled, setRecalled] = useState<Recall>(NO_RECALL);
-  const [output, setOutput] = useState<string[]>([]);
+  const [output, setOutput] = useState<ConsoleLine[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const held = useHeldScopes();
@@ -69,12 +70,13 @@ export function CommandConsole({
     setBusy(true);
     const { outcome, line } = await submitConsole(text, actions, held);
     setBusy(false);
+    const echoed: ConsoleLine = { kind: "input", text: `> ${text}` };
     if (outcome.kind === "unknown" && onAssistantRequest) {
       onAssistantRequest(text);
-      setOutput((o) => appendOutput(o, `> ${text}`));
+      setOutput((o) => appendOutput(o, echoed));
       return;
     }
-    setOutput((o) => appendOutput(appendOutput(o, `> ${text}`), line));
+    setOutput((o) => appendOutput(appendOutput(o, echoed), line));
     if (outcome.kind !== "ok") setOpen(true);
   };
 
@@ -110,7 +112,7 @@ export function CommandConsole({
             ) : (
               output.map((l, i) => (
                 <p key={i} className="break-words whitespace-pre-wrap">
-                  {l}
+                  {l.text}
                 </p>
               ))
             )}
@@ -145,7 +147,7 @@ export function CommandConsole({
             aria-live="polite"
             className="mt-1 truncate font-mono text-[length:var(--text-meta)] text-ink-muted"
           >
-            {last}
+            {last.text}
           </p>
         )}
       </div>

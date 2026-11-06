@@ -174,3 +174,73 @@ export interface RunnerStatus {
   concurrency: number;
   agentAuth: AgentAuthEntry[];
 }
+
+/**
+ * Page context sent with an assistant message. Mirrors `ConciergeAskInputSchema`'s `context`.
+ * The server resolves titles; the browser sends only the screen and ids.
+ */
+export interface ConciergeContext {
+  screen: "overview" | "tasks" | "task" | "plans" | "settings" | "inbox";
+  taskId?: string;
+  planId?: string;
+  goalId?: string;
+}
+
+/** A pending change as the concierge operations return it. The title and details are plain text. */
+export interface PendingChangeView {
+  id: string;
+  op: string;
+  title: string;
+  details: string[];
+  destructive: boolean;
+  reason: "confirm" | "needs-approval";
+  status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed";
+  expiresAt: string;
+}
+
+export interface ConciergeChangeTarget {
+  kind: "task" | "plan" | "epic";
+  id: string;
+}
+
+/** POST /projects/{projectId}/concierge/messages. */
+export interface ConciergeAnswer {
+  conversationId: string;
+  text: string;
+  changes: { op: string; summary: string; target: ConciergeChangeTarget | null }[];
+  pending: PendingChangeView[];
+  costUsd: number | null;
+  stopReason: "done" | "max_turns" | "max_budget";
+}
+
+/** GET /projects/{projectId}/concierge. */
+export interface ConciergeStatus {
+  available: boolean;
+  reason: string | null;
+  via: "gateway" | "project-key" | null;
+  model: string;
+  limits: { perMessageUsd: number; perConversationUsd: number; messagesPerMinute: number };
+  conversation: {
+    id: string;
+    spentUsd: number;
+    messages: number;
+    pending: PendingChangeView[];
+  } | null;
+}
+
+/** One SSE event from POST .../concierge/messages/stream. `data` is this object as JSON. */
+export type ConciergeEvent =
+  | { type: "conversation"; conversationId: string }
+  | { type: "text"; text: string }
+  | { type: "tool"; tool: string; phase: "start" | "end"; ok?: boolean }
+  | { type: "change"; op: string; summary: string; target: ConciergeChangeTarget | null }
+  | { type: "pending"; change: PendingChangeView }
+  | { type: "done"; answer: ConciergeAnswer }
+  | { type: "error"; code: string; message: string };
+
+/** Body of concierge.ask and the stream route. The project id stays in the path. */
+export interface ConciergeAskBody {
+  text: string;
+  context?: ConciergeContext;
+  conversationId?: string;
+}

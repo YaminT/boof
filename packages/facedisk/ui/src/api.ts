@@ -21,9 +21,15 @@ import type {
   AccountsHealth,
   AccountsList,
   AgentSdkEligibility,
+  ConciergeAnswer,
+  ConciergeAskBody,
+  ConciergeEvent,
+  ConciergeStatus,
+  PendingChangeView,
   ProjectView,
   RunnerStatus,
 } from "./api-types.js";
+import { parseSse } from "./lib/concierge-stream.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
 import { authHeaders, getToken, notifyUnauthorized } from "./token.js";
@@ -443,6 +449,99 @@ export const api = {
     http<Record<string, string>>(`${PL(pid, planId)}/export`),
   syncPlan: (pid: string, planId: string, dryRun: boolean) =>
     http<SyncReport>(`${PL(pid, planId)}/sync`, json("POST", { dryRun })),
+
+  conciergeStatus: (pid: string) => http<ConciergeStatus>(`${P(pid)}/concierge`),
+  conciergeAsk: (pid: string, body: ConciergeAskBody) =>
+    http<ConciergeAnswer>(`${P(pid)}/concierge/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  conciergeApply: (pid: string, changeId: string) =>
+    http<{ change: PendingChangeView; result: unknown }>(
+      `${P(pid)}/concierge/changes/${encodeURIComponent(changeId)}/apply`,
+      { method: "POST" },
+    ),
+  conciergeDiscard: (pid: string, changeId: string) =>
+    http<{ change: PendingChangeView }>(
+      `${P(pid)}/concierge/changes/${encodeURIComponent(changeId)}/discard`,
+      { method: "POST" },
+    ),
+  conciergeReset: (pid: string) =>
+    http<{ ok: true }>(`${P(pid)}/concierge/reset`, { method: "POST" }),
+  /**
+   * POST the message and read typed SSE events. A non-2xx answer is JSON (the same error as
+   * `http`) and never opens the stream. The key travels in `Authorization`, never in the URL.
+   */
+  conciergeStream: (
+    pid: string,
+    body: ConciergeAskBody,
+    onEvent: (event: ConciergeEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => readConciergeStream(pid, body, onEvent, signal, false),
 };
+
+async function readConciergeStream(
+  pid: string,
+  body: ConciergeAskBody,
+  onEvent: (event: ConciergeEvent) => void,
+  signal: AbortSignal | undefined,
+  retried: boolean,
+): Promise<void> {
+  const sent = getToken();
+  const res = await fetch(`${P(pid)}/concierge/messages/stream`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    signal,
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      ...authHeaders(),
+    },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && !retried && sent !== getToken()) {
+      return readConciergeStream(pid, body, onEvent, signal, true);
+    }
+    return failure(res, data, sent);
+  }
+  if (!res.body) throw new ApiError("The assistant stream was empty", res.status);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let carry = "";
+  const emit = (events: { data: string }[]) => {
+    for (const event of events) {
+      let data: unknown;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        throw new ApiError("The assistant stream sent invalid data", 502, "internal");
+      }
+      if (typeof data !== "object" || data === null || !("type" in data)) {
+        throw new ApiError("The assistant stream sent invalid data", 502, "internal");
+      }
+      onEvent(data as ConciergeEvent);
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        const tail = decoder.decode();
+        if (tail) {
+          const parsed = parseSse(carry, tail);
+          carry = parsed.carry;
+          emit(parsed.events);
+        }
+        break;
+      }
+      const parsed = parseSse(carry, decoder.decode(value, { stream: true }));
+      carry = parsed.carry;
+      emit(parsed.events);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 export type { Goal, GoalInput, GoalStatus, Plan, PlanStatus };
