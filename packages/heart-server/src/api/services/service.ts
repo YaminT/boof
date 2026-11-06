@@ -855,6 +855,7 @@ export class TaskService {
   readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
   readonly conciergeAgent: ConciergeAgent | null;
+  readonly authStore: AuthStore;
   private conciergeService?: ConciergeService;
   private readonly pendingAgentRoleCache = new Map<
     string,
@@ -864,7 +865,7 @@ export class TaskService {
   constructor(
     readonly root: string,
     catalog: ToolCatalog,
-    opts: { conciergeAgent?: ConciergeAgent | null } = {},
+    opts: { conciergeAgent?: ConciergeAgent | null; authStore?: AuthStore } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
@@ -877,6 +878,7 @@ export class TaskService {
     });
     this.catalog = catalog;
     this.conciergeAgent = opts.conciergeAgent ?? null;
+    this.authStore = opts.authStore ?? new AuthStore(root);
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1587,7 +1589,7 @@ export class TaskService {
       this.conciergeService = new ConciergeService({
         root: this.root,
         services: this,
-        authStore: new AuthStore(this.root),
+        authStore: this.authStore,
         agent: this.conciergeAgent,
       });
     }

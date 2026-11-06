@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   LOCAL_PRINCIPAL,
   SettingsStore,
   TaskStore,
+  ConciergeStore,
   defaultSettings,
   execCommand,
   readDailyLedger,
@@ -91,7 +92,47 @@ describe("ConciergeService", () => {
     const changeId = answer.pending[0]!.id;
     await concierge.apply(LOCAL_PRINCIPAL, "demo", changeId);
     expect(await project.get(task.frontmatter.id)).toBeNull();
+    const auditFiles = await readdir(join(root, "audit"));
+    const auditLines = (
+      await Promise.all(auditFiles.map((file) => readFile(join(root, "audit", file), "utf8")))
+    )
+      .flatMap((file) => file.trim().split("\n"))
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { action?: string; ms?: number });
+    expect(auditLines.find((line) => line.action === "concierge:ask")?.ms).toBeGreaterThan(0);
+    expect(auditLines.find((line) => line.action === "concierge:apply")?.ms).toBeGreaterThan(0);
     await expectCode(concierge.apply(LOCAL_PRINCIPAL, "demo", changeId), "change_not_found");
+  });
+
+  it("rejects malformed confirm input before the confirmation gate runs", async () => {
+    agent = scriptedAgent([{ call: "boof_delete_task", args: {} }]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    await ask("try a malformed deletion");
+    expect(JSON.stringify(agent.results[0])).toContain("invalid_input");
+    expect((await concierge.status(LOCAL_PRINCIPAL, "demo")).conversation?.pending).toHaveLength(0);
+  });
+
+  it("atomically claims a confirmation so concurrent applies run the op once", async () => {
+    const project = await services.requireProject("demo");
+    const task = await project.create({ title: "Delete once", prompt: "p" });
+    agent = scriptedAgent([deleteCall(task.frontmatter.id)]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("delete it");
+    const changeId = answer.pending[0]!.id;
+
+    const results = await Promise.allSettled([
+      concierge.apply(LOCAL_PRINCIPAL, "demo", changeId),
+      concierge.apply(LOCAL_PRINCIPAL, "demo", changeId),
+    ]);
+
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+    expect(
+      (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason.code,
+    ).toBe("change_not_found");
+    expect(await project.get(task.frontmatter.id)).toBeNull();
+    const stored = await new ConciergeStore(root).get("demo", answer.conversationId);
+    expect(stored?.changes.find((c) => c.id === changeId)?.status).toBe("applied");
   });
 
   it("limits one turn to five pending changes even under injected instructions", async () => {
@@ -108,6 +149,30 @@ describe("ConciergeService", () => {
     expect(answer.pending).toHaveLength(5);
     expect(await taskIds()).toHaveLength(7);
     expect(JSON.stringify(agent.results[5])).toContain("pending change limit");
+  });
+
+  it("limits seven parallel delete calls in one message to five pending changes", async () => {
+    const project = await services.requireProject("demo");
+    const tasks = [];
+    for (let i = 0; i < 7; i++)
+      tasks.push(await project.create({ title: `Parallel ${i}`, prompt: "p" }));
+    agent = scriptedAgent([
+      {
+        parallel: tasks.map((t) => ({
+          call: "boof_delete_task",
+          args: { taskId: t.frontmatter.id },
+        })),
+      },
+      { text: "I proposed changes." },
+    ]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+
+    const answer = await ask("delete those tasks");
+
+    expect(answer.pending).toHaveLength(5);
+    expect((await concierge.status(LOCAL_PRINCIPAL, "demo")).conversation?.pending).toHaveLength(5);
+    expect(JSON.stringify(agent.results)).toContain("pending change limit");
+    expect(await taskIds()).toHaveLength(7);
   });
 
   it("rejects stale proposals and applies with the user's rights", async () => {
@@ -157,6 +222,84 @@ describe("ConciergeService", () => {
     });
     expect(agent.inputs[0]?.resumeSessionId).toBe("session-1");
     expect(agent.inputs[0]?.resumeBaseline?.costUsd).toBe(0.01);
+  });
+
+  it("advances the resume baseline after a failed turn reports cost", async () => {
+    agent = scriptedAgent([{ text: "first" }], {
+      usage: { inputTokens: 10, outputTokens: 2, costUsd: 0.01, known: true },
+      cumulative: { inputTokens: 10, outputTokens: 2, costUsd: 0.01, known: true },
+    });
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const first = await ask("first");
+
+    agent = scriptedAgent([], {
+      fail: {
+        message: "failed after usage",
+        kind: "failed",
+        usage: { inputTokens: 20, outputTokens: 4, costUsd: 0.05, known: true },
+        sessionId: "session-failed",
+      },
+    });
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    await expectCode(
+      concierge.ask(LOCAL_PRINCIPAL, "demo", {
+        text: "fail",
+        conversationId: first.conversationId,
+      }),
+      "internal",
+    );
+    expect((await concierge.status(LOCAL_PRINCIPAL, "demo")).conversation?.spentUsd).toBeCloseTo(
+      0.06,
+    );
+
+    agent = scriptedAgent([{ text: "resumed" }], {
+      usage: { inputTokens: 10, outputTokens: 3, costUsd: 0.03, known: true },
+      cumulative: { inputTokens: 40, outputTokens: 9, costUsd: 0.09, known: true },
+    });
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    await concierge.ask(LOCAL_PRINCIPAL, "demo", {
+      text: "resume",
+      conversationId: first.conversationId,
+    });
+
+    expect(agent.inputs[0]?.resumeSessionId).toBe("session-failed");
+    expect(agent.inputs[0]?.resumeBaseline?.costUsd).toBeCloseTo(0.06);
+    const day = new Date().toISOString().slice(0, 10);
+    const ledger = await readDailyLedger(root, day, budgetTimeZone(await services.loadSettings()));
+    expect(ledger.tools.concierge).toBeCloseTo(0.09);
+    expect((await concierge.status(LOCAL_PRINCIPAL, "demo")).conversation?.spentUsd).toBeCloseTo(
+      0.09,
+    );
+  });
+
+  it("refuses a concurrent ask in the same conversation while one turn is running", async () => {
+    let begin!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => (begin = resolve));
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    let turnCalls = 0;
+    agent = scriptedAgent([]);
+    agent.turn = async () => {
+      turnCalls++;
+      begin();
+      await blocked;
+      const usage = { inputTokens: 1, outputTokens: 1, costUsd: 0.01, known: true };
+      return {
+        text: "done",
+        sessionId: "session-busy",
+        usage,
+        cumulative: usage,
+        stopReason: "done",
+      };
+    };
+    concierge = new ConciergeService({ root, services, authStore, agent });
+
+    const first = ask("first");
+    await entered;
+    await expectCode(ask("second"), "concierge_busy");
+    release();
+    await first;
+    expect(turnCalls).toBe(1);
   });
 
   it("records spend reported by an aborted turn and keeps unavailable reasons", async () => {
@@ -231,6 +374,21 @@ describe("ConciergeService", () => {
     } as unknown as AuthStore;
     concierge = new ConciergeService({ root, services, authStore: legacyAuthStore, agent });
     await expectCode(ask(), "concierge_unavailable");
+    expect(agent.inputs).toHaveLength(0);
+  });
+
+  it("uses a TaskService-injected AuthStore for concierge identity checks", async () => {
+    const injectedAuthStore = {
+      list: async () => [{ id: "concierge-local" }],
+    } as unknown as AuthStore;
+    const injectedServices = new TaskService(root, services.catalog, {
+      conciergeAgent: agent,
+      authStore: injectedAuthStore,
+    });
+    await expectCode(
+      injectedServices.concierge().ask(LOCAL_PRINCIPAL, "demo", { text: "hello" }),
+      "concierge_unavailable",
+    );
     expect(agent.inputs).toHaveLength(0);
   });
 
