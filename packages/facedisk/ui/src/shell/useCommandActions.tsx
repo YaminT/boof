@@ -9,6 +9,7 @@ import { useTheme } from "../lib/theme.js";
 import { toggleRunner } from "./RunnerSwitch.js";
 import type { Epics } from "../tasks/useEpics.js";
 import { withQuery } from "../lib/task-links.js";
+import { requestPaletteStop } from "../lib/palette-stop.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
 import {
   isStopPending,
@@ -132,8 +133,13 @@ export function useCommandActions({
         if (!s || !pid) return s?.reject(new Error("no project selected"));
         const id = s.task.frontmatter.id;
         markStopPending(pid, id);
-        mutate(() => api.stopTask(pid, id), "Stop requested", "Could not stop").then(
-          s.resolve,
+        const stop = () => api.stopTask(pid, id);
+        const request = mode === "toast" ? requestPaletteStop(pid, id, stop) : stop();
+        request.then(
+          () => {
+            void Promise.all([data.refresh(), epics.reload()]);
+            s.resolve();
+          },
           (err) => {
             clearStopPending(pid, id);
             s.reject(err);
