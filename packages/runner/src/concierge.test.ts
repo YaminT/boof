@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -560,6 +560,211 @@ describe("ClaudeConcierge", () => {
     expect(JSON.stringify(events)).not.toContain(KEY);
   });
 
+  it("two concurrent turns keep their working directory", async () => {
+    const root = await tempRoot();
+    const scratch = conciergeScratchDir(root, "app");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started = 0;
+    const seen: { cwd: string; marker: boolean; inode: number }[] = [];
+    const sdkFor = (wait: boolean) =>
+      ({
+        query: (params: { options: { cwd: string } }) => {
+          started++;
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" };
+              if (wait) await gate;
+              const marker = await stat(join(params.options.cwd, "marker")).then(
+                () => true,
+                () => false,
+              );
+              const inode = (await stat(params.options.cwd)).ino;
+              seen.push({ cwd: params.options.cwd, marker, inode });
+              yield {
+                type: "result",
+                subtype: "success",
+                result: "ok",
+                total_cost_usd: 0,
+                modelUsage: {},
+                session_id: "sess",
+              };
+            },
+            close() {},
+          };
+        },
+      }) as never;
+    const make = (wait: boolean) =>
+      new ClaudeConcierge({
+        root,
+        auth: authStub(
+          { ok: true, via: "project-key", note: null },
+          { kind: "project-key", apiKey: KEY },
+        ),
+        pool: poolStub(),
+        loadSdk: async () => sdkFor(wait),
+        resolveExecutable: executable,
+      });
+    const first = make(true).turn(input());
+    for (
+      let i = 0;
+      i < 100 &&
+      !(await stat(scratch).then(
+        () => true,
+        () => false,
+      ));
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeFile(join(scratch, "marker"), "x");
+    const inode = (await stat(scratch)).ino;
+    const second = await make(false).turn(input());
+    expect(second.text).toBe("");
+    release();
+    const done = await first;
+    expect(done.stopReason).toBe("done");
+    expect(seen).toHaveLength(2);
+    for (const entry of seen) {
+      expect(entry.cwd).toBe(scratch);
+      expect(entry.marker).toBe(true);
+      expect(entry.inode).toBe(inode);
+    }
+    // Idle again: the next turn clears stale files, still in the same directory.
+    await make(false).turn(input());
+    expect(await readdir(scratch)).toEqual([]);
+    expect((await stat(scratch)).ino).toBe(inode);
+  });
+
+  it("setup failures are ConciergeTurnErrors", async () => {
+    const root = await tempRoot();
+    const fake = fakeSdk([success()]);
+    const failing = new ClaudeConcierge({
+      root,
+      auth: authStub(
+        { ok: true, via: "gateway", note: null },
+        { kind: "gateway", url: GATEWAY, apiKey: "" },
+      ),
+      pool: poolStub(),
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: executable,
+    });
+    const error = await failing.turn(input()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConciergeTurnError);
+    expect(error).toMatchObject({ kind: "failed", usage: null, sessionId: null });
+    expect(fake.calls.options).toEqual([]);
+  });
+
+  it("an abort before anything ran carries no usage", async () => {
+    const root = await tempRoot();
+    const fake = fakeSdk([success()]);
+    const controller = new AbortController();
+    controller.abort();
+    const error = await new ClaudeConcierge({
+      root,
+      auth: authStub(
+        { ok: true, via: "project-key", note: null },
+        { kind: "project-key", apiKey: KEY },
+      ),
+      pool: poolStub(),
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: executable,
+    })
+      .turn(input({ signal: controller.signal }))
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ kind: "aborted", usage: null, sessionId: null });
+    expect(fake.calls.options).toEqual([]);
+  });
+
+  it("drops tool names that are not plain identifiers", async () => {
+    const root = await tempRoot();
+    const events: ConciergeAgentEvent[] = [];
+    const fake = fakeSdk([
+      {
+        emit: {
+          type: "assistant",
+          message: {
+            content: [
+              { type: "tool_use", id: "t1", name: `mcp__boof__${KEY}`, input: {} },
+              { type: "tool_use", id: "t2", name: "mcp__boof__tasks_list", input: {} },
+            ],
+          },
+        },
+      },
+      success(),
+    ]);
+    await new ClaudeConcierge({
+      root,
+      auth: authStub(
+        { ok: true, via: "project-key", note: null },
+        { kind: "project-key", apiKey: KEY },
+      ),
+      pool: poolStub(),
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: executable,
+    }).turn(input({ onEvent: (event) => events.push(event) }));
+    expect(events).toEqual([{ type: "tool", tool: "tasks_list", phase: "start" }]);
+  });
+
+  it("the fake MCP client lists tools before calling one", async () => {
+    const { McpServer } = loadMcpSdk();
+    const server = new McpServer({ name: "boof", version: "0.0.0" });
+    server.registerTool(
+      "echo",
+      {
+        inputSchema: { text: z.string() },
+        outputSchema: { n: z.number() },
+      },
+      (() => ({
+        content: [{ type: "text", text: "x" }],
+        structuredContent: { n: "bad" },
+      })) as never,
+    );
+    const fake = fakeSdk([{ callMcp: "echo", args: { text: "hi" } }, success()]);
+    const turn = new ClaudeConcierge({
+      root: await tempRoot(),
+      auth: authStub(
+        { ok: true, via: "project-key", note: null },
+        { kind: "project-key", apiKey: KEY },
+      ),
+      pool: poolStub(),
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: executable,
+    }).turn(input({ mcpServer: server }));
+    await turn;
+    // An output that breaks the declared schema is an error result, as with a real client.
+    expect((fake.calls.mcpResults[0]!.result as { isError?: boolean }).isError).toBe(true);
+  });
+
+  it("redacts a key split over three deltas", async () => {
+    const root = await tempRoot();
+    const a = Math.floor(KEY.length / 3);
+    const b = Math.floor((KEY.length * 2) / 3);
+    const delta = (text: string): FakeStep => ({
+      emit: {
+        type: "stream_event",
+        event: { type: "content_block_delta", delta: { type: "text_delta", text } },
+      },
+    });
+    const fake = fakeSdk([
+      delta(`key ${KEY.slice(0, a)}`),
+      delta(KEY.slice(a, b)),
+      delta(`${KEY.slice(b)} end`),
+      success(),
+    ]);
+    const result = await new ClaudeConcierge({
+      root,
+      auth: authStub(
+        { ok: true, via: "project-key", note: null },
+        { kind: "project-key", apiKey: KEY },
+      ),
+      pool: poolStub(),
+      loadSdk: async () => fake.sdk,
+      resolveExecutable: executable,
+    }).turn(input());
+    expect(result.text).not.toContain(KEY.slice(0, 12));
+    expect(result.text).toContain("[redacted]");
+  });
+
   it("availability fails closed in order and never sends a prompt", async () => {
     const root = await tempRoot();
     const sleep = vi.fn(async () => {
@@ -688,5 +893,20 @@ describe("ClaudeConcierge", () => {
     });
     expect(fake.calls.options).toEqual([]);
     expect(fake.calls.prompts).toEqual([]);
+
+    const keyPool = vi.fn();
+    const viaKey = new ClaudeConcierge({
+      root,
+      loadSdk: async () => fakeSdk([]).sdk,
+      resolveExecutable: executable,
+      auth: authStub({ ok: true, via: "project-key", note: null }),
+      pool: { check: keyPool } as unknown as PoolGate,
+    });
+    expect(await viaKey.availability(project)).toEqual({
+      available: true,
+      reason: null,
+      via: "project-key",
+    });
+    expect(keyPool).not.toHaveBeenCalled();
   });
 });

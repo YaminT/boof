@@ -1,5 +1,5 @@
-import { chmod, mkdir, rm } from "node:fs/promises";
-import type { Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
+import { chmod, mkdir, readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import {
   BOOF_VERSION,
   ConciergeTurnError,
@@ -33,6 +33,10 @@ const BINARY_MESSAGE =
   "Claude Code native binary not found (set BOOF_RUNNER_CLAUDE_AGENT_BIN or install claude)";
 const GATEWAY_UNREACHABLE = "the better-ccflare gateway is unreachable; try again shortly";
 const MCP_TOOL_PREFIX = "mcp__boof__";
+const TOOL_NAME = /^[a-z0-9_]{1,64}$/;
+
+/** Only tools/claude-agent*.ts import the SDK package, so the options type comes from AgentSdk. */
+type SdkOptions = NonNullable<Parameters<AgentSdk["query"]>[0]["options"]>;
 
 /** Built-in tools the concierge must not have, even if a preset or config would add them. */
 const DISALLOWED_TOOLS = [
@@ -89,11 +93,17 @@ async function ensurePrivate(path: string): Promise<void> {
   await chmod(path, 0o700);
 }
 
-/** Recreate the model cwd empty. The config directory is kept so a resumed session can be read. */
-async function emptyPrivate(path: string): Promise<void> {
-  await rm(path, { recursive: true, force: true });
-  await ensurePrivate(path);
+/**
+ * Empty the model cwd without removing the directory itself. The path and inode stay the same,
+ * so a turn already running in it keeps a valid working directory and `resume` keeps working.
+ */
+async function clearContents(path: string): Promise<void> {
+  for (const name of await readdir(path))
+    await rm(join(path, name), { recursive: true, force: true });
 }
+
+/** Turns running in this process, per scratch directory. Stale files are only cleared at zero. */
+const activeScratch = new Map<string, number>();
 
 export class ClaudeConcierge implements ConciergeAgent {
   private readonly root: string;
@@ -103,7 +113,6 @@ export class ClaudeConcierge implements ConciergeAgent {
   private readonly resolveExecutable: typeof resolveClaudeAgentExecutable;
   private readonly unavailableReason?: string;
   private readonly clientApp: string;
-
   constructor(options: ClaudeConciergeOptions) {
     this.root = options.root;
     this.loadSdk = options.loadSdk ?? loadAgentSdk;
@@ -169,7 +178,7 @@ export class ClaudeConcierge implements ConciergeAgent {
     if (this.unavailableReason)
       throw new ConciergeTurnError(this.unavailableReason, "refused", null, null);
     if (input.signal?.aborted)
-      throw new ConciergeTurnError("assistant aborted", "aborted", unknownUsage(), null);
+      throw new ConciergeTurnError("assistant aborted", "aborted", null, null);
 
     const decision = await this.auth.decide(input.project, { fresh: true });
     if (!decision.ok) throw new ConciergeTurnError(refusalMessage(decision), "refused", null, null);
@@ -200,11 +209,34 @@ export class ClaudeConcierge implements ConciergeAgent {
     const projectId = input.project.id;
     const configDir = conciergeConfigDir(this.root, projectId);
     const scratch = conciergeScratchDir(this.root, projectId);
-    await ensurePrivate(conciergeDir(this.root, projectId));
-    await ensurePrivate(configDir);
-    await emptyPrivate(scratch);
-
-    const env = claudeAgentEnv(process.env, credentials, this.clientApp, configDir);
+    let env: ReturnType<typeof claudeAgentEnv>;
+    let released = false;
+    const releaseScratch = () => {
+      if (released) return;
+      released = true;
+      const left = (activeScratch.get(scratch) ?? 1) - 1;
+      if (left <= 0) activeScratch.delete(scratch);
+      else activeScratch.set(scratch, left);
+    };
+    try {
+      await ensurePrivate(conciergeDir(this.root, projectId));
+      await ensurePrivate(configDir);
+      // Create it if missing; never remove it. The model has no file tools, so nothing is
+      // expected inside. Stale files go only when no turn of this process is using it.
+      await ensurePrivate(scratch);
+      const idle = (activeScratch.get(scratch) ?? 0) === 0;
+      activeScratch.set(scratch, (activeScratch.get(scratch) ?? 0) + 1);
+      if (idle) await clearContents(scratch);
+      env = claudeAgentEnv(process.env, credentials, this.clientApp, configDir);
+    } catch (error) {
+      releaseScratch();
+      throw new ConciergeTurnError(
+        redactSecrets(messageOf(error), credentials.apiKey ? [credentials.apiKey] : []),
+        "failed",
+        null,
+        null,
+      );
+    }
     const secrets = credentials.apiKey ? [credentials.apiKey] : [];
     const redact = (text: string) => redactSecrets(text, secrets);
     const abortController = new AbortController();
@@ -240,7 +272,13 @@ export class ClaudeConcierge implements ConciergeAgent {
       },
     };
 
-    const query = sdk.query({ prompt: input.prompt, options });
+    let query: ReturnType<AgentSdk["query"]>;
+    try {
+      query = sdk.query({ prompt: input.prompt, options });
+    } catch (error) {
+      releaseScratch();
+      throw new ConciergeTurnError(redact(messageOf(error)), "failed", null, null);
+    }
     let queryClosed = false;
     const closeQuery = () => {
       if (!queryClosed) {
@@ -278,7 +316,7 @@ export class ClaudeConcierge implements ConciergeAgent {
     const noteTool = (name: unknown, id: unknown) => {
       if (typeof name !== "string" || !name.startsWith(MCP_TOOL_PREFIX)) return;
       const tool = name.slice(MCP_TOOL_PREFIX.length);
-      if (!tool) return;
+      if (!TOOL_NAME.test(tool)) return;
       if (typeof id === "string") toolsById.set(id, tool);
       pendingTools.push(tool);
       input.onEvent?.({ type: "tool", tool, phase: "start" });
@@ -387,6 +425,7 @@ export class ClaudeConcierge implements ConciergeAgent {
     } finally {
       redactor.flush();
       clearTimeout(deadline);
+      releaseScratch();
       input.signal?.removeEventListener("abort", onAbort);
       closeQuery();
     }
