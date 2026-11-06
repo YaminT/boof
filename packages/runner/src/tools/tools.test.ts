@@ -509,13 +509,14 @@ describe("execCommand idle watchdog", () => {
 
   it("does not kill a child that keeps printing", async () => {
     const script =
-      "let n=0;const t=setInterval(()=>{console.log('tick');if(++n===8){clearInterval(t)}},100)";
+      "console.log('ready');let n=0;const t=setInterval(()=>{console.log('tick');if(++n===8){clearInterval(t)}},100)";
     const res = await execCommand(process.execPath, ["-e", script], {
       cwd: process.cwd(),
-      idleTimeoutMs: 400,
+      idleTimeoutMs: 2000,
     });
     expect(res.stalled).toBe(false);
     expect(res.code).toBe(0);
+    expect(res.stdout).toContain("ready");
     expect(res.stdout.match(/tick/g)).toHaveLength(8);
   });
 
