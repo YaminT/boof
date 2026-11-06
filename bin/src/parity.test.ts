@@ -24,9 +24,11 @@ import { cliOps, commandPath, matchOpCommand, opsCommand } from "@boof/facedisk/
 const json = (o: AnyOperation) => !o.rest.kind || o.rest.kind === "json";
 
 describe("every operation is reachable", () => {
-  it("is an MCP tool unless it moves a file", () => {
+  it("is an MCP tool unless the registry explains why it is REST/CLI only", () => {
     const exposed = new Set(exposedOps(registry).map((o) => o.name));
-    for (const op of registry) expect(exposed.has(op.name), op.name).toBe(json(op));
+    for (const op of registry) expect(exposed.has(op.name), op.name).toBe(json(op) && !op.mcp.why);
+    for (const op of registry.filter((item) => item.mcp.why))
+      expect(op.name.startsWith("concierge."), op.name).toBe(true);
   });
 
   it("is a CLI command", () => {
@@ -120,6 +122,12 @@ describe("read-only operations answer on both local surfaces", () => {
     await ok(["plans", "sync", "--project", "shop", "--plan-id", "q4"]);
     await ok(["epics", "create", "--project", "shop", "--title", "E1", "--id", "e1"]);
     taskId = (await services.forProject("shop").list())[0]!.frontmatter.id;
+  });
+
+  it("prints the unavailable reason through the generated concierge CLI", async () => {
+    const result = await cli(["concierge", "status", "--project", "shop", "--json", "-d", root]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("The assistant is not set up in this boof process.");
   });
 
   afterEach(async () => {

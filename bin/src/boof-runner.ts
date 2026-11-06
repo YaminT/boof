@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ToolRegistry } from "@boof/runner";
+import { ClaudeConcierge, ToolRegistry } from "@boof/runner";
 import { boot, isRunnerStartFailure } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
@@ -21,7 +21,7 @@ import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
-import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
+import { AuthStore, MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
 interface ServeArgs {
@@ -562,7 +562,11 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       (isOpArea(cmd) && !(cmd in HAND_WRITTEN_COMMANDS)))
   ) {
     return opsCommand([cmd, ...rest], defaultDataRoot, {
-      services: (root) => new TaskService(root, new ToolRegistry()),
+      services: (root) =>
+        new TaskService(root, new ToolRegistry(), {
+          conciergeAgent: new ClaudeConcierge({ root }),
+          authStore: new AuthStore(root),
+        }),
     });
   }
   let code = 0;

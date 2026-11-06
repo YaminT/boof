@@ -70,6 +70,8 @@ export interface McpAnnotations {
 
 export interface McpSpec {
   expose: boolean;
+  /** Why a REST/CLI operation deliberately has no MCP tool. */
+  why?: string;
   /** Stable tool name, `^[a-zA-Z0-9_-]{1,64}$`, `boof_<verb>_<noun>`. Required when exposed. */
   name?: string;
   annotations?: McpAnnotations;

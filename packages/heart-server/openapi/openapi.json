@@ -6161,6 +6161,729 @@
         "x-mcp-tool": "boof_archive_project"
       }
     },
+    "/projects/{projectId}/concierge": {
+      "get": {
+        "description": "Gets assistant availability and the current conversation for a project. Inputs: projectId. No side effects.",
+        "operationId": "concierge.status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "conversation": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "messages": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "pending": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "destructive": {
+                                    "type": "boolean"
+                                  },
+                                  "details": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "expiresAt": {
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "op": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "enum": [
+                                      "confirm",
+                                      "needs-approval"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "status": {
+                                    "enum": [
+                                      "pending",
+                                      "applying",
+                                      "applied",
+                                      "discarded",
+                                      "expired",
+                                      "failed"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "op",
+                                  "title",
+                                  "details",
+                                  "destructive",
+                                  "reason",
+                                  "status",
+                                  "expiresAt"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "spentUsd": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "spentUsd",
+                            "messages",
+                            "pending"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "limits": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "messagesPerMinute": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "perConversationUsd": {
+                          "type": "number"
+                        },
+                        "perMessageUsd": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "perMessageUsd",
+                        "perConversationUsd",
+                        "messagesPerMinute"
+                      ],
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "via": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "gateway",
+                            "project-key"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "available",
+                    "reason",
+                    "via",
+                    "model",
+                    "limits",
+                    "conversation"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get assistant status",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/changes/{changeId}/apply": {
+      "post": {
+        "description": "Applies a pending assistant change with the caller's own rights. Inputs: projectId and changeId. Changes one project item once.",
+        "operationId": "concierge.apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "changeId",
+            "required": true,
+            "schema": {
+              "pattern": "^chg-[a-f0-9]{8}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "change": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "destructive": {
+                          "type": "boolean"
+                        },
+                        "details": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "op": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "confirm",
+                            "needs-approval"
+                          ],
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "pending",
+                            "applying",
+                            "applied",
+                            "discarded",
+                            "expired",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "op",
+                        "title",
+                        "details",
+                        "destructive",
+                        "reason",
+                        "status",
+                        "expiresAt"
+                      ],
+                      "type": "object"
+                    },
+                    "result": {}
+                  },
+                  "required": [
+                    "change",
+                    "result"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Apply an assistant change",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/changes/{changeId}/discard": {
+      "post": {
+        "description": "Discards a pending assistant change. Inputs: projectId and changeId. The proposed change is not applied.",
+        "operationId": "concierge.discard",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "changeId",
+            "required": true,
+            "schema": {
+              "pattern": "^chg-[a-f0-9]{8}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "change": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "destructive": {
+                          "type": "boolean"
+                        },
+                        "details": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "op": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "confirm",
+                            "needs-approval"
+                          ],
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "pending",
+                            "applying",
+                            "applied",
+                            "discarded",
+                            "expired",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "op",
+                        "title",
+                        "details",
+                        "destructive",
+                        "reason",
+                        "status",
+                        "expiresAt"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "change"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Discard an assistant change",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/messages": {
+      "post": {
+        "description": "Sends a message to the assistant for the selected project. Inputs: projectId, text and optional page context or conversationId. May create drafts and pending changes, and records model spend.",
+        "operationId": "concierge.ask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "context": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "goalId": {
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "planId": {
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "screen": {
+                        "enum": [
+                          "overview",
+                          "tasks",
+                          "task",
+                          "plans",
+                          "settings",
+                          "inbox"
+                        ],
+                        "type": "string"
+                      },
+                      "taskId": {
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "screen"
+                    ],
+                    "type": "object"
+                  },
+                  "conversationId": {
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "text": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "changes": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "op": {
+                            "type": "string"
+                          },
+                          "summary": {
+                            "type": "string"
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "enum": [
+                                      "task",
+                                      "plan",
+                                      "epic"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "id"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "summary",
+                          "target"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "costUsd": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "pending": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "destructive": {
+                            "type": "boolean"
+                          },
+                          "details": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "expiresAt": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "op": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "enum": [
+                              "confirm",
+                              "needs-approval"
+                            ],
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "pending",
+                              "applying",
+                              "applied",
+                              "discarded",
+                              "expired",
+                              "failed"
+                            ],
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "op",
+                          "title",
+                          "details",
+                          "destructive",
+                          "reason",
+                          "status",
+                          "expiresAt"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "stopReason": {
+                      "enum": [
+                        "done",
+                        "max_turns",
+                        "max_budget"
+                      ],
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "conversationId",
+                    "text",
+                    "changes",
+                    "pending",
+                    "costUsd",
+                    "stopReason"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Ask the assistant",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/reset": {
+      "post": {
+        "description": "Ends the caller's current assistant conversation for a project. Inputs: projectId. Pending changes remain available until discarded or expired.",
+        "operationId": "concierge.reset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset assistant conversation",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
     "/projects/{projectId}/epics": {
       "get": {
         "description": "Lists a project's epics (priority descending, then oldest update) with their progress: non-archived top-level tasks and how many are done. Inputs: projectId, optional includeArchived. No side effects.",

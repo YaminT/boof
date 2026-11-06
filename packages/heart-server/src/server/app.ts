@@ -50,6 +50,8 @@ import {
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 import { mcpRoute } from "./mcp-route.js";
 import { HARNESS_MD } from "./generated/harness.js";
+import { ConciergeAskInputSchema } from "../api/ops/concierge.js";
+import { ConciergeEventSchema } from "../api/schemas.js";
 
 export interface AppDeps {
   service: TaskService;
@@ -235,6 +237,8 @@ export function createApp(deps: AppDeps): Hono {
 
   app.onError((err, c) => {
     const e = toOpError(err);
+    // An aborted request has no client to receive an error body (and 499 is not public API data).
+    if (e.status === 499) return c.body(null, 499 as 400);
     return c.json(e.toBody(), e.status as 400);
   });
 
@@ -276,6 +280,113 @@ export function createApp(deps: AppDeps): Hono {
   });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "", legacy: true });
+
+  const streamConcierge = async (c: Context) => {
+    const principal = who(c);
+    const projectId = c.req.param("projectId") ?? "";
+    if (!authorizeProject(principal, projectId)) {
+      throw new OpError(
+        403,
+        `This client may not access project: ${projectId}`,
+        "forbidden_project",
+        { project: projectId },
+      );
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new OpError(400, "Request body must be valid JSON", "invalid_input");
+    }
+    const parsed = ConciergeAskInputSchema.safeParse({
+      ...(body as Record<string, unknown>),
+      projectId,
+    });
+    if (!parsed.success)
+      throw new OpError(400, "Invalid input", "invalid_input", parsed.error.issues);
+
+    const queued: Array<{ type: string; data: unknown }> = [];
+    let wake: (() => void) | undefined;
+    let complete = false;
+    let failure: unknown;
+    const notify = () => {
+      wake?.();
+      wake = undefined;
+    };
+    const run = service
+      .concierge()
+      .ask(
+        principal,
+        projectId,
+        {
+          text: parsed.data.text,
+          context: parsed.data.context,
+          conversationId: parsed.data.conversationId,
+        },
+        (event) => {
+          const validated = ConciergeEventSchema.parse(event);
+          queued.push({ type: validated.type, data: validated });
+          notify();
+        },
+        c.req.raw.signal,
+      )
+      .then(
+        () => {
+          complete = true;
+          notify();
+        },
+        (err: unknown) => {
+          failure = err;
+          complete = true;
+          notify();
+        },
+      );
+
+    // ConciergeService emits `conversation` only after all pre-model checks. Wait for that
+    // boundary so validation, authorization, budget and availability refusals remain JSON.
+    while (queued.length === 0 && !complete)
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    if (queued.length === 0) {
+      await run;
+      const error = toOpError(failure);
+      if (error.status === 499) return c.body(null, 499 as 400);
+      return c.json(error.toBody(), error.status as 400);
+    }
+
+    c.header("X-Accel-Buffering", "no");
+    return streamSSE(c, async (stream) => {
+      let errorEventSent = false;
+      while (queued.length > 0 || !complete) {
+        while (queued.length > 0) {
+          const event = queued.shift()!;
+          if (event.type === "error") errorEventSent = true;
+          await stream.writeSSE({ event: event.type, data: JSON.stringify(event.data) });
+        }
+        if (!complete)
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+      }
+      if (failure) {
+        const error = toOpError(failure);
+        if (error.status !== 499 && !errorEventSent)
+          await stream.writeSSE({ event: "error", data: JSON.stringify(error.toBody().error) });
+      }
+      await run;
+    });
+  };
+  api.post(
+    "/v1/projects/:projectId/concierge/messages/stream",
+    requireScope("tasks:read"),
+    streamConcierge,
+  );
+  api.post(
+    "/projects/:projectId/concierge/messages/stream",
+    requireScope("tasks:read"),
+    streamConcierge,
+  );
 
   const who = (c: Context) => c.get("principal");
 

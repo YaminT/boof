@@ -142,4 +142,9 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "webhooks.update": { where: "updateWebhook \u2014 Webhooks (enable, disable, edit)" },
   "webhooks.delete": { where: "deleteWebhook \u2014 Webhooks (delete a webhook)" },
+  "concierge.status": { none: "the assistant status is shown in the console" },
+  "concierge.ask": { none: "the console sends assistant messages through its stream client" },
+  "concierge.apply": { none: "the console confirmation dialog applies proposed changes" },
+  "concierge.discard": { none: "the console confirmation dialog discards proposed changes" },
+  "concierge.reset": { none: "the console starts a new conversation when reset" },
 };

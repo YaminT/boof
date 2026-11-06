@@ -71,7 +71,8 @@ describe("operations registry contract", () => {
   it("exposes every operation on MCP except file upload and download", () => {
     for (const op of registry) {
       const json = !op.rest.kind || op.rest.kind === "json";
-      expect(op.mcp.expose, op.name).toBe(json);
+      expect(op.mcp.expose, op.name).toBe(json && !op.mcp.why);
+      if (op.mcp.why) expect(op.name.startsWith("concierge."), op.name).toBe(true);
     }
   });
 

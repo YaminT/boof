@@ -1,5 +1,6 @@
 import {
   DESKTOP_CLAUDE_AGENT_REASON,
+  ClaudeConcierge,
   RunnerEngine,
   ToolRegistry,
   defaultTools,
@@ -38,12 +39,17 @@ export async function boot(opts: BootOptions): Promise<Booted> {
       claudeAgent === "unavailable" ? { claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON } : {},
     ),
   );
+  const conciergeAgent = new ClaudeConcierge({
+    root: opts.root,
+    unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
+  });
   let engine: RunnerEngine | null = null;
   const server = await startServer({
     ...commonServerOptions,
     ...serverOptions,
     root: opts.root,
     catalog: registry,
+    conciergeAgent,
     runnerRunning: () => engine !== null,
   });
   await onServer?.(server);

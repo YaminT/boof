@@ -248,10 +248,9 @@ describe("tools generated from the registry", () => {
         "boof_delete_webhook",
       ]
     `);
-    // Every operation except file upload and download (the plan said 70 before the epic and
-    // health operations were added).
+    // Every exposed JSON operation except file upload and download. Concierge is REST/CLI only.
     const jsonOps = (await import("../api/index.js")).registry.filter(
-      (o) => !o.rest.kind || o.rest.kind === "json",
+      (o) => (!o.rest.kind || o.rest.kind === "json") && o.mcp.expose,
     );
     expect(names).toHaveLength(jsonOps.length);
     expect(names).toHaveLength(80);

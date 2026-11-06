@@ -92,6 +92,11 @@ describe("UI coverage of the operations", () => {
         "settings.health",
         "settings.models",
         "runner.overview",
+        "concierge.status",
+        "concierge.ask",
+        "concierge.apply",
+        "concierge.discard",
+        "concierge.reset",
       ]
     `);
   });

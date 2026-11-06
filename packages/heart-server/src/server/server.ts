@@ -11,6 +11,7 @@ import {
   securitySettings,
   type Settings,
   type ToolCatalog,
+  type ConciergeAgent,
 } from "@boof/heart";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
@@ -32,6 +33,8 @@ export interface StartServerOptions {
   allowedHosts?: string[];
   /** The tools. Required: the composition root (bin, desktop) builds the registry; Heart never does. */
   catalog: ToolCatalog;
+  /** Assistant implementation supplied by the composition root; absent in standalone server mode. */
+  conciergeAgent?: ConciergeAgent;
   /** PEM file paths; when both are set the server speaks HTTPS. */
   tlsCert?: string;
   tlsKey?: string;
@@ -91,12 +94,14 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const migration = await migrateDataRoot(opts.root);
   if (migration.kind === "migrated")
     warn(`migrated data root ${opts.root} to v2 (see migration-v2.log)`);
-  const service = new TaskService(opts.root, opts.catalog);
+  const authStore = new AuthStore(opts.root);
+  const service = new TaskService(opts.root, opts.catalog, {
+    conciergeAgent: opts.conciergeAgent,
+    authStore,
+  });
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);
-  const authStore = new AuthStore(opts.root);
-
   await assertBindAllowed(host, settings, authStore);
   if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
     warn(

@@ -215,6 +215,69 @@ export const PublicClientSchema = ClientSchema.omit({ keyHash: true });
 /** A webhook as listed: `notDelivering` says why one that is enabled still sends nothing. */
 export const PublicWebhookSchema = WebhookSchema.extend({ notDelivering: z.string().optional() });
 
+const ConciergePendingChangeSchema = z.object({
+  id: z.string(),
+  op: z.string(),
+  title: z.string(),
+  details: z.array(z.string()),
+  destructive: z.boolean(),
+  reason: z.enum(["confirm", "needs-approval"]),
+  status: z.enum(["pending", "applying", "applied", "discarded", "expired", "failed"]),
+  expiresAt: z.string(),
+});
+const ConciergeTargetSchema = z
+  .object({ kind: z.enum(["task", "plan", "epic"]), id: z.string() })
+  .nullable();
+export const ConciergeStatusSchema = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+  via: z.enum(["gateway", "project-key"]).nullable(),
+  model: z.string(),
+  limits: z.object({
+    perMessageUsd: z.number(),
+    perConversationUsd: z.number(),
+    messagesPerMinute: z.number().int(),
+  }),
+  conversation: z
+    .object({
+      id: z.string(),
+      spentUsd: z.number(),
+      messages: z.number().int(),
+      pending: z.array(ConciergePendingChangeSchema),
+    })
+    .nullable(),
+});
+export const ConciergeAnswerSchema = z.object({
+  conversationId: z.string(),
+  text: z.string(),
+  changes: z.array(
+    z.object({ op: z.string(), summary: z.string(), target: ConciergeTargetSchema }),
+  ),
+  pending: z.array(ConciergePendingChangeSchema),
+  costUsd: z.number().nullable(),
+  stopReason: z.enum(["done", "max_turns", "max_budget"]),
+});
+export const ConciergeChangeSchema = ConciergePendingChangeSchema;
+export const ConciergeEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("conversation"), conversationId: z.string() }),
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("tool"),
+    tool: z.string(),
+    phase: z.enum(["start", "end"]),
+    ok: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("change"),
+    op: z.string(),
+    summary: z.string(),
+    target: ConciergeTargetSchema,
+  }),
+  z.object({ type: z.literal("pending"), change: ConciergePendingChangeSchema }),
+  z.object({ type: z.literal("done"), answer: ConciergeAnswerSchema }),
+  z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
+]);
+
 export const HealthResultSchema = z.object({
   status: z.enum(["available", "unavailable"]),
   message: z.string(),

@@ -7,15 +7,23 @@ const packageVersion = JSON.parse(
   readFileSync(resolve(fileURLToPath(new URL("../../", import.meta.url)), "package.json"), "utf8"),
 ).version as string;
 
-const { startServer, constructEngine, engineLoop, engineShutdown } = vi.hoisted(() => ({
-  startServer: vi.fn(),
-  constructEngine: vi.fn(),
-  engineLoop: vi.fn(),
-  engineShutdown: vi.fn(),
-}));
+const { startServer, constructEngine, engineLoop, engineShutdown, constructConcierge } = vi.hoisted(
+  () => ({
+    startServer: vi.fn(),
+    constructEngine: vi.fn(),
+    engineLoop: vi.fn(),
+    engineShutdown: vi.fn(),
+    constructConcierge: vi.fn(),
+  }),
+);
 vi.mock("@boof/heart-server", () => ({ startServer }));
 vi.mock("@boof/runner", () => ({
   DESKTOP_CLAUDE_AGENT_REASON: "desktop unavailable",
+  ClaudeConcierge: class {
+    constructor(options: unknown) {
+      constructConcierge(options);
+    }
+  },
   defaultTools: (opts: { claudeAgentUnavailable?: string } = {}) => [
     { id: "claude-agent", unavailableReason: opts.claudeAgentUnavailable },
   ],
@@ -128,5 +136,23 @@ describe("bin boot", () => {
     );
     await result.stop(0);
     delete (globalThis as { catalog?: unknown }).catalog;
+  });
+
+  it("passes the desktop unavailable reason into Concierge before the server starts", async () => {
+    const server = { stop: vi.fn(async () => {}) };
+    startServer.mockImplementation(async (options) => {
+      expect(options.conciergeAgent).toBeTruthy();
+      return server;
+    });
+    const result = await boot({
+      root: "/tmp/boot-test",
+      version: packageVersion,
+      claudeAgent: "unavailable",
+    });
+    expect(constructConcierge).toHaveBeenCalledWith({
+      root: "/tmp/boot-test",
+      unavailableReason: "desktop unavailable",
+    });
+    await result.stop(0);
   });
 });

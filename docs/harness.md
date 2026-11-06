@@ -659,7 +659,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 82 operations. Every path below starts with `/api/v1`.
+There are 87 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -2214,6 +2214,86 @@ JSON body (unknown keys are rejected):
 Path parameters (all required):
 
 - `webhookId`: `kebab-id`, required; Webhook id
+
+### concierge
+
+#### `GET /api/v1/projects/{projectId}/concierge` (Get assistant status)
+
+- Operation: `concierge.status`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge status`
+- What it does: Gets assistant availability and the current conversation for a project. Inputs: projectId. No side effects.
+- Success: HTTP 200 with `{ available: boolean, conversation: { id: string, messages: integer, pending: object[], spentUsd: number } | null, limits: { messagesPerMinute: integer, perConversationUsd: number, perMessageUsd: number }, model: string, reason: string | null, via: "gateway" | "project-key" | null }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
+#### `POST /api/v1/projects/{projectId}/concierge/messages` (Ask the assistant)
+
+- Operation: `concierge.ask`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge ask`
+- What it does: Sends a message to the assistant for the selected project. Inputs: projectId, text and optional page context or conversationId. May create drafts and pending changes, and records model spend.
+- Success: HTTP 200 with `{ changes: { op: string, summary: string, target: object | null }[], conversationId: string, costUsd: number | null, pending: { destructive: boolean, details: string[], expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }[], stopReason: "done" | "max_turns" | "max_budget", text: string }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
+JSON body (unknown keys are rejected):
+
+- `context`: `{ goalId?: string, planId?: string, screen: "overview" | "tasks" | "task" | "plans" | "settings" | "inbox", taskId?: string }`, optional
+- `conversationId`: `string`, optional
+- `text`: `string`, required; max length 4000
+
+#### `POST /api/v1/projects/{projectId}/concierge/changes/{changeId}/apply` (Apply an assistant change)
+
+- Operation: `concierge.apply`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge apply`
+- What it does: Applies a pending assistant change with the caller's own rights. Inputs: projectId and changeId. Changes one project item once.
+- Success: HTTP 200 with `{ change: { destructive: boolean, details: string[], expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }, result: any }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `changeId`: `string`, required
+
+#### `POST /api/v1/projects/{projectId}/concierge/changes/{changeId}/discard` (Discard an assistant change)
+
+- Operation: `concierge.discard`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge discard`
+- What it does: Discards a pending assistant change. Inputs: projectId and changeId. The proposed change is not applied.
+- Success: HTTP 200 with `{ change: { destructive: boolean, details: string[], expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string } }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `changeId`: `string`, required
+
+#### `POST /api/v1/projects/{projectId}/concierge/reset` (Reset assistant conversation)
+
+- Operation: `concierge.reset`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge reset`
+- What it does: Ends the caller's current assistant conversation for a project. Inputs: projectId. Pending changes remain available until discarded or expired.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
 
 ### Event stream
 
