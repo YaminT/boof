@@ -5,6 +5,10 @@
 - Add the write-only `owlishAgentKey`, an api-only better-ccflare key that `claude-agent` processes receive instead of the admin client key. Gateway mode without it falls back to the project key or is refused.
 - Refuse write-only secrets in inline `--input` JSON on the CLI (use `--input @file` or `--input @-`).
 
+### Runner and agent workflow
+
+- Add the opt-in `claude-agent` tool on the Claude Agent SDK: in-place steering of a `now` injection (with an optional model switch, and a kill-and-resume fallback), session resume and an SDK-reported cost estimate. It runs in bare mode with a per-project config folder and only the repo's permission rules. It runs through better-ccflare only when every pool account uses an API key, and otherwise with the project's own Anthropic API key; a task that cannot be authenticated does not start. It is not in the desktop app. Claude Code stays the default.
+
 ## 0.3.0 (2026-11-05)
 
 ### Fixes
@@ -52,7 +56,6 @@
 - Pass large Codex and OpenCode prompts through stdin to avoid command-line length limits.
 - Limit agent environment variables to an allowlist and avoid loading user MCP configuration by default; opt in to inherited MCP servers through settings.
 - Show tool health, model sources, and usage, with health and model reads reporting cached probes and explicit endpoints refreshing them.
-- Add the opt-in `claude-agent` tool on the Claude Agent SDK: in-place steering of a `now` injection (with an optional model switch, and a kill-and-resume fallback), session resume and an SDK-reported cost estimate. It runs in bare mode with a per-project config folder and only the repo's permission rules. It runs through better-ccflare only when every pool account uses an API key, and otherwise with the project's own Anthropic API key; a task that cannot be authenticated does not start. It is not in the desktop app. Claude Code stays the default.
 - Preserve work after interrupted runs and reap verified orphaned agent processes where supported; Windows orphan reaping is experimental.
 
 ### Diff review and stopped status
