@@ -1005,3 +1005,89 @@ describe("handleMcpHttp", () => {
     });
   });
 });
+
+describe("MCP call gates", () => {
+  it("lets a before answer replace a destructive call without running it", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    await call(await connect(LOCAL_PRINCIPAL), "boof_create_task", {
+      projectId: "shop",
+      title: "Keep me",
+      status: "pending",
+    });
+    const client = await connect(LOCAL_PRINCIPAL, "shop", {
+      gate: {
+        before: async (op) =>
+          op.name === "tasks.delete"
+            ? { summary: "Deletion needs your confirmation.", structured: { pending: true } }
+            : undefined,
+      },
+    });
+
+    const result = await call(client, "boof_delete_task", { taskId: "keep-me" });
+    expect(result.content[0]?.text).toBe("Deletion needs your confirmation.");
+    expect(result.content[1]?.text).toBe('{"pending":true}');
+    expect(result.structuredContent).toEqual({ pending: true });
+    expect(
+      (await call(client, "boof_get_task", { taskId: "keep-me" })).structuredContent?.frontmatter,
+    ).toMatchObject({ id: "keep-me" });
+  });
+
+  it("maps a refused error through the hook and leaves other errors unchanged", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    await call(await connect(LOCAL_PRINCIPAL), "boof_create_task", {
+      projectId: "shop",
+      title: "Review delete",
+      status: "pending",
+    });
+    const review = await clientPrincipal(["tasks:read", "tasks:write"], "review");
+    const client = await connect(review, "shop", {
+      gate: {
+        refused: async (_op, _raw, err) =>
+          err.code === "forbidden_trust"
+            ? { summary: "This action needs your confirmation.", structured: { pending: true } }
+            : undefined,
+      },
+    });
+
+    const refused = await call(client, "boof_delete_task", { taskId: "review-delete" });
+    expect(refused.isError).not.toBe(true);
+    expect(refused.content[0]?.text).toBe("This action needs your confirmation.");
+    const missing = await call(client, "boof_get_task", { taskId: "missing" });
+    expect(missing.isError).toBe(true);
+    expect(missing.content[0]?.text).toContain("not_found");
+  });
+
+  it("lets after replace a successful operation result", async () => {
+    const client = await connect(LOCAL_PRINCIPAL, undefined, {
+      gate: { after: async (_op, _raw, result) => ({ ...(result as object), replaced: true }) },
+    });
+    const result = await call(client, "boof_list_projects", {});
+    expect(result.structuredContent).toMatchObject({ replaced: true, projects: [] });
+  });
+
+  it("can disable resources and prompts", async () => {
+    const client = await connect(LOCAL_PRINCIPAL, undefined, { resources: false });
+    await expect(client.listResources()).rejects.toThrow();
+    await expect(client.listResourceTemplates()).rejects.toThrow();
+    await expect(client.listPrompts()).rejects.toThrow();
+  });
+
+  it("uses custom server instructions", async () => {
+    const client = await connect(LOCAL_PRINCIPAL, undefined, {
+      instructions: "Only use the project tools provided.",
+    });
+    expect(client.getInstructions()).toBe("Only use the project tools provided.");
+  });
+
+  it("reports successful gate answers in the call audit", async () => {
+    const calls: ToolCallInfo[] = [];
+    const client = await connect(LOCAL_PRINCIPAL, undefined, {
+      onCall: (info) => calls.push(info),
+      gate: {
+        before: async () => ({ summary: "Gated", structured: { gated: true } }),
+      },
+    });
+    await call(client, "boof_list_projects", {});
+    expect(calls[0]).toMatchObject({ ok: true, gated: true });
+  });
+});
