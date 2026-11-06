@@ -171,6 +171,12 @@ describe("scopes and durations", () => {
 });
 
 describe("client ids", () => {
+  it("never issues an id that starts with the reserved concierge prefix", async () => {
+    const { client } = await store.create({ name: "concierge-local", scopes: [] });
+    expect(client.id.startsWith("client-concierge")).toBe(true);
+    expect(client.id.startsWith("concierge")).toBe(false);
+  });
+
   it("never gives a client the id local (the local principal's), and suffixes on request", async () => {
     const { client } = await store.create({ name: "Local", scopes: ["tasks:read"] });
     expect(client.id).not.toBe("local");

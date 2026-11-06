@@ -58,6 +58,31 @@ describe("audit log", () => {
     ]);
   });
 
+  it("auditOperation accepts via concierge", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    await auditOperation(root, {
+      principal: { id: "local", kind: "local" },
+      action: "concierge.ask",
+      via: "concierge",
+      project: "demo",
+      ok: true,
+      ms: 4,
+      at: Date.parse("2026-03-01T10:00:00Z"),
+    });
+    expect(await lines()).toEqual([
+      {
+        ts: "2026-03-01T10:00:00.000Z",
+        principal: "local",
+        kind: "local",
+        action: "concierge.ask",
+        via: "concierge",
+        project: "demo",
+        outcome: "ok",
+        ms: 4,
+      },
+    ]);
+  });
+
   it("writes nothing when security.audit.enabled is false", async () => {
     const settings = defaultSettings();
     await new SettingsStore(root).save({

@@ -363,6 +363,25 @@ export const McpSettingsSchema = z.object({
 export type McpSettings = z.infer<typeof McpSettingsSchema>;
 
 /**
+ * Console assistant (concierge). Absent on `Settings`: `conciergeSettings` applies these defaults.
+ * `model: "default"` lets the Agent SDK choose. Spend is capped per message and per conversation.
+ */
+export const ConciergeSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  model: z
+    .string()
+    .regex(/^[A-Za-z0-9._:\[\]\/-]{1,100}$/)
+    .default("default"),
+  perMessageUsd: z.number().positive().max(50).default(0.25),
+  perConversationUsd: z.number().positive().max(500).default(2),
+  messagesPerMinute: z.int().min(1).max(60).default(6),
+  maxTurns: z.int().min(1).max(20).default(8),
+  timeoutMs: z.int().min(10_000).max(600_000).default(120_000),
+  idleMinutes: z.int().min(5).max(240).default(30),
+});
+export type ConciergeSettings = z.infer<typeof ConciergeSettingsSchema>;
+
+/**
  * A webhook subscription (settings.webhooks). `events` holds event types or `prefix.*` patterns
  * (`task.status`, `plan.*`, `*`). The signing secret is not part of it: see WebhookSecretStore.
  */
@@ -494,6 +513,8 @@ export const SettingsSchema = z.object({
   budget: BudgetSettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
   mcp: McpSettingsSchema.optional(),
+  /** Console assistant switch and limits. Absent: the defaults from `conciergeSettings`. */
+  concierge: ConciergeSettingsSchema.optional(),
   /** The optional better-ccflare account pool. */
   owlish: OwlishSettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */

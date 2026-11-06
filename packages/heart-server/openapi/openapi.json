@@ -1539,6 +1539,67 @@
             ],
             "type": "object"
           },
+          "concierge": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "idleMinutes": {
+                "default": 30,
+                "maximum": 240,
+                "minimum": 5,
+                "type": "integer"
+              },
+              "maxTurns": {
+                "default": 8,
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "messagesPerMinute": {
+                "default": 6,
+                "maximum": 60,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "model": {
+                "default": "default",
+                "pattern": "^[A-Za-z0-9._:\\[\\]\\/-]{1,100}$",
+                "type": "string"
+              },
+              "perConversationUsd": {
+                "default": 2,
+                "exclusiveMinimum": 0,
+                "maximum": 500,
+                "type": "number"
+              },
+              "perMessageUsd": {
+                "default": 0.25,
+                "exclusiveMinimum": 0,
+                "maximum": 50,
+                "type": "number"
+              },
+              "timeoutMs": {
+                "default": 120000,
+                "maximum": 600000,
+                "minimum": 10000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "enabled",
+              "model",
+              "perMessageUsd",
+              "perConversationUsd",
+              "messagesPerMinute",
+              "maxTurns",
+              "timeoutMs",
+              "idleMinutes"
+            ],
+            "type": "object"
+          },
           "defaultProject": {
             "anyOf": [
               {
