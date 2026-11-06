@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -92,13 +92,21 @@ describe("concierge API", () => {
         id: "chg-aaaaaaaa",
         status: "applying",
         error: undefined,
+        expiresAt: new Date(Date.now() - 11 * 60_000).toISOString(),
       });
     });
+    const conversationPath = join(
+      conciergeDir(root, "shop"),
+      "conversations",
+      `${failedStatus.conversation.id}.json`,
+    );
+    const before = await readFile(conversationPath, "utf8");
     status = await request("/api/v1/projects/shop/concierge");
     pending = (await status.json()).conversation.pending;
     expect(pending).toContainEqual(
-      expect.objectContaining({ id: "chg-aaaaaaaa", status: "applying" }),
+      expect.objectContaining({ id: "chg-aaaaaaaa", status: "failed", error: "interrupted" }),
     );
+    expect(await readFile(conversationPath, "utf8")).toBe(before);
   });
 
   it('"create a task to fix X" yields a draft task', async () => {

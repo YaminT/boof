@@ -11,6 +11,12 @@ export const MAX_PENDING_PER_CONVERSATION = 20;
 export const CHANGE_TTL_MS = 15 * 60_000;
 export const APPLYING_GRACE_MS = 10 * 60_000;
 
+export function isInterruptedApply(change: PendingChange, now: number): boolean {
+  if (change.status !== "applying") return false;
+  const expiresAt = Date.parse(change.expiresAt);
+  return !Number.isNaN(expiresAt) && expiresAt + APPLYING_GRACE_MS <= now;
+}
+
 const CONV_ID = /^cnv-[0-9a-f]{8}$/;
 
 export interface PendingChange {
@@ -251,8 +257,7 @@ export class ConciergeStore {
         change.status = "expired";
         changed = true;
       } else if (change.status === "applying") {
-        const at = Date.parse(change.expiresAt);
-        if (Number.isNaN(at) || at + APPLYING_GRACE_MS > now) continue;
+        if (!isInterruptedApply(change, now)) continue;
         change.status = "failed";
         change.error = "interrupted";
         changed = true;

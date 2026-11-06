@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   AuthStore,
   CHANGE_TTL_MS,
+  isInterruptedApply,
   CONCIERGE_TOOL_ID,
   ConciergeStore,
   conciergeDir,
@@ -181,7 +182,14 @@ export class ConciergeService {
         this.now() < Date.parse(conversation.updatedAt)
       )
         return null;
-      return conversation;
+      return {
+        ...conversation,
+        changes: conversation.changes.map((change) =>
+          isInterruptedApply(change, this.now())
+            ? { ...change, status: "failed" as const, error: "interrupted" }
+            : change,
+        ),
+      };
     } catch {
       return null;
     }
