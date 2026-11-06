@@ -9,6 +9,7 @@ import { TokenUsageSchema, type TokenUsage } from "./schema.js";
 
 export const MAX_PENDING_PER_CONVERSATION = 20;
 export const CHANGE_TTL_MS = 15 * 60_000;
+export const APPLYING_GRACE_MS = 10 * 60_000;
 
 const CONV_ID = /^cnv-[0-9a-f]{8}$/;
 
@@ -131,7 +132,9 @@ export class ConciergeStore {
     if (!CONV_ID.test(conversationId)) return null;
     return this.locked(projectId, async () => {
       const found = await this.readConversation(projectId, conversationId);
-      return found === "corrupt" ? null : found;
+      if (found === "corrupt" || !found) return null;
+      if (this.expire(found)) await this.writeConversation(projectId, found);
+      return found;
     });
   }
 
@@ -234,16 +237,23 @@ export class ConciergeStore {
     };
   }
 
-  /** Pending changes whose `expiresAt` is due become `expired`. Does not touch `updatedAt`. */
+  /** Expire due proposals and recover applies past their expiry grace. */
   private expire(conversation: ConciergeConversation): boolean {
     const now = this.now();
     let changed = false;
     for (const change of conversation.changes) {
-      if (change.status !== "pending") continue;
-      const at = Date.parse(change.expiresAt);
-      if (Number.isNaN(at) || at > now) continue;
-      change.status = "expired";
-      changed = true;
+      if (change.status === "pending") {
+        const at = Date.parse(change.expiresAt);
+        if (Number.isNaN(at) || at > now) continue;
+        change.status = "expired";
+        changed = true;
+      } else if (change.status === "applying") {
+        const at = Date.parse(change.expiresAt);
+        if (Number.isNaN(at) || at + APPLYING_GRACE_MS > now) continue;
+        change.status = "failed";
+        change.error = "interrupted";
+        changed = true;
+      }
     }
     return changed;
   }

@@ -561,6 +561,10 @@ export class ConciergeService {
       throw new OpError(409, "Pending change expired", "change_expired");
     if (change.status !== "pending")
       throw new OpError(404, "Pending change not found", "change_not_found");
+    const { getOp } = await import("../api/registry.js");
+    const op = getOp(change.op);
+    if (!op || !CONCIERGE_TOOLS[change.op])
+      throw new OpError(404, "Pending change not found", "change_not_found");
     const startedAt = this.now();
     const services = await this.opts.services.requireProject(projectId);
     const currentStamp = change.guard ? await this.readGuard(change.guard, services) : null;
@@ -594,10 +598,6 @@ export class ConciergeService {
         throw new OpError(404, "Pending change was already applied.", "change_not_found");
       throw new OpError(404, "Pending change not found", "change_not_found");
     }
-    const { getOp } = await import("../api/registry.js");
-    const op = getOp(change.op);
-    if (!op || !CONCIERGE_TOOLS[change.op])
-      throw new OpError(404, "Pending change not found", "change_not_found");
     try {
       const result = await op.execute(
         {

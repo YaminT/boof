@@ -135,6 +135,23 @@ describe("ConciergeService", () => {
     expect(stored?.changes.find((c) => c.id === changeId)?.status).toBe("applied");
   });
 
+  it("does not claim a change when its operation is missing", async () => {
+    const project = await services.requireProject("demo");
+    const task = await project.create({ title: "Target task", prompt: "p" });
+    agent = scriptedAgent([deleteCall(task.frontmatter.id)]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("delete it");
+    const changeId = answer.pending[0]!.id;
+    const store = new ConciergeStore(root);
+    await store.update("demo", answer.conversationId, (conversation) => {
+      const change = conversation.changes.find((item) => item.id === changeId)!;
+      change.op = "missing.operation";
+    });
+
+    await expectCode(concierge.apply(LOCAL_PRINCIPAL, "demo", changeId), "change_not_found");
+    expect((await store.get("demo", answer.conversationId))?.changes[0]?.status).toBe("pending");
+  });
+
   it("limits one turn to five pending changes even under injected instructions", async () => {
     const project = await services.requireProject("demo");
     const tasks = [];

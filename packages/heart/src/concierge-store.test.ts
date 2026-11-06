@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  APPLYING_GRACE_MS,
   CHANGE_TTL_MS,
   ConciergeStore,
   MAX_PENDING_PER_CONVERSATION,
@@ -126,6 +127,27 @@ describe("ConciergeStore", () => {
     const live = await store.current(PID, OWNER, IDLE);
     expect(live.id).toBe(conv.id);
     expect(live.changes[0]?.status).toBe("expired");
+  });
+
+  it("recovers stale applying changes and leaves fresh ones alone", async () => {
+    root = await scratch();
+    let now = Date.parse("2026-11-06T12:00:00.000Z");
+    const store = new ConciergeStore(root, () => now);
+    const conv = await store.current(PID, OWNER, IDLE);
+    const stale = change("chg-aabbccdd", now, "applying");
+    const fresh = change("chg-bbccddee", now + CHANGE_TTL_MS, "applying");
+    await store.update(PID, conv.id, (c) => {
+      c.changes.push(stale, fresh);
+    });
+
+    now += CHANGE_TTL_MS + APPLYING_GRACE_MS;
+    const recovered = await store.get(PID, conv.id);
+    expect(recovered?.changes[0]).toMatchObject({ status: "failed", error: "interrupted" });
+    expect(recovered?.changes[1]?.status).toBe("applying");
+
+    const newer = change("chg-ccddeeaa", now, "applying");
+    await store.update(PID, conv.id, (c) => c.changes.push(newer));
+    expect((await store.findChange(PID, OWNER, newer.id))?.change.status).toBe("applying");
   });
 
   it("writes conversation files as 0600 in a 0700 directory", async () => {
