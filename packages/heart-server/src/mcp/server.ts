@@ -33,11 +33,36 @@ export interface ToolCallInfo {
   principal: Principal;
   projectId?: string;
   ok: boolean;
+  /** The call was replaced by a policy gate answer. */
+  gated?: boolean;
   /** Error code when `ok` is false. */
   code?: string;
   /** When the call started (ms since the epoch) and how long it took. */
   startedAt: number;
   ms: number;
+}
+
+export interface GateAnswer {
+  summary: string;
+  structured: Record<string, unknown>;
+}
+
+export interface McpCallGate {
+  /** Before `op.execute`: an answer replaces the call (the op does not run). */
+  before?(
+    op: AnyOperation,
+    raw: Record<string, unknown>,
+    principal: Principal,
+  ): Promise<GateAnswer | undefined>;
+  /** After a failed call: an answer replaces the error. */
+  refused?(
+    op: AnyOperation,
+    raw: Record<string, unknown>,
+    err: OpError,
+    principal: Principal,
+  ): Promise<GateAnswer | undefined>;
+  /** After a successful call: may replace the structured result (truncation, events). */
+  after?(op: AnyOperation, raw: Record<string, unknown>, result: unknown): Promise<unknown>;
 }
 
 export interface BoofMcpOptions {
@@ -66,6 +91,9 @@ export interface BoofMcpOptions {
   resolveHost?: ResolveHost;
   /** The HTTP request's signal (stateless HTTP); stdio leaves it unset. */
   signal?: AbortSignal;
+  gate?: McpCallGate;
+  instructions?: string;
+  resources?: boolean;
 }
 
 /** What the server hands to the tool, resource and prompt builders. */
@@ -186,6 +214,16 @@ function successResult(op: AnyOperation, result: unknown): CallToolResult {
   };
 }
 
+function gateResult(answer: GateAnswer): CallToolResult {
+  return {
+    content: [
+      { type: "text", text: answer.summary },
+      { type: "text", text: JSON.stringify(answer.structured) },
+    ],
+    structuredContent: answer.structured,
+  };
+}
+
 /**
  * Create the MCP server: one tool per exposed registry operation, plus resources and prompts.
  * Every call goes through `op.execute`, so scope checks, input validation, project
@@ -238,11 +276,12 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     { name: SERVER_NAME, version: options.version ?? BOOF_VERSION },
     {
       instructions:
+        options.instructions ??
         "Boof runs coding-agent tasks in git repositories. Typical flow: boof_list_projects, " +
-        "boof_create_plan (or boof_import_plan), boof_sync_plan, boof_list_tasks, boof_wait_task, " +
-        "boof_wait_plan, boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
-        "read the plan again and retry. With review trust a plan starts as draft (see warnings) until a " +
-        "human approves it; its tasks are then created pending. Ad-hoc tasks stay draft until a human queues them.",
+          "boof_create_plan (or boof_import_plan), boof_sync_plan, boof_list_tasks, boof_wait_task, " +
+          "boof_wait_plan, boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
+          "read the plan again and retry. With review trust a plan starts as draft (see warnings) until a " +
+          "human approves it; its tasks are then created pending. Ad-hoc tasks stay draft until a human queues them.",
     },
   );
 
@@ -273,19 +312,60 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
         : undefined;
     const principal = await resolve();
     const startedAt = Date.now();
+    let gated = false;
     try {
-      const result = await run(op, raw, extra.signal);
+      const before = await options.gate?.before?.(op, raw as Record<string, unknown>, principal);
+      if (before) {
+        gated = true;
+        options.onCall?.({
+          tool: op.mcp.name!,
+          principal,
+          projectId,
+          ok: true,
+          gated: true,
+          startedAt,
+          ms: Date.now() - startedAt,
+        });
+        return gateResult(before);
+      }
+      let result = await run(op, raw, extra.signal);
+      if (options.gate?.after) {
+        const replaced = await options.gate.after(op, raw as Record<string, unknown>, result);
+        if (replaced !== undefined) {
+          result = replaced;
+          gated = true;
+        }
+      }
       options.onCall?.({
         tool: op.mcp.name!,
         principal,
         projectId,
         ok: true,
+        ...(gated ? { gated: true } : {}),
         startedAt,
         ms: Date.now() - startedAt,
       });
       return successResult(op, result);
     } catch (err) {
       const opErr = toOpError(err);
+      const replacement = await options.gate?.refused?.(
+        op,
+        raw as Record<string, unknown>,
+        opErr,
+        principal,
+      );
+      if (replacement) {
+        options.onCall?.({
+          tool: op.mcp.name!,
+          principal,
+          projectId,
+          ok: true,
+          gated: true,
+          startedAt,
+          ms: Date.now() - startedAt,
+        });
+        return gateResult(replacement);
+      }
       options.onCall?.({
         tool: op.mcp.name!,
         principal,
@@ -299,14 +379,16 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     }
   });
 
-  registerResources(server, runtime);
-  registerPrompts(server, runtime);
-  // The SDK advertises listChanged: true for resources and prompts; the HTTP server is stateless
-  // and never notifies (stdio does not either). Capabilities merge per key, so this wins.
-  server.server.registerCapabilities({
-    resources: { listChanged: false },
-    prompts: { listChanged: false },
-  });
+  if (options.resources !== false) {
+    registerResources(server, runtime);
+    registerPrompts(server, runtime);
+    // The SDK advertises listChanged: true for resources and prompts; the HTTP server is stateless
+    // and never notifies (stdio does not either). Capabilities merge per key, so this wins.
+    server.server.registerCapabilities({
+      resources: { listChanged: false },
+      prompts: { listChanged: false },
+    });
+  }
   return server;
 }
 
