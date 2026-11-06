@@ -8,7 +8,10 @@ import type {
   TokenUsage,
 } from "@boof/heart";
 
-export type ScriptStep = { call: string; args: Record<string, unknown> } | { text: string };
+export type ScriptStep =
+  | { call: string; args: Record<string, unknown> }
+  | { parallel: Array<{ call: string; args: Record<string, unknown> }> }
+  | { text: string };
 export interface ScriptedAgentOptions {
   usage?: TokenUsage;
   cumulative?: TokenUsage;
@@ -55,6 +58,13 @@ export function scriptedAgent(
           if ("text" in step) {
             text += step.text;
             input.onEvent?.({ type: "text", text: step.text });
+          } else if ("parallel" in step) {
+            const results = await Promise.all(
+              step.parallel.map((call) =>
+                client.callTool({ name: call.call, arguments: call.args }),
+              ),
+            );
+            agent.results.push(...results);
           } else {
             const result = await client.callTool({ name: step.call, arguments: step.args });
             agent.results.push(result);

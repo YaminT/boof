@@ -14,6 +14,7 @@ import {
   conciergeSettings,
   evaluateBudget,
   recordSpend,
+  sumUsage,
   type ConciergeAgent,
   type ConciergeAvailability,
   type ConciergeConversation,
@@ -155,6 +156,7 @@ export class ConciergeService {
     onEvent?: (e: ConciergeEvent) => void,
     signal?: AbortSignal,
   ): Promise<ConciergeAnswer> {
+    const startedAt = this.now();
     const text = input.text.trim();
     if (text.length < 1 || text.length > 4000)
       throw new OpError(400, "Text must be 1-4000 characters", "invalid_input");
@@ -199,232 +201,282 @@ export class ConciergeService {
         "A message to the assistant is still being answered.",
         "concierge_busy",
       );
-    const settingsBudget = settings;
-    const budget = await evaluateBudget(
-      this.opts.root,
-      settingsBudget,
-      [project],
-      new Date(this.now()),
-    );
-    const blocked = blockingScopes(budget, projectId, [CONCIERGE_TOOL_ID]);
-    if (blocked.length)
-      throw new OpError(
-        409,
-        "A daily budget that covers the assistant is used up.",
-        "budget_exceeded",
-        { scopes: blocked.map((s) => s.scope), resetsAt: budget.resetsAt },
-      );
-    const conversation = input.conversationId
-      ? await this.getOwned(projectId, input.conversationId, user.id)
-      : await this.store.current(projectId, user.id, cfg.idleMinutes * 60_000);
-    if (Date.parse(conversation.updatedAt) + cfg.idleMinutes * 60_000 <= this.now())
-      throw new OpError(404, "Conversation not found", "not_found");
-    if (conversation.spentUsd >= cfg.perConversationUsd)
-      throw new OpError(
-        409,
-        "The conversation reached its cost limit; start a new one.",
-        "concierge_limit",
-      );
-    const caps = [
-      cfg.perMessageUsd,
-      cfg.perConversationUsd - conversation.spentUsd,
-      ...budget.scopes
-        .filter(
-          (s) =>
-            [
-              "global",
-              `project:${projectId}`,
-              `tool:${CONCIERGE_TOOL_ID}`,
-              `project:${projectId}/tool:${CONCIERGE_TOOL_ID}`,
-            ].includes(s.scope) && s.remainingUsd !== null,
-        )
-        .map((s) => s.remainingUsd!),
-    ];
-    const maxBudgetUsd = Math.max(0.000001, Math.min(...caps));
-    const projectService = await this.opts.services.requireProject(projectId);
-    const resolved = await this.resolveContext(project, projectService, context);
-    const principal = conciergePrincipal(user, projectId);
-    let messagePending = 0;
-    let toolCount = 0;
-    const changes: ConciergeAnswer["changes"] = [];
-    const gate = {
-      before: async (op: (typeof registry)[number], raw: Record<string, unknown>) => {
-        if (CONCIERGE_TOOLS[op.name] !== "confirm") return undefined;
-        const parsed = op.input.safeParse(raw);
-        if (!parsed.success) return undefined;
-        const pending =
-          (await this.store.get(projectId, conversation.id))?.changes.filter(
-            (c) => c.status === "pending",
-          ).length ?? 0;
-        if (messagePending >= 5 || pending >= MAX_PENDING_PER_CONVERSATION) {
-          return {
-            summary: "The pending change limit has been reached.",
-            structured: { limit: messagePending >= 5 ? 5 : MAX_PENDING_PER_CONVERSATION },
-          };
-        }
-        const preview = await previewChange(
-          op,
-          parsed.data as Record<string, unknown>,
-          projectService,
-        );
-        const now = this.now();
-        const change: PendingChange = {
-          id: `chg-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
-          op: op.name,
-          input: parsed.data as Record<string, unknown>,
-          title: preview.title,
-          details: preview.details,
-          destructive: preview.destructive,
-          reason: "confirm",
-          guard: preview.guard,
-          status: "pending",
-          createdAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + CHANGE_TTL_MS).toISOString(),
-        };
-        await this.store.update(projectId, conversation.id, (c) => c.changes.push(change));
-        messagePending++;
-        onEvent?.({ type: "pending", change: toView(change) });
-        const copy = `Waiting for the user's confirmation (change ${change.id}): ${change.title}. Do not call this tool again for it; tell the user in one sentence what will change.`;
-        return {
-          summary: copy,
-          structured: { pending: true, changeId: change.id, title: change.title },
-        };
-      },
-      refused: async (
-        op: (typeof registry)[number],
-        raw: Record<string, unknown>,
-        err: OpError,
-      ) => {
-        if (CONCIERGE_TOOLS[op.name] !== "write" || err.code !== "forbidden_trust")
-          return undefined;
-        const parsed = op.input.safeParse(raw);
-        if (!parsed.success) return undefined;
-        const pending =
-          (await this.store.get(projectId, conversation.id))?.changes.filter(
-            (c) => c.status === "pending",
-          ).length ?? 0;
-        if (messagePending >= 5 || pending >= MAX_PENDING_PER_CONVERSATION)
-          return {
-            summary: "The pending change limit has been reached.",
-            structured: { limit: messagePending >= 5 ? 5 : MAX_PENDING_PER_CONVERSATION },
-          };
-        const preview = await previewChange(
-          op,
-          parsed.data as Record<string, unknown>,
-          projectService,
-        );
-        const now = this.now();
-        const change: PendingChange = {
-          id: `chg-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
-          op: op.name,
-          input: parsed.data as Record<string, unknown>,
-          title: preview.title,
-          details: preview.details,
-          destructive: preview.destructive,
-          reason: "needs-approval",
-          guard: preview.guard,
-          status: "pending",
-          createdAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + CHANGE_TTL_MS).toISOString(),
-        };
-        await this.store.update(projectId, conversation.id, (c) => c.changes.push(change));
-        messagePending++;
-        onEvent?.({ type: "pending", change: toView(change) });
-        return {
-          summary: `Waiting for the user's confirmation (change ${change.id}): ${change.title}. Do not call this tool again for it; tell the user in one sentence what will change.`,
-          structured: { pending: true, changeId: change.id, title: change.title },
-        };
-      },
-      after: async (
-        op: (typeof registry)[number],
-        _raw: Record<string, unknown>,
-        result: unknown,
-      ) => {
-        const mode = CONCIERGE_TOOLS[op.name];
-        if (mode === "write") {
-          const target = targetOf(op.name, result);
-          const summary = op.summary ? op.summary(result as never) : op.title;
-          changes.push({ op: op.name, summary, target });
-          onEvent?.({ type: "change", op: op.name, summary, target });
-        }
-        if (mode === "read") {
-          const json = JSON.stringify(result);
-          if (json.length > RESULT_TEXT_CAP)
-            return { truncated: true, text: json.slice(0, RESULT_TEXT_CAP) };
-        }
-        return result;
-      },
-    };
-    const { registry } = await import("../api/registry.js");
-    const ops = conciergeOps(registry);
-    const allowedTools = conciergeAllowedTools(ops, principal);
-    const { createConciergeMcpServer } = await import("../mcp/server.js");
-    const mcpServer = createConciergeMcpServer({
-      root: this.opts.root,
-      principal,
-      project: projectId,
-      services: this.opts.services,
-      authStore: this.opts.authStore,
-      gate,
-      instructions: CONCIERGE_MCP_INSTRUCTIONS,
-      onCall: (info) => {
-        toolCount++;
-        void auditOperation(this.opts.root, {
-          principal: info.principal,
-          action: `concierge:mcp:${info.tool}`,
-          via: "concierge",
-          project: projectId,
-          ok: info.ok,
-          code: info.code,
-          ms: info.ms,
-          at: info.startedAt,
-        });
-      },
-    });
-    const prompt = buildConciergeMessage(text, resolved);
-    onEvent?.({ type: "conversation", conversationId: conversation.id });
     this.inFlight.add(flightKey);
-    let answerText = "";
-    let usage: TokenUsage | null = null;
-    let cumulative: TokenUsage | null = null;
-    let stopReason: ConciergeAnswer["stopReason"] = "done";
-    let sessionId = conversation.sessionId;
-    let failure: ConciergeTurnError | null = null;
     try {
-      const result = await this.opts.agent.turn({
-        project,
-        systemPrompt: CONCIERGE_SYSTEM_PROMPT,
-        prompt,
-        model: cfg.model,
-        resumeSessionId: conversation.sessionId ?? undefined,
-        resumeBaseline: conversation.baseline ?? undefined,
-        maxTurns: cfg.maxTurns,
-        maxBudgetUsd,
-        timeoutMs: cfg.timeoutMs,
-        mcpServer,
-        mcpServerName: "boof",
-        allowedTools,
-        onEvent: (event) => {
-          if (event.type === "text") answerText += event.text;
-          onEvent?.(event);
+      const settingsBudget = settings;
+      const budget = await evaluateBudget(
+        this.opts.root,
+        settingsBudget,
+        [project],
+        new Date(this.now()),
+      );
+      const blocked = blockingScopes(budget, projectId, [CONCIERGE_TOOL_ID]);
+      if (blocked.length)
+        throw new OpError(
+          409,
+          "A daily budget that covers the assistant is used up.",
+          "budget_exceeded",
+          { scopes: blocked.map((s) => s.scope), resetsAt: budget.resetsAt },
+        );
+      const conversation = input.conversationId
+        ? await this.getOwned(projectId, input.conversationId, user.id)
+        : await this.store.current(projectId, user.id, cfg.idleMinutes * 60_000);
+      if (Date.parse(conversation.updatedAt) + cfg.idleMinutes * 60_000 <= this.now())
+        throw new OpError(404, "Conversation not found", "not_found");
+      if (conversation.spentUsd >= cfg.perConversationUsd)
+        throw new OpError(
+          409,
+          "The conversation reached its cost limit; start a new one.",
+          "concierge_limit",
+        );
+      const caps = [
+        cfg.perMessageUsd,
+        cfg.perConversationUsd - conversation.spentUsd,
+        ...budget.scopes
+          .filter(
+            (s) =>
+              [
+                "global",
+                `project:${projectId}`,
+                `tool:${CONCIERGE_TOOL_ID}`,
+                `project:${projectId}/tool:${CONCIERGE_TOOL_ID}`,
+              ].includes(s.scope) && s.remainingUsd !== null,
+          )
+          .map((s) => s.remainingUsd!),
+      ];
+      const maxBudgetUsd = Math.max(0.000001, Math.min(...caps));
+      const projectService = await this.opts.services.requireProject(projectId);
+      const resolved = await this.resolveContext(project, projectService, context);
+      const principal = conciergePrincipal(user, projectId);
+      let messagePending = 0;
+      let toolCount = 0;
+      const changes: ConciergeAnswer["changes"] = [];
+      const gate = {
+        before: async (op: (typeof registry)[number], raw: Record<string, unknown>) => {
+          if (CONCIERGE_TOOLS[op.name] !== "confirm") return undefined;
+          const parsed = op.input.safeParse(raw);
+          if (!parsed.success)
+            throw new OpError(
+              400,
+              `Invalid input: ${parsed.error.issues[0]?.message ?? "schema mismatch"}`,
+              "invalid_input",
+            );
+          if (messagePending >= 5) {
+            return {
+              summary: "The pending change limit has been reached.",
+              structured: { limit: 5 },
+            };
+          }
+          messagePending++;
+          let stored = false;
+          try {
+            const preview = await previewChange(
+              op,
+              parsed.data as Record<string, unknown>,
+              projectService,
+            );
+            const now = this.now();
+            const change: PendingChange = {
+              id: `chg-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
+              op: op.name,
+              input: parsed.data as Record<string, unknown>,
+              title: preview.title,
+              details: preview.details,
+              destructive: preview.destructive,
+              reason: "confirm",
+              guard: preview.guard,
+              status: "pending",
+              createdAt: new Date(now).toISOString(),
+              expiresAt: new Date(now + CHANGE_TTL_MS).toISOString(),
+            };
+            let conversationLimit = false;
+            await this.store.update(projectId, conversation.id, (c) => {
+              if (
+                c.changes.filter((x) => x.status === "pending").length >=
+                MAX_PENDING_PER_CONVERSATION
+              ) {
+                conversationLimit = true;
+                return;
+              }
+              c.changes.push(change);
+            });
+            if (conversationLimit) {
+              messagePending--;
+              return {
+                summary: "The pending change limit has been reached.",
+                structured: { limit: MAX_PENDING_PER_CONVERSATION },
+              };
+            }
+            stored = true;
+            onEvent?.({ type: "pending", change: toView(change) });
+            const copy = `Waiting for the user's confirmation (change ${change.id}): ${change.title}. Do not call this tool again for it; tell the user in one sentence what will change.`;
+            return {
+              summary: copy,
+              structured: { pending: true, changeId: change.id, title: change.title },
+            };
+          } catch (err) {
+            if (!stored) messagePending--;
+            throw err;
+          }
         },
-        signal,
+        refused: async (
+          op: (typeof registry)[number],
+          raw: Record<string, unknown>,
+          err: OpError,
+        ) => {
+          if (CONCIERGE_TOOLS[op.name] !== "write" || err.code !== "forbidden_trust")
+            return undefined;
+          const parsed = op.input.safeParse(raw);
+          if (!parsed.success)
+            throw new OpError(
+              400,
+              `Invalid input: ${parsed.error.issues[0]?.message ?? "schema mismatch"}`,
+              "invalid_input",
+            );
+          if (messagePending >= 5)
+            return {
+              summary: "The pending change limit has been reached.",
+              structured: { limit: 5 },
+            };
+          messagePending++;
+          let stored = false;
+          try {
+            const preview = await previewChange(
+              op,
+              parsed.data as Record<string, unknown>,
+              projectService,
+            );
+            const now = this.now();
+            const change: PendingChange = {
+              id: `chg-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
+              op: op.name,
+              input: parsed.data as Record<string, unknown>,
+              title: preview.title,
+              details: preview.details,
+              destructive: preview.destructive,
+              reason: "needs-approval",
+              guard: preview.guard,
+              status: "pending",
+              createdAt: new Date(now).toISOString(),
+              expiresAt: new Date(now + CHANGE_TTL_MS).toISOString(),
+            };
+            let conversationLimit = false;
+            await this.store.update(projectId, conversation.id, (c) => {
+              if (
+                c.changes.filter((x) => x.status === "pending").length >=
+                MAX_PENDING_PER_CONVERSATION
+              ) {
+                conversationLimit = true;
+                return;
+              }
+              c.changes.push(change);
+            });
+            if (conversationLimit) {
+              messagePending--;
+              return {
+                summary: "The pending change limit has been reached.",
+                structured: { limit: MAX_PENDING_PER_CONVERSATION },
+              };
+            }
+            stored = true;
+            onEvent?.({ type: "pending", change: toView(change) });
+            return {
+              summary: `Waiting for the user's confirmation (change ${change.id}): ${change.title}. Do not call this tool again for it; tell the user in one sentence what will change.`,
+              structured: { pending: true, changeId: change.id, title: change.title },
+            };
+          } catch (err) {
+            if (!stored) messagePending--;
+            throw err;
+          }
+        },
+        after: async (
+          op: (typeof registry)[number],
+          _raw: Record<string, unknown>,
+          result: unknown,
+        ) => {
+          const mode = CONCIERGE_TOOLS[op.name];
+          if (mode === "write") {
+            const target = targetOf(op.name, result);
+            const summary = op.summary ? op.summary(result as never) : op.title;
+            changes.push({ op: op.name, summary, target });
+            onEvent?.({ type: "change", op: op.name, summary, target });
+          }
+          if (mode === "read") {
+            const json = JSON.stringify(result);
+            if (json.length > RESULT_TEXT_CAP)
+              return { truncated: true, text: json.slice(0, RESULT_TEXT_CAP) };
+          }
+          return result;
+        },
+      };
+      const { registry } = await import("../api/registry.js");
+      const ops = conciergeOps(registry);
+      const allowedTools = conciergeAllowedTools(ops, principal);
+      const { createConciergeMcpServer } = await import("../mcp/server.js");
+      const mcpServer = createConciergeMcpServer({
+        root: this.opts.root,
+        principal,
+        project: projectId,
+        services: this.opts.services,
+        authStore: this.opts.authStore,
+        gate,
+        instructions: CONCIERGE_MCP_INSTRUCTIONS,
+        onCall: (info) => {
+          toolCount++;
+          void auditOperation(this.opts.root, {
+            principal: info.principal,
+            action: `concierge:mcp:${info.tool}`,
+            via: "concierge",
+            project: projectId,
+            ok: info.ok,
+            code: info.code,
+            ms: info.ms,
+            at: info.startedAt,
+          });
+        },
       });
-      answerText = result.text;
-      usage = result.usage;
-      cumulative = result.cumulative;
-      sessionId = result.sessionId;
-      stopReason = result.stopReason;
-    } catch (err) {
-      if (err instanceof ConciergeTurnError) {
-        failure = err;
-        usage = err.usage;
-        sessionId = err.sessionId ?? sessionId;
-      } else {
-        throw err;
-      }
-    } finally {
+      const prompt = buildConciergeMessage(text, resolved);
+      onEvent?.({ type: "conversation", conversationId: conversation.id });
+      let answerText = "";
+      let usage: TokenUsage | null = null;
+      let cumulative: TokenUsage | null = null;
+      let stopReason: ConciergeAnswer["stopReason"] = "done";
+      let sessionId = conversation.sessionId;
+      let failure: ConciergeTurnError | null = null;
       try {
+        const result = await this.opts.agent.turn({
+          project,
+          systemPrompt: CONCIERGE_SYSTEM_PROMPT,
+          prompt,
+          model: cfg.model,
+          resumeSessionId: conversation.sessionId ?? undefined,
+          resumeBaseline: conversation.baseline ?? undefined,
+          maxTurns: cfg.maxTurns,
+          maxBudgetUsd,
+          timeoutMs: cfg.timeoutMs,
+          mcpServer,
+          mcpServerName: "boof",
+          allowedTools,
+          onEvent: (event) => {
+            if (event.type === "text") answerText += event.text;
+            onEvent?.(event);
+          },
+          signal,
+        });
+        answerText = result.text;
+        usage = result.usage;
+        cumulative = result.cumulative;
+        sessionId = result.sessionId;
+        stopReason = result.stopReason;
+      } catch (err) {
+        if (err instanceof ConciergeTurnError) {
+          failure = err;
+          usage = err.usage;
+          sessionId = err.sessionId ?? sessionId;
+        } else {
+          throw err;
+        }
+      } finally {
         if (usage !== null)
           await recordSpend({
             dataRoot: this.opts.root,
@@ -437,6 +489,12 @@ export class ConciergeService {
         await this.store.update(projectId, conversation.id, (c) => {
           c.sessionId = sessionId;
           if (cumulative !== null && !failure) c.baseline = cumulative;
+          else if (failure && usage?.known) {
+            c.baseline = sumUsage([
+              c.baseline ?? { inputTokens: 0, outputTokens: 0, costUsd: 0, known: false },
+              usage,
+            ]);
+          }
           if (usage?.known) c.spentUsd += usage.costUsd;
           else if (usage && !usage.known) c.unknownTurns++;
           c.messages++;
@@ -451,40 +509,40 @@ export class ConciergeService {
             project: projectId,
             outcome: failure ? "error" : "ok",
             ...(failure ? { error: failure.kind } : {}),
-            ms: 0,
+            ms: Math.max(0, this.now() - startedAt),
             ...promptFingerprint(text),
             costUsd: usage?.known ? usage.costUsd : null,
             toolCount,
             pendingCount: messagePending,
           });
         }
-      } finally {
-        this.inFlight.delete(flightKey);
       }
+      const pending =
+        (await this.store.get(projectId, conversation.id))?.changes
+          .filter((c) => c.status === "pending" && Date.parse(c.expiresAt) > this.now())
+          .map(toView) ?? [];
+      if (failure) {
+        if (failure.kind === "aborted")
+          throw new OpError(499, "The assistant request was aborted", "internal");
+        const status = failure.kind === "refused" ? 409 : failure.kind === "timeout" ? 504 : 502;
+        const code = failure.kind === "refused" ? "concierge_unavailable" : "internal";
+        const message = failure.kind === "timeout" ? "the assistant timed out" : failure.message;
+        onEvent?.({ type: "error", code, message });
+        throw new OpError(status, message, code);
+      }
+      const result: ConciergeAnswer = {
+        conversationId: conversation.id,
+        text: answerText,
+        changes,
+        pending,
+        costUsd: usage?.known ? usage.costUsd : null,
+        stopReason,
+      };
+      onEvent?.({ type: "done", answer: result });
+      return result;
+    } finally {
+      this.inFlight.delete(flightKey);
     }
-    const pending =
-      (await this.store.get(projectId, conversation.id))?.changes
-        .filter((c) => c.status === "pending" && Date.parse(c.expiresAt) > this.now())
-        .map(toView) ?? [];
-    if (failure) {
-      if (failure.kind === "aborted")
-        throw new OpError(499, "The assistant request was aborted", "internal");
-      const status = failure.kind === "refused" ? 409 : failure.kind === "timeout" ? 504 : 502;
-      const code = failure.kind === "refused" ? "concierge_unavailable" : "internal";
-      const message = failure.kind === "timeout" ? "the assistant timed out" : failure.message;
-      onEvent?.({ type: "error", code, message });
-      throw new OpError(status, message, code);
-    }
-    const result: ConciergeAnswer = {
-      conversationId: conversation.id,
-      text: answerText,
-      changes,
-      pending,
-      costUsd: usage?.known ? usage.costUsd : null,
-      stopReason,
-    };
-    onEvent?.({ type: "done", answer: result });
-    return result;
   }
 
   async apply(
@@ -503,33 +561,39 @@ export class ConciergeService {
       throw new OpError(409, "Pending change expired", "change_expired");
     if (change.status !== "pending")
       throw new OpError(404, "Pending change not found", "change_not_found");
+    const startedAt = this.now();
     const services = await this.opts.services.requireProject(projectId);
-    if (change.guard && (await this.readGuard(change.guard, services)) !== change.guard.stamp) {
-      const stale = await this.store.update(projectId, conversation.id, (c) => {
-        const item = c.changes.find((x) => x.id === changeId);
-        if (item?.status === "pending" && Date.parse(item.expiresAt) > this.now()) {
-          item.status = "failed";
-          item.error = "change_stale";
-        }
-      });
-      if (stale.changes.find((x) => x.id === changeId)?.status === "expired")
-        throw new OpError(409, "Pending change expired", "change_expired");
+    const currentStamp = change.guard ? await this.readGuard(change.guard, services) : null;
+    let claimedByMe = false;
+    let stale = false;
+    const claimed = await this.store.update(projectId, conversation.id, (c) => {
+      const item = c.changes.find((x) => x.id === changeId);
+      if (!item || item.status !== "pending" || Date.parse(item.expiresAt) <= this.now()) return;
+      if (item.guard && currentStamp !== item.guard.stamp) {
+        item.status = "failed";
+        item.error = "change_stale";
+        stale = true;
+        return;
+      }
+      item.status = "applying";
+      claimedByMe = true;
+    });
+    const claimedChange = claimed.changes.find((x) => x.id === changeId)!;
+    if (claimedChange.status === "expired")
+      throw new OpError(409, "Pending change expired", "change_expired");
+    if (stale)
       throw new OpError(
         409,
         "The target changed since the assistant proposed this change.",
         "change_stale",
       );
-    }
-    const claimed = await this.store.update(projectId, conversation.id, (c) => {
-      const item = c.changes.find((x) => x.id === changeId);
-      if (item?.status === "pending" && Date.parse(item.expiresAt) > this.now())
-        item.status = "applied";
-    });
-    const claimedChange = claimed.changes.find((x) => x.id === changeId)!;
-    if (claimedChange.status === "expired")
-      throw new OpError(409, "Pending change expired", "change_expired");
-    if (claimedChange.status !== "applied")
+    if (!claimedByMe) {
+      if (claimedChange.status === "applying")
+        throw new OpError(404, "Pending change is already in progress.", "change_not_found");
+      if (claimedChange.status === "applied")
+        throw new OpError(404, "Pending change was already applied.", "change_not_found");
       throw new OpError(404, "Pending change not found", "change_not_found");
+    }
     const { getOp } = await import("../api/registry.js");
     const op = getOp(change.op);
     if (!op || !CONCIERGE_TOOLS[change.op])
@@ -545,21 +609,25 @@ export class ConciergeService {
         },
         change.input,
       );
+      const applied = await this.store.update(projectId, conversation.id, (c) => {
+        const item = c.changes.find((x) => x.id === changeId);
+        if (item?.status === "applying") item.status = "applied";
+      });
       await auditOperation(this.opts.root, {
         principal: user,
         action: "concierge:apply",
         via: "concierge",
         project: projectId,
         ok: true,
-        ms: 0,
+        ms: Math.max(0, this.now() - startedAt),
         at: this.now(),
       });
-      return { change: toView(claimedChange), result };
+      return { change: toView(applied.changes.find((x) => x.id === changeId)!), result };
     } catch (err) {
       const opErr = err instanceof OpError ? err : new OpError(500, "Internal error", "internal");
       await this.store.update(projectId, conversation.id, (c) => {
         const item = c.changes.find((x) => x.id === changeId);
-        if (item) {
+        if (item?.status === "applying") {
           item.status = "failed";
           item.error = opErr.code;
         }
@@ -571,7 +639,7 @@ export class ConciergeService {
         project: projectId,
         ok: false,
         code: opErr.code,
-        ms: 0,
+        ms: Math.max(0, this.now() - startedAt),
         at: this.now(),
       });
       throw opErr;

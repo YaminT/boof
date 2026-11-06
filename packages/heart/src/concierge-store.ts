@@ -27,7 +27,7 @@ export interface PendingChange {
   reason: "confirm" | "needs-approval";
   /** Task `updated`, plan `version`, or epic `updated`. */
   guard: { kind: "task" | "plan" | "epic"; id: string; stamp: string } | null;
-  status: "pending" | "applied" | "discarded" | "expired" | "failed";
+  status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed";
   createdAt: string;
   /** `createdAt` plus 15 minutes. */
   expiresAt: string;
@@ -64,7 +64,7 @@ const ChangeSchema = z.object({
   destructive: z.boolean(),
   reason: z.enum(["confirm", "needs-approval"]),
   guard: GuardSchema.nullable(),
-  status: z.enum(["pending", "applied", "discarded", "expired", "failed"]),
+  status: z.enum(["pending", "applying", "applied", "discarded", "expired", "failed"]),
   createdAt: z.string(),
   expiresAt: z.string(),
   error: z.string().optional(),
