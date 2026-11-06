@@ -137,6 +137,7 @@ export class AuthStore {
   }
 
   async get(id: string): Promise<Client | null> {
+    if (id.startsWith("concierge-")) return null;
     return (await this.list()).find((c) => c.id === id) ?? null;
   }
 
@@ -237,7 +238,10 @@ export class AuthStore {
   verifyAgainst(clients: readonly Client[], key: string): VerifyResult {
     const parsed = parseKey(key);
     if (!parsed) return { ok: false, reason: "malformed" };
-    const client = clients.find((c) => c.id === parsed.clientId);
+    // Legacy entries using the in-memory concierge principal namespace cannot authenticate.
+    const client = parsed.clientId.startsWith("concierge-")
+      ? undefined
+      : clients.find((c) => c.id === parsed.clientId);
     // Always hash and compare, even for unknown ids, so timing does not reveal existence.
     const presented = Buffer.from(sha256Hex(parsed.secret), "hex");
     const expected = Buffer.from(client?.keyHash ?? "0".repeat(64), "hex");

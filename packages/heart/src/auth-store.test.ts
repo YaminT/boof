@@ -68,6 +68,20 @@ describe("verification", () => {
     expect(await store.verify("garbage")).toEqual({ ok: false, reason: "malformed" });
   });
 
+  it("does not load or authenticate legacy clients in the concierge principal namespace", async () => {
+    const { client, key } = await store.create({ name: "legacy", scopes: ["tasks:read"] });
+    const raw = JSON.parse(await readFile(store.filePath, "utf8"));
+    const secret = parseKey(key)!.secret;
+    raw.clients[0].id = `concierge-${client.id}`;
+    await atomicWrite(store.filePath, JSON.stringify(raw, null, 2) + "\n", 0o600);
+    const reservedId = `concierge-${client.id}`;
+    expect(await store.get(reservedId)).toBeNull();
+    expect(await store.verify(formatKey(reservedId, secret))).toEqual({
+      ok: false,
+      reason: "unknown",
+    });
+  });
+
   it("revoked clients fail immediately", async () => {
     const { key } = await store.create({ name: "a", scopes: ["tasks:read"] });
     await store.revoke("a");
