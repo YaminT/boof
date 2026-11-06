@@ -73,7 +73,7 @@ describe("groupTasks", () => {
     expect(ids(g.running)).toEqual(["a", "b"]);
   });
 
-  it("keeps proposed drafts separate from Needs you", () => {
+  it("includes proposed drafts in Needs you and keeps a separate Tasks group", () => {
     const g = groupTasks(
       [
         task({ id: "q2", status: "action", created: "2026-01-03T00:00:00Z" }),
@@ -89,7 +89,7 @@ describe("groupTasks", () => {
     );
     expect(
       g.needsYou.map((i) => (i.kind === "draft-plan" ? i.plan.id : i.task.frontmatter.id)),
-    ).toEqual(["q1", "q2", "pl1", "pl2"]);
+    ).toEqual(["q1", "q2", "pr-api", "pr-mcp", "pl1", "pl2"]);
     expect(ids(g.proposed)).toEqual(["pr-api", "pr-mcp"]);
   });
 

@@ -18,6 +18,7 @@ import {
   isStopPending,
   markStopPending,
   stopDisabled,
+  useStopRequested,
 } from "../lib/stop-request.js";
 import { shownSubtasks } from "../lib/task-delete.js";
 import { DeleteTaskDialog } from "./DeleteTaskDialog.js";
@@ -48,7 +49,7 @@ export function TaskHeader({
 }) {
   const f = task.frontmatter;
   const [confirmStop, setConfirmStop] = useState(false);
-  const [stopping, setStopping] = useState(() => isStopPending(task.projectId, f.id));
+  const stopping = useStopRequested(task.projectId, f.id);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // The server found subtasks the page did not know of; kept until the list shows them.
   const [refused, setRefused] = useState<{ count: number | null } | null>(null);
@@ -56,7 +57,6 @@ export function TaskHeader({
   // A stop request returns before the task leaves running. Hold Stop until it does, or the request fails.
   useEffect(() => {
     if (f.status !== "running") clearStopPending(task.projectId, f.id);
-    setStopping((on) => stopDisabled(f.status, on || isStopPending(task.projectId, f.id)));
   }, [f.status, task.projectId, f.id]);
   const running = f.status === "running";
 
@@ -124,12 +124,10 @@ export function TaskHeader({
         onOpenChange={setConfirmStop}
         onConfirm={() => {
           setConfirmStop(false);
-          setStopping(true);
           markStopPending(task.projectId, f.id);
           void Promise.resolve(actions.stop(f.id)).then((ok) => {
             if (!ok) {
               clearStopPending(task.projectId, f.id);
-              setStopping(false);
             }
           });
         }}

@@ -10,7 +10,12 @@ import { toggleRunner } from "./RunnerSwitch.js";
 import type { Epics } from "../tasks/useEpics.js";
 import { withQuery } from "../lib/task-links.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
-import { isStopPending, markStopPending, clearStopPending } from "../lib/stop-request.js";
+import {
+  isStopPending,
+  markStopPending,
+  clearStopPending,
+  usePendingStopKeys,
+} from "../lib/stop-request.js";
 
 interface PendingStop {
   task: TaskView;
@@ -45,6 +50,7 @@ export function useCommandActions({
 }): { actions: CommandAction[]; stopDialog: ReactNode } {
   const { setPref } = useTheme();
   const [stopping, setStopping] = useState<PendingStop | null>(null);
+  const pendingStops = usePendingStopKeys(data.tasks);
 
   const mutate = async (
     fn: () => Promise<unknown>,
@@ -105,6 +111,12 @@ export function useCommandActions({
           : toggleRunner(enabled).then(() => data.refresh()),
     },
   });
+  for (const action of actions) {
+    if (action.id.startsWith("stop-") && pid) {
+      const taskId = action.id.slice("stop-".length);
+      if (pendingStops.has(`${pid}/${taskId}`)) action.disabled = true;
+    }
+  }
 
   const stopDialog = (
     <StopTaskDialog

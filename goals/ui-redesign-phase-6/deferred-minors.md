@@ -55,7 +55,7 @@ Triaged against `boof-ui-phase6-rest` on 2026-11-06. Each line is fixed (with th
 - Phase 3 Task 4: held Alt+↓ reorders once per key repeat — **fixed**. `TasksPage.tsx` and `PlanPage.tsx` ignore `e.repeat`.
 - Phase 3 Task 4: Finished sort was not three-way on ties — **fixed**. `compareFinished` returns 0 on a tie and breaks ties by id (`task-groups.ts`).
 - Phase 3 Task 4: blank page when a search hides the only draft plans — **fixed**. A filter that matches nothing shows "No tasks match" (`TasksPage.tsx`).
-- Phase 3 Task 4: NowStrip "Needs you" counts proposed drafts, which Tasks shows under Proposed — **fixed**. Both counts use Overview's list (questions, proposed drafts and draft plans). Tasks lists those proposed drafts under Needs you, so the strip and the heading match (`NowStrip.tsx`, `TasksPage.tsx`).
+- Phase 3 Task 4: NowStrip "Needs you" counts proposed drafts, which Tasks shows under Proposed — **by design (spec lines 117/234/238)**. The strip and Overview use the shared Needs you list (questions, proposed drafts and draft plans); Tasks keeps proposed drafts in its separate Proposed group, so the counts may differ (`NowStrip.tsx`, `TasksPage.tsx`).
 - Phase 3 Task 4: `shownPending` calls non-memoised `byStatus` — **obsolete**. The memo depends on `filtered`, which is what `byStatus` closes over.
 - Phase 3 Task 5: non-404 load errors left a blank main area — **fixed**. Task and plan pages already retry. Task and plan lists now set `tasksError` / `plansError` and show "Try again" (`useAppData.ts`, `TasksPage.tsx`, `PlansPage.tsx`, `OverviewPage.tsx`).
 - Phase 3 Task 5: `setBase(form)` stored the untrimmed title — **fixed**. `afterSave` stores the trimmed title that was sent (`lib/task-form-sync.ts`, `TaskForm.tsx`).

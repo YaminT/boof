@@ -117,29 +117,11 @@ export function TasksPage({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showFinished, setShowFinished] = useState(false);
   const [stopId, setStopId] = useState<string | null>(null);
-  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(
-    () =>
-      new Set(
-        data.tasks.filter((t) => isStopPending(pid, t.frontmatter.id)).map((t) => t.frontmatter.id),
-      ),
-  );
   const { tasks, plans } = data;
   // Drop a stop latch once that task is no longer running (the request outlives the HTTP call).
   useEffect(() => {
-    const running = new Set(
-      tasks.filter((t) => t.frontmatter.status === "running").map((t) => t.frontmatter.id),
-    );
     for (const t of tasks)
       if (t.frontmatter.status !== "running") clearStopPending(pid, t.frontmatter.id);
-    setStoppingIds((prev) => {
-      let changed = false;
-      const next = new Set<string>();
-      for (const id of prev) {
-        if (running.has(id) && isStopPending(pid, id)) next.add(id);
-        else changed = true;
-      }
-      return changed ? next : prev;
-    });
   }, [tasks, pid]);
   // The queue order while a reorder is in flight; null shows the server's order.
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
@@ -395,7 +377,6 @@ export function TasksPage({
     tabbableKey: (selected ?? visible[0])?.key ?? null,
     onSelect: setSelectedKey,
     onStop: setStopId,
-    stoppingIds,
     epics,
   };
   const list = (entries: RowEntry[]) => (
@@ -563,16 +544,10 @@ export function TasksPage({
           const id = stopId;
           setStopId(null);
           if (!id) return;
-          setStoppingIds((prev) => new Set(prev).add(id));
           markStopPending(pid, id);
           void Promise.resolve(actions.stop(id)).then((ok) => {
             if (ok) return;
             clearStopPending(pid, id);
-            setStoppingIds((prev) => {
-              const next = new Set(prev);
-              next.delete(id);
-              return next;
-            });
           });
         }}
       />

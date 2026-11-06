@@ -4,7 +4,7 @@ import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "../lib/run-timing.js";
-import { stopDisabled } from "../lib/stop-request.js";
+import { stopDisabled, useStopRequested } from "../lib/stop-request.js";
 import { StatusPill } from "../shell/StatusPill.js";
 import { useElapsed } from "../overview/useElapsed.js";
 import { TaskRowMenu } from "./TaskRowMenu.js";
@@ -29,8 +29,6 @@ export interface RowContext {
   tabbableKey: string | null;
   onSelect: (key: string) => void;
   onStop: (id: string) => void;
-  /** Tasks whose stop has been requested and that are still running. */
-  stoppingIds: ReadonlySet<string>;
   /** The project's epics by id, to name the epic chips. */
   epics: ReadonlyMap<string, EpicView>;
 }
@@ -186,6 +184,7 @@ export function TaskRow({
       : actions.open(entry.task.frontmatter.id);
   const action = primary(entry, ctx);
   const f = task?.frontmatter;
+  const stopRequested = useStopRequested(pid, task?.frontmatter.id ?? "");
   const hier = entry.kind === "plan" ? undefined : entry.hier;
   return (
     <li
@@ -237,11 +236,7 @@ export function TaskRow({
             size="sm"
             variant="outline"
             disabled={
-              entry.kind === "running" &&
-              stopDisabled(
-                entry.task.frontmatter.status,
-                ctx.stoppingIds.has(entry.task.frontmatter.id),
-              )
+              entry.kind === "running" && stopDisabled(entry.task.frontmatter.status, stopRequested)
             }
             onClick={action.run}
           >

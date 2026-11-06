@@ -64,6 +64,7 @@ export function groupTasks(
   return {
     needsYou: [
       ...questions.map((task) => ({ kind: "question" as const, task })),
+      ...proposed.map((task) => ({ kind: "proposed" as const, task })),
       ...draftPlans.map((plan) => ({ kind: "draft-plan" as const, plan })),
     ],
     proposed,

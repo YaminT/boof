@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { clearStopPending, isStopPending, markStopPending, stopDisabled } from "./stop-request.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  clearStopPending,
+  isStopPending,
+  markStopPending,
+  stopDisabled,
+  subscribeStopPending,
+} from "./stop-request.js";
 
 describe("stopDisabled", () => {
   it("keeps a stop request visible across screens until cleared", () => {
@@ -20,5 +26,14 @@ describe("stopDisabled", () => {
 
   it("enables Stop again when the request fails, while the task is still running", () => {
     expect(stopDisabled("running", false)).toBe(false);
+  });
+  it("publishes latch changes to subscribers", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeStopPending("subscribed", "task", listener);
+    markStopPending("subscribed", "task");
+    expect(listener).toHaveBeenCalledOnce();
+    clearStopPending("subscribed", "task");
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
   });
 });
