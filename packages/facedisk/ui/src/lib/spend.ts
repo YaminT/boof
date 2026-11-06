@@ -40,6 +40,7 @@ export function scopeLabel(scope: string, nameOf?: (id: string) => string | unde
         const id = part.slice(8);
         return `Project ${nameOf?.(id) ?? id}`;
       }
+      if (part === "tool:concierge") return "Console assistant (concierge)";
       if (part.startsWith("tool:")) return `tool ${part.slice(5)}`;
       return part;
     })

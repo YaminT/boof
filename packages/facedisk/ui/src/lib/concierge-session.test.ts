@@ -30,7 +30,7 @@ describe("reduceConcierge", () => {
     });
     state = reduceConcierge(state, { type: "applied", changeId: change.id });
     expect(state.pending).toEqual([]);
-    expect(state.lines.some((line) => line.kind === "pending")).toBe(false);
+    expect(state.lines.at(-1)).toMatchObject({ kind: "pending", state: "applied" });
   });
 
   it("ends busy on an error and keeps the message as plain text", () => {

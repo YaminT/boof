@@ -1,9 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/ui/input";
+import type { PendingChangeView } from "../api-types.js";
+import {
+  PLACEHOLDER_ASSISTANT,
+  PLACEHOLDER_COMMAND,
+  mergeLines,
+  planUnknownInput,
+  refusalText,
+  type LocalLine,
+} from "../lib/assistant-console.js";
+import { initialConciergeUi, type ConciergeUiState } from "../lib/concierge-session.js";
+import { ConfirmChangeDialog } from "./ConfirmChangeDialog.js";
+import { ConsoleLog } from "./ConsoleLog.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
 import type { CommandAction } from "../lib/command-actions.js";
 import {
-  appendOutput,
+  OUTPUT_MAX,
   pushHistory,
   recall,
   submitConsole,
@@ -13,23 +25,47 @@ import {
 
 const NO_RECALL: Recall = { index: null, draft: "" };
 
+/** The assistant as the console sees it; `AppShell` builds it from `useConcierge`. */
+export interface ConsoleAssistant {
+  available: boolean;
+  /** The server's reason when `available` is false, shown word for word. */
+  reason: string | null;
+  noProject: boolean;
+  state: ConciergeUiState;
+  ask(text: string): void;
+  apply(id: string): Promise<void>;
+  discard(id: string): void | Promise<void>;
+  cancel(): void;
+}
+
+const IDLE: ConciergeUiState = initialConciergeUi(null);
+
 /**
  * One-line command input at the bottom of the shell. It runs the same actions as the palette,
  * resolved deterministically (see `lib/console-command.ts`). History and output live for the
- * session only. `onAssistantRequest` is a seam for free text that is not a command; nothing
- * connects it yet, so unknown input just prints a hint.
+ * session only. Free text that is not a command goes to the assistant when there is one; the
+ * answer streams into the output as plain text. Without the assistant the console is Console A.
  */
 export function CommandConsole({
   actions,
-  onAssistantRequest,
+  assistant,
 }: {
   actions: CommandAction[];
-  onAssistantRequest?: (text: string) => void;
+  assistant?: ConsoleAssistant;
 }) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [recalled, setRecalled] = useState<Recall>(NO_RECALL);
-  const [output, setOutput] = useState<ConsoleLine[]>([]);
+  const [local, setLocal] = useState<LocalLine[]>([]);
+  const [reviewing, setReviewing] = useState<PendingChangeView | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const assistantState = assistant?.state ?? IDLE;
+  const assistantBusy = assistantState.busy;
+  const output = useMemo(
+    () => mergeLines(local, assistantState.lines),
+    [local, assistantState.lines],
+  );
+  const hasPending = assistantState.pending.length > 0;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const held = useHeldScopes();
@@ -61,6 +97,12 @@ export function CommandConsole({
     if (open && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [output, open]);
 
+  useEffect(() => {
+    if (!hasPending) return;
+    const t = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(t);
+  }, [hasPending]);
+
   const submit = async () => {
     const text = value.trim();
     if (!text || busy) return;
@@ -70,13 +112,26 @@ export function CommandConsole({
     setBusy(true);
     const { outcome, line } = await submitConsole(text, actions, held);
     setBusy(false);
+    const at = assistantState.lines.length;
+    const print = (...lines: ConsoleLine[]) =>
+      setLocal((o) => [...o, ...lines.map((l) => ({ ...l, at }))].slice(-OUTPUT_MAX));
     const echoed: ConsoleLine = { kind: "input", text: `> ${text}` };
-    if (outcome.kind === "unknown" && onAssistantRequest) {
-      onAssistantRequest(text);
-      setOutput((o) => appendOutput(o, echoed));
+    if (outcome.kind === "unknown") {
+      const plan = planUnknownInput(text, assistant, line);
+      if (plan.kind === "ask") {
+        setOpen(true);
+        if (assistantBusy) {
+          print(echoed, { kind: "system", text: refusalText("concierge_busy", "") });
+        } else {
+          assistant!.ask(text);
+        }
+        return;
+      }
+      print(echoed, ...plan.lines);
+      setOpen(true);
       return;
     }
-    setOutput((o) => appendOutput(appendOutput(o, echoed), line));
+    print(echoed, line);
     if (outcome.kind !== "ok") setOpen(true);
   };
 
@@ -110,11 +165,13 @@ export function CommandConsole({
             {output.length === 0 ? (
               <p>No output yet. Try /task, /queue, /stop, /open or a palette label.</p>
             ) : (
-              output.map((l, i) => (
-                <p key={i} className="break-words whitespace-pre-wrap">
-                  {l.text}
-                </p>
-              ))
+              <ConsoleLog
+                lines={output}
+                pending={assistantState.pending}
+                now={now}
+                onReview={setReviewing}
+                onDiscard={(id) => void Promise.resolve(assistant?.discard(id)).catch(() => {})}
+              />
             )}
           </div>
         )}
@@ -129,7 +186,7 @@ export function CommandConsole({
           </button>
           <Input
             aria-label="Command"
-            placeholder="Command, e.g. /queue fix login"
+            placeholder={assistant?.available ? PLACEHOLDER_ASSISTANT : PLACEHOLDER_COMMAND}
             autoComplete="off"
             autoCapitalize="off"
             spellCheck={false}
@@ -141,6 +198,23 @@ export function CommandConsole({
             onKeyDown={onKeyDown}
             className="font-mono"
           />
+          {assistantBusy && (
+            <>
+              <span
+                role="status"
+                className="shrink-0 text-[length:var(--text-meta)] text-ink-muted"
+              >
+                Answering…
+              </span>
+              <button
+                type="button"
+                onClick={() => assistant?.cancel()}
+                className="h-8 shrink-0 rounded-lg border border-line px-2 text-[length:var(--text-meta)] text-ink hover:bg-accent"
+              >
+                Stop
+              </button>
+            </>
+          )}
         </div>
         {!open && last && (
           <p
@@ -151,6 +225,11 @@ export function CommandConsole({
           </p>
         )}
       </div>
+      <ConfirmChangeDialog
+        change={reviewing}
+        onConfirm={(id) => assistant!.apply(id)}
+        onCancel={() => setReviewing(null)}
+      />
     </section>
   );
 }

@@ -90,6 +90,7 @@ function slash(raw: string, actions: CommandAction[]): ConsoleResolution {
 
   if (verb === "task") return run(byId("new-task"), "/task");
   if (verb === "epic") return run(byId("new-epic"), "/epic");
+  if (verb === "new") return run(byId("assistant.new"), "/new");
   if (verb === "detach") {
     const what = norm(args);
     const a = what === "parent" || what === "epic" ? byId(`detach-${what}`) : undefined;

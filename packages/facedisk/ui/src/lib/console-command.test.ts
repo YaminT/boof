@@ -29,6 +29,7 @@ function setup(over: { runnerEnabled?: boolean } = {}) {
     createEpic: vi.fn(),
     openNewEpic: vi.fn(),
     moveTask: vi.fn(),
+    resetAssistant: vi.fn(),
   };
   const actions = createCommandActions({
     pid: "alpha",
@@ -69,6 +70,7 @@ function setupWith(o: { ownEpic?: string; parent?: string }) {
     createEpic: vi.fn(),
     openNewEpic: vi.fn(),
     moveTask: vi.fn(),
+    resetAssistant: vi.fn(),
   };
   const cur = {
     projectId: "alpha",
@@ -135,6 +137,10 @@ describe("resolveConsoleCommand", () => {
     expect(idOf(resolveConsoleCommand("/go plans", actions))).toBe("go-plans");
     expect(idOf(resolveConsoleCommand("/go settings keys", actions))).toBe("go-settings-keys");
     expect(idOf(resolveConsoleCommand("/theme light", actions))).toBe("theme-light");
+    expect(idOf(resolveConsoleCommand("/new", actions))).toBe("assistant.new");
+    expect(idOf(resolveConsoleCommand("new assistant conversation", actions))).toBe(
+      "assistant.new",
+    );
   });
 
   it("resolves the hierarchy verbs", () => {

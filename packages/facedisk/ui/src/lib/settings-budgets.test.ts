@@ -88,3 +88,56 @@ describe("budgetsPage", () => {
     expect(budgetsPage.problems(base)).toEqual([]);
   });
 });
+
+describe("the assistant's day limit", () => {
+  const latestOf = (b?: Record<string, unknown>) => ({ settings: settings(b), project: project() });
+
+  it("has its own field, apart from the other tools", () => {
+    const v = budgetsPage.values(
+      settings({ perToolDayUsd: { codex: 5, concierge: 1.5 } }),
+      project({ perToolDayUsd: { concierge: 0.5 } }),
+    );
+    expect(v.global.perTool).toBe("codex=5");
+    expect(v.global.concierge).toBe("1.5");
+    expect(v.project.perTool).toBe("");
+    expect(v.project.concierge).toBe("0.5");
+  });
+
+  it("writes concierge into perToolDayUsd and keeps the other tools", () => {
+    const stored = { perToolDayUsd: { codex: 5 } };
+    const base = budgetsPage.values(settings(stored), project());
+    const form = { ...base, global: { ...base.global, concierge: "2" } };
+    expect(budgetsPage.patches(form, base, latestOf(stored))).toEqual({
+      settings: { budget: { perToolDayUsd: { codex: 5, concierge: 2 } } },
+    });
+  });
+
+  it("clearing it removes the key; editing the list keeps it", () => {
+    const stored = { perToolDayUsd: { codex: 5, concierge: 2 } };
+    const base = budgetsPage.values(settings(stored), project());
+    const cleared = { ...base, global: { ...base.global, concierge: "" } };
+    expect(budgetsPage.patches(cleared, base, latestOf(stored)).settings).toEqual({
+      budget: { perToolDayUsd: { codex: 5 } },
+    });
+    const list = { ...base, global: { ...base.global, perTool: "codex=7" } };
+    expect(budgetsPage.patches(list, base, latestOf(stored)).settings).toEqual({
+      budget: { perToolDayUsd: { codex: 7, concierge: 2 } },
+    });
+  });
+
+  it("sets the project's own concierge limit", () => {
+    const base = budgetsPage.values(settings(), project());
+    const form = { ...base, project: { ...base.project, concierge: "1" } };
+    expect(
+      budgetsPage.patches(form, base, { settings: settings(), project: project() }).project,
+    ).toEqual({ budget: { perToolDayUsd: { concierge: 1 } } });
+  });
+
+  it("refuses concierge typed into the list and a bad amount", () => {
+    const base = budgetsPage.values(settings(), project());
+    const typed = { ...base, global: { ...base.global, perTool: "concierge=3" } };
+    expect(budgetsPage.problems(typed).join(" ")).toContain("own field");
+    const bad = { ...base, global: { ...base.global, concierge: "abc" } };
+    expect(budgetsPage.problems(bad).join(" ")).toContain("Console assistant (concierge)");
+  });
+});

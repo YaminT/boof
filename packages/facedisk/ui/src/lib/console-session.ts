@@ -54,6 +54,10 @@ export type ConsoleLine = {
   text: string;
   changeId?: string;
   href?: string;
+  /** What became of a `pending` row. A row without a state is still waiting for the user. */
+  state?: "applied" | "failed" | "expired" | "discarded";
+  /** Why a change failed, as the server said it. Plain text. */
+  detail?: string;
 };
 
 export function appendOutput(

@@ -37,6 +37,7 @@ export function useCommandActions({
   onSelectProject,
   epics,
   currentTask,
+  resetAssistant,
   mode,
 }: {
   data: AppData;
@@ -47,6 +48,8 @@ export function useCommandActions({
   epics: Epics;
   /** The task open on screen, which the hierarchy actions apply to. */
   currentTask: TaskView | null;
+  /** Start a new assistant conversation (`/new`). */
+  resetAssistant: () => Promise<void> | void;
   mode: "toast" | "throw";
 }): { actions: CommandAction[]; stopDialog: ReactNode } {
   const { setPref } = useTheme();
@@ -92,6 +95,7 @@ export function useCommandActions({
           "Queued",
           "Could not queue",
         ),
+      resetAssistant: () => resetAssistant(),
       createEpic: (id, title) =>
         mutate(() => api.createEpic(id, { title }), "Epic added", "Could not add the epic"),
       openNewEpic: (id) => {

@@ -56,6 +56,7 @@ describe("scopeLabel", () => {
   it("names scopes for people", () => {
     expect(scopeLabel("global")).toBe("All work");
     expect(scopeLabel("tool:codex")).toBe("tool codex");
+    expect(scopeLabel("tool:concierge")).toBe("Console assistant (concierge)");
     expect(
       scopeLabel("project:alpha/tool:codex", (id) => (id === "alpha" ? "Alpha" : undefined)),
     ).toBe("Project Alpha, tool codex");

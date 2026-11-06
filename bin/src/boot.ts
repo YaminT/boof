@@ -5,12 +5,15 @@ import {
   ToolRegistry,
   defaultTools,
 } from "@boof/runner";
+import type { ConciergeAgent } from "@boof/heart";
 import { startServer, type RunningServer, type StartServerOptions } from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
 
 export interface BootOptions extends Omit<StartServerOptions, "catalog" | "runnerRunning"> {
   runner?: boolean;
   claudeAgent?: "enabled" | "unavailable";
+  /** Replaces the assistant implementation. Only the dev flag in `boof-runner.ts` sets it. */
+  conciergeAgent?: ConciergeAgent;
   guard?: RunnerGuard;
   /** Root-specific server settings such as desktop operator clients. */
   serverOptions?: Partial<StartServerOptions>;
@@ -32,17 +35,27 @@ export function isRunnerStartFailure(error: unknown): boolean {
 
 /** Compose the shared server and runner lifecycle used by the CLI and Electron. */
 export async function boot(opts: BootOptions): Promise<Booted> {
-  const { runner, guard, serverOptions, onServer, onRunner, claudeAgent, ...commonServerOptions } =
-    opts;
+  const {
+    runner,
+    guard,
+    serverOptions,
+    onServer,
+    onRunner,
+    claudeAgent,
+    conciergeAgent: conciergeOverride,
+    ...commonServerOptions
+  } = opts;
   const registry = new ToolRegistry(
     defaultTools(
       claudeAgent === "unavailable" ? { claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON } : {},
     ),
   );
-  const conciergeAgent = new ClaudeConcierge({
-    root: opts.root,
-    unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
-  });
+  const conciergeAgent =
+    conciergeOverride ??
+    new ClaudeConcierge({
+      root: opts.root,
+      unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
+    });
   let engine: RunnerEngine | null = null;
   const server = await startServer({
     ...commonServerOptions,

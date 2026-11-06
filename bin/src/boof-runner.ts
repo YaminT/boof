@@ -248,6 +248,10 @@ export async function serve(argv: string[]): Promise<void> {
   const uiDir = resolveUiDir();
   const guard = new RunnerGuard(root);
   try {
+    // Dev only: a scripted assistant (BOOF_DEV_FAKE_CONCIERGE), ignored when NODE_ENV=production.
+    const devAgent = process.env.BOOF_DEV_FAKE_CONCIERGE
+      ? (await import("./dev-fake-concierge.js")).devFakeConcierge()
+      : undefined;
     const composition = await boot({
       root,
       port: args.port,
@@ -258,6 +262,7 @@ export async function serve(argv: string[]): Promise<void> {
       tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
       runner: !args.noRunner,
       guard,
+      ...(devAgent ? { conciergeAgent: devAgent } : {}),
       onServer: (server) => {
         if (!server) return;
         const scheme = args.tlsCert ? "https" : "http";

@@ -44,6 +44,8 @@ export interface ActionEffects {
   createEpic(pid: string, title: string): Promise<void> | void;
   /** Take the user to where an epic is named (the Manage epics sheet). */
   openNewEpic(pid: string): void;
+  /** Start a new assistant conversation for the project; pending changes stay until they expire. */
+  resetAssistant(pid: string): Promise<void> | void;
   /** Change a task's epic or parent; null clears it. */
   moveTask(
     pid: string,
@@ -184,6 +186,14 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
         const title = args?.trim();
         return title ? fx.createEpic(pid, title) : fx.openNewEpic(pid);
       },
+    });
+    add({
+      id: "assistant.new",
+      label: "New assistant conversation",
+      group: "Actions",
+      keywords: ["/new", "assistant", "reset"],
+      requiredScope: "tasks:read",
+      run: () => fx.resetAssistant(pid),
     });
     if (ctx.currentTask) hierarchyActions(pid, ctx, ctx.currentTask, add);
   }

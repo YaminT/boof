@@ -154,6 +154,8 @@ export function useConcierge(
               type: "failed",
               changeId: id,
               message: errorMessage(err),
+              final: err instanceof ApiError,
+              ...(err instanceof ApiError && err.code ? { code: err.code } : {}),
             }),
           );
         }
