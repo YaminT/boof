@@ -126,7 +126,7 @@ export async function projectCommand(
           err("project add: --brief or --brief-file is required with --new and --auto");
           return 1;
         }
-        const audit = beginCliAudit(root, "cli:project.add", values.id);
+        const audit = beginCliAudit(root, "cli:project.add");
         try {
           const project = await projects.create({
             ...(values.auto
@@ -179,14 +179,14 @@ export async function projectCommand(
           err("project remove: a project id is required");
           return 1;
         }
-        const audit = beginCliAudit(root, "cli:project.remove", id);
+        const audit = beginCliAudit(root, "cli:project.remove");
         try {
           await projects.remove(id, { purge: values.purge });
           if (values.purge && (await settings.load()).defaultProject === id) {
             await settings.update({ defaultProject: null });
           }
           out(values.purge ? `Purged project '${id}'` : `Archived project '${id}'`);
-          await audit.ok();
+          await audit.ok(id);
           return 0;
         } catch (e) {
           await audit.fail(e);

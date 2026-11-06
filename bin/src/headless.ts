@@ -141,8 +141,10 @@ export interface RunTaskOptions {
   parentId?: string;
   registry?: ToolRegistry;
   out?: Out;
-  /** When aborted, stop between ticks. The caller records the audit line. */
+  /** When aborted, stop between ticks. A real SIGINT kills the process instead. */
   signal?: AbortSignal;
+  /** Called once the project id is an existing project. */
+  onProject?: (projectId: string) => void;
 }
 
 export interface RunResultSummary {
@@ -161,6 +163,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
   const project = await resolveProject(opts.root, opts, out);
+  opts.onProject?.(project.id);
   if (project.paused) {
     throw new ProjectResolutionError(`Project '${project.id}' is paused; resume it first.`);
   }
@@ -242,14 +245,17 @@ export async function drainQueue(opts: {
   project?: string;
   registry?: ToolRegistry;
   out?: Out;
-  /** When aborted, stop between ticks. The caller records the audit line. */
+  /** When aborted, stop between ticks. A real SIGINT kills the process instead. */
   signal?: AbortSignal;
+  /** Called once `--project` names an existing project. */
+  onProject?: (projectId: string) => void;
 }): Promise<{ ran: number; failed: number }> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
   if (opts.project && !(await new ProjectStore(opts.root).get(opts.project))) {
     throw new ProjectResolutionError(`Project not found: ${opts.project}`);
   }
+  if (opts.project) opts.onProject?.(opts.project);
   await ensureRunnerEnabled(opts.root, out);
   const engine = new RunnerEngine({
     root: opts.root,
@@ -287,6 +293,8 @@ export interface ScanOptions {
   model?: string;
   registry?: ToolRegistry;
   out?: Out;
+  /** Called once the project id is an existing project. */
+  onProject?: (projectId: string) => void;
 }
 
 export interface ScanSummary {
@@ -329,6 +337,7 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
     opts.project ? { project: opts.project } : { repo },
     out,
   );
+  opts.onProject?.(project.id);
   if ((await realpath(repo)) !== project.workingDirectory) {
     throw new ProjectResolutionError(
       `Project '${project.id}' works on ${project.workingDirectory}, not ${repo}; scan that directory or omit --project.`,

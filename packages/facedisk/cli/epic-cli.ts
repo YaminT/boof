@@ -112,6 +112,7 @@ export async function epicCommand(
   await scaffoldDataRoot(root);
 
   try {
+    if (sub === "add" && !positionals[0]?.trim()) throw new CliUsageError("a title is required");
     let projectId: string;
     let dir: string;
     try {

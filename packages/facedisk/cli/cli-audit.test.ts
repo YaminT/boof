@@ -186,9 +186,9 @@ describe("hand-written CLI audit", () => {
     assertLine((await auditLines(missing))[0]!, {
       action: "cli:project.remove",
       outcome: "error",
-      project: "missing",
       error: "not_found",
     });
+    expect(JSON.stringify(await auditLines(missing))).not.toContain("missing");
 
     await disableAudit(root);
     const before = (await auditLines(root)).length;
@@ -939,6 +939,22 @@ describe("hand-written CLI audit", () => {
     });
     expect(JSON.stringify(await auditLines(root))).not.toMatch(/sk-ant-api03/i);
 
+    const hex = "0123456789abcdef0123456789abcdef";
+    expect(
+      await projectCommand(
+        ["remove", hex, "-d", root],
+        () => root,
+        () => {},
+        () => {},
+      ),
+    ).toBe(1);
+    expect(JSON.stringify(await auditLines(root))).not.toContain(hex);
+    assertLine((await auditLines(root)).at(-1)!, {
+      action: "cli:project.remove",
+      outcome: "error",
+      error: "not_found",
+    });
+
     await addProject(root, repo);
     const before = (await auditLines(root)).length;
     expect(
@@ -952,9 +968,9 @@ describe("hand-written CLI audit", () => {
     assertLine((await auditLines(root)).at(-1)!, {
       action: "cli:epic.add",
       outcome: "error",
-      project: "ghost",
       error: "project_resolution",
     });
+    expect(JSON.stringify(await auditLines(root))).not.toContain("ghost");
     expect(
       await epicCommand(
         ["list", "--project", "ghost", "-d", root],
@@ -987,9 +1003,9 @@ describe("hand-written CLI audit", () => {
     assertLine((await auditLines(root)).at(-1)!, {
       action: "cli:plan.import",
       outcome: "error",
-      project: "ghost",
       error: "project_resolution",
     });
+    expect(JSON.stringify(await auditLines(root))).not.toContain("ghost");
     expect(
       await planCommand(
         [
@@ -1015,6 +1031,37 @@ describe("hand-written CLI audit", () => {
       "cli:plan.import",
     ]);
     expect(JSON.stringify(written)).not.toMatch(/sk-ant-api03/i);
+
+    const quiet = (await auditLines(root)).length;
+    const said: string[] = [];
+    const err = (l: string) => said.push(l);
+    expect(
+      await planCommand(
+        ["sync", "--project", "ghost", "--plan", "repo", "--dry-run", "-d", root],
+        () => root,
+        () => {},
+        err,
+      ),
+    ).toBe(1);
+    expect(
+      await epicCommand(
+        ["add", "--project", "ghost", "-d", root],
+        () => root,
+        () => {},
+        err,
+      ),
+    ).toBe(1);
+    expect(
+      await taskCommand(
+        ["move", "--project", "ghost", "-d", root],
+        () => root,
+        () => {},
+        err,
+      ),
+    ).toBe(1);
+    expect(said.join("\n")).toContain("a title is required");
+    expect(said.join("\n")).toContain("a task id is required");
+    expect(await auditLines(root)).toHaveLength(quiet);
   });
 
   it("remote setup that creates a key does not log the key", async () => {

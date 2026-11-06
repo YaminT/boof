@@ -22,7 +22,7 @@ import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import { MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
-import { beginCliAudit } from "@boof/facedisk/cli/cli-audit.js";
+import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
 interface ServeArgs {
   dataRoot: string;
@@ -285,13 +285,26 @@ export async function serve(argv: string[]): Promise<void> {
 }
 
 /**
- * Signal for a long `run`. Tests pass their own. Otherwise SIGINT aborts it so the process can
- * still write the audit line (a bare Ctrl-C would die inside the agent and leave none).
+ * Signal for a long `run`. Tests pass their own abort signal and the run stops between ticks.
+ * A real SIGINT writes the interrupted line and then dies by that signal, as it did before the
+ * handler existed: the shell sees 130 and a `for` loop stops. The agent is in its own process
+ * group, so this does not signal it; parent death leaves that group the way a default SIGINT did.
  */
-function trackInterrupts(signal?: AbortSignal): { signal: AbortSignal; stop: () => void } {
+function trackInterrupts(
+  write: () => void,
+  signal?: AbortSignal,
+): { signal: AbortSignal; stop: () => void } {
   if (signal) return { signal, stop: () => {} };
   const controller = new AbortController();
-  const onSigint = () => controller.abort();
+  const onSigint = () => {
+    process.removeListener("SIGINT", onSigint);
+    try {
+      write();
+    } catch (err) {
+      console.error("audit write failed", err);
+    }
+    process.kill(process.pid, "SIGINT");
+  };
   process.once("SIGINT", onSigint);
   return { signal: controller.signal, stop: () => process.removeListener("SIGINT", onSigint) };
 }
@@ -308,27 +321,35 @@ export async function runCommand(argv: string[], signal?: AbortSignal): Promise<
   const project = getOpt(argv, ["--project"]);
 
   if (hasFlag(argv, ["--all"])) {
-    const audit = beginCliAudit(root, "cli:run", project);
-    const held = trackInterrupts(signal);
+    const startedAt = Date.now();
+    const noted: { projectId?: string } = {};
+    const audit = beginCliAudit(root, "cli:run");
+    const held = trackInterrupts(
+      () => writeInterruptedSync(root, "cli:run", startedAt, noted.projectId),
+      signal,
+    );
     try {
       const { failed } = await drainQueue({
         root,
         ...(project ? { project } : {}),
         signal: held.signal,
+        onProject: (id) => {
+          noted.projectId = id;
+        },
       });
       if (held.signal.aborted) {
-        await audit.failCode("interrupted");
+        await audit.failCode("interrupted", noted.projectId);
         return 130;
       }
-      if (failed > 0) await audit.failCode("not_done");
-      else await audit.ok();
+      if (failed > 0) await audit.failCode("not_done", noted.projectId);
+      else await audit.ok(noted.projectId);
       return failed > 0 ? 1 : 0;
     } catch (e) {
       if (held.signal.aborted) {
-        await audit.failCode("interrupted");
+        await audit.failCode("interrupted", noted.projectId);
         return 130;
       }
-      await audit.fail(e);
+      await audit.fail(e, noted.projectId);
       throw e;
     } finally {
       held.stop();
@@ -350,8 +371,13 @@ export async function runCommand(argv: string[], signal?: AbortSignal): Promise<
     console.error("run: give --epic or --parent, not both: a subtask takes its parent's epic.");
     return 1;
   }
-  const audit = beginCliAudit(root, "cli:run", project);
-  const held = trackInterrupts(signal);
+  const startedAt = Date.now();
+  const noted: { projectId?: string } = {};
+  const audit = beginCliAudit(root, "cli:run");
+  const held = trackInterrupts(
+    () => writeInterruptedSync(root, "cli:run", startedAt, noted.projectId),
+    signal,
+  );
   try {
     const summary = await runTask({
       root,
@@ -366,6 +392,9 @@ export async function runCommand(argv: string[], signal?: AbortSignal): Promise<
       ...(epic ? { epicId: epic } : {}),
       ...(parent ? { parentId: parent } : {}),
       signal: held.signal,
+      onProject: (id) => {
+        noted.projectId = id;
+      },
     });
     if (held.signal.aborted) {
       await audit.failCode("interrupted", summary.projectId);
@@ -376,10 +405,10 @@ export async function runCommand(argv: string[], signal?: AbortSignal): Promise<
     return summary.ok ? 0 : 1;
   } catch (e) {
     if (held.signal.aborted) {
-      await audit.failCode("interrupted");
+      await audit.failCode("interrupted", noted.projectId);
       return 130;
     }
-    await audit.fail(e);
+    await audit.fail(e, noted.projectId);
     throw e;
   } finally {
     held.stop();
@@ -402,7 +431,8 @@ export async function scanCommand(argv: string[]): Promise<number> {
   const root = dataOpt ? absPath(dataOpt) : defaultDataRoot();
   const dryRun = hasFlag(argv, ["--dry-run"]);
   // A dry run and a scan that finds nothing do not write, so they leave no line.
-  const audit = dryRun ? undefined : beginCliAudit(root, "cli:scan", project);
+  const noted: { projectId?: string } = {};
+  const audit = dryRun ? undefined : beginCliAudit(root, "cli:scan");
   try {
     const summary = await scanRepoToTasks({
       root,
@@ -412,11 +442,14 @@ export async function scanCommand(argv: string[]): Promise<number> {
       bumpTo: bump === "review" ? "review" : bump === "done" ? "done" : undefined,
       ...(tool ? { tool } : {}),
       ...(model ? { model } : {}),
+      onProject: (id) => {
+        noted.projectId = id;
+      },
     });
     if (summary.projectId) await audit?.ok(summary.projectId);
     return 0;
   } catch (e) {
-    await audit?.fail(e);
+    await audit?.fail(e, noted.projectId);
     throw e;
   }
 }

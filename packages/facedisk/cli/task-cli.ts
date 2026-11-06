@@ -68,6 +68,7 @@ export async function taskCommand(
   await scaffoldDataRoot(root);
 
   try {
+    if (sub === "move" && !positionals[0]) throw new CliUsageError("a task id is required");
     let projectId: string;
     let dir: string;
     try {

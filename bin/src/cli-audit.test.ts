@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execCommand, SecuritySettingsSchema, SettingsStore, scaffoldDataRoot } from "@boof/heart";
 import { mockState, resetMock } from "@boof/runner";
@@ -27,6 +29,16 @@ async function auditLines(root: string): Promise<Record<string, unknown>[]> {
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+function findNamed(dir: string, name: string, out: string[] = []): string[] {
+  if (!existsSync(dir)) return out;
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, ent.name);
+    if (ent.isDirectory()) findNamed(path, name, out);
+    else if (ent.name === name) out.push(path);
+  }
+  return out;
 }
 
 function assertLine(
@@ -128,9 +140,9 @@ describe("run and scan audit", () => {
     assertLine(lines[1]!, {
       action: "cli:run",
       outcome: "error",
-      project: "missing",
       error: "project_resolution",
     });
+    expect(JSON.stringify(lines[1])).not.toContain("missing");
 
     expect(await runCommand(["--data", root])).toBe(1);
     expect(await auditLines(root)).toHaveLength(2);
@@ -146,14 +158,128 @@ describe("run and scan audit", () => {
       error: "invalid_id",
     });
 
+    const hex = "0123456789abcdef0123456789abcdef";
+    await expect(
+      runCommand(["--data", root, "--project", hex, "--tool", "mock", "Build it"]),
+    ).rejects.toThrow(/Project not found/);
+    expect(JSON.stringify(await auditLines(root))).not.toContain(hex);
+
     await disableAudit(root);
     await expect(
       runCommand(["--data", root, "--project", "missing", `Build ${SECRET}`]),
     ).rejects.toThrow(/Project not found/);
-    expect(await auditLines(root)).toHaveLength(3);
+    expect(await auditLines(root)).toHaveLength(4);
   }, 60_000);
 
-  it("SIGINT after the task is created still writes a line", async () => {
+  it("SIGINT during the first agent call dies by signal and leaves the task running", async () => {
+    const root = await scratch();
+    const parent = await scratch();
+    const home = await scratch();
+    const repo = await gitRepo(parent, "shop", true);
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    for (const key of [
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+      "BOOF_RUNNER_DATA_ROOT",
+    ]) {
+      delete env[key];
+    }
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx/esm",
+        "bin/src/boof-runner.ts",
+        "run",
+        "--data",
+        root,
+        "--repo",
+        repo,
+        "--tool",
+        "mock",
+        "[[mock-stall planner=1]] Build it",
+      ],
+      { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let output = "";
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      output += chunk;
+    });
+    let pgid: number | undefined;
+    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      },
+    );
+    let pidFile: string;
+    try {
+      pidFile = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error(`agent did not start; output:\n${output}`));
+        }, 25_000);
+        const poll = setInterval(() => {
+          const found = findNamed(join(root, "projects"), "pid");
+          if (found[0]) {
+            clearInterval(poll);
+            clearTimeout(timer);
+            resolve(found[0]);
+          }
+        }, 30);
+      });
+      pgid = (JSON.parse(readFileSync(pidFile, "utf8")) as { pgid: number }).pgid;
+      child.kill("SIGINT");
+      const exit = await Promise.race([
+        exitPromise,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(new Error(`run did not die; output:\n${output}`));
+          }, 10_000);
+        }),
+      ]);
+      let groupAlive = true;
+      try {
+        process.kill(pgid, 0);
+      } catch {
+        groupAlive = false;
+      }
+      expect(exit, output).toEqual({ code: null, signal: "SIGINT" });
+      expect(groupAlive, "agent group survives parent death, as a default SIGINT left it").toBe(
+        true,
+      );
+      const area = dirname(dirname(pidFile));
+      const log = await readFile(join(area, "log.txt"), "utf8");
+      expect(log).toContain("### Planner");
+      expect(log).not.toContain("### Developer");
+      expect(area).toContain(join("tasks", "ongoing"));
+      const task = await readFile(join(area, "task.md"), "utf8");
+      expect(task).toMatch(/^status: running$/m);
+      const lines = await auditLines(root);
+      expect(lines).toHaveLength(1);
+      assertLine(lines[0]!, {
+        action: "cli:run",
+        outcome: "error",
+        project: "shop",
+        error: "interrupted",
+      });
+    } finally {
+      if (pgid !== undefined) {
+        try {
+          process.kill(-pgid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+  }, 45_000);
+
+  it("an abort signal after the task is created still writes a line", async () => {
     const root = await scratch();
     const parent = await scratch();
     const repo = await gitRepo(parent, "shop", true);

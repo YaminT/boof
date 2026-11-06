@@ -2,7 +2,7 @@
  * The generated CLI: every operation of the registry as `boof-runner <area> <verb>`. This half is
  * pure: command paths and argument parsing. Execution is in the second half of the file.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
@@ -520,9 +520,8 @@ export async function opsCommand(
     // project, outcome, timing; never the arguments.
     const startedAt = Date.now();
     const audited = (ok: boolean, code?: string) => {
-      // Same rule as the hand-written commands: no line into a data root that is not there,
-      // and a rejected project id (a pasted key) is not a project.
-      if (!existsSync(root)) return Promise.resolve();
+      // A rejected project id (a pasted key) is not a project. The root already exists:
+      // scaffoldDataRoot ran above, and a refusal returns before that, so it creates nothing.
       const projectId = input.projectId;
       return auditOperation(root, {
         principal: ctx.principal,

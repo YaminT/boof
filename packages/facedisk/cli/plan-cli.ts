@@ -120,7 +120,8 @@ export async function planCommand(
         out(c.replace(/\n$/, "")),
       );
     } catch (e) {
-      if (sub !== "export") {
+      // A dry run writes nothing, including when --project does not resolve.
+      if (sub === "import" || (sub === "sync" && !values["dry-run"])) {
         await auditProjectRefusal(
           root,
           sub === "import" ? "cli:plan.import" : "cli:plan.sync",
