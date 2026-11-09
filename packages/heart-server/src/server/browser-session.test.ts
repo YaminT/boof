@@ -1,4 +1,5 @@
 import { chmod, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { request as nodeRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ import { MockTool, ToolRegistry } from "@boof/runner";
 import { TaskService } from "../api/index.js";
 import { createApp } from "./app.js";
 import { DataWatcher } from "./watch.js";
+import { startServer } from "./server.js";
 
 let base: string;
 let root: string;
@@ -162,8 +164,8 @@ describe("browser session authentication", () => {
       const res = await request(app, "/api/v1/whoami", {
         headers: { cookie: `boof_ui_4319=${token}`, "sec-fetch-site": site },
       });
-      expect([401, 403]).toContain(res.status);
-      if (res.status === 401)
+      expect(res.status).toBe(site === "cross-site" ? 403 : 401);
+      if (site === "same-site")
         expect((await res.json()).error.details.reason).toBe("browser_session_required");
     },
   );
@@ -221,6 +223,21 @@ describe("browser session authentication", () => {
     expect((await request(app, `/auth/browser?code=${code}`)).status).toBe(404);
   });
 
+  it("/auth/browser is 404 for a non-loopback Host even when the host guard allows it", async () => {
+    const app = build({ allowedHosts: ["boof.lan"] });
+    const { code } = await sessions.createLink();
+    const res = await request(app, `/auth/browser?code=${code}`, { headers: { host: "boof.lan" } });
+    expect(res.status).toBe(404);
+    expect(await sessions.redeemLink(code)).not.toBeNull();
+  });
+
+  it("HEAD does not redeem a browser sign-in link", async () => {
+    const app = build();
+    const { code } = await sessions.createLink();
+    expect((await request(app, `/auth/browser?code=${code}`, { method: "HEAD" })).status).toBe(405);
+    expect((await request(app, `/auth/browser?code=${code}`)).status).toBe(303);
+  });
+
   it("/auth/browser with a used or bad code is 400 M3 and spends the unauthenticated budget", async () => {
     await setMode("local-trust", 1);
     const app = build();
@@ -229,6 +246,22 @@ describe("browser session authentication", () => {
     const bad = await request(app, `/auth/browser?code=${code}`);
     expect(bad.status).toBe(400);
     expect(await bad.text()).toContain("This sign-in link is invalid, used or expired");
+    expect((await request(app, "/auth/browser?code=bad")).status).toBe(429);
+  });
+
+  it("keyless refusals do not spend the failed-authentication budget", async () => {
+    await setMode("local-trust", 1);
+    const app = build();
+    for (let i = 0; i < 100; i += 1) {
+      const res = await request(app, "/api/v1/whoami");
+      expect(res.status).toBe(401);
+      expect((await res.json()).error.details.reason).toBe("browser_session_required");
+    }
+    const final = await request(app, "/api/v1/whoami");
+    expect(final.status).toBe(401);
+    expect((await final.json()).error.details.reason).toBe("browser_session_required");
+    const badCode = await request(app, "/auth/browser?code=bad");
+    expect(badCode.status).toBe(400);
     expect((await request(app, "/auth/browser?code=bad")).status).toBe(429);
   });
 
@@ -242,6 +275,22 @@ describe("browser session authentication", () => {
       const body = await res.text();
       expect(body).toContain("Fix the data-root permissions");
       expect(body).toContain("chmod 600");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "an unsafe session store returns its permission-fix 503 on /api",
+    async () => {
+      const app = build();
+      const { response } = await signIn(app);
+      expect(response.status).toBe(303);
+      await chmod(dataRootPaths(root).browserSessions, 0o666);
+      const res = await request(app, "/api/v1/whoami");
+      expect(res.status).toBe(503);
+      const body = await res.text();
+      expect(body).toContain("Fix the data-root permissions");
+      expect(body).toContain("chmod 600");
+      expect(body).not.toContain("admin");
     },
   );
 
@@ -263,6 +312,52 @@ describe("browser session authentication", () => {
       headers: { cookie: `boof_ui_4319=${token}`, host: "127.0.0.1:5319" },
     });
     expect(res.status).toBe(200);
+  });
+
+  it("startServer names the cookie for its bound port, regardless of Host port", async () => {
+    const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: () => {},
+    });
+    try {
+      const { code } = await new BrowserSessionStore(root).createLink();
+      const socketRequest = (path: string, cookie?: string) =>
+        new Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders }>(
+          (resolve, reject) => {
+            const req = nodeRequest(
+              {
+                host: "127.0.0.1",
+                port: running.port,
+                path,
+                headers: {
+                  host: "127.0.0.1:5319",
+                  ...(cookie ? { cookie } : {}),
+                },
+              },
+              (res) => {
+                res.resume();
+                res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers }));
+              },
+            );
+            req.on("error", reject);
+            req.end();
+          },
+        );
+      const signedIn = await socketRequest(`/auth/browser?code=${encodeURIComponent(code)}`);
+      expect(signedIn.status).toBe(303);
+      const setCookie = signedIn.headers["set-cookie"]![0];
+      const name = `boof_ui_${running.port}`;
+      expect(setCookie).toMatch(new RegExp(`^${name}=bs_[^;]+;`));
+      const token = setCookie.match(new RegExp(`^${name}=([^;]+)`))![1];
+      const who = await socketRequest("/api/v1/whoami", `${name}=${token}`);
+      expect(who.status).toBe(200);
+      const wrongPort = await socketRequest("/api/v1/whoami", `boof_ui_5319=${token}`);
+      expect(wrongPort.status).toBe(401);
+    } finally {
+      await running.stop();
+    }
   });
 
   it("revokeAll ends an open /api/v1/events stream with event: unauthorized", async () => {
@@ -292,6 +387,45 @@ describe("browser session authentication", () => {
     }
     expect(text).toContain("event: unauthorized");
     await reader.cancel();
+  });
+
+  it("revokeAll ends an open legacy /api/events stream with event: unauthorized", async () => {
+    watcher = new DataWatcher(root);
+    watcher.start();
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const stream = await request(app, "/api/events", {
+      headers: { cookie: `boof_ui_4319=${token}`, accept: "text/event-stream" },
+    });
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = decoder.decode((await reader.read()).value);
+    expect(text).toContain("event: ready");
+    await sessions.revokeAll();
+    const until = Date.now() + 5000;
+    while (!text.includes("event: unauthorized") && Date.now() < until) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("SSE revoke timeout")), 5100),
+        ),
+      ]);
+      if (next.done) break;
+      text += decoder.decode(next.value);
+    }
+    expect(text).toContain("event: unauthorized");
+    await reader.cancel();
+  });
+
+  it("accepts any same-name cookie value that verifies", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=junk; boof_ui_4319=${token}` },
+    });
+    expect(res.status).toBe(200);
   });
 
   it("Bearer keys behave as before from loopback and through a proxy", async () => {

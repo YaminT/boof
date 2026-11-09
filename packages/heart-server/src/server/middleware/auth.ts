@@ -2,6 +2,7 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
 import type { ClientAddress } from "./client-address.js";
 import {
+  UnsafeBrowserSessionPathError,
   authorize,
   LOCAL_PRINCIPAL,
   type AuthStore,
@@ -81,7 +82,7 @@ class ClientCache {
   }
 }
 
-const PROXY_HEADERS = [
+export const PROXY_HEADERS = [
   "x-forwarded-for",
   "forwarded",
   "x-real-ip",
@@ -89,6 +90,17 @@ const PROXY_HEADERS = [
   "x-forwarded-proto",
   "via",
 ];
+
+/** Port used when deriving a cookie name from an HTTP Host header. */
+export function hostPort(host: string | undefined): number {
+  if (!host) return 80;
+  try {
+    const port = new URL(`http://${host}`).port;
+    return port ? Number(port) : 80;
+  } catch {
+    return 80;
+  }
+}
 
 export function principalFromClient(client: Client, opts: { operator?: boolean } = {}): Principal {
   return {
@@ -108,15 +120,21 @@ const M1 =
 const M2 =
   'Keyless access on this machine is only for the boof web UI after sign-in. Open the UI with the link that "boof-runner open" prints, or send "Authorization: Bearer <key>" (create one with "boof-runner auth add").';
 
-function cookieValue(c: Context, name: string): string | undefined {
+function cookieValues(c: Context, name: string): string[] {
   const raw = c.req.header("cookie");
-  if (!raw) return undefined;
+  if (!raw) return [];
+  const values: string[] = [];
   for (const part of raw.split(";")) {
     const separator = part.indexOf("=");
     if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
-    return part.slice(separator + 1).trim();
+    values.push(part.slice(separator + 1).trim());
   }
-  return undefined;
+  return values;
+}
+
+function unavailableMessage(error: unknown): string | undefined {
+  if (!(error instanceof UnsafeBrowserSessionPathError)) return undefined;
+  return `Browser sign-in is unavailable: ${error.message}. Fix the data-root permissions, then run "boof-runner open" again.`;
 }
 
 export interface AuthenticateOptions {
@@ -137,7 +155,11 @@ export interface AuthenticateOptions {
 
 export type AuthResult =
   | { ok: true; principal: Principal }
-  | { ok: false; message: string; reason?: "browser_session_required" | "mcp_key_required" };
+  | {
+      ok: false;
+      message: string;
+      reason?: "browser_session_required" | "mcp_key_required" | "browser_sessions_unavailable";
+    };
 
 export interface Authenticator {
   middleware: MiddlewareHandler;
@@ -174,10 +196,26 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       const fetchSite = c.req.header("sec-fetch-site");
       const allowedFetchSite =
         fetchSite === undefined || fetchSite === "same-origin" || fetchSite === "none";
-      const token = allowedFetchSite
-        ? cookieValue(c, opts.sessionCookieName?.(c) ?? "")
-        : undefined;
-      const session = await opts.browserSessions?.verify(token);
+      const tokens = cookieValues(c, opts.sessionCookieName?.(c) ?? "");
+      let session = null;
+      let unavailable: string | undefined;
+      if (allowedFetchSite) {
+        for (const token of tokens.length > 0 ? tokens : [undefined]) {
+          try {
+            session = (await opts.browserSessions?.verify(token)) ?? null;
+          } catch (error) {
+            unavailable = unavailableMessage(error);
+          }
+          if (session) break;
+        }
+      }
+      if (!session && opts.browserSessions?.unavailableMessage) {
+        unavailable = (await opts.browserSessions.unavailableMessage()) ?? unavailable;
+      }
+      if (unavailable) {
+        c.set("auditExtra", { reason: "browser_sessions_unavailable" });
+        return { ok: false, message: unavailable, reason: "browser_sessions_unavailable" };
+      }
       if (session) {
         c.set("auditExtra", { auth: "browser-session", session: session.id });
         return { ok: true, principal: LOCAL_PRINCIPAL };
@@ -205,8 +243,7 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       lastTouch.set(client.id, t);
       opts.store.touch(client.id).catch((err) => console.error("lastUsedAt update failed", err));
     }
-    // A local reverse proxy makes every peer look like loopback. For this check any common
-    // proxy header counts (the local-trust branch above reads only the first two).
+    // A local reverse proxy makes every peer look like loopback. Any common proxy header counts.
     const proxied = PROXY_HEADERS.some((h) => c.req.header(h) !== undefined);
     const operator =
       opts.operatorClients?.has(client.id) === true &&
@@ -223,8 +260,14 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
     c.set("peerAddress", opts.peerAddress(c));
     const r = await resolve(c);
     if (!r.ok) {
-      const limited = c.get("authFailed")?.(c);
+      const name = opts.sessionCookieName?.(c) ?? "";
+      const presentedCredential =
+        c.req.header("authorization") !== undefined || cookieValues(c, name).length > 0;
+      const limited = presentedCredential ? c.get("authFailed")?.(c) : undefined;
       if (limited) return limited;
+      if (r.reason === "browser_sessions_unavailable") {
+        return c.text(r.message, 503, { "Cache-Control": "no-store" });
+      }
       c.header("WWW-Authenticate", 'Bearer realm="boof-runner"');
       return c.json(
         {

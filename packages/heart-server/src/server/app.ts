@@ -28,6 +28,7 @@ import { originGuard } from "./middleware/origin-guard.js";
 import {
   createAuthenticator,
   defaultPeerAddress,
+  hostPort,
   requireScope,
   type PeerAddressResolver,
 } from "./middleware/auth.js";
@@ -131,15 +132,7 @@ export function createApp(deps: AppDeps): Hono {
   const browserSessions = deps.browserSessions ?? new BrowserSessionStore(service.root);
   const sessionCookieName =
     deps.sessionCookieName ??
-    ((c: Context) => {
-      const host = c.req.header("host");
-      try {
-        const port = host ? new URL(`http://${host}`).port : "";
-        return browserSessionCookieName(port ? Number(port) : 80);
-      } catch {
-        return browserSessionCookieName(80);
-      }
-    });
+    ((c: Context) => browserSessionCookieName(hostPort(c.req.header("host"))));
 
   app.use(
     "*",
@@ -589,6 +582,7 @@ export function createApp(deps: AppDeps): Hono {
       let principal = who(c);
       let ended = false;
       let unsub = () => {};
+      let poll: ReturnType<typeof setInterval> | undefined;
       let wake = () => {};
       let closed = false;
       const finish = () => {
@@ -596,6 +590,7 @@ export function createApp(deps: AppDeps): Hono {
         if (closed) return;
         closed = true;
         unsub();
+        clearInterval(poll);
         releaseStream(streamId);
         wake();
       };
@@ -626,6 +621,19 @@ export function createApp(deps: AppDeps): Hono {
           await stream.writeSSE({ event, data: JSON.stringify(data) });
         })().catch(() => {});
       });
+      poll = setInterval(() => {
+        void (async () => {
+          if (ended) return;
+          const fresh = await resolveSame(c, principal);
+          if (!fresh) {
+            ended = true;
+            await sendUnauthorized(stream);
+            finish();
+            return;
+          }
+          principal = fresh;
+        })().catch(() => {});
+      }, 2000);
       // Keep the connection open until the client disconnects or the key stops working.
       if (!ended)
         await new Promise<void>((resolve) => {

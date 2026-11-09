@@ -53,6 +53,8 @@ export interface BrowserSession {
 export interface BrowserSessionVerifier {
   /** null for undefined, malformed, unknown, expired or revoked tokens. Never throws. */
   verify(token: string | undefined): Promise<BrowserSession | null>;
+  /** Actionable reason when unsafe storage makes verification unavailable. */
+  unavailableMessage?(): Promise<string | undefined>;
 }
 
 interface LinkRecord {
@@ -214,6 +216,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private cache: SessionCache | null = null;
   private loggedStatError = false;
   private loggedUnexpected = false;
+  private unsafeMessage: string | undefined;
   private readonly loggedCorruptPaths = new Set<string>();
   private readonly chmodFn: typeof chmod;
   private readonly warnedChmodPaths = new Set<string>();
@@ -307,6 +310,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(error);
+        this.unsafeMessage = error.message;
         return null;
       }
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -318,6 +322,21 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       }
       return null;
     }
+  }
+
+  async unavailableMessage(): Promise<string | undefined> {
+    try {
+      await this.assertTrustedDirectories();
+      await this.cachedSessions();
+    } catch (error) {
+      if (error instanceof UnsafeBrowserSessionPathError) {
+        this.logUnsafeOnce(error);
+        this.unsafeMessage = error.message;
+      }
+    }
+    return this.unsafeMessage
+      ? `Browser sign-in is unavailable: ${this.unsafeMessage}. Fix the data-root permissions, then run "boof-runner open" again.`
+      : undefined;
   }
 
   /** Delete every session and pending sign-in link; return the number of live sessions removed. */
@@ -520,6 +539,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     try {
       const st = await lstat(this.sessionsPath);
       this.assertSafeStat(this.sessionsPath, st, "file");
+      this.unsafeMessage = undefined;
       if (this.hasReadBits(st.mode)) this.warnReadBits(this.sessionsPath);
       fileStat = { mtimeMs: st.mtimeMs, size: st.size };
       this.loggedStatError = false;
@@ -527,9 +547,11 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       const code = (err as NodeJS.ErrnoException).code;
       if (err instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(err);
+        this.unsafeMessage = err.message;
         return null;
       }
       if (code === "ENOENT") {
+        this.unsafeMessage = undefined;
         this.cache = null;
         return [];
       }
@@ -557,6 +579,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(error);
+        this.unsafeMessage = error.message;
         return null;
       }
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;

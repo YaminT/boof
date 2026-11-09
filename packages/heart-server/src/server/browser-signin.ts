@@ -7,29 +7,10 @@ import {
   type SecuritySettings,
 } from "@boof/heart";
 import type { PeerAddressResolver } from "./middleware/auth.js";
-import { isLoopbackAddress, isLoopbackHost } from "./middleware/auth.js";
+import { hostPort, isLoopbackAddress, isLoopbackHost, PROXY_HEADERS } from "./middleware/auth.js";
 
 const INVALID_LINK =
   'This sign-in link is invalid, used or expired. Run "boof-runner open" on this machine for a new one.';
-const PROXY_HEADERS = [
-  "x-forwarded-for",
-  "forwarded",
-  "x-real-ip",
-  "x-forwarded-host",
-  "x-forwarded-proto",
-  "via",
-];
-
-function hostPort(host: string | undefined): number {
-  if (!host) return 80;
-  try {
-    const port = new URL(`http://${host}`).port;
-    return port ? Number(port) : 80;
-  } catch {
-    return 80;
-  }
-}
-
 function loopbackHost(host: string | undefined): boolean {
   if (!host) return false;
   try {
@@ -59,6 +40,7 @@ export function browserSignin(opts: BrowserSigninOptions): MiddlewareHandler {
     ) {
       return c.body(null, 404);
     }
+    if (c.req.method !== "GET") return c.body(null, 405);
 
     const code = c.req.query("code");
     const redeem = opts.sessions.redeemLink;
@@ -85,6 +67,8 @@ export function browserSignin(opts: BrowserSigninOptions): MiddlewareHandler {
     }
 
     const name = opts.sessionCookieName?.(c) ?? browserSessionCookieName(hostPort(host));
+    // Cookies are shared across ports; the port in this name only prevents the boof servers from
+    // confusing one another. It does not stop another local listener from receiving the cookie.
     c.header(
       "Set-Cookie",
       `${name}=${result.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`,

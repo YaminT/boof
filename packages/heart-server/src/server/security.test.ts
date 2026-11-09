@@ -608,16 +608,15 @@ describe("rate limit", () => {
     expect(limited.status).toBe(429);
     expect(Number(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
     expect((await limited.json()).error.code).toBe("rate_limited");
-    // /mcp shares the bucket; a request with no key at all counts as well.
-    expect(
-      (
-        await call(app, "/mcp", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        })
-      ).status,
-    ).toBe(429);
+    // A keyless loopback refusal has no credential to guess and does not spend this bucket.
+    peer = LOOPBACK;
+    const keylessMcp = await call(app, "/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(keylessMcp.status).toBe(401);
+    expect((await keylessMcp.json()).error.details.reason).toBe("mcp_key_required");
     // Another address has its own bucket.
     peer = "10.9.9.9";
     expect((await guess()).status).toBe(401);
@@ -675,9 +674,11 @@ describe("rate limit", () => {
   it("X-Forwarded-For splits buckets only when the peer is a trusted proxy", async () => {
     const limits = { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 2 };
     await setSecurity({ rateLimit: limits, trustedProxies: [] });
-    peer = LOOPBACK; // nginx on the same host; no key and a proxy header: never local, 401
+    peer = LOOPBACK; // nginx on the same host; the presented bad key spends the address bucket.
     const via = (app: ReturnType<typeof build>, xff: string) =>
-      call(app, "/api/v1/whoami", { headers: { "x-forwarded-for": xff } });
+      call(app, "/api/v1/whoami", {
+        headers: { "x-forwarded-for": xff, authorization: "Bearer bad" },
+      });
     const untrusted = build();
     expect((await via(untrusted, "198.51.100.1")).status).toBe(401);
     expect((await via(untrusted, "198.51.100.2")).status).toBe(401);
@@ -835,9 +836,12 @@ describe("CSRF (Origin and Content-Type)", () => {
     const cross = await get("cross-site");
     expect(cross.status).toBe(403);
     expect((await cross.json()).error.code).toBe("origin_not_allowed");
-    for (const ok of ["same-origin", "same-site", "none", undefined]) {
+    for (const ok of ["same-origin", "none", undefined]) {
       expect((await get(ok)).status).toBe(200);
     }
+    const sameSite = await get("same-site");
+    expect(sameSite.status).toBe(401);
+    expect((await sameSite.json()).error.details.reason).toBe("browser_session_required");
     const mcp = await call(app, "/mcp", {
       method: "POST",
       headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
