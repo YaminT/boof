@@ -92,11 +92,6 @@ describe("UI coverage of the operations", () => {
         "settings.health",
         "settings.models",
         "runner.overview",
-        "n8n.get",
-        "n8n.update",
-        "n8n.delete",
-        "n8n.workflows.list",
-        "n8n.workflows.refresh",
       ]
     `);
   });

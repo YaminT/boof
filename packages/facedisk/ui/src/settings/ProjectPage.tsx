@@ -7,7 +7,7 @@ import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
 import { AddProjectModal } from "../components/Projects.js";
 import { FolderOpenIcon } from "../components/Icons.js";
-import type { AgentSdkEligibility, ProjectView } from "../api-types.js";
+import type { AgentSdkEligibility, ProjectView, Whoami } from "../api-types.js";
 import { desktop, isDesktop } from "../desktop.js";
 import { isApiKeyShape } from "../lib/claude-agent.js";
 import { act } from "../lib/act.js";
@@ -15,6 +15,7 @@ import type { ProjectPageValues } from "../lib/settings-project.js";
 import { ArchivedProjects } from "./ArchivedProjects.js";
 import { ClaudeAgentSection } from "./ClaudeAgentSection.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { ExternalStepsSection } from "./ExternalStepsSection.js";
 
 import { AdvancedSection } from "./AdvancedSection.js";
 const label = "flex flex-col gap-1.5 text-[length:var(--text-body)] font-medium";
@@ -51,6 +52,13 @@ export function ProjectPage({
   const [replacing, setReplacing] = useState(false);
   const [eligibility, setEligibility] = useState<AgentSdkEligibility | null>(null);
   const [eligibilityFailed, setEligibilityFailed] = useState(false);
+  const [whoami, setWhoami] = useState<Whoami | null>(null);
+  useEffect(() => {
+    void api
+      .whoami()
+      .then(setWhoami)
+      .catch(() => {});
+  }, []);
   // Whether a key is stored; the key itself never reaches the browser.
   const keySet = (project as ProjectView).anthropicApiKeySet === true;
   useEffect(() => {
@@ -211,6 +219,8 @@ export function ProjectPage({
           </Button>
         </div>
       </AdvancedSection>
+
+      <ExternalStepsSection project={project} whoami={whoami} onSaved={reloadProjects} />
 
       <ArchivedProjects reloadProjects={reloadProjects} />
 
