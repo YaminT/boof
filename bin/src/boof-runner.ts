@@ -495,6 +495,21 @@ export function firstPositional(argv: string[]): string | undefined {
 }
 
 export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
+  if (!isExactShortcut(rawArgv)) {
+    const roots = [
+      ...dataRootsFromArgv(rawArgv),
+      ...(process.env.BOOF_RUNNER_DATA_ROOT ? [process.env.BOOF_RUNNER_DATA_ROOT] : []),
+      resolve(process.cwd(), "data"),
+    ];
+    for (const root of new Set(roots.map(absPath))) {
+      if (!isAgentOf(process.env, root)) continue;
+      console.error(
+        "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.",
+      );
+      process.exitCode = 3;
+      return;
+    }
+  }
   const argv = routeArgv(rawArgv);
   const [cmd, ...rest] = argv;
   // --version also works after serve's own flags (`boof-runner -d x --version`).
@@ -516,17 +531,6 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
     console.log(HELP);
     return;
   }
-  if (!hasFlag(argv, ["--version", "-v", "--help", "-h"])) {
-    const dataRoot = getOpt(argv, ["--data", "-d"]);
-    const root = dataRoot ? absPath(dataRoot) : defaultDataRoot();
-    if (isAgentOf(process.env, root)) {
-      console.error(
-        "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.",
-      );
-      process.exitCode = 3;
-      return;
-    }
-  }
   let code = 0;
   try {
     code = await dispatch(cmd, rest, argv);
@@ -540,6 +544,26 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   }
   if (code === SERVE_FOREVER) return;
   if (code !== 0) process.exitCode = code;
+}
+
+function isExactShortcut(argv: string[]): boolean {
+  return argv.length === 1 && ["--version", "-v", "--help", "-h"].includes(argv[0]!);
+}
+
+/** Every explicit data root, including repeated short/long and inline forms. */
+function dataRootsFromArgv(argv: string[]): string[] {
+  const roots: string[] = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (arg === "-d" || arg === "--data") {
+      if (argv[i + 1] !== undefined) roots.push(argv[i + 1]!);
+    } else if (arg.startsWith("-d=")) {
+      roots.push(arg.slice("-d=".length));
+    } else if (arg.startsWith("--data=")) {
+      roots.push(arg.slice("--data=".length));
+    }
+  }
+  return roots.filter(Boolean);
 }
 
 /** The words in serve's arguments that are not a flag or a flag's value: serve takes none. */

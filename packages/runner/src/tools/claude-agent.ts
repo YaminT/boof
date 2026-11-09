@@ -6,6 +6,7 @@ import { access, readFile, realpath, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Options as SdkOptions, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AgentAuthRefusedError } from "../agent-auth.js";
+import { agentEnv } from "../agent-env.js";
 import { StreamRenderer } from "./claude-code.js";
 import { ToolRunError } from "./errors.js";
 import { withQuestions } from "./questions.js";
@@ -203,6 +204,7 @@ export class ClaudeAgentTool implements Tool {
       const child = this.spawn(path, ["--version"], {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 8000,
+        env: agentEnv(),
       });
       child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
       child.on("error", () =>
@@ -253,7 +255,6 @@ export class ClaudeAgentTool implements Tool {
     const claudeMd = await readRepoFile(opts.cwd, "CLAUDE.md");
     const permissions = await readRepoPermissions(opts.cwd);
     const childEnv = { ...env };
-    if (opts.agentMarker !== undefined) childEnv.BOOF_RUNNER_AGENT_OF = opts.agentMarker;
     const queryOptions: SdkOptions = {
       cwd: opts.cwd,
       ...(opts.model && opts.model !== "default" && opts.model !== "" ? { model: opts.model } : {}),

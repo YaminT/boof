@@ -25,6 +25,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, ["--version"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
@@ -54,6 +55,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, ["models"], {
       cwd: process.cwd(),
       timeoutMs: 20000,
+      env: agentEnv(),
     });
     if (res.code !== 0) return [...this.defaultModels];
     // `opencode models` prints one `provider/model` id per line.

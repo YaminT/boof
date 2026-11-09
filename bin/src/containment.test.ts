@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentEnv } from "../../packages/runner/src/agent-env.js";
 import { agentMarkerFor } from "../../packages/runner/src/agent-marker.js";
-import { main } from "./boof-runner.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -23,34 +23,118 @@ describe("agent containment", () => {
   it.todo("a child with the agent env gets 401 on protected routes and no code for sign-in");
   it.todo("the same child reads /healthz and /harness.txt (public by design)");
 
-  it("main() with the marker for -d <root> exits 3 with R1 and writes nothing", async () => {
-    const dataRoot = await root();
-    const home = await root();
-    const fakeBase = { PATH: process.env.PATH, HOME: home };
-    const env = agentEnv(fakeBase, [], agentMarkerFor(dataRoot));
-    vi.stubEnv("BOOF_RUNNER_AGENT_OF", env.BOOF_RUNNER_AGENT_OF!);
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    await main(["-d", dataRoot, "project", "list"]);
-
-    expect(process.exitCode).toBe(3);
-    expect(error).toHaveBeenCalledWith(
-      "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.",
+  const runCli = (
+    args: string[],
+    markerRoot: string,
+    home: string,
+    extraEnv: NodeJS.ProcessEnv = {},
+  ) =>
+    spawnSync(
+      process.execPath,
+      ["--import", "tsx", join(process.cwd(), "bin/src/boof-runner.ts"), ...args],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...agentEnv(
+            {
+              PATH: process.env.PATH,
+              HOME: home,
+              BOOF_RUNNER_AGENT_OF: agentMarkerFor(markerRoot),
+            },
+            [],
+            agentMarkerFor(markerRoot),
+          ),
+          ...extraEnv,
+        },
+      },
     );
-    await expect(readFile(join(dataRoot, "settings.json"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+
+  const refusal =
+    "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.";
+
+  it.each([
+    [
+      "checks repeated -d roots",
+      (x: string, r: string) => [
+        "auth",
+        "clients",
+        "create",
+        "--name",
+        "pwn",
+        "--scopes",
+        "admin",
+        "-d",
+        x,
+        "-d",
+        r,
+      ],
+    ],
+    [
+      "checks a -v value",
+      (_x: string, r: string) => [
+        "auth",
+        "clients",
+        "create",
+        "--name",
+        "-v",
+        "--scopes",
+        "admin",
+        "-d",
+        r,
+      ],
+    ],
+    [
+      "checks --data= roots",
+      (_x: string, r: string) => [
+        "auth",
+        "clients",
+        "create",
+        "--name",
+        "pwn",
+        "--scopes",
+        "admin",
+        `--data=${r}`,
+      ],
+    ],
+  ])("refuses before creating anything when it %s", async (_label, args) => {
+    const dataRoot = await root();
+    const extraRoot = await root();
+    const home = await root();
+    const result = runCli(args(extraRoot, dataRoot), dataRoot, home);
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain(refusal);
+    expect(await readdir(dataRoot)).toEqual([]);
   });
 
-  it("main() with the marker for another root (a scratch data root) still works", async () => {
+  it("a marker for a different root does not block a scratch data root", async () => {
     const spawningRoot = await root();
     const scratchRoot = await root();
-    vi.stubEnv("BOOF_RUNNER_AGENT_OF", agentMarkerFor(spawningRoot));
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const home = await root();
+    const result = runCli(["project", "list", "-d", scratchRoot], spawningRoot, home);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("No projects");
+  });
 
-    await main(["-d", scratchRoot, "project", "list"]);
+  it("checks the BOOF_RUNNER_DATA_ROOT environment root", async () => {
+    const dataRoot = await root();
+    const home = await root();
+    const result = runCli(
+      ["auth", "clients", "create", "--name", "pwn", "--scopes", "admin"],
+      dataRoot,
+      home,
+      { BOOF_RUNNER_DATA_ROOT: dataRoot },
+    );
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain(refusal);
+    expect(await readdir(dataRoot)).toEqual([]);
+  });
 
-    expect(process.exitCode).toBe(0);
-    expect(log).toHaveBeenCalled();
+  it("bare --version works when the marker matches the default root", async () => {
+    const home = await root();
+    const dataRoot = join(process.cwd(), "data");
+    const result = runCli(["--version"], dataRoot, home);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
 });

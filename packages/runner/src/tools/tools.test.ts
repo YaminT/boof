@@ -702,6 +702,19 @@ describe("OpencodeTool", () => {
     const failing = await setup("exit 1");
     expect(await failing.listModels()).toEqual(["opencode-go/kimi-k3"]);
   });
+
+  it("model listing probes receive no BOOF_ variables", async () => {
+    const tool = await setup(
+      `env | grep '^BOOF_' > "$(dirname "$0")/probe-env" || true\nprintf 'a/model\\n'`,
+    );
+    process.env.BOOF_TEST_PROBE_SECRET = "boof_secret_value";
+    try {
+      await tool.listModels();
+      expect(await readFile(join(dir, "probe-env"), "utf8")).toBe("");
+    } finally {
+      delete process.env.BOOF_TEST_PROBE_SECRET;
+    }
+  });
 });
 
 describe("session resume", () => {

@@ -8,7 +8,7 @@ export const AGENT_MARKER_ENV = "BOOF_RUNNER_AGENT_OF";
 export function agentMarkerFor(dataRoot: string): string {
   let canonical: string;
   try {
-    canonical = realpathSync(dataRoot);
+    canonical = realpathSync.native(dataRoot);
   } catch {
     canonical = resolve(dataRoot);
   }

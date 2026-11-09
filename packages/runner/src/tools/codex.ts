@@ -32,6 +32,7 @@ export class CodexTool implements Tool {
     const res = await execCommand(this.bin, ["--version"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
@@ -75,6 +76,7 @@ export class CodexTool implements Tool {
     const res = await execCommand(this.bin, ["debug", "models"], {
       cwd: process.cwd(),
       timeoutMs: 20000,
+      env: agentEnv(),
     });
     if (res.code !== 0) return [...this.defaultModels];
     try {
