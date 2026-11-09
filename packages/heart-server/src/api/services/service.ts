@@ -100,6 +100,7 @@ import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import { ConciergeService } from "../../concierge/service.js";
 import type { ConciergeAgent } from "@boof/heart";
+import { cleanN8nName } from "../../n8n/text.js";
 
 export interface CreateTaskInput {
   title: string;
@@ -1157,10 +1158,28 @@ export class TaskService {
    */
   async createN8nCheckTask(
     projectId: string,
-    check: { workflowId: string; workflowName: string; webhookPath: string; updatedAt: string },
+    rawCheck: { workflowId: string; workflowName: string; webhookPath: string; updatedAt: string },
     opts: { queue: boolean },
   ): Promise<{ id: string; created: boolean }> {
     const project = await this.requireProject(projectId);
+    const check = {
+      ...rawCheck,
+      workflowName: cleanN8nName(rawCheck.workflowName, rawCheck.workflowId),
+    };
+    const title = `Check n8n workflow "${check.workflowName}" after edit`;
+    const prompt = `Runs the n8n workflow "${check.workflowName}" (${check.workflowId}) once with boof.kind = "check" and passes when its callback reports ok. Created by boof after the workflow changed in n8n at ${check.updatedAt}.`;
+    const start = Date.now();
+    const audit = (task: string, updated: boolean) =>
+      auditOperation(this.root, {
+        principal: { id: "n8n-watcher", kind: "server" },
+        action: "n8n:check-task",
+        via: "server",
+        project: projectId,
+        ok: true,
+        ms: Date.now() - start,
+        at: start,
+        extra: { workflowId: check.workflowId, task, ...(updated ? { updated: true } : {}) },
+      });
     const open = (await project.tasks.list()).find(
       (t) =>
         (t.frontmatter.status === "draft" || t.frontmatter.status === "pending") &&
@@ -1169,17 +1188,18 @@ export class TaskService {
     if (open) {
       await project.tasks.modify(open.frontmatter.id, (t) => {
         t.frontmatter.n8nCheck = { ...check };
+        t.frontmatter.title = title;
+        t.body.prompt = prompt;
       });
+      await audit(open.frontmatter.id, true);
       return { id: open.frontmatter.id, created: false };
     }
-    const start = Date.now();
-    const name = check.workflowName.slice(0, 120);
     const task = await createTaskInHierarchy(
       project.root,
       newTask(
         {
           id: "pending-id",
-          title: `Check n8n workflow "${name}" after edit`,
+          title,
           status: opts.queue ? "pending" : "draft",
           priority: 50,
           skip: false,
@@ -1193,20 +1213,11 @@ export class TaskService {
           created: "",
           updated: "",
         },
-        `Runs the n8n workflow "${check.workflowName}" (${check.workflowId}) once with boof.kind = "check" and passes when its callback reports ok. Created by boof after the workflow changed in n8n at ${check.updatedAt}.`,
+        prompt,
       ),
       { by: "n8n-watcher" },
     );
-    await auditOperation(this.root, {
-      principal: { id: "n8n-watcher", kind: "server" },
-      action: "n8n:check-task",
-      via: "server",
-      project: projectId,
-      ok: true,
-      ms: Date.now() - start,
-      at: start,
-      extra: { workflowId: check.workflowId, task: task.frontmatter.id },
-    });
+    await audit(task.frontmatter.id, false);
     return { id: task.frontmatter.id, created: true };
   }
 

@@ -46,6 +46,9 @@ export const N8N_BODY_CAP_BYTES = 5_000_000;
 export const N8N_PAGE_SIZE = 100;
 export const N8N_MAX_PAGES = 10;
 
+const pageSignal = (ms: number, extra?: AbortSignal): AbortSignal =>
+  extra ? AbortSignal.any([AbortSignal.timeout(ms), extra]) : AbortSignal.timeout(ms);
+
 const portOf = (u: URL): string => u.port || (u.protocol === "https:" ? "443" : "80");
 
 /** Is `url` on the host:port of the configured n8n `baseUrl`? */
@@ -216,6 +219,7 @@ export class N8nClient {
     allowed: string[],
     apiKey: string,
     cursor: string | null,
+    signal?: AbortSignal,
   ): Promise<{ data: unknown[]; nextCursor: string | null }> {
     const query = `limit=${N8N_PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
     const target = await checkN8nTarget(
@@ -230,7 +234,7 @@ export class N8nClient {
       res = await (this.opts.request ?? pinnedRequest)(target.url.href, target.addresses, {
         method: "GET",
         headers: { "X-N8N-API-KEY": apiKey, Accept: "application/json", "User-Agent": "boof-n8n" },
-        signal: AbortSignal.timeout(this.opts.timeouts?.pageMs ?? N8N_PAGE_TIMEOUT_MS),
+        signal: pageSignal(this.opts.timeouts?.pageMs ?? N8N_PAGE_TIMEOUT_MS, signal),
         maxResponseBytes: N8N_BODY_CAP_BYTES,
       });
     } catch (err) {
@@ -260,7 +264,7 @@ export class N8nClient {
    * GET <baseUrl>/api/v1/workflows?limit=100[&cursor=…], following nextCursor; at most 10 pages.
    * Throws OpError 409 `n8n_not_configured`, or 502 `upstream_failed` with `details.reason`.
    */
-  async listWorkflows(): Promise<N8nWorkflowSummary[]> {
+  async listWorkflows(signal?: AbortSignal): Promise<N8nWorkflowSummary[]> {
     const { n8n, allowed } = await this.config();
     const start = Date.now();
     const host = new URL(n8n.baseUrl).host;
@@ -275,12 +279,14 @@ export class N8nClient {
       const workflows: N8nWorkflowSummary[] = [];
       let cursor: string | null = null;
       do {
+        if (signal?.aborted) throw new Upstream("unreachable");
         if (pages >= N8N_MAX_PAGES) throw new Upstream("too_many");
         const got: { data: unknown[]; nextCursor: string | null } = await this.page(
           n8n,
           allowed,
           apiKey,
           cursor,
+          signal,
         );
         pages++;
         for (const raw of got.data) {
@@ -309,10 +315,10 @@ export class N8nClient {
   }
 
   /** listWorkflows, then the cache. On failure the cache keeps its list, gets lastError, and the error is rethrown. */
-  async refresh(): Promise<N8nWorkflowCache> {
+  async refresh(signal?: AbortSignal): Promise<N8nWorkflowCache> {
     let workflows: N8nWorkflowSummary[];
     try {
-      workflows = await this.listWorkflows();
+      workflows = await this.listWorkflows(signal);
     } catch (err) {
       if (err instanceof OpError && err.code === "upstream_failed") {
         const cache = await readWorkflowCache(this.opts.root);
