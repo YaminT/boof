@@ -354,7 +354,8 @@ describe("mcpCommand", () => {
         new ToolRegistry([new MockTool()]),
         (l) => errs.push(l),
       );
-    expect(await run(["-d", root, "--client", "nobody"])).toBe(1);
+    // A refused identity exits 3, like the generated CLI; a bad id is a usage error (1).
+    expect(await run(["-d", root, "--client", "nobody"])).toBe(3);
     expect(errs.at(-1)).toContain("unknown client");
     expect(await run(["-d", root, "--project", "Bad Id"])).toBe(1);
     expect(errs.at(-1)).toContain("kebab-case");

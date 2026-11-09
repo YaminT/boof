@@ -14,6 +14,7 @@ import {
   type Principal,
   type ToolCatalog,
 } from "@boof/heart";
+import { createBoofMcpServer, type ToolCallInfo } from "./server.js";
 
 /** What `boof-runner mcp` prints when it is started without `--client`. */
 export function mcpNeedsClientMessage(): string {
@@ -25,7 +26,6 @@ export function mcpNeedsClientMessage(): string {
     "For the administration tools, create a trusted client with the admin scope instead.",
   ].join("\n");
 }
-import { createBoofMcpServer, type ToolCallInfo } from "./server.js";
 
 /**
  * The audit hook of a stdio server: every tool call appends one line to the audit log, the same
@@ -57,11 +57,14 @@ export function stdioAudit(root: string) {
 }
 
 export class McpStartError extends Error {
-  /** 3: start MCP differently (no client, or the removed `--admin`). 1: any other start failure. */
+  /** 3: start MCP differently (no client, the removed `--admin`, a refused client). 1: any other start failure. */
   readonly exitCode: 1 | 3;
-  constructor(message: string, exitCode: 1 | 3 = 1) {
+  /** True when `message` is complete copy that the CLI prints as is, without its `mcp:` prefix. */
+  readonly rawMessage: boolean;
+  constructor(message: string, exitCode: 1 | 3 = 1, rawMessage = exitCode === 3) {
     super(message);
     this.exitCode = exitCode;
+    this.rawMessage = rawMessage;
   }
 }
 
@@ -97,7 +100,7 @@ export async function stdioPrincipal(
   }
   // One identity rule for every local surface; its refusals are start errors here.
   const asStartError = (err: unknown): never => {
-    throw err instanceof LocalPrincipalError ? new McpStartError(err.message) : err;
+    throw err instanceof LocalPrincipalError ? new McpStartError(err.message, 3, false) : err;
   };
   const resolve = await localPrincipal({
     settings,

@@ -68,6 +68,74 @@ async function connect(
   return client;
 }
 
+// Fixed on purpose (not derived from the registry): the tools of a client made with the printed
+// recipe. No administration tool; boof_delete_project is listed and refused at call time.
+const EXPECTED_REVIEW_TOOLS: string[] = [
+  "boof_answer_task",
+  "boof_archive_project",
+  "boof_archive_task",
+  "boof_create_epic",
+  "boof_create_plan",
+  "boof_create_project",
+  "boof_create_task",
+  "boof_delete_epic",
+  "boof_delete_project",
+  "boof_delete_task",
+  "boof_export_plan",
+  "boof_get_agent_sdk_eligibility",
+  "boof_get_budget",
+  "boof_get_epic",
+  "boof_get_health",
+  "boof_get_model_details",
+  "boof_get_plan",
+  "boof_get_pool_health",
+  "boof_get_project",
+  "boof_get_project_usage",
+  "boof_get_runner",
+  "boof_get_settings",
+  "boof_get_task",
+  "boof_get_task_diff",
+  "boof_get_task_log",
+  "boof_get_usage",
+  "boof_import_plan",
+  "boof_inject_prompt",
+  "boof_list_accounts",
+  "boof_list_actions",
+  "boof_list_commands",
+  "boof_list_epics",
+  "boof_list_models",
+  "boof_list_plans",
+  "boof_list_projects",
+  "boof_list_tasks",
+  "boof_move_task",
+  "boof_pause_project",
+  "boof_queue_task",
+  "boof_refresh_models",
+  "boof_remove_attachment",
+  "boof_remove_goal",
+  "boof_reorder_goals",
+  "boof_reorder_tasks",
+  "boof_replace_goals",
+  "boof_resume_project",
+  "boof_retry_task",
+  "boof_runner_status",
+  "boof_set_goal_status",
+  "boof_set_runner",
+  "boof_skip_task",
+  "boof_stop_task",
+  "boof_sync_plan",
+  "boof_unarchive_project",
+  "boof_unarchive_task",
+  "boof_update_epic",
+  "boof_update_plan",
+  "boof_update_project",
+  "boof_update_task",
+  "boof_upsert_goal",
+  "boof_wait_plan",
+  "boof_wait_task",
+  "boof_whoami",
+];
+
 async function clientPrincipal(
   scopes: Scope[],
   trust: "trusted" | "review",
@@ -428,19 +496,49 @@ describe("tools generated from the registry", () => {
     }
   });
 
-  it("a review-trust client cannot archive, unarchive or purge a project over MCP", async () => {
+  it.each([true, false])(
+    "a review-trust client cannot archive, unarchive or purge a project over MCP (approval setting %s)",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+      const rev = await connect(
+        await clientPrincipal(["projects:write", "projects:read"], "review"),
+      );
+      // Archiving goes through updateProject, which only refuses while approval is required.
+      const archiving = approvalRequired
+        ? ([
+            ["boof_archive_project", { projectId: "shop" }],
+            ["boof_unarchive_project", { projectId: "shop" }],
+          ] as const)
+        : [];
+      for (const [tool, args] of [
+        ...archiving,
+        ["boof_delete_project", { projectId: "shop", purge: true }],
+        ["boof_delete_project", { projectId: "shop" }],
+      ] as const) {
+        const res = await call(rev, tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
+      }
+      expect((await services.getProject("shop")).archived).toBe(false);
+    },
+  );
+
+  it("a trusted client with projects:write can still delete a project over MCP", async () => {
+    const settings = await new SettingsStore(root).load();
+    settings.security = SecuritySettingsSchema.parse({ externalTasksRequireApproval: false });
+    await new SettingsStore(root).save(settings);
     await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
-    const rev = await connect(await clientPrincipal(["projects:write", "projects:read"], "review"));
-    for (const [tool, args] of [
-      ["boof_archive_project", { projectId: "shop" }],
-      ["boof_unarchive_project", { projectId: "shop" }],
-      ["boof_delete_project", { projectId: "shop", purge: true }],
-    ] as const) {
-      const res = await call(rev, tool, args);
-      expect(res.isError, tool).toBe(true);
-      expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
-    }
-    expect((await services.getProject("shop")).archived).toBe(false);
+    const admin = await connect(
+      await clientPrincipal(["projects:write", "projects:read"], "trusted"),
+    );
+    const res = await call(admin, "boof_delete_project", { projectId: "shop", purge: true });
+    expect(res.isError).not.toBe(true);
+    await expect(services.getProject("shop")).rejects.toThrow();
   });
 
   it("a keyless stdio server hides the administration tools unless --admin is given", async () => {
@@ -762,23 +860,11 @@ describe("stdio principal", () => {
     );
   });
 
-  it("a client created with MCP_REVIEW_SCOPES and review trust lists the same tools the old local-mcp did", async () => {
+  it("a review-trust client with MCP_REVIEW_SCOPES lists exactly the expected tools (boof_delete_project is listed but refused)", async () => {
     const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
-    expect(MCP_REVIEW_SCOPES, "MCP_REVIEW_SCOPES").toBeDefined();
     const principal = await clientPrincipal([...(MCP_REVIEW_SCOPES as readonly Scope[])], "review");
     const listed = (await (await connect(principal)).listTools()).tools.map((t) => t.name).sort();
-    // Scope filtering, which is what a stored client gets: administration tools whose scopes were
-    // removed stay hidden; a tool the scopes still allow (projects.delete) stays listed.
-    const byScopes = exposedOps(registry)
-      .filter((op) => op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s)))
-      .map((op) => op.mcp.name!)
-      .sort();
-    expect(listed).toEqual(byScopes);
-    expect(listed).toContain("boof_create_plan");
-    expect(listed).not.toContain("boof_create_client");
-    expect(listed).not.toContain("boof_update_settings");
-    expect(listed).not.toContain("boof_check_health");
-    expect(listed).toContain("boof_delete_project");
+    expect(listed).toEqual(EXPECTED_REVIEW_TOOLS);
   });
 
   it("resolves --client from the registry and follows a revocation", async () => {

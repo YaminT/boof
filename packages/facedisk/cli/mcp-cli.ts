@@ -78,8 +78,8 @@ export async function mcpCommand(
     return 0;
   } catch (e) {
     if (e instanceof McpStartError) {
-      // Exit 3 is the refusal copy itself. Other start errors keep the `mcp:` prefix.
-      err(e.exitCode === 3 ? e.message : `mcp: ${e.message}`);
+      // The refusal copy is printed as is. Other start errors keep the `mcp:` prefix.
+      err(e.rawMessage ? e.message : `mcp: ${e.message}`);
       return e.exitCode;
     }
     if (e instanceof InvalidIdError || (e as { status?: number }).status === 404) {
