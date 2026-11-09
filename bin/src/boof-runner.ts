@@ -571,12 +571,18 @@ export function dataRootsFromArgv(argv: string[]): string[] {
   }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if (arg === "-d" || arg === "--data") {
+    if (arg === "--data") {
       if (argv[i + 1] !== undefined) roots.push(argv[i + 1]!);
-    } else if (arg.startsWith("-d=")) {
-      roots.push(arg.slice("-d=".length));
     } else if (arg.startsWith("--data=")) {
       roots.push(arg.slice("--data=".length));
+    } else if (arg.startsWith("-") && !arg.startsWith("--") && arg.length > 1) {
+      const dataIndex = arg.indexOf("d", 1);
+      if (dataIndex !== -1) {
+        const attached = arg.slice(dataIndex + 1);
+        if (attached.length > 0)
+          roots.push(attached.startsWith("=") ? attached.slice(1) : attached);
+        else if (argv[i + 1] !== undefined) roots.push(argv[i + 1]!);
+      }
     }
   }
   return [...new Set(roots.filter(Boolean))];

@@ -24,9 +24,20 @@ describe("agent containment", () => {
   it.todo("a child with the agent env gets 401 on protected routes and no code for sign-in");
   it.todo("the same child reads /healthz and /harness.txt (public by design)");
 
-  it("collects grouped short options ending in data from parseArgs", () => {
-    const root = "/tmp/grouped-data-root";
-    expect(dataRootsFromArgv(["service", "-fd", root])).toContain(root);
+  it.each([
+    [["-p80e-0", "-dR"], "R"],
+    [["-p80e-0", "-d", "R"], "R"],
+    [["-n", "x", "-dR"], "R"],
+    [["-xyd", "R"], "R"],
+    [["-xydR"], "R"],
+    [["-d=R"], "R"],
+    [["--", "-dR"], "R"],
+    [["-fd", "R"], "R"],
+    [["-d", "R"], "R"],
+    [["--data", "R"], "R"],
+    [["--data=R"], "R"],
+  ])("collects data root from argv %j", (args, expected) => {
+    expect(dataRootsFromArgv(args)).toContain(expected);
   });
 
   const runCli = (
@@ -112,6 +123,19 @@ describe("agent containment", () => {
         "x",
         "--scopes",
         "admin",
+        `-d${r}`,
+      ],
+    ],
+    [
+      "checks data after an unknown grouped short option for remote setup",
+      (_x: string, r: string) => [
+        "remote",
+        "setup",
+        "--hostname",
+        "x",
+        "--scopes",
+        "admin",
+        "-p80e-0",
         `-d${r}`,
       ],
     ],
