@@ -97,7 +97,7 @@ boof POSTs this JSON to `<webhookBaseUrl>/<webhookPath>`:
   - an API response capped at 5 MB, and at most 10 pages of 100 workflows (more than 1 000 workflows is `too_many`, never a silent cut).
 - **Private n8n host (owner answer 2, final).** The host:port of the configured `baseUrl` is exempt from the private-address block, automatically, so an n8n on loopback or a LAN works without listing it. The exemption is narrow:
   - it covers only API calls to that exact host:port, still pinned to the resolved address, with no redirects;
-  - it never covers webhook targets or any other host, so webhook targets on a private address still need `security.allowedPrivateWebhookHosts`;
+  - it covers both the n8n API calls and the step webhook calls to that same configured host:port, and nothing else: boof's general event webhooks to other private hosts still need `security.allowedPrivateWebhookHosts`;
   - changing `baseUrl` drops the old exemption;
   - boof's own server address (`isSelfUrl`) is still refused as `baseUrl`.
 - **Credentials.** The API key goes only to `baseUrl`'s origin, in `X-N8N-API-KEY`. The webhook secret goes only to the webhook URL, in `X-Boof-Token`.
@@ -154,4 +154,4 @@ The owner answered all six on 2026-11-09. The answers are binding; the plan foll
 5. **Where steps are configured.** Answer: per project only, with no per-task override and no global list. (Owner answers 5/6, as recommended.)
 6. **The n8n API key over MCP.** Answer: `n8n.update` with its write-only `apiKey`, exposed as `boof_update_n8n`, on an admin-only tool. (Owner answer 4.)
 
-One point the answers leave open, and the implementation reads as follows: the private-host exemption covers API calls only. If an n8n webhook base sits on the same private host as `baseUrl`, its webhook targets still need `security.allowedPrivateWebhookHosts`.
+The owner confirmed (2026-11-09) that the exemption covers both the n8n API calls and the step webhook calls on the configured host:port; general event webhooks to other private hosts still need `security.allowedPrivateWebhookHosts`.
