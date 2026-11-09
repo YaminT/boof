@@ -6,6 +6,7 @@ import type { ConciergeAgentEvent, ConciergeTurnInput, Project, TokenUsage } fro
 import { ConciergeTurnError, conciergeConfigDir, conciergeScratchDir } from "@boof/heart";
 import { z } from "zod";
 import type { AgentAuthResolver } from "./agent-auth.js";
+import { agentMarkerFor } from "./agent-marker.js";
 import { DESKTOP_CLAUDE_AGENT_REASON } from "./index.js";
 import type { PoolGate } from "./pool-gate.js";
 import { ClaudeConcierge } from "./concierge.js";
@@ -219,7 +220,10 @@ describe("ClaudeConcierge", () => {
     expect(env).not.toHaveProperty("BOOF_SECRET");
     expect(env).not.toHaveProperty("BOOF_OWLISH_API_KEY");
     expect(env).not.toHaveProperty("BOOF_OWLISH_AGENT_KEY");
-    expect(Object.keys(env).some((name) => name.startsWith("BOOF_"))).toBe(false);
+    expect(env.BOOF_RUNNER_AGENT_OF).toBe(agentMarkerFor(root));
+    expect(Object.keys(env).filter((name) => name.startsWith("BOOF_"))).toEqual([
+      "BOOF_RUNNER_AGENT_OF",
+    ]);
     if (credentials.kind === "gateway") expect(env.ANTHROPIC_BASE_URL).toBe(GATEWAY);
     else expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
   });
