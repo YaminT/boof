@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentEnv } from "../../packages/runner/src/agent-env.js";
 import { agentMarkerFor } from "../../packages/runner/src/agent-marker.js";
+import { dataRootsFromArgv } from "./boof-runner.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,6 +23,11 @@ async function root() {
 describe("agent containment", () => {
   it.todo("a child with the agent env gets 401 on protected routes and no code for sign-in");
   it.todo("the same child reads /healthz and /harness.txt (public by design)");
+
+  it("collects grouped short options ending in data from parseArgs", () => {
+    const root = "/tmp/grouped-data-root";
+    expect(dataRootsFromArgv(["service", "-fd", root])).toContain(root);
+  });
 
   const runCli = (
     args: string[],
@@ -96,6 +102,22 @@ describe("agent containment", () => {
         "admin",
         `--data=${r}`,
       ],
+    ],
+    [
+      "checks attached short data values for remote setup",
+      (_x: string, r: string) => [
+        "remote",
+        "setup",
+        "--hostname",
+        "x",
+        "--scopes",
+        "admin",
+        `-d${r}`,
+      ],
+    ],
+    [
+      "checks attached short data values for project list",
+      (_x: string, r: string) => ["project", "list", `-d${r}`],
     ],
   ])("refuses before creating anything when it %s", async (_label, args) => {
     const dataRoot = await root();

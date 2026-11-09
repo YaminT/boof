@@ -494,15 +494,18 @@ describe("ClaudeAgentTool", () => {
       spawn: spawn as any,
     });
     vi.stubEnv("BOOF_AGENT_PROBE_TEST", "boof_fake_value");
-    await expect(tool.detect()).resolves.toMatchObject({
-      status: "available",
-      version: "Claude Code 2.1.test",
-    });
-    expect(spawn).toHaveBeenCalledWith("/resolved/claude", ["--version"], expect.any(Object));
-    const probeEnv = (spawn.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv }).env;
-    expect(Object.keys(probeEnv).filter((name) => name.startsWith("BOOF_"))).toEqual([]);
-    vi.unstubAllEnvs();
-    expect(query).not.toHaveBeenCalled();
+    try {
+      await expect(tool.detect()).resolves.toMatchObject({
+        status: "available",
+        version: "Claude Code 2.1.test",
+      });
+      expect(spawn).toHaveBeenCalledWith("/resolved/claude", ["--version"], expect.any(Object));
+      const probeEnv = (spawn.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv }).env;
+      expect(Object.keys(probeEnv).filter((name) => name.startsWith("BOOF_"))).toEqual([]);
+      expect(query).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("passes only repository permission lists through settings", async () => {

@@ -2,6 +2,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
 import { boot, isRunnerStartFailure } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
@@ -499,6 +500,7 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
     const roots = [
       ...dataRootsFromArgv(rawArgv),
       ...(process.env.BOOF_RUNNER_DATA_ROOT ? [process.env.BOOF_RUNNER_DATA_ROOT] : []),
+      // Agents can inherit the server cwd, whose default data root remains protected even with -d.
       resolve(process.cwd(), "data"),
     ];
     for (const root of new Set(roots.map(absPath))) {
@@ -551,8 +553,22 @@ function isExactShortcut(argv: string[]): boolean {
 }
 
 /** Every explicit data root, including repeated short/long and inline forms. */
-function dataRootsFromArgv(argv: string[]): string[] {
-  const roots: string[] = [];
+export function dataRootsFromArgv(argv: string[]): string[] {
+  let roots: string[] = [];
+  try {
+    const parsed = parseArgs({
+      args: argv,
+      strict: false,
+      allowPositionals: true,
+      options: { data: { type: "string", short: "d", multiple: true } },
+    });
+    const values = parsed.values.data;
+    if (Array.isArray(values))
+      roots = values.filter((value): value is string => typeof value === "string");
+    else if (typeof values === "string") roots = [values];
+  } catch {
+    // Keep the raw scan below as a belt for malformed or future argv forms.
+  }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (arg === "-d" || arg === "--data") {
@@ -563,7 +579,7 @@ function dataRootsFromArgv(argv: string[]): string[] {
       roots.push(arg.slice("--data=".length));
     }
   }
-  return roots.filter(Boolean);
+  return [...new Set(roots.filter(Boolean))];
 }
 
 /** The words in serve's arguments that are not a flag or a flag's value: serve takes none. */

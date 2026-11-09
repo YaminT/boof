@@ -16,6 +16,61 @@ import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
 
+describe("probe environment filtering", () => {
+  const dirs: string[] = [];
+  const envKeys = ["BOOF_RUNNER_CLAUDE_BIN", "BOOF_RUNNER_CODEX_BIN", "BOOF_RUNNER_OPENCODE_BIN"];
+  const saved = new Map(envKeys.map((key) => [key, process.env[key]]));
+  afterEach(async () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete process.env.BOOF_PROBE_FILTER_TEST;
+    for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+
+  const fake = async (key: string, name: string, output: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-probe-env-"));
+    dirs.push(dir);
+    const trace = join(dir, "trace");
+    const bin = join(dir, name);
+    await writeFile(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${trace}'\nenv | grep '^BOOF_' >> '${trace}' || true\ncase "$1" in --version) echo 'fake version';; --help) echo ''; ; debug) echo '${output}';; models) echo '${output}';; esac\n`,
+    );
+    await chmod(bin, 0o755);
+    process.env[key] = bin;
+    return { dir, trace };
+  };
+
+  it("filters claude-code and codex version and model-list probes", async () => {
+    process.env.BOOF_PROBE_FILTER_TEST = "must-not-pass";
+    const claude = await fake("BOOF_RUNNER_CLAUDE_BIN", "claude", "");
+    const codex = await fake("BOOF_RUNNER_CODEX_BIN", "codex", '{"models":[]}');
+    await new ClaudeCodeTool().listModels();
+    await new ClaudeCodeTool().detect();
+    await new CodexTool().listModels();
+    await new CodexTool().detect();
+    for (const trace of [claude.trace, codex.trace]) {
+      const calls = await readFile(trace, "utf8");
+      expect(calls).toContain("--version");
+      expect(calls).toMatch(/--help|debug models/);
+      expect(calls).not.toContain("BOOF_");
+    }
+  });
+
+  it("filters opencode version and model-list probes", async () => {
+    process.env.BOOF_PROBE_FILTER_TEST = "must-not-pass";
+    const opencode = await fake("BOOF_RUNNER_OPENCODE_BIN", "opencode", "a/model");
+    await new OpencodeTool().listModels();
+    await new OpencodeTool().detect();
+    const calls = await readFile(opencode.trace, "utf8");
+    expect(calls).toContain("--version");
+    expect(calls).toContain("models");
+    expect(calls).not.toContain("BOOF_");
+  });
+});
+
 const fixture = (name: string) => fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url));
 
 const baseOpts = {
