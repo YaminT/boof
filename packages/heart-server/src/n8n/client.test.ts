@@ -11,7 +11,12 @@ import {
   SettingsStore,
   type ExternalTriggerRequest,
 } from "@boof/heart";
-import { fakeWorkflow, startFakeN8n } from "../../test-support/fake-n8n.js";
+import {
+  fakeWorkflow,
+  notSelf,
+  serverSelfCheck,
+  startFakeN8n,
+} from "../../test-support/fake-n8n.js";
 import { OpError } from "../api/errors.js";
 import { N8nClient, checkN8nTarget } from "./client.js";
 import { createN8nTransport } from "./transport.js";
@@ -56,7 +61,7 @@ async function fake(workflows: unknown[] = [], pageSize?: number) {
 }
 
 const client = (extra: Partial<ConstructorParameters<typeof N8nClient>[0]> = {}) =>
-  new N8nClient({ root, env: {}, ...extra });
+  new N8nClient({ root, env: {}, isSelfUrl: notSelf, ...extra });
 
 const manyWorkflows = (n: number) =>
   Array.from({ length: n }, (_, i) => fakeWorkflow({ id: `w${i}`, name: `W ${i}` }));
@@ -186,7 +191,9 @@ describe("outbound target rules (owner answer 2)", () => {
 
   it("the exemption covers the base host:port only: another port or host still needs the allowlist", async () => {
     const s = n8n("http://127.0.0.1:5678");
-    const same = await checkN8nTarget("http://127.0.0.1:5678/webhook/x", s, [], {});
+    const same = await checkN8nTarget("http://127.0.0.1:5678/webhook/x", s, [], {
+      isSelfUrl: notSelf,
+    });
     expect(same).toMatchObject({ ok: true, addresses: ["127.0.0.1"] });
     for (const raw of [
       "http://127.0.0.1:5679/webhook/x",
@@ -194,12 +201,14 @@ describe("outbound target rules (owner answer 2)", () => {
       "http://localhost:5678/webhook/x",
       "http://[::1]:5678/webhook/x",
     ]) {
-      const r = await checkN8nTarget(raw, s, [], {});
+      const r = await checkN8nTarget(raw, s, [], { isSelfUrl: notSelf });
       expect(r.ok, raw).toBe(false);
     }
     // an explicit allowlist entry still works for those, as for any webhook
     expect(
-      await checkN8nTarget("http://127.0.0.1:5679/webhook/x", s, ["127.0.0.1"], {}),
+      await checkN8nTarget("http://127.0.0.1:5679/webhook/x", s, ["127.0.0.1"], {
+        isSelfUrl: notSelf,
+      }),
     ).toMatchObject({
       ok: true,
     });
@@ -209,13 +218,13 @@ describe("outbound target rules (owner answer 2)", () => {
     const before = n8n("http://127.0.0.1:5678");
     const after = n8n("http://127.0.0.1:6000");
     const url = "http://127.0.0.1:5678/webhook/x";
-    expect((await checkN8nTarget(url, before, [], {})).ok).toBe(true);
-    expect((await checkN8nTarget(url, after, [], {})).ok).toBe(false);
+    expect((await checkN8nTarget(url, before, [], { isSelfUrl: notSelf })).ok).toBe(true);
+    expect((await checkN8nTarget(url, after, [], { isSelfUrl: notSelf })).ok).toBe(false);
   });
 
   it("boof's own server address is refused even on the exempt host:port", async () => {
     const s = n8n("http://127.0.0.1:8123");
-    const isSelfUrl = (u: URL) => u.port === "8123";
+    const isSelfUrl = serverSelfCheck(8123);
     const r = await checkN8nTarget("http://127.0.0.1:8123/api/v1/workflows", s, [], { isSelfUrl });
     expect(r).toMatchObject({ ok: false });
     // through the client it is a "blocked" upstream failure and nothing was sent
@@ -228,16 +237,130 @@ describe("outbound target rules (owner answer 2)", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  describe("F1: boof itself is refused on the exempt host:port, judged on resolved addresses", () => {
+    let boof: Server;
+    let port: number;
+    let hits: string[];
+    beforeEach(async () => {
+      hits = [];
+      boof = createServer((req, res) => {
+        hits.push(`${req.method} ${req.url} key=${String(req.headers["x-n8n-api-key"])}`);
+        res.end("{}");
+      });
+      await new Promise<void>((r) => boof.listen(0, "127.0.0.1", r));
+      port = (boof.address() as AddressInfo).port;
+      closers.push(() => new Promise<void>((r) => boof.close(() => r())));
+    });
+
+    const cases: [string, string[] | null, string][] = [
+      ["[::ffff:127.0.0.1]", null, "127.0.0.1"],
+      ["localhost.", null, "127.0.0.1"],
+      ["myself.example", ["127.0.0.1"], "127.0.0.1"],
+      ["127.0.0.2", null, "127.0.0.1"],
+      ["[::]", null, "0.0.0.0"],
+      ["0.0.0.0", null, "0.0.0.0"],
+      ["lan-alias.example", ["::ffff:127.0.0.1"], "127.0.0.1"],
+    ];
+    for (const [host, resolved, bind] of cases) {
+      it(`${host} on boof's port (bound ${bind}): refused, nothing sent, no key leaves`, async () => {
+        const isSelfUrl = serverSelfCheck(port, bind);
+        const resolveHost = async (h: string) => resolved ?? [h === "localhost." ? "127.0.0.1" : h];
+        const base = `http://${host}:${port}`;
+        const s = n8n(base);
+        const r = await checkN8nTarget(`${base}/api/v1/workflows`, s, [], {
+          isSelfUrl,
+          resolveHost,
+        });
+        expect(r.ok, host).toBe(false);
+        await configure({ baseUrl: base });
+        const err = await failure(client({ isSelfUrl, resolveHost }).listWorkflows());
+        expect(err.details).toMatchObject({ reason: expect.stringMatching(/^blocked: /) });
+        expect(hits).toEqual([]);
+      });
+    }
+
+    it("a real local n8n on another port still works", async () => {
+      const f = await fake([fakeWorkflow({ id: "a", name: "A" })]);
+      await configure({ baseUrl: f.url });
+      const list = await client({ isSelfUrl: serverSelfCheck(port) }).listWorkflows();
+      expect(list).toHaveLength(1);
+    });
+  });
+
+  describe("F2: the exemption never reaches link-local, multicast, unspecified or reserved", () => {
+    const s = n8n("http://n8n.lan:5678");
+    const blocked: [string, string][] = [
+      ["169.254.169.254", "link-local"],
+      ["169.254.0.1", "link-local"],
+      ["fe80::1", "link-local"],
+      ["224.0.0.1", "multicast"],
+      ["ff02::1", "multicast"],
+      ["0.0.0.0", "unspecified"],
+      ["0.1.2.3", "unspecified"],
+      ["::", "unspecified"],
+      ["255.255.255.255", "reserved"],
+      ["240.0.0.1", "reserved"],
+      ["198.18.0.1", "reserved"],
+    ];
+    for (const [address, range] of blocked) {
+      it(`${address} (${range}) is refused for a name and as a literal`, async () => {
+        const resolveHost = async () => [address];
+        const named = await checkN8nTarget("http://n8n.lan:5678/x", s, [], {
+          resolveHost,
+          isSelfUrl: notSelf,
+        });
+        expect(named).toMatchObject({ ok: false, reason: expect.stringContaining(range) });
+        const lit = address.includes(":") ? `[${address}]` : address;
+        const literal = await checkN8nTarget(
+          `http://${lit}:5678/x`,
+          n8n(`http://${lit}:5678`),
+          [],
+          { isSelfUrl: notSelf },
+        );
+        expect(literal.ok, address).toBe(false);
+      });
+    }
+    for (const address of [
+      "10.1.2.3",
+      "172.16.0.9",
+      "192.168.1.5",
+      "fd00::5",
+      "127.0.0.1",
+      "::1",
+    ]) {
+      it(`${address} stays exempt`, async () => {
+        const r = await checkN8nTarget("http://n8n.lan:5678/x", s, [], {
+          resolveHost: async () => [address],
+          isSelfUrl: notSelf,
+        });
+        expect(r).toMatchObject({ ok: true, addresses: [address] });
+      });
+    }
+    it("one bad address among good ones refuses the name", async () => {
+      const r = await checkN8nTarget("http://n8n.lan:5678/x", s, [], {
+        resolveHost: async () => ["10.0.0.5", "169.254.169.254"],
+        isSelfUrl: notSelf,
+      });
+      expect(r.ok).toBe(false);
+    });
+  });
+
   it("O2: a name resolving to 10.0.0.5 is exempt as the base (pinned to it) but blocked as another host", async () => {
     const resolveHost = vi.fn(async () => ["10.0.0.5"]);
     const s = n8n("http://n8n.lan:5678", { webhookBaseUrl: "http://hooks.lan:5678/webhook" });
     expect(
-      await checkN8nTarget("http://n8n.lan:5678/webhook/x", s, [], { resolveHost }),
+      await checkN8nTarget("http://n8n.lan:5678/webhook/x", s, [], {
+        resolveHost,
+        isSelfUrl: notSelf,
+      }),
     ).toMatchObject({
       ok: true,
       addresses: ["10.0.0.5"],
     });
-    const other = await checkN8nTarget("http://hooks.lan:5678/webhook/x", s, [], { resolveHost });
+    const other = await checkN8nTarget("http://hooks.lan:5678/webhook/x", s, [], {
+      resolveHost,
+      isSelfUrl: notSelf,
+    });
     expect(other).toMatchObject({
       ok: false,
       reason: expect.stringContaining("10.0.0.5 is private"),
@@ -281,7 +404,12 @@ describe("outbound target rules (owner answer 2)", () => {
     );
     const secret = await new N8nSecretStore(root, {}).rotateWebhookSecret();
     await client().listWorkflows();
-    const transport = createN8nTransport({ root, env: {}, serverRunning: async () => true });
+    const transport = createN8nTransport({
+      root,
+      env: {},
+      isSelfUrl: notSelf,
+      serverRunning: async () => true,
+    });
     const res = await transport.trigger(triggerRequest());
     expect(res).toEqual({ ok: true, sent: "answered" });
     expect(api.calls.every((c) => c.headers["x-boof-token"] === undefined)).toBe(true);
@@ -296,7 +424,12 @@ describe("outbound target rules (owner answer 2)", () => {
     const api = await fake();
     const hooks = await fake();
     await configure({ baseUrl: api.url, webhookBaseUrl: `${hooks.url}/webhook` }, []);
-    const transport = createN8nTransport({ root, env: {}, serverRunning: async () => true });
+    const transport = createN8nTransport({
+      root,
+      env: {},
+      isSelfUrl: notSelf,
+      serverRunning: async () => true,
+    });
     const res = await transport.trigger(triggerRequest());
     expect(res).toMatchObject({
       ok: false,
@@ -319,7 +452,12 @@ describe("outbound target rules (owner answer 2)", () => {
     await configure({ baseUrl: f.url });
     const secret = await new N8nSecretStore(root, {}).rotateWebhookSecret();
     const out: unknown[] = [];
-    const transport = createN8nTransport({ root, env: {}, serverRunning: async () => true });
+    const transport = createN8nTransport({
+      root,
+      env: {},
+      isSelfUrl: notSelf,
+      serverRunning: async () => true,
+    });
     out.push(await client().listWorkflows());
     out.push(await transport.trigger(triggerRequest()));
     out.push(await transport.trigger(triggerRequest({ webhookPath: "boom-path-99" })));

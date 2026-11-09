@@ -9,7 +9,7 @@ import {
   SettingsStore,
   type ExternalTriggerRequest,
 } from "@boof/heart";
-import { startFakeN8n, type FakeN8nCall } from "../../test-support/fake-n8n.js";
+import { notSelf, startFakeN8n, type FakeN8nCall } from "../../test-support/fake-n8n.js";
 import { createN8nTransport, NO_SERVER_MESSAGE } from "./transport.js";
 
 let root: string;
@@ -69,7 +69,13 @@ const req = (over: Partial<ExternalTriggerRequest> = {}): ExternalTriggerRequest
 });
 
 const make = (extra: Partial<Parameters<typeof createN8nTransport>[0]> = {}) =>
-  createN8nTransport({ root, env: {}, serverRunning: async () => true, ...extra });
+  createN8nTransport({
+    root,
+    env: {},
+    isSelfUrl: notSelf,
+    serverRunning: async () => true,
+    ...extra,
+  });
 
 describe("n8n transport", () => {
   it("preflight: not configured; no server; ok", async () => {
@@ -83,7 +89,9 @@ describe("n8n transport", () => {
 
   it("preflight without the seam reads the dispatcher lock of the data root (none held)", async () => {
     await configure({ baseUrl: "http://127.0.0.1:5678" });
-    expect(await createN8nTransport({ root, env: {} }).preflight()).toBe(NO_SERVER_MESSAGE);
+    expect(await createN8nTransport({ root, env: {}, isSelfUrl: notSelf }).preflight()).toBe(
+      NO_SERVER_MESSAGE,
+    );
   });
 
   it("not configured → trigger fails without a request", async () => {
@@ -183,6 +191,20 @@ describe("n8n transport", () => {
     const res = await make({ isSelfUrl: () => true }).trigger(req());
     expect(res).toMatchObject({ ok: false, retryable: false });
     expect((res as { reason: string }).reason).toMatch(/^blocked: /);
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it("F3: a webhook path with .. or . segments is refused before any request", async () => {
+    const f = await fake();
+    await configure({ baseUrl: f.url });
+    for (const webhookPath of ["../../api/v1/workflows", "a/../b", "a/./b", "./x", "/abs"]) {
+      const res = await make().trigger(req({ webhookPath }));
+      expect(res, webhookPath).toEqual({
+        ok: false,
+        retryable: false,
+        reason: "invalid webhook path",
+      });
+    }
     expect(f.calls).toHaveLength(0);
   });
 

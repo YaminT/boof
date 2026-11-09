@@ -8,7 +8,12 @@ import {
   type N8nSettings,
 } from "@boof/heart";
 import { OpError } from "../api/errors.js";
-import { checkWebhookTarget, hostnameOf, resolveHost as defaultResolve } from "../api/net-guard.js";
+import {
+  blockedAddressReason,
+  checkWebhookTarget,
+  hostnameOf,
+  resolveHost as defaultResolve,
+} from "../api/net-guard.js";
 import type { ResolveHost } from "../api/net-guard.js";
 import { assertWebhookUrl } from "../api/ops/webhooks.js";
 import { pinnedRequest } from "../server/pinned-post.js";
@@ -23,7 +28,8 @@ import {
 export interface N8nClientOptions {
   root: string;
   resolveHost?: ResolveHost;
-  isSelfUrl?: (u: URL) => boolean;
+  /** Required: is this URL boof's own server? Build it like `server.ts` does. */
+  isSelfUrl: (u: URL) => boolean;
   /** Test seam; receives the checked addresses. */
   request?: typeof pinnedRequest;
   /** Audit `via`, default "server". */
@@ -85,18 +91,70 @@ export async function checkN8nTarget(
     return checked.ok ? { ok: true, url: checked.url, addresses: checked.addresses } : checked;
   }
   const host = hostnameOf(url);
-  if (net.isIP(host)) return { ok: true, url, addresses: [host] };
   let addresses: string[];
-  try {
-    addresses = await (opts.resolveHost ?? defaultResolve)(host);
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `${host} does not resolve (${(err as { code?: string }).code ?? "error"})`,
-    };
+  if (net.isIP(host)) addresses = [host];
+  else {
+    try {
+      addresses = await (opts.resolveHost ?? defaultResolve)(host);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `${host} does not resolve (${(err as { code?: string }).code ?? "error"})`,
+      };
+    }
+    if (addresses.length === 0)
+      return { ok: false, reason: `${host} does not resolve (no address)` };
   }
-  if (addresses.length === 0) return { ok: false, reason: `${host} does not resolve (no address)` };
+  // The exemption reaches private, loopback and LAN addresses only, and never boof itself,
+  // judged on what the name resolved to and not on how the URL spells it.
+  for (const address of addresses) {
+    const refused = exemptAddressRefusal(address, url, opts.isSelfUrl);
+    if (refused) return { ok: false, reason: refused };
+  }
   return { ok: true, url, addresses };
+}
+
+/** Ranges the n8n host exemption may reach; anything else stays blocked. */
+const EXEMPT_RANGES: ReadonlySet<string | null> = new Set([
+  "loopback",
+  "private",
+  "carrier-grade-nat",
+]);
+
+/** `::ffff:a.b.c.d` (dotted or hex groups) as the IPv4 address; other addresses unchanged. */
+export function unwrapMappedAddress(address: string): string {
+  const a = address.toLowerCase();
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (dotted) return dotted[1]!;
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(a);
+  if (hex) {
+    const hi = parseInt(hex[1]!, 16);
+    const lo = parseInt(hex[2]!, 16);
+    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  }
+  return a;
+}
+
+function exemptAddressRefusal(
+  rawAddress: string,
+  url: URL,
+  isSelfUrl: (u: URL) => boolean,
+): string | null {
+  const address = unwrapMappedAddress(rawAddress);
+  const range = blockedAddressReason(address);
+  if (range !== null && !EXEMPT_RANGES.has(range)) return `${address} is ${range}`;
+  const literal = address.includes(":") ? `[${address}]` : address;
+  const asUrl = (host: string): URL => {
+    const u = new URL(url.href);
+    u.hostname = host;
+    return u;
+  };
+  if (isSelfUrl(asUrl(literal))) return `${address} is this boof server`;
+  // Any loopback address on boof's own port is boof (a wildcard listener answers all of 127/8).
+  if (range === "loopback" && (isSelfUrl(asUrl("127.0.0.1")) || isSelfUrl(asUrl("[::1]")))) {
+    return `${address} is this boof server`;
+  }
+  return null;
 }
 
 /** Short, path-free reason for an audit line from a result reason. */

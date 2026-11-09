@@ -9,6 +9,7 @@ import {
   type ExternalStepTransport,
   type ExternalTriggerRequest,
   type ExternalTriggerResult,
+  WEBHOOK_PATH_PATTERN,
 } from "@boof/heart";
 import { pinnedRequest } from "../server/pinned-post.js";
 import {
@@ -45,6 +46,9 @@ export function createN8nTransport(
       const settings = await new SettingsStore(opts.root).load();
       const n8n = settings.n8n;
       if (!n8n) return { ok: false, retryable: false, reason: "n8n is not configured" };
+      // Defense in depth: the path may come from data n8n controls; `..` would leave the webhook tree.
+      if (!WEBHOOK_PATH_PATTERN.test(req.webhookPath) || hasDotSegment(req.webhookPath))
+        return { ok: false, retryable: false, reason: "invalid webhook path" };
       const url = n8nWebhookUrl(n8n, req.webhookPath);
       const target = await checkN8nTarget(
         url,
@@ -124,3 +128,6 @@ function safeHost(url: string): string {
     return "invalid";
   }
 }
+
+const hasDotSegment = (path: string): boolean =>
+  path.split("/").some((seg) => seg === "." || seg === "..");

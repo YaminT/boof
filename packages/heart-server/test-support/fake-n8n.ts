@@ -1,6 +1,7 @@
 // A fake n8n for tests: the public API (`GET /api/v1/workflows`) and production webhooks
 // (`POST /webhook/<path>`). Listens on 127.0.0.1, port 0. Never contacts anything.
 import { createServer, type IncomingMessage } from "node:http";
+import { networkInterfaces } from "node:os";
 import type { AddressInfo } from "node:net";
 
 export interface FakeN8nCall {
@@ -112,3 +113,28 @@ export async function startFakeN8n(opts: {
       }),
   };
 }
+
+/**
+ * A self check built like the one in `server/server.ts`: the names boof answers to (localhost,
+ * its bind host, wildcard spellings, interface addresses) on boof's bound port.
+ */
+export function serverSelfCheck(
+  boundPort: number,
+  bindHost = "127.0.0.1",
+  extraNames: string[] = [],
+): (url: URL) => boolean {
+  const names = new Set(
+    ["localhost", "127.0.0.1", "[::1]", "0.0.0.0", bindHost.toLowerCase(), ...extraNames].map(
+      (h) => (h.includes(":") && !h.startsWith("[") ? `[${h}]` : h),
+    ),
+  );
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list ?? []) names.add(a.family === "IPv6" ? `[${a.address}]` : a.address);
+  }
+  return (url) =>
+    Number(url.port || (url.protocol === "https:" ? 443 : 80)) === boundPort &&
+    names.has(url.hostname.toLowerCase());
+}
+
+/** A self check for tests where boof is nowhere near: a port nothing uses. */
+export const notSelf = serverSelfCheck(1);
