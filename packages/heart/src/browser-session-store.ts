@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmod, lstat, mkdir, open } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, stat } from "node:fs/promises";
 import { constants, type Stats } from "node:fs";
 import { z } from "zod";
 import { atomicWrite } from "./atomic.js";
@@ -221,6 +221,8 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private readonly uid: number | undefined;
   private readonly openFn: typeof open;
   private readonly loggedUnsafePaths = new Set<string>();
+  private readonly lstatFn: typeof lstat;
+  private readonly statFn: typeof stat;
 
   constructor(
     root: string,
@@ -230,6 +232,9 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       chmod?: typeof chmod;
       uid?: number;
       open?: typeof open;
+      /** Filesystem seams used by security tests; production callers should omit these. */
+      lstat?: typeof lstat;
+      stat?: typeof stat;
     } = {},
   ) {
     const paths = dataRootPaths(root);
@@ -240,6 +245,8 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     this.lockOpts = opts.lock ?? {};
     this.chmodFn = opts.chmod ?? chmod;
     this.openFn = opts.open ?? open;
+    this.lstatFn = opts.lstat ?? lstat;
+    this.statFn = opts.stat ?? stat;
     this.root = paths.root;
     this.uid = opts.uid ?? process.getuid?.();
   }
@@ -365,6 +372,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     resetCorrupt = false,
   ): Promise<T> {
     return (async () => {
+      await this.assertTrustedRoot();
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
       await this.chmodPortable(this.authDir, 0o700);
       await this.assertTrustedDirectories();
@@ -488,6 +496,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   private async persist(path: string, body: unknown): Promise<void> {
+    await this.assertTrustedRoot();
     await mkdir(this.authDir, { recursive: true, mode: 0o700 });
     await this.chmodPortable(this.authDir, 0o700);
     await this.assertTrustedDirectories();
@@ -571,11 +580,41 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
 
   private async assertTrustedDirectories(): Promise<void> {
     if (this.uid === undefined) return; // Windows has no POSIX ownership/mode contract.
-    const rootStat = await lstat(this.root);
-    this.assertSafeStat(this.root, rootStat, "root");
-    const authStat = await lstat(this.authDir);
+    await this.assertTrustedRoot();
+    const authStat = await this.lstatFn(this.authDir);
     this.assertSafeStat(this.authDir, authStat, "directory");
     if (this.hasReadBits(authStat.mode)) this.warnReadBits(this.authDir);
+  }
+
+  private async assertTrustedRoot(): Promise<void> {
+    if (this.uid === undefined) return;
+    const linkStat = await this.lstatFn(this.root);
+    let rootStat = linkStat;
+    if (linkStat.isSymbolicLink()) {
+      if (linkStat.uid !== this.uid && linkStat.uid !== 0) {
+        throw new UnsafeBrowserSessionPathError(
+          this.root,
+          `${this.root} is a symbolic link owned by uid ${linkStat.uid}; use a data root you own`,
+        );
+      }
+      rootStat = await this.statFn(this.root);
+    }
+    const mode = rootStat.mode & 0o7777;
+    if (rootStat.uid === this.uid && (mode & 0o022) !== 0 && (mode & 0o1000) === 0) {
+      try {
+        await this.chmodFn(this.root, mode & ~0o022);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!this.warnedChmodPaths.has(this.root)) {
+          this.warnedChmodPaths.add(this.root);
+          console.warn(
+            `browser sessions: could not set permissions on ${this.root} (${code ?? "unknown"}); checking ownership and mode`,
+          );
+        }
+      }
+      rootStat = await this.statFn(this.root);
+    }
+    this.assertSafeStat(this.root, rootStat, "root");
   }
 
   private assertSafeStat(path: string, fileStat: Stats, kind: "root" | "directory" | "file"): void {
@@ -591,7 +630,9 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     const writable = (mode & 0o022) !== 0 && !(kind === "root" && (mode & 0o1000) !== 0);
     const fix =
       kind === "root"
-        ? "use a data root you own"
+        ? fileStat.uid === this.uid
+          ? `chmod go-w ${path}`
+          : "use a data root you own"
         : `chmod ${kind === "file" ? "600" : "700"} ${path}`;
     if (!typeOk)
       throw new UnsafeBrowserSessionPathError(path, `${path} is not a safe ${kind}; ${fix}`);
@@ -625,7 +666,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
 
   private async chmodPortable(path: string, mode: number): Promise<void> {
     if (path === this.authDir && this.uid !== undefined) {
-      const before = await lstat(path);
+      const before = await this.lstatFn(path);
       if (before.isSymbolicLink()) {
         this.assertSafeStat(path, before, "directory");
       }
@@ -642,11 +683,11 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       }
     }
     if (path === this.authDir) {
-      const directoryStat = await lstat(path);
+      const directoryStat = await this.lstatFn(path);
       this.assertSafeStat(path, directoryStat, "directory");
       if (this.hasReadBits(directoryStat.mode)) this.warnReadBits(path);
     } else {
-      const fileStat = await lstat(path);
+      const fileStat = await this.lstatFn(path);
       this.assertSafeStat(path, fileStat, "file");
       if (this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
     }

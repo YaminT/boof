@@ -3,6 +3,8 @@ import { execFileSync, spawn } from "node:child_process";
 import {
   access,
   chmod,
+  lstat,
+  mkdir,
   mkdtemp,
   open,
   readdir,
@@ -11,6 +13,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { statSync } from "node:fs";
@@ -621,14 +624,136 @@ describe("BrowserSessionStore", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "refuses writable non-sticky root and accepts sticky root",
+    "tightens an owned writable root and accepts sticky root",
     async () => {
       const created = await store.createSession();
-      await chmod(root, 0o770);
-      expect(await store.verify(created.token)).toBeNull();
-      await expect(store.createLink()).rejects.toThrow(/group-writable/);
+      await chmod(root, 0o775);
+      await expect(store.createLink()).resolves.toMatchObject({
+        code: expect.stringMatching(/^bl_/),
+      });
+      expect(statSync(root).mode & 0o777).toBe(0o755);
       await chmod(root, 0o1770);
       expect((await store.verify(created.token))?.id).toBe(created.session.id);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("refuses a root owned by another uid", async () => {
+    const currentUid = process.getuid!();
+    const foreignLstat = vi.fn(async (path: string) => {
+      const actual = await lstat(path);
+      if (path === root)
+        return new Proxy(actual, {
+          get: (target, key) => (key === "uid" ? currentUid + 1 : Reflect.get(target, key, target)),
+        });
+      return actual;
+    });
+    const foreign = new BrowserSessionStore(root, () => clock, {
+      uid: currentUid,
+      lstat: foreignLstat,
+    });
+    await expect(foreign.createLink()).rejects.toThrow(new RegExp(`${root} is owned by uid`));
+  });
+
+  it.skipIf(process.platform === "win32")("follows an owned symlinked data root", async () => {
+    const realRoot = join(root, "real-data");
+    const linkRoot = join(root, "data-link");
+    await mkdir(realRoot, { mode: 0o700 });
+    await symlink(realRoot, linkRoot);
+    const linkedStore = new BrowserSessionStore(linkRoot, () => clock);
+    const created = await linkedStore.createSession();
+    expect((await linkedStore.verify(created.token))?.id).toBe(created.session.id);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a symlinked root owned by another uid",
+    async () => {
+      const currentUid = process.getuid!();
+      const linkedRoot = join(root, "data-link");
+      await symlink(root, linkedRoot);
+      const foreignLstat = async (path: string) => {
+        const actual = await lstat(path);
+        if (path === linkedRoot)
+          return new Proxy(actual, {
+            get: (target, key) =>
+              key === "uid" ? currentUid + 1 : Reflect.get(target, key, target),
+          });
+        return actual;
+      };
+      const linkedStore = new BrowserSessionStore(linkedRoot, () => clock, {
+        uid: currentUid,
+        lstat: foreignLstat,
+      });
+      await expect(linkedStore.createLink()).rejects.toThrow(/symbolic link owned by uid/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "checks an unsafe root before chmodding auth and leaves the swap victim unchanged",
+    async () => {
+      const paths = dataRootPaths(root);
+      await mkdir(paths.auth, { mode: 0o700 });
+      const victim = join(tmpdir(), `boof-session-victim-${process.pid}-${Date.now()}`);
+      await mkdir(victim, { mode: 0o755 });
+      await chmod(root, 0o775);
+      const calls: string[] = [];
+      const chmodSeam = vi.fn(async (path: Parameters<typeof chmod>[0], mode: number) => {
+        calls.push(String(path));
+        if (path === root) {
+          const error = new Error("root chmod denied") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        if (path === paths.auth) {
+          await rename(paths.auth, `${paths.auth}-saved`);
+          await symlink(victim, paths.auth);
+        }
+        await chmod(path, mode);
+      });
+      const checked = new BrowserSessionStore(root, () => clock, { chmod: chmodSeam });
+      try {
+        await expect(checked.createLink()).rejects.toThrow(new RegExp(root));
+        expect(calls).toEqual([root]);
+        expect(statSync(victim).mode & 0o777).toBe(0o755);
+      } finally {
+        await rm(victim, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects cached sessions after the sessions file gains write bits",
+    async () => {
+      const { token } = await store.createSession();
+      const path = dataRootPaths(root).browserSessions;
+      const old = new Date(Date.now() - 10_000);
+      await utimes(path, old, old);
+      expect(await store.verify(token)).not.toBeNull();
+      await chmod(path, 0o666);
+      expect(await store.verify(token)).toBeNull();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "O_NOFOLLOW refuses a session file replaced by a symlink at open time",
+    async () => {
+      const { token } = await store.createSession();
+      const paths = dataRootPaths(root);
+      const moved = `${paths.browserSessions}.moved`;
+      const target = join(root, "safe-target.json");
+      await writeFile(target, await readFile(paths.browserSessions), { mode: 0o600 });
+      let planted = false;
+      const checked = new BrowserSessionStore(root, () => clock, {
+        open: async (path, flags, mode) => {
+          if (path === paths.browserSessions && !planted) {
+            planted = true;
+            await rename(paths.browserSessions, moved);
+            await symlink(target, paths.browserSessions);
+          }
+          return open(path, flags, mode);
+        },
+      });
+      expect(await checked.verify(token)).toBeNull();
+      expect(planted).toBe(true);
     },
   );
 
