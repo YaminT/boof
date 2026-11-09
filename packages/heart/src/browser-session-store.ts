@@ -39,6 +39,11 @@ export class UnsafeBrowserSessionPathError extends Error {
   }
 }
 
+/** What an HTTP client may be told about an unsafe store: the path and the fix, never uids or modes (those go to the log). */
+export function browserSessionUnavailableMessage(path: string): string {
+  return `Browser sign-in is unavailable: fix the permissions of ${path} (for example: chmod go-w ${path}), then run "boof-runner open" again.`;
+}
+
 export function browserSessionCookieName(port: number): string {
   return `boof_ui_${port}`;
 }
@@ -310,7 +315,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(error);
-        this.unsafeMessage = error.message;
+        this.unsafeMessage = browserSessionUnavailableMessage(error.path);
         return null;
       }
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -331,12 +336,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(error);
-        this.unsafeMessage = error.message;
+        this.unsafeMessage = browserSessionUnavailableMessage(error.path);
       }
     }
-    return this.unsafeMessage
-      ? `Browser sign-in is unavailable: ${this.unsafeMessage}. Fix the data-root permissions, then run "boof-runner open" again.`
-      : undefined;
+    return this.unsafeMessage;
   }
 
   /** Delete every session and pending sign-in link; return the number of live sessions removed. */
@@ -547,7 +550,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       const code = (err as NodeJS.ErrnoException).code;
       if (err instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(err);
-        this.unsafeMessage = err.message;
+        this.unsafeMessage = browserSessionUnavailableMessage(err.path);
         return null;
       }
       if (code === "ENOENT") {
@@ -579,7 +582,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(error);
-        this.unsafeMessage = error.message;
+        this.unsafeMessage = browserSessionUnavailableMessage(error.path);
         return null;
       }
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;

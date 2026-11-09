@@ -2,7 +2,7 @@ import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendEvent,
   AuthStore,
@@ -443,4 +443,80 @@ describe("stream lifetime", () => {
       await srv.stop();
     }
   });
+  describe.each(["/api/events", "/api/v1/events"])("%s cleanup on disconnect", (path) => {
+    function spyWatcher() {
+      const state = { subscribed: 0, active: 0 };
+      const stub = {
+        subscribe: () => {
+          state.subscribed += 1;
+          state.active += 1;
+          let done = false;
+          return () => {
+            if (!done) state.active -= 1;
+            done = true;
+          };
+        },
+      } as unknown as DataWatcher;
+      return { state, stub };
+    }
+    function trackTimers() {
+      const live = new Set<unknown>();
+      const set = globalThis.setInterval;
+      const clear = globalThis.clearInterval;
+      vi.spyOn(globalThis, "setInterval").mockImplementation(((...a: Parameters<typeof set>) => {
+        const t = set(...a);
+        live.add(t);
+        return t;
+      }) as typeof setInterval);
+      vi.spyOn(globalThis, "clearInterval").mockImplementation(((t: Parameters<typeof clear>[0]) => {
+        live.delete(t);
+        return clear(t);
+      }) as typeof clearInterval);
+      return live;
+    }
+    const settle = () => new Promise((r) => setTimeout(r, 100));
+    afterEach(() => vi.restoreAllMocks());
+
+    it("a disconnect after the stream opened ends the subscription and timers", async () => {
+      const { state, stub } = spyWatcher();
+      const live = trackTimers();
+      app = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
+        service,
+        authStore,
+        peerAddress: () => peer,
+        watcher: stub,
+      });
+      const ctrl = new AbortController();
+      const res = await app.request(`http://localhost${path}`, { signal: ctrl.signal });
+      const reader = res.body!.getReader();
+      expect(await next(reader)).toContain("event: ready");
+      await settle();
+      expect(state.active).toBe(1);
+      expect(live.size).toBeGreaterThan(0);
+      await reader.cancel();
+      ctrl.abort();
+      await settle();
+      expect(state.active).toBe(0);
+      expect(live.size).toBe(0);
+    });
+
+    it("a disconnect before the first message leaves no subscription or timer", async () => {
+      const { state, stub } = spyWatcher();
+      const live = trackTimers();
+      app = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
+        service,
+        authStore,
+        peerAddress: () => peer,
+        watcher: stub,
+      });
+      const res = await app.request(`http://localhost${path}`, { signal: AbortSignal.abort() });
+      await res.body?.cancel().catch(() => {});
+      await settle();
+      expect(state.active).toBe(0);
+      expect(live.size).toBe(0);
+    });
+  });
+
 });

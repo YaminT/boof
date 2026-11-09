@@ -3,6 +3,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { ClientAddress } from "./client-address.js";
 import {
   UnsafeBrowserSessionPathError,
+  browserSessionUnavailableMessage,
   authorize,
   LOCAL_PRINCIPAL,
   type AuthStore,
@@ -132,9 +133,13 @@ function cookieValues(c: Context, name: string): string[] {
   return values;
 }
 
+const WELL_FORMED_SESSION = /^bs_[A-Za-z0-9_-]{43}$/;
+/** A request is checked against at most this many well-formed session values; the rest are ignored. */
+const MAX_SESSION_VALUES = 4;
+
 function unavailableMessage(error: unknown): string | undefined {
   if (!(error instanceof UnsafeBrowserSessionPathError)) return undefined;
-  return `Browser sign-in is unavailable: ${error.message}. Fix the data-root permissions, then run "boof-runner open" again.`;
+  return browserSessionUnavailableMessage(error.path);
 }
 
 export interface AuthenticateOptions {
@@ -196,7 +201,9 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       const fetchSite = c.req.header("sec-fetch-site");
       const allowedFetchSite =
         fetchSite === undefined || fetchSite === "same-origin" || fetchSite === "none";
-      const tokens = cookieValues(c, opts.sessionCookieName?.(c) ?? "");
+      const tokens = cookieValues(c, opts.sessionCookieName?.(c) ?? "")
+        .filter((value) => WELL_FORMED_SESSION.test(value))
+        .slice(0, MAX_SESSION_VALUES);
       let session = null;
       let unavailable: string | undefined;
       if (allowedFetchSite) {
@@ -204,7 +211,8 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
           try {
             session = (await opts.browserSessions?.verify(token)) ?? null;
           } catch (error) {
-            unavailable = unavailableMessage(error);
+            // A throw is "not valid", unless it is the store's unsafe-path error.
+            unavailable = unavailableMessage(error) ?? unavailable;
           }
           if (session) break;
         }
@@ -212,7 +220,7 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       if (!session && opts.browserSessions?.unavailableMessage) {
         unavailable = (await opts.browserSessions.unavailableMessage()) ?? unavailable;
       }
-      if (unavailable) {
+      if (!session && unavailable) {
         c.set("auditExtra", { reason: "browser_sessions_unavailable" });
         return { ok: false, message: unavailable, reason: "browser_sessions_unavailable" };
       }
@@ -266,7 +274,17 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
       const limited = presentedCredential ? c.get("authFailed")?.(c) : undefined;
       if (limited) return limited;
       if (r.reason === "browser_sessions_unavailable") {
-        return c.text(r.message, 503, { "Cache-Control": "no-store" });
+        return c.json(
+          {
+            error: {
+              code: "browser_sessions_unavailable",
+              message: r.message,
+              details: { reason: r.reason },
+            },
+          },
+          503,
+          { "Cache-Control": "no-store" },
+        );
       }
       c.header("WWW-Authenticate", 'Bearer realm="boof-runner"');
       return c.json(

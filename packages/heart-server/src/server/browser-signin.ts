@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import {
   UnsafeBrowserSessionPathError,
+  browserSessionUnavailableMessage,
   browserSessionCookieName,
   type BrowserSessionStore,
   type BrowserSessionVerifier,
@@ -51,7 +52,7 @@ export function browserSignin(opts: BrowserSigninOptions): MiddlewareHandler {
       if (error instanceof UnsafeBrowserSessionPathError) {
         c.set("auditExtra", { action: "auth:browser-session", outcome: "error" });
         return c.text(
-          `Browser sign-in is unavailable: ${error.message}. Fix the data-root permissions, then run "boof-runner open" again.`,
+browserSessionUnavailableMessage(error.path),
           503,
           { "Cache-Control": "no-store" },
         );

@@ -496,6 +496,7 @@ export function createApp(deps: AppDeps): Hono {
         event: "ready",
         data: JSON.stringify({ cursor: encodeFeedCursor(cursor) }),
       });
+      if (ended) return; // the client left during the greeting: nothing is subscribed yet
       let running: Promise<void> | null = null;
       let again = false;
       const readAll = async () => {
@@ -599,6 +600,7 @@ export function createApp(deps: AppDeps): Hono {
       if (sig.aborted) finish();
       else sig.addEventListener("abort", finish, { once: true });
       await stream.writeSSE({ event: "ready", data: "connected" });
+      if (ended) return;
       if (!deps.watcher) {
         // No watcher (e.g. tests): end after the greeting.
         finish();

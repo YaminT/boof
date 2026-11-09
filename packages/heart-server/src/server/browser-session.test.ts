@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthStore,
   BrowserSessionStore,
+  UnsafeBrowserSessionPathError,
+  type BrowserSessionVerifier,
   dataRootPaths,
   defaultSettings,
   SettingsStore,
@@ -273,8 +275,9 @@ describe("browser session authentication", () => {
       const res = await request(build(), `/auth/browser?code=${code}`);
       expect(res.status).toBe(503);
       const body = await res.text();
-      expect(body).toContain("Fix the data-root permissions");
-      expect(body).toContain("chmod 600");
+      expect(body).toContain(dataRootPaths(root).browserLinks);
+      expect(body).toContain(`chmod go-w ${dataRootPaths(root).browserLinks}`);
+      expect(body).not.toMatch(/uid|mode \d/);
     },
   );
 
@@ -287,12 +290,99 @@ describe("browser session authentication", () => {
       await chmod(dataRootPaths(root).browserSessions, 0o666);
       const res = await request(app, "/api/v1/whoami");
       expect(res.status).toBe(503);
-      const body = await res.text();
-      expect(body).toContain("Fix the data-root permissions");
-      expect(body).toContain("chmod 600");
-      expect(body).not.toContain("admin");
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const json = await res.json();
+      const path = dataRootPaths(root).browserSessions;
+      expect(json).toEqual({
+        error: {
+          code: "browser_sessions_unavailable",
+          message: expect.stringContaining(`chmod go-w ${path}`),
+          details: { reason: "browser_sessions_unavailable" },
+        },
+      });
+      const text = JSON.stringify(json);
+      expect(text).toContain(path);
+      expect(text).not.toMatch(/uid|mode \d|666/);
+      expect(text).not.toContain("admin");
     },
   );
+
+  describe("session cookie values", () => {
+    const wellFormed = (n: number) => `bs_${String(n).padStart(43, "x")}`;
+    const countingVerifier = (inner: BrowserSessionVerifier) => {
+      const seen: (string | undefined)[] = [];
+      const verifier: BrowserSessionVerifier = {
+        verify: async (token) => {
+          seen.push(token);
+          return inner.verify(token);
+        },
+      };
+      return { seen, verifier };
+    };
+    const tokenOf = (response: Response) =>
+      response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+
+    it("700 values: only well-formed ones count, at most 4 are tried, and one of the first 4 still signs in", async () => {
+      const { response } = await signIn();
+      const valid = tokenOf(response);
+      const { seen, verifier } = countingVerifier(sessions);
+      const app = build({ browserSessions: verifier });
+      const junk = Array.from({ length: 696 }, (_, i) => (i % 2 ? `bs_${i}` : `junk${i}`));
+      const cookie = (values: string[]) => values.map((v) => `boof_ui_4319=${v}`).join("; ");
+      const ok = await request(app, "/api/v1/whoami", {
+        headers: { cookie: cookie([...junk, wellFormed(1), wellFormed(2), wellFormed(3), valid]) },
+      });
+      expect(ok.status).toBe(200);
+      expect(seen).toHaveLength(4);
+      seen.length = 0;
+      const late = await request(app, "/api/v1/whoami", {
+        headers: {
+          cookie: cookie([
+            ...junk,
+            wellFormed(1),
+            wellFormed(2),
+            wellFormed(3),
+            wellFormed(4),
+            valid,
+          ]),
+        },
+      });
+      expect(late.status).toBe(401);
+      expect(seen).toHaveLength(4);
+      seen.length = 0;
+      const none = await request(app, "/api/v1/whoami", {
+        headers: { cookie: cookie(junk) },
+      });
+      expect(none.status).toBe(401);
+      expect(seen.length).toBeLessThanOrEqual(1);
+    });
+
+    it("a failing session cookie spends the failed-authentication budget (401, then 429)", async () => {
+      await setMode("local-trust", 1);
+      const app = build();
+      const headers = { cookie: "boof_ui_4319=bs_bad" };
+      expect((await request(app, "/api/v1/whoami", { headers })).status).toBe(401);
+      expect((await request(app, "/api/v1/whoami", { headers })).status).toBe(429);
+    });
+
+    it("a verifier that throws on one value does not hide a later value that verifies", async () => {
+      const { response } = await signIn();
+      const valid = tokenOf(response);
+      const verifier: BrowserSessionVerifier = {
+        verify: async (token) => {
+          if (token === wellFormed(1)) throw new Error("boom");
+          if (token === wellFormed(2)) throw new UnsafeBrowserSessionPathError("/x", "unsafe /x");
+          return sessions.verify(token);
+        },
+      };
+      const res = await request(build({ browserSessions: verifier }), "/api/v1/whoami", {
+        headers: {
+          cookie: `boof_ui_4319=${wellFormed(1)}; boof_ui_4319=${wellFormed(2)}; boof_ui_4319=${valid}`,
+        },
+      });
+      expect(res.status).toBe(200);
+    });
+  });
 
   it("cookie name follows the bound port: boof_ui_9999 does not sign in a server whose name is boof_ui_4319", async () => {
     const app = build();
