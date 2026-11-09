@@ -7,6 +7,7 @@ import {
   AuthStore,
   browserSessionCookieName,
   dataRootPaths,
+  ExternalRunStore,
   migrateDataRoot,
   securitySettings,
   tightenDataRoot,
@@ -160,8 +161,15 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     Number(url.port || (url.protocol === "https:" ? 443 : 80)) === boundPort &&
     selfNames.has(url.hostname.toLowerCase());
 
+  // Expired external-step run records and results: pruned at start and hourly.
+  const externalRuns = new ExternalRunStore(opts.root);
+  await externalRuns.prune().catch(() => 0);
+  const pruneTimer = setInterval(() => void externalRuns.prune().catch(() => 0), 3600_000);
+  pruneTimer.unref();
+
   const app = createApp({
     service,
+    externalRuns,
     watcher,
     uiDir: opts.uiDir,
     allowedHosts,
@@ -219,6 +227,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     service,
     port,
     stop: async () => {
+      clearInterval(pruneTimer);
       await dispatcherGate.stop();
       await watcher.stop();
       await new Promise<void>((resolve) => {
