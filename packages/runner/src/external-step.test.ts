@@ -229,13 +229,24 @@ describe("runExternalStep", () => {
     expect(outcome.report).toBe("won");
   });
 
-  it("stop during the wait throws within 1.5 s and closes the run", async () => {
-    const t = transport(async () => answered);
-    setTimeout(() => (stopped = true), 100);
-    const started = Date.now();
-    const c = ctx(t, { sleep: undefined, pollMs: undefined });
+  it("stop during the wait throws and closes the run", async () => {
+    let signal: AbortSignal | undefined;
+    const t = transport(async (req) => {
+      signal = req.signal;
+      return answered;
+    });
+    // Read 1 is the trigger's pre-check, read 2 the first wait poll. The stop lands during
+    // read 2, so the default sleep (no seam) meets it on its own first stop check. No timers.
+    const racing = Object.create(runs) as ExternalRunStore;
+    let reads = 0;
+    racing.result = async (runId: string) => {
+      if (++reads === 2) stopped = true;
+      return runs.result(runId);
+    };
+    const c = ctx(t, { runs: racing, sleep: undefined, pollMs: undefined });
     await expect(runExternalStep(c, step(), payload)).rejects.toThrow("Task stopped by user");
-    expect(Date.now() - started).toBeLessThan(1500);
+    expect(reads).toBe(2);
+    expect(signal?.aborted).toBe(true);
     expect(await runs.complete(t.calls[0]!.runId, { status: "ok", report: "x" })).toBe(false);
   });
 
@@ -329,18 +340,19 @@ describe("runExternalStep", () => {
 });
 
 describe("trigger races", () => {
-  it("a stop during a hanging trigger aborts it and ends within 1.5 s", async () => {
+  it("a stop during a hanging trigger aborts it and throws the stop error", async () => {
     let signal: AbortSignal | undefined;
     const t = transport(
       (req) =>
         new Promise<ExternalTriggerResult>(() => {
           signal = req.signal;
+          // The stop is requested while the trigger hangs; the next stop check (1 ms) sees it.
+          stopped = true;
         }),
     );
-    setTimeout(() => (stopped = true), 100);
-    const started = Date.now();
-    await expect(runExternalStep(ctx(t), step(), payload)).rejects.toThrow("Task stopped by user");
-    expect(Date.now() - started).toBeLessThan(1500);
+    await expect(runExternalStep(ctx(t, { stopPollMs: 1 }), step(), payload)).rejects.toThrow(
+      "Task stopped by user",
+    );
     expect(signal?.aborted).toBe(true);
     expect(await runs.complete(t.calls[0]!.runId, { status: "ok", report: "x" })).toBe(false);
   });

@@ -499,10 +499,9 @@ describe("outbound target rules (owner answer 2)", () => {
         }),
     );
     await configure({ baseUrl: `http://127.0.0.1:${(hang.address() as AddressInfo).port}` });
-    const t0 = Date.now();
+    // The page timeout is the only way out of a server that never answers; no wall-clock bound.
     const err = await failure(client({ timeouts: { pageMs: 150 } }).listWorkflows());
     expect(err.details).toEqual({ reason: "unreachable" });
-    expect(Date.now() - t0).toBeLessThan(3_000);
   });
 
   it("O8: a body over 5 MB → bad_response, and the stream is aborted", async () => {

@@ -164,10 +164,13 @@ describe("n8n transport", () => {
   });
 
   it("a stop request aborts the trigger without a retry", async () => {
-    const f = await fake(() => ({ status: 200, delayMs: 1_500 }));
-    await configure({ baseUrl: f.url });
     const stop = new AbortController();
-    setTimeout(() => stop.abort(), 100);
+    // The stop lands once the webhook has the request (still unanswered), not on a timer.
+    const f = await fake(() => {
+      stop.abort();
+      return { status: 200, delayMs: 1_500 };
+    });
+    await configure({ baseUrl: f.url });
     expect(await make().trigger(req({ signal: stop.signal }))).toEqual({
       ok: false,
       retryable: false,

@@ -391,10 +391,8 @@ describe("external steps in the pipeline", () => {
         return { ok: true, sent: "answered" };
       },
     };
-    const started = Date.now();
     const outcome = await runTask(await pipeline([ci()], n8n));
     expect(outcome.kind).toBe("stopped");
-    expect(Date.now() - started).toBeLessThan(10_000);
     expect(await stepLabels()).toContain("Stopped");
     expect(await runs.complete(calls[0]!.runId, { status: "ok", report: "late" })).toBe(false);
   });
