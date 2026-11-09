@@ -26,6 +26,7 @@ import {
   buildHierarchyIndex,
   clearMissingCommand,
   CommandStore,
+  auditOperation,
   createTaskInHierarchy,
   moveTask as moveTaskInHierarchy,
   removeTask,
@@ -1147,6 +1148,66 @@ export class TaskService {
   async requireProject(id: string): Promise<ProjectService> {
     if (!(await this.projects.get(id))) throw projectNotFound(id);
     return this.forProject(id);
+  }
+
+  /**
+   * The check task for an edited n8n workflow (the edit watcher's, `by: "n8n-watcher"`): an open
+   * (draft or pending) task for the same workflow is updated in place, otherwise one is created,
+   * as a draft unless `opts.queue`. 404 `project_not_found` for an unknown project.
+   */
+  async createN8nCheckTask(
+    projectId: string,
+    check: { workflowId: string; workflowName: string; webhookPath: string; updatedAt: string },
+    opts: { queue: boolean },
+  ): Promise<{ id: string; created: boolean }> {
+    const project = await this.requireProject(projectId);
+    const open = (await project.tasks.list()).find(
+      (t) =>
+        (t.frontmatter.status === "draft" || t.frontmatter.status === "pending") &&
+        t.frontmatter.n8nCheck?.workflowId === check.workflowId,
+    );
+    if (open) {
+      await project.tasks.modify(open.frontmatter.id, (t) => {
+        t.frontmatter.n8nCheck = { ...check };
+      });
+      return { id: open.frontmatter.id, created: false };
+    }
+    const start = Date.now();
+    const name = check.workflowName.slice(0, 120);
+    const task = await createTaskInHierarchy(
+      project.root,
+      newTask(
+        {
+          id: "pending-id",
+          title: `Check n8n workflow "${name}" after edit`,
+          status: opts.queue ? "pending" : "draft",
+          priority: 50,
+          skip: false,
+          labels: ["n8n-check"],
+          command: null,
+          attachments: [],
+          questions: "none",
+          runs: 1,
+          completedRuns: 0,
+          n8nCheck: { ...check },
+          created: "",
+          updated: "",
+        },
+        `Runs the n8n workflow "${check.workflowName}" (${check.workflowId}) once with boof.kind = "check" and passes when its callback reports ok. Created by boof after the workflow changed in n8n at ${check.updatedAt}.`,
+      ),
+      { by: "n8n-watcher" },
+    );
+    await auditOperation(this.root, {
+      principal: { id: "n8n-watcher", kind: "server" },
+      action: "n8n:check-task",
+      via: "server",
+      project: projectId,
+      ok: true,
+      ms: Date.now() - start,
+      at: start,
+      extra: { workflowId: check.workflowId, task: task.frontmatter.id },
+    });
+    return { id: task.frontmatter.id, created: true };
   }
 
   // --- Projects ---

@@ -21,6 +21,8 @@ import { pruneAudit } from "./middleware/audit.js";
 import { IdempotencyStore, TaskService } from "../api/index.js";
 import { DataWatcher } from "./watch.js";
 import { createSelfUrlCheck } from "./self-url.js";
+import { N8nClient } from "../n8n/client.js";
+import { N8nWatcher } from "../n8n/watcher.js";
 import { runDispatcherWhileHolding, WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
@@ -203,8 +205,24 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     authStore,
     intervalMs: opts.webhookIntervalMs,
   });
+  // The n8n edit watcher polls only where webhooks are delivered, so one server per data root
+  // does it; it stops before the lock is released.
+  const n8nWatcher = new N8nWatcher({
+    root: opts.root,
+    service,
+    client: new N8nClient({ root: opts.root, isSelfUrl }),
+  });
   const dispatcherGate = runDispatcherWhileHolding(
-    webhooks,
+    {
+      start: () => {
+        webhooks.start();
+        n8nWatcher.start();
+      },
+      stop: async () => {
+        await n8nWatcher.stop();
+        await webhooks.stop();
+      },
+    },
     join(dataRootPaths(opts.root).webhooks, ".dispatcher.lock"),
     { retryMs: opts.webhookLockRetryMs },
   );
