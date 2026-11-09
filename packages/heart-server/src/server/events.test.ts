@@ -468,7 +468,9 @@ describe("stream lifetime", () => {
         live.add(t);
         return t;
       }) as typeof setInterval);
-      vi.spyOn(globalThis, "clearInterval").mockImplementation(((t: Parameters<typeof clear>[0]) => {
+      vi.spyOn(globalThis, "clearInterval").mockImplementation(((
+        t: Parameters<typeof clear>[0],
+      ) => {
         live.delete(t);
         return clear(t);
       }) as typeof clearInterval);
@@ -518,5 +520,4 @@ describe("stream lifetime", () => {
       expect(live.size).toBe(0);
     });
   });
-
 });

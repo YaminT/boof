@@ -51,11 +51,9 @@ export function browserSignin(opts: BrowserSigninOptions): MiddlewareHandler {
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         c.set("auditExtra", { action: "auth:browser-session", outcome: "error" });
-        return c.text(
-browserSessionUnavailableMessage(error.path),
-          503,
-          { "Cache-Control": "no-store" },
-        );
+        return c.text(browserSessionUnavailableMessage(error.path), 503, {
+          "Cache-Control": "no-store",
+        });
       }
       throw error;
     }
