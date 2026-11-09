@@ -901,13 +901,20 @@ describe("session resume", () => {
     const bin = join(dir, "codex");
     await writeFile(
       bin,
-      `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\nsleep 30\n`,
+      `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\necho ready\nsleep 30\n`,
     );
     await chmod(bin, 0o755);
     process.env.BOOF_RUNNER_CODEX_BIN = bin;
     const steer = join(dir, "steer");
-    const running = new CodexTool().run({ ...opts, cwd: dir, steerSignalPath: steer });
-    await new Promise((r) => setTimeout(r, 300));
+    let onChunk!: () => void;
+    const sawOutput = new Promise<void>((resolve) => (onChunk = resolve));
+    const running = new CodexTool().run({
+      ...opts,
+      cwd: dir,
+      steerSignalPath: steer,
+      onChunk: () => onChunk(),
+    });
+    await sawOutput;
     await writeFile(steer, "x\n");
     const err = await running.then(
       () => null,
