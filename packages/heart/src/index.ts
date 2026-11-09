@@ -17,6 +17,7 @@ export * from "./boof-goal.js";
 export * from "./verdict.js";
 export * from "./scopes.js";
 export * from "./auth-store.js";
+export * from "./browser-session-store.js";
 export * from "./project-store.js";
 export * from "./project-path.js";
 export * from "./migrate.js";

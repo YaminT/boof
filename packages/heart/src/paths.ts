@@ -51,6 +51,10 @@ export interface DataRootPaths {
   projects: string;
   auth: string;
   authClients: string;
+  /** Signed-in browser sessions, mode 0600. sha256 hashes only. */
+  browserSessions: string;
+  /** Single-use browser sign-in links, mode 0600. sha256 hashes only. */
+  browserLinks: string;
   audit: string;
   /** Global events (runner toggles); project events live in the project directory. */
   events: string;
@@ -75,6 +79,8 @@ export function dataRootPaths(root: string): DataRootPaths {
     projects: join(root, "projects"),
     auth: join(root, "auth"),
     authClients: join(root, "auth", "clients.json"),
+    browserSessions: join(root, "auth", "browser-sessions.json"),
+    browserLinks: join(root, "auth", "browser-links.json"),
     audit: join(root, "audit"),
     events: join(root, "events.jsonl"),
     idempotency: join(root, "idempotency"),
