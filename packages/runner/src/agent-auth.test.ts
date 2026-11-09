@@ -208,6 +208,29 @@ describe("AgentAuthResolver", () => {
       expect(env).not.toHaveProperty("BOOF_OWLISH_API_KEY");
     }
   });
+  it("adds the marker last and keeps the allowlist plus its credential", () => {
+    const marker = "0123456789abcdef0123456789abcdef";
+    const env = claudeAgentEnv(
+      {
+        PATH: "/bin",
+        HOME: "/tmp/home",
+        BOOF_RUNNER_AGENT_OF: "inherited",
+        BOOF_KEY: "boof_admin",
+        CUSTOM_SECRET: "hidden",
+      },
+      { kind: "project-key", apiKey: "scoped-agent-key" },
+      "test-client",
+      "/tmp/config",
+      marker,
+    );
+    expect(env.BOOF_RUNNER_AGENT_OF).toBe(marker);
+    expect(Object.keys(env).filter((name) => name.startsWith("BOOF_"))).toEqual([
+      "BOOF_RUNNER_AGENT_OF",
+    ]);
+    expect(env.ANTHROPIC_API_KEY).toBe("scoped-agent-key");
+    expect(env).not.toHaveProperty("CUSTOM_SECRET");
+    expect(JSON.stringify(env)).not.toMatch(/(?:boof_|bs_)/);
+  });
   it("gateway without an agent key refuses with a clear reason, or falls back to the project key", async () => {
     const { server, url } = await listen(
       JSON.stringify([

@@ -58,6 +58,7 @@ const NEVER_PREFIX = "BOOF_";
 export function agentEnv(
   env: NodeJS.ProcessEnv = process.env,
   extra: readonly string[] = [],
+  marker?: string,
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   const wanted = new Set(extra);
@@ -67,5 +68,6 @@ export function agentEnv(
       out[name] = value;
     }
   }
+  if (marker !== undefined) out.BOOF_RUNNER_AGENT_OF = marker;
   return out;
 }

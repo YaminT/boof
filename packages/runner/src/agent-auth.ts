@@ -279,6 +279,7 @@ export function claudeAgentEnv(
   auth: AgentAuth,
   clientApp: string,
   configDir: string,
+  marker?: string,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(base)) {
@@ -306,5 +307,6 @@ export function claudeAgentEnv(
   } else env.ANTHROPIC_API_KEY = auth.apiKey;
   env.CLAUDE_AGENT_SDK_CLIENT_APP = clientApp;
   env.CLAUDE_CONFIG_DIR = configDir;
+  if (marker !== undefined) env.BOOF_RUNNER_AGENT_OF = marker;
   return env;
 }

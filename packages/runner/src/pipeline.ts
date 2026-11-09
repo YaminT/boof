@@ -43,6 +43,7 @@ import type { ToolRegistry } from "./tools/registry.js";
 import { AgentAuthRefusedError, claudeAgentEnv, type AgentAuthResolver } from "./agent-auth.js";
 import { announceBudgetExceeded } from "./budget.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
+import { agentMarkerFor } from "./agent-marker.js";
 import { RESUME_PROMPT_PREFIX } from "./tools/steer.js";
 import {
   diffAgainstBase,
@@ -427,6 +428,7 @@ export class Pipeline {
                 auth,
                 `boof-runner/${BOOF_VERSION}`,
                 claudeConfigDir,
+                this.deps.dataRoot ? agentMarkerFor(this.deps.dataRoot) : undefined,
               ),
             };
           }
@@ -436,6 +438,7 @@ export class Pipeline {
             ...authOptions,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             agentEnv: this.deps.settings.runner.agentEnv,
+            agentMarker: this.deps.dataRoot ? agentMarkerFor(this.deps.dataRoot) : undefined,
             ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
             prompt,
             resumeSessionId,

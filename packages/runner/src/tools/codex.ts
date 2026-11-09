@@ -140,7 +140,10 @@ export class CodexTool implements Tool {
       const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
-        env: { ...agentEnv(process.env, opts.agentEnv), ...gatewayEnv("openai", opts.gateway) },
+        env: {
+          ...agentEnv(process.env, opts.agentEnv, opts.agentMarker),
+          ...gatewayEnv("openai", opts.gateway),
+        },
         input: this.promptText(opts),
         timeoutMs: opts.timeoutMs,
         stopSignalPath: opts.stopSignalPath,

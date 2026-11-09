@@ -90,7 +90,7 @@ export class OpencodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
-    const childEnv = agentEnv(process.env, opts.agentEnv);
+    const childEnv = agentEnv(process.env, opts.agentEnv, opts.agentMarker);
     if (opts.gateway) {
       delete childEnv.ANTHROPIC_API_KEY;
       delete childEnv.ANTHROPIC_AUTH_TOKEN;

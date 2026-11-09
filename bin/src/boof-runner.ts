@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ClaudeConcierge, ToolRegistry } from "@boof/runner";
+import { ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
 import { boot, isRunnerStartFailure } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
@@ -515,6 +515,17 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   if (hasFlag(argv, ["--help", "-h"]) && topLevel) {
     console.log(HELP);
     return;
+  }
+  if (!hasFlag(argv, ["--version", "-v", "--help", "-h"])) {
+    const dataRoot = getOpt(argv, ["--data", "-d"]);
+    const root = dataRoot ? absPath(dataRoot) : defaultDataRoot();
+    if (isAgentOf(process.env, root)) {
+      console.error(
+        "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.",
+      );
+      process.exitCode = 3;
+      return;
+    }
   }
   let code = 0;
   try {

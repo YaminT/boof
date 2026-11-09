@@ -253,6 +253,7 @@ export class ClaudeAgentTool implements Tool {
     const claudeMd = await readRepoFile(opts.cwd, "CLAUDE.md");
     const permissions = await readRepoPermissions(opts.cwd);
     const childEnv = { ...env };
+    if (opts.agentMarker !== undefined) childEnv.BOOF_RUNNER_AGENT_OF = opts.agentMarker;
     const queryOptions: SdkOptions = {
       cwd: opts.cwd,
       ...(opts.model && opts.model !== "default" && opts.model !== "" ? { model: opts.model } : {}),
