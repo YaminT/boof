@@ -135,6 +135,17 @@ function isLoopbackBind(host: string): boolean {
  * The lines `serve` prints once the server is up. Under local-trust on a loopback bind the
  * Web UI line is a single-use sign-in link; otherwise it is the plain URL.
  */
+/**
+ * True when stdout is the systemd journal, where a live sign-in link must not be printed.
+ * `JOURNAL_STREAM` can also leak into a terminal's shell, so a TTY on stdout wins.
+ */
+export function stdoutIsJournal(
+  env: NodeJS.ProcessEnv = process.env,
+  isTTY: boolean = Boolean(process.stdout.isTTY),
+): boolean {
+  return Boolean(env.JOURNAL_STREAM) && !isTTY;
+}
+
 export function serveBanner(o: {
   scheme: string;
   hostPart: string;
@@ -313,10 +324,12 @@ export async function serve(argv: string[]): Promise<void> {
         const loopback = isLoopbackBind(args.host);
         let link: string | undefined;
         // Under systemd stdout is the journal: no live link there, just the command to run.
-        const underJournal = Boolean(process.env.JOURNAL_STREAM);
+        const underJournal = stdoutIsJournal();
         if (authMode === "local-trust" && loopback && !underJournal) {
           try {
-            const { code } = await new BrowserSessionStore(root).createLink();
+            const { code } = await new BrowserSessionStore(root).createLink({
+              port: server.port,
+            });
             link = `${scheme}://${hostPart}:${server.port}/auth/browser?code=${code}`;
           } catch (e) {
             console.error(

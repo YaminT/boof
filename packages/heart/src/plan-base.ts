@@ -7,13 +7,17 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { GIT_HARDENING_ARGS } from "./git.js";
 import { execCommand } from "./process.js";
 
 const GIT_TIMEOUT_MS = 60_000;
 
 async function git(cwd: string, args: string[]) {
   try {
-    return await execCommand("git", args, { cwd, timeoutMs: GIT_TIMEOUT_MS });
+    return await execCommand("git", [...GIT_HARDENING_ARGS, ...args], {
+      cwd,
+      timeoutMs: GIT_TIMEOUT_MS,
+    });
   } catch {
     return null;
   }

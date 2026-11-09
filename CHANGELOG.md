@@ -28,7 +28,11 @@ Agent containment, layer 1. This is not a sandbox: a process that runs as your O
 - MCP needs a client. POST /mcp needs an API key, and boof-runner mcp needs --client <id>; the keyless local-mcp identity and --admin are gone. Create a client once with boof-runner auth add --name mcp-host --scopes <list> --trust review and add --client <id> to your MCP host's command.
 - boof-runner refuses to act on the data root of the server whose task agent runs it (exit 3). This is a guard against careless or injected commands, not a sandbox.
 - The data root and its auth, owlish, webhooks, audit, idempotency, concierge and claude-agent-config folders are set to mode 700 at start when you own them. This keeps other local users out. It does not isolate task agents, which run as your user.
-- The desktop app without safeStorage now signs its window in with a session it sets itself, instead of keyless local trust.
+- The desktop app without safeStorage now signs its window in with a session it sets itself, instead of keyless local trust. It renews that session daily while a window stays open.
+- A parent folder of the data root that is group-writable by a group other than your own user private group (a shared group such as `users` or `staff`) is refused: sign-in and API keys answer 503 until you run `chmod g-w <folder>`. A parent in your own private group (the usual `~/.local/share` with umask 002) is accepted.
+- A data root on WSL `/mnt/c` (or another filesystem that reports mode 0777 and refuses `chmod`) cannot pass the secret-folder check, so sign-in and keys are refused there. Put the data root on the Linux filesystem, or set `metadata` in `/etc/wsl.conf` so modes are real.
+- Sign-in links are bound to the port they were minted for. A link opened on another port is refused and burned. `boof-runner open` without `--port` warns when nothing answers on the default port.
+- Server-run git in agent worktrees runs with `core.fsmonitor` and hooks disabled; your repository's hooks no longer run for boof's own git calls.
 
 ## 0.3.0 (2026-11-05)
 

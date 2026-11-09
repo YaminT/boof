@@ -132,14 +132,23 @@ export interface WindowAuthDeps {
   showFailure: (message: string) => Promise<void> | void;
   origin: string;
   port: number;
+  /** How long before the fallback session is replaced while a window stays open. Default 24 h. */
+  renewMs?: number;
+  /** Timer seam for tests. Returns a cancel function. Default: setTimeout, unref'd. */
+  schedule?: (fn: () => void, ms: number) => () => void;
 }
+
+/** A browser session lasts 30 days; a window left open renews well before that. */
+export const WINDOW_SESSION_RENEW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Signs the app's own window in when there is no desktop key. `prepare()` runs before every
  * window load (first start and macOS `activate`): it mints a fresh browser session, sets the
  * session cookie, then revokes the session of the previous window so launches do not churn the
  * store's session cap. It never rejects: on failure the window still opens, on the sign-in gate.
- * Calls are serialised. `release()` revokes the current session on quit (best effort).
+ * Calls are serialised. A timer renews the session (same steps) every `renewMs` while the app
+ * runs, so a window kept open past the session's 30-day limit stays signed in. `release()` stops
+ * the timer and revokes the current session on quit (best effort).
  */
 export function createWindowAuth(deps: WindowAuthDeps): {
   prepare: () => Promise<void>;
@@ -147,6 +156,15 @@ export function createWindowAuth(deps: WindowAuthDeps): {
 } {
   let currentId: string | undefined;
   let chain: Promise<unknown> = Promise.resolve();
+  let cancelRenew: (() => void) | undefined;
+  let released = false;
+  const schedule =
+    deps.schedule ??
+    ((fn: () => void, ms: number) => {
+      const timer = setTimeout(fn, ms);
+      timer.unref?.();
+      return () => clearTimeout(timer);
+    });
 
   const revoke = async (id: string): Promise<void> => {
     try {
@@ -186,14 +204,28 @@ export function createWindowAuth(deps: WindowAuthDeps): {
     }
   };
 
+  const prepare = (): Promise<void> => {
+    const next = chain.then(run, run).then(() => {
+      cancelRenew?.();
+      cancelRenew = undefined;
+      // Only a fallback session needs renewing: with a desktop key there is none.
+      if (!released && !deps.desktopToken()) {
+        cancelRenew = schedule(() => void prepare(), deps.renewMs ?? WINDOW_SESSION_RENEW_MS);
+      }
+    });
+    chain = next;
+    return next;
+  };
+
   return {
-    prepare: () => {
-      const next = chain.then(run, run);
-      chain = next;
-      return next;
-    },
+    prepare,
     release: async () => {
+      released = true;
+      cancelRenew?.();
+      cancelRenew = undefined;
       await chain.catch(() => {});
+      cancelRenew?.();
+      cancelRenew = undefined;
       const id = currentId;
       currentId = undefined;
       if (id) await revoke(id);

@@ -167,6 +167,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     allowedHosts,
     authStore,
     sessionCookieName: () => browserSessionCookieName(boundPort),
+    linkPort: () => boundPort,
     operatorClients: opts.operatorClients,
     isSelfUrl,
     version: opts.version,

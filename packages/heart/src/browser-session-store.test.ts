@@ -208,6 +208,16 @@ describe("BrowserSessionStore", () => {
     expect([childWon === "lost", parentWon === null].filter(Boolean)).toHaveLength(1);
   });
 
+  it("a port-bound link redeems only on its port, and a wrong-port try burns it", async () => {
+    const bound = await store.createLink({ port: 4320 });
+    expect(await store.redeemLink(bound.code, { port: 4319 })).toBeNull();
+    expect(await store.redeemLink(bound.code, { port: 4320 })).toBeNull();
+    const again = await store.createLink({ port: 4320 });
+    expect(await store.redeemLink(again.code, { port: 4320 })).not.toBeNull();
+    const legacy = await store.createLink();
+    expect(await store.redeemLink(legacy.code, { port: 4319 })).not.toBeNull();
+  });
+
   it("a createLink in another process does not resurrect a redeemed link", async () => {
     const { code } = await store.createLink();
     const processA = new BrowserSessionStore(root, () => clock, simulatedProcess(82001));

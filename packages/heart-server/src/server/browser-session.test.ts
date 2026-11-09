@@ -36,6 +36,7 @@ function build(extra: Partial<Parameters<typeof createApp>[0]> = {}) {
     authStore,
     browserSessions: sessions,
     sessionCookieName: () => "boof_ui_4319",
+    linkPort: () => 4319,
     peerAddress: () => peer,
     ...(watcher ? { watcher } : {}),
     ...extra,
@@ -231,6 +232,17 @@ describe("browser session authentication", () => {
     const res = await request(app, `/auth/browser?code=${code}`, { headers: { host: "boof.lan" } });
     expect(res.status).toBe(404);
     expect(await sessions.redeemLink(code)).not.toBeNull();
+  });
+
+  it("a link minted for another port is refused with the 400 page and burned", async () => {
+    const { code } = await sessions.createLink({ port: 9999 });
+    const right = await sessions.createLink({ port: 4319 });
+    const ok = await request(build(), `/auth/browser?code=${encodeURIComponent(right.code)}`);
+    expect(ok.status).toBe(303);
+    const wrong = await request(build(), `/auth/browser?code=${encodeURIComponent(code)}`);
+    expect(wrong.status).toBe(400);
+    expect(wrong.headers.get("set-cookie")).toBeNull();
+    expect(await sessions.redeemLink(code, { port: 9999 })).toBeNull();
   });
 
   it("HEAD does not redeem a browser sign-in link", async () => {
@@ -502,6 +514,8 @@ describe("browser session authentication", () => {
       text += decoder.decode(next.value);
     }
     expect(text).toContain("event: unauthorized");
+    expect(text).toContain("Signed out");
+    expect(text).not.toContain("API key revoked");
     await reader.cancel();
   });
 
@@ -531,6 +545,8 @@ describe("browser session authentication", () => {
       text += decoder.decode(next.value);
     }
     expect(text).toContain("event: unauthorized");
+    expect(text).toContain("Signed out");
+    expect(text).not.toContain("API key revoked");
     await reader.cancel();
   });
 

@@ -229,6 +229,7 @@ describe("stream lifetime", () => {
     watcher.broadcast("changed", { project: "a" });
     const tail = await rest(live.reader!);
     expect(tail).toContain("event: unauthorized");
+    expect(tail).toContain("API key revoked");
     expect(tail).not.toContain('"t2"'); // nothing of the revoked tick, no changed hint after the end
     expect(tail.indexOf("event: changed")).toBe(-1);
     // A new connection with the revoked key is refused outright.

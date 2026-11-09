@@ -1,3 +1,4 @@
+import { GIT_HARDENING_ARGS } from "./git.js";
 import { execCommand } from "./process.js";
 
 /** Most untracked files listed or diffed for one review. */
@@ -9,7 +10,14 @@ async function git(cwd: string, args: string[]) {
   // --literal-pathspecs keeps file names from acting as pathspec magic.
   return execCommand(
     "git",
-    ["--no-pager", "--literal-pathspecs", "-c", "core.quotepath=off", ...args],
+    [
+      ...GIT_HARDENING_ARGS,
+      "--no-pager",
+      "--literal-pathspecs",
+      "-c",
+      "core.quotepath=off",
+      ...args,
+    ],
     { cwd, timeoutMs: GIT_TIMEOUT_MS },
   );
 }

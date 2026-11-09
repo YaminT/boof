@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
 import { execCommand } from "./process.js";
-import { leftoversBranch, registeredWorktreeBranch } from "./git.js";
+import { GIT_HARDENING_ARGS, leftoversBranch, registeredWorktreeBranch } from "./git.js";
 import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";
@@ -90,6 +90,7 @@ async function git(cwd: string, args: string[]) {
   const res = await execCommand(
     "git",
     [
+      ...GIT_HARDENING_ARGS,
       "--no-pager",
       "--no-optional-locks",
       "--literal-pathspecs",
