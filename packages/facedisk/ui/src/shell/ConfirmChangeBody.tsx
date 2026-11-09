@@ -14,7 +14,10 @@ export function ConfirmChangeBody({ change }: { change: PendingChangeView }) {
         {change.title}
       </p>
       {change.details.length > 0 && (
-        <ul data-testid="change-details" className="m-0 flex list-disc flex-col gap-1 pl-5">
+        <ul
+          data-testid="change-details"
+          className="m-0 flex max-h-[50vh] list-disc flex-col gap-1 overflow-y-auto pl-5"
+        >
           {change.details.map((line, i) => (
             <li key={i} className="break-words">
               {line}

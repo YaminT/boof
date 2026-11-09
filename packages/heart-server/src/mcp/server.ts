@@ -67,6 +67,10 @@ export interface McpCallGate {
 }
 
 export interface BoofMcpOptions {
+  /** Replaces the scope check of `tools/list` (the call itself is still checked by the op and the gate). */
+  listable?: (op: AnyOperation, principal: Principal) => boolean;
+  /** Replaces the listed definition of a tool (a narrower schema or description). */
+  describeTool?: (op: AnyOperation, tool: Tool) => Tool | undefined;
   /** The data root. */
   root: string;
   /** Resolved for every call, so a revoked client loses access at once (stdio) or per request (HTTP). */
@@ -302,8 +306,15 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     const principal = await resolve();
     return {
       tools: ops
-        .filter((op) => op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s)))
-        .map((op) => toolDefinition(op, options.project, options.gate === undefined)),
+        .filter(
+          (op) =>
+            options.listable?.(op, principal) ??
+            (op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s))),
+        )
+        .map((op) => {
+          const tool = toolDefinition(op, options.project, options.gate === undefined);
+          return options.describeTool?.(op, tool) ?? tool;
+        }),
     };
   });
 
@@ -427,7 +438,7 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
 
 /** Build the concierge's pinned, allowlisted MCP surface with resources and prompts disabled. */
 export function createConciergeMcpServer(
-  options: Omit<BoofMcpOptions, "ops" | "resources" | "project" | "gate"> & {
+  options: Omit<BoofMcpOptions, "ops" | "resources" | "project" | "gate" | "describeTool"> & {
     project: string;
     gate: McpCallGate;
   },
@@ -436,7 +447,36 @@ export function createConciergeMcpServer(
     ...options,
     ops: conciergeOps(registry),
     resources: false,
+    describeTool: conciergeToolDefinition,
   });
+}
+
+/**
+ * The model sees `projects.update` as what it is here: a proposal to change the description.
+ * The project is pinned and every other field is refused, so the schema offers neither.
+ */
+function conciergeToolDefinition(op: AnyOperation, tool: Tool): Tool | undefined {
+  if (op.name !== "projects.update") return undefined;
+  return {
+    ...tool,
+    title: "Propose a new project description (brief)",
+    description:
+      "Proposes replacing the description (brief) of this project, which is given to every agent as context. " +
+      "Input: brief, the complete new text (at most 4000 characters and 60 lines, plain text). " +
+      "It is never applied by you: the user reviews the whole text and confirms it. No other project field can be changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        brief: {
+          type: "string",
+          maxLength: 4000,
+          description: "The complete new description (brief) text.",
+        },
+      },
+      required: ["brief"],
+      additionalProperties: false,
+    },
+  };
 }
 
 export { McpError, ErrorCode };

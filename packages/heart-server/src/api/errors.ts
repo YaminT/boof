@@ -57,6 +57,7 @@ export const ERROR_CODES = {
     409,
     "The epic has tasks; pass detach to clear their epic, or archive the epic instead.",
   ],
+  project_modified: [409, "The project changed since the ETag in If-Match."],
   epic_modified: [409, "The epic changed since the ETag in If-Match."],
   plan_version_conflict: [409, "The plan changed since the version in If-Match / expectedVersion."],
   settings_modified: [409, "The settings changed since the ETag in If-Match."],

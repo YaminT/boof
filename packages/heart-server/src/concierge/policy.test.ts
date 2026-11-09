@@ -39,7 +39,9 @@ describe("concierge MCP policy", () => {
     for (const op of ops) {
       expect(byName.has(op.name)).toBe(true);
       expect(op.mcp.expose).toBe(true);
-      expect(op.scopes.some((scope) => CONCIERGE_SCOPES.includes(scope))).toBe(true);
+      // projects.update is the one confirm tool applied under the user's rights alone.
+      if (op.name !== "projects.update")
+        expect(op.scopes.some((scope) => CONCIERGE_SCOPES.includes(scope))).toBe(true);
       if (op.mcp.annotations?.destructiveHint) {
         expect(CONCIERGE_TOOLS[op.name]).toBe("confirm");
       }
@@ -107,19 +109,44 @@ describe("concierge MCP policy", () => {
       "settings:write",
       "runner:control",
       "tasks:control",
+      "projects:write",
     ] satisfies Scope[]) {
       expect(derived.scopes.has(forbidden)).toBe(false);
     }
   });
 
-  it("offers projects.update only as a confirm tool", () => {
+  it("offers projects.update only as a confirm tool, and no other project write", () => {
     expect(CONCIERGE_TOOLS["projects.update"]).toBe("confirm");
+    expect(
+      Object.keys(CONCIERGE_TOOLS).filter(
+        (name) => name.startsWith("projects.") && name !== "projects.get",
+      ),
+    ).toEqual(["projects.update"]);
+    for (const op of conciergeOps(registry))
+      if (op.scopes.includes("projects:write")) expect(CONCIERGE_TOOLS[op.name]).toBe("confirm");
+  });
+
+  it("lists confirm tools by the user's rights, not the assistant's", () => {
+    const ops = conciergeOps(registry);
+    const tool = "mcp__boof__boof_update_project";
+    const writer = principal("w", ["projects:read", "projects:write", "tasks:read"]);
+    const reader = principal("r", ["projects:read", "tasks:read"]);
+    const assistant = conciergePrincipal(writer, projectId);
+    expect(assistant.scopes.has("projects:write")).toBe(false);
+    expect(conciergeAllowedTools(ops, assistant, writer, projectId)).toContain(tool);
+    expect(
+      conciergeAllowedTools(ops, conciergePrincipal(reader, projectId), reader, projectId),
+    ).not.toContain(tool);
+    const elsewhere = principal("e", ["projects:write"], ["other"]);
+    expect(
+      conciergeAllowedTools(ops, conciergePrincipal(elsewhere, projectId), elsewhere, projectId),
+    ).not.toContain(tool);
   });
 
   it("offers no writes or confirmations to a read-only principal", () => {
     const reader = principal("reader", ["tasks:read"], [projectId], "review");
     const ops = conciergeOps(registry);
-    const names = conciergeAllowedTools(ops, reader);
+    const names = conciergeAllowedTools(ops, reader, reader, projectId);
     const byTool = new Map(ops.map((op) => [`mcp__boof__${op.mcp.name}`, op.name]));
     expect(names.every((name) => CONCIERGE_TOOLS[byTool.get(name)!] === "read")).toBe(true);
     expect(names).not.toContain("mcp__boof__boof_delete_task");
@@ -160,6 +187,19 @@ describe("concierge MCP policy", () => {
 });
 
 describe("assertConfirmInput", () => {
+  it("accepts a brief at the limits", () => {
+    expect(() =>
+      assertConfirmInput("projects.update", { projectId: "p", brief: "x".repeat(4000) }, "p"),
+    ).not.toThrow();
+    expect(() =>
+      assertConfirmInput(
+        "projects.update",
+        { projectId: "p", brief: Array(60).fill("a\tb").join("\n") },
+        "p",
+      ),
+    ).not.toThrow();
+  });
+
   it("lets only the description of the current project through", () => {
     expect(() =>
       assertConfirmInput("projects.update", { projectId: "p", brief: "x" }, "p"),
@@ -174,6 +214,11 @@ describe("assertConfirmInput", () => {
     [{ projectId: "p", brief: "x", anthropicApiKey: "k" }, "forbidden_scope"],
     [{ projectId: "p", paused: true }, "forbidden_scope"],
     [{ projectId: "p", brief: null }, "forbidden_scope"],
+    [{ projectId: "p", brief: "x".repeat(4001) }, "invalid_input"],
+    [{ projectId: "p", brief: Array(61).fill("a").join("\n") }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u200bb" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u202eb" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u00a0b" }, "invalid_input"],
   ])("refuses %j", (input, code) => {
     expect(() => assertConfirmInput("projects.update", input, "p")).toThrowError(
       expect.objectContaining({ code }),

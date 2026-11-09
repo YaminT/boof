@@ -32,6 +32,8 @@ import { promptFingerprint } from "../api/audit.js";
 import type { TaskService } from "../api/services/service.js";
 import {
   conciergeAllowedTools,
+  conciergeCanList,
+  userMayApply,
   conciergeOps,
   assertConfirmInput,
   conciergePrincipal,
@@ -319,6 +321,12 @@ export class ConciergeService {
               `Invalid input: ${parsed.error.issues[0]?.message ?? "schema mismatch"}`,
               "invalid_input",
             );
+          if (!userMayApply(op, user, projectId))
+            throw new OpError(
+              403,
+              "You may not make this change, so it cannot be proposed",
+              "forbidden_scope",
+            );
           assertConfirmInput(op.name, parsed.data as Record<string, unknown>, projectId);
           if (messagePending >= 5) {
             return {
@@ -472,7 +480,7 @@ export class ConciergeService {
       };
       const { registry } = await import("../api/registry.js");
       const ops = conciergeOps(registry);
-      const allowedTools = conciergeAllowedTools(ops, principal);
+      const allowedTools = conciergeAllowedTools(ops, principal, user, projectId);
       const { createConciergeMcpServer } = await import("../mcp/server.js");
       const mcpServer = createConciergeMcpServer({
         root: this.opts.root,
@@ -481,6 +489,7 @@ export class ConciergeService {
         services: this.opts.services,
         authStore: this.opts.authStore,
         gate,
+        listable: (op) => conciergeCanList(op, principal, user, projectId),
         instructions: CONCIERGE_MCP_INSTRUCTIONS,
         onCall: (info) => {
           toolCount++;
@@ -839,6 +848,7 @@ const APPLY_STALE_CODES: ReadonlySet<string> = new Set([
   "plan_version_conflict",
   "task_modified",
   "epic_modified",
+  "project_modified",
 ]);
 
 function applyError(err: unknown): OpError {

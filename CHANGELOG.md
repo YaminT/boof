@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- The console assistant can propose a new project description (the `brief`); it never applies it: you confirm it from a server-built before/after preview, and a change to the project in between answers `change_stale`.
+- The console assistant can propose a new project description (the `brief`); it never applies it: you confirm it from a preview that shows the whole new text (at most 4,000 characters and 60 lines), it is applied with your rights, and a change to the project in between answers `change_stale`. The assistant itself never holds `projects:write`.
+- `projects.update` takes `expectedUpdated` (HTTP: `If-Match` with the project's `ETag`); a changed project answers `409 project_modified`. `projects.get` and `projects.update` return the `ETag`.
 - Fix secret masking in assistant change previews, preserving commit SHAs and slash paths.
 - Add the console assistant: free text in the bottom console goes to a concierge on claude-agent with boof's own MCP server under a narrow, review-trust principal. It creates drafts; deleting, archiving, queueing and changing others' work wait for your confirmation. Spend is recorded as `tool:concierge`. Without a compliant model, and in the desktop app, the console works as before and says why.
 - Add the write-only `owlishAgentKey`, an api-only better-ccflare key that `claude-agent` processes receive instead of the admin client key. Gateway mode without it falls back to the project key or is refused.

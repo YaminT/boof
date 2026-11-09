@@ -1269,7 +1269,12 @@ export class TaskService {
     }
   }
 
-  async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
+  async updateProject(
+    id: string,
+    patch: ProjectPatch,
+    actor?: Principal,
+    expectedUpdated?: string,
+  ): Promise<Project> {
     await this.assertMayChangeProject(patch, actor, false);
     if (
       actor &&
@@ -1293,7 +1298,7 @@ export class TaskService {
       assertTarget = (real) => this.assertRegistrationAllowed(actor, real);
     }
     try {
-      return await this.projects.update(id, patch, { assertTarget });
+      return await this.projects.update(id, patch, { assertTarget, expectedUpdated });
     } catch (err) {
       throw this.mapProjectError(err, actor);
     }
@@ -1355,6 +1360,8 @@ export class TaskService {
         return new OpError(404, err.message, "project_not_found");
       case "id_taken":
         return new OpError(409, err.message, "conflict");
+      case "modified":
+        return new OpError(409, err.message, "project_modified");
       case "duplicate":
       case "same_repo":
         return new OpError(409, err.message, "project_exists");

@@ -119,6 +119,7 @@
                   "invalid_hierarchy",
                   "has_children",
                   "has_tasks",
+                  "project_modified",
                   "epic_modified",
                   "plan_version_conflict",
                   "settings_modified",
@@ -5462,7 +5463,14 @@
                 }
               }
             },
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -5494,6 +5502,15 @@
               "description": "Project id (kebab-case).",
               "maxLength": 200,
               "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ETag of GET /projects/{projectId} you last saw, e.g. W/\"2026-10-01T00:00:00.000Z\". A project that changed since answers 409 project_modified.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -5601,6 +5618,11 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "expectedUpdated": {
+                    "description": "The project's `updated` stamp you last saw (HTTP: If-Match with the ETag); a changed project answers 409 project_modified.",
+                    "maxLength": 100,
+                    "type": "string"
                   },
                   "labels": {
                     "items": {
@@ -6093,7 +6115,14 @@
                 }
               }
             },
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -14758,6 +14787,10 @@
     },
     "project_exists": {
       "description": "A project for this directory already exists.",
+      "status": 409
+    },
+    "project_modified": {
+      "description": "The project changed since the ETag in If-Match.",
       "status": 409
     },
     "project_not_found": {

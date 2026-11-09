@@ -39,10 +39,13 @@ export const CONCIERGE_SCOPES: readonly Scope[] = [
   "projects:read",
   "plans:read",
   "plans:write",
-  "projects:write",
   "tasks:read",
   "tasks:write",
 ];
+
+/** The most a proposed description may hold, so the preview can show every character of it. */
+export const BRIEF_MAX_CHARS = 4_000;
+export const BRIEF_MAX_LINES = 60;
 
 export const RESULT_TEXT_CAP = 20_000;
 
@@ -50,8 +53,8 @@ export const RESULT_TEXT_CAP = 20_000;
  * Deliberately absent: tasks.diff reads the git worktree outside the data root; plans.import reads
  * repository files; tasks.wait and plans.wait are long polls; tasks.stop and tasks.inject need
  * tasks:control; tasks.answers, tasks.retry, tasks.skip and plans.sync start or advance work
- * without a human. Project writes other than the description change (see `assertConfirmInput`), settings, accounts, runner, auth, webhooks, command writes and
- * attachments are also excluded.
+ * without a human. Project writes other than the description change (see `assertConfirmInput`),
+ * settings, accounts, runner, auth, webhooks, command writes and attachments are also excluded.
  */
 export function conciergeOps(registry: readonly AnyOperation[]): AnyOperation[] {
   return registry.filter((op) => Object.hasOwn(CONCIERGE_TOOLS, op.name));
@@ -83,6 +86,27 @@ export function assertConfirmInput(
       "The assistant can only propose a new description for the project",
       "forbidden_scope",
     );
+  const brief = input.brief;
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]/u.test(brief.replace(/[\n\t ]/g, "")))
+    throw new OpError(
+      400,
+      "The description holds control, format or unusual space characters the preview cannot show; remove them",
+      "invalid_input",
+    );
+  if (brief.length > BRIEF_MAX_CHARS || brief.split("\n").length > BRIEF_MAX_LINES)
+    throw new OpError(
+      400,
+      `The description is too long to review (at most ${BRIEF_MAX_CHARS} characters and ${BRIEF_MAX_LINES} lines); shorten it`,
+      "invalid_input",
+    );
+}
+
+/** Whether `user` may apply `op` in `projectId`: the rule the assistant's confirm tools follow. */
+export function userMayApply(op: AnyOperation, user: Principal, projectId: string): boolean {
+  return (
+    (op.scopes.length === 0 || op.scopes.some((scope) => authorize(user, scope))) &&
+    authorizeProject(user, projectId)
+  );
 }
 
 export function conciergePrincipal(user: Principal, projectId: string): Principal {
@@ -114,13 +138,27 @@ export async function assertConciergeIdAvailable(
   }
 }
 
+export function conciergeCanList(
+  op: AnyOperation,
+  principal: Principal,
+  user: Principal,
+  projectId: string,
+): boolean {
+  if (CONCIERGE_TOOLS[op.name] === "confirm") return userMayApply(op, user, projectId);
+  return op.scopes.length === 0 || op.scopes.some((scope) => authorize(principal, scope));
+}
+
+/**
+ * Tools the model is told about. Read and write tools follow the assistant's own principal; confirm
+ * tools never run under it (they are applied with the user's rights), so they follow the user's.
+ */
 export function conciergeAllowedTools(
   ops: readonly AnyOperation[],
   principal: Principal,
+  user: Principal,
+  projectId: string,
 ): string[] {
   return ops
-    .filter(
-      (op) => op.scopes.length === 0 || op.scopes.some((scope) => authorize(principal, scope)),
-    )
+    .filter((op) => conciergeCanList(op, principal, user, projectId))
     .map((op) => `mcp__boof__${op.mcp.name}`);
 }

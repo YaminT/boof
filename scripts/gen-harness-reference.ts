@@ -186,7 +186,13 @@ function errorsFor(opName: string): string[] {
   if (Object.keys(shape).length > 0) list.push(`400 ${invalid}`);
   if (op.rest.ifMatch === "expectedVersion") list.push("409 plan_version_conflict");
   if (op.rest.ifMatch === "expectedUpdated")
-    list.push(op.name === "settings.update" ? "409 settings_modified" : "409 task_modified");
+    list.push(
+      op.name === "settings.update"
+        ? "409 settings_modified"
+        : op.name === "projects.update"
+          ? "409 project_modified"
+          : "409 task_modified",
+    );
   if (op.rest.idempotent) list.push("409 idempotency_conflict");
   list.push(...(EXTRA_ERRORS[op.name] ?? []));
   return [...new Set(list)];

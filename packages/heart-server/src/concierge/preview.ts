@@ -127,7 +127,10 @@ export async function previewChange(
   const preview = await buildPreview(op, input, project, hinted);
   return {
     title: sanitize(preview.title),
-    details: capDetails(preview.details),
+    details:
+      op.name === "projects.update"
+        ? preview.details.map((detail) => detail.text)
+        : capDetails(preview.details),
     destructive: preview.destructive,
     ...(preview.blocked ? { blocked: sanitize(preview.blocked) } : {}),
     guard: preview.guard,
@@ -272,9 +275,14 @@ function proseLines(body: string): string[] {
   return shown;
 }
 
+/** Above this many lines on either side no diff is computed: its table grows with n·m. */
+const DIFF_MAX_LINES = 2_000;
+
 function proseDiff(before: string, after: string): string[] {
   const oldLines = before.split("\n");
   const newLines = after.split("\n");
+  if (oldLines.length > DIFF_MAX_LINES || newLines.length > DIFF_MAX_LINES)
+    return proseLines(after);
   const lcs = Array.from({ length: oldLines.length + 1 }, () =>
     Array<number>(newLines.length + 1).fill(0),
   );
@@ -430,10 +438,24 @@ async function describeProject(
   destructive: boolean,
 ): Promise<Built> {
   const record = await readProject(project);
-  const details: Detail[] = [];
-  pushField(details, "brief", record.brief ?? "", text(input, "brief"), "update");
+  const brief = text(input, "brief");
+  if (brief === (record.brief ?? ""))
+    throw new OpError(409, "The description already has this text (no change)", "invalid_input");
+  // The user confirms what they read, so the whole proposed text is shown: no cap, no diff.
+  // Policy has already refused a text over the length limits and one with hidden characters.
+  const lines = brief.split("\n");
+  const details: Detail[] = [
+    {
+      kind: "field",
+      text: `description (brief), the complete new text (${lines.length} ${lines.length === 1 ? "line" : "lines"}):`,
+    },
+    ...lines.map((line, index) => ({
+      kind: "field" as const,
+      text: `${index + 1}| ${maskSecrets(sanitize(line))}`,
+    })),
+  ];
   return {
-    title: `Change the description of project "${cleanTitle(record.name)}"`,
+    title: `Change the description (brief) of project "${cleanTitle(record.name)}"`,
     details,
     destructive,
     guard: { kind: "project", id: record.id, stamp: record.updated },

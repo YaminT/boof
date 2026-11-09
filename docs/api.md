@@ -453,7 +453,7 @@ the stale-guard check. When the operation accepts it, that call also sets `expec
 when that field is the one the operation declares for `If-Match` and it matches the guard
 (`plan` uses `expectedVersion`; a task or epic uses `expectedUpdated`). The operation then
 refuses a target that moves between the check and the write. Its `plan_version_conflict`,
-`task_modified` or `epic_modified` is stored and returned as `409 change_stale`.
+`task_modified`, `epic_modified` or `project_modified` is stored and returned as `409 change_stale`.
 A second apply, another caller, or a change that is no longer pending is
 `404 change_not_found`. A changed target is `409 change_stale`. `discard` runs nothing.
 
@@ -466,9 +466,10 @@ codes, before the stream opens.
 
 **Principal.** Each request builds an in-memory principal `concierge-<userId>` (`trust: "review"`,
 `alwaysReview`). Its scopes are {`projects:read`, `plans:read`, `plans:write`, `tasks:read`,
-`tasks:write`, `projects:write`} ∩ the user's scopes. Its projects are {the pinned project} ∩ the user's projects.
-It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:control`.
-`projects:write` is held only so the one confirm tool below is listed; it never runs directly. No key is stored. New client ids that would start with `concierge-` are issued
+`tasks:write`} ∩ the user's scopes. Its projects are {the pinned project} ∩ the user's projects.
+It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:control` or
+`projects:write`. Confirm tools are listed by the user's rights, not the principal's, and run only
+after confirmation, with the user's rights. No key is stored. New client ids that would start with `concierge-` are issued
 as `client-concierge…` instead. A leftover `concierge-*` row in `auth/clients.json` still appears
 in the client list, but `get`, revoke and rotate return 404 for that id and the key cannot
 authenticate. For the user whose id matches that row, the assistant answers `409 concierge_unavailable` and names the file: remove
@@ -488,11 +489,17 @@ with the reason and the dialog offers no Confirm, only Discard and Close.
 | `confirm` | `tasks.delete`, `tasks.archive`, `tasks.queue`, `epics.delete`, `plans.removeGoal`, `plans.replaceGoals`, `projects.update` (description only)                                |
 
 `projects.update` is offered as a confirm action for one change only: the description (the `brief`
-field) of the pinned project. Any other field, another project id, or a missing `brief` is refused
-(`403 forbidden_scope`, `403 forbidden_project`) before a pending change exists, and again at apply.
-The preview reads `Change the description of project "<name>"` with the stored and the proposed text
-(cleaned, secrets masked, capped). The stamp is the project's `updated`; a change in between answers
-`409 change_stale` on apply.
+field) of the pinned project. The model sees a narrowed tool (`brief` only). It is listed only for
+a user who holds `projects:write` for the project, and a proposal from any other user is refused
+(`403 forbidden_scope`); any confirm tool is refused at propose when the user could not apply it.
+Any other field, another project id, or a missing `brief` is refused (`403 forbidden_scope`,
+`403 forbidden_project`) before a pending change exists, and again at apply. A description over
+4,000 characters or 60 lines, one with control, format or unusual space characters, and one equal
+to the stored text are refused (`400 invalid_input`: "too long to review; shorten it", "no change").
+The preview reads `Change the description (brief) of project "<name>"` and lists the whole new text
+line by line (secrets masked), so the user confirms exactly what is stored. The stamp is the
+project's `updated`; the apply passes it as `expectedUpdated`, and a change in between, even one
+that lands during the write, answers `409 change_stale`.
 
 Not offered: `tasks.diff`, `plans.import`, the `*.wait` polls, `tasks.stop`, `tasks.inject`,
 `tasks.answers`, `tasks.retry`, `tasks.skip`, `plans.sync`, other project writes, settings, accounts,

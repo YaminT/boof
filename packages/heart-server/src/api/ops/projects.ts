@@ -63,6 +63,8 @@ export const projectsCreate = defineOp({
   handler: (ctx, input) => ctx.services.createProject(input, ctx.principal),
 });
 
+const projectEtag = (p: { updated: string }) => `W/"${p.updated}"`;
+
 export const projectsGet = defineOp({
   name: "projects.get",
   title: "Get a project",
@@ -72,7 +74,7 @@ export const projectsGet = defineOp({
   projectScoped: true,
   input: byProject,
   output: ProjectViewSchema,
-  rest: { method: "GET", path: "/projects/{projectId}" },
+  rest: { method: "GET", path: "/projects/{projectId}", etag: projectEtag },
   mcp: { expose: true, name: "boof_get_project", annotations: READ },
   summary: (p) => `Project ${p.id}: ${p.name}${p.paused ? " (paused)" : ""}`,
   handler: async (ctx, input) => projectView(ctx, await ctx.services.getProject(input.projectId)),
@@ -93,16 +95,25 @@ export const projectsUpdate = defineOp({
         "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it",
       writeOnly: true,
     }),
+    expectedUpdated: z.string().max(100).optional().meta({
+      description:
+        "The project's `updated` stamp you last saw (HTTP: If-Match with the ETag); a changed project answers 409 project_modified.",
+    }),
   }),
   output: ProjectSchema.extend({ anthropicApiKeySet: z.boolean() }),
-  rest: { method: "PUT", path: "/projects/{projectId}" },
+  rest: {
+    method: "PUT",
+    path: "/projects/{projectId}",
+    ifMatch: "expectedUpdated",
+    etag: projectEtag,
+  },
   mcp: { expose: true, name: "boof_update_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Updated project ${p.id}`,
   audit: ({ anthropicApiKey }) =>
     anthropicApiKey === undefined
       ? {}
       : { anthropicApiKey: anthropicApiKey === null ? "removed" : "set" },
-  handler: async (ctx, { projectId, anthropicApiKey, ...patch }) => {
+  handler: async (ctx, { projectId, anthropicApiKey, expectedUpdated, ...patch }) => {
     if (anthropicApiKey !== undefined) {
       if (
         ctx.principal.kind === "client" &&
@@ -114,7 +125,12 @@ export const projectsUpdate = defineOp({
     // Fail before anything is saved when the key store cannot be read, so a store that is corrupt
     // or locked cannot leave the project changed (say, to project-key auth) and its key unstored.
     if (anthropicApiKey !== undefined) await ctx.services.projectKeys.has(projectId);
-    const project = await ctx.services.updateProject(projectId, patch, ctx.principal);
+    const project = await ctx.services.updateProject(
+      projectId,
+      patch,
+      ctx.principal,
+      expectedUpdated,
+    );
     if (typeof anthropicApiKey === "string")
       await ctx.services.projectKeys.set(projectId, anthropicApiKey);
     else if (anthropicApiKey === null) await ctx.services.projectKeys.delete(projectId);

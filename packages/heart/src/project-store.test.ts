@@ -194,6 +194,22 @@ describe("ProjectStore", () => {
     expect(p.labels).toEqual(["x"]);
   });
 
+  it("update with expectedUpdated applies once; the loser of a race gets modified", async () => {
+    const created = await store.create({ workingDirectory: await makeRepo("a"), id: "a" });
+    const results = await Promise.allSettled([
+      store.update("a", { brief: "one" }, { expectedUpdated: created.updated }),
+      store.update("a", { brief: "two" }, { expectedUpdated: created.updated }),
+    ]);
+    const lost = results.filter((r) => r.status === "rejected");
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as PromiseRejectedResult).reason).toMatchObject({ code: "modified" });
+    expect(["one", "two"]).toContain((await store.get("a"))!.brief);
+    await expect(
+      store.update("a", { brief: "late" }, { expectedUpdated: created.updated }),
+    ).rejects.toBeInstanceOf(ProjectError);
+  });
+
   it("updates fields, clears optional ones with null and bumps `updated`", async () => {
     const p = await store.create({ workingDirectory: await makeRepo("app") });
     const u = await store.update("app", {

@@ -30,7 +30,12 @@ import {
   type BoofMcpOptions,
   type ToolCallInfo,
 } from "./index.js";
-import { CONCIERGE_TOOLS, conciergeOps, conciergePrincipal } from "../concierge/policy.js";
+import {
+  CONCIERGE_TOOLS,
+  conciergeCanList,
+  conciergeOps,
+  conciergePrincipal,
+} from "../concierge/policy.js";
 
 let base: string;
 let root: string;
@@ -1018,6 +1023,8 @@ describe("MCP call gates", () => {
       authStore,
       project: "shop",
       gate: {},
+      listable: (op) =>
+        conciergeCanList(op, conciergePrincipal(LOCAL_PRINCIPAL, "shop"), LOCAL_PRINCIPAL, "shop"),
     });
     const client = new Client({ name: "concierge-wrapper", version: "1.0.0" });
     const [a, b] = InMemoryTransport.createLinkedPair();
@@ -1029,7 +1036,54 @@ describe("MCP call gates", () => {
     expect(
       tools.tools.find((tool) => tool.name === "boof_create_task")?.inputSchema.properties,
     ).not.toHaveProperty("projectId");
+    const update = tools.tools.find((tool) => tool.name === "boof_update_project");
+    expect(Object.keys(update?.inputSchema.properties ?? {})).toEqual(["brief"]);
+    expect(update?.inputSchema.required).toEqual(["brief"]);
+    expect(update?.description).toContain("description (brief)");
     await expect(client.listPrompts()).rejects.toThrow();
+  });
+
+  it("never lets the assistant's principal change the project, by tool call or direct op", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    const assistant = conciergePrincipal(LOCAL_PRINCIPAL, "shop");
+    expect(assistant.scopes.has("projects:write")).toBe(false);
+    // Even with no gate at all, the call runs under the assistant's principal and is refused.
+    const server = createConciergeMcpServer({
+      root,
+      principal: assistant,
+      services,
+      authStore,
+      project: "shop",
+      gate: {},
+    });
+    const client = new Client({ name: "concierge-direct", version: "1.0.0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    open.push(client);
+    expect((await client.listTools()).tools.some((t) => t.name === "boof_update_project")).toBe(
+      false,
+    );
+    for (const args of [{ paused: true }, { name: "Renamed" }, { brief: "x" }]) {
+      const result = await client.callTool({ name: "boof_update_project", arguments: args });
+      expect(result.isError).toBe(true);
+    }
+    for (const [name, input] of [
+      ["projects.update", { projectId: "shop", paused: true }],
+      ["projects.update", { projectId: "shop", name: "Renamed" }],
+      ["projects.update", { projectId: "shop", brief: "x" }],
+      ["projects.pause", { projectId: "shop" }],
+    ] as const) {
+      const op = registry.find((o) => o.name === name)!;
+      await expect(
+        op.execute(
+          { root, principal: assistant, services, authStore, now: () => new Date().toISOString() },
+          input,
+        ),
+      ).rejects.toMatchObject({ code: "forbidden_scope" });
+    }
+    const project = await services.getProject("shop");
+    expect(project.paused).toBe(false);
+    expect(project.name).not.toBe("Renamed");
   });
 
   it("lets a before answer replace a destructive call without running it", async () => {
