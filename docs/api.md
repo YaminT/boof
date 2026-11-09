@@ -494,10 +494,13 @@ a user who holds `projects:write` for the project, and a proposal from any other
 (`403 forbidden_scope`); any confirm tool is refused at propose when the user could not apply it.
 Any other field, another project id, or a missing `brief` is refused (`403 forbidden_scope`,
 `403 forbidden_project`) before a pending change exists, and again at apply. A description over
-4,000 characters or 60 lines, one with control, format or unusual space characters, and one equal
-to the stored text are refused (`400 invalid_input`: "too long to review; shorten it", "no change").
+4,000 characters or 60 lines, one with control, bidi, tag or other invisible format characters, one
+with a secret-like string ("remove secrets from the description"), and one equal to the stored text
+are refused (`400 invalid_input`). CRLF is turned into LF; NBSP, ideographic space, soft hyphen and a
+single ZWJ/ZWNJ between two visible characters (Persian text, emoji sequences) are allowed. The
+description tool is also not offered to a review-trust user, who may not apply it.
 The preview reads `Change the description (brief) of project "<name>"` and lists the whole new text
-line by line (secrets masked), so the user confirms exactly what is stored. The stamp is the
+line by line with leading indentation marked (`·` space, `→` tab), so the user confirms exactly what is stored. The stamp is the
 project's `updated`; the apply passes it as `expectedUpdated`, and a change in between, even one
 that lands during the write, answers `409 change_stale`.
 

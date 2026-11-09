@@ -789,18 +789,74 @@ describe("ConciergeService project description", () => {
     expect(await briefOf()).toBe("Someone else");
   });
 
-  it("masks a secret in the new description and shows all of the rest", async () => {
-    const secret = "sk-ant-api03-" + "A".repeat(40);
-    const long = `${secret} ${"word ".repeat(100)}end`;
-    agent = scriptedAgent([describeCall(long)]);
+  it("refuses a secret in the new description instead of masking it", async () => {
+    const key = "sk-ant-api03-" + "A".repeat(40);
+    const blob = "Ab3".repeat(16);
+    agent = scriptedAgent([describeCall(`use ${key}`), describeCall(`note: ${blob}`)]);
     concierge = new ConciergeService({ root, services, authStore, agent });
     const answer = await ask("reword");
-    const details = answer.pending[0]!.details.join("\n");
-    expect(details).not.toContain(secret);
-    expect(details).toContain("[REDACTED");
-    expect(details).toContain("word word word");
-    expect(details.trimEnd().endsWith("end")).toBe(true);
-    expect(details).not.toContain("…");
+    expect(answer.pending).toHaveLength(0);
+    const texts = JSON.stringify(agent.results);
+    expect(texts).toContain("remove secrets from the description");
+    expect(texts).not.toContain(key);
+  });
+
+  it("refuses a stored description with a secret at apply", async () => {
+    agent = scriptedAgent([describeCall("Fine")]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    await new ConciergeStore(root).update("demo", answer.conversationId, (c) => {
+      c.changes[0]!.input = { ...c.changes[0]!.input, brief: `x ${"Ab3".repeat(16)}` };
+    });
+    await expectCode(
+      concierge.apply(LOCAL_PRINCIPAL, "demo", answer.pending[0]!.id),
+      "invalid_input",
+    );
+    expect((await briefOf()) ?? "").not.toContain("Ab3Ab3");
+  });
+
+  it("accepts Persian, emoji sequences, NBSP and CRLF text, normalising line ends", async () => {
+    const text = "می\u200cخواهم\r\n👨\u200d👩\u200d👧 a\u00a0b";
+    agent = scriptedAgent([describeCall(text)]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    expect(answer.pending).toHaveLength(1);
+    expect(answer.pending[0]!.details).toHaveLength(3);
+    await concierge.apply(LOCAL_PRINCIPAL, "demo", answer.pending[0]!.id);
+    expect(await briefOf()).toBe(text.replace("\r\n", "\n"));
+  });
+
+  it("refuses a bidi override and a tag character", async () => {
+    agent = scriptedAgent([describeCall("a\u202eb"), describeCall("a\u{e0041}b")]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    expect(answer.pending).toHaveLength(0);
+    expect(agent.results.every((r) => (r as { isError?: boolean }).isError === true)).toBe(true);
+  });
+
+  it("shows the maximum 60 lines and a 4,000-character line in full", async () => {
+    const lines = Array.from({ length: 60 }, (_v, i) => `line ${i + 1}`);
+    agent = scriptedAgent([describeCall(lines.join("\n"))]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const sixty = await ask("reword");
+    expect(sixty.pending[0]!.details).toHaveLength(61);
+    expect(sixty.pending[0]!.details.at(-1)).toBe("60| line 60");
+  });
+
+  it("shows a 4,000-character line in full", async () => {
+    const long = "ab cd ".repeat(666) + "wxyz";
+    expect(long.length).toBe(4000);
+    agent = scriptedAgent([describeCall(long)]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const one = await ask("reword");
+    expect(one.pending[0]!.details[1]).toBe(`1| ${long}`);
+  });
+
+  it("keeps the leading indentation visible in the preview", async () => {
+    agent = scriptedAgent([describeCall("- a\n    - nested\n\tcode")]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    expect(answer.pending[0]!.details.slice(1)).toEqual(["1| - a", "2| ····- nested", "3| →code"]);
   });
 
   it("shows a fourth line carrying an instruction, in full", async () => {
@@ -824,6 +880,7 @@ describe("ConciergeService project description", () => {
     const texts = JSON.stringify(agent.results);
     expect(texts).toContain("too long to review");
     expect(texts).toContain("no change");
+    expect(texts).toContain("invalid_input");
     expect(await briefOf()).toBe("Same");
   });
 

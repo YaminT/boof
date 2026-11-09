@@ -260,6 +260,13 @@ function maskSecrets(value: string): string {
     );
 }
 
+/** Whether the preview's masker would redact anything in `value`. */
+export function containsSecret(value: string): boolean {
+  // Also the text as the preview shows it, where format characters are gone and could join a token.
+  const shown = value.replace(/[\p{Cf}]/gu, "");
+  return maskSecrets(value) !== value || maskSecrets(shown) !== shown;
+}
+
 function redact(secret: string): string {
   return `[REDACTED ${secret.length} chars]`;
 }
@@ -440,7 +447,7 @@ async function describeProject(
   const record = await readProject(project);
   const brief = text(input, "brief");
   if (brief === (record.brief ?? ""))
-    throw new OpError(409, "The description already has this text (no change)", "invalid_input");
+    throw new OpError(400, "The description already has this text (no change)", "invalid_input");
   // The user confirms what they read, so the whole proposed text is shown: no cap, no diff.
   // Policy has already refused a text over the length limits and one with hidden characters.
   const lines = brief.split("\n");
@@ -451,7 +458,7 @@ async function describeProject(
     },
     ...lines.map((line, index) => ({
       kind: "field" as const,
-      text: `${index + 1}| ${maskSecrets(sanitize(line))}`,
+      text: `${index + 1}| ${indentOf(line)}${sanitize(line)}`,
     })),
   ];
   return {
@@ -460,6 +467,12 @@ async function describeProject(
     destructive,
     guard: { kind: "project", id: record.id, stamp: record.updated },
   };
+}
+
+/** Leading spaces and tabs shown as visible marks, since `sanitize` trims them. */
+function indentOf(line: string): string {
+  const lead = /^[ \t\u00a0\u3000]*/.exec(line)?.[0] ?? "";
+  return Array.from(lead, (ch) => (ch === "\t" ? "→" : "·")).join("");
 }
 
 function taskGuard(task: { frontmatter: { id: string; updated: string } }): PendingChange["guard"] {

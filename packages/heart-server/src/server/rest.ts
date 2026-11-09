@@ -69,7 +69,18 @@ function setWarningHeader(c: Context, result: unknown): void {
   if (codes.length > 0) c.header("Boof-Warning", codes.join(", "));
 }
 
-function parseIfMatch(header: string, field: "expectedVersion" | "expectedUpdated"): unknown {
+const ETAG_NOUNS: Record<string, string> = {
+  tasks: "task",
+  projects: "project",
+  epics: "epic",
+  settings: "settings",
+};
+
+function parseIfMatch(
+  header: string,
+  field: "expectedVersion" | "expectedUpdated",
+  opName = "",
+): unknown {
   if (field === "expectedVersion") {
     const m = /^\s*(?:W\/)?"?(\d+)"?\s*$/.exec(header);
     if (!m) throw new OpError(400, 'If-Match must be a plan version such as "3"', "invalid_input");
@@ -79,7 +90,7 @@ function parseIfMatch(header: string, field: "expectedVersion" | "expectedUpdate
   if (!m)
     throw new OpError(
       400,
-      'If-Match must be a task ETag such as W/"2026-10-01T00:00:00.000Z"',
+      `If-Match must be a ${ETAG_NOUNS[opName.split(".")[0]] ?? "resource"} ETag such as W/"2026-10-01T00:00:00.000Z"`,
       "invalid_input",
     );
   if (m[1].includes('"')) {
@@ -197,7 +208,7 @@ function register(app: Hono, op: AnyOperation, deps: RestDeps, opts: MountOption
     if (op.rest.ifMatch) {
       const header = c.req.header("If-Match");
       if (header !== undefined && header.trim() !== "*") {
-        input[op.rest.ifMatch] = parseIfMatch(header, op.rest.ifMatch);
+        input[op.rest.ifMatch] = parseIfMatch(header, op.rest.ifMatch, op.name);
       }
     }
 

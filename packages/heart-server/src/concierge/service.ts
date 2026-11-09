@@ -36,6 +36,7 @@ import {
   userMayApply,
   conciergeOps,
   assertConfirmInput,
+  normalizeConfirmInput,
   conciergePrincipal,
   assertConciergeIdAvailable,
   RESULT_TEXT_CAP,
@@ -327,7 +328,11 @@ export class ConciergeService {
               "You may not make this change, so it cannot be proposed",
               "forbidden_scope",
             );
-          assertConfirmInput(op.name, parsed.data as Record<string, unknown>, projectId);
+          const confirmInput = normalizeConfirmInput(
+            op.name,
+            parsed.data as Record<string, unknown>,
+          );
+          assertConfirmInput(op.name, confirmInput, projectId);
           if (messagePending >= 5) {
             return {
               summary: "The pending change limit has been reached.",
@@ -337,16 +342,12 @@ export class ConciergeService {
           messagePending++;
           let stored = false;
           try {
-            const preview = await previewChange(
-              op,
-              parsed.data as Record<string, unknown>,
-              projectService,
-            );
+            const preview = await previewChange(op, confirmInput, projectService);
             const now = this.now();
             const change: PendingChange = {
               id: `chg-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
               op: op.name,
-              input: parsed.data as Record<string, unknown>,
+              input: confirmInput,
               title: preview.title,
               details: preview.details,
               destructive: preview.destructive,

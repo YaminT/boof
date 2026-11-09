@@ -4,6 +4,7 @@ import { registry } from "../api/index.js";
 import {
   CONCIERGE_SCOPES,
   assertConfirmInput,
+  normalizeConfirmInput,
   CONCIERGE_TOOLS,
   conciergeAllowedTools,
   assertConciergeIdAvailable,
@@ -143,6 +144,20 @@ describe("concierge MCP policy", () => {
     ).not.toContain(tool);
   });
 
+  it("does not offer projects.update to a review-trust user, whose apply would be forbidden_trust", () => {
+    const ops = conciergeOps(registry);
+    const tool = "mcp__boof__boof_update_project";
+    const scopes: Scope[] = ["projects:read", "projects:write", "tasks:read"];
+    const reviewer = principal("rv", scopes, "*", "review");
+    const trusted = principal("tr", scopes, "*", "trusted");
+    expect(
+      conciergeAllowedTools(ops, conciergePrincipal(reviewer, projectId), reviewer, projectId),
+    ).not.toContain(tool);
+    expect(
+      conciergeAllowedTools(ops, conciergePrincipal(trusted, projectId), trusted, projectId),
+    ).toContain(tool);
+  });
+
   it("offers no writes or confirmations to a read-only principal", () => {
     const reader = principal("reader", ["tasks:read"], [projectId], "review");
     const ops = conciergeOps(registry);
@@ -200,6 +215,26 @@ describe("assertConfirmInput", () => {
     ).not.toThrow();
   });
 
+  it.each([
+    ["Persian ZWNJ", "می\u200cخواهم"],
+    ["family emoji ZWJ sequence", "👨\u200d👩\u200d👧 family"],
+    ["NBSP and ideographic space", "a\u00a0b\u3000c"],
+    ["soft hyphen", "co\u00adoperate"],
+    ["tab and indentation", "  - item\n\tnested"],
+  ])("accepts %s", (_name, brief) => {
+    expect(() =>
+      assertConfirmInput("projects.update", { projectId: "p", brief }, "p"),
+    ).not.toThrow();
+  });
+
+  it("normalises CRLF to LF before the check", () => {
+    const input = { projectId: "p", brief: "a\r\nb" };
+    expect(() => assertConfirmInput("projects.update", input, "p")).toThrow();
+    const normal = normalizeConfirmInput("projects.update", input);
+    expect(normal.brief).toBe("a\nb");
+    expect(() => assertConfirmInput("projects.update", normal, "p")).not.toThrow();
+  });
+
   it("lets only the description of the current project through", () => {
     expect(() =>
       assertConfirmInput("projects.update", { projectId: "p", brief: "x" }, "p"),
@@ -218,7 +253,15 @@ describe("assertConfirmInput", () => {
     [{ projectId: "p", brief: Array(61).fill("a").join("\n") }, "invalid_input"],
     [{ projectId: "p", brief: "a\u200bb" }, "invalid_input"],
     [{ projectId: "p", brief: "a\u202eb" }, "invalid_input"],
-    [{ projectId: "p", brief: "a\u00a0b" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u2060b" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u200c\u200cb" }, "invalid_input"],
+    [{ projectId: "p", brief: "a \u200db" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u2066b" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u{e0067}b" }, "invalid_input"],
+    [{ projectId: "p", brief: "a\u202eb" }, "invalid_input"],
+    [{ projectId: "p", brief: `key ${"sk-ant-api03-" + "A".repeat(40)}` }, "invalid_input"],
+    [{ projectId: "p", brief: `blob ${"Ab3".repeat(16)}` }, "invalid_input"],
+    [{ projectId: "p", brief: `blob ${"Ab3".repeat(15)}\u00ad${"Ab3"}` }, "invalid_input"],
   ])("refuses %j", (input, code) => {
     expect(() => assertConfirmInput("projects.update", input, "p")).toThrowError(
       expect.objectContaining({ code }),

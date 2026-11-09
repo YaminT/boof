@@ -2,6 +2,7 @@ import { authorize, authorizeProject, hasScope, type Principal, type Scope } fro
 import type { AuthStore } from "@boof/heart";
 import type { AnyOperation } from "../api/index.js";
 import { OpError } from "../api/errors.js";
+import { containsSecret } from "./preview.js";
 
 export type ConciergeToolMode = "read" | "write" | "confirm";
 
@@ -60,6 +61,15 @@ export function conciergeOps(registry: readonly AnyOperation[]): AnyOperation[] 
   return registry.filter((op) => Object.hasOwn(CONCIERGE_TOOLS, op.name));
 }
 
+/** Line endings are normalised (CRLF to LF) before the text is checked, previewed and stored. */
+export function normalizeConfirmInput(
+  opName: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  if (opName !== "projects.update" || typeof input.brief !== "string") return input;
+  return { ...input, brief: input.brief.replace(/\r\n/g, "\n") };
+}
+
 /**
  * A confirm tool may be narrower than its operation. `projects.update` is offered for one change only:
  * the description (`brief`) of the project the conversation is about. Anything else is refused
@@ -87,12 +97,7 @@ export function assertConfirmInput(
       "forbidden_scope",
     );
   const brief = input.brief;
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]/u.test(brief.replace(/[\n\t ]/g, "")))
-    throw new OpError(
-      400,
-      "The description holds control, format or unusual space characters the preview cannot show; remove them",
-      "invalid_input",
-    );
+  assertBriefText(brief);
   if (brief.length > BRIEF_MAX_CHARS || brief.split("\n").length > BRIEF_MAX_LINES)
     throw new OpError(
       400,
@@ -101,8 +106,45 @@ export function assertConfirmInput(
     );
 }
 
+const VISIBLE_SPACES = /[\u00a0\u3000]/g;
+const JOINERS = /[\u200c\u200d]/;
+const UNSHOWABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]/u;
+
+/** Characters the preview cannot show are refused; ZWJ/ZWNJ only singly between two visible characters. */
+function assertBriefText(brief: string): void {
+  const chars = Array.from(brief);
+  const bad = chars.some((ch, i) => {
+    if (ch === "\n" || ch === "\t" || ch === " " || ch === "\u00ad") return false;
+    if (VISIBLE_SPACES.test(ch)) {
+      VISIBLE_SPACES.lastIndex = 0;
+      return false;
+    }
+    if (JOINERS.test(ch)) {
+      const before = chars[i - 1];
+      const after = chars[i + 1];
+      return !(before && after && !/[\s\p{Cf}]/u.test(before) && !/[\s\p{Cf}]/u.test(after));
+    }
+    return UNSHOWABLE.test(ch);
+  });
+  if (bad)
+    throw new OpError(
+      400,
+      "The description holds control, format or unusual space characters the preview cannot show; remove them",
+      "invalid_input",
+    );
+  if (containsSecret(brief))
+    throw new OpError(
+      400,
+      "The description looks like it contains a secret or an encoded blob; remove secrets from the description",
+      "invalid_input",
+    );
+}
+
 /** Whether `user` may apply `op` in `projectId`: the rule the assistant's confirm tools follow. */
 export function userMayApply(op: AnyOperation, user: Principal, projectId: string): boolean {
+  // A review-trust client may not change a project's description (`assertMayChangeProject`).
+  if (op.name === "projects.update" && user.kind === "client" && user.trust === "review")
+    return false;
   return (
     (op.scopes.length === 0 || op.scopes.some((scope) => authorize(user, scope))) &&
     authorizeProject(user, projectId)
