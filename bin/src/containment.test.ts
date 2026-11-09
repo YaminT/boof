@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,8 +21,102 @@ async function root() {
 }
 
 describe("agent containment", () => {
-  it.todo("a child with the agent env gets 401 on protected routes and no code for sign-in");
-  it.todo("the same child reads /healthz and /harness.txt (public by design)");
+  /** Start `serve -p 0 --no-runner` on a scratch root; run `fn` with its port; stop it. */
+  async function withServer<T>(
+    fn: (port: number, dataRoot: string, home: string) => T,
+  ): Promise<T> {
+    const dataRoot = await root();
+    const home = await root();
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        join(process.cwd(), "bin/src/boof-runner.ts"),
+        "serve",
+        "-d",
+        dataRoot,
+        "-p",
+        "0",
+        "--no-runner",
+      ],
+      { env: { PATH: process.env.PATH, HOME: home } },
+    );
+    try {
+      let text = "";
+      const port = await new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`serve did not start:\n${text}`)), 45_000);
+        child.stdout.on("data", (b: Buffer) => {
+          text += b.toString();
+          const m = /API:\s+http:\/\/[^:\s]+:(\d+)\/api/.exec(text);
+          if (m) {
+            clearTimeout(timer);
+            resolve(Number(m[1]));
+          }
+        });
+        child.on("exit", () => reject(new Error(`serve exited early:\n${text}`)));
+      });
+      child.removeAllListeners("exit");
+      return await fn(port, dataRoot, home);
+    } finally {
+      child.kill("SIGTERM");
+    }
+  }
+
+  /** What a task agent sees: the agent env, then plain HTTP on the server's own port. */
+  const probe = (port: number, home: string, dataRoot: string) => {
+    const script = `
+      const base = "http://127.0.0.1:${port}";
+      const get = async (path, init) => {
+        const res = await fetch(base + path, { redirect: "manual", ...init });
+        return { status: res.status, body: await res.text(), cookie: res.headers.get("set-cookie") };
+      };
+      (async () => {
+        const out = {};
+        out.projects = await get("/api/v1/projects");
+        out.settings = await get("/api/v1/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" });
+        out.clients = await get("/api/v1/auth/clients", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        out.mcp = await get("/mcp", { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+        out.signin = await get("/auth/browser");
+        out.badcode = await get("/auth/browser?code=bl_guess");
+        out.healthz = await get("/healthz");
+        out.harness = await get("/harness.txt");
+        console.log(JSON.stringify(out));
+      })();`;
+    const r = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf8",
+      env: agentEnv({ PATH: process.env.PATH, HOME: home }, [], agentMarkerFor(dataRoot)),
+    });
+    expect(r.status).toBe(0);
+    return JSON.parse(r.stdout) as Record<
+      string,
+      { status: number; body: string; cookie: string | null }
+    >;
+  };
+
+  it("a child with the agent env gets 401 on protected routes and no code for sign-in", async () => {
+    await withServer(async (port, dataRoot, home) => {
+      const seen = probe(port, home, dataRoot);
+      for (const key of ["projects", "settings", "clients"]) expect(seen[key]!.status).toBe(401);
+      expect(JSON.parse(seen.projects!.body).error.details.reason).toBe("browser_session_required");
+      expect(seen.mcp!.status).toBe(401);
+      expect(JSON.parse(seen.mcp!.body).error.details.reason).toBe("mcp_key_required");
+      for (const key of ["signin", "badcode"]) {
+        expect([400, 404]).toContain(seen[key]!.status);
+        expect(seen[key]!.cookie).toBeNull();
+      }
+      expect(await readdir(join(dataRoot, "projects")).catch(() => [])).toEqual([]);
+    });
+  }, 90_000);
+
+  it("the same child reads /healthz and /harness.txt (public by design)", async () => {
+    await withServer(async (port, dataRoot, home) => {
+      const seen = probe(port, home, dataRoot);
+      expect(seen.healthz!.status).toBe(200);
+      expect(seen.harness!.status).toBe(200);
+      expect(seen.harness!.body).toContain("mcp_key_required");
+    });
+  }, 90_000);
 
   it.each([
     [["-p80e-0", "-dR"], "R"],

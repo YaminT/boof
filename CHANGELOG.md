@@ -11,6 +11,25 @@
 
 - Add the opt-in `claude-agent` tool on the Claude Agent SDK: in-place steering of a `now` injection (with an optional model switch, and a kill-and-resume fallback), session resume and an SDK-reported cost estimate. It runs in bare mode with a per-project config folder and only the repo's permission rules. It runs through better-ccflare only when every pool account uses an API key, and otherwise with the project's own Anthropic API key; a task that cannot be authenticated does not start. It is not in the desktop app. Claude Code stays the default.
 
+### Security
+
+Agent containment, layer 1. This is not a sandbox: a process that runs as your OS user (a task agent included) can still edit the data root, unset the agent marker, read your browser's cookie store or drive your browser. Layer 2, an OS-level sandbox, is future work.
+
+- Browser sign-in (T3): under `local-trust` a keyless loopback request is the administrator only when it carries a valid browser session cookie (`boof_ui_<port>`, `HttpOnly`, `SameSite=Strict`). Any other keyless caller gets `401` with the reason and the fix. When the session store cannot be used safely the API answers `503` with the path and the fix. The cookie is shared across ports on `127.0.0.1`, so another local OS user who runs a server on any loopback port can receive it if your browser loads a page there, and could replay it as administrator. Port-isolated sessions are future work.
+- Sign-in links (T5): `boof-runner open` (with `-d`, `--port`, `--host`, `--revoke-all`) and the line `serve` prints give a single-use link, valid for 10 minutes. Under systemd (`JOURNAL_STREAM`) `serve` prints the `boof-runner open -d <data> --port <port>` command instead of a live link. `service install` and `status` print the same command with the data root and port.
+- MCP (T6): `boof-runner mcp` needs `--client <id>`; the keyless `local-mcp` identity and `--admin` are removed.
+- Agents (T7): task agents get no boof credential. They also get a marker, `BOOF_RUNNER_AGENT_OF`, that makes `boof-runner` refuse to act on the data root of the server that started them (exit 3). The check follows symlinks and `..`, and also covers `-d` roots in any position, `--data=` and `$BOOF_RUNNER_DATA_ROOT`. An agent that works in the server's own folder, where `./data` is the server's data root, is refused even with `-d <scratch>`; start it from another folder. A scratch data root elsewhere keeps working.
+- Data root (T8): the data root and its existing `auth`, `owlish`, `webhooks`, `audit`, `idempotency`, `concierge` and `claude-agent-config` folders are set to mode 700 at every start when you own them. `$HOME` and `/` are never changed, and a root that refuses `chmod` is logged and left alone. Sign-in sessions and `auth/clients.json` are refused (with a message that names the `chmod`) when a file or folder is owned by another user or is writable by group or others.
+- Desktop (T9): without `safeStorage` the app signs its own window in with a session it sets, instead of using keyless local trust.
+
+### Breaking changes and upgrade notes
+
+- Keyless access on loopback now works only for the web UI after sign-in. Open the UI with the link that boof-runner serve prints, or run boof-runner open and open its link. Scripts and curl on 127.0.0.1 need Authorization: Bearer <key> (boof-runner auth add).
+- MCP needs a client. POST /mcp needs an API key, and boof-runner mcp needs --client <id>; the keyless local-mcp identity and --admin are gone. Create a client once with boof-runner auth add --name mcp-host --scopes <list> --trust review and add --client <id> to your MCP host's command.
+- boof-runner refuses to act on the data root of the server whose task agent runs it (exit 3). This is a guard against careless or injected commands, not a sandbox.
+- The data root and its auth, owlish, webhooks, audit, idempotency, concierge and claude-agent-config folders are set to mode 700 at start when you own them. This keeps other local users out. It does not isolate task agents, which run as your user.
+- The desktop app without safeStorage now signs its window in with a session it sets itself, instead of keyless local trust.
+
 ## 0.3.0 (2026-11-05)
 
 ### Fixes
