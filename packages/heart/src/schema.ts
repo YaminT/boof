@@ -113,6 +113,90 @@ export const TaskOriginSchema = z.object({
 });
 export type TaskOrigin = z.infer<typeof TaskOriginSchema>;
 
+// ---- n8n (optional external pipeline steps) ----
+
+/** Where an external step runs in the pipeline. */
+export const EXTERNAL_STEP_POINTS = ["after-planner", "after-developer", "after-review"] as const;
+export type ExternalStepPoint = (typeof EXTERNAL_STEP_POINTS)[number];
+export const N8N_DEFAULT_TIMEOUT_MS = 1_800_000;
+/** No `..`, no `//`, no `?` or `#`, no leading `/`, 1-200 chars of [A-Za-z0-9._~:/-]. */
+export const WEBHOOK_PATH_PATTERN = /^(?!\/)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._~:/-]{1,200}$/;
+
+/** An http(s) URL without credentials, query or hash; a path (a proxy prefix) is allowed. */
+const n8nUrl = z
+  .string()
+  .max(2000)
+  .refine(
+    (v) => {
+      try {
+        const u = new URL(v);
+        return (
+          (u.protocol === "http:" || u.protocol === "https:") &&
+          u.username === "" &&
+          u.password === "" &&
+          u.search === "" &&
+          u.hash === "" &&
+          !v.includes("?") &&
+          !v.includes("#")
+        );
+      } catch {
+        return false;
+      }
+    },
+    { message: "must be an http(s) URL without credentials, query or hash" },
+  );
+
+const n8nTimeoutMs = z.number().int().min(10_000).max(86_400_000);
+
+export const N8nSettingsSchema = z.strictObject({
+  /** The n8n instance (editor and API); a path is allowed when n8n sits behind a prefix. */
+  baseUrl: n8nUrl,
+  /** Where webhooks live; default `${baseUrl}/webhook`. */
+  webhookBaseUrl: n8nUrl.optional(),
+  /** The URL n8n uses to reach boof, proxy prefix included. */
+  callbackBaseUrl: n8nUrl,
+  defaultTimeoutMs: n8nTimeoutMs.default(N8N_DEFAULT_TIMEOUT_MS),
+  /** Opt-in: a check task after a workflow edit. */
+  checks: z
+    .strictObject({
+      enabled: z.boolean().default(false),
+      projectId: kebab,
+      autoQueue: z.boolean().default(false),
+      pollIntervalMs: z.number().int().min(60_000).max(86_400_000).default(300_000),
+    })
+    .optional(),
+});
+export type N8nSettings = z.infer<typeof N8nSettingsSchema>;
+
+/** One external (n8n) step of a project's pipeline. */
+export const ExternalStepSchema = z.strictObject({
+  id: kebab,
+  label: z.string().trim().min(1).max(80),
+  at: z.enum(EXTERNAL_STEP_POINTS),
+  workflowId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  webhookPath: z.string().regex(WEBHOOK_PATH_PATTERN, "invalid webhook path"),
+  timeoutMs: n8nTimeoutMs.optional(),
+  onFailure: z.enum(["fail", "continue"]).default("fail"),
+  sendDiff: z.boolean().default(false),
+});
+export type ExternalStep = z.infer<typeof ExternalStepSchema>;
+
+const ExternalStepsSchema = z
+  .array(ExternalStepSchema)
+  .max(10)
+  .superRefine((steps, ctx) => {
+    const seen = new Set<string>();
+    for (const [i, s] of steps.entries()) {
+      if (seen.has(s.id))
+        ctx.addIssue({
+          code: "custom",
+          message: `duplicate external step id: ${s.id}`,
+          path: [i, "id"],
+        });
+      seen.add(s.id);
+    }
+  });
+
 /** Canonical task frontmatter (task-file spec). */
 export const TaskFrontmatterSchema = z.object({
   id: kebab,
@@ -165,6 +249,15 @@ export const TaskFrontmatterSchema = z.object({
   epicId: kebab.optional(),
   // The parent task (one level only). Written only by hierarchy.ts, through TaskStore.modify.
   parentId: kebab.optional(),
+  // Set on a check task created after an n8n workflow edit.
+  n8nCheck: z
+    .object({
+      workflowId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+      workflowName: z.string().min(1).max(200),
+      webhookPath: z.string().regex(WEBHOOK_PATH_PATTERN),
+      updatedAt: isoDatetime,
+    })
+    .optional(),
   created: isoDatetime,
   updated: isoDatetime,
 });
@@ -519,6 +612,8 @@ export const SettingsSchema = z.object({
   owlish: OwlishSettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
   webhooks: z.array(WebhookSchema).optional(),
+  /** The optional n8n instance; managed through the n8n operations, never PUT /settings. */
+  n8n: N8nSettingsSchema.optional(),
   models: z.record(z.string(), z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -634,6 +729,8 @@ export const ProjectSchema = z.object({
   worktree: ProjectWorktreeOverrideSchema.optional(),
   retries: ProjectRetriesOverrideSchema.optional(),
   budget: ProjectBudgetOverrideSchema.optional(),
+  /** External (n8n) steps, at most 10. */
+  externalSteps: ExternalStepsSchema.optional(),
   /** Plan 03: write goal status back into the repo XML. */
   planWriteBack: z.boolean().default(true),
   labels: z.array(z.string()).default([]),
@@ -658,6 +755,7 @@ export const ProjectPatchSchema = z
     worktree: ProjectWorktreeOverrideSchema.nullable(),
     retries: ProjectRetriesOverrideSchema.nullable(),
     budget: ProjectBudgetOverrideSchema.nullable(),
+    externalSteps: ExternalStepsSchema.nullable(),
     planWriteBack: z.boolean(),
     labels: z.array(z.string().max(100)).max(50),
   })

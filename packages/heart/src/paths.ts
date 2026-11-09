@@ -68,6 +68,13 @@ export interface DataRootPaths {
   owlishProjectKeys: string;
   /** Private Claude Agent SDK config folders, isolated per project. */
   claudeAgentConfigs: string;
+  n8n: string;
+  /** n8n API key and webhook secret, mode 0600. */
+  n8nSecrets: string;
+  n8nWorkflows: string;
+  n8nSeen: string;
+  /** One record per external-step run (token hash only). */
+  externalRuns: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -89,6 +96,11 @@ export function dataRootPaths(root: string): DataRootPaths {
     owlishSecrets: join(root, "owlish", "secrets.json"),
     owlishProjectKeys: join(root, "owlish", "project-keys.json"),
     claudeAgentConfigs: join(root, "claude-agent-config"),
+    n8n: join(root, "n8n"),
+    n8nSecrets: join(root, "n8n", "secrets.json"),
+    n8nWorkflows: join(root, "n8n", "workflows.json"),
+    n8nSeen: join(root, "n8n", "seen.json"),
+    externalRuns: join(root, "external-runs"),
   };
 }
 
