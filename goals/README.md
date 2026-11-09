@@ -102,7 +102,7 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`ui-minimum-expandable-interface`](ui-minimum-expandable-interface/goal.boof.xml) — A simple panel first, expandable to the complex one; complexity stays in the backend
 - [x] [`project-create-with-path`](project-create-with-path/goal.boof.xml) — Create a project with a new, existing or automatic path, starting with a brief (after: chat-console)
 - [x] [`chat-console`](chat-console/goal.boof.xml) — A terminal-like chat box at the bottom of every page that talks to the page (after: owlish-accounts)
-- [ ] [`n8n-pipelines`](n8n-pipelines/goal.boof.xml) — Low priority: n8n can run boof's process; boof works with or without it; each workflow edit adds a check task
+- [x] [`n8n-pipelines`](n8n-pipelines/goal.boof.xml) — Low priority: n8n can run boof's process; boof works with or without it; each workflow edit adds a check task
 
 ## UI redesign, remaining (2026-10-29)
 
