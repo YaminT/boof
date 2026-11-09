@@ -1,6 +1,18 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +22,7 @@ import {
   BROWSER_SESSION_IDLE_MS,
   BROWSER_SESSION_MAX_MS,
   BrowserSessionStore,
+  UnsafeBrowserSessionPathError,
 } from "./browser-session-store.js";
 import { browserSessionCookieName } from "./index.js";
 import { dataRootPaths } from "./paths.js";
@@ -250,32 +263,35 @@ describe("BrowserSessionStore", () => {
     expect(await store.revokeAll()).toBe(0);
   });
 
-  it("verify reloads same-size rewrites with a forced identical mtime", async () => {
-    const first = await store.createSession();
-    const path = dataRootPaths(root).browserSessions;
-    const before = statSync(path, { bigint: true });
-    const mtimeMs = Number(before.mtimeNs) / 1_000_000;
-    vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 5_000);
-    expect((await store.verify(first.token))?.id).toBe(first.session.id);
-    const other = new BrowserSessionStore(root, () => clock);
-    expect(await other.revokeAll()).toBe(1);
-    const second = await other.createSession();
-    expect(statSync(path, { bigint: true }).size).toBe(before.size);
-    const seconds = before.mtimeNs / 1_000_000_000n;
-    const nanos = before.mtimeNs % 1_000_000_000n;
-    execFileSync("touch", ["-m", "-d", `@${seconds}.${nanos.toString().padStart(9, "0")}`, path]);
-    expect(statSync(path, { bigint: true }).mtimeNs).toBe(before.mtimeNs);
-    expect(statSync(path, { bigint: true }).size).toBe(before.size);
-    vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 1_000);
-    try {
-      expect(await store.verify(first.token)).toBeNull();
-      expect((await store.verify(second.token))?.id).toBe(second.session.id);
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
+  it.skipIf(process.platform !== "linux")(
+    "verify reloads same-size rewrites with a forced identical mtime",
+    async () => {
+      const first = await store.createSession();
+      const path = dataRootPaths(root).browserSessions;
+      const before = statSync(path, { bigint: true });
+      const mtimeMs = Number(before.mtimeNs) / 1_000_000;
+      vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 5_000);
+      expect((await store.verify(first.token))?.id).toBe(first.session.id);
+      const other = new BrowserSessionStore(root, () => clock);
+      expect(await other.revokeAll()).toBe(1);
+      const second = await other.createSession();
+      expect(statSync(path, { bigint: true }).size).toBe(before.size);
+      const seconds = before.mtimeNs / 1_000_000_000n;
+      const nanos = before.mtimeNs % 1_000_000_000n;
+      execFileSync("touch", ["-m", "-d", `@${seconds}.${nanos.toString().padStart(9, "0")}`, path]);
+      expect(statSync(path, { bigint: true }).mtimeNs).toBe(before.mtimeNs);
+      expect(statSync(path, { bigint: true }).size).toBe(before.size);
+      vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 1_000);
+      try {
+        expect(await store.verify(first.token)).toBeNull();
+        expect((await store.verify(second.token))?.id).toBe(second.session.id);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(process.platform !== "linux")(
     "verify reloads a same-size rewrite after the recent-mtime window",
     async () => {
       const first = await store.createSession();
@@ -413,7 +429,7 @@ describe("BrowserSessionStore", () => {
     expect(after).toContain(sha256Hex(redeemed!.token));
   });
 
-  it.skipIf(process.platform === "win32")("modes: auth dir 0700, both files 0600", async () => {
+  it.skipIf(process.platform !== "linux")("modes: auth dir 0700, both files 0600", async () => {
     await store.createLink();
     await store.createSession();
     const paths = dataRootPaths(root);
@@ -560,11 +576,11 @@ describe("BrowserSessionStore", () => {
     expect(await store.redeemLink(link.code)).toBeNull();
   });
 
-  it("continues when chmod is unsupported and warns once per path", async () => {
+  it("checks ownership and mode after chmod fails, warning once per path", async () => {
     const paths = dataRootPaths(root);
     const chmod = vi.fn(async () => {
       const error = new Error("unsupported") as NodeJS.ErrnoException;
-      error.code = "ENOTSUP";
+      error.code = "EIO";
       throw error;
     });
     const portable = new BrowserSessionStore(root, () => clock, { chmod });
@@ -584,6 +600,88 @@ describe("BrowserSessionStore", () => {
       warning.mockRestore();
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses planted writable auth directory and session file",
+    async () => {
+      const created = await store.createSession();
+      const paths = dataRootPaths(root);
+      await chmod(paths.auth, 0o777);
+      await chmod(paths.browserSessions, 0o666);
+      expect(await store.verify(created.token)).toBeNull();
+      await expect(store.createLink()).rejects.toBeInstanceOf(UnsafeBrowserSessionPathError);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("refuses auth owned by another uid", async () => {
+    const created = await store.createSession();
+    const foreign = new BrowserSessionStore(root, () => clock, { uid: process.getuid!() + 1 });
+    expect(await foreign.verify(created.token)).toBeNull();
+    await expect(foreign.createLink()).rejects.toThrow(/owned by uid/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses writable non-sticky root and accepts sticky root",
+    async () => {
+      const created = await store.createSession();
+      await chmod(root, 0o770);
+      expect(await store.verify(created.token)).toBeNull();
+      await expect(store.createLink()).rejects.toThrow(/group-writable/);
+      await chmod(root, 0o1770);
+      expect((await store.verify(created.token))?.id).toBe(created.session.id);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "warns once and continues with extra read bits",
+    async () => {
+      const created = await store.createSession();
+      const paths = dataRootPaths(root);
+      await chmod(paths.auth, 0o755);
+      await chmod(paths.browserSessions, 0o644);
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect((await store.verify(created.token))?.id).toBe(created.session.id);
+        expect((await store.verify(created.token))?.id).toBe(created.session.id);
+        expect(warning.mock.calls.flat().join(" ")).toContain(paths.browserSessions);
+        expect(
+          warning.mock.calls.filter((call) => String(call[0]).includes(paths.browserSessions)),
+        ).toHaveLength(1);
+      } finally {
+        warning.mockRestore();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("refuses auth symlink", async () => {
+    const created = await store.createSession();
+    const paths = dataRootPaths(root);
+    const moved = join(root, "auth-real");
+    await rename(paths.auth, moved);
+    await symlink(moved, paths.auth);
+    expect(await store.verify(created.token)).toBeNull();
+    await expect(store.createLink()).rejects.toThrow(/safe directory/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "checks the opened file handle before reading",
+    async () => {
+      const created = await store.createSession();
+      const paths = dataRootPaths(root);
+      let swapped = false;
+      const checked = new BrowserSessionStore(root, () => clock, {
+        open: async (path, flags, mode) => {
+          const handle = await open(path, flags, mode);
+          if (path === paths.browserSessions && !swapped) {
+            swapped = true;
+            await chmod(path, 0o666);
+          }
+          return handle;
+        },
+      });
+      expect(await checked.verify(created.token)).toBeNull();
+    },
+  );
 
   it("browserSessionCookieName(4319) is boof_ui_4319", () => {
     expect(browserSessionCookieName(4319)).toBe("boof_ui_4319");

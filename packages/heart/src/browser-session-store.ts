@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readFile, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, open } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
 import { z } from "zod";
 import { atomicWrite } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
@@ -19,7 +20,24 @@ const TOUCH_MIN_MS = 60_000;
 const CLOCK_SKEW_MS = 60_000;
 const RACY_MTIME_MS = 2_000;
 
-class CorruptBrowserSessionFileError extends Error {}
+class CorruptBrowserSessionFileError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
+
+export class UnsafeBrowserSessionPathError extends Error {
+  constructor(
+    readonly path: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "UnsafeBrowserSessionPathError";
+  }
+}
 
 export function browserSessionCookieName(port: number): string {
   return `boof_ui_${port}`;
@@ -199,11 +217,20 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private readonly loggedCorruptPaths = new Set<string>();
   private readonly chmodFn: typeof chmod;
   private readonly warnedChmodPaths = new Set<string>();
+  private readonly root: string;
+  private readonly uid: number | undefined;
+  private readonly openFn: typeof open;
+  private readonly loggedUnsafePaths = new Set<string>();
 
   constructor(
     root: string,
     private readonly now: () => number = Date.now,
-    opts: { lock?: ProcessLockOptions; chmod?: typeof chmod } = {},
+    opts: {
+      lock?: ProcessLockOptions;
+      chmod?: typeof chmod;
+      uid?: number;
+      open?: typeof open;
+    } = {},
   ) {
     const paths = dataRootPaths(root);
     this.linksPath = paths.browserLinks;
@@ -212,6 +239,9 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     this.lockPath = `${paths.auth}/.browser-session.lock`;
     this.lockOpts = opts.lock ?? {};
     this.chmodFn = opts.chmod ?? chmod;
+    this.openFn = opts.open ?? open;
+    this.root = paths.root;
+    this.uid = opts.uid ?? process.getuid?.();
   }
 
   async createLink(): Promise<{ code: string; expiresAt: string }> {
@@ -257,6 +287,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   async verify(token: string | undefined): Promise<BrowserSession | null> {
     try {
       if (typeof token !== "string" || token.length === 0) return null;
+      await this.assertTrustedDirectories();
       const sessions = await this.cachedSessions();
       if (!sessions) return null;
       const match = findByHash(sessions, token);
@@ -267,6 +298,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       const updated = await this.touch(token, nowMs);
       return updated ? toPublic(updated) : null;
     } catch (error) {
+      if (error instanceof UnsafeBrowserSessionPathError) {
+        this.logUnsafeOnce(error);
+        return null;
+      }
       if (!(error instanceof CorruptBrowserSessionFileError) && !this.loggedUnexpected) {
         this.loggedUnexpected = true;
         console.error(
@@ -331,6 +366,8 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   ): Promise<T> {
     return (async () => {
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
+      await this.chmodPortable(this.authDir, 0o700);
+      await this.assertTrustedDirectories();
       return withProcessLock(
         this.lockPath,
         this.lockOpts,
@@ -343,7 +380,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             links = await this.readLinks();
           } catch (error) {
             if (!this.isCorrupt(error)) throw error;
-            this.logCorruptOnce(this.linksPath);
+            this.logCorruptOnce(
+              this.linksPath,
+              error instanceof CorruptBrowserSessionFileError ? error.code : undefined,
+            );
             if (!resetCorrupt) throw error;
             links = [];
             linksCorrupt = true;
@@ -352,7 +392,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             sessions = await this.readSessions();
           } catch (error) {
             if (!this.isCorrupt(error)) throw error;
-            this.logCorruptOnce(this.sessionsPath);
+            this.logCorruptOnce(
+              this.sessionsPath,
+              error instanceof CorruptBrowserSessionFileError ? error.code : undefined,
+            );
             if (!resetCorrupt) throw error;
             sessions = [];
             sessionsCorrupt = true;
@@ -392,13 +435,30 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   /** Missing file is an empty list. Anything else throws, without the file body in the message. */
   private async readRecords<T>(path: string, parse: (text: string) => T[]): Promise<T[]> {
     let text: string;
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      text = await readFile(path, "utf8");
+      const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+      handle = await this.openFn(path, flags);
+      const fileStat = await handle.stat();
+      this.assertSafeStat(path, fileStat, "file");
+      if (this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
+      text = await handle.readFile("utf8");
     } catch (err) {
+      if (err instanceof UnsafeBrowserSessionPathError) throw err;
+      if ((err as NodeJS.ErrnoException).code === "ELOOP") {
+        throw new UnsafeBrowserSessionPathError(
+          path,
+          `${path} is not a safe file; chmod 600 ${path}`,
+        );
+      }
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      const code = (err as NodeJS.ErrnoException).code;
       throw new CorruptBrowserSessionFileError(
-        `${path} is unreadable; not updating browser sessions`,
+        `${path} is unreadable (${code ?? "unknown"}); not updating browser sessions`,
+        code,
       );
+    } finally {
+      await handle?.close();
     }
     try {
       return parse(text);
@@ -430,9 +490,12 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private async persist(path: string, body: unknown): Promise<void> {
     await mkdir(this.authDir, { recursive: true, mode: 0o700 });
     await this.chmodPortable(this.authDir, 0o700);
+    await this.assertTrustedDirectories();
     // The process lock already serializes writers; avoid re-entering a non-reentrant file lock.
     await atomicWrite(path, `${JSON.stringify(body, null, 2)}\n`, 0o600);
     await this.chmodPortable(path, 0o600);
+    const fileStat = await lstat(path);
+    this.assertSafeStat(path, fileStat, "file");
     if (path === this.sessionsPath) this.cache = null;
   }
 
@@ -443,11 +506,17 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private async cachedSessions(): Promise<SessionRecord[] | null> {
     let fileStat: { mtimeMs: number; size: number };
     try {
-      const st = await stat(this.sessionsPath);
+      const st = await lstat(this.sessionsPath);
+      this.assertSafeStat(this.sessionsPath, st, "file");
+      if (this.hasReadBits(st.mode)) this.warnReadBits(this.sessionsPath);
       fileStat = { mtimeMs: st.mtimeMs, size: st.size };
       this.loggedStatError = false;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
+      if (err instanceof UnsafeBrowserSessionPathError) {
+        this.logUnsafeOnce(err);
+        return null;
+      }
       if (code === "ENOENT") {
         this.cache = null;
         return [];
@@ -473,13 +542,16 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       const sessions = await this.readSessions();
       this.cache = { ...fileStat, readAtMs: Date.now(), sessions, failed: false };
       return sessions;
-    } catch {
-      const alreadyLogged =
-        this.cache?.failed === true &&
-        this.cache.mtimeMs === fileStat.mtimeMs &&
-        this.cache.size === fileStat.size;
+    } catch (error) {
+      if (error instanceof UnsafeBrowserSessionPathError) {
+        this.logUnsafeOnce(error);
+        return null;
+      }
       this.cache = { ...fileStat, readAtMs: Date.now(), sessions: [], failed: true };
-      if (!alreadyLogged) this.logCorruptOnce(this.sessionsPath);
+      this.logCorruptOnce(
+        this.sessionsPath,
+        error instanceof CorruptBrowserSessionFileError ? error.code : undefined,
+      );
       return null;
     }
   }
@@ -491,24 +563,92 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     );
   }
 
-  private logCorruptOnce(path: string): void {
+  private logCorruptOnce(path: string, code?: string): void {
     if (this.loggedCorruptPaths.has(path)) return;
     this.loggedCorruptPaths.add(path);
-    this.logBad(path);
+    this.logBad(path, code);
+  }
+
+  private async assertTrustedDirectories(): Promise<void> {
+    if (this.uid === undefined) return; // Windows has no POSIX ownership/mode contract.
+    const rootStat = await lstat(this.root);
+    this.assertSafeStat(this.root, rootStat, "root");
+    const authStat = await lstat(this.authDir);
+    this.assertSafeStat(this.authDir, authStat, "directory");
+    if (this.hasReadBits(authStat.mode)) this.warnReadBits(this.authDir);
+  }
+
+  private assertSafeStat(path: string, fileStat: Stats, kind: "root" | "directory" | "file"): void {
+    if (this.uid === undefined) return;
+    const mode = fileStat.mode & 0o7777;
+    const ownerOk =
+      kind === "root" ? fileStat.uid === this.uid || fileStat.uid === 0 : fileStat.uid === this.uid;
+    const typeOk =
+      kind === "root" ||
+      (kind === "directory"
+        ? fileStat.isDirectory() && !fileStat.isSymbolicLink()
+        : fileStat.isFile());
+    const writable = (mode & 0o022) !== 0 && !(kind === "root" && (mode & 0o1000) !== 0);
+    const fix =
+      kind === "root"
+        ? "use a data root you own"
+        : `chmod ${kind === "file" ? "600" : "700"} ${path}`;
+    if (!typeOk)
+      throw new UnsafeBrowserSessionPathError(path, `${path} is not a safe ${kind}; ${fix}`);
+    if (!ownerOk)
+      throw new UnsafeBrowserSessionPathError(
+        path,
+        `${path} is owned by uid ${fileStat.uid}; ${fix}`,
+      );
+    if (writable)
+      throw new UnsafeBrowserSessionPathError(
+        path,
+        `${path} is group-writable or world-writable (mode ${mode.toString(8)}); ${fix}`,
+      );
+  }
+
+  private hasReadBits(mode: number): boolean {
+    return (mode & 0o044) !== 0;
+  }
+
+  private warnReadBits(path: string): void {
+    if (this.warnedChmodPaths.has(`read:${path}`)) return;
+    this.warnedChmodPaths.add(`read:${path}`);
+    console.warn(`browser sessions: ${path} has group or world read bits`);
+  }
+
+  private logUnsafeOnce(error: UnsafeBrowserSessionPathError): void {
+    if (this.loggedUnsafePaths.has(error.path)) return;
+    this.loggedUnsafePaths.add(error.path);
+    console.error(`browser sessions: ${error.message}`);
   }
 
   private async chmodPortable(path: string, mode: number): Promise<void> {
+    if (path === this.authDir && this.uid !== undefined) {
+      const before = await lstat(path);
+      if (before.isSymbolicLink()) {
+        this.assertSafeStat(path, before, "directory");
+      }
+    }
     try {
       await this.chmodFn(path, mode);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EINVAL") throw error;
       if (!this.warnedChmodPaths.has(path)) {
         this.warnedChmodPaths.add(path);
         console.warn(
-          `browser sessions: could not set permissions on ${path} (${code}); continuing`,
+          `browser sessions: could not set permissions on ${path} (${code ?? "unknown"}); checking ownership and mode`,
         );
       }
+    }
+    if (path === this.authDir) {
+      const directoryStat = await lstat(path);
+      this.assertSafeStat(path, directoryStat, "directory");
+      if (this.hasReadBits(directoryStat.mode)) this.warnReadBits(path);
+    } else {
+      const fileStat = await lstat(path);
+      this.assertSafeStat(path, fileStat, "file");
+      if (this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
     }
   }
 }
