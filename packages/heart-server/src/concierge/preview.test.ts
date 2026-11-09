@@ -426,7 +426,72 @@ describe("previewChange", () => {
     );
     expect(preview.details.join("\n")).not.toContain("sk-ant-api03");
     expect(preview.details.join("\n")).not.toContain("ghp_");
-    expect(preview.details.join("\n")).toContain("[REDACTED]");
+    expect(preview.details.join("\n")).toContain("[REDACTED 29 chars]");
+  });
+
+  it("masks vendor keys after stripping zero-width characters", async () => {
+    const keys = [
+      "sk-ant-api03-abcdefghijklmnop",
+      "github_pat_abcdefghijklmnop",
+      "ghp_abcdefghijklmnopqrstuvwx",
+      "xoxb-abcdefghijklmnop",
+      "AKIA1234567890ABCDEF",
+    ];
+    const invisibles = ["\u200B", "\u2060", "\uFEFF"];
+    const task = await project.create({ title: "Keys", prompt: "safe" });
+    for (const key of keys) {
+      for (const invisible of invisibles) {
+        const attacked = key.slice(0, 8) + invisible + key.slice(8);
+        const preview = await previewChange(
+          op("tasks.update"),
+          { projectId: "demo", taskId: task.frontmatter.id, prompt: attacked },
+          project,
+        );
+        expect(preview.details.join("\n")).not.toContain(key);
+        expect(preview.details.join("\n")).toContain(`[REDACTED ${key.length} chars]`);
+      }
+    }
+  });
+
+  it("keeps commit SHAs and slash paths visible while masking mixed tokens", async () => {
+    const sha1 = "a".repeat(40);
+    const sha256 = "b".repeat(64);
+    const path = "packages/heartserver/src/concierge/previewfile/x";
+    const token = "AbcdefghijKLMNOPQRSTuvwxyzabcd0123456789EFGHijkl";
+    const task = await project.create({ title: "Shapes", prompt: "safe" });
+    const preview = await previewChange(
+      op("tasks.update"),
+      {
+        projectId: "demo",
+        taskId: task.frontmatter.id,
+        prompt: `${sha1}\n${sha256}\n${path}`,
+      },
+      project,
+    );
+    const details = preview.details.join("\n");
+    expect(details).toContain(sha1);
+    expect(details).toContain(sha256);
+    expect(details).toContain(path);
+    const tokenPreview = await previewChange(
+      op("tasks.update"),
+      { projectId: "demo", taskId: task.frontmatter.id, prompt: token },
+      project,
+    );
+    expect(tokenPreview.details.join("\n")).toContain("[REDACTED 48 chars]");
+    expect(tokenPreview.details.join("\n")).not.toContain(token);
+  });
+
+  it("masks before capping so a capped preview never exposes a vendor key prefix", async () => {
+    const secret = `sk-ant-api03-${"a".repeat(200)}`;
+    const task = await project.create({ title: "Long key", prompt: "safe" });
+    const preview = await previewChange(
+      op("tasks.update"),
+      { projectId: "demo", taskId: task.frontmatter.id, prompt: secret },
+      project,
+    );
+    const details = preview.details.join("\n");
+    expect(details).not.toContain("sk-ant-api03-");
+    expect(details).toContain(`[REDACTED ${secret.length} chars]`);
   });
 
   it("keeps a pending status warning visible after many earlier input fields", async () => {

@@ -238,17 +238,30 @@ function changeTitle(
 }
 
 function quoteLine(line: string): string {
-  return `"${cleanText(maskSecrets(line), PART_MAX)}"`;
+  return `"${maskedText(line, PART_MAX)}"`;
 }
 
 function maskSecrets(value: string): string {
   return value
-    .replace(/sk-ant-[A-Za-z0-9_-]{12,}/g, "[REDACTED]")
-    .replace(/github_pat_[A-Za-z0-9_]{12,}/g, "[REDACTED]")
-    .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, "[REDACTED]")
-    .replace(/xox[abp]-[A-Za-z0-9-]{12,}/g, "[REDACTED]")
-    .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]")
-    .replace(/\b(?:[A-Fa-f0-9]{40,}|[A-Za-z0-9+/]{40,}={0,2})\b/g, "[REDACTED]");
+    .replace(/sk-ant-[A-Za-z0-9_-]{12,}/g, redact)
+    .replace(/github_pat_[A-Za-z0-9_]{12,}/g, redact)
+    .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, redact)
+    .replace(/xox[abp]-[A-Za-z0-9-]{12,}/g, redact)
+    .replace(/AKIA[0-9A-Z]{16}/g, redact)
+    .replace(/\b[A-Fa-f0-9]{32,}\b/g, (match) =>
+      match.length === 40 || match.length === 64 ? match : redact(match),
+    )
+    .replace(/\b[A-Za-z0-9+]{40,}={0,2}\b/g, (match) =>
+      /[A-Z]/.test(match) && /[a-z]/.test(match) && /[0-9]/.test(match) ? redact(match) : match,
+    );
+}
+
+function redact(secret: string): string {
+  return `[REDACTED ${secret.length} chars]`;
+}
+
+function maskedText(value: string, max: number): string {
+  return cleanText(maskSecrets(sanitize(value)), max);
 }
 
 function proseLines(body: string): string[] {
@@ -307,15 +320,15 @@ function sameValue(before: unknown, after: unknown): boolean {
 function showValue(value: unknown): string {
   if (value === null || value === undefined) return "(none)";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "string") return `"${cleanText(maskSecrets(value), PART_MAX)}"`;
+  if (typeof value === "string") return `"${maskedText(value, PART_MAX)}"`;
   if (
     Array.isArray(value) &&
     value.every((item) => ["string", "number", "boolean"].includes(typeof item))
   ) {
     if (value.length === 0) return "(none)";
-    return cleanText(maskSecrets(value.map(String).join(", ")), PART_MAX);
+    return maskedText(value.map(String).join(", "), PART_MAX);
   }
-  return `"${cleanText(maskSecrets(JSON.stringify(value) ?? ""), PART_MAX)}"`;
+  return `"${maskedText(JSON.stringify(value) ?? "", PART_MAX)}"`;
 }
 
 function pushField(
