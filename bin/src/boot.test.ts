@@ -16,7 +16,7 @@ const { startServer, constructEngine, engineLoop, engineShutdown, constructConci
     constructConcierge: vi.fn(),
   }),
 );
-vi.mock("@boof/heart-server", () => ({ startServer }));
+vi.mock("@boof/heart-server", () => ({ startServer, createN8nTransport: vi.fn(() => ({})) }));
 vi.mock("@boof/runner", () => ({
   DESKTOP_CLAUDE_AGENT_REASON: "desktop unavailable",
   ClaudeConcierge: class {

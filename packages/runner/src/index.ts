@@ -17,3 +17,4 @@ export * from "./worktree.js";
 export * from "./pipeline.js";
 export * from "./engine.js";
 export * from "./concierge.js";
+export * from "./external-step.js";

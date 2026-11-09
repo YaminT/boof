@@ -6,7 +6,13 @@ import {
   defaultTools,
 } from "@boof/runner";
 import type { ConciergeAgent } from "@boof/heart";
-import { startServer, type RunningServer, type StartServerOptions } from "@boof/heart-server";
+import {
+  createN8nTransport,
+  startServer,
+  type RunningServer,
+  type StartServerOptions,
+} from "@boof/heart-server";
+import { networkInterfaces } from "node:os";
 import { RunnerGuard } from "./runner-guard.js";
 
 export interface BootOptions extends Omit<StartServerOptions, "catalog" | "runnerRunning"> {
@@ -31,6 +37,18 @@ const runnerStartFailures = new WeakSet<object>();
 
 export function isRunnerStartFailure(error: unknown): boolean {
   return typeof error === "object" && error !== null && runnerStartFailures.has(error);
+}
+
+/** True for a URL that points at this server: its port on a loopback name or an own address. */
+export function selfUrlCheck(port: number | undefined): (u: URL) => boolean {
+  const names = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"]);
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list ?? []) names.add(a.family === "IPv6" ? `[${a.address}]` : a.address);
+  }
+  return (u) =>
+    port !== undefined &&
+    Number(u.port || (u.protocol === "https:" ? 443 : 80)) === port &&
+    names.has(u.hostname.toLowerCase());
 }
 
 /** Compose the shared server and runner lifecycle used by the CLI and Electron. */
@@ -68,7 +86,15 @@ export async function boot(opts: BootOptions): Promise<Booted> {
   await onServer?.(server);
   try {
     if (runner !== false && (!guard || (await guard.acquire()))) {
-      engine = new RunnerEngine({ root: opts.root, registry });
+      engine = new RunnerEngine({
+        root: opts.root,
+        registry,
+        external: createN8nTransport({
+          root: opts.root,
+          via: "runner",
+          isSelfUrl: selfUrlCheck(server.port),
+        }),
+      });
       onRunner?.(engine);
       void engine.loop();
     } else {

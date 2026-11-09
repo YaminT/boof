@@ -31,6 +31,12 @@ import {
   type ScannedUnit,
 } from "@boof/heart";
 import { RunnerEngine, ToolRegistry, type TickResult } from "@boof/runner";
+import { createN8nTransport } from "@boof/heart-server";
+import { selfUrlCheck } from "./boot.js";
+
+// A headless run has no server of its own; the one that receives callbacks listens on the default port
+// unless told otherwise, so that is the port the n8n client must never reach as "n8n".
+const DEFAULT_SERVER_PORT = 4319;
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";
@@ -208,7 +214,16 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   }
   const id = created.frontmatter.id;
 
-  const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
+  const engine = new RunnerEngine({
+    root: opts.root,
+    registry,
+    onlyProject: project.id,
+    external: createN8nTransport({
+      root: opts.root,
+      via: "runner",
+      isSelfUrl: selfUrlCheck(DEFAULT_SERVER_PORT),
+    }),
+  });
   // Drive until our task leaves the active states. One tick fully runs the
   // highest-priority pending task (ours), so this normally loops once.
   for (;;) {
@@ -261,6 +276,11 @@ export async function drainQueue(opts: {
     root: opts.root,
     registry: opts.registry ?? new ToolRegistry(),
     onlyProject: opts.project,
+    external: createN8nTransport({
+      root: opts.root,
+      via: "runner",
+      isSelfUrl: selfUrlCheck(DEFAULT_SERVER_PORT),
+    }),
   });
   let ran = 0;
   let failed = 0;
