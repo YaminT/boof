@@ -666,10 +666,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         }
       }
       const checkedLinkStat = await this.lstatFn(this.root);
-      if (checkedLinkStat.isSymbolicLink()) {
+      if (checkedLinkStat.isSymbolicLink() !== linkStat.isSymbolicLink()) {
         throw new UnsafeBrowserSessionPathError(
           this.root,
-          `${this.root} became a symbolic link while checking permissions; use a data root you own`,
+          `${this.root} changed between a folder and a symbolic link while checking permissions; use a data root you own`,
         );
       }
       rootStat = await this.statFn(this.root);

@@ -261,6 +261,11 @@ async function setup(
   await scaffoldDataRoot(root);
   if (!tightenedRoot.changed && tightenedRoot.reason === "missing")
     tightenedRoot = await tightenDataRoot(root);
+  if (tightenedRoot.unsafeParent) {
+    err(
+      `WARNING: remote setup: ${tightenedRoot.unsafeParent.message}. Until then the server refuses key checks.`,
+    );
+  }
   const store = new AuthStore(root);
   const audit = beginCliAudit(root, "cli:remote.setup");
 
@@ -315,9 +320,10 @@ async function setup(
         `Data root ${root} was accessible to other users (mode ${tightenedRoot.before.toString(8)}); ran chmod 700.`,
       );
     } else if (
-      tightenedRoot.reason === "not-owner" ||
-      tightenedRoot.reason === "home-or-root" ||
-      tightenedRoot.reason === "chmod-failed"
+      !tightenedRoot.unsafeParent &&
+      (tightenedRoot.reason === "not-owner" ||
+        tightenedRoot.reason === "home-or-root" ||
+        tightenedRoot.reason === "chmod-failed")
     ) {
       const fix =
         tightenedRoot.reason === "home-or-root"

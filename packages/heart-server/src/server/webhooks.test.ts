@@ -564,6 +564,31 @@ describe("webhook delivery", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "logs again when the AuthStore breaks again after a good tick",
+    async () => {
+      await authStore.create({ name: "webhook test", scopes: ["projects:read"] });
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      const dispatcher = new WebhookDispatcher({ root, service, authStore, intervalMs: 5 });
+      const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const unsafe = () => errorLog.mock.calls.filter((c) => String(c[0]).startsWith("webhooks: "));
+      try {
+        await chmod(join(root, "auth"), 0o770);
+        dispatcher.start();
+        await wait(35);
+        expect(unsafe()).toHaveLength(1);
+        await chmod(join(root, "auth"), 0o700);
+        await wait(35);
+        await chmod(join(root, "auth"), 0o770);
+        await wait(35);
+        expect(unsafe()).toHaveLength(2);
+      } finally {
+        await dispatcher.stop();
+        errorLog.mockRestore();
+      }
+    },
+  );
+
   it.each([
     ["an empty secret", async (id: string) => writeSecrets({ [id]: "" })],
     ["a non-string secret", async (id: string) => writeSecrets({ [id]: 12345 })],

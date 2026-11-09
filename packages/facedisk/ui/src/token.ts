@@ -115,7 +115,7 @@ export const keyRotationFailed = (): void => gate.failed();
 
 /**
  * The server message for a 503 `browser_sessions_unavailable` (its browser-session folder has
- * unsafe permissions; the message names the path and the fix), or undefined for any other answer.
+ * unsafe permissions; the message is fixed and the server log names the path), or undefined for any other answer.
  */
 export function storageUnavailableMessage(status: number, body: unknown): string | undefined {
   if (status !== 503) return undefined;

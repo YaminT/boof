@@ -1,6 +1,6 @@
 import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import {
@@ -99,9 +99,14 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     warn(
       `tightened data root ${opts.root} from ${tightened.before.toString(8)} to 700 (other local users could read it)`,
     );
-  } else if (["not-owner", "home-or-root", "chmod-failed"].includes(tightened.reason)) {
+  } else if (
+    ["not-owner", "home-or-root", "chmod-failed"].includes(tightened.reason) &&
+    !tightened.unsafeParent
+  ) {
     await warnIfDataRootOpen(opts.root, warn);
   }
+  if (tightened.unsafeParent)
+    warn(`warning: ${tightened.unsafeParent.message}; the server refuses key checks until then`);
   if (migration.kind === "migrated")
     warn(`migrated data root ${opts.root} to v2 (see migration-v2.log)`);
   const authStore = new AuthStore(opts.root);
@@ -228,7 +233,6 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
 async function warnIfDataRootOpen(root: string, warn: (m: string) => void): Promise<void> {
   if (process.platform === "win32") return;
   try {
-    const { stat } = await import("node:fs/promises");
     const mode = (await stat(root)).mode & 0o777;
     if (mode & 0o077) {
       warn(

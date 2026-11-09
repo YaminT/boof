@@ -296,12 +296,12 @@ describe("browser session authentication", () => {
       expect(json).toEqual({
         error: {
           code: "browser_sessions_unavailable",
-          message: expect.stringContaining(`chmod go-w ${path}`),
+          message: "the server's data folder has unsafe permissions; see the server log",
           details: { reason: "browser_sessions_unavailable" },
         },
       });
       const text = JSON.stringify(json);
-      expect(text).toContain(path);
+      expect(text).not.toContain(path);
       expect(text).not.toMatch(/uid|mode \d|666/);
       expect(text).not.toContain("admin");
     },
@@ -321,14 +321,14 @@ describe("browser session authentication", () => {
       expect(keyed.status).toBe(503);
       const keyedJson = await keyed.json();
       expect(keyedJson.error.code).toBe("auth_store_unavailable");
-      expect(keyedJson.error.message).toContain(authDir);
+      expect(keyedJson.error.message).not.toContain(authDir);
       const cookie = await request(app, "/api/v1/whoami", {
         headers: { cookie: `boof_ui_4319=${token}` },
       });
       expect(cookie.status).toBe(503);
       const cookieJson = await cookie.json();
       expect(cookieJson.error.code).toBe("browser_sessions_unavailable");
-      expect(cookieJson.error.message).toContain(authDir);
+      expect(cookieJson.error.message).not.toContain(authDir);
       expect(JSON.stringify(cookieJson)).not.toMatch(/uid|mode \d|"admin"/);
     },
   );

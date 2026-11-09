@@ -213,10 +213,14 @@ export class WebhookDispatcher {
   tick(): Promise<void> {
     if (this.running) return Promise.resolve();
     this.running = true;
-    const pass = this.tickOnce().finally(() => {
-      this.running = false;
-      this.current = null;
-    });
+    const pass = this.tickOnce()
+      .then(() => {
+        this.loggedUnsafeAuthStore = false; // log again if the store breaks again later
+      })
+      .finally(() => {
+        this.running = false;
+        this.current = null;
+      });
     this.current = pass;
     return pass;
   }
