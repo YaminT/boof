@@ -211,14 +211,18 @@ The route is outside the API-key chain. It works the same with `auth.mode` `loca
 
 ## 7. Check after edit (opt-in)
 
-Off by default. With `checks.enabled`, the server holding the dispatcher lock polls the workflow list every `checks.pollIntervalMs` (default 5 min, at least 1 min). When a workflow's `updatedAt` changes, boof creates a **check task** in `checks.projectId`:
+Off by default. With `checks.enabled`, the server holding `webhooks/.dispatcher.lock` polls the workflow list every `checks.pollIntervalMs` (default 5 min, between 1 min and 24 h), re-reading the setting each pass. The first pass runs at once. One server per data root polls, so a second server waits and takes over if the first exits. When a workflow's `updatedAt` changes, boof creates a **check task** in `checks.projectId`:
 
-- A check task runs only that workflow's first usable POST webhook, with `boof.kind = "check"` and `step.at = "check"` in the payload and no branch or base. It uses no worktree and no agent tool, and it skips the agent, account-pool and budget gates. It finishes `done` when the callback says `ok`. Its step reads `n8n check`.
-- It is a **draft** unless `checks.autoQueue` is set, because running a workflow can send mail or deploy. Use `boof.kind = "check"` in the workflow to do a dry run.
-- A workflow seen for the first time is only recorded. A second edit while a check task is open updates that task instead of making another. A workflow with no usable webhook gets no task.
-- Caps: at most 10 check tasks per pass and 50 per hour; the rest wait for a later pass. Workflow names are cleaned (control and bidi characters removed) and cut at 120 characters in the title.
-- The record of seen workflows (`n8n/seen.json`) belongs to one n8n origin. After `baseUrl` changes, every workflow counts as new and gets no task. A workflow that disappears and comes back is treated as new too.
-- A failed refresh creates nothing and is retried on the next pass.
+- A check task runs only that workflow's webhook, with `boof.kind = "check"` and `step.at = "check"` in the payload and no branch or base. It uses no worktree and no agent tool, and it skips the agent, account-pool and budget gates. It finishes `done` when the callback says `ok`. Its step reads `n8n check`.
+- It is a **draft** unless `checks.autoQueue` is set (then it is `pending`), because running a workflow can send mail or deploy. Use `boof.kind = "check"` in the workflow to do a dry run.
+- A workflow seen for the first time is only recorded: no task. An edit to a workflow with an **open** check task (draft or pending) updates that task instead of making another. A done or failed check task does not absorb new edits: the next edit makes a new task.
+- A workflow gets no task unless it has exactly one enabled webhook node, a POST with a valid path. A workflow with several webhook nodes is ambiguous and is skipped. Its edit is still recorded, so it is not retried.
+- An `updatedAt` that is not a date is skipped with one warning per workflow and recorded, so it is not retried.
+- Caps: at most 10 tasks (created or updated) per pass and 50 per rolling hour. The rest keep their old value and are picked up by later passes. At the hourly cap the watcher warns once.
+- Names from n8n are cleaned before use in the title, prompt and logs: control characters become spaces, format characters (bidi overrides, zero-width) are removed, whitespace is collapsed. A name is cut at 120 characters, the ellipsis included. An empty name falls back to the workflow id.
+- `n8n/seen.json` records `{ origin, seen }` for the current workflows only. It belongs to one n8n origin (scheme, host and port). After the origin changes, the first pass only records: no task is made. A change of path alone does not count as a new origin.
+- A workflow that disappears from the list (deleted, archived) and comes back is treated as new: it is recorded without a task, so an edit made while it was missing gets no check.
+- A failed refresh creates nothing and records nothing; the next pass sees the same edits again.
 
 ## 8. Disconnect
 
