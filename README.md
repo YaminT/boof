@@ -196,6 +196,10 @@ bash scripts/install-or-update-boof-runner.sh
 
 The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. Without bun it uses `npm install` (`package-lock.json` is git-ignored; `bun.lock` is the lockfile). A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `https://github.com/YaminT/boof.git`; set `BOOF_RUNNER_REPO=git@github.com:YaminT/boof.git` to clone over SSH.
 
+## n8n (optional)
+
+An [n8n](https://n8n.io) workflow can run as an extra step of a project's pipeline: boof calls its webhook, and the workflow reports back through a single-use callback. Admins can also list n8n's workflows in boof and, if they opt in, get a check task after each workflow edit. boof runs fully without n8n: with no n8n connection nothing changes and nothing calls out, and boof never starts n8n. See [docs/n8n.md](docs/n8n.md).
+
 ## Run on a server
 
 To run boof on a headless Linux server (systemd service, nginx with TLS, API key for an AI harness), follow the runbook in [deploy/README.md](deploy/README.md) or the [published server runbook](https://nodets.com/boof/server). In short: install with the script (it skips Electron on a machine without a display), then `boof-runner project add`, `boof-runner remote setup --hostname <host>` and `boof-runner service install`. `GET /healthz` is a public liveness check. An nginx example is in [deploy/nginx-boof.conf.example](deploy/nginx-boof.conf.example); to serve boof under a path of an existing site (`https://example.com/boof/`) include [deploy/nginx-boof-prefix.conf.example](deploy/nginx-boof-prefix.conf.example) in that site's server block (the web UI uses relative URLs, so no build option is needed).

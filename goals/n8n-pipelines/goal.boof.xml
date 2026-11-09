@@ -19,6 +19,7 @@
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
         <version number="2" status="plan">D7 (owner, 2026-10-29): approved — n8n runs external pipeline steps called by webhook with a callback, rather than a &#x27;run one internal step&#x27; API; built last.</version>
+        <version number="3" status="done">Implemented 2026-11-09 per docs/superpowers/plans/2026-11-09-n8n-integration.md: optional n8n external steps (webhook plus single-use callback), the workflow list, and the opt-in check-after-edit watcher; docs/n8n.md. Boof runs unchanged without n8n.</version>
       </versions>
     </status>
     <tests>

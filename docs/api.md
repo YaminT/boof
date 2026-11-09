@@ -162,6 +162,9 @@ internals; validation errors list `details: [{ path, message }]`.
 | `change_stale`                 | 409    | The target changed since the assistant proposed this change.                                                                                                                                                                                                                 |
 | `change_expired`               | 409    | The pending change expired (15 minutes).                                                                                                                                                                                                                                     |
 | `rate_limited`                 | 429    | Too many requests; retry after the Retry-After header.                                                                                                                                                                                                                       |
+| `n8n_not_configured`           | 409    | No n8n instance is configured; connect one with `n8n.update` first.                                                                                                                                                                                                          |
+| `upstream_failed`              | 502    | The n8n instance failed or refused the call; `details.reason` is `unauthorized`, `unreachable`, `blocked`, `redirected`, `bad_response`, `too_many` or `HTTP <n>`. The cached workflow list stays.                                                                           |
+| `invalid_step_token`           | 401    | Only on n8n's callback route: the run token is missing, wrong, already used, expired, or the run was closed.                                                                                                                                                                 |
 | `internal`                     | 500    | Unexpected server error; details are in the server log.                                                                                                                                                                                                                      |
 
 ## Concurrency (ETag / If-Match)
@@ -559,6 +562,39 @@ before any model call. The conversation cap is `409 concierge_limit`.
 **No MCP tools.** `mcp.expose` is false because an MCP host is itself a model: driving the
 assistant would spend budget model-to-model and could confirm its own proposals. The operations
 the concierge uses are already MCP tools.
+
+## External steps and n8n
+
+A project can list `externalSteps`: n8n workflows that run after the planner, after the developer or after the reviewer approves. n8n is optional; without it nothing changes. The guide, with the payload, a workflow to import and the security notes, is [n8n.md](n8n.md).
+
+Operations (all need a configured n8n except `n8n.get`, `n8n.update` and the cached list):
+
+| Operation               | REST                                 | MCP                          | Scope            |
+| ----------------------- | ------------------------------------ | ---------------------------- | ---------------- |
+| `n8n.get`               | `GET /api/v1/n8n`                    | `boof_get_n8n`               | `settings:read`  |
+| `n8n.update`            | `PUT /api/v1/n8n`                    | `boof_update_n8n`            | `admin`          |
+| `n8n.delete`            | `DELETE /api/v1/n8n`                 | `boof_delete_n8n`            | `admin`          |
+| `n8n.workflows.list`    | `GET /api/v1/n8n/workflows`          | `boof_list_n8n_workflows`    | `settings:read`  |
+| `n8n.workflows.refresh` | `POST /api/v1/n8n/workflows/refresh` | `boof_refresh_n8n_workflows` | `settings:write` |
+
+- `n8n.update` and `n8n.delete` need an admin client that is trusted and not restricted to projects. The API key is a write-only `apiKey` field (never returned; `n8n.get` shows `apiKeySet`); the first `n8n.update` returns the webhook header secret once as `secret`. A changed `baseUrl` origin without a new `apiKey` drops the stored key and the workflow cache. On the CLI, `--api-key` and an inline `--input` with `apiKey` are refused: use `--input @file` or `--input @-`.
+- `n8n.workflows.list` reads the cache and never calls n8n; `n8n.workflows.refresh` does (`409 n8n_not_configured`, `502 upstream_failed`).
+- **Addresses.** The configured n8n `baseUrl` host and port may be private, loopback or LAN, for the API and the step webhooks, with the connection pinned and no redirects. Link-local and metadata addresses are never allowed, and boof's own address is always refused.
+- **`projects.update` trust rule.** `externalSteps` (and `null`, which clears them) send task content to n8n, so only a trusted client may set them; a review-trust client gets `403 forbidden_trust` even when `externalTasksRequireApproval` is off. Steps are otherwise edited through `projects.update`.
+
+### The callback (not an operation)
+
+`POST /callbacks/external-steps/{runId}` is where n8n reports a step's result. It is n8n's protocol endpoint, not an operation, so it has no MCP tool or CLI command and is not in the OpenAPI document (like `/auth/browser`). It sits outside the API-key chain and works the same with `auth.mode` `local-trust` and `required`.
+
+```
+Authorization: Bearer <run.token>
+Content-Type: application/json
+{ "status": "ok" | "failed", "report": "<at most 65 536 chars>", "summary": "<at most 300 chars, optional>" }
+```
+
+- The token is minted per run, single use, scoped to that run, and valid until `expiresAt`. It is not an API key and cannot reach `/api` or `/mcp`; an API key cannot complete a step.
+- Answers: `200 {ok: true}`; `400 invalid_input` (the token is kept: retry with a fixed body); `401 invalid_step_token` for every bad, replayed, expired or closed run, with no hint which; `403 origin_not_allowed` for a request with `Origin` or `Sec-Fetch-Site`; `413 payload_too_large` (over 300 000 bytes); `415 unsupported_media_type`; `429 rate_limited` (its own budget of `security.rateLimit.unauthenticatedPerMinute` refusals per address and minute; a valid token is never counted).
+- Audit: one `callback:external-step` line per call. The outcome is `ok` or the error code above (or `error`); project, task, step and result status appear only when the token verified. Never the token or the body.
 
 ## Operations
 

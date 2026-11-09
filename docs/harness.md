@@ -444,6 +444,8 @@ For each task the runner runs these steps and writes a report for each:
 4. observer (optional role): reads the diff and writes a verdict.
 5. reviewer: gives the final verdict.
 
+If the project lists `externalSteps` (n8n), more steps run at three points: after the planner, after the developer, and after the reviewer approves. They show in `steps[]` as `n8n: <label>` (a check task from an n8n workflow edit shows `n8n check`). Expect them only when the project lists `externalSteps`; without it the steps above are all there is. An external step's report reaches the developer, observer, reviewer and fix prompts as untrusted data. See [n8n.md](n8n.md).
+
 The observer is optional. It runs only if `settings.roles` has an `observer` entry (or the project overrides it). To check, read `GET /api/v1/settings` (scope `settings:read`) and look for `roles.observer`; if the key is missing, there is no observer. Then a task has an empty `body.reports.observer` and you must not expect an observer verdict: report the reviewer verdict only and write "no observer configured".
 
 Observer and reviewer reports end with exactly one line: `VERDICT: APPROVE`, `VERDICT: CHANGES_REQUESTED` or `VERDICT: REJECT`.
