@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_LINK_TTL_MS,
@@ -92,9 +92,7 @@ describe("BrowserSessionStore", () => {
 
   it("a link redeems once between real Node processes", async () => {
     const { code } = await store.createLink();
-    const moduleUrl = pathToFileURL(
-      join(process.cwd(), "packages/heart/src/browser-session-store.ts"),
-    );
+    const moduleUrl = new URL("./browser-session-store.ts", import.meta.url);
     const childPath = join(root, "redeem-child.mjs");
     const readyPath = join(root, "child-ready");
     const releasePath = join(root, "child-release");
@@ -115,7 +113,7 @@ describe("BrowserSessionStore", () => {
         process.execPath,
         ["--import", "tsx", childPath, root, code, String(clock), readyPath, releasePath],
         {
-          cwd: process.cwd(),
+          cwd: new URL(".", import.meta.url).pathname,
           env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: tmpdir(), TZ: "UTC" },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -254,18 +252,56 @@ describe("BrowserSessionStore", () => {
 
   it("verify reloads same-size rewrites with a forced identical mtime", async () => {
     const first = await store.createSession();
-    expect((await store.verify(first.token))?.id).toBe(first.session.id);
     const path = dataRootPaths(root).browserSessions;
-    const before = await stat(path);
+    const before = statSync(path, { bigint: true });
+    const mtimeMs = Number(before.mtimeNs) / 1_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 5_000);
+    expect((await store.verify(first.token))?.id).toBe(first.session.id);
     const other = new BrowserSessionStore(root, () => clock);
     expect(await other.revokeAll()).toBe(1);
     const second = await other.createSession();
-    expect((await stat(path)).size).toBe(before.size);
-    await utimes(path, before.atime, before.mtime);
-
-    expect(await store.verify(first.token)).toBeNull();
-    expect((await store.verify(second.token))?.id).toBe(second.session.id);
+    expect(statSync(path, { bigint: true }).size).toBe(before.size);
+    const seconds = before.mtimeNs / 1_000_000_000n;
+    const nanos = before.mtimeNs % 1_000_000_000n;
+    execFileSync("touch", ["-m", "-d", `@${seconds}.${nanos.toString().padStart(9, "0")}`, path]);
+    expect(statSync(path, { bigint: true }).mtimeNs).toBe(before.mtimeNs);
+    expect(statSync(path, { bigint: true }).size).toBe(before.size);
+    vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 1_000);
+    try {
+      expect(await store.verify(first.token)).toBeNull();
+      expect((await store.verify(second.token))?.id).toBe(second.session.id);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "verify reloads a same-size rewrite after the recent-mtime window",
+    async () => {
+      const first = await store.createSession();
+      const path = dataRootPaths(root).browserSessions;
+      const before = statSync(path, { bigint: true });
+      const mtimeMs = Number(before.mtimeNs) / 1_000_000;
+      vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 1_000);
+      expect((await store.verify(first.token))?.id).toBe(first.session.id);
+      const other = new BrowserSessionStore(root, () => clock);
+      expect(await other.revokeAll()).toBe(1);
+      const second = await other.createSession();
+      expect(statSync(path, { bigint: true }).size).toBe(before.size);
+      const seconds = before.mtimeNs / 1_000_000_000n;
+      const nanos = before.mtimeNs % 1_000_000_000n;
+      execFileSync("touch", ["-m", "-d", `@${seconds}.${nanos.toString().padStart(9, "0")}`, path]);
+      expect(statSync(path, { bigint: true }).mtimeNs).toBe(before.mtimeNs);
+      expect(statSync(path, { bigint: true }).size).toBe(before.size);
+      vi.spyOn(Date, "now").mockReturnValue(mtimeMs + 5_000);
+      try {
+        expect(await store.verify(first.token)).toBeNull();
+        expect((await store.verify(second.token))?.id).toBe(second.session.id);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   it("revokeAll racing a lastUsedAt write leaves no session", async () => {
     const created = await store.createSession();
@@ -280,6 +316,44 @@ describe("BrowserSessionStore", () => {
     expect(await store.verify(created.token)).toBeNull();
     const sessions = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8"));
     expect(sessions.sessions).toHaveLength(0);
+  });
+
+  it("touch refuses a session removed while it waits for the lock", async () => {
+    const created = await store.createSession();
+    expect(await store.verify(created.token)).not.toBeNull();
+    const processA = new BrowserSessionStore(root, () => clock, simulatedProcess(83501));
+    expect(await processA.verify(created.token)).not.toBeNull();
+    clock += 60_001;
+    const lockPath = join(dataRootPaths(root).auth, ".browser-session.lock");
+    let acquired!: () => void;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (acquired = resolve));
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const holder = withProcessLock(
+      lockPath,
+      {
+        pid: 83502,
+        bootId: null,
+        isProcessAlive: () => true,
+        lockPollMs: 1,
+      },
+      async () => {
+        acquired();
+        await gate;
+        await writeFile(dataRootPaths(root).browserSessions, JSON.stringify({ sessions: [] }));
+      },
+      (pid) => new Error(`holder ${pid}`),
+    );
+    await held;
+    try {
+      const verifying = processA.verify(created.token);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      release();
+      expect(await verifying).toBeNull();
+    } finally {
+      release();
+      await holder;
+    }
   });
 
   it("mutations wait for the cross-process browser session lock", async () => {
@@ -419,6 +493,24 @@ describe("BrowserSessionStore", () => {
     expect((await store.verify(again.token))?.id).toBe(again.session.id);
   });
 
+  it("a corrupt links file logs once per path across repeated verify touches", async () => {
+    const { token } = await store.createSession();
+    const path = dataRootPaths(root).browserLinks;
+    await writeFile(path, "{not json");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      clock += 60_001;
+      expect(await store.verify(token)).toBeNull();
+      expect(await store.verify(token)).toBeNull();
+      expect(spy).toHaveBeenCalledTimes(1);
+      const logged = spy.mock.calls.flat().map(String).join(" ");
+      expect(logged).toContain(path);
+      expect(logged).not.toContain(dataRootPaths(root).browserSessions);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("revokeAll resets corrupt links and sessions files to empty lists", async () => {
     const paths = dataRootPaths(root);
     await store.createLink();
@@ -441,21 +533,56 @@ describe("BrowserSessionStore", () => {
     expect(JSON.parse(await readFile(paths.browserSessions, "utf8"))).toEqual({ sessions: [] });
   });
 
-  it("future-dated session records and links are expired beyond the clock-skew allowance", async () => {
+  it("future-dated createdAt is expired beyond the clock-skew allowance", async () => {
     const { token } = await store.createSession();
     const paths = dataRootPaths(root);
     const sessionFile = JSON.parse(await readFile(paths.browserSessions, "utf8"));
-    const future = new Date(clock + 60_001).toISOString();
-    sessionFile.sessions[0].createdAt = future;
-    sessionFile.sessions[0].lastUsedAt = future;
+    sessionFile.sessions[0].createdAt = new Date(clock + 60_001).toISOString();
     await writeFile(paths.browserSessions, JSON.stringify(sessionFile));
     expect(await store.verify(token)).toBeNull();
+  });
 
+  it("future-dated lastUsedAt is expired beyond the clock-skew allowance", async () => {
+    const { token } = await store.createSession();
+    const paths = dataRootPaths(root);
+    const sessionFile = JSON.parse(await readFile(paths.browserSessions, "utf8"));
+    sessionFile.sessions[0].lastUsedAt = new Date(clock + 60_001).toISOString();
+    await writeFile(paths.browserSessions, JSON.stringify(sessionFile));
+    expect(await store.verify(token)).toBeNull();
+  });
+
+  it("future-dated links are expired beyond the clock-skew allowance", async () => {
     const link = await store.createLink();
+    const paths = dataRootPaths(root);
     const linkFile = JSON.parse(await readFile(paths.browserLinks, "utf8"));
     linkFile.links[0].expiresAt = new Date(clock + BROWSER_LINK_TTL_MS + 60_001).toISOString();
     await writeFile(paths.browserLinks, JSON.stringify(linkFile));
     expect(await store.redeemLink(link.code)).toBeNull();
+  });
+
+  it("continues when chmod is unsupported and warns once per path", async () => {
+    const paths = dataRootPaths(root);
+    const chmod = vi.fn(async () => {
+      const error = new Error("unsupported") as NodeJS.ErrnoException;
+      error.code = "ENOTSUP";
+      throw error;
+    });
+    const portable = new BrowserSessionStore(root, () => clock, { chmod });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await portable.createLink();
+      await portable.createLink();
+      expect(await readFile(paths.browserLinks, "utf8")).toContain("links");
+      expect(warning).toHaveBeenCalledTimes(2);
+      expect(warning.mock.calls.map((call) => String(call[0]))).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(paths.auth),
+          expect.stringContaining(paths.browserLinks),
+        ]),
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("browserSessionCookieName(4319) is boof_ui_4319", () => {

@@ -19,6 +19,8 @@ const TOUCH_MIN_MS = 60_000;
 const CLOCK_SKEW_MS = 60_000;
 const RACY_MTIME_MS = 2_000;
 
+class CorruptBrowserSessionFileError extends Error {}
+
 export function browserSessionCookieName(port: number): string {
   return `boof_ui_${port}`;
 }
@@ -194,11 +196,14 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private cache: SessionCache | null = null;
   private loggedStatError = false;
   private loggedUnexpected = false;
+  private readonly loggedCorruptPaths = new Set<string>();
+  private readonly chmodFn: typeof chmod;
+  private readonly warnedChmodPaths = new Set<string>();
 
   constructor(
     root: string,
     private readonly now: () => number = Date.now,
-    opts: { lock?: ProcessLockOptions } = {},
+    opts: { lock?: ProcessLockOptions; chmod?: typeof chmod } = {},
   ) {
     const paths = dataRootPaths(root);
     this.linksPath = paths.browserLinks;
@@ -206,6 +211,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     this.authDir = paths.auth;
     this.lockPath = `${paths.auth}/.browser-session.lock`;
     this.lockOpts = opts.lock ?? {};
+    this.chmodFn = opts.chmod ?? chmod;
   }
 
   async createLink(): Promise<{ code: string; expiresAt: string }> {
@@ -260,10 +266,12 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       if (nowMs - at(match.lastUsedAt) < TOUCH_MIN_MS) return toPublic(match);
       const updated = await this.touch(token, nowMs);
       return updated ? toPublic(updated) : null;
-    } catch {
-      if (!this.loggedUnexpected) {
+    } catch (error) {
+      if (!(error instanceof CorruptBrowserSessionFileError) && !this.loggedUnexpected) {
         this.loggedUnexpected = true;
-        this.logBad(this.sessionsPath);
+        console.error(
+          `browser sessions: verify failed (${error instanceof Error ? error.message : String(error)})`,
+        );
       }
       return null;
     }
@@ -335,7 +343,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             links = await this.readLinks();
           } catch (error) {
             if (!this.isCorrupt(error)) throw error;
-            this.logBad(this.linksPath);
+            this.logCorruptOnce(this.linksPath);
             if (!resetCorrupt) throw error;
             links = [];
             linksCorrupt = true;
@@ -344,7 +352,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             sessions = await this.readSessions();
           } catch (error) {
             if (!this.isCorrupt(error)) throw error;
-            this.logBad(this.sessionsPath);
+            this.logCorruptOnce(this.sessionsPath);
             if (!resetCorrupt) throw error;
             sessions = [];
             sessionsCorrupt = true;
@@ -364,9 +372,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   private isCorrupt(error: unknown): boolean {
-    return (
-      error instanceof Error && error.message.endsWith("is corrupt; not updating browser sessions")
-    );
+    return error instanceof CorruptBrowserSessionFileError;
   }
 
   private async readLinks(): Promise<LinkRecord[]> {
@@ -390,12 +396,14 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       text = await readFile(path, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw new Error(`${path} is unreadable; not updating browser sessions`);
+      throw new CorruptBrowserSessionFileError(
+        `${path} is unreadable; not updating browser sessions`,
+      );
     }
     try {
       return parse(text);
     } catch {
-      throw new Error(`${path} is corrupt; not updating browser sessions`);
+      throw new CorruptBrowserSessionFileError(`${path} is corrupt; not updating browser sessions`);
     }
   }
 
@@ -421,10 +429,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
 
   private async persist(path: string, body: unknown): Promise<void> {
     await mkdir(this.authDir, { recursive: true, mode: 0o700 });
-    await chmod(this.authDir, 0o700);
+    await this.chmodPortable(this.authDir, 0o700);
     // The process lock already serializes writers; avoid re-entering a non-reentrant file lock.
     await atomicWrite(path, `${JSON.stringify(body, null, 2)}\n`, 0o600);
-    await chmod(path, 0o600);
+    await this.chmodPortable(path, 0o600);
     if (path === this.sessionsPath) this.cache = null;
   }
 
@@ -471,7 +479,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         this.cache.mtimeMs === fileStat.mtimeMs &&
         this.cache.size === fileStat.size;
       this.cache = { ...fileStat, readAtMs: Date.now(), sessions: [], failed: true };
-      if (!alreadyLogged) this.logBad(this.sessionsPath);
+      if (!alreadyLogged) this.logCorruptOnce(this.sessionsPath);
       return null;
     }
   }
@@ -481,5 +489,26 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     console.error(
       `browser sessions: ${path} is unreadable or corrupt${code ? ` (${code})` : ""}; treating it as no sessions`,
     );
+  }
+
+  private logCorruptOnce(path: string): void {
+    if (this.loggedCorruptPaths.has(path)) return;
+    this.loggedCorruptPaths.add(path);
+    this.logBad(path);
+  }
+
+  private async chmodPortable(path: string, mode: number): Promise<void> {
+    try {
+      await this.chmodFn(path, mode);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EINVAL") throw error;
+      if (!this.warnedChmodPaths.has(path)) {
+        this.warnedChmodPaths.add(path);
+        console.warn(
+          `browser sessions: could not set permissions on ${path} (${code}); continuing`,
+        );
+      }
+    }
   }
 }
