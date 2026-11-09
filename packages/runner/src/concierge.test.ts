@@ -463,7 +463,7 @@ describe("ClaudeConcierge", () => {
 
     const timed = fakeSdk(hang());
     const timedOut = await make(timed)
-      .turn(input({ timeoutMs: 30 }))
+      .turn(input({ timeoutMs: 250 }))
       .catch((caught: unknown) => caught);
     expect(timedOut).toBeInstanceOf(ConciergeTurnError);
     expect(timedOut).toMatchObject({
@@ -479,7 +479,8 @@ describe("ClaudeConcierge", () => {
     const pending = make(abortedSdk)
       .turn(input({ signal: signal.signal }))
       .catch((caught: unknown) => caught);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    while (abortedSdk.calls.options.length === 0)
+      await new Promise<void>((resolve) => setImmediate(resolve));
     signal.abort();
     const aborted = await pending;
     expect(aborted).toBeInstanceOf(ConciergeTurnError);

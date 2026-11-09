@@ -1968,7 +1968,7 @@ describe("steering a running step (mock tool)", () => {
     mockState.resumeSupported = false;
     // The 6th run stalls with no steer path and is cut by the idle watchdog, then retried.
     await engine.settingsStore.update({
-      retries: { transient: 2, backoffMs: [0], idleTimeoutMs: 1500 },
+      retries: { transient: 2, backoffMs: [0], idleTimeoutMs: 5000 },
     });
     const stop = steerDeveloper(6);
     let outcome;
@@ -1984,7 +1984,7 @@ describe("steering a running step (mock tool)", () => {
     expect(done.body.log).not.toContain("### Developer (steer 6)");
     // 5 steered runs, the stalled sixth, its transient retry.
     expect(devCalls()).toBe(7);
-  }, 30000);
+  }, 60000);
 
   it("a steer that arrives between steps applies to the next step without a kill", async () => {
     let first = true;

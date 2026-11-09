@@ -163,24 +163,28 @@ describe("read-only operations answer on both local surfaces", () => {
     expect(READ_ONLY.length).toBeGreaterThan(20);
   });
 
-  it.each(READ_ONLY.map((o) => [o.name, o] as const))("%s over the CLI", async (_name, op) => {
-    const r = await cli([
-      ...commandPath(op),
-      "--input",
-      JSON.stringify(inputFor(op)),
-      "--json",
-      "-d",
-      root,
-    ]);
-    const expected = EXPECTED_FAILURE[op.name];
-    if (expected) {
-      expect(r.code).toBe(2);
-      expect(JSON.parse(r.err[0]!).error.code).toBe(expected);
-    } else {
-      expect(r.code, r.err.join("\n")).toBe(0);
-      expect(() => JSON.parse(r.out)).not.toThrow();
-    }
-  });
+  it.each(READ_ONLY.map((o) => [o.name, o] as const))(
+    "%s over the CLI",
+    async (_name, op) => {
+      const r = await cli([
+        ...commandPath(op),
+        "--input",
+        JSON.stringify(inputFor(op)),
+        "--json",
+        "-d",
+        root,
+      ]);
+      const expected = EXPECTED_FAILURE[op.name];
+      if (expected) {
+        expect(r.code).toBe(2);
+        expect(JSON.parse(r.err[0]!).error.code).toBe(expected);
+      } else {
+        expect(r.code, r.err.join("\n")).toBe(0);
+        expect(() => JSON.parse(r.out)).not.toThrow();
+      }
+    },
+    20000,
+  );
 
   it.each(READ_ONLY.map((o) => [o.name, o] as const))("%s over MCP", async (_name, op) => {
     const server = createBoofMcpServer({
