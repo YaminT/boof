@@ -31,6 +31,18 @@ Only an admin client that is trusted and not restricted to some projects can con
 - The API key goes to `baseUrl`'s origin only, in `X-N8N-API-KEY`. It is stored in `n8n/secrets.json` (mode 0600), never in `settings.json`, and no operation returns it (`n8n.get` shows `apiKeySet` and `apiKeySource`). `BOOF_N8N_API_KEY` in the server's environment wins over the stored key and is never written.
 - **Changing the origin of `baseUrl`** (scheme, host or port) without a new `apiKey` in the same call removes the stored key and the cached workflow list, and the answer says so in `notice`. A key from `BOOF_N8N_API_KEY` stays, because boof does not hold it.
 
+### Get an API key
+
+On a fresh n8n (tested with 2.46.7):
+
+1. In n8n, open **Settings › n8n API** and create an API key.
+2. Give the key only the **`workflow:list`** scope. boof calls one n8n endpoint, `GET /api/v1/workflows`, to fill the workflow list (`n8n.workflows.refresh`). It never reads a single workflow by id, and it never creates, updates or deletes one. Step runs go to the webhook, not to the API, so no other scope is needed. `workflow:read` and `workflow:update` are not needed.
+3. Paste the key as `apiKey` (section 2 above).
+
+### Start the runner
+
+The runner is off on a fresh data root (`runner.enabled` is `false`), so no task runs, n8n steps included, until you turn it on: in the UI, or with `boof-runner runner set-enabled --enabled`. `--enabled` is a switch with no value; `--no-enabled` turns the runner off again.
+
 ### An n8n on this machine or your LAN
 
 boof blocks outbound calls to private, loopback and similar addresses, so a webhook to your own network needs `security.allowedPrivateWebhookHosts`. **n8n is exempt, narrowly:**
@@ -63,7 +75,7 @@ n8n in a container reaches boof by the host's name, so:
    - header `Authorization: Bearer {{$json.body.run.token}}`;
    - JSON body with `status` (`ok` or `failed`), `report` and optionally `summary`.
 
-A minimal workflow to import (replace the `credentials` in n8n after the import):
+A minimal workflow to import. The JSON carries no credential: after the import, open the **Webhook** node and select a **Header Auth** credential named `X-Boof-Token` whose value is the webhook secret (or create one). Until you select it, the node has no credential to check `X-Boof-Token` against:
 
 ```json
 {
