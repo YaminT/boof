@@ -5,6 +5,7 @@ import { z } from "zod";
 import { atomicWrite } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
 import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
+import { assertSafeForSecrets, UnsafeSecretPathError } from "./data-root-mode.js";
 
 /** A sign-in link is single-use and lives this long. */
 export const BROWSER_LINK_TTL_MS = 600_000;
@@ -622,6 +623,17 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private async assertTrustedDirectories(): Promise<void> {
     if (this.uid === undefined) return; // Windows has no POSIX ownership/mode contract.
     await this.assertTrustedRoot();
+    try {
+      await assertSafeForSecrets(this.root, this.authDir, "directory", {
+        uid: this.uid,
+        lstat: this.lstatFn,
+        stat: this.statFn,
+      });
+    } catch (error) {
+      if (error instanceof UnsafeSecretPathError)
+        throw new UnsafeBrowserSessionPathError(error.path, error.message);
+      throw error;
+    }
     const authStat = await this.lstatFn(this.authDir);
     this.assertSafeStat(this.authDir, authStat, "directory");
     if (this.hasReadBits(authStat.mode)) this.warnReadBits(this.authDir);

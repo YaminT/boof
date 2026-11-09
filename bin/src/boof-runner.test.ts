@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleStartupSignal, isServeFlag, main, routeArgv } from "./boof-runner.js";
+import { AuthStore } from "@boof/heart";
 
 describe("boof-runner top level", () => {
   let logs: string[];
@@ -25,6 +26,16 @@ describe("boof-runner top level", () => {
     process.exitCode = undefined;
     delete process.env.BOOF_RUNNER_DATA_ROOT;
     await rm(dataRoot, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === "win32")("prints AuthStore refusals as one CLI line", async () => {
+    await new AuthStore(dataRoot).create({ name: "cli test", scopes: ["projects:read"] });
+    await chmod(join(dataRoot, "auth"), 0o770);
+    await main(["auth", "list"]);
+    expect(process.exitCode).toBe(1);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain(`chmod 700 ${join(dataRoot, "auth")}`);
+    expect(errs[0]).not.toMatch(/UnsafeSecretPathError|at /);
   });
 
   it("only serve's own flags fall through to serve", () => {

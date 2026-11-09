@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, mkdtemp, open, rm, stat, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertSafeForSecrets, tightenDataRoot } from "./data-root-mode.js";
@@ -43,7 +43,7 @@ describe("tightenDataRoot", () => {
     },
   );
 
-  it("never touches home or /", async () => {
+  it.skipIf(process.platform === "win32")("never touches home or /", async () => {
     const root = await temp();
     await chmod(root, 0o755);
     expect(await tightenDataRoot(root, { home: root })).toEqual({
@@ -57,7 +57,7 @@ describe("tightenDataRoot", () => {
     expect((await stat(root)).mode & 0o777).toBe(0o755);
   });
 
-  it("reports missing roots without throwing", async () => {
+  it.skipIf(process.platform === "win32")("reports missing roots without throwing", async () => {
     expect(await tightenDataRoot(join(await temp(), "missing"))).toEqual({
       changed: false,
       reason: "missing",
@@ -106,6 +106,33 @@ describe("tightenDataRoot", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "tightens owned private folders even when the root chmod fails",
+    async () => {
+      const root = await temp();
+      const auth = join(root, "auth");
+      await mkdir(auth, { mode: 0o777 });
+      await chmod(root, 0o755);
+      await chmod(auth, 0o777);
+      const handle = await open(root, "r");
+      const prototype = Object.getPrototypeOf(handle);
+      await handle.close();
+      vi.spyOn(prototype, "chmod").mockRejectedValue(
+        Object.assign(new Error("permission denied"), { code: "EPERM" }),
+      );
+      const tightenedPrivateDirs: string[] = [];
+      const result = await tightenDataRoot(root, {
+        chmod: async (path, mode) => {
+          tightenedPrivateDirs.push(String(path));
+          await chmod(path, mode);
+        },
+      });
+      expect(result).toEqual({ changed: false, reason: "chmod-failed", mode: 0o755 });
+      expect(tightenedPrivateDirs).toContain(auth);
+      expect((await stat(auth)).mode & 0o777).toBe(0o700);
+    },
+  );
+
   it("windows is a no-op", async () => {
     expect(await tightenDataRoot("missing", { platform: "win32" })).toEqual({
       changed: false,
@@ -115,6 +142,183 @@ describe("tightenDataRoot", () => {
 });
 
 describe("assertSafeForSecrets", () => {
+  it.skipIf(process.platform === "win32")("accepts a primary-group 0775 parent", async () => {
+    const base = await temp();
+    const parent = join(base, "boof-runner");
+    const root = join(parent, "data");
+    await mkdir(parent, { mode: 0o775 });
+    await chmod(parent, 0o775);
+    await mkdir(root, { mode: 0o700 });
+    await mkdir(join(root, "auth"), { mode: 0o700 });
+    await expect(
+      assertSafeForSecrets(root, join(root, "auth"), "directory"),
+    ).resolves.toBeUndefined();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "pins owner checks for clients.json and auth",
+    async () => {
+      const root = await temp();
+      const auth = join(root, "auth");
+      const clients = join(auth, "clients.json");
+      await mkdir(auth, { mode: 0o700 });
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(clients, "{}", { mode: 0o600 });
+      const uid = process.getuid!();
+      const other = uid + 1;
+      const foreign = (value: Awaited<ReturnType<typeof stat>>) =>
+        new Proxy(value, {
+          get: (target, key) => (key === "uid" ? other : Reflect.get(target, key, target)),
+        });
+      const lstatClients = async (path: string) => {
+        const value = await import("node:fs/promises").then(({ lstat }) => lstat(path));
+        return path === clients ? foreign(value) : value;
+      };
+      await expect(
+        assertSafeForSecrets(root, clients, "file", { uid, lstat: lstatClients }),
+      ).rejects.toThrow(/owned by uid/);
+      const lstatAuth = async (path: string) => {
+        const value = await import("node:fs/promises").then(({ lstat }) => lstat(path));
+        return path === auth ? foreign(value) : value;
+      };
+      await expect(
+        assertSafeForSecrets(root, auth, "directory", { uid, lstat: lstatAuth }),
+      ).rejects.toThrow(/owned by uid/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("refuses a foreign-owned data root", async () => {
+    const root = await temp();
+    const uid = process.getuid!();
+    const fakeOwner = (value: Awaited<ReturnType<typeof stat>>) =>
+      new Proxy(value, {
+        get: (target, key) => (key === "uid" ? uid + 1 : Reflect.get(target, key, target)),
+      });
+    const statForeign = vi.fn(async (path: string) => {
+      const value = await stat(path);
+      return path === root ? fakeOwner(value) : value;
+    });
+    let rootOpenCount = 0;
+    const openForeign = (async (path: string) => {
+      const handle = await open(path, "r");
+      if (path !== root) return handle;
+      rootOpenCount += 1;
+      if (rootOpenCount > 1) return handle;
+      return {
+        stat: async () => fakeOwner(await handle.stat()),
+        close: () => handle.close(),
+      } as Awaited<ReturnType<typeof open>>;
+    }) as typeof open;
+    await expect(
+      assertSafeForSecrets(root, root, "directory", {
+        uid,
+        stat: statForeign,
+        open: openForeign,
+      }),
+    ).rejects.toThrow(`${root} is owned by uid ${uid + 1}`);
+    expect(statForeign).toHaveBeenCalledWith(root);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a foreign-owned middle symlink", async () => {
+    const base = await temp();
+    const real = join(base, "real");
+    const middle = join(base, "middle");
+    const top = join(base, "top");
+    await mkdir(real, { mode: 0o700 });
+    await mkdir(join(real, "auth"), { mode: 0o700 });
+    await symlink(real, middle);
+    await symlink(middle, top);
+    const uid = process.getuid!();
+    const lstat = async (path: string) => {
+      const { lstat } = await import("node:fs/promises");
+      const value = await lstat(path);
+      return path === middle
+        ? new Proxy(value, {
+            get: (target, key) => (key === "uid" ? uid + 1 : Reflect.get(target, key, target)),
+          })
+        : value;
+    };
+    await expect(
+      assertSafeForSecrets(top, join(top, "auth"), "directory", { uid, lstat }),
+    ).rejects.toThrow(/symbolic link owned by uid/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a world-writable non-sticky link parent",
+    async () => {
+      const base = await temp();
+      const real = join(base, "real");
+      const shared = join(base, "shared");
+      const top = join(shared, "top");
+      await mkdir(real, { mode: 0o700 });
+      await mkdir(join(real, "auth"), { mode: 0o700 });
+      await mkdir(shared, { mode: 0o777 });
+      await chmod(shared, 0o777);
+      await symlink(real, top);
+      await expect(assertSafeForSecrets(top, join(top, "auth"), "directory")).rejects.toThrow(
+        /world-writable/,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "only accepts sticky ancestors owned by root or us",
+    async () => {
+      const base = await temp();
+      const parent = join(base, "sticky");
+      const root = join(parent, "data");
+      await mkdir(parent, { mode: 0o1777 });
+      await chmod(parent, 0o1777);
+      await mkdir(root, { mode: 0o700 });
+      await mkdir(join(root, "auth"), { mode: 0o700 });
+      const uid = process.getuid!();
+      const statForeign = async (path: string) => {
+        const value = await stat(path);
+        return path === parent
+          ? new Proxy(value, {
+              get: (target, key) => (key === "uid" ? uid + 1 : Reflect.get(target, key, target)),
+            })
+          : value;
+      };
+      await expect(
+        assertSafeForSecrets(root, join(root, "auth"), "directory", { uid, stat: statForeign }),
+      ).rejects.toThrow(/owned by uid/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("refuses a non-root foreign-owned ancestor", async () => {
+    const base = await temp();
+    const parent = join(base, "parent");
+    const root = join(parent, "data");
+    await mkdir(parent, { mode: 0o755 });
+    await mkdir(root, { mode: 0o700 });
+    await mkdir(join(root, "auth"), { mode: 0o700 });
+    const uid = process.getuid!();
+    const statForeign = async (path: string) => {
+      const value = await stat(path);
+      return path === parent
+        ? new Proxy(value, {
+            get: (target, key) => (key === "uid" ? uid + 1 : Reflect.get(target, key, target)),
+          })
+        : value;
+    };
+    await expect(
+      assertSafeForSecrets(root, join(root, "auth"), "directory", { uid, stat: statForeign }),
+    ).rejects.toThrow(/owned by uid/);
+  });
+
+  it.skipIf(process.platform === "win32")("protects os.homedir when HOME is unset", async () => {
+    vi.stubEnv("HOME", undefined);
+    try {
+      const home = homedir();
+      const before = (await stat(home)).mode & 0o777;
+      expect(await tightenDataRoot(home)).toEqual({ changed: false, reason: "home-or-root" });
+      expect((await stat(home)).mode & 0o777).toBe(before);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.skipIf(process.platform === "win32")(
     "accepts the owned auth directory and regular file",
     async () => {
@@ -173,7 +377,7 @@ describe("assertSafeForSecrets", () => {
       await mkdir(nested, { mode: 0o700 });
       await mkdir(join(nested, "auth"), { mode: 0o700 });
       await expect(assertSafeForSecrets(nested, join(nested, "auth"), "directory")).rejects.toThrow(
-        /ancestor/,
+        /world-writable/,
       );
     },
   );
@@ -191,8 +395,18 @@ describe("assertSafeForSecrets", () => {
       assertSafeForSecrets(second, join(second, "auth"), "directory"),
     ).resolves.toBeUndefined();
     const uid = (await stat(root)).uid;
+    const foreignMiddle = async (path: string) => {
+      const entry = await lstat(path);
+      if (path !== first) return entry;
+      return new Proxy(entry, {
+        get: (target, key) => (key === "uid" ? uid + 1 : Reflect.get(target, key, target)),
+      });
+    };
     await expect(
-      assertSafeForSecrets(second, join(second, "auth"), "directory", { uid: uid + 1 }),
+      assertSafeForSecrets(second, join(second, "auth"), "directory", {
+        uid,
+        lstat: foreignMiddle,
+      }),
     ).rejects.toThrow(/symbolic link owned by uid/);
   });
 

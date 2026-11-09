@@ -33,6 +33,25 @@ afterEach(async () => {
 });
 
 describe("key format", () => {
+  it.skipIf(process.platform === "win32")(
+    "creates clients below an owned 0775 parent",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "boof-runner-parent-"));
+      const parent = join(base, "boof-runner");
+      const root = join(parent, "data");
+      try {
+        await mkdir(parent, { mode: 0o775 });
+        await chmod(parent, 0o775);
+        await mkdir(root, { mode: 0o700 });
+        const local = new AuthStore(root);
+        const made = await local.create({ name: "parent test", scopes: ["tasks:read"] });
+        expect(await local.verify(made.key)).toMatchObject({ ok: true });
+      } finally {
+        await rm(base, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("is boof_<clientId>_<base64url(32 bytes)> and round-trips", async () => {
     const { client, key } = await store.create({ name: "CI Bot", scopes: ["tasks:read"] });
     expect(client.id).toBe("ci-bot");

@@ -42,6 +42,25 @@ function simulatedProcess(pid: number) {
 }
 
 describe("BrowserSessionStore", () => {
+  it.skipIf(process.platform === "win32")(
+    "creates sessions below an owned 0775 parent",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "boof-browser-parent-"));
+      const parent = join(base, "boof-runner");
+      const data = join(parent, "data");
+      try {
+        await mkdir(parent, { mode: 0o775 });
+        await chmod(parent, 0o775);
+        await mkdir(data, { mode: 0o700 });
+        const local = new BrowserSessionStore(data);
+        const created = await local.createSession();
+        expect(await local.verify(created.token)).toMatchObject({ id: created.session.id });
+      } finally {
+        await rm(base, { recursive: true, force: true });
+      }
+    },
+  );
+
   let root: string;
   let clock: number;
   let store: BrowserSessionStore;

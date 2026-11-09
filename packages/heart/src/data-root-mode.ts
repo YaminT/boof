@@ -1,5 +1,6 @@
 import { chmod, lstat, open, readlink, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 export const PRIVATE_SUBDIRS = [
@@ -23,14 +24,14 @@ export type TightenResult =
 
 export async function tightenDataRoot(
   root: string,
-  opts: { platform?: NodeJS.Platform; uid?: number; home?: string } = {},
+  opts: { platform?: NodeJS.Platform; uid?: number; home?: string; chmod?: typeof chmod } = {},
 ): Promise<TightenResult> {
   const platform = opts.platform ?? process.platform;
   if (platform === "win32") return { changed: false, reason: "windows" };
   try {
     const rootStat = await stat(root);
     const resolvedRoot = await realpath(root);
-    const home = opts.home ?? process.env.HOME;
+    const home = opts.home ?? homedir();
     if (
       resolvedRoot === "/" ||
       (home && resolvedRoot === (await realpath(home).catch(() => resolve(home))))
@@ -39,7 +40,7 @@ export async function tightenDataRoot(
     }
     const uid = opts.uid ?? process.getuid?.();
     if (uid === undefined || rootStat.uid !== uid) return { changed: false, reason: "not-owner" };
-    await checkLinkOwners(resolve(root), uid);
+    await checkLinkOwners(resolve(root), uid, process.getgid?.() ?? -1);
 
     const before = rootStat.mode & 0o777;
     const changed = (before & 0o077) !== 0;
@@ -47,18 +48,22 @@ export async function tightenDataRoot(
       resolvedRoot,
       constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
     );
+    let rootChmodFailed = false;
     try {
       const handleStat = await rootHandle.stat();
       if (!handleStat.isDirectory() || handleStat.uid !== uid)
         return { changed: false, reason: "not-owner" };
       if (changed) {
-        await rootHandle.chmod(0o700);
-        const after = await rootHandle.stat();
-        if (after.uid !== uid || (after.mode & 0o077) !== 0)
-          return { changed: false, reason: "chmod-failed", mode: before };
+        try {
+          await rootHandle.chmod(0o700);
+          const after = await rootHandle.stat();
+          if (after.uid !== uid || (after.mode & 0o077) !== 0) rootChmodFailed = true;
+        } catch {
+          rootChmodFailed = true;
+        }
       }
     } catch {
-      return { changed: false, reason: "chmod-failed", mode: before };
+      rootChmodFailed = true;
     } finally {
       await rootHandle.close();
     }
@@ -67,11 +72,12 @@ export async function tightenDataRoot(
       try {
         const entry = await lstat(path);
         if (entry.isSymbolicLink() || !entry.isDirectory() || entry.uid !== uid) continue;
-        await chmod(path, 0o700);
+        await (opts.chmod ?? chmod)(path, 0o700);
       } catch {
         // Tightening is best effort; a later consumer still validates secret paths.
       }
     }
+    if (rootChmodFailed) return { changed: false, reason: "chmod-failed", mode: before };
     return changed ? { changed: true, before } : { changed: false, reason: "already-private" };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
@@ -100,7 +106,14 @@ function fail(path: string, message: string): never {
   throw new UnsafeSecretPathError(path, `${path} ${message}`);
 }
 
-async function checkLinkOwners(path: string, uid: number, depth = 0): Promise<void> {
+async function checkLinkOwners(
+  path: string,
+  uid: number,
+  gid: number,
+  lstatFn: typeof lstat = lstat,
+  statFn: typeof stat = stat,
+  depth = 0,
+): Promise<void> {
   if (depth > 40) fail(path, "has too many symbolic links; use a real data root");
   const absolute = resolve(path);
   const parsedRoot = isAbsolute(absolute) ? absolute.slice(0, absolute.indexOf(sep) + 1) : "/";
@@ -108,9 +121,10 @@ async function checkLinkOwners(path: string, uid: number, depth = 0): Promise<vo
   let current = parsedRoot;
   for (const part of parts) {
     const candidate = join(current, part);
+    await checkAncestors(candidate, uid, gid, statFn);
     let entry;
     try {
-      entry = await lstat(candidate);
+      entry = await lstatFn(candidate);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
@@ -122,7 +136,7 @@ async function checkLinkOwners(path: string, uid: number, depth = 0): Promise<vo
           `is a symbolic link owned by uid ${entry.uid}; use a data root owned by your uid or root`,
         );
       const target = resolve(dirname(candidate), await readlink(candidate));
-      await checkLinkOwners(target, uid, depth + 1);
+      await checkLinkOwners(target, uid, gid, lstatFn, statFn, depth + 1);
       current = target;
     } else {
       current = candidate;
@@ -130,17 +144,22 @@ async function checkLinkOwners(path: string, uid: number, depth = 0): Promise<vo
   }
 }
 
-async function checkAncestors(rootPath: string): Promise<void> {
+async function checkAncestors(
+  rootPath: string,
+  uid: number,
+  gid: number,
+  statFn: typeof stat = stat,
+): Promise<void> {
   let current = dirname(rootPath);
   while (current !== dirname(current)) {
-    const st = await stat(current);
+    const st = await statFn(current);
     const mode = st.mode & 0o7777;
+    if (st.uid !== 0 && st.uid !== uid)
+      fail(current, `is owned by uid ${st.uid}; use a directory owned by your uid or root`);
     if ((mode & 0o1000) !== 0) return;
-    if ((mode & 0o022) !== 0)
-      fail(
-        current,
-        `is a group-writable or world-writable ancestor; move the data root below a root-owned or sticky directory`,
-      );
+    if ((mode & 0o002) !== 0) fail(current, `is world-writable; run chmod o-w ${current}`);
+    if ((mode & 0o020) !== 0 && !(st.uid === uid && st.gid === gid))
+      fail(current, `is group-writable by a different group; run chmod g-w ${current}`);
     if (st.uid === 0) return;
     current = dirname(current);
   }
@@ -151,23 +170,36 @@ export async function assertSafeForSecrets(
   root: string,
   path: string,
   kind: SecretKind,
-  opts: { allowMissing?: boolean; platform?: NodeJS.Platform; uid?: number } = {},
+  opts: {
+    allowMissing?: boolean;
+    platform?: NodeJS.Platform;
+    uid?: number;
+    gid?: number;
+    home?: string;
+    lstat?: typeof lstat;
+    stat?: typeof stat;
+    open?: typeof open;
+  } = {},
 ): Promise<void> {
   const platform = opts.platform ?? process.platform;
   const uid = opts.uid ?? uidFor(platform);
+  const gid = opts.gid ?? process.getgid?.() ?? -1;
+  const lstatFn = opts.lstat ?? lstat;
+  const statFn = opts.stat ?? stat;
+  const openFn = opts.open ?? open;
   if (platform === "win32" || uid === undefined) return;
 
   let rootInitial;
   try {
-    rootInitial = await stat(root);
+    rootInitial = await statFn(root);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT" && opts.allowMissing) return;
     throw error;
   }
-  const home = process.env.HOME;
+  const home = opts.home ?? homedir();
   const rootReal = await realpath(root);
-  await checkLinkOwners(resolve(root), uid);
-  await checkAncestors(rootReal);
+  await checkLinkOwners(resolve(root), uid, gid, lstatFn, statFn);
+  await checkAncestors(rootReal, uid, gid, statFn);
   if (
     rootInitial.uid === uid &&
     rootReal !== "/" &&
@@ -175,7 +207,7 @@ export async function assertSafeForSecrets(
     (rootInitial.mode & 0o022) !== 0 &&
     (rootInitial.mode & 0o1000) === 0
   ) {
-    const rootHandle = await open(
+    const rootHandle = await openFn(
       rootReal,
       constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
     );
@@ -193,7 +225,7 @@ export async function assertSafeForSecrets(
     }
   }
   const resolvedRoot = rootReal;
-  const rootStat = await stat(root);
+  const rootStat = await statFn(root);
   const rootMode = rootStat.mode & 0o7777;
   if (!rootStat.isDirectory()) fail(root, "is not a real directory; use a data root directory");
   if (rootStat.uid !== uid && rootStat.uid !== 0)
@@ -203,7 +235,7 @@ export async function assertSafeForSecrets(
       root,
       `is group-writable or world-writable (mode ${(rootMode & 0o777).toString(8)}); run chmod go-w ${root}`,
     );
-  const rootHandle = await open(
+  const rootHandle = await openFn(
     resolvedRoot,
     constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
   );
@@ -230,10 +262,10 @@ export async function assertSafeForSecrets(
   if (relative === null)
     fail(path, "is outside the data root; keep secret files inside the data root");
   const resolvedPath = join(resolvedRoot, relative);
-  await checkLinkOwners(absolutePath, uid);
+  await checkLinkOwners(absolutePath, uid, gid, lstatFn, statFn);
 
   const parent = kind === "file" ? dirname(resolvedPath) : resolvedPath;
-  const parentStat = await lstat(parent).catch((error: unknown) => {
+  const parentStat = await lstatFn(parent).catch((error: unknown) => {
     if (opts.allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   });
@@ -247,7 +279,7 @@ export async function assertSafeForSecrets(
       parent,
       `is group-writable or world-writable (mode ${(parentStat.mode & 0o777).toString(8)}); run chmod 700 ${parent}`,
     );
-  const dirHandle = await open(
+  const dirHandle = await openFn(
     parent,
     constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
   );
@@ -265,7 +297,7 @@ export async function assertSafeForSecrets(
   if (kind === "file") {
     let fileStat;
     try {
-      fileStat = await lstat(resolvedPath);
+      fileStat = await lstatFn(resolvedPath);
     } catch (error) {
       if (opts.allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
@@ -285,7 +317,7 @@ export async function assertSafeForSecrets(
         resolvedPath,
         `is group-writable or world-writable (mode ${(fileStat.mode & 0o777).toString(8)}); run chmod 600 ${resolvedPath}`,
       );
-    const fileHandle = await open(resolvedPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const fileHandle = await openFn(resolvedPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const handleStat = await fileHandle.stat();
       if (!handleStat.isFile() || handleStat.uid !== uid || (handleStat.mode & 0o022) !== 0)

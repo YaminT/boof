@@ -32,6 +32,7 @@ import {
   ProjectResolutionError,
   SettingsStore,
   securitySettings,
+  UnsafeSecretPathError,
 } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
@@ -600,8 +601,12 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   try {
     code = await dispatch(cmd, rest, argv);
   } catch (err) {
-    if (err instanceof ProjectResolutionError || err instanceof MigrationError) {
-      console.error(err.message);
+    if (
+      err instanceof ProjectResolutionError ||
+      err instanceof MigrationError ||
+      err instanceof UnsafeSecretPathError
+    ) {
+      console.error(err.message.replace(/[\r\n]+/g, " "));
       code = 1;
     } else {
       throw err;

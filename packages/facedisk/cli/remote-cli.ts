@@ -314,8 +314,18 @@ async function setup(
       out(
         `Data root ${root} was accessible to other users (mode ${tightenedRoot.before.toString(8)}); ran chmod 700.`,
       );
-    } else if (tightenedRoot.reason === "already-private") {
-      out(`Data root ${root} is already private (chmod 700).`);
+    } else if (
+      tightenedRoot.reason === "not-owner" ||
+      tightenedRoot.reason === "home-or-root" ||
+      tightenedRoot.reason === "chmod-failed"
+    ) {
+      const fix =
+        tightenedRoot.reason === "home-or-root"
+          ? "choose a data root below your home directory"
+          : `make this data root private with: chmod 700 "${root}"`;
+      err(
+        `WARNING: remote setup could not secure data root ${root} (${tightenedRoot.reason}); ${fix}. Remote clients may be able to read local data.`,
+      );
     }
 
     let key: string | undefined;

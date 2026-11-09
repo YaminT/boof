@@ -6,6 +6,7 @@ import {
   browserSessionUnavailableMessage,
   authorize,
   LOCAL_PRINCIPAL,
+  UnsafeSecretPathError,
   type AuthStore,
   type BrowserSessionVerifier,
   type Client,
@@ -182,6 +183,8 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
   const now = opts.now ?? Date.now;
   const cache = new ClientCache(opts.store, now);
   const lastTouch = new Map<string, number>();
+  const unavailable = (error: UnsafeSecretPathError, c: Context) =>
+    c.json({ error: { code: "auth_store_unavailable", message: error.message } }, 503);
 
   const resolve = async (c: Context): Promise<AuthResult> => {
     const peer = opts.peerAddress(c);
@@ -266,7 +269,13 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
 
   const middleware: MiddlewareHandler = async (c, next) => {
     c.set("peerAddress", opts.peerAddress(c));
-    const r = await resolve(c);
+    let r: AuthResult;
+    try {
+      r = await resolve(c);
+    } catch (error) {
+      if (error instanceof UnsafeSecretPathError) return unavailable(error, c);
+      throw error;
+    }
     if (!r.ok) {
       const name = opts.sessionCookieName?.(c) ?? "";
       const presentedCredential =

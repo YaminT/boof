@@ -100,6 +100,19 @@ beforeEach(async () => {
   store = new AuthStore(root, () => clock);
   peer = LOOPBACK;
 });
+
+it.skipIf(process.platform === "win32")("auth store refusals return a clean 503", async () => {
+  const key = await mint("security test", ["projects:read"]);
+  await import("node:fs/promises").then(({ chmod }) => chmod(join(root, "auth"), 0o770));
+  const response = await call(build(), "/api/v1/projects", {}, key);
+  expect(response.status).toBe(503);
+  expect(await response.json()).toMatchObject({
+    error: {
+      code: "auth_store_unavailable",
+      message: expect.stringContaining(`chmod 700 ${join(root, "auth")}`),
+    },
+  });
+});
 afterEach(async () => {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });

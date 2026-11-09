@@ -1,6 +1,15 @@
 import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -537,6 +546,24 @@ async function subscribe(body: object) {
 }
 
 describe("webhook delivery", () => {
+  it.skipIf(process.platform === "win32")("logs an unsafe AuthStore refusal once", async () => {
+    await authStore.create({ name: "webhook test", scopes: ["projects:read"] });
+    await chmod(join(root, "auth"), 0o770);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const dispatcher = new WebhookDispatcher({ root, service, authStore, intervalMs: 5 });
+    try {
+      dispatcher.start();
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      await dispatcher.stop();
+      const lines = errorLog.mock.calls.map((call) => String(call[0]));
+      expect(lines.filter((line) => line.startsWith("webhooks: "))).toHaveLength(1);
+      expect(lines.join("\n")).not.toMatch(/UnsafeSecretPathError|at /);
+    } finally {
+      await dispatcher.stop();
+      errorLog.mockRestore();
+    }
+  });
+
   it.each([
     ["an empty secret", async (id: string) => writeSecrets({ [id]: "" })],
     ["a non-string secret", async (id: string) => writeSecrets({ [id]: 12345 })],
