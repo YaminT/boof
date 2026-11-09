@@ -11,7 +11,7 @@ export async function appendAuditLine(
   line: { ts: string; [key: string]: unknown },
 ): Promise<void> {
   const dir = dataRootPaths(root).audit;
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   await appendFile(join(dir, `${line.ts.slice(0, 10)}.jsonl`), JSON.stringify(line) + "\n", "utf8");
 }
 

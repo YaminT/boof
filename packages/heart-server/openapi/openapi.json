@@ -141,6 +141,8 @@
                   "change_not_found",
                   "change_stale",
                   "change_expired",
+                  "auth_store_unavailable",
+                  "browser_sessions_unavailable",
                   "rate_limited",
                   "not_configured",
                   "gateway_error",
@@ -15550,9 +15552,17 @@
     }
   ],
   "x-error-codes": {
+    "auth_store_unavailable": {
+      "description": "The server's data folder has unsafe permissions, so no key can be checked; see the server log.",
+      "status": 503
+    },
     "branch_not_found": {
       "description": "The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).",
       "status": 404
+    },
+    "browser_sessions_unavailable": {
+      "description": "The server's data folder has unsafe permissions, so no browser session can be checked; see the server log.",
+      "status": 503
     },
     "budget_exceeded": {
       "description": "A daily budget that covers the assistant is used up.",

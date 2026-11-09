@@ -86,6 +86,14 @@ export const ERROR_CODES = {
   change_not_found: [404, "The pending change does not exist or is no longer available."],
   change_stale: [409, "The target changed since the assistant proposed this change."],
   change_expired: [409, "The pending change expired."],
+  auth_store_unavailable: [
+    503,
+    "The server's data folder has unsafe permissions, so no key can be checked; see the server log.",
+  ],
+  browser_sessions_unavailable: [
+    503,
+    "The server's data folder has unsafe permissions, so no browser session can be checked; see the server log.",
+  ],
   rate_limited: [429, "Too many requests; retry after the Retry-After header."],
   not_configured: [409, "No account pool is configured (settings.owlish is not set)."],
   gateway_error: [502, "The account pool gateway (better-ccflare) failed or is unreachable."],
@@ -157,7 +165,7 @@ export function toOpError(err: unknown): OpError {
   if (err instanceof OpError) return err;
   if (err instanceof UnsafeSecretPathError) {
     logUnsafeDataFolder(err);
-    return new OpError(503, UNSAFE_DATA_FOLDER_MESSAGE, "auth_store_unavailable" as ErrorCode);
+    return new OpError(503, UNSAFE_DATA_FOLDER_MESSAGE, "auth_store_unavailable");
   }
   if (err instanceof EpicError) {
     if (err.code === "not_found") return new OpError(404, err.message, "epic_not_found");

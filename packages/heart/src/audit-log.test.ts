@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, stat, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -30,6 +30,19 @@ describe("audit log", () => {
     expect(await readdir(join(root, "audit"))).toEqual(["2026-03-01.jsonl"]);
     expect((await lines()).map((l) => l.principal)).toEqual(["a", "b"]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "creates the audit folder private even under umask 0",
+    async () => {
+      const old = process.umask(0);
+      try {
+        await appendAuditLine(root, { ts: "2026-03-01T10:00:00.000Z", principal: "a" });
+      } finally {
+        process.umask(old);
+      }
+      expect((await stat(join(root, "audit"))).mode & 0o777).toBe(0o700);
+    },
+  );
 
   it("auditOperation records who, what, where and outcome, with the surface, and no values", async () => {
     await new SettingsStore(root).save(defaultSettings());
