@@ -29,6 +29,7 @@ export * from "./webhook-secrets.js";
 export * from "./n8n-secrets.js";
 export * from "./n8n-config.js";
 export * from "./external-step-types.js";
+export * from "./external-runs.js";
 export * from "./plan-schema.js";
 export * from "./plan-validate.js";
 export * from "./plan-store.js";
