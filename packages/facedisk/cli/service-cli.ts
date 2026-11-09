@@ -782,6 +782,7 @@ async function install(
     out("");
     out(`Boof Runner is running as ${unitName(name)} at ${baseUrl(host, port)}`);
     out(`Data root: ${data}`);
+    out("Sign in to the web UI: boof-runner open");
 
     const linger = await env.run("loginctl", ["show-user", env.user, "-p", "Linger"]);
     if (!/^Linger=yes$/m.test(linger.stdout)) {
@@ -888,6 +889,7 @@ async function status(
   const h = await env.health(baseUrl(host, port));
   out("");
   out(`healthz: ${h.summary}`);
+  out("Sign in to the web UI: boof-runner open");
   return st.code === 0 && h.ok ? 0 : 1;
 }
 

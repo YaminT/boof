@@ -21,9 +21,18 @@ import { projectCommand } from "@boof/facedisk/cli/project-cli.js";
 import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
+import { openCommand } from "@boof/facedisk/cli/open-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
-import { AuthStore, MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
+import {
+  AuthStore,
+  BrowserSessionStore,
+  MigrationError,
+  scaffoldDataRoot,
+  ProjectResolutionError,
+  SettingsStore,
+  securitySettings,
+} from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
 interface ServeArgs {
@@ -75,6 +84,7 @@ Usage:
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
+  boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
   boof-runner ops                      List the operation commands (every REST/MCP operation)
   boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
   boof-runner --help                   Show this help
@@ -113,6 +123,34 @@ scan options:
       --model <name>  Model for --tool
 
 Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage; operation commands: 2 not found, 3 not allowed (identity, scope, project, trust), 130 interrupted.`;
+
+/** True when the bind address only accepts connections from this machine. */
+function isLoopbackBind(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+}
+
+/**
+ * The lines `serve` prints once the server is up. Under local-trust on a loopback bind the
+ * Web UI line is a single-use sign-in link; otherwise it is the plain URL.
+ */
+export function serveBanner(o: {
+  scheme: string;
+  hostPart: string;
+  port: number;
+  authMode: "local-trust" | "required";
+  loopback: boolean;
+  link?: string;
+}): string[] {
+  const base = `${o.scheme}://${o.hostPart}:${o.port}`;
+  const web =
+    o.authMode === "local-trust" && o.loopback && o.link
+      ? [
+          `Web UI:  ${o.link}`,
+          '  (sign-in link: single use, 10 minutes; later run "boof-runner open")',
+        ]
+      : [`Web UI:  ${base}`];
+  return [...web, `API:     ${base}/api`];
+}
 
 /** Locate the built UI directory shipped alongside this CLI, if present. */
 function resolveUiDir(): string {
@@ -264,13 +302,33 @@ export async function serve(argv: string[]): Promise<void> {
       runner: !args.noRunner,
       guard,
       ...(devAgent ? { conciergeAgent: devAgent } : {}),
-      onServer: (server) => {
+      onServer: async (server) => {
         if (!server) return;
         const scheme = args.tlsCert ? "https" : "http";
         const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
         const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
-        console.log(`Web UI:  ${scheme}://${hostPart}:${server.port}`);
-        console.log(`API:     ${scheme}://${hostPart}:${server.port}/api`);
+        const authMode = securitySettings(await new SettingsStore(root).load()).auth.mode;
+        const loopback = isLoopbackBind(args.host);
+        let link: string | undefined;
+        if (authMode === "local-trust" && loopback) {
+          try {
+            const { code } = await new BrowserSessionStore(root).createLink();
+            link = `${scheme}://${hostPart}:${server.port}/auth/browser?code=${code}`;
+          } catch (e) {
+            console.error(
+              `Could not mint a sign-in link (${e instanceof Error ? e.message : String(e)}); run "boof-runner open" later.`,
+            );
+          }
+        }
+        for (const line of serveBanner({
+          scheme,
+          hostPart,
+          port: server.port,
+          authMode,
+          loopback,
+          ...(link ? { link } : {}),
+        }))
+          console.log(line);
       },
       onRunner: (engine) => {
         if (engine) console.log("Runner:  started (toggle on/off in the UI)");
@@ -661,6 +719,9 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "task":
       code = await taskCommand(rest, defaultDataRoot);
+      break;
+    case "open":
+      code = await openCommand(rest, defaultDataRoot);
       break;
     case "mcp":
       code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());
