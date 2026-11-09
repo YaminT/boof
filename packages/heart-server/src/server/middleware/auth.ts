@@ -17,8 +17,6 @@ declare module "hono" {
     principal: Principal;
     peerAddress: string | undefined;
     clientAddress: ClientAddress;
-    /** Set on /mcp when a keyless loopback caller was turned into the `local-mcp` principal. */
-    keylessMcp: boolean;
     /** Extra fields the handler wants recorded in the audit line (never bodies or secrets). */
     auditExtra: Record<string, unknown>;
     /** Set by the unauthenticated limiter: called when authentication fails; returns a 429 when the address is over its budget. */
@@ -105,9 +103,20 @@ export function principalFromClient(client: Client, opts: { operator?: boolean }
   };
 }
 
-function unauthenticated(c: Context, message = "Authentication required") {
-  c.header("WWW-Authenticate", 'Bearer realm="boof-runner"');
-  return c.json({ error: { code: "unauthenticated", message } }, 401);
+const M1 =
+  'MCP needs an API key. Send "Authorization: Bearer <key>"; create one with "boof-runner auth add --name <name> --scopes <list> --trust review". Keyless MCP on loopback was removed (see the CHANGELOG, "Breaking changes and upgrade notes").';
+const M2 =
+  'Keyless access on this machine is only for the boof web UI after sign-in. Open the UI with the link that "boof-runner open" prints, or send "Authorization: Bearer <key>" (create one with "boof-runner auth add").';
+
+function cookieValue(c: Context, name: string): string | undefined {
+  const raw = c.req.header("cookie");
+  if (!raw) return undefined;
+  for (const part of raw.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    return part.slice(separator + 1).trim();
+  }
+  return undefined;
 }
 
 export interface AuthenticateOptions {
@@ -126,7 +135,9 @@ export interface AuthenticateOptions {
   sessionCookieName?: (c: Context) => string;
 }
 
-export type AuthResult = { ok: true; principal: Principal } | { ok: false; message: string };
+export type AuthResult =
+  | { ok: true; principal: Principal }
+  | { ok: false; message: string; reason?: "browser_session_required" | "mcp_key_required" };
 
 export interface Authenticator {
   middleware: MiddlewareHandler;
@@ -137,7 +148,7 @@ export interface Authenticator {
 /**
  * Establish the request's principal.
  * - `Authorization: Bearer boof_...` is verified against the client registry.
- * - No header, loopback peer, no proxy headers, mode `local-trust` -> the local principal.
+ * - No header, loopback peer, no proxy headers, mode `local-trust`, valid browser cookie -> local principal.
  * - Anything else -> 401.
  */
 export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
@@ -151,13 +162,28 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
 
     if (header === undefined) {
       const { auth } = await opts.security();
-      // A local reverse proxy makes every peer look like loopback; never trust those.
-      const proxied =
-        c.req.header("x-forwarded-for") !== undefined || c.req.header("forwarded") !== undefined;
-      if (auth.mode === "local-trust" && isLoopbackAddress(peer) && !proxied) {
+      if (auth.mode !== "local-trust") return { ok: false, message: "Authentication required" };
+      const proxied = PROXY_HEADERS.some((name) => c.req.header(name) !== undefined);
+      if (!isLoopbackAddress(peer) || proxied) {
+        return { ok: false, message: "Authentication required" };
+      }
+      if (c.req.path === "/mcp") {
+        c.set("auditExtra", { reason: "mcp_key_required" });
+        return { ok: false, message: M1, reason: "mcp_key_required" };
+      }
+      const fetchSite = c.req.header("sec-fetch-site");
+      const allowedFetchSite =
+        fetchSite === undefined || fetchSite === "same-origin" || fetchSite === "none";
+      const token = allowedFetchSite
+        ? cookieValue(c, opts.sessionCookieName?.(c) ?? "")
+        : undefined;
+      const session = await opts.browserSessions?.verify(token);
+      if (session) {
+        c.set("auditExtra", { auth: "browser-session", session: session.id });
         return { ok: true, principal: LOCAL_PRINCIPAL };
       }
-      return { ok: false, message: "Authentication required" };
+      c.set("auditExtra", { reason: "browser_session_required" });
+      return { ok: false, message: M2, reason: "browser_session_required" };
     }
 
     const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
@@ -196,7 +222,21 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
   const middleware: MiddlewareHandler = async (c, next) => {
     c.set("peerAddress", opts.peerAddress(c));
     const r = await resolve(c);
-    if (!r.ok) return c.get("authFailed")?.(c) ?? unauthenticated(c, r.message);
+    if (!r.ok) {
+      const limited = c.get("authFailed")?.(c);
+      if (limited) return limited;
+      c.header("WWW-Authenticate", 'Bearer realm="boof-runner"');
+      return c.json(
+        {
+          error: {
+            code: "unauthenticated",
+            message: r.message,
+            ...(r.reason ? { details: { reason: r.reason } } : {}),
+          },
+        },
+        401,
+      );
+    }
     c.set("principal", r.principal);
     return next();
   };

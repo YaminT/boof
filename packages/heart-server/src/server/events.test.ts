@@ -394,7 +394,15 @@ describe("stream lifetime", () => {
       warn: () => {},
     });
     try {
-      const req = `GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1:${srv.port}\r\n\r\n`;
+      const key = (
+        await authStore.create({
+          name: "stream-lifetime",
+          scopes: ["tasks:read"],
+          trust: "trusted",
+        })
+      ).key;
+      const auth = `Authorization: Bearer ${key}\r\n`;
+      const req = `GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1:${srv.port}\r\n${auth}\r\n`;
       for (let i = 0; i < 40; i += 1) {
         await new Promise<void>((resolve) => {
           const s = net.connect(srv.port, "127.0.0.1", () => {
@@ -416,6 +424,7 @@ describe("stream lifetime", () => {
             ctrls.push(ac);
             const res = await fetch(`http://127.0.0.1:${srv.port}/api/v1/events`, {
               signal: ac.signal,
+              headers: { authorization: `Bearer ${key}` },
             });
             if (res.status !== 200) rejected += 1;
           }

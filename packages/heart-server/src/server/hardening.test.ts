@@ -3,7 +3,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSettings, SettingsStore, execCommand } from "@boof/heart";
+import { BrowserSessionStore, defaultSettings, SettingsStore, execCommand } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "../api/index.js";
@@ -44,6 +44,17 @@ afterEach(async () => {
 });
 
 describe("host guard", () => {
+  it("requires a real browser session on an otherwise accepted local Host", async () => {
+    app = createApp({
+      service,
+      browserSessions: new BrowserSessionStore(root),
+      peerAddress: () => "127.0.0.1",
+    });
+    const res = await req("/api/v1/whoami", undefined, "localhost:4319");
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.details.reason).toBe("browser_session_required");
+  });
+
   it("rejects a foreign Host header with 421", async () => {
     const res = await req("/api/tasks", undefined, "evil.example.com");
     expect(res.status).toBe(421);

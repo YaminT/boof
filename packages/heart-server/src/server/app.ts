@@ -1,13 +1,14 @@
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import {
   AuthStore,
+  BrowserSessionStore,
+  browserSessionCookieName,
   authorize,
   authorizeProject,
   isKebabId,
-  LOCAL_PRINCIPAL,
   MAX_ATTACHMENT_BYTES,
   type BrowserSessionVerifier,
   type Principal,
@@ -15,11 +16,8 @@ import {
 import {
   buildOpenApi,
   IdempotencyStore,
-  LOCAL_MCP_ID,
-  LOCAL_MCP_PRINCIPAL,
   OpError,
   registry,
-  RESERVED_ID_MESSAGE,
   toOpError,
   type AnyOperation,
   type ResolveHost,
@@ -50,6 +48,7 @@ import {
 } from "./events.js";
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 import { mcpRoute } from "./mcp-route.js";
+import { browserSignin } from "./browser-signin.js";
 import { HARNESS_MD } from "./generated/harness.js";
 import { ConciergeAskInputSchema } from "../api/ops/concierge.js";
 import { ConciergeEventSchema } from "../api/schemas.js";
@@ -129,6 +128,18 @@ export function createApp(deps: AppDeps): Hono {
   const security = securityConfigReader(service);
   const authStore = deps.authStore ?? new AuthStore(service.root, deps.now);
   const peerAddress = deps.peerAddress ?? defaultPeerAddress;
+  const browserSessions = deps.browserSessions ?? new BrowserSessionStore(service.root);
+  const sessionCookieName =
+    deps.sessionCookieName ??
+    ((c: Context) => {
+      const host = c.req.header("host");
+      try {
+        const port = host ? new URL(`http://${host}`).port : "";
+        return browserSessionCookieName(port ? Number(port) : 80);
+      } catch {
+        return browserSessionCookieName(80);
+      }
+    });
 
   app.use(
     "*",
@@ -210,35 +221,32 @@ export function createApp(deps: AppDeps): Hono {
     peerAddress,
     now: deps.now,
     operatorClients: deps.operatorClients,
-    browserSessions: deps.browserSessions,
-    sessionCookieName: deps.sessionCookieName,
+    browserSessions,
+    sessionCookieName,
   });
   const limiter = rateLimit({ security, now: deps.now });
   // Before authenticate, so failed authentications are counted per address; a request whose key
   // verifies is never limited. After the Origin guard, so cross-site rejections do not spend a
   // client's bucket.
   const unauthenticated = unauthenticatedRateLimit({ security, peerAddress, now: deps.now });
-  // A keyless loopback caller of /mcp (local-trust) is a model host, not the UI: it becomes the
-  // review-trust `local-mcp` principal here, before the limiter and the handler, so it has its
-  // own rate-limit bucket and the audit line names it. As on stdio, it is refused while
-  // clients.json holds a stored client of that reserved id (the two would share ownership).
-  const keylessMcp: MiddlewareHandler = async (c, next) => {
-    const p = c.get("principal");
-    if (p.kind === LOCAL_PRINCIPAL.kind && p.id === LOCAL_PRINCIPAL.id) {
-      if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
-        throw new OpError(403, RESERVED_ID_MESSAGE, "forbidden_trust");
-      }
-      c.set("principal", LOCAL_MCP_PRINCIPAL);
-      c.set("keylessMcp", true);
-    }
-    return next();
-  };
   for (const path of guarded) {
     app.use(path, unauthenticated);
     app.use(path, auth.middleware);
-    if (path === "/mcp") app.use(path, keylessMcp);
     app.use(path, limiter);
   }
+
+  // Sign-in is deliberately concealed outside the owner's local-trust browser context.
+  app.use("/auth/browser", auditor);
+  app.use("/auth/browser", unauthenticated);
+  app.get(
+    "/auth/browser",
+    browserSignin({
+      security,
+      peerAddress,
+      sessions: browserSessions,
+      sessionCookieName,
+    }),
+  );
 
   app.onError((err, c) => {
     const e = toOpError(err);

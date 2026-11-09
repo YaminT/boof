@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthStore,
+  BrowserSessionStore,
   defaultSettings,
   SecuritySettingsSchema,
   SettingsStore,
@@ -114,9 +115,11 @@ async function waitUntil(check: () => Promise<boolean>, timeoutMs = 5000): Promi
 }
 
 describe("authenticate", () => {
-  it("local-trust: loopback peer without Authorization is the local principal", async () => {
-    const res = await call(build(), "/api/tasks");
-    expect(res.status).toBe(200);
+  it("local-trust: loopback peer without a browser session is refused", async () => {
+    const app = build({ browserSessions: new BrowserSessionStore(root) });
+    const res = await call(app, "/api/tasks");
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.details.reason).toBe("browser_session_required");
   });
 
   it("401 for a non-loopback peer without a key", async () => {
@@ -1547,7 +1550,7 @@ describe("server binding", () => {
     }
   });
 
-  it("startServer warns when a client holds the reserved id local-mcp", async () => {
+  it("startServer no longer warns about the reserved local-mcp id", async () => {
     await store.create({ name: "old", scopes: ["tasks:read"] });
     const { readFile, writeFile } = await import("node:fs/promises");
     const file = join(root, "auth", "clients.json");
@@ -1562,15 +1565,13 @@ describe("server binding", () => {
       warn: (m) => warnings.push(m),
     });
     try {
-      expect(warnings.join("\n")).toMatch(/local-mcp/);
-      // It names both keyless surfaces: stdio refuses to start, keyless /mcp answers 403.
-      expect(warnings.join("\n")).toMatch(/\/mcp/);
+      expect(warnings.join("\n")).not.toMatch(/local-mcp/);
     } finally {
       await running.stop();
     }
   });
 
-  it("local-trust over a real socket: loopback peer without a key is allowed", async () => {
+  it("local-trust over a real socket: loopback peer without a browser session is refused", async () => {
     const running = await startServer({
       catalog: new ToolRegistry([new MockTool()]),
       root,
@@ -1579,7 +1580,7 @@ describe("server binding", () => {
     });
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/api/tasks`);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     } finally {
       await running.stop();
     }
@@ -1606,7 +1607,7 @@ describe("server binding", () => {
             "-subj",
             "/CN=localhost",
           ],
-          { stdio: "ignore" },
+          { stdio: "ignore", env: { PATH: "/usr/bin:/bin", HOME: dir } },
         );
       } catch {
         return ctx.skip();
@@ -1624,7 +1625,7 @@ describe("server binding", () => {
         process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
         try {
           const res = await fetch(`https://127.0.0.1:${running.port}/api/tasks`);
-          expect(res.status).toBe(200);
+          expect(res.status).toBe(401);
         } finally {
           if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
           else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
