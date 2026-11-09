@@ -14,6 +14,9 @@
 
 ### Fixed
 
+- The hand-written CLI commands (`auth add`, `task move`, `plan sync`, `run`, ...) now write audit lines (`cli:<command>`, `via: "cli"`), like the generated commands.
+- Ctrl-C stops `boof-runner run` again.
+- Web UI: agent-proposed drafts appear in their own "Proposed" group and stay in "Needs you"; step time is counted once; stop actions are not duplicated and a failed stop in the palette clears the stop latch.
 - Applying a pending change reports a concurrent edit as `409 change_stale`, including when the operation itself answers `plan_version_conflict`, `task_modified` or `epic_modified`. The stored stamp is copied only into the `If-Match` field that matches the guard kind.
 - A failure writing the `concierge:ask` audit line is logged and no longer replaces the turn.
 - An assistant conversation id the caller owns, once it has been idle for `idleMinutes`, starts a fresh conversation. An id owned by someone else is still `404 not_found`.
@@ -32,7 +35,7 @@ Agent containment, layer 1. This is not a sandbox: a process that runs as your O
 - Sign-in links (T5): `boof-runner open` (with `-d`, `--port`, `--host`, `--revoke-all`) and the line `serve` prints give a single-use link, valid for 10 minutes. Under systemd (`JOURNAL_STREAM`) `serve` prints the `boof-runner open -d <data> --port <port>` command instead of a live link. `service install` and `status` print the same command with the data root and port.
 - MCP (T6): `boof-runner mcp` needs `--client <id>`; the keyless `local-mcp` identity and `--admin` are removed.
 - Agents (T7): task agents get no boof credential. They also get a marker, `BOOF_RUNNER_AGENT_OF`, that makes `boof-runner` refuse to act on the data root of the server that started them (exit 3). The check follows symlinks and `..`, and also covers `-d` roots in any position, `--data=` and `$BOOF_RUNNER_DATA_ROOT`. An agent that works in the server's own folder, where `./data` is the server's data root, is refused even with `-d <scratch>`; start it from another folder. A scratch data root elsewhere keeps working.
-- Data root (T8): the data root and its existing `auth`, `owlish`, `webhooks`, `audit`, `idempotency`, `concierge` and `claude-agent-config` folders are set to mode 700 at every start when you own them. `$HOME` and `/` are never changed, and a root that refuses `chmod` is logged and left alone. Sign-in sessions and `auth/clients.json` are refused (with a message that names the `chmod`) when a file or folder is owned by another user or is writable by group or others. A group-writable parent folder is accepted only in your user private group (named like you, no other members); any other group, including a shared primary group such as `users` or `staff`, is refused with `chmod g-w <folder>`. HTTP clients get a fixed 503 message; the folder and the fix are in the server log.
+- Data root (T8): the data root and its existing `auth`, `owlish`, `webhooks`, `audit`, `idempotency`, `concierge`, `claude-agent-config`, `n8n` and `external-runs` folders are set to mode 700 at every start when you own them. `$HOME` and `/` are never changed, and a root that refuses `chmod` is logged and left alone. Sign-in sessions and `auth/clients.json` are refused (with a message that names the `chmod`) when a file or folder is owned by another user or is writable by group or others. A group-writable parent folder is accepted only in your user private group (named like you, no other members); any other group, including a shared primary group such as `users` or `staff`, is refused with `chmod g-w <folder>`. HTTP clients get a fixed 503 message; the folder and the fix are in the server log.
 - Folders created after start (such as `audit/`) are now made with mode 700 as well, not the umask default.
 - Desktop (T9): without `safeStorage` the app signs its own window in with a session it sets, instead of using keyless local trust.
 
@@ -41,12 +44,13 @@ Agent containment, layer 1. This is not a sandbox: a process that runs as your O
 - Keyless access on loopback now works only for the web UI after sign-in. Open the UI with the link that boof-runner serve prints, or run boof-runner open and open its link. Scripts and curl on 127.0.0.1 need Authorization: Bearer <key> (boof-runner auth add).
 - MCP needs a client. POST /mcp needs an API key, and boof-runner mcp needs --client <id>; the keyless local-mcp identity and --admin are gone. Create a client once with boof-runner auth add --name mcp-host --scopes <list> --trust review and add --client <id> to your MCP host's command.
 - boof-runner refuses to act on the data root of the server whose task agent runs it (exit 3). This is a guard against careless or injected commands, not a sandbox.
-- The data root and its auth, owlish, webhooks, audit, idempotency, concierge and claude-agent-config folders are set to mode 700 at start when you own them. This keeps other local users out. It does not isolate task agents, which run as your user.
+- The data root and its auth, owlish, webhooks, audit, idempotency, concierge, claude-agent-config, n8n and external-runs folders are set to mode 700 at start when you own them. This keeps other local users out. It does not isolate task agents, which run as your user.
 - The desktop app without safeStorage now signs its window in with a session it sets itself, instead of keyless local trust. It renews that session daily while a window stays open.
 - A parent folder of the data root that is group-writable by a group other than your own user private group (a shared group such as `users` or `staff`) is refused: sign-in and API keys answer 503 until you run `chmod g-w <folder>`. A parent in your own private group (the usual `~/.local/share` with umask 002) is accepted.
 - A data root on WSL `/mnt/c` (or another filesystem that reports mode 0777 and refuses `chmod`) cannot pass the secret-folder check, so sign-in and keys are refused there. Put the data root on the Linux filesystem, or set `metadata` in `/etc/wsl.conf` so modes are real.
 - Sign-in links are bound to the port they were minted for. A link opened on another port is refused and burned. `boof-runner open` without `--port` warns when nothing answers on the default port.
-- Server-run git in agent worktrees runs with `core.fsmonitor` and hooks disabled; your repository's hooks no longer run for boof's own git calls.
+- Server-run git in agent worktrees runs with `core.fsmonitor` and hooks disabled; your repository's hooks no longer run for boof's own git calls. Server-run `git diff` also disables external diff drivers and textconv; clean/smudge filters are not disabled.
+- Do not go back to 0.3.0 on an upgraded data root: it makes keyless loopback administrator again, drops `settings.n8n` on the next save, and runs pending n8n check tasks as full agent tasks.
 
 ## 0.3.0 (2026-11-05)
 

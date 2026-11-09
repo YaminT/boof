@@ -287,4 +287,25 @@ describe("agent-planted git config does not run server-side", () => {
     expect(await untrackedFiles(wt)).toContain("new.txt");
     expect(await exists(fsmonitor)).toBe(false);
   });
+  it("never runs a planted diff.external or textconv in task diffs", async () => {
+    const ran = join(nonRepo, "extdiff-ran");
+    const script = join(nonRepo, "extdiff.sh");
+    await writeFile(script, `#!/bin/sh\ntouch '${ran}'\n`, { mode: 0o755 });
+    await g(["branch", "boof-runner/t2"]);
+    const wt = join(repo, ".wts", "t2");
+    await g(["worktree", "add", "-q", wt, "boof-runner/t2"]);
+    await writeFile(join(wt, "a.txt"), "one\n");
+    await g(["config", "diff.external", script]);
+    await g(["config", "diff.evil.textconv", script]);
+    await writeFile(join(wt, ".gitattributes"), "*.txt diff=evil\n");
+    // Sanity: plain git diff runs the external driver.
+    await g(["-C", wt, "add", "-N", "a.txt"]);
+    await g(["-C", wt, "diff", "HEAD"]);
+    expect(await exists(ran)).toBe(true);
+    await rm(ran, { force: true });
+    const diff = await taskDiff({ workingDir: repo, taskId: "t2", worktreePath: wt });
+    expect(diff.includesUncommitted).toBe(true);
+    await git(wt, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--stat"]);
+    expect(await exists(ran)).toBe(false);
+  });
 });

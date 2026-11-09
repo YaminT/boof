@@ -223,9 +223,22 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
   const cwd = includesUncommitted ? liveWt! : workingDir;
   const range = includesUncommitted ? [baseSha] : [baseSha, headSha];
   const names = parseNameStatus(
-    (await git(cwd, ["diff", "--name-status", "-M", "-z", ...range])).out,
+    (
+      await git(cwd, [
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-status",
+        "-M",
+        "-z",
+        ...range,
+      ])
+    ).out,
   );
-  const nums = parseNumstat((await git(cwd, ["diff", "--numstat", "-M", "-z", ...range])).out);
+  const nums = parseNumstat(
+    (await git(cwd, ["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", ...range]))
+      .out,
+  );
   const files = mergeFiles(names, nums);
 
   // Untracked files of the live worktree, diffed against nothing (no objects are written).
@@ -238,6 +251,8 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
       const ns = await git(liveWt!, [
         "diff",
         "--no-index",
+        "--no-ext-diff",
+        "--no-textconv",
         "--numstat",
         "-z",
         "--",
