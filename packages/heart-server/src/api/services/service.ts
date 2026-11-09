@@ -75,6 +75,7 @@ import {
   type TaskReviewInfo,
   appendAnswerRound,
   WebhookSecretStore,
+  N8nSecretStore,
   atomicWrite,
   settingsVersion,
   initGitRepo,
@@ -848,6 +849,8 @@ export class TaskService {
   readonly commands: CommandStore;
   readonly settingsStore: SettingsStore;
   readonly webhookSecrets: WebhookSecretStore;
+  /** The n8n API key and webhook header secret (n8n/secrets.json). */
+  readonly n8nSecrets: N8nSecretStore;
   /** boof's one better-ccflare client key (file or BOOF_OWLISH_API_KEY); never part of settings. */
   readonly owlishSecrets: OwlishSecretStore;
   readonly projectKeys: ProjectKeyStore;
@@ -871,6 +874,7 @@ export class TaskService {
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
+    this.n8nSecrets = new N8nSecretStore(root);
     this.owlishSecrets = new OwlishSecretStore(root);
     this.projectKeys = new ProjectKeyStore(root);
     void this.owlishSecrets.tighten().catch(() => {

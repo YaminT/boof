@@ -201,7 +201,7 @@ Fix errors this way:
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 80 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 85 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
 
 ### MCP over HTTP (remote)
 
@@ -272,7 +272,7 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (80). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (85). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
 | Area                       | Tools                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -287,6 +287,7 @@ Tools (80). Arguments that name a project use `projectId`; plan tools use `planI
 | API clients                | `boof_list_clients`, `boof_create_client`, `boof_revoke_client`, `boof_rotate_client`                                                                                                                                                                                                                                                                                                         |
 | Webhooks                   | `boof_list_webhooks`, `boof_create_webhook`, `boof_update_webhook`, `boof_delete_webhook`                                                                                                                                                                                                                                                                                                     |
 | Account pool               | `boof_list_accounts`, `boof_get_agent_sdk_eligibility`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`                                                                                                                                                                                                       |
+| n8n                        | `boof_get_n8n`, `boof_update_n8n`, `boof_delete_n8n`, `boof_list_n8n_workflows`, `boof_refresh_n8n_workflows`                                                                                                                                                                                                                                                                                 |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
 
@@ -663,7 +664,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 87 operations. Every path below starts with `/api/v1`.
+There are 92 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -936,7 +937,7 @@ Path parameters (all required):
 - Scope: `projects:write`
 - MCP tool: `boof_update_project`
 - CLI: `boof-runner projects update`
-- What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.
+- What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.
 - Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
 - Header `If-Match`: The ETag of GET /projects/{projectId} you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A project that changed since answers 409 project_modified.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 project_modified`, `400 not_a_git_repo`, `403 project_root_not_allowed`
@@ -2223,6 +2224,68 @@ JSON body (unknown keys are rejected):
 Path parameters (all required):
 
 - `webhookId`: `kebab-id`, required; Webhook id
+
+### n8n
+
+#### `GET /api/v1/n8n` (Get the n8n connection)
+
+- Operation: `n8n.get`
+- Scope: `settings:read`
+- MCP tool: `boof_get_n8n`
+- CLI: `boof-runner n8n get`
+- What it does: Returns how boof is connected to n8n: the URLs, the timeout, the check settings, and whether an API key and a webhook secret are set. Never returns the key or the secret. { configured: false } when n8n is not set up. No side effects, no call to n8n.
+- Success: HTTP 200 with `{ apiKeySet: boolean, apiKeySource: "env" | "file" | null, baseUrl?: string, callbackBaseUrl?: string, checks?: { autoQueue: boolean, enabled: boolean, pollIntervalMs: number, projectId: string }, configured: boolean, defaultTimeoutMs?: number, webhookBaseUrl?: string, webhookSecretSet: boolean }`.
+- Errors: `403 forbidden_scope`
+
+#### `PUT /api/v1/n8n` (Configure n8n)
+
+- Operation: `n8n.update`
+- Scope: `admin`
+- MCP tool: `boof_update_n8n`
+- CLI: `boof-runner n8n update`
+- What it does: Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.
+- Success: HTTP 200 with `{ apiKeySet: boolean, apiKeySource: "env" | "file" | null, baseUrl?: string, callbackBaseUrl?: string, checks?: { autoQueue: boolean, enabled: boolean, pollIntervalMs: number, projectId: string }, configured: boolean, defaultTimeoutMs?: number, secret?: string, webhookBaseUrl?: string, webhookSecretSet: boolean }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+JSON body (unknown keys are rejected):
+
+- `apiKey`: `string | null`, optional; The n8n API key. Write-only: stored apart from settings.json (n8n/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_N8N_API_KEY, when set, still wins)
+- `baseUrl`: `string`, optional; max length 2000
+- `callbackBaseUrl`: `string`, optional; max length 2000
+- `checks`: `{ autoQueue?: boolean, enabled?: boolean, pollIntervalMs?: integer 60000..86400000, projectId: kebab-id } | null`, optional
+- `defaultTimeoutMs`: `integer 10000..86400000`, optional
+- `rotateWebhookSecret`: `boolean`, optional; Make a new webhook header secret (X-Boof-Token). It is returned once, as `secret`; the first configuration makes one anyway
+- `webhookBaseUrl`: `string | null`, optional
+
+#### `DELETE /api/v1/n8n` (Disconnect n8n)
+
+- Operation: `n8n.delete`
+- Scope: `admin`
+- MCP tool: `boof_delete_n8n`
+- CLI: `boof-runner n8n delete`
+- What it does: Removes the n8n connection: settings.n8n, the stored API key and webhook secret, and the workflow cache. Projects keep their externalSteps (those steps then fail with "n8n is not configured"); the answer lists those projects. Needs admin and a trusted, project-unrestricted client.
+- Success: HTTP 200 with `{ ok: true, projectsWithSteps: string[] }`.
+- Errors: `403 forbidden_scope`
+
+#### `GET /api/v1/n8n/workflows` (List n8n workflows)
+
+- Operation: `n8n.workflows.list`
+- Scope: `settings:read`
+- MCP tool: `boof_list_n8n_workflows`
+- CLI: `boof-runner n8n workflows list`
+- What it does: Lists the n8n workflows from the last refresh (cache only; no call to n8n). Each has its webhooks (only a single POST webhook is `usable` for a step) and an editor link. { configured: false, workflows: [] } when n8n is not set up; `lastError` shows why the last refresh failed.
+- Success: HTTP 200 with `{ configured: boolean, fetchedAt: string | null, lastError?: string, workflows: { active: boolean, editorUrl: string, id: string, name: string, tags: string[], updatedAt: string, webhooks: object[] }[] }`.
+- Errors: `403 forbidden_scope`
+
+#### `POST /api/v1/n8n/workflows/refresh` (Refresh the n8n workflow list)
+
+- Operation: `n8n.workflows.refresh`
+- Scope: `settings:write`
+- MCP tool: `boof_refresh_n8n_workflows`
+- CLI: `boof-runner n8n workflows refresh`
+- What it does: Fetches the workflow list from n8n (its public API, with the stored API key) and rewrites the cache. 409 n8n_not_configured when n8n is not set up; 502 upstream_failed with details.reason (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>) when n8n cannot be read, and the cached list stays.
+- Success: HTTP 200 with `{ configured: boolean, fetchedAt: string | null, lastError?: string, workflows: { active: boolean, editorUrl: string, id: string, name: string, tags: string[], updatedAt: string, webhooks: object[] }[] }`.
+- Errors: `403 forbidden_scope`
 
 ### concierge
 

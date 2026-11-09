@@ -84,7 +84,7 @@ export const projectsUpdate = defineOp({
   name: "projects.update",
   title: "Update a project",
   description:
-    "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
+    "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.",
   scope: "projects:write",
   projectScoped: true,
   input: z.strictObject({
@@ -121,6 +121,18 @@ export const projectsUpdate = defineOp({
       ) {
         throw new OpError(403, "forbidden", "forbidden_trust");
       }
+    }
+    // External steps send task content to n8n: a review-trust client may not change them.
+    if (
+      "externalSteps" in patch &&
+      patch.externalSteps !== undefined &&
+      ctx.principal.trust === "review"
+    ) {
+      throw new OpError(
+        403,
+        "External steps send task content to n8n; only a trusted client may change them",
+        "forbidden_trust",
+      );
     }
     // Fail before anything is saved when the key store cannot be read, so a store that is corrupt
     // or locked cannot leave the project changed (say, to project-key auth) and its key unstored.

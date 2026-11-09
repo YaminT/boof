@@ -15,7 +15,7 @@ describe("operations registry contract", () => {
     for (const op of registry) {
       for (const s of op.scopes) expect(SCOPES, op.name).toContain(s);
       expect(op.description.length, op.name).toBeGreaterThan(20);
-      expect(op.name, op.name).toMatch(/^[a-z]+(\.[a-zA-Z]+)+$/);
+      expect(op.name, op.name).toMatch(/^[a-z][a-z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*)+$/);
       expect(op.rest.path.startsWith("/"), op.name).toBe(true);
       // Path placeholders are input fields; project-scoped operations take a projectId.
       const shape = Object.keys((op.input as { shape: object }).shape);
@@ -39,7 +39,7 @@ describe("operations registry contract", () => {
     const names: string[] = [];
     for (const op of registry.filter((o) => o.mcp.expose)) {
       expect(op.mcp.name, op.name).toMatch(MCP_NAME);
-      expect(op.mcp.name, op.name).toMatch(/^boof_[a-z]+(_[a-z_]+)?$/);
+      expect(op.mcp.name, op.name).toMatch(/^boof_[a-z0-9]+(_[a-z0-9_]+)?$/);
       expect(op.mcp.annotations, op.name).toBeDefined();
       expect(op.summary, op.name).toBeTypeOf("function");
       names.push(op.mcp.name!);

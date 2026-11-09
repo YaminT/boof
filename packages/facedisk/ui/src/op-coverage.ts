@@ -142,6 +142,11 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "webhooks.update": { where: "updateWebhook \u2014 Webhooks (enable, disable, edit)" },
   "webhooks.delete": { where: "deleteWebhook \u2014 Webhooks (delete a webhook)" },
+  "n8n.get": { none: "UI arrives in the n8n UI task" },
+  "n8n.update": { none: "UI arrives in the n8n UI task" },
+  "n8n.delete": { none: "UI arrives in the n8n UI task" },
+  "n8n.workflows.list": { none: "UI arrives in the n8n UI task" },
+  "n8n.workflows.refresh": { none: "UI arrives in the n8n UI task" },
   "concierge.status": {
     where:
       "conciergeStatus \u2014 useConcierge (reloads when the project changes and after each message)",

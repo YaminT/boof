@@ -92,6 +92,7 @@ const EXPECTED_REVIEW_TOOLS: string[] = [
   "boof_get_epic",
   "boof_get_health",
   "boof_get_model_details",
+  "boof_get_n8n",
   "boof_get_plan",
   "boof_get_pool_health",
   "boof_get_project",
@@ -109,6 +110,7 @@ const EXPECTED_REVIEW_TOOLS: string[] = [
   "boof_list_commands",
   "boof_list_epics",
   "boof_list_models",
+  "boof_list_n8n_workflows",
   "boof_list_plans",
   "boof_list_projects",
   "boof_list_tasks",
@@ -322,6 +324,11 @@ describe("tools generated from the registry", () => {
         "boof_create_webhook",
         "boof_update_webhook",
         "boof_delete_webhook",
+        "boof_get_n8n",
+        "boof_update_n8n",
+        "boof_delete_n8n",
+        "boof_list_n8n_workflows",
+        "boof_refresh_n8n_workflows",
       ]
     `);
     // Every exposed JSON operation except file upload and download. Concierge is REST/CLI only.
@@ -329,7 +336,7 @@ describe("tools generated from the registry", () => {
       (o) => (!o.rest.kind || o.rest.kind === "json") && o.mcp.expose,
     );
     expect(names).toHaveLength(jsonOps.length);
-    expect(names).toHaveLength(80);
+    expect(names).toHaveLength(85);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("../api/index.js").then((m) => m.registry)).map((o) => [
         o.mcp.name,
