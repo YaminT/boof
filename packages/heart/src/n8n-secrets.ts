@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { lockedAtomicWrite, withFileLock } from "./atomic.js";
+import { assertSafeForSecrets } from "./data-root-mode.js";
 import { dataRootPaths } from "./paths.js";
 
 const FileSchema = z.object({
@@ -29,7 +30,7 @@ export class N8nSecretStore {
   private readonly path: string;
 
   constructor(
-    root: string,
+    private readonly root: string,
     private readonly env: NodeJS.ProcessEnv = process.env,
   ) {
     this.path = dataRootPaths(root).n8nSecrets;
@@ -41,6 +42,8 @@ export class N8nSecretStore {
 
   private async read(): Promise<SecretFile> {
     let text: string;
+    // Same owner/mode/ancestor rules as the layer-1 stores; refuses with UnsafeSecretPathError.
+    await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
     try {
       text = await readFile(this.path, "utf8");
     } catch (err) {
@@ -77,10 +80,11 @@ export class N8nSecretStore {
   }
 
   setApiKey(key: string): Promise<void> {
-    if (typeof key !== "string" || !/^[\x20-\x7e]{1,2048}$/.test(key))
+    const trimmed = typeof key === "string" ? key.trim() : "";
+    if (!/^[\x20-\x7e]{1,2048}$/.test(trimmed))
       return Promise.reject(new Error("invalid n8n API key"));
     return this.mutate((f) => {
-      f.apiKey = key;
+      f.apiKey = trimmed;
     });
   }
 

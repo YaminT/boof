@@ -11,6 +11,8 @@ export const PRIVATE_SUBDIRS = [
   "idempotency",
   "concierge",
   "claude-agent-config",
+  "n8n",
+  "external-runs",
 ] as const;
 
 export type TightenResult =

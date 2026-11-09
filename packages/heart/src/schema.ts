@@ -119,32 +119,35 @@ export type TaskOrigin = z.infer<typeof TaskOriginSchema>;
 export const EXTERNAL_STEP_POINTS = ["after-planner", "after-developer", "after-review"] as const;
 export type ExternalStepPoint = (typeof EXTERNAL_STEP_POINTS)[number];
 export const N8N_DEFAULT_TIMEOUT_MS = 1_800_000;
-/** No `..`, no `//`, no `?` or `#`, no leading `/`, 1-200 chars of [A-Za-z0-9._~:/-]. */
-export const WEBHOOK_PATH_PATTERN = /^(?!\/)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._~:/-]{1,200}$/;
+/** No `.` or `..` segment, no `//`, no `?` or `#`, no leading `/`, 1-200 chars of [A-Za-z0-9._~:/-]. */
+export const WEBHOOK_PATH_PATTERN =
+  /^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!(?:.*\/)?\.(?:\/|$))[A-Za-z0-9._~:/-]{1,200}$/;
 
-/** An http(s) URL without credentials, query or hash; a path (a proxy prefix) is allowed. */
+/** The canonical form of an n8n URL, or null when the input is not exactly that form. */
+function canonicalN8nUrl(v: string): string | null {
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.username !== "" || u.password !== "" || u.search !== "" || u.hash !== "") return null;
+    if (v.includes("?") || v.includes("#") || v.includes("@") || u.port === "0") return null;
+    const canonical = u.href.replace(/\/+$/, "");
+    // Refuse anything the URL parser rewrites (backslashes, %2e%2e, whitespace, default ports...):
+    // what an admin reads must be what boof calls.
+    if (v.replace(/\/+$/, "") !== canonical) return null;
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+
+/** An http(s) URL in canonical form, without credentials, query or hash; a path (a proxy prefix) is allowed. */
 const n8nUrl = z
   .string()
   .max(2000)
-  .refine(
-    (v) => {
-      try {
-        const u = new URL(v);
-        return (
-          (u.protocol === "http:" || u.protocol === "https:") &&
-          u.username === "" &&
-          u.password === "" &&
-          u.search === "" &&
-          u.hash === "" &&
-          !v.includes("?") &&
-          !v.includes("#")
-        );
-      } catch {
-        return false;
-      }
-    },
-    { message: "must be an http(s) URL without credentials, query or hash" },
-  );
+  .refine((v) => canonicalN8nUrl(v) !== null, {
+    message: "must be a canonical http(s) URL without credentials, query or hash",
+  })
+  .transform((v) => canonicalN8nUrl(v) as string);
 
 const n8nTimeoutMs = z.number().int().min(10_000).max(86_400_000);
 

@@ -56,6 +56,15 @@ describe("n8n schemas", () => {
   it("n8n URLs refuse credentials, query, hash and non-http schemes", () => {
     for (const bad of [
       "https://u:p@n8n.x",
+      "https://u@n8n.x",
+      "https://@n8n.x",
+      "https://n8n.x#",
+      "https://evil.com\\@n8n.x",
+      "https://n8n.x/a/%2e%2e/b",
+      " https://n8n.x",
+      "https://n8n.x ",
+      "https://n8n.x:0",
+      "https://n8n.x\t",
       "https://n8n.x/?a=1",
       "https://n8n.x/#h",
       "https://n8n.x?",
@@ -78,6 +87,15 @@ describe("n8n schemas", () => {
     }
   });
 
+  it("n8n URLs are stored in canonical form (no trailing slash, prefix kept)", () => {
+    const s = N8nSettingsSchema.parse({
+      baseUrl: "https://n8n.x/",
+      callbackBaseUrl: "https://b.x/boof//",
+    });
+    expect(s.baseUrl).toBe("https://n8n.x");
+    expect(s.callbackBaseUrl).toBe("https://b.x/boof");
+  });
+
   it("timeouts outside 10_000..86_400_000 are refused", () => {
     for (const t of [9_999, 86_400_001]) {
       expect(
@@ -94,7 +112,13 @@ describe("n8n schemas", () => {
   });
 
   it("webhook paths: accepts 'boof/ci-check' and a uuid; refuses '../x', 'a/../b', 'a//b', '/abs', 'a?b', 'a#b', 201 chars", () => {
-    for (const ok of ["boof/ci-check", "3f2b8a1e-9c4d-4e6a-8b7f-0a1b2c3d4e5f", "a.b_c~d:e"])
+    for (const ok of [
+      "boof/ci-check",
+      "3f2b8a1e-9c4d-4e6a-8b7f-0a1b2c3d4e5f",
+      "a.b_c~d:e",
+      ".x",
+      "a/.b/c.",
+    ])
       expect(WEBHOOK_PATH_PATTERN.test(ok), ok).toBe(true);
     for (const bad of [
       "../x",
@@ -107,6 +131,11 @@ describe("n8n schemas", () => {
       "",
       "a b",
       "a%2e",
+      ".",
+      "..",
+      "./x",
+      "a/./b",
+      "a/.",
     ])
       expect(WEBHOOK_PATH_PATTERN.test(bad), bad).toBe(false);
     expect(WEBHOOK_PATH_PATTERN.test("a".repeat(200))).toBe(true);
