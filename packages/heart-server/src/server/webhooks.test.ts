@@ -569,18 +569,20 @@ describe("webhook delivery", () => {
     async () => {
       await authStore.create({ name: "webhook test", scopes: ["projects:read"] });
       const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      // Not started: each tick is driven and awaited here, so no wall-clock waits decide the count.
       const dispatcher = new WebhookDispatcher({ root, service, authStore, intervalMs: 5 });
-      const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
       const unsafe = () => errorLog.mock.calls.filter((c) => String(c[0]).startsWith("webhooks: "));
       try {
         await chmod(join(root, "auth"), 0o770);
-        dispatcher.start();
-        await wait(35);
+        await dispatcher.tickReporting();
+        expect(unsafe()).toHaveLength(1);
+        await dispatcher.tickReporting(); // still broken: already logged, so silent
         expect(unsafe()).toHaveLength(1);
         await chmod(join(root, "auth"), 0o700);
-        await wait(35);
+        await dispatcher.tickReporting(); // a good tick re-arms the log
+        expect(unsafe()).toHaveLength(1);
         await chmod(join(root, "auth"), 0o770);
-        await wait(35);
+        await dispatcher.tickReporting();
         expect(unsafe()).toHaveLength(2);
       } finally {
         await dispatcher.stop();

@@ -217,15 +217,22 @@ export function createWindowAuth(deps: WindowAuthDeps): {
     return next;
   };
 
+  // A helper, not an inline call: TypeScript narrows `cancelRenew` to `undefined` after the
+  // assignment in release(), so a second direct call there is rejected by the typecheck.
+  const stopRenew = (): void => {
+    const cancel = cancelRenew;
+    cancelRenew = undefined;
+    cancel?.();
+  };
+
   return {
     prepare,
     release: async () => {
       released = true;
-      cancelRenew?.();
-      cancelRenew = undefined;
+      stopRenew();
       await chain.catch(() => {});
-      cancelRenew?.();
-      cancelRenew = undefined;
+      // A renew scheduled while the chain settled must be cancelled too.
+      stopRenew();
       const id = currentId;
       currentId = undefined;
       if (id) await revoke(id);
