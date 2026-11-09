@@ -166,6 +166,25 @@ describe("storage", () => {
     expect(await store.list()).toEqual([]);
     expect(await store.mtimeMs()).toBe(0);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses unsafe auth paths with a repair hint",
+    async () => {
+      await store.create({ name: "a", scopes: ["tasks:read"] });
+      await chmod(join(root, "auth"), 0o770);
+      await expect(store.list()).rejects.toThrow(/chmod 700/);
+      await expect(store.verify("anything")).rejects.toThrow(/chmod 700/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a foreign-mode clients file instead of authenticating",
+    async () => {
+      const { key } = await store.create({ name: "a", scopes: ["tasks:read"] });
+      await chmod(store.filePath, 0o666);
+      await expect(store.verify(key)).rejects.toThrow(/chmod 600/);
+    },
+  );
 });
 
 describe("scopes and durations", () => {

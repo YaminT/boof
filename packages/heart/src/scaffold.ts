@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dataRootPaths } from "./paths.js";
 import { migrateDataRoot, type MigrationResult } from "./migrate.js";
+import { tightenDataRoot } from "./data-root-mode.js";
 
 /**
  * Ensure the data root exists in layout v2: migrate a v1 root first (before any store opens),
@@ -12,6 +13,7 @@ export async function scaffoldDataRoot(
 ): Promise<{ created: boolean; migration: MigrationResult }> {
   const paths = dataRootPaths(root);
   await mkdir(root, { recursive: true });
+  await tightenDataRoot(root);
   const migration = await migrateDataRoot(root);
   await mkdir(paths.projects, { recursive: true });
   await mkdir(paths.commands, { recursive: true });

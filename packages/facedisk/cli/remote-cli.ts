@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -19,6 +19,7 @@ import {
   type Scope,
   type Settings,
   scaffoldDataRoot,
+  tightenDataRoot,
 } from "@boof/heart";
 import { assertBindAllowed } from "@boof/heart-server";
 import { beginCliAudit } from "./cli-audit.js";
@@ -256,7 +257,10 @@ async function setup(
     }
   }
 
+  let tightenedRoot = await tightenDataRoot(root);
   await scaffoldDataRoot(root);
+  if (!tightenedRoot.changed && tightenedRoot.reason === "missing")
+    tightenedRoot = await tightenDataRoot(root);
   const store = new AuthStore(root);
   const audit = beginCliAudit(root, "cli:remote.setup");
 
@@ -306,12 +310,12 @@ async function setup(
       );
     }
 
-    const mode = await modeOf(root);
-    if (mode !== null && mode & 0o077) {
-      await chmod(root, 0o700);
+    if (tightenedRoot.changed) {
       out(
-        `Data root ${root} was accessible to other users (mode ${mode.toString(8)}); ran chmod 700.`,
+        `Data root ${root} was accessible to other users (mode ${tightenedRoot.before.toString(8)}); ran chmod 700.`,
       );
+    } else if (tightenedRoot.reason === "already-private") {
+      out(`Data root ${root} is already private (chmod 700).`);
     }
 
     let key: string | undefined;

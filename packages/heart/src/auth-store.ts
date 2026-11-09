@@ -6,6 +6,7 @@ import { lockedAtomicWrite } from "./atomic.js";
 import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { uniqueKebabId } from "./ids.js";
 import { dataRootPaths } from "./paths.js";
+import { assertSafeForSecrets } from "./data-root-mode.js";
 import {
   ClientSchema,
   type Client,
@@ -106,6 +107,7 @@ export function isExpired(client: Pick<Client, "expiresAt">, nowMs: number): boo
  * rotation. Secrets are 32 random bytes, so a plain sha256 is sufficient.
  */
 export class AuthStore {
+  private readonly root: string;
   private readonly path: string;
   private readonly dir: string;
   /** Bumped on every write by this instance; lets in-process caches invalidate at once. */
@@ -119,6 +121,7 @@ export class AuthStore {
     opts: { lock?: ProcessLockOptions } = {},
   ) {
     const p = dataRootPaths(root);
+    this.root = root;
     this.path = p.authClients;
     this.dir = p.auth;
     this.lockOpts = opts.lock ?? {};
@@ -131,15 +134,18 @@ export class AuthStore {
   /** mtime (ms) of clients.json, or 0 when it does not exist. */
   async mtimeMs(): Promise<number> {
     try {
+      await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
       return (await stat(this.path)).mtimeMs;
-    } catch {
-      return 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+      throw error;
     }
   }
 
   async list(): Promise<Client[]> {
     let raw: string;
     try {
+      await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
       raw = await readFile(this.path, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -160,10 +166,23 @@ export class AuthStore {
   }
 
   private async save(clients: Client[]): Promise<void> {
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    await this.ensureAuthDirectory();
+    await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
     await lockedAtomicWrite(this.path, JSON.stringify({ clients }, null, 2) + "\n", 0o600);
     await chmod(this.path, 0o600);
+    await assertSafeForSecrets(this.root, this.path, "file");
     this.version += 1;
+  }
+
+  private async ensureAuthDirectory(): Promise<void> {
+    try {
+      await assertSafeForSecrets(this.root, this.dir, "directory");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await mkdir(this.dir, { recursive: true, mode: 0o700 });
+      await chmod(this.dir, 0o700);
+      await assertSafeForSecrets(this.root, this.dir, "directory");
+    }
   }
 
   /**
@@ -173,7 +192,7 @@ export class AuthStore {
    */
   private async mutate<T>(fn: (clients: Client[]) => T): Promise<T> {
     // The directory first, with its private mode: the lock file is created inside it.
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    await this.ensureAuthDirectory();
     return withProcessLock(
       join(this.dir, ".clients.lock"),
       this.lockOpts,

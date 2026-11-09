@@ -20,6 +20,7 @@ import {
   migrateDataRoot,
   securitySettings,
   SettingsStore,
+  tightenDataRoot,
 } from "@boof/heart";
 import type { RunningServer } from "@boof/heart-server";
 import {
@@ -115,6 +116,7 @@ function uiDir(): string {
 async function ensureDataRoot(): Promise<string> {
   const root = join(app.getPath("userData"), "data");
   await mkdir(root, { recursive: true });
+  await tightenDataRoot(root);
   await migrateDataRoot(root);
   await mkdir(dataRootPaths(root).projects, { recursive: true });
   return root;
