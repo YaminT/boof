@@ -117,9 +117,11 @@ export async function stdioSelfUrlCheck(
   services: TaskService,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<(url: URL) => boolean> {
+  const settings = await services.loadSettings();
   return createSelfUrlCheck({
     port: Number(env.BOOF_RUNNER_PORT ?? 4319),
-    allowedHosts: securitySettings(await services.loadSettings()).allowedHosts,
+    allowedHosts: securitySettings(settings).allowedHosts,
+    callbackBaseUrl: settings.n8n?.callbackBaseUrl,
   });
 }
 

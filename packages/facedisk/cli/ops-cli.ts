@@ -566,6 +566,7 @@ export async function opsCommand(
       isSelfUrl: createSelfUrlCheck({
         port: Number(process.env.BOOF_RUNNER_PORT ?? 4319),
         allowedHosts: securitySettings(settings).allowedHosts,
+        callbackBaseUrl: settings.n8n?.callbackBaseUrl,
       }),
     };
     // One audit line per operation run, the same log and settings as the web server's: who, what,

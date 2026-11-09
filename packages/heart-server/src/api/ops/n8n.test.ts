@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AuthStore,
   dataRootPaths,
@@ -197,6 +197,33 @@ describe("n8n.update", () => {
       await run("n8n.update", admin, { baseUrl: fake.url, apiKey: API_KEY });
       expect(await service.n8nSecrets.getApiKey()).toBe(API_KEY);
     } finally {
+      await other.close();
+    }
+  });
+
+  it("M2 the old key is gone before the new origin is written, so a racing refresh cannot send it", async () => {
+    await configure();
+    const other = await startFakeN8n({ apiKey: API_KEY, workflows: [] });
+    const store = service.settingsStore;
+    const realMutate = store.mutate.bind(store);
+    let keyAtWrite: string | null | undefined;
+    let refreshed: unknown;
+    vi.spyOn(store, "mutate").mockImplementation(async (fn) => {
+      // The moment just before the settings write: the key must already be dropped.
+      keyAtWrite = await service.n8nSecrets.getApiKey();
+      const result = await realMutate(fn);
+      // The moment just after it: a refresh now reads the new origin and must find no key.
+      refreshed = await run("n8n.workflows.refresh", admin).catch((e) => e);
+      return result;
+    });
+    try {
+      await run("n8n.update", admin, { baseUrl: other.url, apiKey: "new-key" });
+      expect(keyAtWrite).toBeNull();
+      expect(other.calls).toHaveLength(0);
+      expect(refreshed).toBeDefined();
+      expect(await service.n8nSecrets.getApiKey()).toBe("new-key");
+    } finally {
+      vi.restoreAllMocks();
       await other.close();
     }
   });

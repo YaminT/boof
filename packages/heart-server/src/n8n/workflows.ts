@@ -89,5 +89,7 @@ export async function readWorkflowCache(root: string): Promise<N8nWorkflowCache>
 export async function writeWorkflowCache(root: string, cache: N8nWorkflowCache): Promise<void> {
   const paths = dataRootPaths(root);
   await mkdir(paths.n8n, { recursive: true, mode: 0o700 });
-  await lockedAtomicWrite(paths.n8nWorkflows, JSON.stringify(cache, null, 2) + "\n");
+  await lockedAtomicWrite(paths.n8nWorkflows, JSON.stringify(cache, null, 2) + "\n", {
+    mode: 0o600,
+  });
 }

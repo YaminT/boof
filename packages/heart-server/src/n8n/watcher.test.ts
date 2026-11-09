@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import { TaskService } from "../api/index.js";
 import { pinnedRequest } from "../server/pinned-post.js";
 import { startServer } from "../server/server.js";
 import { N8nClient } from "./client.js";
+import { writeWorkflowCache } from "./workflows.js";
 import { MAX_CHECK_TASKS_PER_PASS, N8nWatcher } from "./watcher.js";
 
 const KEY = "n8n_api_KEY_secret_value";
@@ -105,6 +106,23 @@ describe("N8nWatcher", () => {
     expect(f3.calls).toHaveLength(0);
     await expect(readFile(dataRootPaths(root).n8nSeen, "utf8")).rejects.toThrow();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "M4 seen.json and workflows.json are written with mode 0600",
+    async () => {
+      await setup({ workflows: [wf("a", "2026-11-09T10:00:00.000Z")] });
+      const old = process.umask(0o000);
+      try {
+        await watcher().tick();
+        await writeWorkflowCache(root, { fetchedAt: null, workflows: [] });
+      } finally {
+        process.umask(old);
+      }
+      const paths = dataRootPaths(root);
+      expect((await stat(paths.n8nSeen)).mode & 0o777).toBe(0o600);
+      expect((await stat(paths.n8nWorkflows)).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("first sight only records", async () => {
     const f = await setup({ workflows: [wf("a", "2026-11-09T10:00:00.000Z")] });

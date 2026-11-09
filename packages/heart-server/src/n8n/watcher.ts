@@ -50,7 +50,9 @@ async function readSeen(root: string, origin: string): Promise<Record<string, st
 async function writeSeen(root: string, state: SeenState): Promise<void> {
   const paths = dataRootPaths(root);
   await mkdir(paths.n8n, { recursive: true, mode: 0o700 });
-  await lockedAtomicWrite(paths.n8nSeen, JSON.stringify(state, null, 2) + "\n");
+  await lockedAtomicWrite(paths.n8nSeen, JSON.stringify(state, null, 2) + "\n", {
+    mode: 0o600,
+  });
 }
 
 /** `updatedAt` as ISO UTC (`…Z`), or null when n8n sent something that is not a date. */

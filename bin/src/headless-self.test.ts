@@ -20,7 +20,8 @@ vi.mock("@boof/heart-server", async (importOriginal) => {
 });
 
 import { drainQueue, runTask } from "./headless.js";
-import { headlessSelfCheck, selfUrlCheck } from "./boot.js";
+import { createSelfUrlCheck } from "@boof/heart-server";
+import { headlessSelfCheck } from "./boot.js";
 
 let dataRoot: string;
 let repo: string;
@@ -113,8 +114,8 @@ describe("headlessSelfCheck", () => {
     expect(check(new URL("http://127.0.0.1:9443/"))).toBe(false);
   });
 
-  it("selfUrlCheck knows the ports and extra names it was given", () => {
-    const check = selfUrlCheck([1234], ["Boof.Example:99"]);
+  it("the shared check knows the port and extra names it was given", () => {
+    const check = createSelfUrlCheck({ port: 1234, allowedHosts: ["Boof.Example:99"] });
     expect(check(new URL("http://boof.example:1234/"))).toBe(true);
     expect(check(new URL("http://boof.example:99/"))).toBe(false);
     expect(check(new URL("http://127.0.0.1:1234/"))).toBe(true);

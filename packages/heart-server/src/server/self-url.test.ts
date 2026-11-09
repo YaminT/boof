@@ -48,3 +48,21 @@ describe("createSelfUrlCheck", () => {
     expect(lazy(u("http://127.0.0.1:5000"))).toBe(true);
   });
 });
+
+describe("createSelfUrlCheck callbackBaseUrl", () => {
+  it("counts the port of a local callback URL, not of a remote one", () => {
+    const local = createSelfUrlCheck({ port: 4319, callbackBaseUrl: "http://127.0.0.1:4400/boof" });
+    expect(local(u("http://localhost:4400"))).toBe(true);
+    expect(local(u("http://[::ffff:127.0.0.1]:4400"))).toBe(true);
+    expect(local(u("http://[::]:4400"))).toBe(true);
+    expect(local(u("http://n8n.example:4400"))).toBe(false);
+    const remote = createSelfUrlCheck({ port: 4319, callbackBaseUrl: "https://boof.example:9443" });
+    expect(remote(u("http://127.0.0.1:9443"))).toBe(false);
+  });
+
+  it("withCallback adds the port to an existing check", () => {
+    const base = createSelfUrlCheck({ port: 4319 });
+    expect(base(u("http://127.0.0.1:4400"))).toBe(false);
+    expect(base.withCallback("http://localhost:4400")(u("http://127.0.0.1:4400"))).toBe(true);
+  });
+});

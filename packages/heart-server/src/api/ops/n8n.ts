@@ -184,22 +184,22 @@ export const n8nUpdate = defineOp({
       }
     }
     const secrets = secretsOf(ctx);
-    await ctx.services.settingsStore.mutate((s) => ({ ...s, n8n: next }));
-    // The key and the secret are written only after the settings write succeeded.
     // A new origin must not receive the key stored for the old one, nor show its workflows.
+    // The old key goes BEFORE the settings write, so a refresh that reads the new baseUrl
+    // can never find it; dropping a key early fails safe.
     const moved = current !== undefined && originOf(current.baseUrl) !== originOf(next.baseUrl);
     let keyCleared = false;
-    if (typeof input.apiKey === "string") await secrets.setApiKey(input.apiKey);
-    else if (input.apiKey === null) await secrets.deleteApiKey();
-    else if (moved) {
-      keyCleared = (await secrets.apiKeySource()) === "file";
-      await secrets.deleteApiKey();
-    }
     if (moved) {
+      keyCleared = typeof input.apiKey !== "string" && (await secrets.apiKeySource()) === "file";
+      await secrets.deleteApiKey();
       const paths = dataRootPaths(ctx.root);
       await rm(paths.n8nWorkflows, { force: true });
       await rm(paths.n8nSeen, { force: true });
     }
+    await ctx.services.settingsStore.mutate((s) => ({ ...s, n8n: next }));
+    // A new key is written only after the settings write succeeded.
+    if (typeof input.apiKey === "string") await secrets.setApiKey(input.apiKey);
+    else if (input.apiKey === null) await secrets.deleteApiKey();
     let secret: string | undefined;
     if (!current || input.rotateWebhookSecret === true || !(await secrets.getWebhookSecret())) {
       secret = await secrets.rotateWebhookSecret();

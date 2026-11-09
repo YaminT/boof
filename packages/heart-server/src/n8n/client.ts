@@ -16,6 +16,7 @@ import {
 } from "../api/net-guard.js";
 import type { ResolveHost } from "../api/net-guard.js";
 import { assertWebhookUrl } from "../api/ops/webhooks.js";
+import { withCallbackPort } from "../server/self-url.js";
 import { pinnedRequest } from "../server/pinned-post.js";
 import {
   readWorkflowCache,
@@ -79,15 +80,17 @@ export async function checkN8nTarget(
   allowedPrivateHosts: readonly string[],
   opts: Pick<N8nClientOptions, "resolveHost" | "isSelfUrl">,
 ): Promise<N8nTarget> {
+  // The port of a local callbackBaseUrl is boof's too, however the check was built.
+  const isSelfUrl = withCallbackPort(opts.isSelfUrl, n8n.callbackBaseUrl);
   let url: URL;
   try {
-    url = assertWebhookUrl(raw, opts.isSelfUrl);
+    url = assertWebhookUrl(raw, isSelfUrl);
   } catch (err) {
     return { ok: false, reason: err instanceof OpError ? err.message : "invalid URL" };
   }
   if (!isN8nHost(url, n8n)) {
     const checked = await checkWebhookTarget(raw, {
-      isSelf: opts.isSelfUrl,
+      isSelf: isSelfUrl,
       resolve: opts.resolveHost,
       allowedPrivateHosts,
     });
@@ -111,7 +114,7 @@ export async function checkN8nTarget(
   // The exemption reaches private, loopback and LAN addresses only, and never boof itself,
   // judged on what the name resolved to and not on how the URL spells it.
   for (const address of addresses) {
-    const refused = exemptAddressRefusal(address, url, opts.isSelfUrl);
+    const refused = exemptAddressRefusal(address, url, isSelfUrl);
     if (refused) return { ok: false, reason: refused };
   }
   return { ok: true, url, addresses };
