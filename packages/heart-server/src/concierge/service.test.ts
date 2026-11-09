@@ -281,10 +281,7 @@ describe("ConciergeService", () => {
       return updated;
     };
     try {
-      await expectCode(
-        concierge.apply(LOCAL_PRINCIPAL, "demo", changeId!),
-        "plan_version_conflict",
-      );
+      await expectCode(concierge.apply(LOCAL_PRINCIPAL, "demo", changeId!), "change_stale");
     } finally {
       ConciergeStore.prototype.update = original;
     }
@@ -294,9 +291,57 @@ describe("ConciergeService", () => {
     expect(after.goals.map((goal) => goal.id)).toEqual(["keep"]);
     const stored = await new ConciergeStore(root).get("demo", answer.conversationId);
     expect(stored?.changes.find((change) => change.id === changeId)?.status).toBe("failed");
-    expect(stored?.changes.find((change) => change.id === changeId)?.error).toBe(
-      "plan_version_conflict",
-    );
+    expect(stored?.changes.find((change) => change.id === changeId)?.error).toBe("change_stale");
+  });
+
+  it("refuses a task edit that lands after the stale check", async () => {
+    const project = await services.requireProject("demo");
+    const task = await project.create({ title: "Original", prompt: "p" });
+    agent = scriptedAgent([
+      {
+        call: "boof_update_task",
+        args: { taskId: task.frontmatter.id, title: "From the assistant" },
+      },
+    ]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("rename the task");
+    const changeId = answer.pending[0]?.id;
+    expect(changeId).toBeTruthy();
+    expect(answer.pending[0]?.reason).toBe("needs-approval");
+    const proposed = await new ConciergeStore(root).get("demo", answer.conversationId);
+    const stamp = proposed?.changes.find((change) => change.id === changeId)?.guard?.stamp;
+    expect(stamp).toBe(task.frontmatter.updated);
+
+    const original = ConciergeStore.prototype.update;
+    let bumped = false;
+    ConciergeStore.prototype.update = async function (this: ConciergeStore, ...args) {
+      const updated = await original.apply(this, args);
+      if (!bumped) {
+        bumped = true;
+        const stampMs = Date.parse(stamp!);
+        while (Date.now() <= stampMs) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        await project.update(task.frontmatter.id, { title: "Moved under apply" }, LOCAL_PRINCIPAL);
+      }
+      return updated;
+    };
+    try {
+      await expect(concierge.apply(LOCAL_PRINCIPAL, "demo", changeId!)).rejects.toMatchObject({
+        status: 409,
+        code: "change_stale",
+        message: "The target changed since the assistant proposed this change.",
+      });
+    } finally {
+      ConciergeStore.prototype.update = original;
+    }
+
+    const after = await project.get(task.frontmatter.id);
+    expect(after?.frontmatter.title).toBe("Moved under apply");
+    expect(after?.frontmatter.updated).not.toBe(stamp);
+    const stored = await new ConciergeStore(root).get("demo", answer.conversationId);
+    expect(stored?.changes.find((change) => change.id === changeId)?.status).toBe("failed");
+    expect(stored?.changes.find((change) => change.id === changeId)?.error).toBe("change_stale");
   });
 
   it("rejects stale proposals and applies with the user's rights", async () => {
@@ -356,6 +401,43 @@ describe("ConciergeService", () => {
     expect((await store.get("demo", second.conversationId))?.sessionId).toBe("session-new");
   });
 
+  it("answers not_found for an unknown id and a live foreign id, with the same message", async () => {
+    const unknown = concierge.ask(LOCAL_PRINCIPAL, "demo", {
+      text: "missing",
+      conversationId: "cnv-00000000",
+    });
+    await expect(unknown).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+      message: "Conversation not found",
+    });
+    expect(agent.inputs).toHaveLength(0);
+
+    const other = { ...LOCAL_PRINCIPAL, id: "other" };
+    agent = scriptedAgent([{ text: "theirs" }]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const foreign = await concierge.ask(other, "demo", { text: "mine" });
+
+    agent = scriptedAgent([{ text: "steal" }]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    await expect(
+      concierge.ask(LOCAL_PRINCIPAL, "demo", {
+        text: "steal",
+        conversationId: foreign.conversationId,
+      }),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+      message: "Conversation not found",
+    });
+    expect(agent.inputs).toHaveLength(0);
+    expect((await concierge.status(LOCAL_PRINCIPAL, "demo")).conversation).toBeNull();
+    expect((await new ConciergeStore(root).get("demo", foreign.conversationId))?.messages).toBe(1);
+    expect((await new ConciergeStore(root).get("demo", foreign.conversationId))?.owner).toBe(
+      "other",
+    );
+  });
+
   it("a failing spend ledger still saves the conversation and returns the turn", async () => {
     const spend = vi
       .spyOn(heart, "recordSpend")
@@ -385,6 +467,29 @@ describe("ConciergeService", () => {
       expect(logged.mock.calls.some((call) => String(call[0]).includes("daily ledger"))).toBe(true);
     } finally {
       spend.mockRestore();
+      logged.mockRestore();
+    }
+  });
+
+  it("a failing ask audit line still returns the turn", async () => {
+    const audit = vi.spyOn(heart, "appendAuditLine").mockRejectedValue(new Error("disk full"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      agent = scriptedAgent([{ text: "kept" }], {
+        usage: { inputTokens: 4, outputTokens: 2, costUsd: 0.01, known: true },
+        sessionId: "session-kept",
+      });
+      concierge = new ConciergeService({ root, services, authStore, agent });
+      const answer = await ask("hello");
+      expect(answer.text).toBe("kept");
+      const stored = await new ConciergeStore(root).get("demo", answer.conversationId);
+      expect(stored?.sessionId).toBe("session-kept");
+      expect(stored?.messages).toBe(1);
+      expect(logged.mock.calls.some((call) => String(call[0]).includes("audit write failed"))).toBe(
+        true,
+      );
+    } finally {
+      audit.mockRestore();
       logged.mockRestore();
     }
   });

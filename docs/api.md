@@ -449,8 +449,11 @@ An id owned by someone else, or an unknown id, is `404 not_found`.
 The audit line stores a fingerprint of the text, not the text. `apply` returns `{ change, result }`
 and runs the stored operation **as the caller** (the caller's scopes, trust and projects), after
 the stale-guard check. When the operation accepts it, that call also sets `expectedUpdated`
-(a task or epic stamp) or `expectedVersion` (a plan version) from the stored stamp, so the
-operation itself refuses a target that moves between the check and the write.
+(a task or epic stamp) or `expectedVersion` (a plan version) from the stored stamp, and only
+when that field is the one the operation declares for `If-Match` and it matches the guard
+(`plan` uses `expectedVersion`; a task or epic uses `expectedUpdated`). The operation then
+refuses a target that moves between the check and the write. Its `plan_version_conflict`,
+`task_modified` or `epic_modified` is stored and returned as `409 change_stale`.
 A second apply, another caller, or a change that is no longer pending is
 `404 change_not_found`. A changed target is `409 change_stale`. `discard` runs nothing.
 

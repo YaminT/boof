@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Applying a pending change reports a concurrent edit as `409 change_stale`, including when the operation itself answers `plan_version_conflict`, `task_modified` or `epic_modified`. The stored stamp is copied only into the `If-Match` field that matches the guard kind.
+- A failure writing the `concierge:ask` audit line is logged and no longer replaces the turn.
 - An assistant conversation id the caller owns, once it has been idle for `idleMinutes`, starts a fresh conversation. An id owned by someone else is still `404 not_found`.
 - A failure while recording assistant spend no longer drops the conversation update, the audit line, or the turn. The failure is logged and written as `concierge:spend`.
 - Applying a pending change copies the stored stale-guard stamp into `expectedUpdated` or `expectedVersion` when the operation accepts it, so the operation refuses a concurrent edit.

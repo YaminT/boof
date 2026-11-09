@@ -574,21 +574,25 @@ export class ConciergeService {
           c.messages++;
         });
         if (securitySettings(settings).audit.enabled) {
-          await appendAuditLine(this.opts.root, {
-            ts: new Date(this.now()).toISOString(),
-            principal: user.id,
-            kind: user.kind,
-            action: "concierge:ask",
-            via: "concierge",
-            project: projectId,
-            outcome: failure ? "error" : "ok",
-            ...(failure ? { error: failure.kind } : {}),
-            ms: Math.max(0, this.now() - startedAt),
-            ...promptFingerprint(text),
-            costUsd: usage?.known ? usage.costUsd : null,
-            toolCount,
-            pendingCount: messagePending,
-          });
+          try {
+            await appendAuditLine(this.opts.root, {
+              ts: new Date(this.now()).toISOString(),
+              principal: user.id,
+              kind: user.kind,
+              action: "concierge:ask",
+              via: "concierge",
+              project: projectId,
+              outcome: failure ? "error" : "ok",
+              ...(failure ? { error: failure.kind } : {}),
+              ms: Math.max(0, this.now() - startedAt),
+              ...promptFingerprint(text),
+              costUsd: usage?.known ? usage.costUsd : null,
+              toolCount,
+              pendingCount: messagePending,
+            });
+          } catch (err) {
+            console.error("audit write failed", err);
+          }
         }
       }
       const pending =
@@ -659,12 +663,7 @@ export class ConciergeService {
     const claimedChange = claimed.changes.find((x) => x.id === changeId)!;
     if (claimedChange.status === "expired")
       throw new OpError(409, "Pending change expired", "change_expired");
-    if (stale)
-      throw new OpError(
-        409,
-        "The target changed since the assistant proposed this change.",
-        "change_stale",
-      );
+    if (stale) throw new OpError(409, CHANGE_STALE_MESSAGE, "change_stale");
     if (!claimedByMe) {
       if (claimedChange.status === "applying")
         throw new OpError(404, "Pending change is already in progress.", "change_not_found");
@@ -681,7 +680,7 @@ export class ConciergeService {
           authStore: this.opts.authStore,
           now: () => new Date(this.now()).toISOString(),
         },
-        inputWithStaleGuard(op.input, change.input, change.guard),
+        inputWithStaleGuard(op, change.input, change.guard),
       );
       const applied = await this.store.update(projectId, conversation.id, (c) => {
         const item = c.changes.find((x) => x.id === changeId);
@@ -698,7 +697,7 @@ export class ConciergeService {
       });
       return { change: toView(applied.changes.find((x) => x.id === changeId)!), result };
     } catch (err) {
-      const opErr = err instanceof OpError ? err : new OpError(500, "Internal error", "internal");
+      const opErr = applyError(err);
       await this.store.update(projectId, conversation.id, (c) => {
         const item = c.changes.find((x) => x.id === changeId);
         if (item?.status === "applying") {
@@ -823,21 +822,40 @@ export class ConciergeService {
   }
 }
 
+const CHANGE_STALE_MESSAGE = "The target changed since the assistant proposed this change.";
+
+/** Conflict codes the operation raises for its own If-Match. Apply reports them as `change_stale`. */
+const APPLY_STALE_CODES: ReadonlySet<string> = new Set([
+  "plan_version_conflict",
+  "task_modified",
+  "epic_modified",
+]);
+
+function applyError(err: unknown): OpError {
+  const opErr = err instanceof OpError ? err : new OpError(500, "Internal error", "internal");
+  if (!APPLY_STALE_CODES.has(opErr.code)) return opErr;
+  return new OpError(409, CHANGE_STALE_MESSAGE, "change_stale");
+}
+
 /**
  * Copy the proposal's stale-guard stamp into the op input when the op can enforce it.
+ * The field is the one `rest.ifMatch` names, and only when it matches the guard kind
+ * (`plan` → `expectedVersion`, `task` or `epic` → `expectedUpdated`). Anything else
+ * is left unchanged, so a strict schema is never given an extra key.
  * The check before the claim stays; this makes the op refuse a write that lands after it.
- * Ops without the field keep the earlier check only, so a strict schema is never given an extra key.
  */
 function inputWithStaleGuard(
-  schema: z.ZodType,
+  op: { input: z.ZodType; rest: { ifMatch?: "expectedVersion" | "expectedUpdated" } },
   input: Record<string, unknown>,
   guard: PendingChange["guard"],
 ): Record<string, unknown> {
-  if (!guard || !(schema instanceof z.ZodObject)) return input;
-  const shape = schema.shape as Record<string, unknown>;
-  if (Object.prototype.hasOwnProperty.call(shape, "expectedUpdated"))
-    return { ...input, expectedUpdated: guard.stamp };
-  if (!Object.prototype.hasOwnProperty.call(shape, "expectedVersion")) return input;
+  if (!guard || !(op.input instanceof z.ZodObject)) return input;
+  const field = op.rest.ifMatch;
+  const kindField = guard.kind === "plan" ? "expectedVersion" : "expectedUpdated";
+  if (!field || field !== kindField) return input;
+  const shape = op.input.shape as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(shape, field)) return input;
+  if (field === "expectedUpdated") return { ...input, expectedUpdated: guard.stamp };
   const version = Number(guard.stamp);
   if (!Number.isInteger(version) || version < 1) return input;
   return { ...input, expectedVersion: version };
