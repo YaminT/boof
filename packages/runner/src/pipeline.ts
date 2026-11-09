@@ -21,9 +21,13 @@ import {
   taskStopRequestPath,
   TaskStore,
   EpicStore,
+  ExternalRunStore,
   workingAreaDir,
   worktreeSettings,
   type EffectiveSettings,
+  type ExternalStepPayload,
+  type ExternalStepPoint,
+  type ExternalStepTransport,
   type Project,
   type Task,
   type TokenUsage,
@@ -44,6 +48,13 @@ import { AgentAuthRefusedError, claudeAgentEnv, type AgentAuthResolver } from ".
 import { announceBudgetExceeded } from "./budget.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
 import { agentMarkerFor } from "./agent-marker.js";
+import {
+  ExternalStepFailedError,
+  externalReportsSection,
+  runExternalStep,
+  type CheckStep,
+  type ExternalStepOutcome,
+} from "./external-step.js";
 import { RESUME_PROMPT_PREFIX } from "./tools/steer.js";
 import {
   diffAgainstBase,
@@ -72,6 +83,8 @@ export interface PipelineDeps {
   /** The fail-safe pool gate: a pool-routed step waits in place while the pool is unusable. */
   pool?: PoolGate;
   agentAuth?: AgentAuthResolver;
+  /** Triggers n8n workflows for the project's external steps and check tasks. */
+  external?: ExternalStepTransport;
 }
 
 const VERDICT_PROTOCOL =
@@ -267,6 +280,8 @@ export class Pipeline {
   private readonly resumeNotes = new Map<string, string>();
   /** Per task id: usage of failed attempts that returned no result, folded in by persistUsage. */
   private readonly lostUsages = new Map<string, TokenUsage[]>();
+  /** Per task id: outcomes of the external steps run so far in this run. */
+  private readonly externalOutcomes = new Map<string, ExternalStepOutcome[]>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
   }
@@ -772,6 +787,131 @@ export class Pipeline {
     }
   }
 
+  /** The reports of the external steps that ran so far, as prompt text; "" when none. */
+  private externalSection(id: string): string {
+    return externalReportsSection(this.externalOutcomes.get(id) ?? []) ?? "";
+  }
+
+  /** The step context shared by external steps and check tasks. */
+  private externalContext(task: Task) {
+    const id = task.frontmatter.id;
+    return {
+      taskId: id,
+      projectId: this.deps.project?.id ?? "",
+      settings: this.deps.settings,
+      transport: this.deps.external,
+      runs: new ExternalRunStore(this.deps.dataRoot!),
+      log: (line: string) => this.log(id, line),
+      appendStep: (label: string) => this.deps.store.appendStep(id, label).then(() => undefined),
+      assertNotStopped: () => this.assertNotStopped(id),
+      sleep: (ms: number) => this.backoff(id, ms),
+    };
+  }
+
+  /**
+   * Run the project's external steps for `point`, in list order. Each outcome is recorded in the
+   * task body and log and kept for the prompts of the later roles. No steps: nothing happens.
+   */
+  private async externalAt(
+    task: Task,
+    point: ExternalStepPoint,
+    worktree: Worktree | null,
+    reports: ExternalStepPayload["reports"],
+    appendLog: (line: string) => Promise<void>,
+  ): Promise<void> {
+    const steps = (this.deps.project?.externalSteps ?? []).filter((s) => s.at === point);
+    if (steps.length === 0) return;
+    const id = task.frontmatter.id;
+    if (!this.deps.dataRoot) {
+      throw new ExternalStepFailedError(steps[0]!.id, "no data root for external step runs");
+    }
+    const context = this.externalContext(task);
+    for (const step of steps) {
+      const payload: Omit<ExternalStepPayload, "run"> = {
+        boof: { version: BOOF_VERSION, kind: "step" },
+        step: { id: step.id, label: step.label, at: step.at },
+        task: {
+          project: context.projectId,
+          id,
+          title: task.frontmatter.title,
+          prompt: task.body.prompt,
+          labels: task.frontmatter.labels,
+          priority: task.frontmatter.priority,
+          iteration: currentIteration(task),
+          ...(worktree ? { branch: worktree.branch, base: worktree.base } : {}),
+        },
+        reports,
+        ...(step.sendDiff ? { diff: await this.inlineDiff(id, worktree) } : {}),
+      };
+      const outcome = await runExternalStep(context, step, payload);
+      const all = this.externalOutcomes.get(id) ?? [];
+      all.push(outcome);
+      this.externalOutcomes.set(id, all);
+      await appendLog(`### n8n: ${outcome.label} (${outcome.status})\n${outcome.report}`);
+    }
+  }
+
+  /**
+   * A check task (created after an n8n workflow edit): no worktree and no tool, one external
+   * step that runs only the edited workflow.
+   */
+  private async runCheck(task: Task): Promise<PipelineOutcome> {
+    const id = task.frontmatter.id;
+    const check = task.frontmatter.n8nCheck!;
+    const appendLog = async (line: string): Promise<void> => {
+      task.body.log = task.body.log ? `${task.body.log}\n\n${line}` : line;
+      await this.log(id, line);
+    };
+    try {
+      if (!this.deps.dataRoot) {
+        throw new ExternalStepFailedError("n8n-check", "no data root for external step runs");
+      }
+      const step: CheckStep = {
+        id: "n8n-check",
+        label: "n8n check",
+        workflowId: check.workflowId,
+        webhookPath: check.webhookPath,
+        onFailure: "fail",
+      };
+      const outcome = await runExternalStep(this.externalContext(task), step, {
+        boof: { version: BOOF_VERSION, kind: "check" },
+        step: { id: step.id, label: step.label, at: "check" },
+        task: {
+          project: this.deps.project?.id ?? "",
+          id,
+          title: task.frontmatter.title,
+          prompt: task.body.prompt,
+          labels: task.frontmatter.labels,
+          priority: task.frontmatter.priority,
+          iteration: currentIteration(task),
+        },
+        reports: {},
+      });
+      await appendLog(`### ${outcome.label} (${outcome.status})\n${outcome.report}`);
+      await this.mirrorLiveLog(task);
+      await this.persistUsage(task, []);
+      await this.closeSteps(id, "Finished");
+      return { kind: "done", task };
+    } catch (err) {
+      const message =
+        err instanceof ExternalStepFailedError
+          ? err.message
+          : err instanceof Error
+            ? `${err.name}: ${err.message}`
+            : String(err);
+      const stopped = await this.stopRequested(id);
+      const stopReason = stopped ? await this.stopReason(id) : null;
+      const stopNote = stopReason === "shutdown" ? "stopped by server shutdown" : "stopped by user";
+      if (stopped) await appendLog(`### Stopped\n${stopNote}`);
+      else await appendLog(`ERROR: ${message}`);
+      await this.closeSteps(id, stopped ? "Stopped" : "Failed");
+      await this.mirrorLiveLog(task).catch(() => {});
+      await this.persistUsage(task, []).catch(() => {});
+      if (stopReason) return { kind: "stopped", task, reason: stopReason, note: stopNote };
+      return { kind: "failed", task, error: message };
+    }
+  }
+
   private async buildPrompt(task: Task, extra: string): Promise<string> {
     const parts = [`# Task: ${task.frontmatter.title}`];
     const brief = this.deps.project?.brief?.trim();
@@ -811,7 +951,9 @@ export class Pipeline {
    * status transition based on it.
    */
   async run(task: Task): Promise<PipelineOutcome> {
+    if (task.frontmatter.n8nCheck) return this.runCheck(task);
     const id = task.frontmatter.id;
+    this.externalOutcomes.delete(id);
     const usages: TokenUsage[] = [];
     const record = (r: RunResult) => {
       if (r.usage) usages.push(r.usage);
@@ -943,6 +1085,12 @@ export class Pipeline {
         `${planResult.report}\n\n## Refinement\n${refineResult.report}`,
       );
       const finalPlan = refineResult.report;
+      // The external reports so far, appended to a prompt's extra text.
+      const withExternal = (extra: string): string => {
+        const section = this.externalSection(id);
+        return section ? `${extra}\n\n${section}` : extra;
+      };
+      await this.externalAt(task, "after-planner", worktree, { planner: finalPlan }, appendLog);
 
       // --- Step 3: Developer ---
       const developer = this.tool(task, "developer");
@@ -950,7 +1098,7 @@ export class Pipeline {
         role: "developer" as const,
         model: developer.model,
         systemPrompt: SYSTEM_PROMPTS.developer,
-        prompt: await this.buildPrompt(task, `## Plan\n${finalPlan}`),
+        prompt: await this.buildPrompt(task, withExternal(`## Plan\n${finalPlan}`)),
         cwd: stepCwd,
         autoApprove: true,
       };
@@ -973,7 +1121,7 @@ export class Pipeline {
               ...devOpts,
               prompt: await this.buildPrompt(
                 task,
-                `## Plan\n${finalPlan}\n\n${answersSection(answers)}`,
+                withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
               ),
             });
             record(again);
@@ -983,6 +1131,13 @@ export class Pipeline {
         );
       }
       await this.writeReport(task, "developer", devResult.report);
+      await this.externalAt(
+        task,
+        "after-developer",
+        worktree,
+        { planner: finalPlan, developer: devResult.report },
+        appendLog,
+      );
 
       // --- Step 4: Observer (optional) and Reviewer, gated by verdicts ---
       const observer = this.observerTool(task);
@@ -998,7 +1153,7 @@ export class Pipeline {
           systemPrompt: SYSTEM_PROMPTS[role],
           prompt: await this.buildPrompt(
             task,
-            `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}`,
+            withExternal(`## Plan\n${finalPlan}\n\n## Diff under review\n${diff}`),
           ),
           cwd: stepCwd,
           autoApprove: true,
@@ -1027,7 +1182,9 @@ export class Pipeline {
                   ...checkOpts,
                   prompt: await this.buildPrompt(
                     task,
-                    `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
+                    withExternal(
+                      `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
+                    ),
                   ),
                 },
               );
@@ -1059,7 +1216,7 @@ export class Pipeline {
           role: "developer" as const,
           model: developer.model,
           systemPrompt: SYSTEM_PROMPTS.developerFix,
-          prompt: await this.buildPrompt(task, fixBase),
+          prompt: await this.buildPrompt(task, withExternal(fixBase)),
           cwd: stepCwd,
           autoApprove: true,
         };
@@ -1087,7 +1244,10 @@ export class Pipeline {
                 developer.tool,
                 {
                   ...fixOpts,
-                  prompt: await this.buildPrompt(task, `${fixBase}\n\n${answersSection(answers)}`),
+                  prompt: await this.buildPrompt(
+                    task,
+                    withExternal(`${fixBase}\n\n${answersSection(answers)}`),
+                  ),
                 },
               );
               record(again);
@@ -1110,6 +1270,7 @@ export class Pipeline {
       let revFix = 0;
       let obsRound = 0;
       let revRound = 0;
+      let lastReviewerReport = "";
       for (;;) {
         if (observer) {
           for (;;) {
@@ -1122,12 +1283,25 @@ export class Pipeline {
           }
         }
         const rev = await checkRole("reviewer", ++revRound);
+        lastReviewerReport = rev.report;
         if (!gate || rev.verdict === "APPROVE") break;
         if (rev.verdict !== "CHANGES_REQUESTED" || revFix >= maxFixRounds) {
           throw new ReviewNotApprovedError("reviewer", rev.verdict);
         }
         await fix(++revFix, "reviewer", revRound, rev.report);
       }
+
+      await this.externalAt(
+        task,
+        "after-review",
+        worktree,
+        {
+          planner: finalPlan,
+          developer: task.body.reports.developer,
+          reviewer: lastReviewerReport,
+        },
+        appendLog,
+      );
 
       // Only finalize the worktree on the final iteration, per settings.worktree.onDone
       // (default: leftovers go to a side branch, the directory goes, the task branch stays).
@@ -1162,7 +1336,11 @@ export class Pipeline {
       const poolExhausted = err instanceof PoolExhaustedError;
       const authRefused = err instanceof AgentAuthRefusedError;
       const message =
-        err instanceof ReviewNotApprovedError || overBudget || poolExhausted || authRefused
+        err instanceof ReviewNotApprovedError ||
+        err instanceof ExternalStepFailedError ||
+        overBudget ||
+        poolExhausted ||
+        authRefused
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`

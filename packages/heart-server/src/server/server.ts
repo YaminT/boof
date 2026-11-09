@@ -1,4 +1,3 @@
-import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,6 +6,7 @@ import {
   AuthStore,
   browserSessionCookieName,
   dataRootPaths,
+  ExternalRunStore,
   migrateDataRoot,
   securitySettings,
   tightenDataRoot,
@@ -20,7 +20,9 @@ import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
 import { IdempotencyStore, TaskService } from "../api/index.js";
 import { DataWatcher } from "./watch.js";
-import { hostnameOf } from "./middleware/host-guard.js";
+import { createSelfUrlCheck } from "./self-url.js";
+import { N8nClient } from "../n8n/client.js";
+import { N8nWatcher } from "../n8n/watcher.js";
 import { runDispatcherWhileHolding, WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
@@ -58,6 +60,8 @@ export interface RunningServer {
   webhooks: WebhookDispatcher;
   service: TaskService;
   port: number;
+  /** True for a URL that points at this server (its port on one of its names). */
+  isSelfUrl: (url: URL) => boolean;
   stop: () => Promise<void>;
 }
 
@@ -142,26 +146,18 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (!loopback && !WILDCARD_HOSTS.has(host)) allowedHosts.push(host);
 
   // A webhook must not call back into this server: remember the names and port it answers to.
-  const selfNames = new Set(
-    [
-      "localhost",
-      "127.0.0.1",
-      "[::1]",
-      "0.0.0.0",
-      host.toLowerCase(),
-      ...allowedHosts.map(hostnameOf),
-    ].map((h) => (h.includes(":") && !h.startsWith("[") ? `[${h}]` : h)),
-  );
-  for (const list of Object.values(networkInterfaces())) {
-    for (const a of list ?? []) selfNames.add(a.family === "IPv6" ? `[${a.address}]` : a.address);
-  }
   let boundPort = opts.port ?? 4319;
-  const isSelfUrl = (url: URL): boolean =>
-    Number(url.port || (url.protocol === "https:" ? 443 : 80)) === boundPort &&
-    selfNames.has(url.hostname.toLowerCase());
+  const isSelfUrl = createSelfUrlCheck({ port: () => boundPort, bindHost: host, allowedHosts });
+
+  // Expired external-step run records and results: pruned at start and hourly.
+  const externalRuns = new ExternalRunStore(opts.root);
+  await externalRuns.prune().catch(() => 0);
+  const pruneTimer = setInterval(() => void externalRuns.prune().catch(() => 0), 3600_000);
+  pruneTimer.unref();
 
   const app = createApp({
     service,
+    externalRuns,
     watcher,
     uiDir: opts.uiDir,
     allowedHosts,
@@ -189,6 +185,10 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
         )
       : serve(base, listening);
     s.once("error", reject);
+  }).catch((err: unknown) => {
+    // No server will ever stop, so nothing else will clear the prune timer.
+    clearInterval(pruneTimer);
+    throw err;
   });
 
   const address = server.address();
@@ -205,8 +205,24 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     authStore,
     intervalMs: opts.webhookIntervalMs,
   });
+  // The n8n edit watcher polls only where webhooks are delivered, so one server per data root
+  // does it; it stops before the lock is released.
+  const n8nWatcher = new N8nWatcher({
+    root: opts.root,
+    service,
+    client: new N8nClient({ root: opts.root, isSelfUrl }),
+  });
   const dispatcherGate = runDispatcherWhileHolding(
-    webhooks,
+    {
+      start: () => {
+        webhooks.start();
+        n8nWatcher.start();
+      },
+      stop: async () => {
+        await n8nWatcher.stop();
+        await webhooks.stop();
+      },
+    },
     join(dataRootPaths(opts.root).webhooks, ".dispatcher.lock"),
     { retryMs: opts.webhookLockRetryMs },
   );
@@ -218,7 +234,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     webhooks,
     service,
     port,
+    isSelfUrl,
     stop: async () => {
+      clearInterval(pruneTimer);
       await dispatcherGate.stop();
       await watcher.stop();
       await new Promise<void>((resolve) => {

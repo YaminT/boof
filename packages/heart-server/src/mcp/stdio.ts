@@ -11,9 +11,11 @@ import {
   AuthStore,
   auditOperation,
   mcpSettings,
+  securitySettings,
   type Principal,
   type ToolCatalog,
 } from "@boof/heart";
+import { createSelfUrlCheck } from "../server/self-url.js";
 import { createBoofMcpServer, type ToolCallInfo } from "./server.js";
 
 /** What `boof-runner mcp` prints when it is started without `--client`. */
@@ -110,6 +112,19 @@ export async function stdioPrincipal(
   return () => resolve().catch(asStartError);
 }
 
+/** The self-address check of a stdio server: boof's usual port (`BOOF_RUNNER_PORT`) and allowed hosts. */
+export async function stdioSelfUrlCheck(
+  services: TaskService,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<(url: URL) => boolean> {
+  const settings = await services.loadSettings();
+  return createSelfUrlCheck({
+    port: Number(env.BOOF_RUNNER_PORT ?? 4319),
+    allowedHosts: securitySettings(settings).allowedHosts,
+    callbackBaseUrl: settings.n8n?.callbackBaseUrl,
+  });
+}
+
 /** What {@link closeWhenDrained} needs of a transport; the SDK's stdio transport satisfies it. */
 export interface DrainTransport {
   send(message: JSONRPCMessage): Promise<void>;
@@ -171,6 +186,8 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
     services,
     authStore,
     project: opts.project,
+    // The n8n tools refuse without one: boof's own address must never be the n8n host.
+    isSelfUrl: await stdioSelfUrlCheck(services),
   });
   const transport = new StdioServerTransport();
   const closed = new Promise<void>((resolve) => {

@@ -116,11 +116,11 @@ export class SettingsStore {
 }
 
 /**
- * A short token of the settings a client can read (everything but the webhook list, which has its
- * own operations): it changes whenever one of them does. The ETag of GET/PUT /settings.
+ * A short token of the settings a client can read (everything but the webhook list and the n8n block,
+ * which have their own operations and are never sent to clients): it changes whenever one of them does. The ETag of GET/PUT /settings.
  */
-export function settingsVersion(settings: { webhooks?: unknown }): string {
-  const { webhooks: _w, ...visible } = settings;
+export function settingsVersion(settings: { webhooks?: unknown; n8n?: unknown }): string {
+  const { webhooks: _w, n8n: _n, ...visible } = settings;
   return createHash("sha256").update(JSON.stringify(visible)).digest("hex").slice(0, 16);
 }
 

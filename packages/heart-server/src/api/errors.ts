@@ -89,6 +89,12 @@ export const ERROR_CODES = {
   rate_limited: [429, "Too many requests; retry after the Retry-After header."],
   not_configured: [409, "No account pool is configured (settings.owlish is not set)."],
   gateway_error: [502, "The account pool gateway (better-ccflare) failed or is unreachable."],
+  n8n_not_configured: [409, "No n8n instance is configured (settings.n8n is not set)."],
+  upstream_failed: [
+    502,
+    "The n8n instance failed or refused the call; details.reason says why (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>).",
+  ],
+  invalid_step_token: [401, "The external-step callback token is missing, wrong, used or expired."],
   internal: [500, "Unexpected server error; details are in the server log."],
 } as const;
 

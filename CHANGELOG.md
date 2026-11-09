@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional n8n external pipeline steps: a project's `externalSteps` run an n8n workflow after the planner, after the developer or after the reviewer approves. boof calls the workflow's webhook and waits for an authenticated, single-use callback (`POST /callbacks/external-steps/{runId}`, `invalid_step_token`); steps use no model tokens. Admins connect n8n with `n8n.get`, `n8n.update` (write-only API key), `n8n.delete`, `n8n.workflows.list` and `n8n.workflows.refresh` (REST, MCP, CLI and the Settings › Automation page). The configured n8n host may be private, loopback or LAN without `allowedPrivateWebhookHosts`, narrowly; boof's own address and link-local addresses are always refused. Only trusted clients change `externalSteps`. Without n8n boof is unchanged. See `docs/n8n.md`.
+- Add an opt-in n8n watcher (`settings.n8n.checks`): when a workflow's `updatedAt` changes, boof creates a draft check task (pending with `autoQueue`) that runs only that workflow and finishes `done` on an `ok` callback. It makes at most 10 tasks per pass and 50 per hour.
 - The console assistant can propose a new project description (the `brief`); it never applies it: you confirm it from a preview that shows the whole new text (at most 4,000 characters and 60 lines), it is applied with your rights, and a change to the project in between answers `change_stale`. The assistant itself never holds `projects:write`.
 - `projects.update` takes `expectedUpdated` (HTTP: `If-Match` with the project's `ETag`); a changed project answers `409 project_modified`. `projects.get` and `projects.update` return the `ETag`.
 - Fix secret masking in assistant change previews, preserving commit SHAs and slash paths.

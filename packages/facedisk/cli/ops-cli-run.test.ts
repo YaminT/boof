@@ -1,10 +1,18 @@
 import { existsSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TaskService } from "@boof/heart-server";
-import { AuthStore, SecuritySettingsSchema, SettingsStore, execCommand } from "@boof/heart";
+import {
+  AuthStore,
+  N8nSecretStore,
+  SecuritySettingsSchema,
+  SettingsStore,
+  execCommand,
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { opsCommand } from "./ops-cli.js";
 
@@ -308,6 +316,81 @@ describe("generated commands", () => {
     expect(code).toBe(1);
     expect(errs.join("\n")).toContain("binary output to a terminal");
     expect(written).toHaveLength(0);
+  });
+
+  it("F1 n8n update refuses boof's own address (default port 4319, or BOOF_RUNNER_PORT)", async () => {
+    const file = join(base, "n8n.json");
+    const saved = process.env.BOOF_RUNNER_PORT;
+    try {
+      for (const [port, url] of [
+        [undefined, "http://127.0.0.1:4319"],
+        ["4999", "http://localhost:4999"],
+      ] as const) {
+        if (port === undefined) delete process.env.BOOF_RUNNER_PORT;
+        else process.env.BOOF_RUNNER_PORT = port;
+        await writeFile(
+          file,
+          JSON.stringify({ baseUrl: url, callbackBaseUrl: "https://boof.example" }),
+        );
+        out.length = 0;
+        errs.length = 0;
+        expect(await run(["n8n", "update", "--input", `@${file}`]), url).not.toBe(0);
+        expect(errs.join("\n"), url).toContain("not allowed");
+      }
+      // An n8n on another port still configures.
+      await writeFile(
+        file,
+        JSON.stringify({
+          baseUrl: "http://localhost:5678",
+          callbackBaseUrl: "https://boof.example",
+        }),
+      );
+      expect(await run(["n8n", "update", "--input", `@${file}`])).toBe(0);
+    } finally {
+      if (saved === undefined) delete process.env.BOOF_RUNNER_PORT;
+      else process.env.BOOF_RUNNER_PORT = saved;
+    }
+  });
+
+  it("M1 n8n update refuses boof's own address on a non-default port named by callbackBaseUrl", async () => {
+    const file = join(base, "n8n-cb.json");
+    const saved = process.env.BOOF_RUNNER_PORT;
+    delete process.env.BOOF_RUNNER_PORT;
+    try {
+      await writeFile(
+        file,
+        JSON.stringify({
+          baseUrl: "http://127.0.0.1:4400",
+          callbackBaseUrl: "http://127.0.0.1:4400",
+        }),
+      );
+      expect(await run(["n8n", "update", "--input", `@${file}`])).not.toBe(0);
+      expect(errs.join("\n")).toContain("not allowed");
+      expect((await new SettingsStore(root).load()).n8n).toBeUndefined();
+      // A later CLI run reads the stored callback: refresh never sends the key to boof's port.
+      const hits: string[] = [];
+      const srv = createServer((req, res) => {
+        hits.push(String(req.headers["x-n8n-api-key"] ?? ""));
+        res.end("{}");
+      });
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      try {
+        const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+        await new SettingsStore(root).mutate((s) => ({
+          ...s,
+          n8n: { baseUrl: url, callbackBaseUrl: url, defaultTimeoutMs: 600_000 },
+        }));
+        await new N8nSecretStore(root).setApiKey("sekret-key");
+        await run(["n8n", "workflows", "refresh"]);
+        expect(hits).toEqual([]);
+        expect(`${out.join("\n")}${errs.join("\n")}`).not.toContain("sekret-key");
+      } finally {
+        srv.closeAllConnections();
+        await new Promise((r) => srv.close(r));
+      }
+    } finally {
+      if (saved !== undefined) process.env.BOOF_RUNNER_PORT = saved;
+    }
   });
 
   it("the help points secret-bearing input to --input @file", async () => {

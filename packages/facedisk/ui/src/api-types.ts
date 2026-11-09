@@ -248,3 +248,53 @@ export interface ConciergeAskBody {
   context?: ConciergeContext;
   conversationId?: string;
 }
+
+/** One webhook node of an n8n workflow; only a single POST webhook is `usable` for a step. */
+export interface N8nWebhook {
+  path: string;
+  method: string;
+  usable: boolean;
+}
+export interface N8nWorkflowSummary {
+  id: string;
+  name: string;
+  active: boolean;
+  updatedAt: string;
+  tags: string[];
+  webhooks: N8nWebhook[];
+  editorUrl: string;
+}
+/** GET /n8n: the connection, never the API key or the webhook secret. */
+export interface N8nInfo {
+  configured: boolean;
+  baseUrl?: string;
+  webhookBaseUrl?: string;
+  callbackBaseUrl?: string;
+  defaultTimeoutMs?: number;
+  checks?: { enabled: boolean; projectId: string; autoQueue: boolean; pollIntervalMs: number };
+  apiKeySet: boolean;
+  apiKeySource: "env" | "file" | null;
+  webhookSecretSet: boolean;
+}
+/** PUT /n8n: the secret is present only when it was created or rotated; `notice` explains a dropped key. */
+export type N8nUpdateResult = N8nInfo & { secret?: string; notice?: string };
+export interface N8nWorkflowsResult {
+  configured: boolean;
+  fetchedAt: string | null;
+  workflows: N8nWorkflowSummary[];
+  lastError?: string;
+}
+export interface N8nUpdateInput {
+  baseUrl?: string;
+  webhookBaseUrl?: string | null;
+  callbackBaseUrl?: string;
+  defaultTimeoutMs?: number;
+  checks?: {
+    enabled: boolean;
+    projectId: string;
+    autoQueue: boolean;
+    pollIntervalMs: number;
+  } | null;
+  apiKey?: string | null;
+  rotateWebhookSecret?: boolean;
+}

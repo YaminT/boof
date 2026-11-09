@@ -7,16 +7,22 @@ const packageVersion = JSON.parse(
   readFileSync(resolve(fileURLToPath(new URL("../../", import.meta.url)), "package.json"), "utf8"),
 ).version as string;
 
-const { startServer, constructEngine, engineLoop, engineShutdown, constructConcierge } = vi.hoisted(
-  () => ({
-    startServer: vi.fn(),
-    constructEngine: vi.fn(),
-    engineLoop: vi.fn(),
-    engineShutdown: vi.fn(),
-    constructConcierge: vi.fn(),
-  }),
-);
-vi.mock("@boof/heart-server", () => ({ startServer }));
+const {
+  startServer,
+  constructEngine,
+  engineLoop,
+  engineShutdown,
+  constructConcierge,
+  createN8nTransport,
+} = vi.hoisted(() => ({
+  createN8nTransport: vi.fn(() => ({})),
+  startServer: vi.fn(),
+  constructEngine: vi.fn(),
+  engineLoop: vi.fn(),
+  engineShutdown: vi.fn(),
+  constructConcierge: vi.fn(),
+}));
+vi.mock("@boof/heart-server", () => ({ startServer, createN8nTransport }));
 vi.mock("@boof/runner", () => ({
   DESKTOP_CLAUDE_AGENT_REASON: "desktop unavailable",
   ClaudeConcierge: class {
@@ -112,6 +118,25 @@ describe("bin boot", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("gives the engine an n8n transport that uses the running server's own self check", async () => {
+    const isSelfUrl = vi.fn((u: URL) => u.port === "4999");
+    const server = { stop: vi.fn(async () => {}), port: 4999, isSelfUrl };
+    startServer.mockResolvedValue(server);
+    constructEngine.mockImplementation(() => {});
+    const result = await boot({ root: "/tmp/boot-test", version: packageVersion });
+    expect(createN8nTransport).toHaveBeenCalledOnce();
+    const args = createN8nTransport.mock.calls[0] as unknown as [
+      { via: string; root: string; isSelfUrl: (u: URL) => boolean },
+    ];
+    expect(args[0].via).toBe("runner");
+    expect(args[0].root).toBe("/tmp/boot-test");
+    expect(args[0].isSelfUrl).toBe(isSelfUrl);
+    expect(args[0].isSelfUrl(new URL("http://127.0.0.1:4999/"))).toBe(true);
+    const transport = createN8nTransport.mock.results[0]!.value;
+    expect(constructEngine).toHaveBeenCalledWith(expect.objectContaining({ external: transport }));
+    await result.stop(0);
   });
 
   it("uses one registry marked unavailable for the desktop Claude Agent tool", async () => {

@@ -25,6 +25,7 @@ import {
   parseGoal,
   serializeTask,
   SettingsStore,
+  ExternalRunStore,
   TaskStore,
   parseInjected,
   taskControlDir,
@@ -185,6 +186,74 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
         (e) => e.event.type === "runner.agent_auth_refused",
       ),
     ).toHaveLength(1);
+  });
+
+  it("an n8n check task is not touched by agent auth or an unavailable tool; a normal task still is", async () => {
+    const decide = vi.fn(async () => ({ ok: false as const, reason: "auth refused" }));
+    const agent = new MockTool();
+    const wrapped = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      unavailableReason: "agent tool unavailable",
+      detect: () => agent.detect(),
+      listModels: () => agent.listModels(),
+      run: (opts: RunOptions) => agent.run(opts),
+    };
+    const external = {
+      preflight: async () => null,
+      trigger: async (req: { runId: string }) => {
+        await new ExternalRunStore(dataRoot).complete(req.runId, { status: "ok", report: "fine" });
+        return { ok: true as const, sent: "answered" as const };
+      },
+    };
+    const settings = new SettingsStore(dataRoot);
+    await settings.save({
+      ...(await settings.load()),
+      n8n: {
+        baseUrl: "http://n8n.test:5678",
+        callbackBaseUrl: "https://boof.test/boof",
+        defaultTimeoutMs: 600_000,
+      },
+    });
+    engine = new RunnerEngine({
+      root: dataRoot,
+      pollIntervalMs: 10,
+      registry: new ToolRegistry([new MockTool(), wrapped]),
+      agentAuth: { decide } as never,
+      external: external as never,
+    });
+    const agentTools = {
+      ...fm().tools,
+      developer: { tool: "claude-agent", model: "default" },
+    };
+    await store.create(newTask(fm({ id: "normal", priority: 60, tools: agentTools }), "Work."));
+    await store.create(
+      newTask(
+        fm({
+          id: "chk",
+          priority: 90,
+          tools: agentTools,
+          n8nCheck: {
+            workflowId: "wf1",
+            workflowName: "Nightly",
+            webhookPath: "boof/check",
+            updatedAt: "2026-06-04T10:00:00.000Z",
+          },
+        }),
+        "Check.",
+      ),
+    );
+    const result = await engine.tick();
+    expect(result).toMatchObject({ kind: "ran", outcome: { kind: "done" } });
+    expect((await store.get("chk"))?.frontmatter.status).toBe("done");
+    expect((await store.get("chk"))?.body.log).not.toContain("### Not started");
+    expect(decide).not.toHaveBeenCalled();
+    // The gated task is refused as before.
+    await engine.tick();
+    expect((await store.get("normal"))?.frontmatter.status).toBe("failed");
+    expect((await store.get("normal"))?.body.log).toContain("agent tool unavailable");
   });
 
   it("fails desktop-unavailable claude-agent selection without asking for auth", async () => {

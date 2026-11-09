@@ -5,8 +5,14 @@ import {
   ToolRegistry,
   defaultTools,
 } from "@boof/runner";
-import type { ConciergeAgent } from "@boof/heart";
-import { startServer, type RunningServer, type StartServerOptions } from "@boof/heart-server";
+import type { ConciergeAgent, Settings } from "@boof/heart";
+import {
+  createN8nTransport,
+  createSelfUrlCheck,
+  startServer,
+  type RunningServer,
+  type StartServerOptions,
+} from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
 
 export interface BootOptions extends Omit<StartServerOptions, "catalog" | "runnerRunning"> {
@@ -31,6 +37,21 @@ const runnerStartFailures = new WeakSet<object>();
 
 export function isRunnerStartFailure(error: unknown): boolean {
   return typeof error === "object" && error !== null && runnerStartFailures.has(error);
+}
+
+const DEFAULT_SERVER_PORT = 4319;
+
+/**
+ * The self check for a process without the server: the one in heart-server, with
+ * `$BOOF_RUNNER_PORT` (default 4319), the configured `allowedHosts` and the port of
+ * `n8n.callbackBaseUrl` when its host is local.
+ */
+export function headlessSelfCheck(settings: Settings): (u: URL) => boolean {
+  return createSelfUrlCheck({
+    port: Number(process.env.BOOF_RUNNER_PORT ?? DEFAULT_SERVER_PORT),
+    allowedHosts: settings.security?.allowedHosts,
+    callbackBaseUrl: settings.n8n?.callbackBaseUrl,
+  });
 }
 
 /** Compose the shared server and runner lifecycle used by the CLI and Electron. */
@@ -68,7 +89,15 @@ export async function boot(opts: BootOptions): Promise<Booted> {
   await onServer?.(server);
   try {
     if (runner !== false && (!guard || (await guard.acquire()))) {
-      engine = new RunnerEngine({ root: opts.root, registry });
+      engine = new RunnerEngine({
+        root: opts.root,
+        registry,
+        external: createN8nTransport({
+          root: opts.root,
+          via: "runner",
+          isSelfUrl: server.isSelfUrl,
+        }),
+      });
       onRunner?.(engine);
       void engine.loop();
     } else {

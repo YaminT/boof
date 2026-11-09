@@ -28,6 +28,10 @@ import type {
   PendingChangeView,
   ProjectView,
   RunnerStatus,
+  N8nInfo,
+  N8nUpdateInput,
+  N8nUpdateResult,
+  N8nWorkflowsResult,
 } from "./api-types.js";
 import { parseSse } from "./lib/concierge-stream.js";
 import type { TaskReview } from "@boof/heart";
@@ -394,6 +398,14 @@ export const api = {
     }),
   deleteWebhook: (id: string) =>
     http<{ ok: true }>(`${V1}/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getN8n: () => http<N8nInfo>(`${V1}/n8n`),
+  updateN8n: (input: N8nUpdateInput) =>
+    http<N8nUpdateResult>(`${V1}/n8n`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteN8n: () =>
+    http<{ ok: true; projectsWithSteps: string[] }>(`${V1}/n8n`, { method: "DELETE" }),
+  listN8nWorkflows: () => http<N8nWorkflowsResult>(`${V1}/n8n/workflows`),
+  refreshN8nWorkflows: () =>
+    http<N8nWorkflowsResult>(`${V1}/n8n/workflows/refresh`, { method: "POST" }),
   whoami: () => http<Whoami>(`${V1}/whoami`),
   listClients: () => http<{ clients: PublicClient[] }>(`${V1}/auth/clients`).then((r) => r.clients),
   createClient: (input: {

@@ -26,6 +26,7 @@ import {
   buildHierarchyIndex,
   clearMissingCommand,
   CommandStore,
+  auditOperation,
   createTaskInHierarchy,
   moveTask as moveTaskInHierarchy,
   removeTask,
@@ -75,6 +76,7 @@ import {
   type TaskReviewInfo,
   appendAnswerRound,
   WebhookSecretStore,
+  N8nSecretStore,
   atomicWrite,
   settingsVersion,
   initGitRepo,
@@ -98,6 +100,7 @@ import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import { ConciergeService } from "../../concierge/service.js";
 import type { ConciergeAgent } from "@boof/heart";
+import { cleanN8nName } from "../../n8n/text.js";
 
 export interface CreateTaskInput {
   title: string;
@@ -848,6 +851,8 @@ export class TaskService {
   readonly commands: CommandStore;
   readonly settingsStore: SettingsStore;
   readonly webhookSecrets: WebhookSecretStore;
+  /** The n8n API key and webhook header secret (n8n/secrets.json). */
+  readonly n8nSecrets: N8nSecretStore;
   /** boof's one better-ccflare client key (file or BOOF_OWLISH_API_KEY); never part of settings. */
   readonly owlishSecrets: OwlishSecretStore;
   readonly projectKeys: ProjectKeyStore;
@@ -871,6 +876,7 @@ export class TaskService {
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
+    this.n8nSecrets = new N8nSecretStore(root);
     this.owlishSecrets = new OwlishSecretStore(root);
     this.projectKeys = new ProjectKeyStore(root);
     void this.owlishSecrets.tighten().catch(() => {
@@ -1143,6 +1149,76 @@ export class TaskService {
   async requireProject(id: string): Promise<ProjectService> {
     if (!(await this.projects.get(id))) throw projectNotFound(id);
     return this.forProject(id);
+  }
+
+  /**
+   * The check task for an edited n8n workflow (the edit watcher's, `by: "n8n-watcher"`): an open
+   * (draft or pending) task for the same workflow is updated in place, otherwise one is created,
+   * as a draft unless `opts.queue`. 404 `project_not_found` for an unknown project.
+   */
+  async createN8nCheckTask(
+    projectId: string,
+    rawCheck: { workflowId: string; workflowName: string; webhookPath: string; updatedAt: string },
+    opts: { queue: boolean },
+  ): Promise<{ id: string; created: boolean }> {
+    const project = await this.requireProject(projectId);
+    const check = {
+      ...rawCheck,
+      workflowName: cleanN8nName(rawCheck.workflowName, rawCheck.workflowId),
+    };
+    const title = `Check n8n workflow "${check.workflowName}" after edit`;
+    const prompt = `Runs the n8n workflow "${check.workflowName}" (${check.workflowId}) once with boof.kind = "check" and passes when its callback reports ok. Created by boof after the workflow changed in n8n at ${check.updatedAt}.`;
+    const start = Date.now();
+    const audit = (task: string, updated: boolean) =>
+      auditOperation(this.root, {
+        principal: { id: "n8n-watcher", kind: "server" },
+        action: "n8n:check-task",
+        via: "server",
+        project: projectId,
+        ok: true,
+        ms: Date.now() - start,
+        at: start,
+        extra: { workflowId: check.workflowId, task, ...(updated ? { updated: true } : {}) },
+      });
+    const open = (await project.tasks.list()).find(
+      (t) =>
+        (t.frontmatter.status === "draft" || t.frontmatter.status === "pending") &&
+        t.frontmatter.n8nCheck?.workflowId === check.workflowId,
+    );
+    if (open) {
+      await project.tasks.modify(open.frontmatter.id, (t) => {
+        t.frontmatter.n8nCheck = { ...check };
+        t.frontmatter.title = title;
+        t.body.prompt = prompt;
+      });
+      await audit(open.frontmatter.id, true);
+      return { id: open.frontmatter.id, created: false };
+    }
+    const task = await createTaskInHierarchy(
+      project.root,
+      newTask(
+        {
+          id: "pending-id",
+          title,
+          status: opts.queue ? "pending" : "draft",
+          priority: 50,
+          skip: false,
+          labels: ["n8n-check"],
+          command: null,
+          attachments: [],
+          questions: "none",
+          runs: 1,
+          completedRuns: 0,
+          n8nCheck: { ...check },
+          created: "",
+          updated: "",
+        },
+        prompt,
+      ),
+      { by: "n8n-watcher" },
+    );
+    await audit(task.frontmatter.id, false);
+    return { id: task.frontmatter.id, created: true };
   }
 
   // --- Projects ---

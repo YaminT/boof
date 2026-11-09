@@ -16,6 +16,7 @@ import {
 } from "@boof/heart";
 import { MockTool, ToolRegistry, type HealthResult, type Tool } from "@boof/runner";
 import { registry, TaskService } from "../api/index.js";
+import { fakeWorkflow, startFakeN8n } from "../../test-support/fake-n8n.js";
 import { createApp } from "./app.js";
 
 /** A tool that counts every probe: a GET must never reach it. */
@@ -180,6 +181,27 @@ describe("GET operations", () => {
     }
     expect(await snapshot(root)).toEqual(before);
     expect(spy.probes).toBe(0);
+  });
+
+  it("GET /n8n and /n8n/workflows make no outbound call (O14)", async () => {
+    const fake = await startFakeN8n({
+      apiKey: "k",
+      workflows: [fakeWorkflow({ id: "w1", name: "CI", webhook: { path: "ci" } })],
+    });
+    try {
+      await service.settingsStore.mutate(
+        (s) => ({ ...s, n8n: { baseUrl: fake.url, callbackBaseUrl: "https://b.x" } }) as typeof s,
+      );
+      const before = await snapshot(root);
+      for (const path of ["/api/v1/n8n", "/api/v1/n8n/workflows"]) {
+        const res = await app.request(`http://localhost${path}`);
+        expect(res.status, path).toBe(200);
+      }
+      expect(fake.calls).toHaveLength(0);
+      expect(await snapshot(root)).toEqual(before);
+    } finally {
+      await fake.close();
+    }
   });
 
   it("do not create settings.json when it is missing", async () => {

@@ -144,6 +144,9 @@
                   "rate_limited",
                   "not_configured",
                   "gateway_error",
+                  "n8n_not_configured",
+                  "upstream_failed",
+                  "invalid_step_token",
                   "internal"
                 ],
                 "type": "string"
@@ -1288,6 +1291,67 @@
             "minLength": 1,
             "type": "string"
           },
+          "externalSteps": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "enum": [
+                    "after-planner",
+                    "after-developer",
+                    "after-review"
+                  ],
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "label": {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "onFailure": {
+                  "default": "fail",
+                  "enum": [
+                    "fail",
+                    "continue"
+                  ],
+                  "type": "string"
+                },
+                "sendDiff": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "timeoutMs": {
+                  "maximum": 86400000,
+                  "minimum": 10000,
+                  "type": "integer"
+                },
+                "webhookPath": {
+                  "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                  "type": "string"
+                },
+                "workflowId": {
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "at",
+                "workflowId",
+                "webhookPath",
+                "onFailure",
+                "sendDiff"
+              ],
+              "type": "object"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
           "id": {
             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
             "type": "string"
@@ -2365,6 +2429,36 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "n8nCheck": {
+            "additionalProperties": false,
+            "properties": {
+              "updatedAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "type": "string"
+              },
+              "webhookPath": {
+                "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                "type": "string"
+              },
+              "workflowId": {
+                "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                "type": "string"
+              },
+              "workflowName": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "workflowId",
+              "workflowName",
+              "webhookPath",
+              "updatedAt"
+            ],
+            "type": "object"
           },
           "origin": {
             "additionalProperties": false,
@@ -4413,6 +4507,588 @@
         "x-mcp-tool": "boof_refresh_models"
       }
     },
+    "/n8n": {
+      "delete": {
+        "description": "Removes the n8n connection: settings.n8n, the stored API key and webhook secret, and the workflow cache. Projects keep their externalSteps (those steps then fail with \"n8n is not configured\"); the answer lists those projects. Needs admin and a trusted, project-unrestricted client.",
+        "operationId": "n8n.delete",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    },
+                    "projectsWithSteps": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "projectsWithSteps"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Disconnect n8n",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_delete_n8n"
+      },
+      "get": {
+        "description": "Returns how boof is connected to n8n: the URLs, the timeout, the check settings, and whether an API key and a webhook secret are set. Never returns the key or the secret. { configured: false } when n8n is not set up. No side effects, no call to n8n.",
+        "operationId": "n8n.get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeySet": {
+                      "type": "boolean"
+                    },
+                    "apiKeySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "env",
+                            "file"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "baseUrl": {
+                      "type": "string"
+                    },
+                    "callbackBaseUrl": {
+                      "type": "string"
+                    },
+                    "checks": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "autoQueue": {
+                          "type": "boolean"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "pollIntervalMs": {
+                          "type": "number"
+                        },
+                        "projectId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "projectId",
+                        "autoQueue",
+                        "pollIntervalMs"
+                      ],
+                      "type": "object"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "defaultTimeoutMs": {
+                      "type": "number"
+                    },
+                    "webhookBaseUrl": {
+                      "type": "string"
+                    },
+                    "webhookSecretSet": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "apiKeySet",
+                    "apiKeySource",
+                    "webhookSecretSet"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get the n8n connection",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_n8n"
+      },
+      "put": {
+        "description": "Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Changing the origin of baseUrl without a new apiKey removes the stored key and the workflow cache (`notice` says so). Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.",
+        "operationId": "n8n.update",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "apiKey": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[\\x21-\\x7e]{1,2048}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The n8n API key. Write-only: stored apart from settings.json (n8n/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_N8N_API_KEY, when set, still wins).",
+                    "writeOnly": true
+                  },
+                  "baseUrl": {
+                    "maxLength": 2000,
+                    "type": "string"
+                  },
+                  "callbackBaseUrl": {
+                    "maxLength": 2000,
+                    "type": "string"
+                  },
+                  "checks": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "autoQueue": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "enabled": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "pollIntervalMs": {
+                            "default": 300000,
+                            "maximum": 86400000,
+                            "minimum": 60000,
+                            "type": "integer"
+                          },
+                          "projectId": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "projectId"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "defaultTimeoutMs": {
+                    "maximum": 86400000,
+                    "minimum": 10000,
+                    "type": "integer"
+                  },
+                  "rotateWebhookSecret": {
+                    "description": "Make a new webhook header secret (X-Boof-Token). It is returned once, as `secret`; the first configuration makes one anyway.",
+                    "type": "boolean"
+                  },
+                  "webhookBaseUrl": {
+                    "anyOf": [
+                      {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeySet": {
+                      "type": "boolean"
+                    },
+                    "apiKeySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "env",
+                            "file"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "baseUrl": {
+                      "type": "string"
+                    },
+                    "callbackBaseUrl": {
+                      "type": "string"
+                    },
+                    "checks": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "autoQueue": {
+                          "type": "boolean"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "pollIntervalMs": {
+                          "type": "number"
+                        },
+                        "projectId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "projectId",
+                        "autoQueue",
+                        "pollIntervalMs"
+                      ],
+                      "type": "object"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "defaultTimeoutMs": {
+                      "type": "number"
+                    },
+                    "notice": {
+                      "type": "string"
+                    },
+                    "secret": {
+                      "type": "string"
+                    },
+                    "webhookBaseUrl": {
+                      "type": "string"
+                    },
+                    "webhookSecretSet": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "apiKeySet",
+                    "apiKeySource",
+                    "webhookSecretSet"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Configure n8n",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_update_n8n"
+      }
+    },
+    "/n8n/workflows": {
+      "get": {
+        "description": "Lists the n8n workflows from the last refresh (cache only; no call to n8n). Each has its webhooks (only a single POST webhook is `usable` for a step) and an editor link. { configured: false, workflows: [] } when n8n is not set up; `lastError` shows why the last refresh failed.",
+        "operationId": "n8n.workflows.list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "fetchedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "workflows": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "editorUrl": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "webhooks": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "method": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "usable": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "method",
+                                "usable"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "active",
+                          "updatedAt",
+                          "tags",
+                          "webhooks",
+                          "editorUrl"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "fetchedAt",
+                    "workflows"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List n8n workflows",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_list_n8n_workflows"
+      }
+    },
+    "/n8n/workflows/refresh": {
+      "post": {
+        "description": "Fetches the workflow list from n8n (its public API, with the stored API key) and rewrites the cache. 409 n8n_not_configured when n8n is not set up; 502 upstream_failed with details.reason (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>) when n8n cannot be read, and the cached list stays.",
+        "operationId": "n8n.workflows.refresh",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "fetchedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "workflows": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "editorUrl": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "webhooks": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "method": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "usable": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "method",
+                                "usable"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "active",
+                          "updatedAt",
+                          "tags",
+                          "webhooks",
+                          "editorUrl"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "fetchedAt",
+                    "workflows"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Refresh the n8n workflow list",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_refresh_n8n_workflows"
+      }
+    },
     "/projects": {
       "get": {
         "description": "Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.",
@@ -4512,6 +5188,67 @@
                           "defaultBase": {
                             "minLength": 1,
                             "type": "string"
+                          },
+                          "externalSteps": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "at": {
+                                  "enum": [
+                                    "after-planner",
+                                    "after-developer",
+                                    "after-review"
+                                  ],
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "maxLength": 80,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "onFailure": {
+                                  "default": "fail",
+                                  "enum": [
+                                    "fail",
+                                    "continue"
+                                  ],
+                                  "type": "string"
+                                },
+                                "sendDiff": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "timeoutMs": {
+                                  "maximum": 86400000,
+                                  "minimum": 10000,
+                                  "type": "integer"
+                                },
+                                "webhookPath": {
+                                  "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                                  "type": "string"
+                                },
+                                "workflowId": {
+                                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "label",
+                                "at",
+                                "workflowId",
+                                "webhookPath",
+                                "onFailure",
+                                "sendDiff"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 10,
+                            "type": "array"
                           },
                           "id": {
                             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -5246,6 +5983,67 @@
                       "minLength": 1,
                       "type": "string"
                     },
+                    "externalSteps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "at": {
+                            "enum": [
+                              "after-planner",
+                              "after-developer",
+                              "after-review"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "label": {
+                            "maxLength": 80,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "onFailure": {
+                            "default": "fail",
+                            "enum": [
+                              "fail",
+                              "continue"
+                            ],
+                            "type": "string"
+                          },
+                          "sendDiff": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "timeoutMs": {
+                            "maximum": 86400000,
+                            "minimum": 10000,
+                            "type": "integer"
+                          },
+                          "webhookPath": {
+                            "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                            "type": "string"
+                          },
+                          "workflowId": {
+                            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "at",
+                          "workflowId",
+                          "webhookPath",
+                          "onFailure",
+                          "sendDiff"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 10,
+                      "type": "array"
+                    },
                     "id": {
                       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
                       "type": "string"
@@ -5491,7 +6289,7 @@
         "x-mcp-tool": "boof_get_project"
       },
       "put": {
-        "description": "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
+        "description": "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.",
         "operationId": "projects.update",
         "parameters": [
           {
@@ -5623,6 +6421,72 @@
                     "description": "The project's `updated` stamp you last saw (HTTP: If-Match with the ETag); a changed project answers 409 project_modified.",
                     "maxLength": 100,
                     "type": "string"
+                  },
+                  "externalSteps": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "at": {
+                              "enum": [
+                                "after-planner",
+                                "after-developer",
+                                "after-review"
+                              ],
+                              "type": "string"
+                            },
+                            "id": {
+                              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "maxLength": 80,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "onFailure": {
+                              "default": "fail",
+                              "enum": [
+                                "fail",
+                                "continue"
+                              ],
+                              "type": "string"
+                            },
+                            "sendDiff": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "timeoutMs": {
+                              "maximum": 86400000,
+                              "minimum": 10000,
+                              "type": "integer"
+                            },
+                            "webhookPath": {
+                              "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                              "type": "string"
+                            },
+                            "workflowId": {
+                              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "label",
+                            "at",
+                            "workflowId",
+                            "webhookPath"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 10,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "labels": {
                     "items": {
@@ -5898,6 +6762,67 @@
                     "defaultBase": {
                       "minLength": 1,
                       "type": "string"
+                    },
+                    "externalSteps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "at": {
+                            "enum": [
+                              "after-planner",
+                              "after-developer",
+                              "after-review"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "label": {
+                            "maxLength": 80,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "onFailure": {
+                            "default": "fail",
+                            "enum": [
+                              "fail",
+                              "continue"
+                            ],
+                            "type": "string"
+                          },
+                          "sendDiff": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "timeoutMs": {
+                            "maximum": 86400000,
+                            "minimum": 10000,
+                            "type": "integer"
+                          },
+                          "webhookPath": {
+                            "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                            "type": "string"
+                          },
+                          "workflowId": {
+                            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "at",
+                          "workflowId",
+                          "webhookPath",
+                          "onFailure",
+                          "sendDiff"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 10,
+                      "type": "array"
                     },
                     "id": {
                       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -14729,8 +15654,16 @@
       "description": "A plan or goal in the input is invalid (schema, dangling dependency, cycle).",
       "status": 400
     },
+    "invalid_step_token": {
+      "description": "The external-step callback token is missing, wrong, used or expired.",
+      "status": 401
+    },
     "invalid_transition": {
       "description": "The task status transition is not allowed.",
+      "status": 409
+    },
+    "n8n_not_configured": {
+      "description": "No n8n instance is configured (settings.n8n is not set).",
       "status": 409
     },
     "no_default_project": {
@@ -14820,6 +15753,10 @@
     "unsupported_media_type": {
       "description": "A JSON operation needs Content-Type: application/json.",
       "status": 415
+    },
+    "upstream_failed": {
+      "description": "The n8n instance failed or refused the call; details.reason says why (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>).",
+      "status": 502
     }
   }
 }

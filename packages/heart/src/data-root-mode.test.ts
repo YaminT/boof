@@ -102,6 +102,17 @@ describe("tightenDataRoot", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")("tightens n8n/ and external-runs/ to 0700", async () => {
+    const root = await temp();
+    for (const d of ["n8n", "external-runs"]) {
+      await mkdir(join(root, d), { mode: 0o777 });
+      await chmod(join(root, d), 0o775);
+    }
+    await tightenDataRoot(root);
+    for (const d of ["n8n", "external-runs"])
+      expect((await stat(join(root, d))).mode & 0o777, d).toBe(0o700);
+  });
+
   it.skipIf(process.platform === "win32")("never touches home or /", async () => {
     const root = await temp();
     await chmod(root, 0o755);

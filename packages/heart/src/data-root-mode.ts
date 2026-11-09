@@ -11,6 +11,8 @@ export const PRIVATE_SUBDIRS = [
   "idempotency",
   "concierge",
   "claude-agent-config",
+  "n8n",
+  "external-runs",
 ] as const;
 
 /** A folder above the data root that others could write to; the root itself may still be private. */

@@ -208,7 +208,7 @@ export const ImportResultSchema = z.object({
 });
 
 /** Settings as the API shows them: webhooks are managed (and hidden) through their own operations. */
-export const PublicSettingsSchema = SettingsSchema.omit({ webhooks: true });
+export const PublicSettingsSchema = SettingsSchema.omit({ webhooks: true, n8n: true });
 
 export const PublicClientSchema = ClientSchema.omit({ keyHash: true });
 

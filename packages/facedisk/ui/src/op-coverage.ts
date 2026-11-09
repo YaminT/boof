@@ -142,6 +142,15 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "webhooks.update": { where: "updateWebhook \u2014 Webhooks (enable, disable, edit)" },
   "webhooks.delete": { where: "deleteWebhook \u2014 Webhooks (delete a webhook)" },
+  "n8n.get": { where: "getN8n — N8nSection, ExternalStepsSection (n8n status)" },
+  "n8n.update": {
+    where: "updateN8n — N8nSection (connect, save, replace or remove the key, rotate the secret)",
+  },
+  "n8n.delete": { where: "deleteN8n — N8nSection (disconnect)" },
+  "n8n.workflows.list": {
+    where: "listN8nWorkflows — N8nSection, ExternalStepsSection (workflow table and picker)",
+  },
+  "n8n.workflows.refresh": { where: "refreshN8nWorkflows — N8nSection (refresh workflows)" },
   "concierge.status": {
     where:
       "conciergeStatus \u2014 useConcierge (reloads when the project changes and after each message)",

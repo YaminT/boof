@@ -31,6 +31,10 @@ import {
   type ScannedUnit,
 } from "@boof/heart";
 import { RunnerEngine, ToolRegistry, type TickResult } from "@boof/runner";
+import { createN8nTransport } from "@boof/heart-server";
+import { headlessSelfCheck } from "./boot.js";
+
+// A headless run has no server of its own; `headlessSelfCheck` (boot.ts) works out which addresses are boof's.
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";
@@ -208,7 +212,16 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   }
   const id = created.frontmatter.id;
 
-  const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
+  const engine = new RunnerEngine({
+    root: opts.root,
+    registry,
+    onlyProject: project.id,
+    external: createN8nTransport({
+      root: opts.root,
+      via: "runner",
+      isSelfUrl: headlessSelfCheck(settings),
+    }),
+  });
   // Drive until our task leaves the active states. One tick fully runs the
   // highest-priority pending task (ours), so this normally loops once.
   for (;;) {
@@ -257,10 +270,16 @@ export async function drainQueue(opts: {
   }
   if (opts.project) opts.onProject?.(opts.project);
   await ensureRunnerEnabled(opts.root, out);
+  const settings = await new SettingsStore(opts.root).load();
   const engine = new RunnerEngine({
     root: opts.root,
     registry: opts.registry ?? new ToolRegistry(),
     onlyProject: opts.project,
+    external: createN8nTransport({
+      root: opts.root,
+      via: "runner",
+      isSelfUrl: headlessSelfCheck(settings),
+    }),
   });
   let ran = 0;
   let failed = 0;

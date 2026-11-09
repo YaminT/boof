@@ -30,6 +30,7 @@ import {
   principalFromClient,
   stdioAudit,
   stdioPrincipal,
+  stdioSelfUrlCheck,
   type BoofMcpOptions,
   type ToolCallInfo,
 } from "./index.js";
@@ -92,6 +93,7 @@ const EXPECTED_REVIEW_TOOLS: string[] = [
   "boof_get_epic",
   "boof_get_health",
   "boof_get_model_details",
+  "boof_get_n8n",
   "boof_get_plan",
   "boof_get_pool_health",
   "boof_get_project",
@@ -109,6 +111,7 @@ const EXPECTED_REVIEW_TOOLS: string[] = [
   "boof_list_commands",
   "boof_list_epics",
   "boof_list_models",
+  "boof_list_n8n_workflows",
   "boof_list_plans",
   "boof_list_projects",
   "boof_list_tasks",
@@ -322,6 +325,11 @@ describe("tools generated from the registry", () => {
         "boof_create_webhook",
         "boof_update_webhook",
         "boof_delete_webhook",
+        "boof_get_n8n",
+        "boof_update_n8n",
+        "boof_delete_n8n",
+        "boof_list_n8n_workflows",
+        "boof_refresh_n8n_workflows",
       ]
     `);
     // Every exposed JSON operation except file upload and download. Concierge is REST/CLI only.
@@ -329,7 +337,7 @@ describe("tools generated from the registry", () => {
       (o) => (!o.rest.kind || o.rest.kind === "json") && o.mcp.expose,
     );
     expect(names).toHaveLength(jsonOps.length);
-    expect(names).toHaveLength(80);
+    expect(names).toHaveLength(85);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("../api/index.js").then((m) => m.registry)).map((o) => [
         o.mcp.name,
@@ -1039,6 +1047,32 @@ describe("handleMcpHttp", () => {
     await pending.catch(() => undefined); // the transport may reject once the request is aborted
     expect((await done).tool).toBe("boof_wait_task");
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  describe("stdio n8n self check", () => {
+    const update = (c: Client, port: number) =>
+      call(c, "boof_update_n8n", {
+        baseUrl: `http://127.0.0.1:${port}`,
+        callbackBaseUrl: "https://boof.example",
+      });
+
+    it("F1 the stdio server's check refuses boof's own port; without one the tool refuses", async () => {
+      const admin = await clientPrincipal(["admin", "settings:read", "settings:write"], "trusted");
+      const withCheck = await connect(admin, undefined, {
+        isSelfUrl: await stdioSelfUrlCheck(services, { BOOF_RUNNER_PORT: "4321" }),
+      });
+      const own = await update(withCheck, 4321);
+      expect(own.isError).toBe(true);
+      expect(own.content[0]!.text).toContain("not allowed");
+      const dflt = await connect(admin, undefined, {
+        isSelfUrl: await stdioSelfUrlCheck(services, {}),
+      });
+      expect((await update(dflt, 4319)).isError).toBe(true);
+      const bare = await connect(admin);
+      const refused = await update(bare, 5678);
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0]!.text).toContain("own address");
+    });
   });
 
   describe("stdio audit", () => {

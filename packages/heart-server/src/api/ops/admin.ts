@@ -35,8 +35,10 @@ import {
 } from "./common.js";
 
 /** Settings without the webhook list (secrets): see the webhooks operations. */
-export function publicSettings<T extends { webhooks?: unknown }>(s: T): Omit<T, "webhooks"> {
-  const { webhooks: _w, ...rest } = s;
+export function publicSettings<T extends { webhooks?: unknown; n8n?: unknown }>(
+  s: T,
+): Omit<T, "webhooks" | "n8n"> {
+  const { webhooks: _w, n8n: _n, ...rest } = s;
   return rest;
 }
 

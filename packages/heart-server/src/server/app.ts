@@ -10,6 +10,7 @@ import {
   authorizeProject,
   isKebabId,
   MAX_ATTACHMENT_BYTES,
+  ExternalRunStore,
   type BrowserSessionVerifier,
   type Principal,
 } from "@boof/heart";
@@ -50,6 +51,7 @@ import {
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 import { mcpRoute } from "./mcp-route.js";
 import { browserSignin } from "./browser-signin.js";
+import { externalCallbackRoutes } from "./external-callback.js";
 import { HARNESS_MD } from "./generated/harness.js";
 import { ConciergeAskInputSchema } from "../api/ops/concierge.js";
 import { ConciergeEventSchema } from "../api/schemas.js";
@@ -81,6 +83,8 @@ export interface AppDeps {
   runnerRunning?: () => boolean;
   /** Clock override for tests (rate limit, client cache, audit). */
   now?: () => number;
+  /** Run records for external-step callbacks; defaults to a store on the service root (test seam). */
+  externalRuns?: ExternalRunStore;
   /** True when this process terminates TLS itself (--tls-cert): the only case boof sends Strict-Transport-Security. */
   tls?: boolean;
 }
@@ -188,6 +192,17 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/harness.md", (c) => c.body(HARNESS_MD, 200, { "Content-Type": MARKDOWN }));
   app.get("/harness.txt", (c) => c.body(HARNESS_MD, 200, { "Content-Type": PLAIN }));
   app.get("/llms.txt", (c) => c.body(LLMS_TXT, 200, { "Content-Type": PLAIN }));
+  // n8n's callback: outside the API-key chain, authenticated by its per-run token only.
+  app.route(
+    "/callbacks",
+    externalCallbackRoutes({
+      root: service.root,
+      runs: deps.externalRuns ?? new ExternalRunStore(service.root, deps.now),
+      security,
+      peerAddress,
+      now: deps.now,
+    }),
+  );
   // Outermost on /api so rejected requests (401/403/429) are audited too.
   // `/mcp` (the MCP endpoint) runs through the same chain as `/api/*`.
   const guarded = ["/api/*", "/mcp"];
