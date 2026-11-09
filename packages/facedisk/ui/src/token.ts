@@ -112,3 +112,46 @@ export function notifyUnauthorized(
 export const beginKeyRotation = (): void => gate.begin(getToken());
 export const keyRotationSucceeded = (): void => gate.succeeded();
 export const keyRotationFailed = (): void => gate.failed();
+
+/**
+ * The server message for a 503 `browser_sessions_unavailable` (its browser-session folder has
+ * unsafe permissions; the message names the path and the fix), or undefined for any other answer.
+ */
+export function storageUnavailableMessage(status: number, body: unknown): string | undefined {
+  if (status !== 503) return undefined;
+  const err = (body as { error?: unknown } | null | undefined)?.error;
+  if (typeof err !== "object" || err === null) return undefined;
+  const { code, message } = err as { code?: unknown; message?: unknown };
+  return code === "browser_sessions_unavailable" && typeof message === "string" && message
+    ? message
+    : undefined;
+}
+
+let storageError: string | null = null;
+const storageListeners = new Set<() => void>();
+
+/**
+ * Record the sign-in storage error. Only a change notifies, so a repeated 503 with the same
+ * message (every retry) does not show it again.
+ */
+export function reportSignInStorageError(message: string): void {
+  if (storageError === message) return;
+  storageError = message;
+  for (const fn of [...storageListeners]) fn();
+}
+
+/** The sign-in storage error to show, or null. */
+export function getSignInStorageError(): string | null {
+  return storageError;
+}
+
+/** Subscribe to a change of the sign-in storage error. Returns an unsubscribe function. */
+export function onSignInStorageError(fn: () => void): () => void {
+  storageListeners.add(fn);
+  return () => storageListeners.delete(fn);
+}
+
+/** Forget the recorded storage error (tests). */
+export function clearSignInStorageError(): void {
+  storageError = null;
+}

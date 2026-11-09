@@ -32,7 +32,14 @@ import type {
 import { parseSse } from "./lib/concierge-stream.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
-import { authHeaders, getToken, notifyUnauthorized, unauthorizedReason } from "./token.js";
+import {
+  authHeaders,
+  getToken,
+  notifyUnauthorized,
+  reportSignInStorageError,
+  storageUnavailableMessage,
+  unauthorizedReason,
+} from "./token.js";
 
 /** An error response of the v1 API, with its machine-readable code and details. */
 export class ApiError extends Error {
@@ -54,6 +61,8 @@ async function failure(res: Response, data: unknown, sent?: string): Promise<nev
   const verdict =
     res.status === 401 ? notifyUnauthorized(sent, unauthorizedReason(data)) : undefined;
   const quiet = verdict === "stale" || verdict === "held";
+  const storage = storageUnavailableMessage(res.status, data);
+  if (storage !== undefined) reportSignInStorageError(storage);
   const err = (data as { error?: { message?: string; code?: string; details?: unknown } | string })
     .error;
   const message = typeof err === "string" ? err : err?.message;

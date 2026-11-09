@@ -1,7 +1,11 @@
 // fetch-based Server-Sent Events reader. EventSource cannot send headers, so the
 // API key would have to travel in the URL; this keeps it in an Authorization header.
 
-import { unauthorizedReason } from "./token.js";
+import {
+  reportSignInStorageError,
+  storageUnavailableMessage,
+  unauthorizedReason,
+} from "./token.js";
 
 export interface SseMessage {
   event: string;
@@ -142,6 +146,15 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
           if (ctrl.signal.aborted) return;
           attempt = 0;
           continue;
+        }
+        if (res.status === 503) {
+          // The browser-session folder is unsafe: retrying cannot help until it is fixed, so the
+          // stream stays paused (no reconnects) and the message is shown once.
+          const storage = storageUnavailableMessage(res.status, await res.json().catch(() => null));
+          if (storage !== undefined) {
+            reportSignInStorageError(storage);
+            return;
+          }
         }
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         attempt = 0;

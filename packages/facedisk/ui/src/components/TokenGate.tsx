@@ -75,3 +75,26 @@ export function TokenGate({
     </div>
   );
 }
+
+/**
+ * Shown in place of the sign-in gate when the server cannot keep browser sign-ins (its folder has
+ * unsafe permissions). `message` is the server's text, rendered as plain text. The event stream
+ * stays paused until the page is reloaded.
+ */
+export function SignInStorageError({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="mx-auto my-[12vh] max-w-[440px] rounded-[10px] border border-line bg-surface p-6 shadow-md"
+    >
+      <div className="flex flex-col gap-3.5">
+        <h2 className="m-0">Sign-in storage needs fixing</h2>
+        <p className="m-0 text-ink-muted">
+          This Boof Runner server cannot keep browser sign-ins. Fix the item below, then reload this
+          page.
+        </p>
+        <p className="m-0 break-words font-mono text-sm">{message}</p>
+      </div>
+    </div>
+  );
+}
