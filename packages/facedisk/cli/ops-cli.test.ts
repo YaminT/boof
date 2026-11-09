@@ -159,6 +159,46 @@ describe("parseOpArgs", () => {
     );
   });
 
+  it("refuses secret-bearing webhook URLs inline and accepts file or stdin input", async () => {
+    const cases = [
+      ["Slack-style", "https://hooks.slack.com/services/T12345678/B12345678/AbCdEf1234567890"],
+      ["Discord-style", "https://discord.com/api/webhooks/123456789012345678/AbCdEf1234567890"],
+      ["query token", "https://example.com/hooks/boof?token=query-secret-123"],
+      ["userinfo", "https://user:password-secret@example.com/hooks/boof"],
+    ] as const;
+    for (const [label, url] of cases) {
+      for (const args of [
+        ["--url", url],
+        ["--input", JSON.stringify({ url })],
+      ]) {
+        let error: Error | undefined;
+        try {
+          parseOpArgs(op("webhooks.create"), args, dir);
+        } catch (caught) {
+          error = caught as Error;
+        }
+        expect(error, `${label} ${args[0]}`).toBeInstanceOf(Error);
+        expect(error?.message).toMatch(/url.*--input @file\.json or --input @-/i);
+        expect(error?.message).not.toContain(url);
+        expect(error?.message).not.toContain("query-secret-123");
+        expect(error?.message).not.toContain("password-secret");
+      }
+      await writeFile(join(dir, "webhook.json"), JSON.stringify({ url }));
+      expect(parseOpArgs(op("webhooks.create"), ["--input", "@webhook.json"], dir).input.url).toBe(
+        url,
+      );
+    }
+    expect(
+      parseOpArgs(op("webhooks.create"), ["--input", "@-"], dir, () =>
+        JSON.stringify({ url: cases[0]![1] }),
+      ).input.url,
+    ).toBe(cases[0]![1]);
+    expect(
+      parseOpArgs(op("webhooks.create"), ["--url", "https://example.com/hooks/boof"], dir).input
+        .url,
+    ).toBe("https://example.com/hooks/boof");
+  });
+
   it("--input gives the whole object and flags override its keys", () => {
     const r = parseOpArgs(
       op("tasks.create"),

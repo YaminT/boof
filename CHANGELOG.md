@@ -6,6 +6,7 @@
 - Add the console assistant: free text in the bottom console goes to a concierge on claude-agent with boof's own MCP server under a narrow, review-trust principal. It creates drafts; deleting, archiving, queueing and changing others' work wait for your confirmation. Spend is recorded as `tool:concierge`. Without a compliant model, and in the desktop app, the console works as before and says why.
 - Add the write-only `owlishAgentKey`, an api-only better-ccflare key that `claude-agent` processes receive instead of the admin client key. Gateway mode without it falls back to the project key or is refused.
 - Refuse write-only secrets in inline `--input` JSON on the CLI (use `--input @file` or `--input @-`).
+- Refuse secret-bearing webhook URLs in CLI arguments and inline `--input` JSON; use `--input @file` or `--input @-`.
 
 ### Runner and agent workflow
 

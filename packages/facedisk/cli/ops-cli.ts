@@ -160,14 +160,19 @@ const MIME: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
-function readJsonText(flag: string, text: string, cwd: string): unknown {
+function readJsonText(
+  flag: string,
+  text: string,
+  cwd: string,
+  readStdin: () => string = () => readFileSync(0, "utf8"),
+): unknown {
   let raw = text;
   if (text.startsWith("@")) {
     const path = text.slice(1);
     try {
       raw =
         path === "-"
-          ? readFileSync(0, "utf8")
+          ? readStdin()
           : readFileSync(isAbsolute(path) ? path : resolve(cwd, path), "utf8");
     } catch (e) {
       throw new CliUsageError(`--${flag}: ${(e as Error).message}`);
@@ -178,6 +183,31 @@ function readJsonText(flag: string, text: string, cwd: string): unknown {
   } catch {
     throw new CliUsageError(`--${flag}: not valid JSON`);
   }
+}
+
+// Webhook URL fields are identified from both the operation namespace and its input schema,
+// keeping this CLI-only safeguard tied to the actual webhook URL field.
+function isWebhookUrl(op: AnyOperation, key: string): boolean {
+  return op.name.startsWith("webhooks.") && key === "url";
+}
+
+function hasSecretBearingWebhookUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return true;
+    return url.pathname
+      .split("/")
+      .some((segment) => segment.length >= 16 && /[a-z]/i.test(segment) && /\d/.test(segment));
+  } catch {
+    return false;
+  }
+}
+
+function refuseInlineWebhookUrl(key: string): never {
+  throw new CliUsageError(
+    `--${kebab(key)} looks secret-bearing; pass it with --input @file.json or --input @- to read stdin`,
+  );
 }
 
 function coerce(
@@ -217,6 +247,7 @@ export function parseOpArgs(
   op: AnyOperation,
   rest: string[],
   cwd: string = process.cwd(),
+  readStdin?: () => string,
 ): ParsedOpArgs {
   const flags = flagsOf(op);
   const result: ParsedOpArgs = { input: {}, json: false, help: false };
@@ -247,13 +278,14 @@ export function parseOpArgs(
       if (OWN_VALUE.has(name)) {
         const v = takeValue(name);
         if (name === "input") {
-          const parsed = readJsonText("input", v, cwd);
+          const parsed = readJsonText("input", v, cwd, readStdin);
           if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
             throw new CliUsageError("--input: must be a JSON object");
           }
           // Inline JSON is part of argv (visible in `ps` and shell history): a write-only secret
           // may come only from a file or stdin. Name the field, never its value.
           if (!v.startsWith("@")) {
+            const inlineInput = parsed as Record<string, unknown>;
             const secret = Object.keys(parsed).find((k) =>
               [...flags.values()].some((f) => f.key === k && f.writeOnly),
             );
@@ -261,6 +293,10 @@ export function parseOpArgs(
               throw new CliUsageError(
                 `--input: "${secret}" is write-only; pass the input with --input @file.json or --input @- to read stdin, not inline`,
               );
+            const webhookUrl = Object.keys(parsed).find(
+              (k) => isWebhookUrl(op, k) && hasSecretBearingWebhookUrl(inlineInput[k]),
+            );
+            if (webhookUrl) refuseInlineWebhookUrl(webhookUrl);
           }
           base = parsed as Record<string, unknown>;
         } else {
@@ -285,6 +321,10 @@ export function parseOpArgs(
         throw new CliUsageError(
           `--${name} is write-only; pass it with --input @file.json or --input @- to read stdin`,
         );
+      if (isWebhookUrl(op, flag.key)) {
+        const rawValue = inline ?? rest[i + 1];
+        if (hasSecretBearingWebhookUrl(rawValue)) refuseInlineWebhookUrl(flag.key);
+      }
       const f = flag.field;
       if (op.rest.kind === "multipart" && flag.key === "file") {
         const path = takeValue(name);
