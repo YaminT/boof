@@ -16,8 +16,15 @@ import {
   type AnyOperation,
   type OpContext,
   type TaskService,
+  createSelfUrlCheck,
 } from "@boof/heart-server";
-import { AuthStore, isKebabId, scaffoldDataRoot, auditOperation } from "@boof/heart";
+import {
+  AuthStore,
+  isKebabId,
+  scaffoldDataRoot,
+  auditOperation,
+  securitySettings,
+} from "@boof/heart";
 import { CliUsageError, dataRootOf } from "./epic-cli.js";
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
@@ -555,6 +562,11 @@ export async function opsCommand(
       authStore,
       now: () => new Date().toISOString(),
       signal,
+      // The n8n operations refuse without one: boof's own address must never be the n8n host.
+      isSelfUrl: createSelfUrlCheck({
+        port: Number(process.env.BOOF_RUNNER_PORT ?? 4319),
+        allowedHosts: securitySettings(settings).allowedHosts,
+      }),
     };
     // One audit line per operation run, the same log and settings as the web server's: who, what,
     // project, outcome, timing; never the arguments.

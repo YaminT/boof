@@ -4660,7 +4660,7 @@
         "x-mcp-tool": "boof_get_n8n"
       },
       "put": {
-        "description": "Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.",
+        "description": "Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Changing the origin of baseUrl without a new apiKey removes the stored key and the workflow cache (`notice` says so). Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.",
         "operationId": "n8n.update",
         "parameters": [],
         "requestBody": {
@@ -4810,6 +4810,9 @@
                     },
                     "defaultTimeoutMs": {
                       "type": "number"
+                    },
+                    "notice": {
+                      "type": "string"
                     },
                     "secret": {
                       "type": "string"

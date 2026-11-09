@@ -74,13 +74,28 @@ const N8nUpdateInput = z.strictObject({
 
 const secretsOf = (ctx: OpContext): N8nSecretStore => ctx.services.n8nSecrets;
 
+/** Without a self check nothing can be told from boof itself, so the n8n operations refuse. */
+function selfCheckOf(ctx: OpContext): (url: URL) => boolean {
+  if (!ctx.isSelfUrl) {
+    throw new OpError(
+      500,
+      "This surface cannot tell this server's own address, so the n8n operation is refused",
+      "internal",
+    );
+  }
+  return ctx.isSelfUrl;
+}
+
 const clientOf = (ctx: OpContext): N8nClient =>
-  new N8nClient({
-    root: ctx.root,
-    resolveHost: ctx.resolveHost,
-    // The server and the MCP route always pass it; without one nothing is boof itself.
-    isSelfUrl: ctx.isSelfUrl ?? (() => false),
-  });
+  new N8nClient({ root: ctx.root, resolveHost: ctx.resolveHost, isSelfUrl: selfCheckOf(ctx) });
+
+const originOf = (url: string): string | null => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
 
 async function infoOf(ctx: OpContext, n8n: N8nSettings | undefined): Promise<N8nInfo> {
   const secrets = secretsOf(ctx);
@@ -120,11 +135,11 @@ export const n8nUpdate = defineOp({
   name: "n8n.update",
   title: "Configure n8n",
   description:
-    "Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.",
+    "Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Changing the origin of baseUrl without a new apiKey removes the stored key and the workflow cache (`notice` says so). Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.",
   scope: "admin",
   projectScoped: false,
   input: N8nUpdateInput,
-  output: N8nInfoSchema.extend({ secret: z.string().optional() }),
+  output: N8nInfoSchema.extend({ secret: z.string().optional(), notice: z.string().optional() }),
   rest: { method: "PUT", path: "/n8n" },
   mcp: { expose: true, name: "boof_update_n8n", annotations: IDEMPOTENT_WRITE },
   summary: () => "Updated the n8n connection",
@@ -145,13 +160,14 @@ export const n8nUpdate = defineOp({
     const next = buildNext(current, input);
     if (next.checks) await ctx.services.getProject(next.checks.projectId);
     if (input.baseUrl !== undefined || input.webhookBaseUrl !== undefined) {
+      const isSelfUrl = selfCheckOf(ctx);
       const allowed = securitySettings(settings).allowedPrivateWebhookHosts;
       const urls: [string, string][] = [["baseUrl", next.baseUrl]];
       if (next.webhookBaseUrl) urls.push(["webhookBaseUrl", next.webhookBaseUrl]);
       for (const [path, url] of urls) {
         const checked = await checkN8nTarget(url, next, allowed, {
           resolveHost: ctx.resolveHost,
-          isSelfUrl: ctx.isSelfUrl ?? (() => false),
+          isSelfUrl,
         });
         if (!checked.ok) {
           const hint =
@@ -170,14 +186,38 @@ export const n8nUpdate = defineOp({
     const secrets = secretsOf(ctx);
     await ctx.services.settingsStore.mutate((s) => ({ ...s, n8n: next }));
     // The key and the secret are written only after the settings write succeeded.
+    // A new origin must not receive the key stored for the old one, nor show its workflows.
+    const moved = current !== undefined && originOf(current.baseUrl) !== originOf(next.baseUrl);
+    let keyCleared = false;
     if (typeof input.apiKey === "string") await secrets.setApiKey(input.apiKey);
     else if (input.apiKey === null) await secrets.deleteApiKey();
+    else if (moved) {
+      keyCleared = (await secrets.apiKeySource()) === "file";
+      await secrets.deleteApiKey();
+    }
+    if (moved) {
+      const paths = dataRootPaths(ctx.root);
+      await rm(paths.n8nWorkflows, { force: true });
+      await rm(paths.n8nSeen, { force: true });
+    }
     let secret: string | undefined;
     if (!current || input.rotateWebhookSecret === true || !(await secrets.getWebhookSecret())) {
       secret = await secrets.rotateWebhookSecret();
     }
-    ctx.audit?.(auditExtras(input, secret !== undefined));
-    return { ...(await infoOf(ctx, next)), ...(secret ? { secret } : {}) };
+    ctx.audit?.({
+      ...auditExtras(input, secret !== undefined),
+      ...(keyCleared ? { apiKey: "removed" } : {}),
+    });
+    return {
+      ...(await infoOf(ctx, next)),
+      ...(secret ? { secret } : {}),
+      ...(keyCleared
+        ? {
+            notice:
+              "The n8n address changed, so the stored API key was removed; set a new apiKey for the new address.",
+          }
+        : {}),
+    };
   },
 });
 

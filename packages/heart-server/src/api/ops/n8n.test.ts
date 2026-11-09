@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -159,6 +159,46 @@ describe("n8n.update", () => {
       ).rejects.toMatchObject({ status: 400 });
     }
     expect((await run("n8n.get", admin)).configured).toBe(false);
+  });
+
+  it("F1 without a self check the n8n operations refuse (fail closed)", async () => {
+    const bare = (name: string, input: object = {}) =>
+      getOp(name)!.execute({ ...ctxFor(admin), isSelfUrl: undefined }, input) as Promise<unknown>;
+    await expect(
+      bare("n8n.update", { baseUrl: `http://127.0.0.1:${SELF_PORT}`, callbackBaseUrl: CALLBACK }),
+    ).rejects.toMatchObject({ status: 500, message: expect.stringContaining("own address") });
+    await expect(
+      bare("n8n.update", { baseUrl: fake.url, callbackBaseUrl: CALLBACK }),
+    ).rejects.toMatchObject({ status: 500 });
+    await configure();
+    await expect(bare("n8n.workflows.refresh")).rejects.toMatchObject({ status: 500 });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("F4 a changed baseUrl origin drops the stored key and the caches; the same origin keeps them", async () => {
+    await configure();
+    await run("n8n.workflows.refresh", admin);
+    const paths = dataRootPaths(root);
+    await writeFile(paths.n8nSeen, "{}");
+    const same = await run("n8n.update", admin, { baseUrl: `${fake.url}/` });
+    expect(same).toMatchObject({ apiKeySet: true });
+    expect(same).not.toHaveProperty("notice");
+    await expect(stat(paths.n8nWorkflows)).resolves.toBeDefined();
+    const other = await startFakeN8n({ apiKey: API_KEY, workflows: [] });
+    try {
+      const moved = await run("n8n.update", admin, { baseUrl: other.url });
+      expect(moved).toMatchObject({ apiKeySet: false, apiKeySource: null });
+      expect(moved.notice).toContain("API key was removed");
+      expect(await service.n8nSecrets.getApiKey()).toBeNull();
+      await expect(stat(paths.n8nWorkflows)).rejects.toThrow();
+      await expect(stat(paths.n8nSeen)).rejects.toThrow();
+      expect((await run("n8n.workflows.list", admin)).workflows).toEqual([]);
+      // A new key given in the same call is kept.
+      await run("n8n.update", admin, { baseUrl: fake.url, apiKey: API_KEY });
+      expect(await service.n8nSecrets.getApiKey()).toBe(API_KEY);
+    } finally {
+      await other.close();
+    }
   });
 
   it("a changed baseUrl drops the old exemption for webhookBaseUrl", async () => {
@@ -389,6 +429,7 @@ describe("n8n.delete", () => {
     });
     await configure();
     await run("n8n.workflows.refresh", admin);
+    await writeFile(dataRootPaths(root).n8nSeen, "{}");
     const out = await run("n8n.delete", admin);
     expect(out).toEqual({ ok: true, projectsWithSteps: ["demo"] });
     expect((await run("n8n.get", admin)).configured).toBe(false);
@@ -396,9 +437,21 @@ describe("n8n.delete", () => {
     const paths = dataRootPaths(root);
     await expect(stat(paths.n8nSecrets)).rejects.toThrow();
     await expect(stat(paths.n8nWorkflows)).rejects.toThrow();
+    await expect(stat(paths.n8nSeen)).rejects.toThrow();
     expect((await service.loadSettings()).n8n).toBeUndefined();
     expect((await service.getProject("demo")).externalSteps).toHaveLength(1);
     expect(await readdir(root)).not.toContain("n8n.json");
+  });
+});
+
+describe("n8n.delete when nothing is configured", () => {
+  it("is idempotent", async () => {
+    for (let i = 0; i < 2; i++) {
+      await expect(run("n8n.delete", admin)).resolves.toEqual({
+        ok: true,
+        projectsWithSteps: [],
+      });
+    }
   });
 });
 
@@ -435,6 +488,27 @@ describe("externalSteps trust rule", () => {
     await expect(
       run("projects.update", LOCAL_PRINCIPAL, { projectId: "demo", externalSteps: steps }),
     ).resolves.toBeDefined();
+  });
+
+  it("O11 with externalTasksRequireApproval off, the externalSteps rule itself refuses a review key", async () => {
+    await service.settingsStore.mutate((s) => ({
+      ...s,
+      security: { ...(s.security ?? {}), externalTasksRequireApproval: false },
+    }));
+    const review = client(["projects:write"], "review");
+    await expect(
+      run("projects.update", review, { projectId: "demo", brief: "Changed" }),
+    ).resolves.toBeDefined();
+    for (const externalSteps of [steps, null]) {
+      await expect(
+        run("projects.update", review, { projectId: "demo", externalSteps }),
+      ).rejects.toMatchObject({
+        status: 403,
+        code: "forbidden_trust",
+        message: expect.stringContaining("External steps send task content to n8n"),
+      });
+    }
+    expect((await service.getProject("demo")).externalSteps).toBeUndefined();
   });
 });
 

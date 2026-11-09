@@ -1,4 +1,3 @@
-import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,7 +20,7 @@ import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
 import { IdempotencyStore, TaskService } from "../api/index.js";
 import { DataWatcher } from "./watch.js";
-import { hostnameOf } from "./middleware/host-guard.js";
+import { createSelfUrlCheck } from "./self-url.js";
 import { runDispatcherWhileHolding, WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
@@ -145,23 +144,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (!loopback && !WILDCARD_HOSTS.has(host)) allowedHosts.push(host);
 
   // A webhook must not call back into this server: remember the names and port it answers to.
-  const selfNames = new Set(
-    [
-      "localhost",
-      "127.0.0.1",
-      "[::1]",
-      "0.0.0.0",
-      host.toLowerCase(),
-      ...allowedHosts.map(hostnameOf),
-    ].map((h) => (h.includes(":") && !h.startsWith("[") ? `[${h}]` : h)),
-  );
-  for (const list of Object.values(networkInterfaces())) {
-    for (const a of list ?? []) selfNames.add(a.family === "IPv6" ? `[${a.address}]` : a.address);
-  }
   let boundPort = opts.port ?? 4319;
-  const isSelfUrl = (url: URL): boolean =>
-    Number(url.port || (url.protocol === "https:" ? 443 : 80)) === boundPort &&
-    selfNames.has(url.hostname.toLowerCase());
+  const isSelfUrl = createSelfUrlCheck({ port: () => boundPort, bindHost: host, allowedHosts });
 
   // Expired external-step run records and results: pruned at start and hourly.
   const externalRuns = new ExternalRunStore(opts.root);

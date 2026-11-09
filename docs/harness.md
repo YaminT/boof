@@ -940,7 +940,7 @@ Path parameters (all required):
 - What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.
 - Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
 - Header `If-Match`: The ETag of GET /projects/{projectId} you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A project that changed since answers 409 project_modified.
-- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 project_modified`, `400 not_a_git_repo`, `403 project_root_not_allowed`
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 project_modified`, `400 not_a_git_repo`, `403 forbidden_trust`, `403 project_root_not_allowed`
 
 Path parameters (all required):
 
@@ -2243,9 +2243,9 @@ Path parameters (all required):
 - Scope: `admin`
 - MCP tool: `boof_update_n8n`
 - CLI: `boof-runner n8n update`
-- What it does: Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.
-- Success: HTTP 200 with `{ apiKeySet: boolean, apiKeySource: "env" | "file" | null, baseUrl?: string, callbackBaseUrl?: string, checks?: { autoQueue: boolean, enabled: boolean, pollIntervalMs: number, projectId: string }, configured: boolean, defaultTimeoutMs?: number, secret?: string, webhookBaseUrl?: string, webhookSecretSet: boolean }`.
-- Errors: `403 forbidden_scope`, `400 invalid_input`
+- What it does: Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Changing the origin of baseUrl without a new apiKey removes the stored key and the workflow cache (`notice` says so). Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.
+- Success: HTTP 200 with `{ apiKeySet: boolean, apiKeySource: "env" | "file" | null, baseUrl?: string, callbackBaseUrl?: string, checks?: { autoQueue: boolean, enabled: boolean, pollIntervalMs: number, projectId: string }, configured: boolean, defaultTimeoutMs?: number, notice?: string, secret?: string, webhookBaseUrl?: string, webhookSecretSet: boolean }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`, `403 forbidden_trust`, `404 project_not_found`
 
 JSON body (unknown keys are rejected):
 
@@ -2265,7 +2265,7 @@ JSON body (unknown keys are rejected):
 - CLI: `boof-runner n8n delete`
 - What it does: Removes the n8n connection: settings.n8n, the stored API key and webhook secret, and the workflow cache. Projects keep their externalSteps (those steps then fail with "n8n is not configured"); the answer lists those projects. Needs admin and a trusted, project-unrestricted client.
 - Success: HTTP 200 with `{ ok: true, projectsWithSteps: string[] }`.
-- Errors: `403 forbidden_scope`
+- Errors: `403 forbidden_scope`, `403 forbidden_trust`
 
 #### `GET /api/v1/n8n/workflows` (List n8n workflows)
 
@@ -2285,7 +2285,7 @@ JSON body (unknown keys are rejected):
 - CLI: `boof-runner n8n workflows refresh`
 - What it does: Fetches the workflow list from n8n (its public API, with the stored API key) and rewrites the cache. 409 n8n_not_configured when n8n is not set up; 502 upstream_failed with details.reason (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>) when n8n cannot be read, and the cached list stays.
 - Success: HTTP 200 with `{ configured: boolean, fetchedAt: string | null, lastError?: string, workflows: { active: boolean, editorUrl: string, id: string, name: string, tags: string[], updatedAt: string, webhooks: object[] }[] }`.
-- Errors: `403 forbidden_scope`
+- Errors: `403 forbidden_scope`, `409 n8n_not_configured`, `502 upstream_failed`
 
 ### concierge
 

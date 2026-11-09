@@ -310,6 +310,40 @@ describe("generated commands", () => {
     expect(written).toHaveLength(0);
   });
 
+  it("F1 n8n update refuses boof's own address (default port 4319, or BOOF_RUNNER_PORT)", async () => {
+    const file = join(base, "n8n.json");
+    const saved = process.env.BOOF_RUNNER_PORT;
+    try {
+      for (const [port, url] of [
+        [undefined, "http://127.0.0.1:4319"],
+        ["4999", "http://localhost:4999"],
+      ] as const) {
+        if (port === undefined) delete process.env.BOOF_RUNNER_PORT;
+        else process.env.BOOF_RUNNER_PORT = port;
+        await writeFile(
+          file,
+          JSON.stringify({ baseUrl: url, callbackBaseUrl: "https://boof.example" }),
+        );
+        out.length = 0;
+        errs.length = 0;
+        expect(await run(["n8n", "update", "--input", `@${file}`]), url).not.toBe(0);
+        expect(errs.join("\n"), url).toContain("not allowed");
+      }
+      // An n8n on another port still configures.
+      await writeFile(
+        file,
+        JSON.stringify({
+          baseUrl: "http://localhost:5678",
+          callbackBaseUrl: "https://boof.example",
+        }),
+      );
+      expect(await run(["n8n", "update", "--input", `@${file}`])).toBe(0);
+    } finally {
+      if (saved === undefined) delete process.env.BOOF_RUNNER_PORT;
+      else process.env.BOOF_RUNNER_PORT = saved;
+    }
+  });
+
   it("the help points secret-bearing input to --input @file", async () => {
     expect(await run(["webhooks", "create", "--help"])).toBe(0);
     expect(text()).toMatch(/--input @file/);

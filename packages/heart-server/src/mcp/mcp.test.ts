@@ -30,6 +30,7 @@ import {
   principalFromClient,
   stdioAudit,
   stdioPrincipal,
+  stdioSelfUrlCheck,
   type BoofMcpOptions,
   type ToolCallInfo,
 } from "./index.js";
@@ -1046,6 +1047,32 @@ describe("handleMcpHttp", () => {
     await pending.catch(() => undefined); // the transport may reject once the request is aborted
     expect((await done).tool).toBe("boof_wait_task");
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  describe("stdio n8n self check", () => {
+    const update = (c: Client, port: number) =>
+      call(c, "boof_update_n8n", {
+        baseUrl: `http://127.0.0.1:${port}`,
+        callbackBaseUrl: "https://boof.example",
+      });
+
+    it("F1 the stdio server's check refuses boof's own port; without one the tool refuses", async () => {
+      const admin = await clientPrincipal(["admin", "settings:read", "settings:write"], "trusted");
+      const withCheck = await connect(admin, undefined, {
+        isSelfUrl: await stdioSelfUrlCheck(services, { BOOF_RUNNER_PORT: "4321" }),
+      });
+      const own = await update(withCheck, 4321);
+      expect(own.isError).toBe(true);
+      expect(own.content[0]!.text).toContain("not allowed");
+      const dflt = await connect(admin, undefined, {
+        isSelfUrl: await stdioSelfUrlCheck(services, {}),
+      });
+      expect((await update(dflt, 4319)).isError).toBe(true);
+      const bare = await connect(admin);
+      const refused = await update(bare, 5678);
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0]!.text).toContain("own address");
+    });
   });
 
   describe("stdio audit", () => {
