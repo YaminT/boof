@@ -1,8 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { lockedAtomicWrite } from "./atomic.js";
+import { assertSafeForSecrets } from "./data-root-mode.js";
 import type { ExternalRunResult } from "./external-step-types.js";
 import { dataRootPaths } from "./paths.js";
 
@@ -40,7 +41,9 @@ const ResultSchema = z.strictObject({
 
 const DAY_MS = 24 * 3600_000;
 const STRAY_CLOSED_MS = 3600_000;
-const TOLERATED = new Set(["ENOENT", "EPERM", "ENOTSUP", "EOPNOTSUPP"]);
+const STRAY_TMP_MS = 3600_000;
+const MIN_TTL_MS = 1000;
+const MAX_TTL_MS = DAY_MS;
 
 const sha256 = (s: string): Buffer => createHash("sha256").update(s).digest();
 
@@ -55,23 +58,31 @@ export class ExternalRunStore {
   private readonly dir: string;
 
   constructor(
-    root: string,
+    private readonly root: string,
     private readonly now: () => number = Date.now,
   ) {
-    this.dir = dataRootPaths(root).externalRuns;
+    this.dir = dataRootPaths(this.root).externalRuns;
   }
 
   private p(runId: string, ext: ".json" | ".closed" | ".result.json"): string {
     return join(this.dir, runId + ext);
   }
 
+  /**
+   * The shared layer-1 owner/mode/symlink rules on the data root and `external-runs/`, before
+   * every read and write: this folder's integrity is what makes a callback unforgeable. The
+   * folder may be missing (nothing opened yet) unless `strict`.
+   */
+  private async guard(strict = false): Promise<void> {
+    await assertSafeForSecrets(this.root, this.root, "directory");
+    await assertSafeForSecrets(this.root, this.dir, "directory", { allowMissing: !strict });
+  }
+
   private async ensureDir(): Promise<void> {
+    await this.guard(); // refuses a symlinked folder before mkdir/chmod could follow it
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
-    try {
-      await chmod(this.dir, 0o700);
-    } catch (err) {
-      if (!TOLERATED.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
-    }
+    await chmod(this.dir, 0o700); // a failure is not ignored: the checker below decides
+    await this.guard(true);
   }
 
   async open(input: {
@@ -81,6 +92,8 @@ export class ExternalRunStore {
     kind: "step" | "check";
     ttlMs: number;
   }): Promise<{ runId: string; token: string; expiresAt: string }> {
+    if (!(input.ttlMs >= MIN_TTL_MS && input.ttlMs <= MAX_TTL_MS))
+      throw new RangeError(`ttlMs must be between ${MIN_TTL_MS} and ${MAX_TTL_MS}`);
     await this.ensureDir();
     const runId = "xr-" + randomBytes(16).toString("hex");
     const token = EXTERNAL_RUN_TOKEN_PREFIX + randomBytes(32).toString("base64url");
@@ -104,6 +117,7 @@ export class ExternalRunStore {
   async verify(runId: string, token: string | undefined): Promise<ExternalRunRecord | null> {
     try {
       if (!EXTERNAL_RUN_ID.test(runId)) return null;
+      await this.guard();
       if (typeof token !== "string" || !token.startsWith(EXTERNAL_RUN_TOKEN_PREFIX)) return null;
       const parsed = RecordSchema.safeParse(
         JSON.parse(await readFile(this.p(runId, ".json"), "utf8")),
@@ -122,34 +136,81 @@ export class ExternalRunStore {
 
   /** The one arbiter: true when this caller closed the open record. */
   private async close(runId: string): Promise<boolean> {
-    if (!EXTERNAL_RUN_ID.test(runId)) return false;
     try {
       await rename(this.p(runId, ".json"), this.p(runId, ".closed"));
-      return true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw err;
     }
+    // rename keeps the open time; prune ages `.closed` from the close time.
+    const t = new Date(this.now());
+    await utimes(this.p(runId, ".closed"), t, t).catch(() => {});
+    return true;
   }
 
-  /** Close the run and store its result. False when it was already closed (replay, cancel, other callback). */
+  /**
+   * Close the run and store its result. False when it was already closed (replay, cancel, other
+   * callback). The caller must `verify` the token first (this method checks neither token nor
+   * expiry) and validate the body before calling, so a bad body never reaches here.
+   *
+   * A storage failure does not burn the token: the result is written to a temp file first, then
+   * the run is closed, then the temp file is moved into place. If any step fails the run is left
+   * open (a closed record is renamed back) and the error is thrown, so n8n gets a 5xx and may retry
+   * with the same token.
+   */
   async complete(runId: string, result: Omit<ExternalRunResult, "receivedAt">): Promise<boolean> {
-    if (!(await this.close(runId))) return false;
+    if (!EXTERNAL_RUN_ID.test(runId)) return false;
+    await this.guard(true);
     const full: ExternalRunResult = { ...result, receivedAt: new Date(this.now()).toISOString() };
-    await lockedAtomicWrite(this.p(runId, ".result.json"), JSON.stringify(full), { mode: 0o600 });
+    const tmp = join(this.dir, `.${randomBytes(8).toString("hex")}.tmp`);
+    try {
+      const fh = await open(tmp, "w", 0o600);
+      try {
+        await fh.writeFile(JSON.stringify(full), "utf8");
+        await fh.sync();
+      } finally {
+        await fh.close();
+      }
+      if (!(await this.close(runId))) {
+        await rm(tmp, { force: true });
+        return false;
+      }
+    } catch (err) {
+      await rm(tmp, { force: true });
+      throw err;
+    }
+    try {
+      await rename(tmp, this.p(runId, ".result.json"));
+    } catch (err) {
+      // Nothing else creates <runId>.json, so reopening the run is safe.
+      await rm(tmp, { force: true });
+      await rename(this.p(runId, ".closed"), this.p(runId, ".json")).catch(() => {});
+      throw err;
+    }
     await rm(this.p(runId, ".closed"), { force: true });
     return true;
   }
 
   /** Close the run without a result (timeout, stop). False when a callback closed it first. */
   async cancel(runId: string): Promise<boolean> {
-    if (!(await this.close(runId))) return false;
+    if (!EXTERNAL_RUN_ID.test(runId)) return false;
+    await this.guard(true);
+    let closed: boolean;
+    try {
+      closed = await this.close(runId);
+    } catch (err) {
+      // Windows: a transient EPERM/EBUSY (antivirus) on rename counts as "not closed".
+      if (process.platform === "win32") return false;
+      throw err;
+    }
+    if (!closed) return false;
     await rm(this.p(runId, ".closed"), { force: true });
     return true;
   }
 
   async result(runId: string): Promise<ExternalRunResult | null> {
     if (!EXTERNAL_RUN_ID.test(runId)) return null;
+    await this.guard();
     let text: string;
     try {
       text = await readFile(this.p(runId, ".result.json"), "utf8");
@@ -175,15 +236,17 @@ export class ExternalRunStore {
   /** Delete the result after the runner used it. */
   async discard(runId: string): Promise<void> {
     if (!EXTERNAL_RUN_ID.test(runId)) return;
+    await this.guard();
     await rm(this.p(runId, ".result.json"), { force: true });
   }
 
   /**
    * Delete open records and results older than expiresAt + 24 h (a result is dated by its
-   * `receivedAt`, which is never later than its run's expiry) and stray `.closed` files older
-   * than 1 h. Returns the count.
+   * `receivedAt`), stray `.closed` files closed more than 1 h ago and leftover temp files
+   * older than 1 h. Returns the count.
    */
   async prune(): Promise<number> {
+    await this.guard();
     let names: string[];
     try {
       names = await readdir(this.dir);
@@ -198,9 +261,17 @@ export class ExternalRunStore {
       count++;
     };
     for (const name of names) {
+      const file = join(this.dir, name);
+      if (/^\.[0-9a-f]{16}\.tmp$/.test(name)) {
+        try {
+          if (now - (await stat(file)).mtimeMs > STRAY_TMP_MS) await drop(name);
+        } catch {
+          /* gone */
+        }
+        continue;
+      }
       const m = /^(xr-[0-9a-f]{32})(\.json|\.closed|\.result\.json)$/.exec(name);
       if (!m) continue;
-      const file = join(this.dir, name);
       try {
         if (m[2] === ".closed") {
           if (now - (await stat(file)).mtimeMs > STRAY_CLOSED_MS) await drop(name);
