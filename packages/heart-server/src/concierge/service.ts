@@ -33,6 +33,7 @@ import type { TaskService } from "../api/services/service.js";
 import {
   conciergeAllowedTools,
   conciergeOps,
+  assertConfirmInput,
   conciergePrincipal,
   assertConciergeIdAvailable,
   RESULT_TEXT_CAP,
@@ -318,6 +319,7 @@ export class ConciergeService {
               `Invalid input: ${parsed.error.issues[0]?.message ?? "schema mismatch"}`,
               "invalid_input",
             );
+          assertConfirmInput(op.name, parsed.data as Record<string, unknown>, projectId);
           if (messagePending >= 5) {
             return {
               summary: "The pending change limit has been reached.",
@@ -643,6 +645,7 @@ export class ConciergeService {
     const op = getOp(change.op);
     if (!op || !CONCIERGE_TOOLS[change.op])
       throw new OpError(404, "Pending change not found", "change_not_found");
+    assertConfirmInput(change.op, change.input, projectId);
     const startedAt = this.now();
     const services = await this.opts.services.requireProject(projectId);
     const currentStamp = change.guard ? await this.readGuard(change.guard, services) : null;
@@ -810,6 +813,13 @@ export class ConciergeService {
     if (guard.kind === "plan") {
       try {
         return String((await project.plans.get(guard.id)).version);
+      } catch {
+        return null;
+      }
+    }
+    if (guard.kind === "project") {
+      try {
+        return (await this.opts.services.getProject(guard.id)).updated;
       } catch {
         return null;
       }

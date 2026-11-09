@@ -722,3 +722,79 @@ describe("ConciergeService", () => {
     expect(audit).toContain("concierge:ask");
   });
 });
+
+describe("ConciergeService project description", () => {
+  const describeCall = (brief: string) => ({ call: "boof_update_project", args: { brief } });
+  const briefOf = async () => (await services.getProject("demo")).brief;
+
+  it("proposes a description change, applies it only on confirm", async () => {
+    await services.updateProject("demo", { brief: "Old words" }, LOCAL_PRINCIPAL);
+    agent = scriptedAgent([describeCall("New words"), { text: "Waiting." }]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword the description");
+    expect(answer.pending).toHaveLength(1);
+    expect(answer.pending[0]?.title).toBe('Change the description of project "repo"');
+    expect(answer.pending[0]?.details).toEqual(['brief: "Old words" → "New words"']);
+    expect(await briefOf()).toBe("Old words");
+
+    await concierge.apply(LOCAL_PRINCIPAL, "demo", answer.pending[0]!.id);
+    expect(await briefOf()).toBe("New words");
+  });
+
+  it("refuses another field in the same input, and a clear, before any pending change", async () => {
+    agent = scriptedAgent([
+      { call: "boof_update_project", args: { brief: "x", name: "Renamed" } },
+      { call: "boof_update_project", args: { brief: "x", workingDirectory: "/tmp" } },
+      { call: "boof_update_project", args: { brief: "x", paused: true } },
+      { call: "boof_update_project", args: { paused: true } },
+      { call: "boof_update_project", args: { brief: null } },
+    ]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("change a lot");
+    expect(answer.pending).toHaveLength(0);
+    expect(agent.results.every((r) => (r as { isError?: boolean }).isError === true)).toBe(true);
+    expect((await services.getProject("demo")).name).not.toBe("Renamed");
+    expect((await services.getProject("demo")).paused).toBe(false);
+  });
+
+  it("refuses a stored change aimed at another project or field at apply", async () => {
+    agent = scriptedAgent([describeCall("Fine")]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    const store = new ConciergeStore(root);
+    await store.update("demo", answer.conversationId, (c) => {
+      c.changes[0]!.input = { ...c.changes[0]!.input, paused: true };
+    });
+    await expectCode(
+      concierge.apply(LOCAL_PRINCIPAL, "demo", answer.pending[0]!.id),
+      "forbidden_scope",
+    );
+    expect((await services.getProject("demo")).paused).toBe(false);
+  });
+
+  it("answers change_stale when the project changed after the preview", async () => {
+    agent = scriptedAgent([describeCall("Mine")]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    const stamp = (await services.getProject("demo")).updated;
+    while (Date.now() <= Date.parse(stamp)) await new Promise((r) => setTimeout(r, 1));
+    await services.updateProject("demo", { brief: "Someone else" }, LOCAL_PRINCIPAL);
+    await expectCode(
+      concierge.apply(LOCAL_PRINCIPAL, "demo", answer.pending[0]!.id),
+      "change_stale",
+    );
+    expect(await briefOf()).toBe("Someone else");
+  });
+
+  it("masks a secret in the new description and caps it", async () => {
+    const secret = "sk-ant-api03-" + "A".repeat(40);
+    const long = `${secret} ${"word ".repeat(100)}`;
+    agent = scriptedAgent([describeCall(long)]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("reword");
+    const details = answer.pending[0]!.details.join("\n");
+    expect(details).not.toContain(secret);
+    expect(details).toContain("[REDACTED");
+    expect(details.length).toBeLessThan(600);
+  });
+});

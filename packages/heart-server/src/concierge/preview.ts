@@ -45,7 +45,7 @@ const SKIP_FIELDS = new Set([
 ]);
 
 /** Write ops whose preview is `Change <kind> "<title>": <field list>`. */
-const CHANGE_KIND: Record<string, "task" | "plan" | "epic" | "goal" | "project"> = {
+const CHANGE_KIND: Record<string, "task" | "plan" | "epic" | "goal"> = {
   "tasks.create": "task",
   "tasks.update": "task",
   "tasks.move": "task",
@@ -56,7 +56,6 @@ const CHANGE_KIND: Record<string, "task" | "plan" | "epic" | "goal" | "project">
   "plans.upsertGoal": "goal",
   "plans.reorderGoals": "plan",
   "plans.setGoalStatus": "goal",
-  "projects.update": "project",
 };
 
 const PROSE_FIELDS = new Set(["prompt", "brief", "description", "spec"]);
@@ -200,6 +199,8 @@ async function buildPreview(
       return removeGoal(input, project, destructive);
     case "plans.replaceGoals":
       return replaceGoals(input, project, destructive);
+    case "projects.update":
+      return describeProject(input, project, destructive);
     default:
       break;
   }
@@ -420,6 +421,23 @@ async function readProject(project: ProjectService): Promise<Project> {
     throw err;
   }
   return ProjectSchema.parse(JSON.parse(body));
+}
+
+/** The assistant may only reword the description (the project's `brief`); policy refuses the rest. */
+async function describeProject(
+  input: Record<string, unknown>,
+  project: ProjectService,
+  destructive: boolean,
+): Promise<Built> {
+  const record = await readProject(project);
+  const details: Detail[] = [];
+  pushField(details, "brief", record.brief ?? "", text(input, "brief"), "update");
+  return {
+    title: `Change the description of project "${cleanTitle(record.name)}"`,
+    details,
+    destructive,
+    guard: { kind: "project", id: record.id, stamp: record.updated },
+  };
 }
 
 function taskGuard(task: { frontmatter: { id: string; updated: string } }): PendingChange["guard"] {
@@ -676,7 +694,7 @@ function syncWarning(plan: Plan): Detail | null {
 }
 
 async function changeOp(
-  kind: "task" | "plan" | "epic" | "goal" | "project",
+  kind: "task" | "plan" | "epic" | "goal",
   name: string,
   input: Record<string, unknown>,
   project: ProjectService,
@@ -687,23 +705,6 @@ async function changeOp(
     eachField(details, name, input, "create", () => undefined);
     return {
       title: changeTitle(kind, text(input, "title"), name, input),
-      details,
-      destructive,
-      guard: null,
-    };
-  }
-  if (name === "projects.update") {
-    const record = await readProject(project);
-    const details: Detail[] = [];
-    eachField(
-      details,
-      name,
-      input,
-      "update",
-      (key) => (record as unknown as Record<string, unknown>)[key],
-    );
-    return {
-      title: changeTitle("project", record.name, name, input),
       details,
       destructive,
       guard: null,

@@ -524,7 +524,7 @@ describe("previewChange", () => {
       { projectId: "demo", brief: next },
       project,
     );
-    expect(preview.title).toContain("brief");
+    expect(preview.title).toBe('Change the description of project "repo"');
     expect(preview.details[0]).toBe('brief: "old line" → "new line"');
     expect(preview.details).toContain('brief: "" → "extra"');
     await service.updateProject("demo", { brief: next }, LOCAL_PRINCIPAL);

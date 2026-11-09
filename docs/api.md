@@ -466,9 +466,9 @@ codes, before the stream opens.
 
 **Principal.** Each request builds an in-memory principal `concierge-<userId>` (`trust: "review"`,
 `alwaysReview`). Its scopes are {`projects:read`, `plans:read`, `plans:write`, `tasks:read`,
-`tasks:write`} ∩ the user's scopes. Its projects are {the pinned project} ∩ the user's projects.
-It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:control` or
-`projects:write`. No key is stored. New client ids that would start with `concierge-` are issued
+`tasks:write`, `projects:write`} ∩ the user's scopes. Its projects are {the pinned project} ∩ the user's projects.
+It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:control`.
+`projects:write` is held only so the one confirm tool below is listed; it never runs directly. No key is stored. New client ids that would start with `concierge-` are issued
 as `client-concierge…` instead. A leftover `concierge-*` row in `auth/clients.json` still appears
 in the client list, but `get`, revoke and rotate return 404 for that id and the key cannot
 authenticate. For the user whose id matches that row, the assistant answers `409 concierge_unavailable` and names the file: remove
@@ -485,10 +485,17 @@ with the reason and the dialog offers no Confirm, only Discard and Close.
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read`    | `projects.get`, `plans.list`, `plans.get`, `tasks.list`, `tasks.get`, `tasks.liveLog`, `epics.list`, `epics.get`, `usage.budget`, `commands.list`                             |
 | `write`   | `tasks.create`, `tasks.update`, `tasks.move`, `epics.create`, `epics.update`, `plans.create`, `plans.update`, `plans.upsertGoal`, `plans.reorderGoals`, `plans.setGoalStatus` |
-| `confirm` | `tasks.delete`, `tasks.archive`, `tasks.queue`, `epics.delete`, `plans.removeGoal`, `plans.replaceGoals`                                                                      |
+| `confirm` | `tasks.delete`, `tasks.archive`, `tasks.queue`, `epics.delete`, `plans.removeGoal`, `plans.replaceGoals`, `projects.update` (description only)                                |
+
+`projects.update` is offered as a confirm action for one change only: the description (the `brief`
+field) of the pinned project. Any other field, another project id, or a missing `brief` is refused
+(`403 forbidden_scope`, `403 forbidden_project`) before a pending change exists, and again at apply.
+The preview reads `Change the description of project "<name>"` with the stored and the proposed text
+(cleaned, secrets masked, capped). The stamp is the project's `updated`; a change in between answers
+`409 change_stale` on apply.
 
 Not offered: `tasks.diff`, `plans.import`, the `*.wait` polls, `tasks.stop`, `tasks.inject`,
-`tasks.answers`, `tasks.retry`, `tasks.skip`, `plans.sync`, project writes, settings, accounts,
+`tasks.answers`, `tasks.retry`, `tasks.skip`, `plans.sync`, other project writes, settings, accounts,
 the runner, auth, webhooks, command writes and attachments. One message stores at most 5 pending
 changes; a conversation holds at most 20. A pending change stays appliable for 15 minutes
 (`change_expired` after that). `concierge.reset` (the console's `/new`) ends the live

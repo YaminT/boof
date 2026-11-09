@@ -34,8 +34,8 @@ export interface PendingChange {
   /** Why confirming can only fail; set by the preview. */
   blocked?: string;
   reason: "confirm" | "needs-approval";
-  /** Task `updated`, plan `version`, or epic `updated`. */
-  guard: { kind: "task" | "plan" | "epic"; id: string; stamp: string } | null;
+  /** Task `updated`, plan `version`, epic `updated`, or project `updated`. */
+  guard: { kind: "task" | "plan" | "epic" | "project"; id: string; stamp: string } | null;
   status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed";
   createdAt: string;
   /** `createdAt` plus 15 minutes. */
@@ -59,7 +59,7 @@ export interface ConciergeConversation {
 }
 
 const GuardSchema = z.object({
-  kind: z.enum(["task", "plan", "epic"]),
+  kind: z.enum(["task", "plan", "epic", "project"]),
   id: z.string(),
   stamp: z.string(),
 });

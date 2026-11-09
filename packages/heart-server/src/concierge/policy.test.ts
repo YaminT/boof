@@ -3,6 +3,7 @@ import { LOCAL_PRINCIPAL, type Principal, type Scope } from "@boof/heart";
 import { registry } from "../api/index.js";
 import {
   CONCIERGE_SCOPES,
+  assertConfirmInput,
   CONCIERGE_TOOLS,
   conciergeAllowedTools,
   assertConciergeIdAvailable,
@@ -58,7 +59,6 @@ describe("concierge MCP policy", () => {
       "tasks.skip",
       "plans.sync",
       "projects.create",
-      "projects.update",
       "settings.update",
       "commands.create",
       "attachments.upload",
@@ -107,10 +107,13 @@ describe("concierge MCP policy", () => {
       "settings:write",
       "runner:control",
       "tasks:control",
-      "projects:write",
     ] satisfies Scope[]) {
       expect(derived.scopes.has(forbidden)).toBe(false);
     }
+  });
+
+  it("offers projects.update only as a confirm tool", () => {
+    expect(CONCIERGE_TOOLS["projects.update"]).toBe("confirm");
   });
 
   it("offers no writes or confirmations to a read-only principal", () => {
@@ -153,5 +156,27 @@ describe("concierge MCP policy", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("assertConfirmInput", () => {
+  it("lets only the description of the current project through", () => {
+    expect(() =>
+      assertConfirmInput("projects.update", { projectId: "p", brief: "x" }, "p"),
+    ).not.toThrow();
+    expect(() => assertConfirmInput("tasks.delete", { projectId: "q" }, "p")).not.toThrow();
+  });
+
+  it.each([
+    [{ projectId: "other", brief: "x" }, "forbidden_project"],
+    [{ projectId: "p", brief: "x", path: "/etc" }, "forbidden_scope"],
+    [{ projectId: "p", brief: "x", name: "n" }, "forbidden_scope"],
+    [{ projectId: "p", brief: "x", anthropicApiKey: "k" }, "forbidden_scope"],
+    [{ projectId: "p", paused: true }, "forbidden_scope"],
+    [{ projectId: "p", brief: null }, "forbidden_scope"],
+  ])("refuses %j", (input, code) => {
+    expect(() => assertConfirmInput("projects.update", input, "p")).toThrowError(
+      expect.objectContaining({ code }),
+    );
   });
 });
