@@ -197,6 +197,10 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
         )
       : serve(base, listening);
     s.once("error", reject);
+  }).catch((err: unknown) => {
+    // No server will ever stop, so nothing else will clear the prune timer.
+    clearInterval(pruneTimer);
+    throw err;
   });
 
   const address = server.address();

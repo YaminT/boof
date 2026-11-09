@@ -1,13 +1,14 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   dataRootPaths,
   defaultSettings,
   ExternalRunStore,
   SecuritySettingsSchema,
   SettingsStore,
+  UnsafeSecretPathError,
   type SecuritySettings,
 } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
@@ -247,6 +248,59 @@ describe("POST /callbacks/external-steps/{runId}", () => {
     } as RequestInit);
     expect(chunked.status).toBe(413);
     expect((await post(runId, token)).status).toBe(200);
+  });
+
+  it("F1 a chunked body over the limit with a valid token is 413 (not 429) and spends no budget", async () => {
+    await setSecurity({
+      rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 1 },
+    });
+    const a = build();
+    const { runId, token } = await open();
+    const big = JSON.stringify({ status: "ok", report: "x".repeat(CALLBACK_BODY_LIMIT) });
+    const chunked = (tok: string) =>
+      a.request(`http://localhost/callbacks/external-steps/${runId}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${tok}` },
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode(big));
+            c.close();
+          },
+        }),
+        duplex: "half",
+      } as RequestInit);
+    // The bucket holds one refusal: a valid-token 413 must not take it, so two 413s in a row.
+    const first = await chunked(token);
+    expect(first.status).toBe(413);
+    expect((await first.json()).error.code).toBe("payload_too_large");
+    expect((await chunked(token)).status).toBe(413);
+    // The single unauthenticated refusal is still available for a wrong token...
+    expect((await post(runId, "bxs_wrong", OK, {}, a)).status).toBe(401);
+    // ...and then the bucket is empty.
+    expect((await post(runId, "bxs_wrong", OK, {}, a)).status).toBe(429);
+    expect(await runs.verify(runId, token)).not.toBeNull();
+  });
+
+  it("F2 a complete() that throws answers as the error handler does and is audited with that status", async () => {
+    const { runId, token } = await open();
+    const folder = join(root, "external-runs");
+    const store = new ExternalRunStore(root, () => clock);
+    vi.spyOn(store, "complete").mockRejectedValueOnce(
+      new UnsafeSecretPathError(folder, `unsafe folder ${folder}; chmod 700 ${folder}`),
+    );
+    const res = await post(runId, token, OK, {}, build(store));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toEqual({
+      error: {
+        code: "auth_store_unavailable",
+        message: "the server's data folder has unsafe permissions; see the server log",
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain(root);
+    const lines = await auditLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ outcome: "auth_store_unavailable", status: 503, runId });
   });
 
   it("C12 Content-Type text/plain (or none) is 415", async () => {

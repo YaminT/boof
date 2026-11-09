@@ -9,6 +9,7 @@ import {
 import { clientAddress } from "./middleware/client-address.js";
 import type { PeerAddressResolver } from "./middleware/auth.js";
 import { unauthenticatedRateLimit } from "./middleware/rate-limit.js";
+import { OpError, toOpError, type ErrorCode } from "../api/errors.js";
 
 export const CALLBACK_BODY_LIMIT = 300_000;
 
@@ -89,10 +90,11 @@ export function externalCallbackRoutes(deps: {
       c.header("Cache-Control", "no-store");
       return c.json(body, st as 400);
     };
-    const error = (st: number, code: string, message: string, details?: unknown): Response =>
-      answer(st, code, { error: { code, message, ...(details ? { details } : {}) } });
+    /** An error answer: the registered code and its public body, as every operation returns. */
+    const error = (st: number, code: ErrorCode, message: string, details?: unknown): Response =>
+      answer(st, code, new OpError(st, message, code, details).toBody());
     /** A refusal spends the caller's unauthenticated budget; an empty bucket answers 429 instead. */
-    const refuse = (st: number, code: string, message: string, details?: unknown): Response => {
+    const refuse = (st: number, code: ErrorCode, message: string, details?: unknown): Response => {
       const limited = c.get("authFailed")?.(c);
       if (limited) {
         status = 429;
@@ -134,7 +136,8 @@ export function externalCallbackRoutes(deps: {
       Object.assign(audit, { project: record.projectId, task: record.taskId, step: record.stepId });
       // 6. The body. A bad one does not use up the token.
       const bytes = await readCapped(c.req.raw, CALLBACK_BODY_LIMIT);
-      if (!bytes) return refuse(413, "payload_too_large", "Request body too large");
+      // The token verified, so this is not a refusal of an unauthenticated caller: no budget spent.
+      if (!bytes) return error(413, "payload_too_large", "Request body too large");
       let parsed: z.ZodSafeParseResult<z.infer<typeof ExternalCallbackBodySchema>>;
       try {
         parsed = ExternalCallbackBodySchema.safeParse(
@@ -152,11 +155,19 @@ export function externalCallbackRoutes(deps: {
       }
       // 7. Close the run: the first caller wins.
       const body = parsed.data;
-      const won = await deps.runs.complete(runId, {
-        status: body.status,
-        report: body.report,
-        ...(body.summary !== undefined ? { summary: body.summary } : {}),
-      });
+      let won: boolean;
+      try {
+        won = await deps.runs.complete(runId, {
+          status: body.status,
+          report: body.report,
+          ...(body.summary !== undefined ? { summary: body.summary } : {}),
+        });
+      } catch (err) {
+        // Answer as the app's error handler would (same status and body), so the audit line
+        // records what the client got and no internal path reaches the response.
+        const op = toOpError(err);
+        return error(op.status, op.code, op.message, op.details);
+      }
       if (!won) return invalidToken();
       // 8.
       return answer(200, "ok", { ok: true }, { result: body.status });
