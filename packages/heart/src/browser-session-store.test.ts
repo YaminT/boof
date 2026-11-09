@@ -28,6 +28,7 @@ import {
   UnsafeBrowserSessionPathError,
 } from "./browser-session-store.js";
 import { browserSessionCookieName } from "./index.js";
+import { setAccountFilesForTests } from "./data-root-mode.js";
 import { dataRootPaths } from "./paths.js";
 import { withProcessLock } from "./process-lock.js";
 
@@ -52,10 +53,16 @@ describe("BrowserSessionStore", () => {
         await mkdir(parent, { mode: 0o775 });
         await chmod(parent, 0o775);
         await mkdir(data, { mode: 0o700 });
+        setAccountFilesForTests({
+          username: "me",
+          group: `me:x:${process.getgid!()}:\n`,
+          passwd: `me:x:${process.getuid!()}:${process.getgid!()}::/home/me:/bin/sh\n`,
+        });
         const local = new BrowserSessionStore(data);
         const created = await local.createSession();
         expect(await local.verify(created.token)).toMatchObject({ id: created.session.id });
       } finally {
+        setAccountFilesForTests(undefined);
         await rm(base, { recursive: true, force: true });
       }
     },
@@ -199,6 +206,16 @@ describe("BrowserSessionStore", () => {
     const [childWon, parentWon] = await Promise.all([childResult, parentResult]);
     expect([childWon === "won", parentWon !== null].filter(Boolean)).toHaveLength(1);
     expect([childWon === "lost", parentWon === null].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("a port-bound link redeems only on its port, and a wrong-port try burns it", async () => {
+    const bound = await store.createLink({ port: 4320 });
+    expect(await store.redeemLink(bound.code, { port: 4319 })).toBeNull();
+    expect(await store.redeemLink(bound.code, { port: 4320 })).toBeNull();
+    const again = await store.createLink({ port: 4320 });
+    expect(await store.redeemLink(again.code, { port: 4320 })).not.toBeNull();
+    const legacy = await store.createLink();
+    expect(await store.redeemLink(legacy.code, { port: 4319 })).not.toBeNull();
   });
 
   it("a createLink in another process does not resurrect a redeemed link", async () => {
@@ -712,6 +729,36 @@ describe("BrowserSessionStore", () => {
     expect((await linkedStore.verify(created.token))?.id).toBe(created.session.id);
     expect(statSync(realRoot).mode & 0o777).toBe(0o700);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "tightens an owned symlinked root whose target is group-writable, on the first call",
+    async () => {
+      const realRoot = join(root, "real-data");
+      const linkRoot = join(root, "data-link");
+      await mkdir(realRoot, { mode: 0o775 });
+      await chmod(realRoot, 0o775);
+      await symlink(realRoot, linkRoot);
+      const linkedStore = new BrowserSessionStore(linkRoot, () => clock);
+      const created = await linkedStore.createSession();
+      expect((await linkedStore.verify(created.token))?.id).toBe(created.session.id);
+      expect(statSync(realRoot).mode & 0o022).toBe(0);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a data root below a world-writable, non-sticky parent (rollback guard)",
+    async () => {
+      const shared = join(root, "shared");
+      const data = join(shared, "data");
+      await mkdir(shared, { mode: 0o777 });
+      await chmod(shared, 0o777);
+      await mkdir(data, { mode: 0o700 });
+      const unsafe = new BrowserSessionStore(data, () => clock);
+      await expect(unsafe.createLink()).rejects.toThrow(/world-writable/);
+      await expect(unsafe.revokeAll()).rejects.toThrow(/world-writable/);
+      expect(await unsafe.verify("0".repeat(43))).toBeNull();
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "refuses a symlinked root owned by another uid",

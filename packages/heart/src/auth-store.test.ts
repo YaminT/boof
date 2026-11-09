@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setAccountFilesForTests } from "./data-root-mode.js";
 import { atomicWrite } from "./atomic.js";
 import {
   AuthStore,
@@ -43,10 +44,16 @@ describe("key format", () => {
         await mkdir(parent, { mode: 0o775 });
         await chmod(parent, 0o775);
         await mkdir(root, { mode: 0o700 });
+        setAccountFilesForTests({
+          username: "me",
+          group: `me:x:${process.getgid!()}:\n`,
+          passwd: `me:x:${process.getuid!()}:${process.getgid!()}::/home/me:/bin/sh\n`,
+        });
         const local = new AuthStore(root);
         const made = await local.create({ name: "parent test", scopes: ["tasks:read"] });
         expect(await local.verify(made.key)).toMatchObject({ ok: true });
       } finally {
+        setAccountFilesForTests(undefined);
         await rm(base, { recursive: true, force: true });
       }
     },

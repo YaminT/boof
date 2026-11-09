@@ -116,7 +116,8 @@ function uiDir(): string {
 async function ensureDataRoot(): Promise<string> {
   const root = join(app.getPath("userData"), "data");
   await mkdir(root, { recursive: true });
-  await tightenDataRoot(root);
+  const tightened = await tightenDataRoot(root);
+  if (tightened.unsafeParent) console.warn(`warning: ${tightened.unsafeParent.message}`);
   await migrateDataRoot(root);
   await mkdir(dataRootPaths(root).projects, { recursive: true });
   return root;

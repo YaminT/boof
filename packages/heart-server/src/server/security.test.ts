@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AuthStore,
   BrowserSessionStore,
@@ -104,16 +104,51 @@ beforeEach(async () => {
 it.skipIf(process.platform === "win32")("auth store refusals return a clean 503", async () => {
   const key = await mint("security test", ["projects:read"]);
   await import("node:fs/promises").then(({ chmod }) => chmod(join(root, "auth"), 0o770));
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
   const response = await call(build(), "/api/v1/projects", {}, key);
   expect(response.status).toBe(503);
-  expect(await response.json()).toMatchObject({
+  const body = await response.json();
+  expect(body).toEqual({
     error: {
       code: "auth_store_unavailable",
-      message: expect.stringContaining(`chmod 700 ${join(root, "auth")}`),
+      message: "the server's data folder has unsafe permissions; see the server log",
     },
   });
+  expect(JSON.stringify(body)).not.toContain(root);
+  // The path and the fix go to the server log, on one line.
+  const line = logged.mock.calls
+    .map((c) => String(c[0]))
+    .find((m) => m.includes(join(root, "auth")));
+  expect(line).toContain(`chmod 700 ${join(root, "auth")}`);
+  expect(line).not.toContain("\n");
 });
+it.skipIf(process.platform === "win32")(
+  "a warm cache does not flip 503 to 200 once the store turns unsafe",
+  async () => {
+    const key = await mint("security test", ["projects:read"]);
+    const app = build();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await call(app, "/api/v1/projects", {}, key)).status).toBe(200);
+    await import("node:fs/promises").then(({ chmod }) => chmod(join(root, "auth"), 0o770));
+    clock += 6_000;
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++)
+      statuses.push((await call(app, "/api/v1/projects", {}, key)).status);
+    expect(statuses).toEqual([503, 503, 503, 503]);
+  },
+);
+
+it("a failed lastUsedAt update logs one line without a stack", async () => {
+  const key = await mint("security test", ["projects:read"]);
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(store, "touch").mockRejectedValue(new Error("disk\nfull"));
+  expect((await call(build(), "/api/v1/projects", {}, key)).status).toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(logged.mock.calls).toEqual([["lastUsedAt update failed: disk full"]]);
+});
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });

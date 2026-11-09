@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+import { connect } from "node:net";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BrowserSessionStore, SettingsStore, securitySettings } from "@boof/heart";
@@ -14,11 +15,25 @@ Usage:
       --host <addr>   127.0.0.1 (default), localhost or ::1
       --revoke-all    Sign out every browser session and drop pending links
 
-The link is valid for 10 minutes and works once. It is printed, never opened for you, because
+The link is valid for 10 minutes, works once and only on the port it was minted for. It is printed, never opened for you, because
 process arguments are visible to other local users. Only someone who can already act as the
 owner of the data root can mint one.`;
 
 const DEFAULT_PORT = 4319;
+
+/** Best effort: does anything accept a TCP connection on this loopback port? */
+export function defaultPortProbe(host: string, port: number): Promise<boolean> {
+  return new Promise((done) => {
+    const socket = connect({ host, port });
+    const finish = (up: boolean) => {
+      socket.destroy();
+      done(up);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
 
 /** `open` subcommand. Returns a process exit code. */
 export async function openCommand(
@@ -26,6 +41,7 @@ export async function openCommand(
   defaultRoot: () => string,
   out: (line: string) => void = console.log,
   err: (line: string) => void = console.error,
+  portProbe: (host: string, port: number) => Promise<boolean> = defaultPortProbe,
 ): Promise<number> {
   let parsed;
   try {
@@ -85,8 +101,16 @@ export async function openCommand(
       );
       return 1;
     }
-    const { code } = await store.createLink();
+    const { code } = await store.createLink({ port });
     await audit.ok();
+    if (v.port === undefined && process.env.BOOF_RUNNER_PORT === undefined) {
+      const up = await portProbe(host === "localhost" ? "127.0.0.1" : host, port).catch(() => true);
+      if (!up) {
+        err(
+          `open: nothing answers on ${host}:${port}. The link only works on port ${port}; if the server uses another port, run "boof-runner open --port <n>".`,
+        );
+      }
+    }
     out("Sign in to the boof web UI (single use, valid for 10 minutes):");
     out(`  http://${host === "::1" ? "[::1]" : host}:${port}/auth/browser?code=${code}`);
     return 0;

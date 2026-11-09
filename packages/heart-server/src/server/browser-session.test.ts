@@ -36,6 +36,7 @@ function build(extra: Partial<Parameters<typeof createApp>[0]> = {}) {
     authStore,
     browserSessions: sessions,
     sessionCookieName: () => "boof_ui_4319",
+    linkPort: () => 4319,
     peerAddress: () => peer,
     ...(watcher ? { watcher } : {}),
     ...extra,
@@ -233,6 +234,17 @@ describe("browser session authentication", () => {
     expect(await sessions.redeemLink(code)).not.toBeNull();
   });
 
+  it("a link minted for another port is refused with the 400 page and burned", async () => {
+    const { code } = await sessions.createLink({ port: 9999 });
+    const right = await sessions.createLink({ port: 4319 });
+    const ok = await request(build(), `/auth/browser?code=${encodeURIComponent(right.code)}`);
+    expect(ok.status).toBe(303);
+    const wrong = await request(build(), `/auth/browser?code=${encodeURIComponent(code)}`);
+    expect(wrong.status).toBe(400);
+    expect(wrong.headers.get("set-cookie")).toBeNull();
+    expect(await sessions.redeemLink(code, { port: 9999 })).toBeNull();
+  });
+
   it("HEAD does not redeem a browser sign-in link", async () => {
     const app = build();
     const { code } = await sessions.createLink();
@@ -296,12 +308,12 @@ describe("browser session authentication", () => {
       expect(json).toEqual({
         error: {
           code: "browser_sessions_unavailable",
-          message: expect.stringContaining(`chmod go-w ${path}`),
+          message: "the server's data folder has unsafe permissions; see the server log",
           details: { reason: "browser_sessions_unavailable" },
         },
       });
       const text = JSON.stringify(json);
-      expect(text).toContain(path);
+      expect(text).not.toContain(path);
       expect(text).not.toMatch(/uid|mode \d|666/);
       expect(text).not.toContain("admin");
     },
@@ -321,14 +333,14 @@ describe("browser session authentication", () => {
       expect(keyed.status).toBe(503);
       const keyedJson = await keyed.json();
       expect(keyedJson.error.code).toBe("auth_store_unavailable");
-      expect(keyedJson.error.message).toContain(authDir);
+      expect(keyedJson.error.message).not.toContain(authDir);
       const cookie = await request(app, "/api/v1/whoami", {
         headers: { cookie: `boof_ui_4319=${token}` },
       });
       expect(cookie.status).toBe(503);
       const cookieJson = await cookie.json();
       expect(cookieJson.error.code).toBe("browser_sessions_unavailable");
-      expect(cookieJson.error.message).toContain(authDir);
+      expect(cookieJson.error.message).not.toContain(authDir);
       expect(JSON.stringify(cookieJson)).not.toMatch(/uid|mode \d|"admin"/);
     },
   );
@@ -502,6 +514,8 @@ describe("browser session authentication", () => {
       text += decoder.decode(next.value);
     }
     expect(text).toContain("event: unauthorized");
+    expect(text).toContain("Signed out");
+    expect(text).not.toContain("API key revoked");
     await reader.cancel();
   });
 
@@ -531,6 +545,8 @@ describe("browser session authentication", () => {
       text += decoder.decode(next.value);
     }
     expect(text).toContain("event: unauthorized");
+    expect(text).toContain("Signed out");
+    expect(text).not.toContain("API key revoked");
     await reader.cancel();
   });
 

@@ -163,20 +163,21 @@ export class WebhookDispatcher {
   start(): void {
     if (this.timer) return;
     void this.secrets.tighten().catch((e) => console.error("webhooks", e));
-    this.timer = setInterval(
-      () =>
-        void this.tick().catch((e) => {
-          if (e instanceof UnsafeSecretPathError) {
-            if (this.loggedUnsafeAuthStore) return;
-            this.loggedUnsafeAuthStore = true;
-            console.error(`webhooks: ${e.message.replace(/[\r\n]+/g, " ")}`);
-            return;
-          }
-          console.error("webhooks", e);
-        }),
-      this.opts.intervalMs ?? 1000,
-    );
+    this.timer = setInterval(() => void this.tickReporting(), this.opts.intervalMs ?? 1000);
     this.timer.unref();
+  }
+
+  /** {@link tick}, with a failure logged the way the timer logs it (an unsafe store once per break). */
+  tickReporting(): Promise<void> {
+    return this.tick().catch((e) => {
+      if (e instanceof UnsafeSecretPathError) {
+        if (this.loggedUnsafeAuthStore) return;
+        this.loggedUnsafeAuthStore = true;
+        console.error(`webhooks: ${e.message.replace(/[\r\n]+/g, " ")}`);
+        return;
+      }
+      console.error("webhooks", e);
+    });
   }
 
   /**
@@ -213,10 +214,14 @@ export class WebhookDispatcher {
   tick(): Promise<void> {
     if (this.running) return Promise.resolve();
     this.running = true;
-    const pass = this.tickOnce().finally(() => {
-      this.running = false;
-      this.current = null;
-    });
+    const pass = this.tickOnce()
+      .then(() => {
+        this.loggedUnsafeAuthStore = false; // log again if the store breaks again later
+      })
+      .finally(() => {
+        this.running = false;
+        this.current = null;
+      });
     this.current = pass;
     return pass;
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { serveBanner } from "./boof-runner.js";
+import { serveBanner, stdoutIsJournal } from "./boof-runner.js";
 
 const base = { scheme: "http", hostPart: "127.0.0.1", port: 4319 } as const;
 
@@ -28,5 +28,14 @@ describe("serveBanner", () => {
         link: "http://x/?code=bl_z",
       }),
     ).toEqual(plain);
+  });
+});
+
+describe("stdoutIsJournal", () => {
+  it("is true only with JOURNAL_STREAM and no terminal on stdout", () => {
+    expect(stdoutIsJournal({ JOURNAL_STREAM: "8:12345" }, false)).toBe(true);
+    // The variable leaks into shells started by a systemd user unit: the link is still shown.
+    expect(stdoutIsJournal({ JOURNAL_STREAM: "8:12345" }, true)).toBe(false);
+    expect(stdoutIsJournal({}, false)).toBe(false);
   });
 });
