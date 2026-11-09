@@ -5,6 +5,7 @@ import {
   authorize,
   LOCAL_PRINCIPAL,
   type AuthStore,
+  type BrowserSessionVerifier,
   type Client,
   type Principal,
   type Scope,
@@ -119,6 +120,10 @@ export interface AuthenticateOptions {
    * scope, trusted, every project, no expiry) used from loopback without proxy headers.
    */
   operatorClients?: ReadonlySet<string>;
+  /** Optional browser-session verifier; consumed by the local-trust browser gate. */
+  browserSessions?: BrowserSessionVerifier;
+  /** Cookie name for the bound server port. */
+  sessionCookieName?: (c: Context) => string;
 }
 
 export type AuthResult = { ok: true; principal: Principal } | { ok: false; message: string };

@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +72,7 @@ beforeEach(async () => {
   authStore = new AuthStore(root);
   key = (await authStore.create({ name: "h", scopes: ["projects:read"], trust: "review" })).key;
   app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
     service: new TaskService(root, new ToolRegistry([new MockTool()])),
     authStore,
     peerAddress: () => "10.0.0.7",
@@ -101,6 +103,7 @@ describe("POST /mcp", () => {
   it("accepts a loopback Origin and an allowed-host Origin", async () => {
     expect((await post(INIT, { origin: "http://localhost", host: "localhost" })).status).toBe(200);
     const withHost = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "10.0.0.7",
@@ -194,6 +197,7 @@ describe("/mcp under local-trust", () => {
   it("serves a loopback peer without a key, and refuses a remote one", async () => {
     await setup("local-trust");
     const local = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "127.0.0.1",
@@ -222,6 +226,7 @@ describe("/mcp under local-trust", () => {
     const admin = (await authStore.create({ name: "adm", scopes: ["admin"], trust: "trusted" }))
       .key;
     const withSelf = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "10.0.0.7",
@@ -251,7 +256,12 @@ describe("/mcp under local-trust", () => {
     const keyless = async () => {
       await setup("local-trust");
       const svc = new TaskService(root, new ToolRegistry([new MockTool()]));
-      const local = createApp({ service: svc, authStore, peerAddress: () => "127.0.0.1" });
+      const local = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
+        service: svc,
+        authStore,
+        peerAddress: () => "127.0.0.1",
+      });
       const rpcCall = async (body: string) => {
         const res = await local.request("http://localhost/mcp", {
           method: "POST",
@@ -286,6 +296,7 @@ describe("/mcp under local-trust", () => {
     it("is recorded in the audit log as local-mcp, while the UI's keyless calls stay local", async () => {
       await setup("local-trust");
       const local = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
         service: new TaskService(root),
         authStore,
         peerAddress: () => "127.0.0.1",
@@ -308,6 +319,7 @@ describe("/mcp under local-trust", () => {
     it("has its own rate-limit bucket, separate from the UI's", async () => {
       await setup("local-trust", undefined, 3);
       const local = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
         service: new TaskService(root),
         authStore,
         peerAddress: () => "127.0.0.1",
@@ -334,6 +346,7 @@ describe("/mcp under local-trust", () => {
       raw.clients[0].id = "local-mcp";
       await writeFile(file, JSON.stringify(raw));
       const local = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
         service: new TaskService(root),
         authStore: new AuthStore(root),
         peerAddress: () => "127.0.0.1",

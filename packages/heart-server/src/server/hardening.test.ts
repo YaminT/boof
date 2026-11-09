@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,11 @@ beforeEach(async () => {
   await execCommand("git", ["init", "-q"], { cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
   await service.projects.create({ workingDirectory: repo, id: "default" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 
 afterEach(async () => {
@@ -53,7 +58,12 @@ describe("host guard", () => {
   );
 
   it("accepts explicitly allowed hosts", async () => {
-    app = createApp({ service, peerAddress: () => "127.0.0.1", allowedHosts: ["boof.lan"] });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+      allowedHosts: ["boof.lan"],
+    });
     expect((await req("/api/tasks", undefined, "boof.lan:80")).status).toBe(200);
   });
 
@@ -64,7 +74,12 @@ describe("host guard", () => {
 
   it("sends HSTS only when it terminates TLS itself, never with includeSubDomains", async () => {
     expect((await req("/api/tasks")).headers.get("strict-transport-security")).toBeNull();
-    app = createApp({ service, peerAddress: () => "127.0.0.1", tls: true });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+      tls: true,
+    });
     expect((await req("/api/tasks")).headers.get("strict-transport-security")).toBe(
       "max-age=15552000",
     );

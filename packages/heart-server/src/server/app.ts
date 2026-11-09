@@ -9,6 +9,7 @@ import {
   isKebabId,
   LOCAL_PRINCIPAL,
   MAX_ATTACHMENT_BYTES,
+  type BrowserSessionVerifier,
   type Principal,
 } from "@boof/heart";
 import {
@@ -66,6 +67,8 @@ export interface AppDeps {
   authStore?: AuthStore;
   /** Resolves the TCP peer address (loopback detection). Default: the socket's remote address. */
   peerAddress?: PeerAddressResolver;
+  browserSessions?: BrowserSessionVerifier;
+  sessionCookieName?: (c: Context) => string;
   /** True when a URL points at this server itself (webhook targets must not). */
   isSelfUrl?: (url: URL) => boolean;
   /** DNS for the webhook target check; tests inject a fake. */
@@ -207,6 +210,8 @@ export function createApp(deps: AppDeps): Hono {
     peerAddress,
     now: deps.now,
     operatorClients: deps.operatorClients,
+    browserSessions: deps.browserSessions,
+    sessionCookieName: deps.sessionCookieName,
   });
   const limiter = rateLimit({ security, now: deps.now });
   // Before authenticate, so failed authentications are counted per address; a request whose key

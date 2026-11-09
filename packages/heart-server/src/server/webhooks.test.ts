@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -64,6 +65,7 @@ beforeEach(async () => {
   authStore = new AuthStore(root);
   peer = "127.0.0.1";
   app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
     service,
     authStore,
     peerAddress: () => peer,

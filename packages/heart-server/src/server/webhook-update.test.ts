@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,7 +54,13 @@ beforeEach(async () => {
   await new SettingsStore(root).save(defaultSettings());
   authStore = new AuthStore(root);
   peer = LOOPBACK;
-  app = createApp({ service, authStore, peerAddress: () => peer, resolveHost });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    authStore,
+    peerAddress: () => peer,
+    resolveHost,
+  });
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });

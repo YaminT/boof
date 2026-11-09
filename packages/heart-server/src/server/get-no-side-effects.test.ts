@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -94,7 +95,11 @@ beforeEach(async () => {
     source: { kind: "api" },
     goals: [],
   });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
   spy.probes = 0;
 });
 afterEach(async () => {
@@ -145,7 +150,12 @@ describe("POST /health/check and /models/refresh", () => {
     const store = new AuthStore(root);
     const reader = (await store.create({ name: "reader", scopes: ["settings:read"] })).key;
     const writer = (await store.create({ name: "writer", scopes: ["settings:write"] })).key;
-    app = createApp({ service, authStore: store, peerAddress: () => "10.1.2.3" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore: store,
+      peerAddress: () => "10.1.2.3",
+    });
     expect((await post("/health/check", reader)).status).toBe(403);
     expect(spy.probes).toBe(0);
     expect((await post("/models/refresh", reader)).status).toBe(200);

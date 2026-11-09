@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,7 +41,12 @@ beforeEach(async () => {
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "shop" });
   authStore = new AuthStore(root);
-  app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    authStore,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 
 afterEach(async () => {
@@ -55,7 +61,12 @@ describe("concierge API", () => {
       { call: "boof_delete_task", args: { projectId: "shop", taskId: parent.frontmatter.id } },
     ]);
     service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
-    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => "127.0.0.1",
+    });
 
     const asked = await request(
       "/api/v1/projects/shop/concierge/messages",
@@ -115,7 +126,12 @@ describe("concierge API", () => {
       { call: "boof_create_task", args: { projectId: "shop", title: "Fix X", prompt: "Fix X" } },
     ]);
     service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
-    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => "127.0.0.1",
+    });
 
     const response = await request(
       "/api/v1/projects/shop/concierge/messages",
@@ -151,7 +167,12 @@ describe("concierge API", () => {
       return result;
     };
     service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
-    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => "127.0.0.1",
+    });
     await service.forProject("shop").create({ title: "Keep me" });
 
     const response = await request(
@@ -190,7 +211,12 @@ describe("concierge API", () => {
       { call: "boof_delete_task", args: { projectId: "shop", taskId: "keep-me" } },
     ]);
     service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
-    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => "127.0.0.1",
+    });
     await service.forProject("shop").create({ title: "Keep me" });
     const ask = await request(
       "/api/v1/projects/shop/concierge/messages",
@@ -243,7 +269,12 @@ describe("concierge API", () => {
       resolveExecutable: vi.fn() as never,
     });
     service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
-    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => "127.0.0.1",
+    });
     const response = await request("/api/v1/projects/shop/concierge");
     expect(await response.json()).toMatchObject({
       available: false,
@@ -267,7 +298,12 @@ describe("concierge API", () => {
       { call: "boof_delete_task", args: { projectId: "shop", taskId: "keep-me" } },
     ]);
     service = new TaskService(root, new ToolRegistry([new MockTool()]), { conciergeAgent: agent });
-    app = createApp({ service, authStore, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => "127.0.0.1",
+    });
     await service.forProject("shop").create({ title: "Apply me" });
     await service.forProject("shop").create({ title: "Keep me" });
     const first = await request(

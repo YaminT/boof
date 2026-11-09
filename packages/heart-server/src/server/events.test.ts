@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,7 +39,12 @@ beforeEach(async () => {
   }
   authStore = new AuthStore(root);
   peer = "127.0.0.1";
-  app = createApp({ service, authStore, peerAddress: () => peer });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    authStore,
+    peerAddress: () => peer,
+  });
 });
 
 afterEach(() => rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
@@ -195,7 +201,14 @@ describe("stream lifetime", () => {
     const watcher = new DataWatcher(root); // never started: broadcast() stands in for a file change
     let clock = Date.parse("2026-03-01T12:00:00Z");
     authStore = new AuthStore(root, () => clock);
-    app = createApp({ service, authStore, peerAddress: () => peer, watcher, now: () => clock });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => peer,
+      watcher,
+      now: () => clock,
+    });
     const { key, client } = await authStore.create({
       name: "r",
       scopes: ["tasks:read"],
@@ -224,7 +237,13 @@ describe("stream lifetime", () => {
 
   it("ends a local stream when auth.mode flips to required", async () => {
     const watcher = new DataWatcher(root);
-    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => peer,
+      watcher,
+    });
     const live = await open();
     expect(await next(live.reader!)).toContain("event: ready");
     const settings = new SettingsStore(root);
@@ -240,7 +259,13 @@ describe("stream lifetime", () => {
 
   it("caps open streams per principal and frees the slot on disconnect", async () => {
     const watcher = new DataWatcher(root);
-    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => peer,
+      watcher,
+    });
     const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
     for (let i = 0; i < 16; i += 1) {
       const { res, reader } = await open();
@@ -272,7 +297,14 @@ describe("stream lifetime", () => {
     const watcher = new DataWatcher(root);
     let clock = Date.parse("2026-03-01T12:00:00Z");
     authStore = new AuthStore(root, () => clock);
-    app = createApp({ service, authStore, peerAddress: () => peer, watcher, now: () => clock });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => peer,
+      watcher,
+      now: () => clock,
+    });
     const { key } = await authStore.create({
       name: "e",
       scopes: ["tasks:read"],
@@ -289,7 +321,13 @@ describe("stream lifetime", () => {
 
   it("ends a deprecated /api/events stream when the key is revoked", async () => {
     const watcher = new DataWatcher(root);
-    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => peer,
+      watcher,
+    });
     const { key, client } = await authStore.create({
       name: "l",
       scopes: ["tasks:read"],
@@ -308,7 +346,13 @@ describe("stream lifetime", () => {
 
   it("sends nothing after unauthorized when the key is revoked during a replay", async () => {
     const watcher = new DataWatcher(root);
-    app = createApp({ service, authStore, peerAddress: () => peer, watcher });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore,
+      peerAddress: () => peer,
+      watcher,
+    });
     const { key, client } = await authStore.create({
       name: "p",
       scopes: ["tasks:read"],

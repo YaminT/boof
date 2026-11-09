@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +58,7 @@ describe("the injected tool catalog", () => {
   it("is what the REST routes list, check and read models from", async () => {
     const calls: string[] = [];
     const app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, stubCatalog(calls)),
       peerAddress: () => "127.0.0.1",
     });
@@ -82,6 +84,7 @@ describe("the injected tool catalog", () => {
   it("is what MCP over HTTP serves too (boof_get_model_details, boof_refresh_models)", async () => {
     const calls: string[] = [];
     const app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, stubCatalog(calls)),
       peerAddress: () => "127.0.0.1",
     });

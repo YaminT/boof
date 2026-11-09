@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -74,7 +75,13 @@ beforeEach(async () => {
   authStore = new AuthStore(root);
   peer = LOOPBACK;
   watcher = new DataWatcher(root, 20);
-  app = createApp({ service, watcher, authStore, peerAddress: () => peer });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    watcher,
+    authStore,
+    peerAddress: () => peer,
+  });
 });
 afterEach(async () => {
   await watcher.stop();
@@ -1081,6 +1088,7 @@ describe("the desktop operator key", () => {
   let op: Awaited<ReturnType<AuthStore["create"]>>;
   const asOperator = (id: string) => {
     app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service,
       watcher,
       authStore,

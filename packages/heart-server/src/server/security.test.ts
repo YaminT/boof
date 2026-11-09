@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
@@ -51,6 +52,7 @@ async function setSecurity(patch: Partial<SecuritySettings>): Promise<void> {
 
 function build(extra: Partial<Parameters<typeof createApp>[0]> = {}) {
   return createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
     service,
     authStore: store,
     peerAddress: () => peer,
