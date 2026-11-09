@@ -24,7 +24,7 @@ import {
 import type { RunningServer } from "@boof/heart-server";
 import {
   createQuitHandler,
-  desktopSessionCookie,
+  createWindowAuth,
   isAppUrl,
   isExternalUrl,
   operatorClientId,
@@ -41,6 +41,9 @@ const SHUTDOWN_GRACE_MS = shutdownGraceMs();
 let server: RunningServer | null = null;
 let engine: RunnerEngine | null = null;
 let win: BrowserWindow | null = null;
+/** Signs the window in (browser-session cookie) before each load when there is no desktop key. */
+let windowAuth: ReturnType<typeof createWindowAuth> | null = null;
+let windowPending = false;
 /** API key for the bundled UI; undefined when safeStorage is unavailable (browser-session fallback). */
 let desktopToken: string | undefined;
 
@@ -117,7 +120,15 @@ async function ensureDataRoot(): Promise<string> {
   return root;
 }
 
-function createWindow(port: number): void {
+async function createWindow(): Promise<void> {
+  if (!server || !windowAuth || win || windowPending) return;
+  windowPending = true;
+  try {
+    await windowAuth?.prepare();
+  } finally {
+    windowPending = false;
+  }
+  if (win) return;
   win = new BrowserWindow({
     width: 1240,
     height: 860,
@@ -148,7 +159,6 @@ function createWindow(port: number): void {
   };
   win.webContents.on("will-navigate", (event, url) => guard(event, url));
   win.webContents.on("will-redirect", (event, url) => guard(event, url));
-  appOrigin = `http://127.0.0.1:${port}`;
   void win.loadURL(appOrigin);
   win.on("closed", () => {
     win = null;
@@ -191,33 +201,28 @@ async function startComposition(): Promise<void> {
       engine = activeEngine;
     },
   });
-  if (!desktopToken) {
-    await signInWindow(root, composition.server.port).catch((err) => {
-      console.error(
-        "desktop UI: could not create a browser session; the window shows the sign-in gate:",
-        err,
-      );
-    });
-  }
-  createWindow(composition.server.port);
-}
-
-/**
- * Without a desktop key the window is signed in by a browser session the app creates itself:
- * no keyless local access exists any more. Under `required` a session is not accepted, so the
- * user pastes an API key in the window.
- */
-async function signInWindow(root: string, port: number): Promise<void> {
-  const mode = securitySettings(await new SettingsStore(root).load()).auth.mode;
-  if (mode === "required") {
-    console.warn(
-      'desktop UI: safeStorage unavailable and auth.mode is "required"; paste an API key in the window',
-    );
-    return;
-  }
-  const origin = `http://127.0.0.1:${port}`;
-  const { token } = await new BrowserSessionStore(root).createSession();
-  await session.defaultSession.cookies.set(desktopSessionCookie(origin, port, token, Date.now()));
+  appOrigin = `http://127.0.0.1:${composition.server.port}`;
+  const sessions = new BrowserSessionStore(root);
+  windowAuth = createWindowAuth({
+    desktopToken: () => desktopToken,
+    loadAuthMode: async () => securitySettings(await new SettingsStore(root).load()).auth.mode,
+    createSession: () => sessions.createSession(),
+    revokeSession: (id) => sessions.revokeSession(id),
+    setCookie: (cookie) => session.defaultSession.cookies.set(cookie),
+    warn: console.warn,
+    error: console.error,
+    showFailure: async (message) => {
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "Boof Runner",
+        message: "Boof Runner could not sign in",
+        detail: message,
+      });
+    },
+    origin: appOrigin,
+    port: composition.server.port,
+  });
+  await createWindow();
 }
 
 // Single-instance: a second launch focuses the existing window instead of
@@ -241,7 +246,7 @@ if (!app.requestSingleInstanceLock()) {
     });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0 && server) createWindow(server.port);
+    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
 
   app.on("window-all-closed", () => {
@@ -253,6 +258,7 @@ if (!app.requestSingleInstanceLock()) {
     server: () => server,
     exit: (code) => app.exit(code),
     graceMs: SHUTDOWN_GRACE_MS,
+    cleanup: () => windowAuth?.release(),
     log: console.log,
     notify: (message) => {
       win?.setTitle(`Boof Runner — ${message}`);

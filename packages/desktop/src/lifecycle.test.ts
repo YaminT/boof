@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStore, BROWSER_SESSION_MAX_MS, browserSessionCookieName } from "@boof/heart";
+import { AuthStore, BrowserSessionStore, browserSessionCookieName } from "@boof/heart";
+import { startServer } from "@boof/heart-server";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import {
   createQuitHandler,
+  createWindowAuth,
   desktopSessionCookie,
   isAppUrl,
   isExternalUrl,
@@ -190,9 +193,8 @@ describe("isExternalUrl", () => {
 });
 
 describe("desktop session cookie", () => {
-  it("desktopSessionCookie targets the app origin with boof_ui_<port>, HttpOnly, SameSite strict, 30-day expiry", () => {
-    const nowMs = 1_700_000_000_000;
-    const cookie = desktopSessionCookie("http://127.0.0.1:4319", 4319, "bs_abc", nowMs);
+  it("desktopSessionCookie targets the app origin with boof_ui_<port>, HttpOnly, SameSite strict, and is a session cookie", () => {
+    const cookie = desktopSessionCookie("http://127.0.0.1:4319", 4319, "bs_abc");
     expect(cookie).toEqual({
       url: "http://127.0.0.1:4319",
       name: browserSessionCookieName(4319),
@@ -200,8 +202,205 @@ describe("desktop session cookie", () => {
       httpOnly: true,
       sameSite: "strict",
       path: "/",
-      expirationDate: (nowMs + BROWSER_SESSION_MAX_MS) / 1000,
     });
+    expect(cookie).not.toHaveProperty("expirationDate");
     expect(cookie.name).toBe("boof_ui_4319");
+  });
+
+  it("the server accepts the desktop cookie on its bound port and refuses other ports and cross-site", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-desktop-contract-"));
+    const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: () => {},
+    });
+    try {
+      const { token } = await new BrowserSessionStore(root).createSession();
+      const origin = `http://127.0.0.1:${running.port}`;
+      const c = desktopSessionCookie(origin, running.port, token);
+      const get = (cookie?: string, headers: Record<string, string> = {}) =>
+        fetch(`${origin}/api/settings`, {
+          headers: { ...(cookie ? { cookie } : {}), ...headers },
+        });
+      expect((await get()).status).toBe(401);
+      expect((await get(`${c.name}=${c.value}`)).status).toBe(200);
+      expect((await get(`${browserSessionCookieName(running.port + 1)}=${c.value}`)).status).toBe(
+        401,
+      );
+      expect((await get(`${c.name}=${c.value}`, { "Sec-Fetch-Site": "cross-site" })).status).toBe(
+        403,
+      );
+    } finally {
+      await running.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("createWindowAuth", () => {
+  const setup = (over: Partial<Parameters<typeof createWindowAuth>[0]> = {}) => {
+    const order: string[] = [];
+    let n = 0;
+    const logs: string[] = [];
+    const showFailure = vi.fn(async (m: string): Promise<void> => {
+      order.push("dialog");
+      logs.push(m);
+    });
+    const deps = {
+      desktopToken: () => undefined as string | undefined,
+      loadAuthMode: async () => "local-trust",
+      createSession: vi.fn(async () => {
+        const id = `s${++n}`;
+        order.push(`create ${id}`);
+        return { token: `bs_secret${n}`, session: { id } };
+      }),
+      revokeSession: vi.fn(async (id: string) => {
+        order.push(`revoke ${id}`);
+      }),
+      setCookie: vi.fn(async (c: { value: string }) => {
+        order.push(`cookie ${c.value}`);
+      }),
+      warn: (l: string) => logs.push(l),
+      error: (l: string, e?: unknown) => logs.push(`${l} ${String(e ?? "")}`),
+      showFailure,
+      origin: "http://127.0.0.1:4319",
+      port: 4319,
+      ...over,
+    };
+    return { auth: createWindowAuth(deps), deps, showFailure, order, logs };
+  };
+
+  it("with a desktop key: no session, no cookie", async () => {
+    const { auth, deps } = setup({ desktopToken: () => "boof_key" });
+    await auth.prepare();
+    expect(deps.createSession).not.toHaveBeenCalled();
+    expect(deps.setCookie).not.toHaveBeenCalled();
+  });
+
+  it("local-trust without a key: mints a session and sets the cookie before resolving", async () => {
+    const { auth, deps, order } = setup();
+    await auth.prepare();
+    expect(order).toEqual(["create s1", "cookie bs_secret1"]);
+    expect(deps.setCookie).toHaveBeenCalledWith(
+      desktopSessionCookie("http://127.0.0.1:4319", 4319, "bs_secret1"),
+    );
+  });
+
+  it("required: no session and the exact warning", async () => {
+    const { auth, deps, logs } = setup({ loadAuthMode: async () => "required" });
+    await auth.prepare();
+    expect(deps.createSession).not.toHaveBeenCalled();
+    expect(deps.setCookie).not.toHaveBeenCalled();
+    expect(logs).toEqual([
+      'desktop UI: safeStorage unavailable and auth.mode is "required"; paste an API key in the window',
+    ]);
+  });
+
+  it("a failing createSession resolves, sets no cookie, shows the store's fix and never logs a token", async () => {
+    const { auth, deps, showFailure, logs } = setup({
+      createSession: vi.fn(async () => {
+        throw new Error("auth dir is group-writable; run: chmod go-w /x/auth");
+      }),
+    });
+    await expect(auth.prepare()).resolves.toBeUndefined();
+    expect(deps.setCookie).not.toHaveBeenCalled();
+    expect(showFailure).toHaveBeenCalledOnce();
+    expect(showFailure.mock.calls[0]![0]).toContain("chmod go-w /x/auth");
+    expect(logs.join("\n")).not.toMatch(/bs_/);
+  });
+
+  it("every prepare (activate) signs in again and revokes the previous session", async () => {
+    const { auth, order } = setup();
+    await auth.prepare();
+    await auth.prepare();
+    expect(order).toEqual([
+      "create s1",
+      "cookie bs_secret1",
+      "create s2",
+      "cookie bs_secret2",
+      "revoke s1",
+    ]);
+  });
+
+  it("concurrent prepares are serialised", async () => {
+    const { auth, order } = setup();
+    await Promise.all([auth.prepare(), auth.prepare()]);
+    expect(order).toEqual([
+      "create s1",
+      "cookie bs_secret1",
+      "create s2",
+      "cookie bs_secret2",
+      "revoke s1",
+    ]);
+  });
+
+  it("release revokes the current session once", async () => {
+    const { auth, order } = setup();
+    await auth.prepare();
+    await auth.release();
+    await auth.release();
+    expect(order.filter((o) => o.startsWith("revoke"))).toEqual(["revoke s1"]);
+  });
+
+  it("a revoke failure is logged, not thrown", async () => {
+    const { auth } = setup({
+      revokeSession: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+    await auth.prepare();
+    await expect(auth.prepare()).resolves.toBeUndefined();
+    await expect(auth.release()).resolves.toBeUndefined();
+  });
+
+  it("60 launches leave at most one desktop session and never evict a boof-runner open session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-desktop-churn-"));
+    try {
+      const store = new BrowserSessionStore(root);
+      const opened = await store.createSession(); // stands in for `boof-runner open`
+      for (let launch = 0; launch < 60; launch++) {
+        const auth = createWindowAuth({
+          desktopToken: () => undefined,
+          loadAuthMode: async () => "local-trust",
+          createSession: () => store.createSession(),
+          revokeSession: (id) => store.revokeSession(id),
+          setCookie: async () => {},
+          warn: () => {},
+          error: () => {},
+          showFailure: () => {},
+          origin: "http://127.0.0.1:4319",
+          port: 4319,
+        });
+        await auth.prepare();
+        await auth.prepare(); // a window re-open in the same launch
+        await auth.release(); // quit
+      }
+      expect((await store.verify(opened.token))?.id).toBe(opened.session.id);
+      const rows = JSON.parse(
+        await (
+          await import("node:fs/promises")
+        ).readFile(join(root, "auth", "browser-sessions.json"), "utf8"),
+      );
+      expect((Array.isArray(rows) ? rows : rows.sessions).length).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("quit runs cleanup after the drain and before the server stops", async () => {
+    const order: string[] = [];
+    const quit = createQuitHandler({
+      engine: () => ({
+        shutdown: async () => (order.push("drain"), { stopped: [], timedOut: false }),
+      }),
+      server: () => ({ stop: async () => void order.push("stop") }),
+      exit: () => order.push("exit"),
+      graceMs: 1,
+      cleanup: async () => void order.push("cleanup"),
+      log: () => {},
+    });
+    await quit({ preventDefault() {} });
+    expect(order).toEqual(["drain", "cleanup", "stop", "exit"]);
   });
 });

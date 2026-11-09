@@ -274,6 +274,15 @@ describe("BrowserSessionStore", () => {
     expect(await store.verify(first.token)).toBeNull();
   });
 
+  it("revokeSession removes only the named session", async () => {
+    const a = await store.createSession();
+    const b = await store.createSession();
+    expect(await store.revokeSession(a.session.id)).toBe(true);
+    expect(await store.verify(a.token)).toBeNull();
+    expect((await store.verify(b.token))?.id).toBe(b.session.id);
+    expect(await store.revokeSession(a.session.id)).toBe(false);
+  });
+
   it("revokeAll clears pending sign-in links", async () => {
     const { code } = await store.createLink();
     expect(await store.revokeAll()).toBe(0);

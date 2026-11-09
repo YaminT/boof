@@ -342,6 +342,17 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     return this.unsafeMessage;
   }
 
+  /** Delete one session by id; true when a live session was removed. Other sessions are untouched. */
+  async revokeSession(id: string): Promise<boolean> {
+    return this.mutate(async ({ links, sessions }) => {
+      const nowMs = this.now();
+      const live = pruneSessions(sessions, nowMs);
+      const next = live.filter((row) => row.id !== id);
+      await this.commit(pruneLinks(links, nowMs), next, { links, sessions });
+      return next.length !== live.length;
+    });
+  }
+
   /** Delete every session and pending sign-in link; return the number of live sessions removed. */
   async revokeAll(): Promise<number> {
     return this.mutate(async ({ links, sessions, corrupt }) => {
