@@ -252,8 +252,16 @@ describe("outbound target rules (owner answer 2)", () => {
       closers.push(() => new Promise<void>((r) => boof.close(() => r())));
     });
 
+    it("[::ffff:127.0.0.1] on boof's port is refused by the settings schema (not canonical: the URL parser rewrites it)", () => {
+      const parsed = N8nSettingsSchema.safeParse({
+        baseUrl: `http://[::ffff:127.0.0.1]:${port}`,
+        callbackBaseUrl: "https://boof.example",
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    // Canonical names only: the resolved-address self check is what refuses these.
     const cases: [string, string[] | null, string][] = [
-      ["[::ffff:127.0.0.1]", null, "127.0.0.1"],
       ["localhost.", null, "127.0.0.1"],
       ["myself.example", ["127.0.0.1"], "127.0.0.1"],
       ["127.0.0.2", null, "127.0.0.1"],
