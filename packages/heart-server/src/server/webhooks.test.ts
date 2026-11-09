@@ -564,6 +564,33 @@ describe("webhook delivery", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "logs again when the AuthStore breaks again after a good tick",
+    async () => {
+      await authStore.create({ name: "webhook test", scopes: ["projects:read"] });
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      // Not started: each tick is driven and awaited here, so no wall-clock waits decide the count.
+      const dispatcher = new WebhookDispatcher({ root, service, authStore, intervalMs: 5 });
+      const unsafe = () => errorLog.mock.calls.filter((c) => String(c[0]).startsWith("webhooks: "));
+      try {
+        await chmod(join(root, "auth"), 0o770);
+        await dispatcher.tickReporting();
+        expect(unsafe()).toHaveLength(1);
+        await dispatcher.tickReporting(); // still broken: already logged, so silent
+        expect(unsafe()).toHaveLength(1);
+        await chmod(join(root, "auth"), 0o700);
+        await dispatcher.tickReporting(); // a good tick re-arms the log
+        expect(unsafe()).toHaveLength(1);
+        await chmod(join(root, "auth"), 0o770);
+        await dispatcher.tickReporting();
+        expect(unsafe()).toHaveLength(2);
+      } finally {
+        await dispatcher.stop();
+        errorLog.mockRestore();
+      }
+    },
+  );
+
   it.each([
     ["an empty secret", async (id: string) => writeSecrets({ [id]: "" })],
     ["a non-string secret", async (id: string) => writeSecrets({ [id]: 12345 })],

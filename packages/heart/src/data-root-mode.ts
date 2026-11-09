@@ -1,6 +1,6 @@
-import { chmod, lstat, open, readlink, realpath, stat } from "node:fs/promises";
+import { chmod, lstat, open, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 export const PRIVATE_SUBDIRS = [
@@ -15,18 +15,109 @@ export const PRIVATE_SUBDIRS = [
   "external-runs",
 ] as const;
 
+/** A folder above the data root that others could write to; the root itself may still be private. */
+export interface UnsafeParent {
+  path: string;
+  message: string;
+}
+
 export type TightenResult =
-  | { changed: true; before: number }
+  | { changed: true; before: number; unsafeParent?: UnsafeParent }
   | {
       changed: false;
       reason:
         "already-private" | "windows" | "missing" | "not-owner" | "home-or-root" | "chmod-failed";
       mode?: number;
+      unsafeParent?: UnsafeParent;
     };
+
+/** Text of /etc/group and /etc/passwd (undefined when unreadable) and the current user name. */
+export interface AccountFiles {
+  group?: string;
+  passwd?: string;
+  username?: string;
+}
+
+let accountFilesCache: Promise<AccountFiles> | undefined;
+
+async function readAccountFiles(): Promise<AccountFiles> {
+  const read = (path: string) => readFile(path, "utf8").catch(() => undefined);
+  let username: string | undefined;
+  try {
+    username = userInfo().username;
+  } catch {
+    username = undefined;
+  }
+  return { group: await read("/etc/group"), passwd: await read("/etc/passwd"), username };
+}
+
+/** Read once per process. */
+function accountFiles(): Promise<AccountFiles> {
+  accountFilesCache ??= readAccountFiles();
+  return accountFilesCache;
+}
+
+/** Test seam: replace (or with `undefined` reset) the cached account files. */
+export function setAccountFilesForTests(files: AccountFiles | undefined): void {
+  accountFilesCache = files ? Promise.resolve(files) : undefined;
+}
+
+/**
+ * A user private group, as login.defs/pam_umask define it: the group is named like the user and
+ * nobody else belongs to it (no other member, no other account with it as primary group).
+ * With no /etc/group entry for the gid (NSS, LDAP), fall back to gid === uid.
+ */
+export function isUserPrivateGroup(uid: number, gid: number, files: AccountFiles): boolean {
+  const entry = (files.group ?? "")
+    .split("\n")
+    .map((line) => line.split(":"))
+    .find((f) => f.length >= 3 && Number(f[2]) === gid);
+  if (!entry) return gid === uid;
+  const user = files.username;
+  if (!user || entry[0] !== user) return false;
+  if ((entry[3] ?? "").split(",").some((m) => m.trim() !== "" && m.trim() !== user)) return false;
+  for (const line of (files.passwd ?? "").split("\n")) {
+    const f = line.split(":");
+    if (f.length >= 4 && Number(f[3]) === gid && f[0] !== user) return false;
+  }
+  return true;
+}
+
+interface Check {
+  uid: number;
+  isPrivate: (gid: number) => boolean;
+  lstatFn: typeof lstat;
+  statFn: typeof stat;
+  /** When set, unsafe ancestors are collected here instead of thrown. */
+  collect?: UnsafeSecretPathError[];
+}
+
+async function makeCheck(
+  uid: number,
+  opts: { gid?: number; accounts?: AccountFiles; lstat?: typeof lstat; stat?: typeof stat },
+  collect?: UnsafeSecretPathError[],
+): Promise<Check> {
+  const files = opts.accounts ?? (await accountFiles());
+  const ownGid = opts.gid ?? process.getgid?.() ?? -1;
+  return {
+    uid,
+    isPrivate: (gid) => gid === ownGid && isUserPrivateGroup(uid, gid, files),
+    lstatFn: opts.lstat ?? lstat,
+    statFn: opts.stat ?? stat,
+    collect,
+  };
+}
 
 export async function tightenDataRoot(
   root: string,
-  opts: { platform?: NodeJS.Platform; uid?: number; home?: string; chmod?: typeof chmod } = {},
+  opts: {
+    platform?: NodeJS.Platform;
+    uid?: number;
+    gid?: number;
+    home?: string;
+    chmod?: typeof chmod;
+    accounts?: AccountFiles;
+  } = {},
 ): Promise<TightenResult> {
   const platform = opts.platform ?? process.platform;
   if (platform === "win32") return { changed: false, reason: "windows" };
@@ -42,7 +133,13 @@ export async function tightenDataRoot(
     }
     const uid = opts.uid ?? process.getuid?.();
     if (uid === undefined || rootStat.uid !== uid) return { changed: false, reason: "not-owner" };
-    await checkLinkOwners(resolve(root), uid, process.getgid?.() ?? -1);
+    // Tightening (read safety) goes ahead under an unsafe parent; the parent is reported instead.
+    const parentIssues: UnsafeSecretPathError[] = [];
+    await checkLinkOwners(resolve(root), await makeCheck(uid, opts, parentIssues));
+    const unsafeParent = parentIssues[0]
+      ? { path: parentIssues[0].path, message: parentIssues[0].message }
+      : undefined;
+    const withParent = <T extends object>(r: T): T => (unsafeParent ? { ...r, unsafeParent } : r);
 
     const before = rootStat.mode & 0o777;
     const changed = (before & 0o077) !== 0;
@@ -54,7 +151,7 @@ export async function tightenDataRoot(
     try {
       const handleStat = await rootHandle.stat();
       if (!handleStat.isDirectory() || handleStat.uid !== uid)
-        return { changed: false, reason: "not-owner" };
+        return withParent({ changed: false, reason: "not-owner" });
       if (changed) {
         try {
           await rootHandle.chmod(0o700);
@@ -79,8 +176,11 @@ export async function tightenDataRoot(
         // Tightening is best effort; a later consumer still validates secret paths.
       }
     }
-    if (rootChmodFailed) return { changed: false, reason: "chmod-failed", mode: before };
-    return changed ? { changed: true, before } : { changed: false, reason: "already-private" };
+    if (rootChmodFailed)
+      return withParent({ changed: false, reason: "chmod-failed", mode: before });
+    return withParent(
+      changed ? { changed: true, before } : { changed: false, reason: "already-private" },
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return { changed: false, reason: "missing" };
@@ -108,14 +208,8 @@ function fail(path: string, message: string): never {
   throw new UnsafeSecretPathError(path, `${path} ${message}`);
 }
 
-async function checkLinkOwners(
-  path: string,
-  uid: number,
-  gid: number,
-  lstatFn: typeof lstat = lstat,
-  statFn: typeof stat = stat,
-  depth = 0,
-): Promise<void> {
+async function checkLinkOwners(path: string, check: Check, depth = 0): Promise<void> {
+  const { uid, lstatFn } = check;
   if (depth > 40) fail(path, "has too many symbolic links; use a real data root");
   const absolute = resolve(path);
   const parsedRoot = isAbsolute(absolute) ? absolute.slice(0, absolute.indexOf(sep) + 1) : "/";
@@ -123,7 +217,7 @@ async function checkLinkOwners(
   let current = parsedRoot;
   for (const part of parts) {
     const candidate = join(current, part);
-    await checkAncestors(candidate, uid, gid, statFn);
+    await checkAncestors(candidate, check);
     let entry;
     try {
       entry = await lstatFn(candidate);
@@ -138,7 +232,7 @@ async function checkLinkOwners(
           `is a symbolic link owned by uid ${entry.uid}; use a data root owned by your uid or root`,
         );
       const target = resolve(dirname(candidate), await readlink(candidate));
-      await checkLinkOwners(target, uid, gid, lstatFn, statFn, depth + 1);
+      await checkLinkOwners(target, check, depth + 1);
       current = target;
     } else {
       current = candidate;
@@ -146,12 +240,20 @@ async function checkLinkOwners(
   }
 }
 
-async function checkAncestors(
-  rootPath: string,
-  uid: number,
-  gid: number,
-  statFn: typeof stat = stat,
-): Promise<void> {
+async function checkAncestors(rootPath: string, check: Check): Promise<void> {
+  try {
+    await walkAncestors(rootPath, check);
+  } catch (error) {
+    if (check.collect && error instanceof UnsafeSecretPathError) {
+      check.collect.push(error);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function walkAncestors(rootPath: string, check: Check): Promise<void> {
+  const { uid, statFn } = check;
   let current = dirname(rootPath);
   while (current !== dirname(current)) {
     const st = await statFn(current);
@@ -160,8 +262,11 @@ async function checkAncestors(
       fail(current, `is owned by uid ${st.uid}; use a directory owned by your uid or root`);
     if ((mode & 0o1000) !== 0) return;
     if ((mode & 0o002) !== 0) fail(current, `is world-writable; run chmod o-w ${current}`);
-    if ((mode & 0o020) !== 0 && !(st.uid === uid && st.gid === gid))
-      fail(current, `is group-writable by a different group; run chmod g-w ${current}`);
+    if ((mode & 0o020) !== 0 && !(st.uid === uid && check.isPrivate(st.gid)))
+      fail(
+        current,
+        `is group-writable by a group that is not your private group; run chmod g-w ${current}`,
+      );
     if (st.uid === 0) return;
     current = dirname(current);
   }
@@ -177,6 +282,7 @@ export async function assertSafeForSecrets(
     platform?: NodeJS.Platform;
     uid?: number;
     gid?: number;
+    accounts?: AccountFiles;
     home?: string;
     lstat?: typeof lstat;
     stat?: typeof stat;
@@ -185,11 +291,11 @@ export async function assertSafeForSecrets(
 ): Promise<void> {
   const platform = opts.platform ?? process.platform;
   const uid = opts.uid ?? uidFor(platform);
-  const gid = opts.gid ?? process.getgid?.() ?? -1;
   const lstatFn = opts.lstat ?? lstat;
   const statFn = opts.stat ?? stat;
   const openFn = opts.open ?? open;
   if (platform === "win32" || uid === undefined) return;
+  const check = await makeCheck(uid, opts);
 
   let rootInitial;
   try {
@@ -200,8 +306,8 @@ export async function assertSafeForSecrets(
   }
   const home = opts.home ?? homedir();
   const rootReal = await realpath(root);
-  await checkLinkOwners(resolve(root), uid, gid, lstatFn, statFn);
-  await checkAncestors(rootReal, uid, gid, statFn);
+  await checkLinkOwners(resolve(root), check);
+  await checkAncestors(rootReal, check);
   if (
     rootInitial.uid === uid &&
     rootReal !== "/" &&
@@ -264,7 +370,7 @@ export async function assertSafeForSecrets(
   if (relative === null)
     fail(path, "is outside the data root; keep secret files inside the data root");
   const resolvedPath = join(resolvedRoot, relative);
-  await checkLinkOwners(absolutePath, uid, gid, lstatFn, statFn);
+  await checkLinkOwners(absolutePath, check);
 
   const parent = kind === "file" ? dirname(resolvedPath) : resolvedPath;
   const parentStat = await lstatFn(parent).catch((error: unknown) => {

@@ -26,6 +26,7 @@ export interface BrowserSigninOptions {
   peerAddress: PeerAddressResolver;
   sessions: BrowserSessionVerifier & { redeemLink?: BrowserSessionStore["redeemLink"] };
   sessionCookieName?: (c: Context) => string;
+  linkPort?: (c: Context) => number;
 }
 
 /** GET /auth/browser exchanges one single-use local sign-in code for an HttpOnly session cookie. */
@@ -47,7 +48,10 @@ export function browserSignin(opts: BrowserSigninOptions): MiddlewareHandler {
     const redeem = opts.sessions.redeemLink;
     let result: Awaited<ReturnType<BrowserSessionStore["redeemLink"]>> = null;
     try {
-      if (code && redeem) result = await redeem.call(opts.sessions, code);
+      if (code && redeem)
+        result = await redeem.call(opts.sessions, code, {
+          port: opts.linkPort?.(c) ?? hostPort(host),
+        });
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         c.set("auditExtra", { action: "auth:browser-session", outcome: "error" });

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  git,
   initGitRepo,
   isGitRepo,
   leftoversBranch,
@@ -11,6 +12,8 @@ import {
   repoCommonDir,
 } from "./git.js";
 import { execCommand } from "./process.js";
+import { taskDiff } from "./task-diff.js";
+import { untrackedFiles } from "./untracked-diff.js";
 
 let repo: string;
 let nonRepo: string;
@@ -73,7 +76,7 @@ describe("git queries", () => {
     const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
     await writeFile(
       join(shim, "git"),
-      `#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = prune ]; then echo boom >&2; exit 3; fi\nexec ${real} "$@"\n`,
+      `#!/bin/sh\ncase " $* " in *" worktree prune "*) echo boom >&2; exit 3;; esac\nexec ${real} "$@"\n`,
       { mode: 0o755 },
     );
     const oldPath = process.env.PATH;
@@ -238,5 +241,50 @@ describe("initGitRepo", () => {
       initGitRepo(dir, { timeoutMs: 300, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }),
     ).rejects.toThrow(/timed out after 300 ms/);
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+});
+
+describe("agent-planted git config does not run server-side", () => {
+  /** An agent sets core.fsmonitor (and a hook) in the shared .git/config; each would drop a file. */
+  async function plant(): Promise<{ fsmonitor: string; hook: string }> {
+    const fsmonitor = join(nonRepo, "fsmonitor-ran");
+    const hook = join(nonRepo, "hook-ran");
+    const script = join(nonRepo, "fsmonitor.sh");
+    await writeFile(script, `#!/bin/sh\ntouch '${fsmonitor}'\nprintf '/\\0'\n`, { mode: 0o755 });
+    await g(["config", "core.fsmonitor", script]);
+    const hooks = join(repo, ".git", "hooks");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "post-checkout"), `#!/bin/sh\ntouch '${hook}'\n`, {
+      mode: 0o755,
+    });
+    return { fsmonitor, hook };
+  }
+
+  it("sanity: plain git status runs the planted fsmonitor", async () => {
+    const { fsmonitor } = await plant();
+    await g(["status", "--porcelain"]);
+    expect(await exists(fsmonitor)).toBe(true);
+  });
+
+  it("the shared git helper never runs fsmonitor or hooks", async () => {
+    const { fsmonitor, hook } = await plant();
+    const st = await git(repo, ["status", "--porcelain"]);
+    expect(st.code).toBe(0);
+    await git(repo, ["worktree", "add", "-q", "-b", "x", join(repo, ".wts", "x")]);
+    expect(await exists(fsmonitor)).toBe(false);
+    expect(await exists(hook)).toBe(false);
+  });
+
+  it("task diff and the untracked listing never run it", async () => {
+    await g(["branch", "boof-runner/t1"]);
+    const wt = join(repo, ".wts", "t1");
+    await g(["worktree", "add", "-q", wt, "boof-runner/t1"]);
+    await writeFile(join(wt, "new.txt"), "x\n");
+    const { fsmonitor } = await plant();
+    await rm(fsmonitor, { force: true });
+    const diff = await taskDiff({ workingDir: repo, taskId: "t1", worktreePath: wt });
+    expect(diff.includesUncommitted).toBe(true);
+    expect(await untrackedFiles(wt)).toContain("new.txt");
+    expect(await exists(fsmonitor)).toBe(false);
   });
 });

@@ -66,6 +66,8 @@ export interface BrowserSessionVerifier {
 interface LinkRecord {
   hash: string;
   expiresAt: string;
+  /** Port the link was minted for. Absent on links written before ports were bound. */
+  port?: number;
 }
 
 interface SessionRecord {
@@ -77,7 +79,9 @@ interface SessionRecord {
 }
 
 const LinkFile = z.object({
-  links: z.array(z.object({ hash: z.string(), expiresAt: z.string() })),
+  links: z.array(
+    z.object({ hash: z.string(), expiresAt: z.string(), port: z.number().int().optional() }),
+  ),
 });
 
 const SessionFile = z.object({
@@ -180,7 +184,9 @@ function toPublic(record: SessionRecord): BrowserSession {
 }
 
 function cleanLink(row: LinkRecord): LinkRecord {
-  return { hash: row.hash, expiresAt: row.expiresAt };
+  return row.port === undefined
+    ? { hash: row.hash, expiresAt: row.expiresAt }
+    : { hash: row.hash, expiresAt: row.expiresAt, port: row.port };
 }
 
 function cleanSession(row: SessionRecord): SessionRecord {
@@ -260,19 +266,30 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     this.uid = opts.uid ?? process.getuid?.();
   }
 
-  async createLink(): Promise<{ code: string; expiresAt: string }> {
+  async createLink(opts: { port?: number } = {}): Promise<{ code: string; expiresAt: string }> {
     return this.mutate(async ({ links, sessions }) => {
       const nowMs = this.now();
       const code = `bl_${randomBytes(32).toString("base64url")}`;
       const expiresAt = new Date(nowMs + BROWSER_LINK_TTL_MS).toISOString();
       const nextLinks = roomForOne(pruneLinks(links, nowMs), MAX_LINKS);
-      nextLinks.push({ hash: sha256Hex(code), expiresAt });
+      nextLinks.push({
+        hash: sha256Hex(code),
+        expiresAt,
+        ...(opts.port !== undefined ? { port: opts.port } : {}),
+      });
       await this.commit(nextLinks, pruneSessions(sessions, nowMs), { links, sessions });
       return { code, expiresAt };
     });
   }
 
-  async redeemLink(code: string): Promise<{ token: string; session: BrowserSession } | null> {
+  /**
+   * `opts.port` is the port the request arrived on. A link minted for another port is burned and
+   * refused, so a link printed for the wrong port cannot be redeemed by whoever holds that port.
+   */
+  async redeemLink(
+    code: string,
+    opts: { port?: number } = {},
+  ): Promise<{ token: string; session: BrowserSession } | null> {
     return this.mutate(async ({ links, sessions }) => {
       const nowMs = this.now();
       const liveLinks = pruneLinks(links, nowMs);
@@ -285,6 +302,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       }
       // Drop the link before the session is added, so a crash cannot leave it redeemable twice.
       const keptLinks = liveLinks.filter((link) => link !== match);
+      if (match.port !== undefined && opts.port !== undefined && match.port !== opts.port) {
+        await this.commit(keptLinks, liveSessions, { links, sessions });
+        return null;
+      }
       const minted = this.mint(liveSessions, nowMs);
       await this.commit(keptLinks, minted.sessions, { links, sessions });
       return { token: minted.token, session: minted.session };
@@ -666,10 +687,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         }
       }
       const checkedLinkStat = await this.lstatFn(this.root);
-      if (checkedLinkStat.isSymbolicLink()) {
+      if (checkedLinkStat.isSymbolicLink() !== linkStat.isSymbolicLink()) {
         throw new UnsafeBrowserSessionPathError(
           this.root,
-          `${this.root} became a symbolic link while checking permissions; use a data root you own`,
+          `${this.root} changed between a folder and a symbolic link while checking permissions; use a data root you own`,
         );
       }
       rootStat = await this.statFn(this.root);

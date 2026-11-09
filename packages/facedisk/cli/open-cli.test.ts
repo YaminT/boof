@@ -16,6 +16,15 @@ const run = (...argv: string[]) =>
     () => root,
     (l) => out.push(l),
     (l) => errs.push(l),
+    async () => true,
+  );
+const runProbe = (up: boolean, ...argv: string[]) =>
+  openCommand(
+    argv,
+    () => root,
+    (l) => out.push(l),
+    (l) => errs.push(l),
+    async () => up,
   );
 
 const codeOf = (lines: string[]): string => {
@@ -53,6 +62,32 @@ describe("boof-runner open", () => {
     const redeemed = await new BrowserSessionStore(root).redeemLink(code);
     expect(redeemed?.token).toMatch(/^bs_/);
     expect(await new BrowserSessionStore(root).redeemLink(code)).toBeNull();
+    expect(errs).toEqual([]);
+  });
+
+  it("binds the link to the port it prints", async () => {
+    expect(await run("-d", root, "--port", "6002")).toBe(0);
+    const code = codeOf(out);
+    expect(await new BrowserSessionStore(root).redeemLink(code, { port: 4319 })).toBeNull();
+    // The mismatched attempt burned it.
+    expect(await new BrowserSessionStore(root).redeemLink(code, { port: 6002 })).toBeNull();
+    out.length = 0;
+    await run("-d", root, "--port", "6002");
+    expect(
+      await new BrowserSessionStore(root).redeemLink(codeOf(out), { port: 6002 }),
+    ).not.toBeNull();
+  });
+
+  it("without --port warns when nothing answers on the default port", async () => {
+    expect(await runProbe(false, "-d", root)).toBe(0);
+    expect(errs.join("\n")).toMatch(/nothing answers on 127\.0\.0\.1:4319/);
+    expect(out[1]).toContain(":4319/");
+  });
+
+  it("does not warn when the default port answers, or when --port is given", async () => {
+    await runProbe(true, "-d", root);
+    expect(errs).toEqual([]);
+    await runProbe(false, "-d", root, "--port", "6002");
     expect(errs).toEqual([]);
   });
 

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { McpStartError, mcpNeedsClientMessage, runStdio } from "@boof/heart-server";
@@ -73,6 +74,14 @@ export async function mcpCommand(
       }
     }
     if (v.client === undefined) throw new McpStartError(mcpNeedsClientMessage(), 3);
+    // A client lives in the data root, so a missing root has none: refuse before creating it.
+    if (!existsSync(root)) {
+      throw new McpStartError(
+        `unknown client "${v.client}": no boof data root at ${root}; pass -d <data root>`,
+        3,
+        false,
+      );
+    }
     await scaffoldDataRoot(root);
     await runStdio({ root, catalog, client: v.client, project: v.project });
     return 0;

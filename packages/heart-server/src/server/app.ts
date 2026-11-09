@@ -69,6 +69,8 @@ export interface AppDeps {
   peerAddress?: PeerAddressResolver;
   browserSessions?: BrowserSessionVerifier;
   sessionCookieName?: (c: Context) => string;
+  /** Port sign-in links are bound to. Default: the port in the request's Host header. */
+  linkPort?: (c: Context) => number;
   /** True when a URL points at this server itself (webhook targets must not). */
   isSelfUrl?: (url: URL) => boolean;
   /** DNS for the webhook target check; tests inject a fake. */
@@ -238,6 +240,7 @@ export function createApp(deps: AppDeps): Hono {
       peerAddress,
       sessions: browserSessions,
       sessionCookieName,
+      ...(deps.linkPort ? { linkPort: deps.linkPort } : {}),
     }),
   );
 
@@ -424,13 +427,24 @@ export function createApp(deps: AppDeps): Hono {
     return r.principal;
   };
   // Tell a stalled client at most 1 s: a full socket buffer must not hold the slot.
-  const sendUnauthorized = (stream: {
-    writeSSE(m: { event: string; data: string }): Promise<void>;
-  }) =>
+  const sendUnauthorized = (
+    stream: { writeSSE(m: { event: string; data: string }): Promise<void> },
+    principal: Principal,
+  ) =>
     Promise.race([
-      stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {}),
+      stream
+        .writeSSE({
+          event: "unauthorized",
+          data: principal.kind === "local" ? SIGNED_OUT : UNAUTHORIZED,
+        })
+        .catch(() => {}),
       new Promise<void>((r) => setTimeout(r, 1000).unref()),
     ]);
+  // A browser session is the local principal; a key is a client principal.
+  const SIGNED_OUT = JSON.stringify({
+    message:
+      'Signed out: this browser session ended. Run "boof-runner open" for a new sign-in link.',
+  });
   const UNAUTHORIZED = JSON.stringify({
     message: "API key revoked, expired or no longer authorized",
   });
@@ -526,7 +540,7 @@ export function createApp(deps: AppDeps): Hono {
         if (!fresh) {
           if (ended) return false;
           ended = true; // stops the replay before the event goes out
-          await sendUnauthorized(stream);
+          await sendUnauthorized(stream, principal);
           finish();
           return false;
         }
@@ -612,7 +626,7 @@ export function createApp(deps: AppDeps): Hono {
           const fresh = await resolveSame(c, principal);
           if (!fresh) {
             ended = true;
-            await sendUnauthorized(stream);
+            await sendUnauthorized(stream, principal);
             finish();
             return;
           }
@@ -629,7 +643,7 @@ export function createApp(deps: AppDeps): Hono {
           const fresh = await resolveSame(c, principal);
           if (!fresh) {
             ended = true;
-            await sendUnauthorized(stream);
+            await sendUnauthorized(stream, principal);
             finish();
             return;
           }

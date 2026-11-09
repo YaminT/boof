@@ -139,11 +139,26 @@ export function formatIssues(err: ZodError): { path: string; message: string }[]
   return err.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
 }
 
+/** What an HTTP client sees when the data folder is unsafe; the path and fix go to the server log. */
+export const UNSAFE_DATA_FOLDER_MESSAGE =
+  "the server's data folder has unsafe permissions; see the server log";
+
+const loggedUnsafe = new Set<string>();
+
+/** Log an unsafe-folder refusal once per path, on one line (message holds the path and the fix). */
+export function logUnsafeDataFolder(error: { path: string; message: string }): void {
+  if (loggedUnsafe.has(error.path)) return;
+  loggedUnsafe.add(error.path);
+  console.error(`auth store: ${error.message.replace(/[\r\n]+/g, " ")}`);
+}
+
 /** Map any thrown value to an {@link OpError}. Never leaks internals (unknown errors are `internal`). */
 export function toOpError(err: unknown): OpError {
   if (err instanceof OpError) return err;
-  if (err instanceof UnsafeSecretPathError)
-    return new OpError(503, err.message, "auth_store_unavailable" as ErrorCode);
+  if (err instanceof UnsafeSecretPathError) {
+    logUnsafeDataFolder(err);
+    return new OpError(503, UNSAFE_DATA_FOLDER_MESSAGE, "auth_store_unavailable" as ErrorCode);
+  }
   if (err instanceof EpicError) {
     if (err.code === "not_found") return new OpError(404, err.message, "epic_not_found");
     if (err.code === "modified") return new OpError(409, err.message, "epic_modified");

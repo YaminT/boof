@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -344,6 +345,20 @@ describe("mcpCommand", () => {
     expect(res.stdout).toBe("");
     expect(res.stderr).toContain(ADMIN_REMOVED);
   }, 30000);
+
+  it("refuses a missing data root before creating it", async () => {
+    const errs: string[] = [];
+    const missing = join(root, "typo");
+    const code = await mcpCommand(
+      ["-d", missing, "--client", "nobody"],
+      () => root,
+      new ToolRegistry([new MockTool()]),
+      (l) => errs.push(l),
+    );
+    expect(code).toBe(3);
+    expect(errs.at(-1)).toContain("no boof data root");
+    expect(existsSync(missing)).toBe(false);
+  });
 
   it("refuses an unknown client, a bad id, and a missing client when auth is required", async () => {
     const errs: string[] = [];

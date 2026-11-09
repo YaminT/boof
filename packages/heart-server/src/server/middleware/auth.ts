@@ -1,5 +1,6 @@
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
+import { UNSAFE_DATA_FOLDER_MESSAGE, logUnsafeDataFolder } from "../../api/errors.js";
 import type { ClientAddress } from "./client-address.js";
 import {
   UnsafeBrowserSessionPathError,
@@ -25,6 +26,11 @@ declare module "hono" {
     /** Set by the unauthenticated limiter: called when authentication fails; returns a 429 when the address is over its budget. */
     authFailed: (c: Context) => Response | undefined;
   }
+}
+
+/** One line for a log: the message of an error, never its stack. */
+function errorLine(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).replace(/[\r\n]+/g, " ");
 }
 
 /** Resolves the TCP peer address of a request; undefined when there is no socket (tests). */
@@ -72,13 +78,14 @@ class ClientCache {
     const t = this.now();
     const localChange = this.version !== this.store.version;
     if (localChange || t - this.checkedAt >= CACHE_CHECK_MS) {
-      this.checkedAt = t;
       const mtime = await this.store.mtimeMs();
       if (localChange || mtime !== this.mtime) {
         this.clients = await this.store.list();
         this.mtime = mtime;
         this.version = this.store.version;
       }
+      // Only after the check ran: a failing check stays failing instead of serving the cache.
+      this.checkedAt = t;
     }
     return this.clients;
   }
@@ -183,8 +190,10 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
   const now = opts.now ?? Date.now;
   const cache = new ClientCache(opts.store, now);
   const lastTouch = new Map<string, number>();
-  const unavailable = (error: UnsafeSecretPathError, c: Context) =>
-    c.json({ error: { code: "auth_store_unavailable", message: error.message } }, 503);
+  const unavailable = (error: UnsafeSecretPathError, c: Context) => (
+    logUnsafeDataFolder(error),
+    c.json({ error: { code: "auth_store_unavailable", message: UNSAFE_DATA_FOLDER_MESSAGE } }, 503)
+  );
 
   const resolve = async (c: Context): Promise<AuthResult> => {
     const peer = opts.peerAddress(c);
@@ -252,7 +261,10 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
     const t = now();
     if (t - (lastTouch.get(client.id) ?? -Infinity) >= TOUCH_INTERVAL_MS) {
       lastTouch.set(client.id, t);
-      opts.store.touch(client.id).catch((err) => console.error("lastUsedAt update failed", err));
+      opts.store.touch(client.id).catch((err) => {
+        if (err instanceof UnsafeSecretPathError) logUnsafeDataFolder(err);
+        else console.error(`lastUsedAt update failed: ${errorLine(err)}`);
+      });
     }
     // A local reverse proxy makes every peer look like loopback. Any common proxy header counts.
     const proxied = PROXY_HEADERS.some((h) => c.req.header(h) !== undefined);
@@ -287,7 +299,7 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
           {
             error: {
               code: "browser_sessions_unavailable",
-              message: r.message,
+              message: UNSAFE_DATA_FOLDER_MESSAGE,
               details: { reason: r.reason },
             },
           },

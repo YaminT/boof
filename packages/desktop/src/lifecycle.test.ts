@@ -287,6 +287,48 @@ describe("createWindowAuth", () => {
     );
   });
 
+  it("renews the session on a timer while the window stays open, revoking the old one", async () => {
+    const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
+    const schedule = (fn: () => void, ms: number) => {
+      const t = { fn, ms, cancelled: false };
+      timers.push(t);
+      return () => void (t.cancelled = true);
+    };
+    const { auth, deps, order } = setup({ schedule, renewMs: 1234 });
+    await auth.prepare();
+    expect(timers).toHaveLength(1);
+    expect(timers[0]!.ms).toBe(1234);
+    timers[0]!.fn();
+    await vi.waitFor(() => expect(deps.createSession).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(timers).toHaveLength(2));
+    expect(order).toEqual([
+      "create s1",
+      "cookie bs_secret1",
+      "create s2",
+      "cookie bs_secret2",
+      "revoke s1",
+    ]);
+    // Only the live timer is armed; release stops it and revokes the current session.
+    await auth.release();
+    expect(timers[1]!.cancelled).toBe(true);
+    expect(order.at(-1)).toBe("revoke s2");
+  });
+
+  it("no timer with a desktop key, and none after release", async () => {
+    const timers: unknown[] = [];
+    const schedule = () => {
+      timers.push(1);
+      return () => {};
+    };
+    const keyed = setup({ desktopToken: () => "boof_key", schedule });
+    await keyed.auth.prepare();
+    expect(timers).toHaveLength(0);
+    const plain = setup({ schedule });
+    await plain.auth.release();
+    await plain.auth.prepare();
+    expect(timers).toHaveLength(0);
+  });
+
   it("required: no session and the exact warning", async () => {
     const { auth, deps, logs } = setup({ loadAuthMode: async () => "required" });
     await auth.prepare();
