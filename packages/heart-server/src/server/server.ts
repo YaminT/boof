@@ -185,9 +185,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
         )
       : serve(base, listening);
     s.once("error", reject);
-  }).catch((err: unknown) => {
-    // No server will ever stop, so nothing else will clear the prune timer.
+  }).catch(async (err: unknown) => {
     clearInterval(pruneTimer);
+    await watcher.stop().catch(() => {});
     throw err;
   });
 

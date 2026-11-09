@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -53,17 +54,25 @@ describe("startServer's external-step prune timer", () => {
   });
 
   it("clears the prune interval when the server fails to listen", async () => {
-    const holder = await start(0);
+    const holder = createNetServer();
+    await new Promise<void>((resolve) => holder.listen(0, "127.0.0.1", resolve));
+    const address = holder.address();
+    if (!address || typeof address === "string") throw new Error("expected TCP address");
     try {
       const setSpy = vi.spyOn(globalThis, "setInterval");
       const clearSpy = vi.spyOn(globalThis, "clearInterval");
       const from = setSpy.mock.calls.length;
-      await expect(start(holder.port)).rejects.toThrow();
+      await expect(start(address.port)).rejects.toThrow();
       const timers = pruneTimersSince(setSpy, from);
       expect(timers).toHaveLength(1);
       expect(clearSpy).toHaveBeenCalledWith(timers[0]);
+
+      const retry = await start(0);
+      await retry.stop();
     } finally {
-      await holder.stop();
+      await new Promise<void>((resolve, reject) =>
+        holder.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 });
