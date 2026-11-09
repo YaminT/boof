@@ -1,6 +1,8 @@
 // fetch-based Server-Sent Events reader. EventSource cannot send headers, so the
 // API key would have to travel in the URL; this keeps it in an Authorization header.
 
+import { unauthorizedReason } from "./token.js";
+
 export interface SseMessage {
   event: string;
   data: string;
@@ -71,7 +73,10 @@ export interface EventStreamOptions {
   /** Called after each (re)connection becomes ready, e.g. to refetch. */
   onOpen?: () => void;
   /** Called on a 401 so the UI can ask for a key; reconnects stop until the next start(). */
-  onUnauthorized?: (sentToken?: string) => "stale" | "held" | "notified" | void;
+  onUnauthorized?: (
+    sentToken?: string,
+    reason?: "signin" | "key",
+  ) => "stale" | "held" | "notified" | void;
   /**
    * Resolves when new credentials are available (or `signal` aborts). When set, a 401 pauses the
    * stream instead of ending it, so live updates resume after the user enters a key.
@@ -114,11 +119,18 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
       try {
         const headers = opts.headers();
         const res = await doFetch(opts.url, {
+          credentials: "same-origin",
           headers: { accept: "text/event-stream", ...headers },
           signal: ctrl.signal,
         });
         if (res.status === 401) {
-          const verdict = opts.onUnauthorized?.(headers.authorization?.replace(/^Bearer\s+/i, ""));
+          // A "browser_session_required" 401 means this browser has no session: pause until the
+          // user signs in (or stores a key), instead of reconnecting into more 401s.
+          const reason = unauthorizedReason(await res.json().catch(() => null));
+          const verdict = opts.onUnauthorized?.(
+            headers.authorization?.replace(/^Bearer\s+/i, ""),
+            reason,
+          );
           // The key it carried is no longer the current one: just reconnect with the current key.
           if (verdict === "stale") {
             attempt = 0;

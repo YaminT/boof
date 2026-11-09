@@ -107,6 +107,7 @@ export function App() {
   if (needsToken) {
     return (
       <TokenGate
+        reason={needsToken}
         onSubmit={() => {
           clearNeedsToken();
           void refresh().catch(() => {});

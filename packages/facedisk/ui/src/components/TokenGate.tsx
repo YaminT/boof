@@ -1,13 +1,19 @@
 import { useState } from "react";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
-import { clearToken, setToken } from "../token.js";
+import { clearToken, setToken, type UnauthorizedReason } from "../token.js";
 
 /**
  * Shown when the API answers 401: the server requires an API key. The key is
  * pasted (created with `boof-runner auth add`) and kept in sessionStorage only.
  */
-export function TokenGate({ onSubmit }: { onSubmit: () => void }) {
+export function TokenGate({
+  onSubmit,
+  reason = "key",
+}: {
+  onSubmit: () => void;
+  reason?: UnauthorizedReason;
+}) {
   const [value, setValue] = useState("");
   return (
     <div className="mx-auto my-[12vh] max-w-[440px] rounded-[10px] border border-line bg-surface p-6 shadow-md">
@@ -20,11 +26,24 @@ export function TokenGate({ onSubmit }: { onSubmit: () => void }) {
           onSubmit();
         }}
       >
-        <h2 className="m-0">API key required</h2>
-        <p className="m-0 text-ink-muted">
-          This Boof Runner server requires authentication. Paste an API key created with{" "}
-          <code>boof-runner auth add</code>. It is kept for this browser tab only.
-        </p>
+        {reason === "signin" ? (
+          <>
+            <h2 className="m-0">Sign in to Boof Runner</h2>
+            <p className="m-0 text-ink-muted">
+              This browser is not signed in. On this machine, run <code>boof-runner open</code> and
+              open the link it prints. If you started <code>boof-runner serve</code>, its sign-in
+              link works too. Or paste an API key below.
+            </p>
+          </>
+        ) : (
+          <>
+            <h2 className="m-0">API key required</h2>
+            <p className="m-0 text-ink-muted">
+              This Boof Runner server requires authentication. Paste an API key created with{" "}
+              <code>boof-runner auth add</code>. It is kept for this browser tab only.
+            </p>
+          </>
+        )}
         <label className="flex flex-col gap-1.5 text-sm font-medium">
           API key
           <Input

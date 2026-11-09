@@ -32,7 +32,7 @@ import type {
 import { parseSse } from "./lib/concierge-stream.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
-import { authHeaders, getToken, notifyUnauthorized } from "./token.js";
+import { authHeaders, getToken, notifyUnauthorized, unauthorizedReason } from "./token.js";
 
 /** An error response of the v1 API, with its machine-readable code and details. */
 export class ApiError extends Error {
@@ -51,7 +51,8 @@ export class ApiError extends Error {
 /** Throw a readable error for a failed response; a 401 also opens the token gate. */
 async function failure(res: Response, data: unknown, sent?: string): Promise<never> {
   // A 401 for a key that was replaced or is being rotated is not worth a message.
-  const verdict = res.status === 401 ? notifyUnauthorized(sent) : undefined;
+  const verdict =
+    res.status === 401 ? notifyUnauthorized(sent, unauthorizedReason(data)) : undefined;
   const quiet = verdict === "stale" || verdict === "held";
   const err = (data as { error?: { message?: string; code?: string; details?: unknown } | string })
     .error;
@@ -68,6 +69,7 @@ async function failure(res: Response, data: unknown, sent?: string): Promise<nev
 async function http<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const sent = getToken();
   const res = await fetch(path, {
+    credentials: "same-origin",
     ...init,
     headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
@@ -269,6 +271,7 @@ export const api = {
     form.append("file", file);
     // No content-type header: the browser sets the multipart boundary.
     const res = await fetch(`${T(pid, id)}/attachments`, {
+      credentials: "same-origin",
       method: "POST",
       body: form,
       headers: authHeaders(),
@@ -358,7 +361,10 @@ export const api = {
 
   /** Fetch an attachment with the auth header and return a blob: URL for <img>/<a>. */
   attachmentBlobUrl: async (pid: string, id: string, name: string): Promise<string> => {
-    const res = await fetch(api.attachmentUrl(pid, id, name), { headers: authHeaders() });
+    const res = await fetch(api.attachmentUrl(pid, id, name), {
+      credentials: "same-origin",
+      headers: authHeaders(),
+    });
     if (!res.ok) return failure(res, await res.json().catch(() => ({})));
     return URL.createObjectURL(await res.blob());
   },
@@ -489,6 +495,7 @@ async function readConciergeStream(
 ): Promise<void> {
   const sent = getToken();
   const res = await fetch(`${P(pid)}/concierge/messages/stream`, {
+    credentials: "same-origin",
     method: "POST",
     body: JSON.stringify(body),
     signal,

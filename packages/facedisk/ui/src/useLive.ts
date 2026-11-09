@@ -50,7 +50,8 @@ export function useLive(handlers: LiveHandlers): void {
       },
       onMessage: (m) => {
         if (m.event === "unauthorized") {
-          notifyUnauthorized(streamKey); // the key stopped working: open the gate, as a 401 does
+          // The key (or, with none stored, the browser session) stopped working: open the gate.
+          notifyUnauthorized(streamKey, streamKey ? "key" : "signin");
           return;
         }
         if (m.event === "ready" || m.event === "ping") return;
@@ -65,7 +66,7 @@ export function useLive(handlers: LiveHandlers): void {
         if (opened) ref.current.onReconnect?.();
         opened = true;
       },
-      onUnauthorized: (sent) => notifyUnauthorized(sent),
+      onUnauthorized: (sent, reason) => notifyUnauthorized(sent, reason),
       waitForCredentials: (signal) =>
         new Promise((resolve) => {
           const done = () => {

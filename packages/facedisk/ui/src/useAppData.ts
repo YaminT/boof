@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@boof/heart/schema";
 import { api, ApiError, type PlanSummary, type TaskView } from "./api.js";
 import type { BudgetStatus } from "./api-types.js";
-import { onUnauthorized } from "./token.js";
+import { onUnauthorized, type UnauthorizedReason } from "./token.js";
 import { useLive } from "./useLive.js";
 import { latestGuard } from "./lib/latest.js";
 import { emptyList, settleList, type ListState } from "./lib/list-load.js";
@@ -24,7 +24,7 @@ export interface AppData {
   /** Bumped on each `plan.*` event for the selected project; plan views reload on it. */
   planTick: number;
   refresh(project?: string): Promise<void>;
-  needsToken: boolean;
+  needsToken: UnauthorizedReason | null;
   clearNeedsToken(): void;
 }
 
@@ -57,7 +57,7 @@ export function useAppData(
   const plansError = planState.pid === selectedId && planState.error;
   const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const [planTick, setPlanTick] = useState(0);
-  const [needsToken, setNeedsToken] = useState(false);
+  const [needsToken, setNeedsToken] = useState<UnauthorizedReason | null>(null);
 
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
@@ -158,8 +158,8 @@ export function useAppData(
     [reloadProjects, refreshSettings, refreshBudget, refreshActions, refreshTasks, refreshPlans],
   );
 
-  useEffect(() => onUnauthorized(() => setNeedsToken(true)), []);
-  const clearNeedsToken = useCallback(() => setNeedsToken(false), []);
+  useEffect(() => onUnauthorized((reason) => setNeedsToken(reason)), []);
+  const clearNeedsToken = useCallback(() => setNeedsToken(null), []);
 
   useEffect(() => {
     void refresh().catch(() => {});

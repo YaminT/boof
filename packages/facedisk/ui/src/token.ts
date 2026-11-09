@@ -28,6 +28,7 @@ export function getToken(): string | undefined {
 }
 
 export function setToken(token: string): void {
+  gateOpen = false; // a new key may be refused again: that 401 reopens the gate
   try {
     store()?.setItem(KEY, token.trim());
   } catch {
@@ -58,10 +59,29 @@ export function authHeaders(): Record<string, string> {
   return t ? { authorization: `Bearer ${t}` } : {};
 }
 
-const listeners = new Set<() => void>();
+/** What the gate asks for: a browser sign-in link, or an API key. */
+export type UnauthorizedReason = "signin" | "key";
 
-/** Subscribe to 401 responses (the app shows the token gate). Returns an unsubscribe function. */
-export function onUnauthorized(fn: () => void): () => void {
+/** "signin" iff the 401 body says this browser has no session (`error.details.reason`). */
+export function unauthorizedReason(body: unknown): UnauthorizedReason {
+  const err = (body as { error?: unknown } | null | undefined)?.error;
+  const details =
+    typeof err === "object" && err !== null ? (err as { details?: unknown }).details : undefined;
+  const reason =
+    typeof details === "object" && details !== null
+      ? (details as { reason?: unknown }).reason
+      : undefined;
+  return reason === "browser_session_required" ? "signin" : "key";
+}
+
+const listeners = new Set<(reason: UnauthorizedReason) => void>();
+// The gate is open until a key is stored: a burst of 401s (fetches, the event stream's
+// reconnects) opens it once, for either reason.
+let gateOpen = false;
+let lastReason: UnauthorizedReason = "key";
+
+/** Subscribe to 401 responses (the app shows the gate). Returns an unsubscribe function. */
+export function onUnauthorized(fn: (reason: UnauthorizedReason) => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
@@ -69,7 +89,9 @@ export function onUnauthorized(fn: () => void): () => void {
 const gate = createUnauthorizedGate(
   () => getToken(),
   () => {
-    for (const fn of [...listeners]) fn();
+    if (gateOpen) return;
+    gateOpen = true;
+    for (const fn of [...listeners]) fn(lastReason);
   },
 );
 
@@ -78,7 +100,11 @@ const gate = createUnauthorizedGate(
  * left out). A stale key's 401 is ignored, and the verdict tells the caller so it can retry with
  * the current key.
  */
-export function notifyUnauthorized(sent?: string): UnauthorizedVerdict {
+export function notifyUnauthorized(
+  sent?: string,
+  reason: UnauthorizedReason = "key",
+): UnauthorizedVerdict {
+  lastReason = reason;
   return gate.unauthorized(sent);
 }
 
