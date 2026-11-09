@@ -8,6 +8,12 @@
 - Refuse write-only secrets in inline `--input` JSON on the CLI (use `--input @file` or `--input @-`).
 - Refuse secret-bearing webhook URLs in CLI arguments and inline `--input` JSON; use `--input @file` or `--input @-`.
 
+### Fixed
+
+- An assistant conversation id the caller owns, once it has been idle for `idleMinutes`, starts a fresh conversation. An id owned by someone else is still `404 not_found`.
+- A failure while recording assistant spend no longer drops the conversation update, the audit line, or the turn. The failure is logged and written as `concierge:spend`.
+- Applying a pending change copies the stored stale-guard stamp into `expectedUpdated` or `expectedVersion` when the operation accepts it, so the operation refuses a concurrent edit.
+
 ### Runner and agent workflow
 
 - Add the opt-in `claude-agent` tool on the Claude Agent SDK: in-place steering of a `now` injection (with an optional model switch, and a kill-and-resume fallback), session resume and an SDK-reported cost estimate. It runs in bare mode with a per-project config folder and only the repo's permission rules. It runs through better-ccflare only when every pool account uses an API key, and otherwise with the project's own Anthropic API key; a task that cannot be authenticated does not start. It is not in the desktop app. Claude Code stays the default.

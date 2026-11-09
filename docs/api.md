@@ -444,9 +444,14 @@ project descriptions. The same five operations are REST and CLI. They are not MC
 
 Each needs `tasks:read` and is project-scoped. `ask` takes `{ text }` (1–4000 characters after
 trim), and optionally `context` (`screen`, and `taskId`, `planId`, `goalId`) and `conversationId`.
+A `conversationId` the caller owns that has been idle for `idleMinutes` starts a new conversation.
+An id owned by someone else, or an unknown id, is `404 not_found`.
 The audit line stores a fingerprint of the text, not the text. `apply` returns `{ change, result }`
 and runs the stored operation **as the caller** (the caller's scopes, trust and projects), after
-the stale-guard check. A second apply, another caller, or a change that is no longer pending is
+the stale-guard check. When the operation accepts it, that call also sets `expectedUpdated`
+(a task or epic stamp) or `expectedVersion` (a plan version) from the stored stamp, so the
+operation itself refuses a target that moves between the check and the write.
+A second apply, another caller, or a change that is no longer pending is
 `404 change_not_found`. A changed target is `409 change_stale`. `discard` runs nothing.
 
 `POST /api/v1/projects/{projectId}/concierge/messages/stream` (and the unversioned path, because

@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as heart from "@boof/heart";
 import {
   AuthStore,
   LOCAL_PRINCIPAL,
@@ -222,6 +223,82 @@ describe("ConciergeService", () => {
     expect(await taskIds()).toHaveLength(7);
   });
 
+  it("refuses a plan edit that lands after the stale check", async () => {
+    const project = await services.requireProject("demo");
+    const kept = {
+      id: "keep",
+      title: "Keep",
+      spec: {
+        goal: "Keep the goal",
+        stack: "TypeScript",
+        rules: { do: ["Stay"], dont: [] as string[] },
+        tests: { strategy: "TDD", technology: "vitest", run: "npm test" },
+      },
+    };
+    const plan = await project.plans.createPlan(
+      { id: "guarded", title: "Guarded", status: "draft", goals: [kept] },
+      LOCAL_PRINCIPAL,
+    );
+    agent = scriptedAgent([
+      {
+        call: "boof_replace_goals",
+        args: {
+          planId: plan.id,
+          goals: [
+            {
+              id: "other",
+              title: "Other",
+              spec: {
+                goal: "Replace the goal",
+                stack: "TypeScript",
+                rules: { do: ["Change"] },
+                tests: { strategy: "TDD", technology: "vitest", run: "npm test" },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    const answer = await ask("replace the goals");
+    const changeId = answer.pending[0]?.id;
+    expect(changeId).toBeTruthy();
+
+    const original = ConciergeStore.prototype.update;
+    let bumped = false;
+    ConciergeStore.prototype.update = async function (this: ConciergeStore, ...args) {
+      const updated = await original.apply(this, args);
+      if (!bumped) {
+        bumped = true;
+        const current = await project.plans.get(plan.id);
+        await project.plans.updatePlan(
+          plan.id,
+          { title: "Moved under apply" },
+          current.version,
+          LOCAL_PRINCIPAL,
+        );
+      }
+      return updated;
+    };
+    try {
+      await expectCode(
+        concierge.apply(LOCAL_PRINCIPAL, "demo", changeId!),
+        "plan_version_conflict",
+      );
+    } finally {
+      ConciergeStore.prototype.update = original;
+    }
+
+    const after = await project.plans.get(plan.id);
+    expect(after.title).toBe("Moved under apply");
+    expect(after.goals.map((goal) => goal.id)).toEqual(["keep"]);
+    const stored = await new ConciergeStore(root).get("demo", answer.conversationId);
+    expect(stored?.changes.find((change) => change.id === changeId)?.status).toBe("failed");
+    expect(stored?.changes.find((change) => change.id === changeId)?.error).toBe(
+      "plan_version_conflict",
+    );
+  });
+
   it("rejects stale proposals and applies with the user's rights", async () => {
     const project = await services.requireProject("demo");
     const task = await project.create({ title: "Original", prompt: "p" });
@@ -252,6 +329,64 @@ describe("ConciergeService", () => {
     await expectCode(ask(), "budget_exceeded");
     expect(agent.inputs).toHaveLength(0);
     expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("an owned idle conversation id starts fresh instead of not_found", async () => {
+    let now = Date.parse("2026-11-09T12:00:00.000Z");
+    agent = scriptedAgent([{ text: "first" }], { sessionId: "session-old" });
+    concierge = new ConciergeService({ root, services, authStore, agent, now: () => now });
+    const first = await ask("first");
+    now += 30 * 60_000;
+    const other = { ...LOCAL_PRINCIPAL, id: "other" };
+    await expectCode(
+      concierge.ask(other, "demo", { text: "steal", conversationId: first.conversationId }),
+      "not_found",
+    );
+    agent = scriptedAgent([{ text: "fresh" }], { sessionId: "session-new" });
+    concierge = new ConciergeService({ root, services, authStore, agent, now: () => now });
+    const second = await concierge.ask(LOCAL_PRINCIPAL, "demo", {
+      text: "again",
+      conversationId: first.conversationId,
+    });
+    expect(second.conversationId).not.toBe(first.conversationId);
+    expect(second.text).toBe("fresh");
+    expect(agent.inputs[0]?.resumeSessionId).toBeUndefined();
+    const store = new ConciergeStore(root, () => now);
+    expect((await store.get("demo", first.conversationId))?.messages).toBe(1);
+    expect((await store.get("demo", second.conversationId))?.sessionId).toBe("session-new");
+  });
+
+  it("a failing spend ledger still saves the conversation and returns the turn", async () => {
+    const spend = vi
+      .spyOn(heart, "recordSpend")
+      .mockRejectedValue(new Error("ledger lock timeout"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      agent = scriptedAgent([{ text: "kept" }], {
+        usage: { inputTokens: 4, outputTokens: 2, costUsd: 0.01, known: true },
+        cumulative: { inputTokens: 4, outputTokens: 2, costUsd: 0.01, known: true },
+        sessionId: "session-kept",
+      });
+      concierge = new ConciergeService({ root, services, authStore, agent });
+      const answer = await ask("hello");
+      expect(answer.text).toBe("kept");
+      expect(spend).toHaveBeenCalled();
+      const stored = await new ConciergeStore(root).get("demo", answer.conversationId);
+      expect(stored?.sessionId).toBe("session-kept");
+      expect(stored?.messages).toBe(1);
+      expect(stored?.spentUsd).toBeCloseTo(0.01);
+      const auditFiles = await readdir(join(root, "audit"));
+      const audit = (
+        await Promise.all(auditFiles.map((file) => readFile(join(root, "audit", file), "utf8")))
+      ).join("\n");
+      expect(audit).toContain('"action":"concierge:ask"');
+      expect(audit).toContain('"action":"concierge:spend"');
+      expect(audit).toContain("spend_failed");
+      expect(logged.mock.calls.some((call) => String(call[0]).includes("daily ledger"))).toBe(true);
+    } finally {
+      spend.mockRestore();
+      logged.mockRestore();
+    }
   });
 
   it("resumes the stored session and baseline", async () => {

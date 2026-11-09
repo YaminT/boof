@@ -274,11 +274,12 @@ export class ConciergeService {
           "budget_exceeded",
           { scopes: blocked.map((s) => s.scope), resetsAt: budget.resetsAt },
         );
-      const conversation = input.conversationId
-        ? await this.getOwned(projectId, input.conversationId, user.id)
-        : await this.store.current(projectId, user.id, cfg.idleMinutes * 60_000);
-      if (Date.parse(conversation.updatedAt) + cfg.idleMinutes * 60_000 <= this.now())
-        throw new OpError(404, "Conversation not found", "not_found");
+      const conversation = await this.conversationFor(
+        projectId,
+        user.id,
+        input.conversationId,
+        cfg.idleMinutes * 60_000,
+      );
       if (conversation.spentUsd >= cfg.perConversationUsd)
         throw new OpError(
           409,
@@ -535,15 +536,30 @@ export class ConciergeService {
           throw err;
         }
       } finally {
-        if (usage !== null)
-          await recordSpend({
-            dataRoot: this.opts.root,
-            projectId,
-            tool: CONCIERGE_TOOL_ID,
-            usage: { costUsd: usage.costUsd, known: usage.known },
-            timezone: budgetTimeZone(settings),
-            now: new Date(this.now()),
-          });
+        if (usage !== null) {
+          try {
+            await recordSpend({
+              dataRoot: this.opts.root,
+              projectId,
+              tool: CONCIERGE_TOOL_ID,
+              usage: { costUsd: usage.costUsd, known: usage.known },
+              timezone: budgetTimeZone(settings),
+              now: new Date(this.now()),
+            });
+          } catch (err) {
+            console.error("could not record the assistant spend in the daily ledger:", err);
+            await auditOperation(this.opts.root, {
+              principal: user,
+              action: "concierge:spend",
+              via: "concierge",
+              project: projectId,
+              ok: false,
+              code: "spend_failed",
+              ms: Math.max(0, this.now() - startedAt),
+              at: startedAt,
+            });
+          }
+        }
         await this.store.update(projectId, conversation.id, (c) => {
           c.sessionId = sessionId;
           if (cumulative !== null && !failure) c.baseline = cumulative;
@@ -665,7 +681,7 @@ export class ConciergeService {
           authStore: this.opts.authStore,
           now: () => new Date(this.now()).toISOString(),
         },
-        change.input,
+        inputWithStaleGuard(op.input, change.input, change.guard),
       );
       const applied = await this.store.update(projectId, conversation.id, (c) => {
         const item = c.changes.find((x) => x.id === changeId);
@@ -736,14 +752,23 @@ export class ConciergeService {
     this.rate.set(userId, recent);
   }
 
-  private async getOwned(
+  /**
+   * The given conversation when this owner still has it and it is inside `idleMs`.
+   * An owned conversation past that window starts again through `store.current`.
+   * Another owner's id, and an unknown id, stay `not_found`.
+   */
+  private async conversationFor(
     projectId: string,
-    id: string,
     owner: string,
+    conversationId: string | undefined,
+    idleMs: number,
   ): Promise<ConciergeConversation> {
-    const conv = await this.store.get(projectId, id);
+    if (!conversationId) return this.store.current(projectId, owner, idleMs);
+    const conv = await this.store.get(projectId, conversationId);
     if (!conv || conv.owner !== owner)
       throw new OpError(404, "Conversation not found", "not_found");
+    if (Date.parse(conv.updatedAt) + idleMs <= this.now())
+      return this.store.current(projectId, owner, idleMs);
     return conv;
   }
 
@@ -796,6 +821,26 @@ export class ConciergeService {
       return null;
     }
   }
+}
+
+/**
+ * Copy the proposal's stale-guard stamp into the op input when the op can enforce it.
+ * The check before the claim stays; this makes the op refuse a write that lands after it.
+ * Ops without the field keep the earlier check only, so a strict schema is never given an extra key.
+ */
+function inputWithStaleGuard(
+  schema: z.ZodType,
+  input: Record<string, unknown>,
+  guard: PendingChange["guard"],
+): Record<string, unknown> {
+  if (!guard || !(schema instanceof z.ZodObject)) return input;
+  const shape = schema.shape as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(shape, "expectedUpdated"))
+    return { ...input, expectedUpdated: guard.stamp };
+  if (!Object.prototype.hasOwnProperty.call(shape, "expectedVersion")) return input;
+  const version = Number(guard.stamp);
+  if (!Number.isInteger(version) || version < 1) return input;
+  return { ...input, expectedVersion: version };
 }
 
 function toView(change: PendingChange): PendingChangeView {
