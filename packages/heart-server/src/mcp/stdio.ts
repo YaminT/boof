@@ -3,6 +3,7 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import {
   LocalPrincipalError,
   localPrincipal,
+  MCP_REVIEW_SCOPES,
   principalFromClient,
   TaskService,
 } from "../api/index.js";
@@ -13,6 +14,17 @@ import {
   type Principal,
   type ToolCatalog,
 } from "@boof/heart";
+
+/** What `boof-runner mcp` prints when it is started without `--client`. */
+export function mcpNeedsClientMessage(): string {
+  return [
+    "boof-runner mcp needs --client <id>. Keyless MCP was removed (agent containment).",
+    "Create a review-trust client once, then use it:",
+    `  boof-runner auth add --name mcp-host --scopes ${MCP_REVIEW_SCOPES.join(",")} --trust review`,
+    "  boof-runner mcp --client <the printed id> [--project <id>]",
+    "For the administration tools, create a trusted client with the admin scope instead.",
+  ].join("\n");
+}
 import { createBoofMcpServer, type ToolCallInfo } from "./server.js";
 
 /**
@@ -44,35 +56,41 @@ export function stdioAudit(root: string) {
   };
 }
 
-export class McpStartError extends Error {}
+export class McpStartError extends Error {
+  /** 3: start MCP differently (no client, or the removed `--admin`). 1: any other start failure. */
+  readonly exitCode: 1 | 3;
+  constructor(message: string, exitCode: 1 | 3 = 1) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
 
 export { principalFromClient };
 
 export interface StdioOptions {
   root: string;
-  /** API client id; its scopes, projects and trust apply. No key is needed (the OS user owns the data root). */
-  client?: string;
+  /**
+   * API client id. Required. Its scopes, projects and trust apply. No key is needed (the OS user
+   * owns the data root).
+   */
+  client: string;
   /** The tools, built by the composition root (bin); MCP never constructs a registry. */
   catalog: ToolCatalog;
   /** Serve one project only and hide the `projectId` argument. */
   project?: string;
-  /**
-   * Without `client`: also list the administration tools (API clients, webhooks, settings writes,
-   * commands, project deletion). Default false. With `client` the client's scopes decide.
-   */
-  admin?: boolean;
 }
 
 /**
- * Check the options and return the principal for a stdio server. Without `--client` it is the
- * review-trust `local-mcp` principal (the local administrator with `--admin`), and only when
- * `security.auth.mode` is `local-trust`.
+ * Check the options and return the principal for a stdio server. `--client` is required: there is
+ * no keyless identity. The client's scopes, projects and trust apply, in `local-trust` and in
+ * `required` mode.
  */
 export async function stdioPrincipal(
   services: TaskService,
   authStore: AuthStore,
   opts: StdioOptions,
 ): Promise<() => Promise<Principal>> {
+  if (!opts.client) throw new McpStartError(mcpNeedsClientMessage(), 3);
   const settings = await services.loadSettings();
   if (!mcpSettings(settings).enabled) {
     throw new McpStartError("MCP is disabled (settings.mcp.enabled is false)");
@@ -81,12 +99,10 @@ export async function stdioPrincipal(
   const asStartError = (err: unknown): never => {
     throw err instanceof LocalPrincipalError ? new McpStartError(err.message) : err;
   };
-  // Without a client and without --admin the host acts like a review-trust client.
   const resolve = await localPrincipal({
     settings,
     authStore,
     client: opts.client,
-    withoutClient: opts.admin ? "admin" : "review",
   }).catch(asStartError);
   return () => resolve().catch(asStartError);
 }
@@ -152,8 +168,6 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
     services,
     authStore,
     project: opts.project,
-    // The keyless stdio server is `local-mcp` unless `--admin`: its default hides the administration tools.
-    ...(opts.client === undefined ? { adminTools: opts.admin === true } : {}),
   });
   const transport = new StdioServerTransport();
   const closed = new Promise<void>((resolve) => {
@@ -162,7 +176,7 @@ export async function runStdio(opts: StdioOptions): Promise<void> {
   await server.connect(transport);
   const drain = closeWhenDrained(transport, () => void server.close());
   console.error(
-    `boof-runner mcp: serving ${opts.root}${opts.client ? ` as ${opts.client}` : ""}${opts.project ? ` (project ${opts.project})` : ""}`,
+    `boof-runner mcp: serving ${opts.root} as ${opts.client}${opts.project ? ` (project ${opts.project})` : ""}`,
   );
   process.stdin.on("end", drain.stdinEnded);
   await closed;

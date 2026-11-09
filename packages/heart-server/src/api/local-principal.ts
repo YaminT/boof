@@ -6,26 +6,29 @@ import {
   type AuthStore,
   type Client,
   type Principal,
+  type Scope,
   type Settings,
 } from "@boof/heart";
 
 export { LOCAL_MCP_ID };
 
+/** The scopes the removed keyless local-mcp principal had: every scope except admin, auth:admin, settings:write. */
+export const MCP_REVIEW_SCOPES: readonly Scope[] = SCOPES.filter(
+  (s) => s !== "admin" && s !== "auth:admin" && s !== "settings:write",
+);
+
 /**
- * The principal of a keyless stdio MCP server without `--admin`: a fixed review-trust client with
- * every scope except the administrator's (`admin`, `auth:admin`, `settings:write`). The rules for
- * review-trust clients then apply to whatever the host's model asks for: its tasks and plans are
- * drafts a human approves, it cannot queue, retry, answer, activate a plan or switch the runner,
- * it changes only its own work and only the name, labels and paused state of a project, and it
- * creates no project.
+ * The principal of keyless HTTP `/mcp` under local-trust: a fixed review-trust client with
+ * {@link MCP_REVIEW_SCOPES}. Stdio MCP does not use it; `boof-runner mcp` requires `--client`.
+ * The rules for review-trust clients then apply: its tasks and plans are drafts a human approves,
+ * it cannot queue, retry, answer, activate a plan or switch the runner, it changes only its own
+ * work and only the name, labels and paused state of a project, and it creates no project.
  */
 export const LOCAL_MCP_PRINCIPAL: Principal = {
   kind: "client",
   id: LOCAL_MCP_ID,
   name: LOCAL_MCP_ID,
-  scopes: new Set(
-    SCOPES.filter((s) => s !== "admin" && s !== "auth:admin" && s !== "settings:write"),
-  ),
+  scopes: new Set(MCP_REVIEW_SCOPES),
   projects: "*",
   trust: "review",
   clientKind: "mcp",
@@ -34,7 +37,7 @@ export const LOCAL_MCP_PRINCIPAL: Principal = {
 /** Why a keyless MCP server refuses to start when clients.json holds the reserved id. */
 export const RESERVED_ID_MESSAGE =
   `clients.json holds a client with the reserved id ${LOCAL_MCP_ID} (made before the id was reserved): ` +
-  "remove its entry from auth/clients.json, or start with --admin or --client <id>";
+  "remove its entry from auth/clients.json, or use --client <id>";
 
 /** A local surface cannot act: an unknown, revoked or expired client, or `required` mode without one. */
 export class LocalPrincipalError extends Error {}
@@ -52,12 +55,13 @@ export function principalFromClient(client: Client): Principal {
 }
 
 /**
- * The principal a local surface (stdio MCP, the generated CLI) acts as. With `client`, that
- * client: checked now and again on every call, so a revocation applies at once, with no key (the
- * OS user owns the data root). Without it, LOCAL_PRINCIPAL, but only when `security.auth.mode` is
- * "local-trust": there it is the local administrator (the CLI, which the human runs directly), or,
- * with `withoutClient: "review"` (the keyless MCP server without `--admin`), LOCAL_MCP_PRINCIPAL.
- * It does not look at `settings.mcp`: that switch belongs to the MCP surface.
+ * The principal a local surface (the generated CLI) acts as. With `client`, that client: checked
+ * now and again on every call, so a revocation applies at once, with no key (the OS user owns the
+ * data root). Without it, LOCAL_PRINCIPAL, but only when `security.auth.mode` is "local-trust":
+ * there it is the local administrator (the CLI, which the human runs directly). `withoutClient:
+ * "review"` still resolves LOCAL_MCP_PRINCIPAL for the keyless HTTP `/mcp` path. Stdio MCP does
+ * not call that path; it requires a client. It does not look at `settings.mcp`: that switch
+ * belongs to the MCP surface.
  */
 export async function localPrincipal(opts: {
   settings: Settings;

@@ -5,8 +5,24 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MockTool, ToolRegistry } from "@boof/runner";
-import { AuthStore } from "@boof/heart";
+import { AuthStore, SCOPES, type Scope } from "@boof/heart";
 import { mcpCommand, MCP_HELP } from "./mcp-cli.js";
+
+/** The scopes a review-trust MCP host is told to request: every scope except the administrator's. */
+const REVIEW_SCOPES = SCOPES.filter(
+  (s) => s !== "admin" && s !== "auth:admin" && s !== "settings:write",
+);
+
+const CLIENT_REQUIRED = [
+  "boof-runner mcp needs --client <id>. Keyless MCP was removed (agent containment).",
+  "Create a review-trust client once, then use it:",
+  `  boof-runner auth add --name mcp-host --scopes ${REVIEW_SCOPES.join(",")} --trust review`,
+  "  boof-runner mcp --client <the printed id> [--project <id>]",
+  "For the administration tools, create a trusted client with the admin scope instead.",
+].join("\n");
+
+const ADMIN_REMOVED =
+  'boof-runner mcp: --admin was removed. Create a trusted client with the admin scope ("boof-runner auth add --name mcp-admin --scopes admin --trust trusted") and pass --client <id>.';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // This integration test spawns bin; test files are outside the production boundary check.
@@ -33,10 +49,32 @@ const INIT = {
   },
 };
 
+/** A child never inherits this process's environment (no gateway, no boof credential). */
+function childEnv(): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH ?? "",
+    HOME: root,
+    TMPDIR: process.env.TMPDIR ?? tmpdir(),
+    LANG: "C.UTF-8",
+  };
+}
+
+async function makeClient(opts: {
+  name: string;
+  scopes: Scope[];
+  trust: "trusted" | "review";
+}): Promise<string> {
+  const { client } = await new AuthStore(root).create(opts);
+  return client.id;
+}
+
 /** Spawn `boof-runner mcp`, send `lines`, close stdin and collect everything. */
 function runMcp(args: string[], lines: unknown[]) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(tsx, [entry, "mcp", "-d", root, ...args], { stdio: "pipe" });
+    const child = spawn(tsx, [entry, "mcp", "-d", root, ...args], {
+      stdio: "pipe",
+      env: childEnv(),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
@@ -51,8 +89,9 @@ function runMcp(args: string[], lines: unknown[]) {
 
 describe("boof-runner mcp over stdio", () => {
   it("answers initialize and tools/list; stdout carries only JSON-RPC", async () => {
+    const id = await makeClient({ name: "host", scopes: ["admin"], trust: "trusted" });
     const res = await runMcp(
-      [],
+      ["--client", id],
       [
         INIT,
         { jsonrpc: "2.0", method: "notifications/initialized" },
@@ -89,21 +128,59 @@ describe("boof-runner mcp over stdio", () => {
       .result.tools.map((t: { name: string }) => t.name) as string[];
   };
 
-  it("without --client the administration tools need --admin", async () => {
-    const adminOnly = [
-      "boof_create_client",
-      "boof_list_clients",
-      "boof_create_webhook",
-      "boof_update_settings",
-      "boof_create_command",
-      "boof_delete_project",
-    ];
-    const plain = await toolNames([]);
-    for (const n of adminOnly) expect(plain, n).not.toContain(n);
-    expect(plain).toContain("boof_create_plan");
-    expect(plain).toContain("boof_set_runner");
-    const admin = await toolNames(["--admin"]);
-    for (const n of adminOnly) expect(admin, n).toContain(n);
+  it("mcp --client <id> serves; --project still pins and hides the client/webhook tools", async () => {
+    const id = await makeClient({ name: "boss", scopes: ["admin"], trust: "trusted" });
+    const unpinned = await toolNames(["--client", id]);
+    expect(unpinned).toContain("boof_create_client");
+    expect(unpinned).toContain("boof_create_webhook");
+
+    const { ProjectStore, execCommand } = await import("@boof/heart");
+    const base = await mkdtemp(join(tmpdir(), "boof-mcp-pin-"));
+    const repoDir = join(base, "repo");
+    await mkdir(repoDir, { recursive: true });
+    await execCommand("git", ["init", "-q"], { cwd: repoDir });
+    await new ProjectStore(root).create({ workingDirectory: repoDir, id: "shop" });
+    try {
+      const res = await runMcp(
+        ["--client", id, "--project", "shop"],
+        [
+          INIT,
+          { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+          {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "boof_list_projects", arguments: {} },
+          },
+        ],
+      );
+      expect(res.code).toBe(0);
+      const msgs = res.stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+      const tools = msgs[1].result.tools as {
+        name: string;
+        inputSchema: { properties?: object };
+      }[];
+      const names = tools.map((t) => t.name);
+      for (const n of [
+        "boof_create_client",
+        "boof_list_clients",
+        "boof_create_webhook",
+        "boof_list_webhooks",
+      ]) {
+        expect(names, n).not.toContain(n);
+      }
+      expect(names).toContain("boof_list_tasks");
+      const tasks = tools.find((t) => t.name === "boof_list_tasks");
+      expect(tasks?.inputSchema.properties).not.toHaveProperty("projectId");
+      expect(msgs[2].result.structuredContent.projects.map((p: { id: string }) => p.id)).toEqual([
+        "shop",
+      ]);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   }, 60000);
 
   /** One tools/call per line, after initialize; returns the results by id. */
@@ -134,8 +211,14 @@ describe("boof-runner mcp over stdio", () => {
     });
   };
 
-  it("without --admin the host acts as a review-trust client: the unattended-agent chain fails at every step", async () => {
+  it("a review-trust client cannot run the unattended-agent chain; a trusted admin client can", async () => {
     const { ProjectStore, execCommand } = await import("@boof/heart");
+    const reviewId = await makeClient({
+      name: "mcp-host",
+      scopes: [...REVIEW_SCOPES],
+      trust: "review",
+    });
+    const adminId = await makeClient({ name: "mcp-admin", scopes: ["admin"], trust: "trusted" });
     const base = await mkdtemp(join(tmpdir(), "boof-mcp-repos-"));
     const repoDir = join(base, "repo");
     const elsewhere = join(base, "elsewhere");
@@ -154,7 +237,7 @@ describe("boof-runner mcp over stdio", () => {
       ["boof_set_runner", { enabled: true }],
       ["boof_list_projects", {}],
     ];
-    const plain = await callTools([], chain);
+    const plain = await callTools(["--client", reviewId], chain);
     const text = (r: (typeof plain)[number]) => r?.content?.[0]?.text ?? r?.message ?? "";
     expect(text(plain[0]!)).toMatch(/^forbidden_trust:/);
     // A drafted task still works, as a draft awaiting a human.
@@ -163,11 +246,19 @@ describe("boof-runner mcp over stdio", () => {
     expect(text(plain[2]!)).toMatch(/^forbidden_trust:/);
     expect(text(plain[3]!)).toMatch(/^forbidden_trust:/);
     expect(plain[4]!.structuredContent?.projects).toHaveLength(1);
-    const queue = await callTools([], [["boof_queue_task", { projectId: "shop", taskId: "do" }]]);
+    const queue = await callTools(
+      ["--client", reviewId],
+      [["boof_queue_task", { projectId: "shop", taskId: "do" }]],
+    );
     expect(text(queue[0]!)).toMatch(/^forbidden_trust:/);
-    // With --admin the same chain works.
+    // A trusted client with the admin scope can do the same chain once the directory is allowed.
+    // (The removed --admin flag was the local principal, which is not bound by allowedProjectRoots.)
+    const { SettingsStore, defaultSettings } = await import("@boof/heart");
+    const settings = defaultSettings();
+    settings.security = { ...settings.security, allowedProjectRoots: [base] };
+    await new SettingsStore(root).save(settings);
     const admin = await callTools(
-      ["--admin"],
+      ["--client", adminId],
       [
         ["boof_create_project", { workingDirectory: elsewhere }],
         ["boof_create_task", { projectId: "shop", title: "Do 2", prompt: "p", status: "pending" }],
@@ -180,7 +271,7 @@ describe("boof-runner mcp over stdio", () => {
     await rm(base, { recursive: true, force: true });
   }, 90000);
 
-  it("with --client the client's scopes decide, with no --admin needed", async () => {
+  it("with --client the client's scopes decide", async () => {
     await new AuthStore(root).create({ name: "boss", scopes: ["admin"], trust: "trusted" });
     const [client] = await new AuthStore(root).list();
     const names = await toolNames(["--client", client.id]);
@@ -222,7 +313,37 @@ describe("mcpCommand", () => {
       ),
     ).toBe(0);
     expect(out[0]).toBe(MCP_HELP);
+    expect(MCP_HELP).not.toContain("--admin");
+    expect(MCP_HELP).toContain("--client <id>");
   });
+
+  it("mcp without --client exits 3 with the auth add command and MCP_REVIEW_SCOPES", async () => {
+    const res = await runMcp([], []);
+    expect(res.code).toBe(3);
+    expect(res.stdout).toBe("");
+    expect(res.stderr).toContain(CLIENT_REQUIRED);
+    const { MCP_REVIEW_SCOPES } = await import("@boof/heart-server");
+    expect(res.stderr).toContain(
+      `--scopes ${(MCP_REVIEW_SCOPES as readonly string[]).join(",")} --trust review`,
+    );
+  }, 30000);
+
+  it("mcp --admin exits 3 with the trusted-admin hint", async () => {
+    const errs: string[] = [];
+    const code = await mcpCommand(
+      ["-d", root, "--client", "x", "--admin"],
+      () => root,
+      new ToolRegistry([new MockTool()]),
+      (l) => errs.push(l),
+    );
+    expect(code).toBe(3);
+    expect(errs).toEqual([ADMIN_REMOVED]);
+
+    const res = await runMcp(["--admin"], []);
+    expect(res.code).toBe(3);
+    expect(res.stdout).toBe("");
+    expect(res.stderr).toContain(ADMIN_REMOVED);
+  }, 30000);
 
   it("refuses an unknown client, a bad id, and a missing client when auth is required", async () => {
     const errs: string[] = [];
@@ -237,8 +358,6 @@ describe("mcpCommand", () => {
     expect(errs.at(-1)).toContain("unknown client");
     expect(await run(["-d", root, "--project", "Bad Id"])).toBe(1);
     expect(errs.at(-1)).toContain("kebab-case");
-    expect(await run(["-d", root, "--client", "x", "--admin"])).toBe(1);
-    expect(errs.at(-1)).toContain("--admin");
 
     const { SettingsStore, defaultSettings } = await import("@boof/heart");
     const settings = defaultSettings();
@@ -253,7 +372,7 @@ describe("mcpCommand", () => {
       audit: { enabled: true, retentionDays: 90 },
     };
     await new SettingsStore(root).save(settings);
-    expect(await run(["-d", root])).toBe(1);
-    expect(errs.at(-1)).toContain("--client");
+    expect(await run(["-d", root])).toBe(3);
+    expect(errs.at(-1)).toBe(CLIENT_REQUIRED);
   });
 });

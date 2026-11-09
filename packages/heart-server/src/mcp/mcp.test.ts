@@ -6,9 +6,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AuthStore,
+  authorize,
   BOOF_VERSION,
   defaultSettings,
   LOCAL_PRINCIPAL,
+  SCOPES,
   SecuritySettingsSchema,
   SettingsStore,
   type Principal,
@@ -24,6 +26,7 @@ import {
   createConciergeMcpServer,
   handleMcpHttp,
   exposedOps,
+  McpStartError,
   principalFromClient,
   stdioAudit,
   stdioPrincipal,
@@ -726,16 +729,14 @@ describe("prompts", () => {
 });
 
 describe("stdio principal", () => {
-  it("uses the local principal only in local-trust mode", async () => {
-    // Keyless: the review-trust local-mcp principal, or the local administrator with --admin.
-    expect(await (await stdioPrincipal(services, authStore, { root }))()).toMatchObject({
-      kind: "client",
-      id: "local-mcp",
-      trust: "review",
-    });
-    expect((await (await stdioPrincipal(services, authStore, { root, admin: true }))()).kind).toBe(
-      "local",
+  it("refuses to start without --client, in local-trust and when auth is required", async () => {
+    const refused = await stdioPrincipal(services, authStore, { root }).then(
+      () => null,
+      (err: unknown) => err,
     );
+    expect(refused).toBeInstanceOf(McpStartError);
+    expect((refused as Error).message).toMatch(/boof-runner mcp needs --client <id>/);
+    expect((refused as Error).message).toMatch(/Keyless MCP was removed/);
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({
       ...settings,
@@ -749,7 +750,35 @@ describe("stdio principal", () => {
         audit: { enabled: true, retentionDays: 90 },
       },
     });
-    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/--client/);
+    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(
+      /Keyless MCP was removed/,
+    );
+  });
+
+  it("MCP_REVIEW_SCOPES equals SCOPES minus admin, auth:admin, settings:write", async () => {
+    const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+    expect(MCP_REVIEW_SCOPES).toEqual(
+      SCOPES.filter((s) => s !== "admin" && s !== "auth:admin" && s !== "settings:write"),
+    );
+  });
+
+  it("a client created with MCP_REVIEW_SCOPES and review trust lists the same tools the old local-mcp did", async () => {
+    const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+    expect(MCP_REVIEW_SCOPES, "MCP_REVIEW_SCOPES").toBeDefined();
+    const principal = await clientPrincipal([...(MCP_REVIEW_SCOPES as readonly Scope[])], "review");
+    const listed = (await (await connect(principal)).listTools()).tools.map((t) => t.name).sort();
+    // Scope filtering, which is what a stored client gets: administration tools whose scopes were
+    // removed stay hidden; a tool the scopes still allow (projects.delete) stays listed.
+    const byScopes = exposedOps(registry)
+      .filter((op) => op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s)))
+      .map((op) => op.mcp.name!)
+      .sort();
+    expect(listed).toEqual(byScopes);
+    expect(listed).toContain("boof_create_plan");
+    expect(listed).not.toContain("boof_create_client");
+    expect(listed).not.toContain("boof_update_settings");
+    expect(listed).not.toContain("boof_check_health");
+    expect(listed).toContain("boof_delete_project");
   });
 
   it("resolves --client from the registry and follows a revocation", async () => {
@@ -768,9 +797,16 @@ describe("stdio principal", () => {
   });
 
   it("refuses to start when settings.mcp.enabled is false", async () => {
+    const { client } = await authStore.create({
+      name: "x",
+      scopes: ["tasks:read"],
+      trust: "review",
+    });
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({ ...settings, mcp: { enabled: false } });
-    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/disabled/);
+    await expect(stdioPrincipal(services, authStore, { root, client: client.id })).rejects.toThrow(
+      /disabled/,
+    );
   });
 });
 
