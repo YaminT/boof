@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
@@ -48,8 +48,9 @@ function defaultDataRoot(): string {
   return process.env.BOOF_RUNNER_DATA_ROOT ?? resolve(process.cwd(), "data");
 }
 
+/** Always lexically collapsed (`..`), the same string the stores build their paths from. */
 function absPath(p: string): string {
-  return isAbsolute(p) ? p : resolve(process.cwd(), p);
+  return resolve(process.cwd(), p);
 }
 
 /** Pull `--flag value` / `--flag=value` out of an arg list. */
@@ -310,7 +311,9 @@ export async function serve(argv: string[]): Promise<void> {
         const authMode = securitySettings(await new SettingsStore(root).load()).auth.mode;
         const loopback = isLoopbackBind(args.host);
         let link: string | undefined;
-        if (authMode === "local-trust" && loopback) {
+        // Under systemd stdout is the journal: no live link there, just the command to run.
+        const underJournal = Boolean(process.env.JOURNAL_STREAM);
+        if (authMode === "local-trust" && loopback && !underJournal) {
           try {
             const { code } = await new BrowserSessionStore(root).createLink();
             link = `${scheme}://${hostPart}:${server.port}/auth/browser?code=${code}`;
@@ -320,6 +323,8 @@ export async function serve(argv: string[]): Promise<void> {
             );
           }
         }
+        if (authMode === "local-trust" && loopback && underJournal)
+          console.log(`Sign in to the web UI: boof-runner open -d "${root}" --port ${server.port}`);
         for (const line of serveBanner({
           scheme,
           hostPart,

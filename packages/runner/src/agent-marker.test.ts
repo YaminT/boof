@@ -38,4 +38,16 @@ describe("agent marker", () => {
     expect(isAgentOf({ [AGENT_MARKER_ENV]: agentMarkerFor(otherRoot) }, dataRoot)).toBe(false);
     expect(isAgentOf({ [AGENT_MARKER_ENV]: agentMarkerFor(dataRoot) }, dataRoot)).toBe(true);
   });
+
+  it("a symlink/missing/.. spelling and a not-yet-existing root get the canonical marker", async () => {
+    const actual = await root();
+    const alias = join(tmpdir(), `boof-agent-marker-link2-${process.pid}-${Date.now()}`);
+    roots.push(alias);
+    await symlink(actual, alias);
+    expect(agentMarkerFor(`${alias}/missing/..`)).toBe(agentMarkerFor(actual));
+    expect(isAgentOf({ [AGENT_MARKER_ENV]: agentMarkerFor(actual) }, `${alias}/missing/..`)).toBe(
+      true,
+    );
+    expect(agentMarkerFor(join(alias, "later"))).toBe(agentMarkerFor(join(actual, "later")));
+  });
 });

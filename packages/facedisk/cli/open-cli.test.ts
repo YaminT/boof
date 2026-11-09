@@ -68,6 +68,19 @@ describe("boof-runner open", () => {
     expect(out[1]).toMatch(/^ {2}http:\/\/localhost:6002\/auth\/browser\?code=bl_/);
   });
 
+  it("--host ::1 prints a bracketed address", async () => {
+    expect(await run("-d", root, "--port", "6003", "--host", "::1")).toBe(0);
+    expect(out[1]).toMatch(/^ {2}http:\/\/\[::1\]:6003\/auth\/browser\?code=bl_/);
+  });
+
+  it("refuses a data root that does not exist and creates nothing", async () => {
+    const missing = join(root, "nope");
+    expect(await run("-d", missing)).toBe(1);
+    expect(errs.join("\n")).toContain(`open: no boof data root at ${missing}; pass -d <data root>`);
+    expect(out).toEqual([]);
+    expect(await readdir(root)).toEqual([]);
+  });
+
   it("rejects a bad port or a non-loopback host", async () => {
     expect(await run("-d", root, "--port", "abc")).toBe(1);
     expect(await run("-d", root, "--host", "example.com")).toBe(1);
@@ -108,9 +121,7 @@ describe("boof-runner open", () => {
       .split("\n")
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines.map((l) => l.action)).toEqual(["cli:open", "cli:open.revoke-all"]);
-    expect(lines.every((l) => l.principal === "local" || typeof l.principal === "string")).toBe(
-      true,
-    );
+    expect(lines.map((l) => l.principal)).toEqual(["local", "local"]);
     expect(text).not.toContain(code);
     expect(text).not.toContain("bl_");
   });

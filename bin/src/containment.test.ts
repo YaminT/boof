@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,6 +151,59 @@ describe("agent containment", () => {
     expect(result.status).toBe(3);
     expect(result.stderr).toContain(refusal);
     expect(await readdir(dataRoot)).toEqual([]);
+  });
+
+  describe("symlink and `..` spellings of the data root are refused (canonical form)", () => {
+    const name = (r: string) => r.split("/").pop()!;
+    const spellings: [string, (r: string, base: string) => Promise<string>][] = [
+      ["plain", async (r) => r],
+      [
+        "<symlink to parent>/x/../x",
+        async (r, base) => {
+          const a = join(base, "a");
+          await symlink(join(r, ".."), a);
+          return `${a}/${name(r)}/../${name(r)}`;
+        },
+      ],
+      [
+        "<symlink to R>/missing/..",
+        async (r, base) => {
+          const l = join(base, "l");
+          await symlink(r, l);
+          return `${l}/missing/..`;
+        },
+      ],
+      [
+        "<symlink to R>/../<name> style via a linked parent",
+        async (r, base) => {
+          const l = join(base, "up");
+          await symlink(join(r, ".."), l);
+          return `${l}/x/../${name(r)}`;
+        },
+      ],
+    ];
+    const commands: [string, (d: string) => string[]][] = [
+      ["open", (d) => ["open", "-d", d]],
+      ["auth list", (d) => ["auth", "list", "-d", d]],
+    ];
+    for (const [cname, cmd] of commands)
+      for (const [sname, make] of spellings)
+        it(`${cname} with -d ${sname} exits 3 and leaves the root untouched`, async () => {
+          const container = await root();
+          const dataRoot = join(container, "data");
+          await mkdir(dataRoot);
+          const base = await root();
+          const home = await root();
+          const spelled = await make(dataRoot, base);
+          const parent = container;
+          const before = await readdir(parent);
+          const result = runCli(cmd(spelled), dataRoot, home);
+          expect(result.status).toBe(3);
+          expect(result.stderr).toContain(refusal);
+          expect(result.stdout).not.toContain("bl_");
+          expect(await readdir(dataRoot)).toEqual([]);
+          expect(await readdir(parent)).toEqual(before);
+        });
   });
 
   it("a marker for a different root does not block a scratch data root", async () => {

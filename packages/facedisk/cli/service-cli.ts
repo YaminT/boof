@@ -782,7 +782,7 @@ async function install(
     out("");
     out(`Boof Runner is running as ${unitName(name)} at ${baseUrl(host, port)}`);
     out(`Data root: ${data}`);
-    out("Sign in to the web UI: boof-runner open");
+    out(openHint(data, port));
 
     const linger = await env.run("loginctl", ["show-user", env.user, "-p", "Linger"]);
     if (!/^Linger=yes$/m.test(linger.stdout)) {
@@ -857,7 +857,7 @@ async function uninstall(
 async function unitEndpoint(
   env: ServiceEnv,
   name: string,
-): Promise<{ host: string; port: number }> {
+): Promise<{ host: string; port: number; data?: string }> {
   let text = "";
   try {
     text = await readFile(unitPath(env, name), "utf8");
@@ -867,7 +867,13 @@ async function unitEndpoint(
   const exec = text.split("\n").find((l) => l.startsWith("ExecStart=")) ?? "";
   const port = Number(/ -p (\d+)/.exec(exec)?.[1] ?? 4319);
   const host = /--host (\S+)/.exec(exec)?.[1] ?? "127.0.0.1";
-  return { host: host.replace(/^"|"$/g, ""), port };
+  const data = readLegacyUnitOptions(text)?.data;
+  return { host: host.replace(/^"|"$/g, ""), port, ...(data ? { data } : {}) };
+}
+
+/** The exact command that signs a browser in to this service (its data root and port). */
+function openHint(data: string | undefined, port: number): string {
+  return `Sign in to the web UI: boof-runner open -d "${data ?? "<data root>"}" --port ${port}`;
 }
 
 async function status(
@@ -885,11 +891,11 @@ async function status(
     "--lines=10",
   ]);
   out((st.stdout || st.stderr).trimEnd());
-  const { host, port } = await unitEndpoint(env, name);
+  const { host, port, data } = await unitEndpoint(env, name);
   const h = await env.health(baseUrl(host, port));
   out("");
   out(`healthz: ${h.summary}`);
-  out("Sign in to the web UI: boof-runner open");
+  out(openHint(data, port));
   return st.code === 0 && h.ok ? 0 : 1;
 }
 
