@@ -12,6 +12,7 @@ import {
   type Settings,
   type ToolCatalog,
   type ConciergeAgent,
+  reservedIdWarning,
 } from "@boof/heart";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
@@ -118,6 +119,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (!loopback || (await authStore.list().catch(() => [])).length > 0) {
     await warnIfDataRootOpen(opts.root, warn);
   }
+  const reserved = reservedIdWarning(await authStore.list().catch(() => []));
+  if (reserved) warn(reserved);
   await pruneAudit(opts.root, sec.audit.retentionDays).catch(() => []);
   await new IdempotencyStore(opts.root).prune().catch(() => 0);
 

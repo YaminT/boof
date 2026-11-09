@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { LOCAL_MCP_PRINCIPAL, registry, TaskService, type AnyOperation } from "@boof/heart-server";
+import {
+  MCP_REVIEW_SCOPES,
+  principalFromClient,
+  registry,
+  TaskService,
+  type AnyOperation,
+} from "@boof/heart-server";
 import { createBoofMcpServer, exposedOps } from "@boof/heart-server";
 import {
   AuthStore,
@@ -200,14 +206,18 @@ describe("read-only operations answer on both local surfaces", () => {
     }
   });
 
-  describe("the keyless default (local-mcp, no administration tools)", () => {
+  describe("a review-trust MCP client (no administration scopes)", () => {
     it("still reaches every read-only tool it lists", async () => {
+      const { client: made } = await authStore.create({
+        name: "reviewer",
+        scopes: [...MCP_REVIEW_SCOPES],
+        trust: "review",
+      });
       const server = createBoofMcpServer({
         root,
-        principal: LOCAL_MCP_PRINCIPAL,
+        principal: principalFromClient((await authStore.get(made.id))!),
         services,
         authStore,
-        adminTools: false,
       });
       const client = new Client({ name: "parity", version: "1" });
       const [a, b] = InMemoryTransport.createLinkedPair();

@@ -557,40 +557,6 @@ describe("tools generated from the registry", () => {
     await expect(services.getProject("shop")).rejects.toThrow();
   });
 
-  it("a keyless stdio server hides the administration tools unless --admin is given", async () => {
-    const hidden = (
-      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false })).listTools()
-    ).tools.map((t) => t.name);
-    for (const n of [
-      "boof_create_client",
-      "boof_list_clients",
-      "boof_revoke_client",
-      "boof_create_webhook",
-      "boof_list_webhooks",
-      "boof_update_settings",
-      "boof_check_health",
-      "boof_create_command",
-      "boof_update_command",
-      "boof_delete_command",
-      "boof_delete_project",
-    ]) {
-      expect(hidden, n).not.toContain(n);
-    }
-    // Everything else stays: the project, plan and task tools, and the runner switch.
-    for (const n of ["boof_create_task", "boof_set_runner", "boof_list_projects", "boof_whoami"]) {
-      expect(hidden, n).toContain(n);
-    }
-    const shown = (
-      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: true })).listTools()
-    ).tools.map((t) => t.name);
-    expect(shown).toContain("boof_create_client");
-    // A hidden tool is not callable either.
-    const c = await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false });
-    await expect(
-      call(c, "boof_create_client", { name: "z", scopes: ["tasks:read"] }),
-    ).rejects.toThrow(/Unknown tool/);
-  });
-
   it("boof_update_epic lets a review client change only its own epics", async () => {
     await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
     const admin = await connect(LOCAL_PRINCIPAL);
@@ -1112,18 +1078,16 @@ describe("handleMcpHttp", () => {
       expect(JSON.stringify(lines)).not.toMatch(/SECRET/);
     });
 
-    it("a keyless local-mcp call is recorded as local-mcp, a refusal as an error", async () => {
+    it("a review client's call is recorded under its name, a refusal as an error", async () => {
       const auditor = stdioAudit(root);
-      const { LOCAL_MCP_PRINCIPAL } = await import("../api/index.js");
-      const c = await connect(LOCAL_MCP_PRINCIPAL, undefined, {
-        onCall: auditor.onCall,
-        adminTools: false,
-      });
+      const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+      const reviewer = await clientPrincipal([...MCP_REVIEW_SCOPES], "review");
+      const c = await connect(reviewer, undefined, { onCall: auditor.onCall });
       await call(c, "boof_set_runner", { enabled: true });
       await auditor.flush();
       expect(await auditLines()).toMatchObject([
         {
-          principal: "local-mcp",
+          principal: reviewer.name,
           action: "mcp:boof_set_runner",
           via: "stdio-mcp",
           outcome: "error",

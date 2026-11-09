@@ -1554,7 +1554,7 @@ describe("server binding", () => {
     }
   });
 
-  it("startServer no longer warns about the reserved local-mcp id", async () => {
+  it("startServer warns once about a legacy client with the reserved local-mcp id, naming the fix", async () => {
     await store.create({ name: "old", scopes: ["tasks:read"] });
     const { readFile, writeFile } = await import("node:fs/promises");
     const file = join(root, "auth", "clients.json");
@@ -1569,7 +1569,7 @@ describe("server binding", () => {
       warn: (m) => warnings.push(m),
     });
     try {
-      expect(warnings.join("\n")).not.toMatch(/local-mcp/);
+      expect(warnings.filter((w) => w.includes("auth revoke local-mcp"))).toHaveLength(1);
     } finally {
       await running.stop();
     }

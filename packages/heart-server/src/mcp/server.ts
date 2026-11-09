@@ -75,12 +75,6 @@ export interface BoofMcpOptions {
   authStore: AuthStore;
   /** Fix the project: every project-scoped tool gets this `projectId`, and the argument is hidden. */
   project?: string;
-  /**
-   * `false` hides the administration tools (API clients, webhooks, settings writes, commands,
-   * project deletion). The keyless stdio server sets it unless `--admin` is given; an HTTP server
-   * or a stdio server with `--client` leaves it unset and the caller's scopes decide.
-   */
-  adminTools?: boolean;
   /** Called after every tool call (the HTTP transport records it in the audit log). */
   onCall?: (info: ToolCallInfo) => void;
   /** Operations to serve; default is the whole registry (filtered by `mcp.expose`). */
@@ -117,42 +111,21 @@ function narrowToProject(principal: Principal, project: string): Principal {
 /** Scopes that only the server's administrator holds: API clients and webhooks need one of them. */
 export const SERVER_ADMIN_SCOPES: readonly Scope[] = ["admin", "auth:admin"];
 
-/**
- * Operations that change or reveal the server's own configuration, beyond the API-client and
- * webhook operations (which {@link SERVER_ADMIN_SCOPES} select by scope): settings writes, the
- * paid health check, command templates and project deletion. A keyless stdio server hides all of
- * them unless started with `--admin`. Load-bearing: `settings.checkHealth` makes paid calls and
- * `projects.delete` destroys data, so do not "clean up" this list. `settings.refreshModels` and
- * `models.details` are deliberately absent: they cost nothing and stay visible.
- */
-const ADMIN_FLAG_OPS: readonly string[] = [
-  "settings.update",
-  "settings.checkHealth",
-  "commands.create",
-  "commands.update",
-  "commands.delete",
-  "projects.delete",
-];
-
 const isServerAdminOp = (o: AnyOperation): boolean =>
   o.scopes.length > 0 && o.scopes.every((s) => SERVER_ADMIN_SCOPES.includes(s));
 
 /**
  * The operations a server offers as tools: the exposed ones, filtered by the caller's scopes at
  * `tools/list`. `--project` also hides project creation and the API-client and webhook tools (a
- * server pinned to one project is a project tool). `adminTools: false` (a keyless stdio server
- * without `--admin`) hides every administration tool; unset or true leaves them to the scopes.
+ * server pinned to one project is a project tool).
  */
 export function exposedOps(
   ops: readonly AnyOperation[],
-  opts: { project?: string; adminTools?: boolean } = {},
+  opts: { project?: string } = {},
 ): AnyOperation[] {
   return ops.filter((o) => {
     if (!o.mcp.expose) return false;
     if (opts.project !== undefined && (o.name === "projects.create" || isServerAdminOp(o))) {
-      return false;
-    }
-    if (opts.adminTools === false && (isServerAdminOp(o) || ADMIN_FLAG_OPS.includes(o.name))) {
       return false;
     }
     return true;
@@ -241,7 +214,6 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
   // fail closed instead of silently exposing the complete registry.
   const ops = exposedOps(options.ops ?? (options.gate ? [] : registry), {
     project: options.project,
-    adminTools: options.adminTools,
   });
   const allOps = options.ops ?? registry;
   const byTool = new Map(ops.map((o) => [o.mcp.name!, o]));

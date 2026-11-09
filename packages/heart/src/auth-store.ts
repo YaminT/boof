@@ -61,11 +61,23 @@ export interface CreateClientInput {
   randomSuffix?: boolean;
 }
 
-/** The principal of a keyless stdio MCP server without `--admin`. It is not stored: see `localPrincipal`. */
+/** Reserved: the id the removed keyless local-mcp principal had. No client may hold it. */
 export const LOCAL_MCP_ID = "local-mcp";
 
-/** `local` names the local principal and `local-mcp` the keyless MCP one, so no client may hold either id. */
+/** `local` names the local principal and `local-mcp` the removed keyless MCP one, so no client may hold either id. */
 const RESERVED_CLIENT_IDS = ["local", LOCAL_MCP_ID];
+
+/**
+ * The warning for a client that holds the reserved id `local-mcp` from before it was reserved: it
+ * cannot authenticate any more. Undefined when there is none (a revoked one is already refused).
+ */
+export function reservedIdWarning(clients: readonly Client[]): string | undefined {
+  if (!clients.some((c) => c.id === LOCAL_MCP_ID && !c.revokedAt)) return undefined;
+  return (
+    `warning: auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID} (made before the id was reserved). ` +
+    `It is refused. Fix: boof-runner auth revoke ${LOCAL_MCP_ID}`
+  );
+}
 
 /** Tighten an existing `auth/` directory (an older data root may have it looser) to mode 0700. */
 export async function tightenAuthDir(root: string): Promise<void> {
@@ -238,10 +250,10 @@ export class AuthStore {
   verifyAgainst(clients: readonly Client[], key: string): VerifyResult {
     const parsed = parseKey(key);
     if (!parsed) return { ok: false, reason: "malformed" };
-    // Legacy entries using the in-memory concierge principal namespace cannot authenticate.
+    // Legacy entries using the in-memory concierge principal namespace cannot authenticate, nor can a legacy `local-mcp` entry (reserved).
     const client = parsed.clientId.startsWith("concierge-")
       ? undefined
-      : clients.find((c) => c.id === parsed.clientId);
+      : clients.find((c) => c.id === parsed.clientId && c.id !== LOCAL_MCP_ID);
     // Always hash and compare, even for unknown ids, so timing does not reveal existence.
     const presented = Buffer.from(sha256Hex(parsed.secret), "hex");
     const expected = Buffer.from(client?.keyHash ?? "0".repeat(64), "hex");
