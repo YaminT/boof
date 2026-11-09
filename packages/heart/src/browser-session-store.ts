@@ -16,6 +16,8 @@ const MAX_LINKS = 20;
 const MAX_SESSIONS = 50;
 /** How often a successful verify may persist `lastUsedAt`. */
 const TOUCH_MIN_MS = 60_000;
+const CLOCK_SKEW_MS = 60_000;
+const RACY_MTIME_MS = 2_000;
 
 export function browserSessionCookieName(port: number): string {
   return `boof_ui_${port}`;
@@ -65,6 +67,7 @@ const SessionFile = z.object({
 interface SessionCache {
   mtimeMs: number;
   size: number;
+  readAtMs: number;
   sessions: SessionRecord[];
   /** The file was unreadable or corrupt at this mtime and size. Verify fails closed. */
   failed: boolean;
@@ -108,11 +111,18 @@ function at(iso: string): number {
 function sessionExpired(row: SessionRecord, nowMs: number): boolean {
   const absolute = at(row.createdAt) + BROWSER_SESSION_MAX_MS;
   const idle = at(row.lastUsedAt) + BROWSER_SESSION_IDLE_MS;
-  return nowMs >= Math.min(absolute, idle, at(row.expiresAt));
+  return (
+    at(row.createdAt) > nowMs + CLOCK_SKEW_MS ||
+    at(row.lastUsedAt) > nowMs + CLOCK_SKEW_MS ||
+    nowMs >= Math.min(absolute, idle, at(row.expiresAt))
+  );
 }
 
 function pruneLinks(rows: readonly LinkRecord[], nowMs: number): LinkRecord[] {
-  return rows.filter((row) => nowMs < at(row.expiresAt));
+  return rows.filter(
+    (row) =>
+      nowMs < at(row.expiresAt) && at(row.expiresAt) <= nowMs + BROWSER_LINK_TTL_MS + CLOCK_SKEW_MS,
+  );
 }
 
 function pruneSessions(rows: readonly SessionRecord[], nowMs: number): SessionRecord[] {
@@ -129,11 +139,15 @@ function roomForOne<T>(rows: T[], max: number): T[] {
 }
 
 function toPublic(record: SessionRecord): BrowserSession {
+  const effectiveExpiry = Math.min(
+    at(record.createdAt) + BROWSER_SESSION_MAX_MS,
+    at(record.lastUsedAt) + BROWSER_SESSION_IDLE_MS,
+  );
   return {
     id: record.id,
     createdAt: record.createdAt,
     lastUsedAt: record.lastUsedAt,
-    expiresAt: record.expiresAt,
+    expiresAt: new Date(effectiveExpiry).toISOString(),
   };
 }
 
@@ -249,18 +263,19 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     } catch {
       if (!this.loggedUnexpected) {
         this.loggedUnexpected = true;
-        console.error("browser sessions: verify failed; treating it as no session");
+        this.logBad(this.sessionsPath);
       }
       return null;
     }
   }
 
-  /** Delete every stored session and return how many records were removed. */
+  /** Delete every session and pending sign-in link; return the number of live sessions removed. */
   async revokeAll(): Promise<number> {
-    return this.mutate(async ({ links, sessions }) => {
-      await this.commit(links, [], { links, sessions });
-      return sessions.length;
-    });
+    return this.mutate(async ({ links, sessions, corrupt }) => {
+      const liveCount = pruneSessions(sessions, this.now()).length;
+      await this.commit([], [], { links, sessions }, corrupt);
+      return liveCount;
+    }, true);
   }
 
   private mint(
@@ -299,7 +314,12 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   private mutate<T>(
-    fn: (state: { links: LinkRecord[]; sessions: SessionRecord[] }) => Promise<T>,
+    fn: (state: {
+      links: LinkRecord[];
+      sessions: SessionRecord[];
+      corrupt: { links: boolean; sessions: boolean };
+    }) => Promise<T>,
+    resetCorrupt = false,
   ): Promise<T> {
     return (async () => {
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
@@ -307,9 +327,33 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         this.lockPath,
         this.lockOpts,
         async () => {
-          const links = await this.readLinks();
-          const sessions = await this.readSessions();
-          return fn({ links, sessions });
+          let links: LinkRecord[];
+          let sessions: SessionRecord[];
+          let linksCorrupt = false;
+          let sessionsCorrupt = false;
+          try {
+            links = await this.readLinks();
+          } catch (error) {
+            if (!this.isCorrupt(error)) throw error;
+            this.logBad(this.linksPath);
+            if (!resetCorrupt) throw error;
+            links = [];
+            linksCorrupt = true;
+          }
+          try {
+            sessions = await this.readSessions();
+          } catch (error) {
+            if (!this.isCorrupt(error)) throw error;
+            this.logBad(this.sessionsPath);
+            if (!resetCorrupt) throw error;
+            sessions = [];
+            sessionsCorrupt = true;
+          }
+          return fn({
+            links,
+            sessions,
+            corrupt: { links: linksCorrupt, sessions: sessionsCorrupt },
+          });
         },
         (holder, path) =>
           new Error(
@@ -317,6 +361,12 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
           ),
       );
     })();
+  }
+
+  private isCorrupt(error: unknown): boolean {
+    return (
+      error instanceof Error && error.message.endsWith("is corrupt; not updating browser sessions")
+    );
   }
 
   private async readLinks(): Promise<LinkRecord[]> {
@@ -353,11 +403,16 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     links: LinkRecord[],
     sessions: SessionRecord[],
     prev: { links: LinkRecord[]; sessions: SessionRecord[] },
+    force: { links: boolean; sessions: boolean } = { links: false, sessions: false },
   ): Promise<void> {
-    if (JSON.stringify(links.map(cleanLink)) !== JSON.stringify(prev.links.map(cleanLink))) {
+    if (
+      force.links ||
+      JSON.stringify(links.map(cleanLink)) !== JSON.stringify(prev.links.map(cleanLink))
+    ) {
       await this.persist(this.linksPath, { links: links.map(cleanLink) });
     }
     if (
+      force.sessions ||
       JSON.stringify(sessions.map(cleanSession)) !== JSON.stringify(prev.sessions.map(cleanSession))
     ) {
       await this.persist(this.sessionsPath, { sessions: sessions.map(cleanSession) });
@@ -374,8 +429,8 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   /**
-   * Stat on every call. Reload only when mtime or size changed. A failure is cached with that
-   * stat so a still-corrupt file logs once, and a later rewrite is picked up.
+   * Stat on every call. Re-read files with a recent mtime to cover coarse timestamp resolution.
+   * A failure is cached with that stat so a still-corrupt file logs once.
    */
   private async cachedSessions(): Promise<SessionRecord[] | null> {
     let fileStat: { mtimeMs: number; size: number };
@@ -399,18 +454,24 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     if (
       this.cache &&
       this.cache.mtimeMs === fileStat.mtimeMs &&
-      this.cache.size === fileStat.size
+      this.cache.size === fileStat.size &&
+      Math.abs(fileStat.mtimeMs - this.cache.readAtMs) > RACY_MTIME_MS &&
+      Math.abs(Date.now() - fileStat.mtimeMs) > RACY_MTIME_MS
     ) {
       return this.cache.failed ? null : this.cache.sessions;
     }
 
     try {
       const sessions = await this.readSessions();
-      this.cache = { ...fileStat, sessions, failed: false };
+      this.cache = { ...fileStat, readAtMs: Date.now(), sessions, failed: false };
       return sessions;
     } catch {
-      this.cache = { ...fileStat, sessions: [], failed: true };
-      this.logBad(this.sessionsPath);
+      const alreadyLogged =
+        this.cache?.failed === true &&
+        this.cache.mtimeMs === fileStat.mtimeMs &&
+        this.cache.size === fileStat.size;
+      this.cache = { ...fileStat, readAtMs: Date.now(), sessions: [], failed: true };
+      if (!alreadyLogged) this.logBad(this.sessionsPath);
       return null;
     }
   }

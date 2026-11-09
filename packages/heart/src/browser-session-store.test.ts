@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { access, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_LINK_TTL_MS,
@@ -49,7 +51,7 @@ describe("BrowserSessionStore", () => {
     expect(redeemed!.session.createdAt).toBe(new Date(clock).toISOString());
     expect(redeemed!.session.lastUsedAt).toBe(redeemed!.session.createdAt);
     expect(redeemed!.session.expiresAt).toBe(
-      new Date(clock + BROWSER_SESSION_MAX_MS).toISOString(),
+      new Date(clock + BROWSER_SESSION_IDLE_MS).toISOString(),
     );
 
     expect((await store.verify(redeemed!.token))?.id).toBe(redeemed!.session.id);
@@ -86,6 +88,64 @@ describe("BrowserSessionStore", () => {
     const results = await Promise.all([processA.redeemLink(code), processB.redeemLink(code)]);
     expect(results.filter((result) => result !== null)).toHaveLength(1);
     expect(results.filter((result) => result === null)).toHaveLength(1);
+  });
+
+  it("a link redeems once between real Node processes", async () => {
+    const { code } = await store.createLink();
+    const moduleUrl = pathToFileURL(
+      join(process.cwd(), "packages/heart/src/browser-session-store.ts"),
+    );
+    const childPath = join(root, "redeem-child.mjs");
+    const readyPath = join(root, "child-ready");
+    const releasePath = join(root, "child-release");
+    await writeFile(
+      childPath,
+      `import { existsSync, writeFileSync } from "node:fs";\n` +
+        `import { BrowserSessionStore } from ${JSON.stringify(moduleUrl.href)};\n` +
+        `const [root, code, now, ready, release] = process.argv.slice(2);\n` +
+        `const waitForRelease = () => { writeFileSync(ready, "ready"); ` +
+        `while (!existsSync(release)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); ` +
+        `return Number(now); };\n` +
+        `const result = await new BrowserSessionStore(root, waitForRelease).redeemLink(code);\n` +
+        `process.stdout.write(result ? "won" : "lost");\n`,
+    );
+
+    const childResult = new Promise<string>((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ["--import", "tsx", childPath, root, code, String(clock), readyPath, releasePath],
+        {
+          cwd: process.cwd(),
+          env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: tmpdir(), TZ: "UTC" },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+      child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(new Error(`redeem child exited ${code}: ${stderr}`));
+      });
+    });
+    const readyDeadline = Date.now() + 10_000;
+    while (Date.now() < readyDeadline) {
+      try {
+        await access(readyPath);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    await expect(access(readyPath)).resolves.toBeUndefined();
+    const parentResult = store.redeemLink(code);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await writeFile(releasePath, "release");
+    const [childWon, parentWon] = await Promise.all([childResult, parentResult]);
+    expect([childWon === "won", parentWon !== null].filter(Boolean)).toHaveLength(1);
+    expect([childWon === "lost", parentWon === null].filter(Boolean)).toHaveLength(1);
   });
 
   it("a createLink in another process does not resurrect a redeemed link", async () => {
@@ -180,6 +240,33 @@ describe("BrowserSessionStore", () => {
     expect(await store.verify(first.token)).toBeNull();
   });
 
+  it("revokeAll clears pending sign-in links", async () => {
+    const { code } = await store.createLink();
+    expect(await store.revokeAll()).toBe(0);
+    expect(await store.redeemLink(code)).toBeNull();
+  });
+
+  it("revokeAll counts only live sessions", async () => {
+    await store.createSession();
+    clock += BROWSER_SESSION_IDLE_MS;
+    expect(await store.revokeAll()).toBe(0);
+  });
+
+  it("verify reloads same-size rewrites with a forced identical mtime", async () => {
+    const first = await store.createSession();
+    expect((await store.verify(first.token))?.id).toBe(first.session.id);
+    const path = dataRootPaths(root).browserSessions;
+    const before = await stat(path);
+    const other = new BrowserSessionStore(root, () => clock);
+    expect(await other.revokeAll()).toBe(1);
+    const second = await other.createSession();
+    expect((await stat(path)).size).toBe(before.size);
+    await utimes(path, before.atime, before.mtime);
+
+    expect(await store.verify(first.token)).toBeNull();
+    expect((await store.verify(second.token))?.id).toBe(second.session.id);
+  });
+
   it("revokeAll racing a lastUsedAt write leaves no session", async () => {
     const created = await store.createSession();
     expect(await store.verify(created.token)).not.toBeNull();
@@ -189,6 +276,7 @@ describe("BrowserSessionStore", () => {
     await processA.verify(created.token); // Prime this process's lock-free read cache.
 
     await Promise.all([processA.verify(created.token), processB.revokeAll()]);
+    expect(await processA.verify(created.token)).toBeNull();
     expect(await store.verify(created.token)).toBeNull();
     const sessions = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8"));
     expect(sessions.sessions).toHaveLength(0);
@@ -319,6 +407,7 @@ describe("BrowserSessionStore", () => {
       expect(await store.verify(token)).toBeNull();
       expect(spy).toHaveBeenCalledTimes(1);
       const logged = spy.mock.calls.flat().map(String).join(" ");
+      expect(logged).toContain(path);
       expect(logged).not.toContain(token);
       expect(logged).not.toContain("not json");
     } finally {
@@ -328,6 +417,45 @@ describe("BrowserSessionStore", () => {
     await writeFile(path, '{ "sessions": [] }\n');
     const again = await store.createSession();
     expect((await store.verify(again.token))?.id).toBe(again.session.id);
+  });
+
+  it("revokeAll resets corrupt links and sessions files to empty lists", async () => {
+    const paths = dataRootPaths(root);
+    await store.createLink();
+    await store.createSession();
+    await writeFile(paths.browserLinks, "link-body-must-not-be-logged");
+    await writeFile(paths.browserSessions, "session-body-must-not-be-logged");
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await store.revokeAll()).toBe(0);
+      const logged = spy.mock.calls.flat().map(String).join(" ");
+      expect(logged).toContain(paths.browserLinks);
+      expect(logged).toContain(paths.browserSessions);
+      expect(logged).not.toContain("link-body-must-not-be-logged");
+      expect(logged).not.toContain("session-body-must-not-be-logged");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(JSON.parse(await readFile(paths.browserLinks, "utf8"))).toEqual({ links: [] });
+    expect(JSON.parse(await readFile(paths.browserSessions, "utf8"))).toEqual({ sessions: [] });
+  });
+
+  it("future-dated session records and links are expired beyond the clock-skew allowance", async () => {
+    const { token } = await store.createSession();
+    const paths = dataRootPaths(root);
+    const sessionFile = JSON.parse(await readFile(paths.browserSessions, "utf8"));
+    const future = new Date(clock + 60_001).toISOString();
+    sessionFile.sessions[0].createdAt = future;
+    sessionFile.sessions[0].lastUsedAt = future;
+    await writeFile(paths.browserSessions, JSON.stringify(sessionFile));
+    expect(await store.verify(token)).toBeNull();
+
+    const link = await store.createLink();
+    const linkFile = JSON.parse(await readFile(paths.browserLinks, "utf8"));
+    linkFile.links[0].expiresAt = new Date(clock + BROWSER_LINK_TTL_MS + 60_001).toISOString();
+    await writeFile(paths.browserLinks, JSON.stringify(linkFile));
+    expect(await store.redeemLink(link.code)).toBeNull();
   });
 
   it("browserSessionCookieName(4319) is boof_ui_4319", () => {
