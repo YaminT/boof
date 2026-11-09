@@ -309,6 +309,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         this.logUnsafeOnce(error);
         return null;
       }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       if (!(error instanceof CorruptBrowserSessionFileError) && !this.loggedUnexpected) {
         this.loggedUnexpected = true;
         console.error(
@@ -372,6 +373,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     resetCorrupt = false,
   ): Promise<T> {
     return (async () => {
+      await mkdir(this.root, { recursive: true, mode: 0o700 });
       await this.assertTrustedRoot();
       await mkdir(this.authDir, { recursive: true, mode: 0o700 });
       await this.chmodPortable(this.authDir, 0o700);
@@ -496,6 +498,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   private async persist(path: string, body: unknown): Promise<void> {
+    await mkdir(this.root, { recursive: true, mode: 0o700 });
     await this.assertTrustedRoot();
     await mkdir(this.authDir, { recursive: true, mode: 0o700 });
     await this.chmodPortable(this.authDir, 0o700);
@@ -556,6 +559,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         this.logUnsafeOnce(error);
         return null;
       }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       this.cache = { ...fileStat, readAtMs: Date.now(), sessions: [], failed: true };
       this.logCorruptOnce(
         this.sessionsPath,
@@ -611,6 +615,13 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             `browser sessions: could not set permissions on ${this.root} (${code ?? "unknown"}); checking ownership and mode`,
           );
         }
+      }
+      const checkedLinkStat = await this.lstatFn(this.root);
+      if (checkedLinkStat.isSymbolicLink()) {
+        throw new UnsafeBrowserSessionPathError(
+          this.root,
+          `${this.root} became a symbolic link while checking permissions; use a data root you own`,
+        );
       }
       rootStat = await this.statFn(this.root);
     }

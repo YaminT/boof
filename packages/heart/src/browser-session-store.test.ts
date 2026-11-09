@@ -73,6 +73,26 @@ describe("BrowserSessionStore", () => {
     expect((await store.verify(redeemed!.token))?.id).toBe(redeemed!.session.id);
   });
 
+  it("creates missing data roots with private permissions", async () => {
+    const missingRoot = join(root, "new-root");
+    await new BrowserSessionStore(missingRoot, () => clock).createLink();
+    expect(statSync(missingRoot).mode & 0o777).toBe(0o700);
+    const sessionRoot = join(root, "new-session-root");
+    await new BrowserSessionStore(sessionRoot, () => clock).createSession();
+    expect(statSync(sessionRoot).mode & 0o777).toBe(0o700);
+  });
+
+  it("verify on a missing data root quietly returns null", async () => {
+    const missingStore = new BrowserSessionStore(join(root, "missing"), () => clock);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await missingStore.verify("bs_unknown")).toBeNull();
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("a link redeems once", async () => {
     const { code } = await store.createLink();
     const first = await store.redeemLink(code);
@@ -651,7 +671,7 @@ describe("BrowserSessionStore", () => {
       uid: currentUid,
       lstat: foreignLstat,
     });
-    await expect(foreign.createLink()).rejects.toThrow(new RegExp(`${root} is owned by uid`));
+    await expect(foreign.createLink()).rejects.toThrow(/use a data root you own/);
   });
 
   it.skipIf(process.platform === "win32")("follows an owned symlinked data root", async () => {
@@ -662,6 +682,7 @@ describe("BrowserSessionStore", () => {
     const linkedStore = new BrowserSessionStore(linkRoot, () => clock);
     const created = await linkedStore.createSession();
     expect((await linkedStore.verify(created.token))?.id).toBe(created.session.id);
+    expect(statSync(realRoot).mode & 0o777).toBe(0o700);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -711,7 +732,7 @@ describe("BrowserSessionStore", () => {
       });
       const checked = new BrowserSessionStore(root, () => clock, { chmod: chmodSeam });
       try {
-        await expect(checked.createLink()).rejects.toThrow(new RegExp(root));
+        await expect(checked.createLink()).rejects.toThrow(/chmod go-w/);
         expect(calls).toEqual([root]);
         expect(statSync(victim).mode & 0o777).toBe(0o755);
       } finally {
