@@ -11,11 +11,16 @@ import {
 } from "./browser-session-store.js";
 import { browserSessionCookieName } from "./index.js";
 import { dataRootPaths } from "./paths.js";
+import { withProcessLock } from "./process-lock.js";
 
 const DAY_MS = 86_400_000;
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function simulatedProcess(pid: number) {
+  return { lock: { pid, bootId: null, isProcessAlive: () => true, lockPollMs: 1 } };
 }
 
 describe("BrowserSessionStore", () => {
@@ -71,6 +76,26 @@ describe("BrowserSessionStore", () => {
 
     const sessions = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8"));
     expect(sessions.sessions).toHaveLength(1);
+  });
+
+  it("a link redeems once across processes", async () => {
+    const { code } = await store.createLink();
+    const processA = new BrowserSessionStore(root, () => clock, simulatedProcess(81001));
+    const processB = new BrowserSessionStore(root, () => clock, simulatedProcess(81002));
+
+    const results = await Promise.all([processA.redeemLink(code), processB.redeemLink(code)]);
+    expect(results.filter((result) => result !== null)).toHaveLength(1);
+    expect(results.filter((result) => result === null)).toHaveLength(1);
+  });
+
+  it("a createLink in another process does not resurrect a redeemed link", async () => {
+    const { code } = await store.createLink();
+    const processA = new BrowserSessionStore(root, () => clock, simulatedProcess(82001));
+    const processB = new BrowserSessionStore(root, () => clock, simulatedProcess(82002));
+
+    const [redeemed] = await Promise.all([processA.redeemLink(code), processB.createLink()]);
+    expect(redeemed).not.toBeNull();
+    expect(await store.redeemLink(code)).toBeNull();
   });
 
   it("a link expires after 10 minutes", async () => {
@@ -153,6 +178,47 @@ describe("BrowserSessionStore", () => {
     expect(await other.verify(first.token)).toBeNull();
     expect(await other.verify(second.token)).toBeNull();
     expect(await store.verify(first.token)).toBeNull();
+  });
+
+  it("revokeAll racing a lastUsedAt write leaves no session", async () => {
+    const created = await store.createSession();
+    expect(await store.verify(created.token)).not.toBeNull();
+    clock += 60_001;
+    const processA = new BrowserSessionStore(root, () => clock, simulatedProcess(83001));
+    const processB = new BrowserSessionStore(root, () => clock, simulatedProcess(83002));
+    await processA.verify(created.token); // Prime this process's lock-free read cache.
+
+    await Promise.all([processA.verify(created.token), processB.revokeAll()]);
+    expect(await store.verify(created.token)).toBeNull();
+    const sessions = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8"));
+    expect(sessions.sessions).toHaveLength(0);
+  });
+
+  it("mutations wait for the cross-process browser session lock", async () => {
+    const lockPath = join(dataRootPaths(root).auth, ".browser-session.lock");
+    let acquired!: () => void;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (acquired = resolve));
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const holder = withProcessLock(
+      lockPath,
+      { pid: 84001, bootId: null, isProcessAlive: () => true },
+      async () => {
+        acquired();
+        await gate;
+      },
+      (pid) => new Error(`holder ${pid}`),
+    );
+    await held;
+    try {
+      const blocked = new BrowserSessionStore(root, () => clock, {
+        lock: { lockTimeoutMs: 20, lockPollMs: 1, isProcessAlive: () => true },
+      });
+      await expect(blocked.createLink()).rejects.toThrow(/Another boof process.*pid 84001/);
+    } finally {
+      release();
+      await holder;
+    }
   });
 
   it("files hold only hashes", async () => {

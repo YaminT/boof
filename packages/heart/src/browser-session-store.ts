@@ -1,8 +1,9 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { z } from "zod";
-import { lockedAtomicWrite, withFileLock } from "./atomic.js";
+import { atomicWrite } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
+import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 
 /** A sign-in link is single-use and lives this long. */
 export const BROWSER_LINK_TTL_MS = 600_000;
@@ -166,20 +167,16 @@ function parseStored<T>(text: string, schema: z.ZodType<{ [key: string]: T[] }>,
  * Browser sign-in links and sessions for the local web UI.
  *
  * Both files store sha256 hex of the secret, never the secret. `auth/` is 0700 and the files
- * are 0600. Link and session mutations read under one in-process lock and write through
- * {@link lockedAtomicWrite}, so two requests in this process cannot redeem one link twice.
- * `verify` stats the sessions file on every call and reloads it when the mtime or size changed,
- * so another instance's revoke is visible without a cached copy.
+ * are 0600. Link and session mutations read and write under one cross-process lock, so a link
+ * minted by another process cannot race a redemption or revoke. `verify` stats the sessions file
+ * on every call and reloads it when the mtime or size changed.
  */
 export class BrowserSessionStore implements BrowserSessionVerifier {
   private readonly linksPath: string;
   private readonly sessionsPath: string;
   private readonly authDir: string;
-  /**
-   * Not the file path. {@link lockedAtomicWrite} locks that path, and {@link withFileLock}
-   * is not reentrant, so the read-modify-write section needs its own key.
-   */
-  private readonly lockKey: string;
+  private readonly lockPath: string;
+  private readonly lockOpts: ProcessLockOptions;
   private cache: SessionCache | null = null;
   private loggedStatError = false;
   private loggedUnexpected = false;
@@ -187,12 +184,14 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   constructor(
     root: string,
     private readonly now: () => number = Date.now,
+    opts: { lock?: ProcessLockOptions } = {},
   ) {
     const paths = dataRootPaths(root);
     this.linksPath = paths.browserLinks;
     this.sessionsPath = paths.browserSessions;
     this.authDir = paths.auth;
-    this.lockKey = `${paths.auth}/#browser-session`;
+    this.lockPath = `${paths.auth}/.browser-session.lock`;
+    this.lockOpts = opts.lock ?? {};
   }
 
   async createLink(): Promise<{ code: string; expiresAt: string }> {
@@ -302,11 +301,22 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private mutate<T>(
     fn: (state: { links: LinkRecord[]; sessions: SessionRecord[] }) => Promise<T>,
   ): Promise<T> {
-    return withFileLock(this.lockKey, async () => {
-      const links = await this.readLinks();
-      const sessions = await this.readSessions();
-      return fn({ links, sessions });
-    });
+    return (async () => {
+      await mkdir(this.authDir, { recursive: true, mode: 0o700 });
+      return withProcessLock(
+        this.lockPath,
+        this.lockOpts,
+        async () => {
+          const links = await this.readLinks();
+          const sessions = await this.readSessions();
+          return fn({ links, sessions });
+        },
+        (holder, path) =>
+          new Error(
+            `Another boof process is updating browser sessions (pid ${holder}); try again in a moment, or remove ${path} if no boof process is running`,
+          ),
+      );
+    })();
   }
 
   private async readLinks(): Promise<LinkRecord[]> {
@@ -357,7 +367,8 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private async persist(path: string, body: unknown): Promise<void> {
     await mkdir(this.authDir, { recursive: true, mode: 0o700 });
     await chmod(this.authDir, 0o700);
-    await lockedAtomicWrite(path, `${JSON.stringify(body, null, 2)}\n`, 0o600);
+    // The process lock already serializes writers; avoid re-entering a non-reentrant file lock.
+    await atomicWrite(path, `${JSON.stringify(body, null, 2)}\n`, 0o600);
     await chmod(path, 0o600);
     if (path === this.sessionsPath) this.cache = null;
   }
