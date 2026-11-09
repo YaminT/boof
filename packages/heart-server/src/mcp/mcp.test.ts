@@ -508,15 +508,10 @@ describe("tools generated from the registry", () => {
       const rev = await connect(
         await clientPrincipal(["projects:write", "projects:read"], "review"),
       );
-      // Archiving goes through updateProject, which only refuses while approval is required.
-      const archiving = approvalRequired
-        ? ([
-            ["boof_archive_project", { projectId: "shop" }],
-            ["boof_unarchive_project", { projectId: "shop" }],
-          ] as const)
-        : [];
+      // Archiving and unarchiving are refused whatever the approval setting says.
       for (const [tool, args] of [
-        ...archiving,
+        ["boof_archive_project", { projectId: "shop" }],
+        ["boof_unarchive_project", { projectId: "shop" }],
         ["boof_delete_project", { projectId: "shop", purge: true }],
         ["boof_delete_project", { projectId: "shop" }],
       ] as const) {
@@ -524,6 +519,27 @@ describe("tools generated from the registry", () => {
         expect(res.isError, tool).toBe(true);
         expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
       }
+      expect((await services.getProject("shop")).archived).toBe(false);
+    },
+  );
+
+  it.each([true, false])(
+    "a trusted client can still archive and unarchive a project over MCP (approval setting %s)",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+      const admin = await connect(
+        await clientPrincipal(["projects:write", "projects:read"], "trusted"),
+      );
+      const archived = await call(admin, "boof_archive_project", { projectId: "shop" });
+      expect(archived.isError).not.toBe(true);
+      expect((await services.getProject("shop")).archived).toBe(true);
+      const unarchived = await call(admin, "boof_unarchive_project", { projectId: "shop" });
+      expect(unarchived.isError).not.toBe(true);
       expect((await services.getProject("shop")).archived).toBe(false);
     },
   );

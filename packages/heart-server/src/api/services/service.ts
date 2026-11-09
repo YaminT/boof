@@ -1270,6 +1270,15 @@ export class TaskService {
   }
 
   async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
+    // Archiving and unarchiving are operator actions, like removing a project: a review-trust
+    // client may not do either, whatever `externalTasksRequireApproval` says.
+    if (actor?.kind === "client" && actor.trust === "review" && patch.archived !== undefined) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot archive or unarchive projects; a human or a trusted client must",
+        "forbidden_trust",
+      );
+    }
     await this.assertMayChangeProject(patch, actor, false);
     if (
       actor &&
