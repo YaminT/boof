@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,7 +38,11 @@ beforeEach(async () => {
   await execCommand("git", ["init", "-q"], { cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
   await service.projects.create({ workingDirectory: repo, id: "default" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 
 afterEach(async () => {
@@ -50,6 +55,7 @@ describe("GET /healthz", () => {
     let running = false;
     let now = 1_000_000;
     app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service,
       peerAddress: () => "127.0.0.1",
       version: "9.9.9",

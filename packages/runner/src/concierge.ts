@@ -22,6 +22,7 @@ import {
   type AgentAuthResolution,
 } from "./agent-auth.js";
 import { PoolGate } from "./pool-gate.js";
+import { agentMarkerFor } from "./agent-marker.js";
 import { createStreamRedactor, usageFromSdkResult } from "./tools/claude-agent.js";
 import {
   loadAgentSdk,
@@ -227,7 +228,13 @@ export class ClaudeConcierge implements ConciergeAgent {
       const idle = (activeScratch.get(scratch) ?? 0) === 0;
       activeScratch.set(scratch, (activeScratch.get(scratch) ?? 0) + 1);
       if (idle) await clearContents(scratch);
-      env = claudeAgentEnv(process.env, credentials, this.clientApp, configDir);
+      env = claudeAgentEnv(
+        process.env,
+        credentials,
+        this.clientApp,
+        configDir,
+        agentMarkerFor(this.root),
+      );
     } catch (error) {
       releaseScratch();
       throw new ConciergeTurnError(

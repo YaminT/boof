@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { spawn } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -39,7 +40,11 @@ beforeEach(async () => {
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "demo" });
   store = new TaskStore(service.projects.dir("demo"));
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 afterEach(async () => {
   for (const pid of live.splice(0)) {

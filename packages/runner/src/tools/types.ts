@@ -33,6 +33,8 @@ export interface RunOptions {
   inheritMcpServers?: boolean;
   /** Extra environment variable names the agent may inherit (`runner.agentEnv`); see `agentEnv()`. */
   agentEnv?: readonly string[];
+  /** Marker binding this child process to the boof data root that spawned it. */
+  agentMarker?: string;
   /**
    * Route this run through the account pool: the tool adds the gateway's base URL and key to its
    * child's environment. Set by the pipeline only for tools with `acceptsPool`, and only when a

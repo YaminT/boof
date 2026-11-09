@@ -6,9 +6,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AuthStore,
+  authorize,
   BOOF_VERSION,
   defaultSettings,
   LOCAL_PRINCIPAL,
+  SCOPES,
   SecuritySettingsSchema,
   SettingsStore,
   type Principal,
@@ -24,6 +26,7 @@ import {
   createConciergeMcpServer,
   handleMcpHttp,
   exposedOps,
+  McpStartError,
   principalFromClient,
   stdioAudit,
   stdioPrincipal,
@@ -69,6 +72,74 @@ async function connect(
   open.push(client);
   return client;
 }
+
+// Fixed on purpose (not derived from the registry): the tools of a client made with the printed
+// recipe. No administration tool; boof_delete_project is listed and refused at call time.
+const EXPECTED_REVIEW_TOOLS: string[] = [
+  "boof_answer_task",
+  "boof_archive_project",
+  "boof_archive_task",
+  "boof_create_epic",
+  "boof_create_plan",
+  "boof_create_project",
+  "boof_create_task",
+  "boof_delete_epic",
+  "boof_delete_project",
+  "boof_delete_task",
+  "boof_export_plan",
+  "boof_get_agent_sdk_eligibility",
+  "boof_get_budget",
+  "boof_get_epic",
+  "boof_get_health",
+  "boof_get_model_details",
+  "boof_get_plan",
+  "boof_get_pool_health",
+  "boof_get_project",
+  "boof_get_project_usage",
+  "boof_get_runner",
+  "boof_get_settings",
+  "boof_get_task",
+  "boof_get_task_diff",
+  "boof_get_task_log",
+  "boof_get_usage",
+  "boof_import_plan",
+  "boof_inject_prompt",
+  "boof_list_accounts",
+  "boof_list_actions",
+  "boof_list_commands",
+  "boof_list_epics",
+  "boof_list_models",
+  "boof_list_plans",
+  "boof_list_projects",
+  "boof_list_tasks",
+  "boof_move_task",
+  "boof_pause_project",
+  "boof_queue_task",
+  "boof_refresh_models",
+  "boof_remove_attachment",
+  "boof_remove_goal",
+  "boof_reorder_goals",
+  "boof_reorder_tasks",
+  "boof_replace_goals",
+  "boof_resume_project",
+  "boof_retry_task",
+  "boof_runner_status",
+  "boof_set_goal_status",
+  "boof_set_runner",
+  "boof_skip_task",
+  "boof_stop_task",
+  "boof_sync_plan",
+  "boof_unarchive_project",
+  "boof_unarchive_task",
+  "boof_update_epic",
+  "boof_update_plan",
+  "boof_update_project",
+  "boof_update_task",
+  "boof_upsert_goal",
+  "boof_wait_plan",
+  "boof_wait_task",
+  "boof_whoami",
+];
 
 async function clientPrincipal(
   scopes: Scope[],
@@ -430,53 +501,65 @@ describe("tools generated from the registry", () => {
     }
   });
 
-  it("a review-trust client cannot archive, unarchive or purge a project over MCP", async () => {
-    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
-    const rev = await connect(await clientPrincipal(["projects:write", "projects:read"], "review"));
-    for (const [tool, args] of [
-      ["boof_archive_project", { projectId: "shop" }],
-      ["boof_unarchive_project", { projectId: "shop" }],
-      ["boof_delete_project", { projectId: "shop", purge: true }],
-    ] as const) {
-      const res = await call(rev, tool, args);
-      expect(res.isError, tool).toBe(true);
-      expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
-    }
-    expect((await services.getProject("shop")).archived).toBe(false);
-  });
+  it.each([true, false])(
+    "a review-trust client cannot archive, unarchive or purge a project over MCP (approval setting %s)",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+      const rev = await connect(
+        await clientPrincipal(["projects:write", "projects:read"], "review"),
+      );
+      // Archiving and unarchiving are refused whatever the approval setting says.
+      for (const [tool, args] of [
+        ["boof_archive_project", { projectId: "shop" }],
+        ["boof_unarchive_project", { projectId: "shop" }],
+        ["boof_delete_project", { projectId: "shop", purge: true }],
+        ["boof_delete_project", { projectId: "shop" }],
+      ] as const) {
+        const res = await call(rev, tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
+      }
+      expect((await services.getProject("shop")).archived).toBe(false);
+    },
+  );
 
-  it("a keyless stdio server hides the administration tools unless --admin is given", async () => {
-    const hidden = (
-      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false })).listTools()
-    ).tools.map((t) => t.name);
-    for (const n of [
-      "boof_create_client",
-      "boof_list_clients",
-      "boof_revoke_client",
-      "boof_create_webhook",
-      "boof_list_webhooks",
-      "boof_update_settings",
-      "boof_check_health",
-      "boof_create_command",
-      "boof_update_command",
-      "boof_delete_command",
-      "boof_delete_project",
-    ]) {
-      expect(hidden, n).not.toContain(n);
-    }
-    // Everything else stays: the project, plan and task tools, and the runner switch.
-    for (const n of ["boof_create_task", "boof_set_runner", "boof_list_projects", "boof_whoami"]) {
-      expect(hidden, n).toContain(n);
-    }
-    const shown = (
-      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: true })).listTools()
-    ).tools.map((t) => t.name);
-    expect(shown).toContain("boof_create_client");
-    // A hidden tool is not callable either.
-    const c = await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false });
-    await expect(
-      call(c, "boof_create_client", { name: "z", scopes: ["tasks:read"] }),
-    ).rejects.toThrow(/Unknown tool/);
+  it.each([true, false])(
+    "a trusted client can still archive and unarchive a project over MCP (approval setting %s)",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+      const admin = await connect(
+        await clientPrincipal(["projects:write", "projects:read"], "trusted"),
+      );
+      const archived = await call(admin, "boof_archive_project", { projectId: "shop" });
+      expect(archived.isError).not.toBe(true);
+      expect((await services.getProject("shop")).archived).toBe(true);
+      const unarchived = await call(admin, "boof_unarchive_project", { projectId: "shop" });
+      expect(unarchived.isError).not.toBe(true);
+      expect((await services.getProject("shop")).archived).toBe(false);
+    },
+  );
+
+  it("a trusted client with projects:write can still delete a project over MCP", async () => {
+    const settings = await new SettingsStore(root).load();
+    settings.security = SecuritySettingsSchema.parse({ externalTasksRequireApproval: false });
+    await new SettingsStore(root).save(settings);
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const admin = await connect(
+      await clientPrincipal(["projects:write", "projects:read"], "trusted"),
+    );
+    const res = await call(admin, "boof_delete_project", { projectId: "shop", purge: true });
+    expect(res.isError).not.toBe(true);
+    await expect(services.getProject("shop")).rejects.toThrow();
   });
 
   it("boof_update_epic lets a review client change only its own epics", async () => {
@@ -731,16 +814,14 @@ describe("prompts", () => {
 });
 
 describe("stdio principal", () => {
-  it("uses the local principal only in local-trust mode", async () => {
-    // Keyless: the review-trust local-mcp principal, or the local administrator with --admin.
-    expect(await (await stdioPrincipal(services, authStore, { root }))()).toMatchObject({
-      kind: "client",
-      id: "local-mcp",
-      trust: "review",
-    });
-    expect((await (await stdioPrincipal(services, authStore, { root, admin: true }))()).kind).toBe(
-      "local",
+  it("refuses to start without --client, in local-trust and when auth is required", async () => {
+    const refused = await stdioPrincipal(services, authStore, { root }).then(
+      () => null,
+      (err: unknown) => err,
     );
+    expect(refused).toBeInstanceOf(McpStartError);
+    expect((refused as Error).message).toMatch(/boof-runner mcp needs --client <id>/);
+    expect((refused as Error).message).toMatch(/Keyless MCP was removed/);
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({
       ...settings,
@@ -754,7 +835,23 @@ describe("stdio principal", () => {
         audit: { enabled: true, retentionDays: 90 },
       },
     });
-    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/--client/);
+    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(
+      /Keyless MCP was removed/,
+    );
+  });
+
+  it("MCP_REVIEW_SCOPES equals SCOPES minus admin, auth:admin, settings:write", async () => {
+    const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+    expect(MCP_REVIEW_SCOPES).toEqual(
+      SCOPES.filter((s) => s !== "admin" && s !== "auth:admin" && s !== "settings:write"),
+    );
+  });
+
+  it("a review-trust client with MCP_REVIEW_SCOPES lists exactly the expected tools (boof_delete_project is listed but refused)", async () => {
+    const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+    const principal = await clientPrincipal([...(MCP_REVIEW_SCOPES as readonly Scope[])], "review");
+    const listed = (await (await connect(principal)).listTools()).tools.map((t) => t.name).sort();
+    expect(listed).toEqual(EXPECTED_REVIEW_TOOLS);
   });
 
   it("resolves --client from the registry and follows a revocation", async () => {
@@ -773,9 +870,16 @@ describe("stdio principal", () => {
   });
 
   it("refuses to start when settings.mcp.enabled is false", async () => {
+    const { client } = await authStore.create({
+      name: "x",
+      scopes: ["tasks:read"],
+      trust: "review",
+    });
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({ ...settings, mcp: { enabled: false } });
-    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/disabled/);
+    await expect(stdioPrincipal(services, authStore, { root, client: client.id })).rejects.toThrow(
+      /disabled/,
+    );
   });
 });
 
@@ -979,18 +1083,16 @@ describe("handleMcpHttp", () => {
       expect(JSON.stringify(lines)).not.toMatch(/SECRET/);
     });
 
-    it("a keyless local-mcp call is recorded as local-mcp, a refusal as an error", async () => {
+    it("a review client's call is recorded under its name, a refusal as an error", async () => {
       const auditor = stdioAudit(root);
-      const { LOCAL_MCP_PRINCIPAL } = await import("../api/index.js");
-      const c = await connect(LOCAL_MCP_PRINCIPAL, undefined, {
-        onCall: auditor.onCall,
-        adminTools: false,
-      });
+      const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+      const reviewer = await clientPrincipal([...MCP_REVIEW_SCOPES], "review");
+      const c = await connect(reviewer, undefined, { onCall: auditor.onCall });
       await call(c, "boof_set_runner", { enabled: true });
       await auditor.flush();
       expect(await auditLines()).toMatchObject([
         {
-          principal: "local-mcp",
+          principal: reviewer.name,
           action: "mcp:boof_set_runner",
           via: "stdio-mcp",
           outcome: "error",

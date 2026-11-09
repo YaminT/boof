@@ -29,6 +29,7 @@ export class ClaudeCodeTool implements Tool {
     const res = await execCommand(this.bin, ["--version"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
@@ -67,6 +68,7 @@ export class ClaudeCodeTool implements Tool {
     const res = await execCommand(this.bin, ["--help"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) return [...this.defaultModels];
     return unique([...this.defaultModels, ...parseClaudeModelsFromHelp(res.stdout + res.stderr)]);
@@ -104,7 +106,7 @@ export class ClaudeCodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
-    const childEnv = agentEnv(process.env, opts.agentEnv);
+    const childEnv = agentEnv(process.env, opts.agentEnv, opts.agentMarker);
     if (opts.gateway) {
       delete childEnv.ANTHROPIC_API_KEY;
       delete childEnv.ANTHROPIC_AUTH_TOKEN;

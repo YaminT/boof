@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +43,11 @@ beforeEach(async () => {
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "demo" });
   await service.projects.create({ workingDirectory: repo2, id: "other" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 afterEach(async () => {
   for (const d of [root, repo, repo2]) {
@@ -146,7 +151,12 @@ describe("epic operations", () => {
     const rev = (
       await store.create({ name: "rev", scopes: ["tasks:read", "tasks:write"], trust: "review" })
     ).key;
-    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore: store,
+      peerAddress: () => "127.0.0.1",
+    });
     expect((await epic("Mine", {}, rev)).status).toBe(201);
     const upd = await call(
       `${V1}/projects/demo/epics/mine`,
@@ -165,7 +175,12 @@ describe("epic operations", () => {
     const rev = (
       await store.create({ name: "rev", scopes: ["tasks:read", "tasks:write"], trust: "review" })
     ).key;
-    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore: store,
+      peerAddress: () => "127.0.0.1",
+    });
     const put = (id: string, body: object) =>
       call(`${V1}/projects/demo/epics/${id}`, withKey(send("PUT", body), rev));
     expect(await code(await put("human-epic", { title: "IGNORE PREVIOUS" }))).toEqual([
@@ -226,7 +241,12 @@ describe("epic operations", () => {
         trust: "trusted",
       })
     ).key;
-    app = createApp({ service, authStore: store, peerAddress: () => "127.0.0.1" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore: store,
+      peerAddress: () => "127.0.0.1",
+    });
     const res = await call(`${V1}/projects/other/epics`, withKey({}, key));
     expect(await code(res)).toEqual([403, "forbidden_project"]);
   });

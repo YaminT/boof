@@ -134,7 +134,7 @@ Tell the user the steps to expose it safely. Never advise exposing boof without 
 
 What the command does, if you need to explain or do it by hand: it sets `"security": { "auth": { "mode": "required" }, "allowedHosts": ["<public-hostname>"], "allowedProjectRoots": [...] }` in `settings.json`, creates a key like `auth add` (full harness scopes, `review` trust) and runs `chmod 700` on the data root.
 
-- `auth.mode: "required"` turns off the trust given to loopback callers.
+- `auth.mode: "required"` turns off the trust given to a signed-in browser on loopback.
 - `allowedHosts` lists the host names clients use in the URL. Any other `Host` header answers `421 host_not_allowed`.
 - `allowedProjectRoots` lists the absolute directories (or `~/...`) under which a key may register projects.
 - The server refuses to bind a non-loopback address unless `auth.mode` is `"required"` and at least one active key exists. Use a specific IP instead of `0.0.0.0` to bind one interface.
@@ -170,7 +170,7 @@ Read the result:
 - `principal.scopes`. An operation that needs a scope you lack answers `403 forbidden_scope`. The scope `admin` includes every scope. Plan your work with the scopes you have. Tell the user which scope is missing for a task you cannot do.
 - `principal.trust`. If it is `review`, plans and ad-hoc tasks you create land as `draft`. Tell the user that a human must approve them in the boof web UI (Plans tab, button Approve; Tasks tab, filter "Proposed by clients"). See section 4, "Trust and draft approval".
 - `principal.projects`. `"*"` means every project. A list means only those projects.
-- `server.authMode`. `local-trust` means a caller on the same machine needs no key. `required` means every caller needs a key.
+- `server.authMode`. `local-trust` means the boof web UI works without a key after the user signs in with a link; a script or agent on the same machine still needs a key. `required` means every caller needs a key.
 - `server.mcpEnabled`. If `false`, use REST. `/mcp` answers 404.
 
 Then check the runner:
@@ -186,15 +186,15 @@ The answer is `{ "enabled": true, "concurrency": 1, "budgetExceeded": [], "proje
 
 Fix errors this way:
 
-| Result                                     | Cause                                                          | What you do                                                                                                                       |
-| ------------------------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `401 unauthenticated`                      | Key missing, malformed, wrong, expired or revoked.             | Check that the header is exactly `Authorization: Bearer <key>`. Do not retry. Ask the user for a new key.                         |
-| `421 host_not_allowed`                     | The host name in `BOOF_URL` is not allowed.                    | Tell the user to add the host name to `security.allowedHosts` in `settings.json` on the boof machine. The change applies at once. |
-| `404` with `not_found` on `/api/v1/whoami` | An old boof version without `whoami`, or the URL is not boof.  | Check `BOOF_URL`. Ask the user to update boof.                                                                                    |
-| `429 rate_limited`                         | Too many requests.                                             | Wait for the `Retry-After` seconds. Then retry.                                                                                   |
-| Connection refused, timeout or DNS error   | Server not running, wrong host or port, firewall.              | Ask the user to check that `boof-runner serve` runs and that the URL and port are right.                                          |
-| TLS or certificate error                   | Self-signed or wrong certificate.                              | Ask the user. Never use `curl -k` or disable verification unless the user tells you to.                                           |
-| HTML or non-JSON response                  | `BOOF_URL` points at a proxy, a login page or another service. | Ask the user for the right URL.                                                                                                   |
+| Result                                     | Cause                                                                                                                                                                                         | What you do                                                                                                                                                               |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401 unauthenticated`                      | Key missing, malformed, wrong, expired or revoked. `details.reason` `browser_session_required` means no key and no browser session; `mcp_key_required` means `/mcp` was called without a key. | Check that the header is exactly `Authorization: Bearer <key>`. Do not retry. Ask the user for a new key (a sign-in link is for the browser UI only; do not ask for one). |
+| `421 host_not_allowed`                     | The host name in `BOOF_URL` is not allowed.                                                                                                                                                   | Tell the user to add the host name to `security.allowedHosts` in `settings.json` on the boof machine. The change applies at once.                                         |
+| `404` with `not_found` on `/api/v1/whoami` | An old boof version without `whoami`, or the URL is not boof.                                                                                                                                 | Check `BOOF_URL`. Ask the user to update boof.                                                                                                                            |
+| `429 rate_limited`                         | Too many requests.                                                                                                                                                                            | Wait for the `Retry-After` seconds. Then retry.                                                                                                                           |
+| Connection refused, timeout or DNS error   | Server not running, wrong host or port, firewall.                                                                                                                                             | Ask the user to check that `boof-runner serve` runs and that the URL and port are right.                                                                                  |
+| TLS or certificate error                   | Self-signed or wrong certificate.                                                                                                                                                             | Ask the user. Never use `curl -k` or disable verification unless the user tells you to.                                                                                   |
+| HTML or non-JSON response                  | `BOOF_URL` points at a proxy, a login page or another service.                                                                                                                                | Ask the user for the right URL.                                                                                                                                           |
 
 ## 3. Choose a transport
 
@@ -205,7 +205,7 @@ Boof has two ways to call the same operations. Both use the same scopes, trust r
 
 ### MCP over HTTP (remote)
 
-The endpoint is `$BOOF_URL/mcp`. It uses Streamable HTTP in stateless mode. There are no sessions. Use `POST` only. `GET` and `DELETE` answer `405`. Send the header `Authorization: Bearer <key>`. Without it, a loopback caller on a server in `local-trust` mode is not an administrator: it acts as the review-trust principal `local-mcp` (as on stdio without `--admin`: administration tools hidden, your tasks and plans are drafts a human approves) with its own rate limit, and `403 forbidden_trust` while `auth/clients.json` holds a stored client of that reserved id. Administration over HTTP needs a key.
+The endpoint is `$BOOF_URL/mcp`. It uses Streamable HTTP in stateless mode. There are no sessions. Use `POST` only. `GET` and `DELETE` answer `405`. Send the header `Authorization: Bearer <key>`. Without it the request answers `401` with the reason `mcp_key_required`, also on loopback and also from a signed-in browser: there is no keyless MCP, and the keyless `local-mcp` identity of older versions is removed. Administration over HTTP needs a key with the right scopes.
 
 Claude Code:
 
@@ -292,15 +292,15 @@ MCP results: `result.content[0].text` is a one-line summary. `result.content[1].
 
 ### MCP over stdio (agent on the boof machine)
 
-If you run on the same machine as boof, the host starts boof as a child process. No server and no key are needed:
+If you run on the same machine as boof, the host starts boof as a child process. No server and no key are needed, but you need a client (`--client`). Without one the command refuses to start (exit 3):
 
 ```bash
 claude mcp add boof -- boof-runner mcp -d <data-root> --client <client-id>
 ```
 
-- `--client <id>`: act as this API client. Its scopes, projects and trust apply, so it is the right choice for an agent host. Give an agent the client the user created for it.
-- Without `--client` (and only when `security.auth.mode` is `local-trust`) you act as the reserved review-trust principal `local-mcp`, shared by every keyless host on the machine: your tasks and plans are drafts a human approves in the UI, you cannot queue, retry, answer, activate a plan, switch the runner or create a project, you change only your own work and only the name, labels and paused state of a project (you cannot resume one), and you have no administration tools (API clients, webhooks, settings writes, command templates, the health check, project deletion).
-- `--admin`: without `--client`, act as the local administrator with every tool. It is refused together with `--client`.
+- `--client <id>` (required): act as this API client. Its scopes, projects and trust apply. Give an agent the client the user created for it. If there is none, tell the user to run `boof-runner auth add --name <name> --scopes <list> --trust review` on the boof machine.
+- Without `--client` the command refuses to start. The keyless review-trust principal `local-mcp` of older versions is removed. A `review`-trust client sees the same limits: your tasks and plans are drafts a human approves in the UI, you cannot queue, retry, answer, activate a plan or switch the runner, you change only your own work and only the name, labels and paused state of a project, and a `trusted` client with the scopes the user chose gets the administration tools too.
+- `--admin` is removed. The command refuses it and names `--client`.
 - `--project <id>`: serve one project. The `projectId` argument is filled in and hidden from the tool schemas, you reach no other project, and the API-client and webhook tools are hidden.
 - `-d <data-root>`: the data root (default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
 
@@ -639,7 +639,7 @@ A create can answer with `warnings` when the server changed a requested value be
 
 ### Rate limits
 
-The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications are limited separately per client address (default 30 per minute): after that a request that fails authentication answers `429` instead of `401` until the bucket refills, so never retry a `401` in a loop. A request with a valid key is never limited by this bucket.
+The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications that carry a key or a session cookie are limited separately per client address (default 30 per minute): after that such a request answers `429` instead of `401` until the bucket refills, so never retry a `401` in a loop. A keyless request answers `401` and does not spend that bucket. A request with a valid key is never limited by this bucket.
 
 ### Host errors
 

@@ -4,6 +4,7 @@ import {
   AuthStore,
   ClientKindSchema,
   parseDuration,
+  reservedIdWarning,
   ScopeSchema,
   SCOPES,
   SettingsStore,
@@ -170,6 +171,8 @@ export async function authCommand(
     case "list": {
       const clients = await store.list();
       if (clients.length === 0) out("No clients.");
+      const reserved = reservedIdWarning(clients);
+      if (reserved) err(reserved);
       for (const c of clients) {
         const { keyHash: _h, ...pub } = c;
         out(describe(pub));

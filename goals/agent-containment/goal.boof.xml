@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Raised by the security review on 2026-11-02 (a task agent can call the local API as the administrator under local-trust); not started. Step 1 is the investigation of the four options.</version>
+        <version number="2" status="done">Layer 1 (owner decision 2026-11-07): browser-only keyless access, MCP keys, no agent credential plus marker, data root 0700. Layer 2 (OS sandbox) not started.</version>
       </versions>
     </status>
     <tests>

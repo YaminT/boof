@@ -6,6 +6,7 @@ import { lockedAtomicWrite } from "./atomic.js";
 import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { uniqueKebabId } from "./ids.js";
 import { dataRootPaths } from "./paths.js";
+import { assertSafeForSecrets } from "./data-root-mode.js";
 import {
   ClientSchema,
   type Client,
@@ -61,11 +62,23 @@ export interface CreateClientInput {
   randomSuffix?: boolean;
 }
 
-/** The principal of a keyless stdio MCP server without `--admin`. It is not stored: see `localPrincipal`. */
+/** Reserved: the id the removed keyless local-mcp principal had. No client may hold it. */
 export const LOCAL_MCP_ID = "local-mcp";
 
-/** `local` names the local principal and `local-mcp` the keyless MCP one, so no client may hold either id. */
+/** `local` names the local principal and `local-mcp` the removed keyless MCP one, so no client may hold either id. */
 const RESERVED_CLIENT_IDS = ["local", LOCAL_MCP_ID];
+
+/**
+ * The warning for a client that holds the reserved id `local-mcp` from before it was reserved: it
+ * cannot authenticate any more. Undefined when there is none (a revoked one is already refused).
+ */
+export function reservedIdWarning(clients: readonly Client[]): string | undefined {
+  if (!clients.some((c) => c.id === LOCAL_MCP_ID && !c.revokedAt)) return undefined;
+  return (
+    `warning: auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID} (made before the id was reserved). ` +
+    `It is refused. Fix: boof-runner auth revoke ${LOCAL_MCP_ID}`
+  );
+}
 
 /** Tighten an existing `auth/` directory (an older data root may have it looser) to mode 0700. */
 export async function tightenAuthDir(root: string): Promise<void> {
@@ -94,6 +107,7 @@ export function isExpired(client: Pick<Client, "expiresAt">, nowMs: number): boo
  * rotation. Secrets are 32 random bytes, so a plain sha256 is sufficient.
  */
 export class AuthStore {
+  private readonly root: string;
   private readonly path: string;
   private readonly dir: string;
   /** Bumped on every write by this instance; lets in-process caches invalidate at once. */
@@ -107,6 +121,7 @@ export class AuthStore {
     opts: { lock?: ProcessLockOptions } = {},
   ) {
     const p = dataRootPaths(root);
+    this.root = root;
     this.path = p.authClients;
     this.dir = p.auth;
     this.lockOpts = opts.lock ?? {};
@@ -119,15 +134,18 @@ export class AuthStore {
   /** mtime (ms) of clients.json, or 0 when it does not exist. */
   async mtimeMs(): Promise<number> {
     try {
+      await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
       return (await stat(this.path)).mtimeMs;
-    } catch {
-      return 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+      throw error;
     }
   }
 
   async list(): Promise<Client[]> {
     let raw: string;
     try {
+      await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
       raw = await readFile(this.path, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -148,10 +166,23 @@ export class AuthStore {
   }
 
   private async save(clients: Client[]): Promise<void> {
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    await this.ensureAuthDirectory();
+    await assertSafeForSecrets(this.root, this.path, "file", { allowMissing: true });
     await lockedAtomicWrite(this.path, JSON.stringify({ clients }, null, 2) + "\n", 0o600);
     await chmod(this.path, 0o600);
+    await assertSafeForSecrets(this.root, this.path, "file");
     this.version += 1;
+  }
+
+  private async ensureAuthDirectory(): Promise<void> {
+    try {
+      await assertSafeForSecrets(this.root, this.dir, "directory");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await mkdir(this.dir, { recursive: true, mode: 0o700 });
+      await chmod(this.dir, 0o700);
+      await assertSafeForSecrets(this.root, this.dir, "directory");
+    }
   }
 
   /**
@@ -161,7 +192,7 @@ export class AuthStore {
    */
   private async mutate<T>(fn: (clients: Client[]) => T): Promise<T> {
     // The directory first, with its private mode: the lock file is created inside it.
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    await this.ensureAuthDirectory();
     return withProcessLock(
       join(this.dir, ".clients.lock"),
       this.lockOpts,
@@ -238,10 +269,10 @@ export class AuthStore {
   verifyAgainst(clients: readonly Client[], key: string): VerifyResult {
     const parsed = parseKey(key);
     if (!parsed) return { ok: false, reason: "malformed" };
-    // Legacy entries using the in-memory concierge principal namespace cannot authenticate.
+    // Legacy entries using the in-memory concierge principal namespace cannot authenticate, nor can a legacy `local-mcp` entry (reserved).
     const client = parsed.clientId.startsWith("concierge-")
       ? undefined
-      : clients.find((c) => c.id === parsed.clientId);
+      : clients.find((c) => c.id === parsed.clientId && c.id !== LOCAL_MCP_ID);
     // Always hash and compare, even for unknown ids, so timing does not reveal existence.
     const presented = Buffer.from(sha256Hex(parsed.secret), "hex");
     const expected = Buffer.from(client?.keyHash ?? "0".repeat(64), "hex");

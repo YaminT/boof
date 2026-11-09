@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import {
   mkdtemp,
   readFile,
@@ -48,7 +49,11 @@ beforeEach(async () => {
   await new SettingsStore(root).save(defaultSettings());
   const service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "demo" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
   wtRoot = join(repo, ".boof-runner-worktrees");
 });
 

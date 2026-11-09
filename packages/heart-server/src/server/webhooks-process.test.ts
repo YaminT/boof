@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { execFile, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -97,7 +98,11 @@ describe("one webhook dispatcher per data root", () => {
     });
     const service = new TaskService(root, new ToolRegistry([new MockTool()]));
     await service.projects.create({ workingDirectory: repo, id: "a" });
-    const app = createApp({ service, peerAddress: () => "127.0.0.1" });
+    const app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+    });
     const made = await app.request("http://localhost/api/v1/webhooks", {
       method: "POST",
       headers: { "content-type": "application/json" },

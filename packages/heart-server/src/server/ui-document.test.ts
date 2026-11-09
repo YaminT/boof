@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,7 +72,12 @@ describe("UI document and SPA fallback", () => {
     await writeFile(join(ui, "assets", "app.js"), "export {};");
     const service = new TaskService(root, new ToolRegistry([new MockTool()]));
     await new SettingsStore(root).save(defaultSettings());
-    app = createApp({ service, peerAddress: () => "127.0.0.1", uiDir: ui });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+      uiDir: ui,
+    });
   });
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });

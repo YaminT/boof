@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStore, LOCAL_PRINCIPAL, TaskStore, type Principal, type Scope } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
-import { LOCAL_MCP_PRINCIPAL } from "../local-principal.js";
 import type { OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { getOp } from "../registry.js";
@@ -688,12 +687,11 @@ describe("authorization", () => {
     expect(seen).toEqual([]);
   });
 
-  it("review-trust, project-restricted and local-mcp principals cannot change account state or the gateway", async () => {
+  it("review-trust and project-restricted principals cannot change account state or the gateway", async () => {
     await configure();
     const refused: Principal[] = [
       client(["settings:read", "settings:write"], "review"),
       client(["settings:read", "settings:write"], "trusted", ["demo"]),
-      { ...LOCAL_MCP_PRINCIPAL, scopes: new Set<Scope>(["settings:read", "settings:write"]) },
     ];
     for (const p of refused) {
       for (const [name, input] of [
@@ -714,13 +712,14 @@ describe("authorization", () => {
     expect(seen).toEqual([]);
   });
 
-  it("local-mcp as it really is (no settings:write at all) is refused on every mutation", async () => {
+  it("a review client without settings:write is refused on every mutation", async () => {
     await configure();
+    const reviewer = client(["settings:read", "tasks:read"], "review");
+    await expect(run("accounts.pause", reviewer, { accountId: "a1" })).rejects.toMatchObject({
+      status: 403,
+    });
     await expect(
-      run("accounts.pause", LOCAL_MCP_PRINCIPAL, { accountId: "a1" }),
-    ).rejects.toMatchObject({ status: 403 });
-    await expect(
-      run("settings.update", LOCAL_MCP_PRINCIPAL, { owlishApiKey: "btr-x-key-000000001" }),
+      run("settings.update", reviewer, { owlishApiKey: "btr-x-key-000000001" }),
     ).rejects.toMatchObject({ status: 403 });
     expect(seen).toEqual([]);
   });

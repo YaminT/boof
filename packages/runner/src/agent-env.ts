@@ -4,7 +4,7 @@
  * tokens the agent has no business with. Only what a command-line agent needs is kept.
  *
  * This limits what an agent *inherits*. It is not a sandbox: the agent runs as your OS user and
- * can read your files and call boof's local API (see docs/boof-runner.md, "Agents are not sandboxed").
+ * can read your files and unset the CLI refusal marker (see docs/boof-runner.md, "Agents are not sandboxed").
  */
 
 /** Names kept as they are: the shell basics, the temp and cache locations, TLS and proxy settings. */
@@ -58,6 +58,7 @@ const NEVER_PREFIX = "BOOF_";
 export function agentEnv(
   env: NodeJS.ProcessEnv = process.env,
   extra: readonly string[] = [],
+  marker?: string,
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   const wanted = new Set(extra);
@@ -67,5 +68,6 @@ export function agentEnv(
       out[name] = value;
     }
   }
+  if (marker !== undefined) out.BOOF_RUNNER_AGENT_OF = marker;
   return out;
 }

@@ -1,24 +1,23 @@
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import {
   AuthStore,
+  BrowserSessionStore,
+  browserSessionCookieName,
   authorize,
   authorizeProject,
   isKebabId,
-  LOCAL_PRINCIPAL,
   MAX_ATTACHMENT_BYTES,
+  type BrowserSessionVerifier,
   type Principal,
 } from "@boof/heart";
 import {
   buildOpenApi,
   IdempotencyStore,
-  LOCAL_MCP_ID,
-  LOCAL_MCP_PRINCIPAL,
   OpError,
   registry,
-  RESERVED_ID_MESSAGE,
   toOpError,
   type AnyOperation,
   type ResolveHost,
@@ -29,6 +28,7 @@ import { originGuard } from "./middleware/origin-guard.js";
 import {
   createAuthenticator,
   defaultPeerAddress,
+  hostPort,
   requireScope,
   type PeerAddressResolver,
 } from "./middleware/auth.js";
@@ -49,6 +49,7 @@ import {
 } from "./events.js";
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 import { mcpRoute } from "./mcp-route.js";
+import { browserSignin } from "./browser-signin.js";
 import { HARNESS_MD } from "./generated/harness.js";
 import { ConciergeAskInputSchema } from "../api/ops/concierge.js";
 import { ConciergeEventSchema } from "../api/schemas.js";
@@ -66,6 +67,8 @@ export interface AppDeps {
   authStore?: AuthStore;
   /** Resolves the TCP peer address (loopback detection). Default: the socket's remote address. */
   peerAddress?: PeerAddressResolver;
+  browserSessions?: BrowserSessionVerifier;
+  sessionCookieName?: (c: Context) => string;
   /** True when a URL points at this server itself (webhook targets must not). */
   isSelfUrl?: (url: URL) => boolean;
   /** DNS for the webhook target check; tests inject a fake. */
@@ -126,6 +129,10 @@ export function createApp(deps: AppDeps): Hono {
   const security = securityConfigReader(service);
   const authStore = deps.authStore ?? new AuthStore(service.root, deps.now);
   const peerAddress = deps.peerAddress ?? defaultPeerAddress;
+  const browserSessions = deps.browserSessions ?? new BrowserSessionStore(service.root);
+  const sessionCookieName =
+    deps.sessionCookieName ??
+    ((c: Context) => browserSessionCookieName(hostPort(c.req.header("host"))));
 
   app.use(
     "*",
@@ -207,33 +214,32 @@ export function createApp(deps: AppDeps): Hono {
     peerAddress,
     now: deps.now,
     operatorClients: deps.operatorClients,
+    browserSessions,
+    sessionCookieName,
   });
   const limiter = rateLimit({ security, now: deps.now });
   // Before authenticate, so failed authentications are counted per address; a request whose key
   // verifies is never limited. After the Origin guard, so cross-site rejections do not spend a
   // client's bucket.
   const unauthenticated = unauthenticatedRateLimit({ security, peerAddress, now: deps.now });
-  // A keyless loopback caller of /mcp (local-trust) is a model host, not the UI: it becomes the
-  // review-trust `local-mcp` principal here, before the limiter and the handler, so it has its
-  // own rate-limit bucket and the audit line names it. As on stdio, it is refused while
-  // clients.json holds a stored client of that reserved id (the two would share ownership).
-  const keylessMcp: MiddlewareHandler = async (c, next) => {
-    const p = c.get("principal");
-    if (p.kind === LOCAL_PRINCIPAL.kind && p.id === LOCAL_PRINCIPAL.id) {
-      if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
-        throw new OpError(403, RESERVED_ID_MESSAGE, "forbidden_trust");
-      }
-      c.set("principal", LOCAL_MCP_PRINCIPAL);
-      c.set("keylessMcp", true);
-    }
-    return next();
-  };
   for (const path of guarded) {
     app.use(path, unauthenticated);
     app.use(path, auth.middleware);
-    if (path === "/mcp") app.use(path, keylessMcp);
     app.use(path, limiter);
   }
+
+  // Sign-in is deliberately concealed outside the owner's local-trust browser context.
+  app.use("/auth/browser", auditor);
+  app.use("/auth/browser", unauthenticated);
+  app.get(
+    "/auth/browser",
+    browserSignin({
+      security,
+      peerAddress,
+      sessions: browserSessions,
+      sessionCookieName,
+    }),
+  );
 
   app.onError((err, c) => {
     const e = toOpError(err);
@@ -490,6 +496,7 @@ export function createApp(deps: AppDeps): Hono {
         event: "ready",
         data: JSON.stringify({ cursor: encodeFeedCursor(cursor) }),
       });
+      if (ended) return; // the client left during the greeting: nothing is subscribed yet
       let running: Promise<void> | null = null;
       let again = false;
       const readAll = async () => {
@@ -576,6 +583,7 @@ export function createApp(deps: AppDeps): Hono {
       let principal = who(c);
       let ended = false;
       let unsub = () => {};
+      let poll: ReturnType<typeof setInterval> | undefined;
       let wake = () => {};
       let closed = false;
       const finish = () => {
@@ -583,6 +591,7 @@ export function createApp(deps: AppDeps): Hono {
         if (closed) return;
         closed = true;
         unsub();
+        clearInterval(poll);
         releaseStream(streamId);
         wake();
       };
@@ -591,6 +600,7 @@ export function createApp(deps: AppDeps): Hono {
       if (sig.aborted) finish();
       else sig.addEventListener("abort", finish, { once: true });
       await stream.writeSSE({ event: "ready", data: "connected" });
+      if (ended) return;
       if (!deps.watcher) {
         // No watcher (e.g. tests): end after the greeting.
         finish();
@@ -613,6 +623,19 @@ export function createApp(deps: AppDeps): Hono {
           await stream.writeSSE({ event, data: JSON.stringify(data) });
         })().catch(() => {});
       });
+      poll = setInterval(() => {
+        void (async () => {
+          if (ended) return;
+          const fresh = await resolveSame(c, principal);
+          if (!fresh) {
+            ended = true;
+            await sendUnauthorized(stream);
+            finish();
+            return;
+          }
+          principal = fresh;
+        })().catch(() => {});
+      }, 2000);
       // Keep the connection open until the client disconnects or the key stops working.
       if (!ended)
         await new Promise<void>((resolve) => {

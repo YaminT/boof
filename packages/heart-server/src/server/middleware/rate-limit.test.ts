@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "../test-ui-session.js";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import type { SecuritySettings } from "@boof/heart";

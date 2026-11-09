@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 /**
  * The harness flow of the roadmap (plans/README.md), end to end through /api/v1 with a bearer
  * key: create project, submit a plan with dependent goals, sync, let the runner execute with the
@@ -104,6 +105,7 @@ beforeEach(async () => {
     })
   ).key;
   app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
     service: new TaskService(root, new ToolRegistry([new MockTool()])),
     authStore,
     peerAddress: () => "10.0.0.7",

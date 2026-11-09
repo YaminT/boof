@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ afterEach(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDe
 describe("REST routes match the registry", () => {
   it("serves every operation at its method and path under /api/v1 and the unversioned prefix", async () => {
     const app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       peerAddress: () => "127.0.0.1",
     });
@@ -36,6 +38,7 @@ describe("REST routes match the registry", () => {
 
   it("answers a route that is not in the registry with 404 not_found", async () => {
     const app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       peerAddress: () => "127.0.0.1",
     });

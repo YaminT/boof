@@ -1,8 +1,9 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ClaudeConcierge, ToolRegistry } from "@boof/runner";
+import { parseArgs } from "node:util";
+import { ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
 import { boot, isRunnerStartFailure } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
@@ -20,9 +21,19 @@ import { projectCommand } from "@boof/facedisk/cli/project-cli.js";
 import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
+import { openCommand } from "@boof/facedisk/cli/open-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
-import { AuthStore, MigrationError, scaffoldDataRoot, ProjectResolutionError } from "@boof/heart";
+import {
+  AuthStore,
+  BrowserSessionStore,
+  MigrationError,
+  scaffoldDataRoot,
+  ProjectResolutionError,
+  SettingsStore,
+  securitySettings,
+  UnsafeSecretPathError,
+} from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
 interface ServeArgs {
@@ -38,8 +49,9 @@ function defaultDataRoot(): string {
   return process.env.BOOF_RUNNER_DATA_ROOT ?? resolve(process.cwd(), "data");
 }
 
+/** Always lexically collapsed (`..`), the same string the stores build their paths from. */
 function absPath(p: string): string {
-  return isAbsolute(p) ? p : resolve(process.cwd(), p);
+  return resolve(process.cwd(), p);
 }
 
 /** Pull `--flag value` / `--flag=value` out of an arg list. */
@@ -74,6 +86,7 @@ Usage:
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
+  boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
   boof-runner ops                      List the operation commands (every REST/MCP operation)
   boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
   boof-runner --help                   Show this help
@@ -112,6 +125,34 @@ scan options:
       --model <name>  Model for --tool
 
 Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage; operation commands: 2 not found, 3 not allowed (identity, scope, project, trust), 130 interrupted.`;
+
+/** True when the bind address only accepts connections from this machine. */
+function isLoopbackBind(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+}
+
+/**
+ * The lines `serve` prints once the server is up. Under local-trust on a loopback bind the
+ * Web UI line is a single-use sign-in link; otherwise it is the plain URL.
+ */
+export function serveBanner(o: {
+  scheme: string;
+  hostPart: string;
+  port: number;
+  authMode: "local-trust" | "required";
+  loopback: boolean;
+  link?: string;
+}): string[] {
+  const base = `${o.scheme}://${o.hostPart}:${o.port}`;
+  const web =
+    o.authMode === "local-trust" && o.loopback && o.link
+      ? [
+          `Web UI:  ${o.link}`,
+          '  (sign-in link: single use, 10 minutes; later run "boof-runner open")',
+        ]
+      : [`Web UI:  ${base}`];
+  return [...web, `API:     ${base}/api`];
+}
 
 /** Locate the built UI directory shipped alongside this CLI, if present. */
 function resolveUiDir(): string {
@@ -263,13 +304,37 @@ export async function serve(argv: string[]): Promise<void> {
       runner: !args.noRunner,
       guard,
       ...(devAgent ? { conciergeAgent: devAgent } : {}),
-      onServer: (server) => {
+      onServer: async (server) => {
         if (!server) return;
         const scheme = args.tlsCert ? "https" : "http";
         const shown = args.host === "0.0.0.0" || args.host === "::" ? "localhost" : args.host;
         const hostPart = shown.includes(":") && !shown.startsWith("[") ? `[${shown}]` : shown;
-        console.log(`Web UI:  ${scheme}://${hostPart}:${server.port}`);
-        console.log(`API:     ${scheme}://${hostPart}:${server.port}/api`);
+        const authMode = securitySettings(await new SettingsStore(root).load()).auth.mode;
+        const loopback = isLoopbackBind(args.host);
+        let link: string | undefined;
+        // Under systemd stdout is the journal: no live link there, just the command to run.
+        const underJournal = Boolean(process.env.JOURNAL_STREAM);
+        if (authMode === "local-trust" && loopback && !underJournal) {
+          try {
+            const { code } = await new BrowserSessionStore(root).createLink();
+            link = `${scheme}://${hostPart}:${server.port}/auth/browser?code=${code}`;
+          } catch (e) {
+            console.error(
+              `Could not mint a sign-in link (${e instanceof Error ? e.message : String(e)}); run "boof-runner open" later.`,
+            );
+          }
+        }
+        if (authMode === "local-trust" && loopback && underJournal)
+          console.log(`Sign in to the web UI: boof-runner open -d "${root}" --port ${server.port}`);
+        for (const line of serveBanner({
+          scheme,
+          hostPart,
+          port: server.port,
+          authMode,
+          loopback,
+          ...(link ? { link } : {}),
+        }))
+          console.log(line);
       },
       onRunner: (engine) => {
         if (engine) console.log("Runner:  started (toggle on/off in the UI)");
@@ -495,6 +560,22 @@ export function firstPositional(argv: string[]): string | undefined {
 }
 
 export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
+  if (!isExactShortcut(rawArgv)) {
+    const roots = [
+      ...dataRootsFromArgv(rawArgv),
+      ...(process.env.BOOF_RUNNER_DATA_ROOT ? [process.env.BOOF_RUNNER_DATA_ROOT] : []),
+      // Agents can inherit the server cwd, whose default data root remains protected even with -d.
+      resolve(process.cwd(), "data"),
+    ];
+    for (const root of new Set(roots.map(absPath))) {
+      if (!isAgentOf(process.env, root)) continue;
+      console.error(
+        "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.",
+      );
+      process.exitCode = 3;
+      return;
+    }
+  }
   const argv = routeArgv(rawArgv);
   const [cmd, ...rest] = argv;
   // --version also works after serve's own flags (`boof-runner -d x --version`).
@@ -520,8 +601,12 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   try {
     code = await dispatch(cmd, rest, argv);
   } catch (err) {
-    if (err instanceof ProjectResolutionError || err instanceof MigrationError) {
-      console.error(err.message);
+    if (
+      err instanceof ProjectResolutionError ||
+      err instanceof MigrationError ||
+      err instanceof UnsafeSecretPathError
+    ) {
+      console.error(err.message.replace(/[\r\n]+/g, " "));
       code = 1;
     } else {
       throw err;
@@ -529,6 +614,46 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   }
   if (code === SERVE_FOREVER) return;
   if (code !== 0) process.exitCode = code;
+}
+
+function isExactShortcut(argv: string[]): boolean {
+  return argv.length === 1 && ["--version", "-v", "--help", "-h"].includes(argv[0]!);
+}
+
+/** Every explicit data root, including repeated short/long and inline forms. */
+export function dataRootsFromArgv(argv: string[]): string[] {
+  let roots: string[] = [];
+  try {
+    const parsed = parseArgs({
+      args: argv,
+      strict: false,
+      allowPositionals: true,
+      options: { data: { type: "string", short: "d", multiple: true } },
+    });
+    const values = parsed.values.data;
+    if (Array.isArray(values))
+      roots = values.filter((value): value is string => typeof value === "string");
+    else if (typeof values === "string") roots = [values];
+  } catch {
+    // Keep the raw scan below as a belt for malformed or future argv forms.
+  }
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (arg === "--data") {
+      if (argv[i + 1] !== undefined) roots.push(argv[i + 1]!);
+    } else if (arg.startsWith("--data=")) {
+      roots.push(arg.slice("--data=".length));
+    } else if (arg.startsWith("-") && !arg.startsWith("--") && arg.length > 1) {
+      const dataIndex = arg.indexOf("d", 1);
+      if (dataIndex !== -1) {
+        const attached = arg.slice(dataIndex + 1);
+        if (attached.length > 0)
+          roots.push(attached.startsWith("=") ? attached.slice(1) : attached);
+        else if (argv[i + 1] !== undefined) roots.push(argv[i + 1]!);
+      }
+    }
+  }
+  return [...new Set(roots.filter(Boolean))];
 }
 
 /** The words in serve's arguments that are not a flag or a flag's value: serve takes none. */
@@ -604,6 +729,9 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "task":
       code = await taskCommand(rest, defaultDataRoot);
+      break;
+    case "open":
+      code = await openCommand(rest, defaultDataRoot);
       break;
     case "mcp":
       code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());

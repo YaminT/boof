@@ -25,6 +25,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, ["--version"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
@@ -54,6 +55,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, ["models"], {
       cwd: process.cwd(),
       timeoutMs: 20000,
+      env: agentEnv(),
     });
     if (res.code !== 0) return [...this.defaultModels];
     // `opencode models` prints one `provider/model` id per line.
@@ -90,7 +92,7 @@ export class OpencodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
-    const childEnv = agentEnv(process.env, opts.agentEnv);
+    const childEnv = agentEnv(process.env, opts.agentEnv, opts.agentMarker);
     if (opts.gateway) {
       delete childEnv.ANTHROPIC_API_KEY;
       delete childEnv.ANTHROPIC_AUTH_TOKEN;

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,6 +27,21 @@ afterEach(async () => {
 });
 
 describe("boof-runner auth", () => {
+  it("list warns once about a client with the reserved id local-mcp and names the fix", async () => {
+    const store = new AuthStore(root);
+    await store.create({ name: "old", scopes: ["tasks:read"] });
+    const file = join(root, "auth", "clients.json");
+    const raw = JSON.parse(await readFile(file, "utf8"));
+    raw.clients[0].id = "local-mcp";
+    await writeFile(file, JSON.stringify(raw));
+    expect(await run("list")).toBe(0);
+    expect(errs.filter((l) => l.includes("auth revoke local-mcp"))).toHaveLength(1);
+    expect(await run("revoke", "local-mcp")).toBe(0);
+    errs.length = 0;
+    expect(await run("list")).toBe(0);
+    expect(errs).toEqual([]);
+  });
+
   it("add prints the key once; list, rotate and revoke manage it without ever reprinting it", async () => {
     expect(
       await run(

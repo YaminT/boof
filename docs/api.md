@@ -14,8 +14,27 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 
 ## Authentication and scopes
 
-- Loopback peers are trusted as the local user when `security.auth.mode` is `local-trust` (the
-  default). Anything else needs `Authorization: Bearer boof_...`.
+- Under `security.auth.mode = "local-trust"` (the default) the web UI works without a key, but only
+  after sign-in: a loopback request with no `Authorization` header is the local user only when it
+  carries the browser session cookie `boof_ui_<port>` (`HttpOnly`, `SameSite=Strict`). Get one by
+  opening the single-use link (valid 10 minutes) that `boof-runner serve` or `boof-runner open`
+  prints; `GET /auth/browser?code=bl_...` sets the cookie and redirects to `/`. Every other keyless
+  request, `curl` included, gets `401` (see the reasons below). Anything else needs
+  `Authorization: Bearer boof_...`. With `auth.mode = "required"` the UI asks for a key.
+- **Keyless refusals.** `401 unauthenticated` has `details.reason`: `browser_session_required`
+  (keyless, no valid session: open a sign-in link or send a key) or `mcp_key_required` (`/mcp`
+  always needs a key; the cookie does not count). A keyless refusal does not spend the
+  failed-authentication limit. When the session store cannot be used safely the answer is
+  `503 browser_sessions_unavailable`: the message names the path, what is wrong (the owner uid or
+  the file mode) and the `chmod` that fixes it. Only a keyless loopback caller can read it, and
+  other origins cannot (no CORS headers).
+- **What this does not stop.** A process that runs as your OS user can still edit the data root
+  and read your browser's cookie store, and cookies are shared across ports on `127.0.0.1`: another
+  OS user who runs a server on any loopback port can receive the cookie if your browser loads a
+  page from it, and replay it as the administrator. Same-user isolation is layer 2 (an OS
+  sandbox, future work); a port-isolated browser session is future work too. A request that
+  carries `X-Forwarded-For` or another proxy header never gets the local principal, and
+  `/auth/browser` answers `404` for it: behind a reverse proxy use a key.
 - **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` (host and port) is not the request's own `Host` or a `security.allowedHosts` entry. An entry without a port matches only the default port of the Origin's scheme (80 for http, 443 for https); an entry with a port matches that port. Such a request is refused with `403 origin_not_allowed` (`Origin: null` too), and so is any browser request with `Sec-Fetch-Site: cross-site`. A JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
 - Create a key (printed once) with the CLI or `POST /auth/clients`:
 
@@ -74,7 +93,7 @@ Routed agents receive the gateway key in their environment and can call ccflare 
 The opt-in `claude-agent` tool (Claude Agent SDK) may use the gateway only when every account in it, paused ones included, is an API-key provider with no refresh token. Anthropic allows the Agent SDK only with API-key authentication, so subscription (OAuth) accounts stay on `claude-code`. The check needs a better-ccflare **admin** client key; an api-only key gets HTTP 401 and keeps the gate closed. The admin key stays inside boof. The gateway is usable for `claude-agent` only when a distinct api-only `owlishAgentKey` is also set; that key is what the agent process receives. Without it boof skips eligibility checking and immediately falls back to the project key or refuses. A network failure, timeout or 5xx while checking eligibility waits (pending at selection; a running step waits up to `retries.poolWaitMs`); a 401/403, subscription account or malformed answer refuses or falls back. Pool-routed claude-code, codex and opencode continue to receive the admin client key as before; only claude-agent gets the separate agent key. See [The claude-agent tool](boof-runner.md#the-claude-agent-tool) for the full rules, bare mode, the per-project config folder and the known limits.
 
 - `accounts.agentSdk` (`GET /api/v1/accounts/agent-sdk`, MCP `boof_get_agent_sdk_eligibility`, CLI `boof-runner accounts agent-sdk`): scope `settings:read`; input `{ refresh? }`; returns `{ gateway: "absent" | "checked", allowed, reason, blocking: [{ id, name, provider, why }], checkedAt }`. `why` is `subscription`, `oauth-token` or `unknown-type`. With no `settings.owlish` it answers `gateway: "absent"`, `allowed: false` and makes no request.
-- `projects.update` input `anthropicApiKey` (`string | null`): the project's own Anthropic API key, write-only. It is stored in `<data>/owlish/project-keys.json` (mode 0600), never returned, and `null` removes it. Only `sk-ant-api…` keys match; OAuth (`sk-ant-oat…`) and admin (`sk-ant-admin…`) keys give 400 without echoing the value. A `review-trust` or `local-mcp` principal gets 403 `forbidden_trust`. `projects.get` and `projects.list` show only `anthropicApiKeySet: boolean`, and `claudeAgent.auth` (`gateway` or `project-key`) is set through the same operation. The audit log records `set` or `removed`, never the value. The CLI accepts the key only through `--input @file.json` or `--input @-` (stdin); a flag such as `--anthropic-api-key` is refused.
+- `projects.update` input `anthropicApiKey` (`string | null`): the project's own Anthropic API key, write-only. It is stored in `<data>/owlish/project-keys.json` (mode 0600), never returned, and `null` removes it. Only `sk-ant-api…` keys match; OAuth (`sk-ant-oat…`) and admin (`sk-ant-admin…`) keys give 400 without echoing the value. A `review-trust` principal gets 403 `forbidden_trust`. `projects.get` and `projects.list` show only `anthropicApiKeySet: boolean`, and `claudeAgent.auth` (`gateway` or `project-key`) is set through the same operation. The audit log records `set` or `removed`, never the value. The CLI accepts the key only through `--input @file.json` or `--input @-` (stdin); a flag such as `--anthropic-api-key` is refused.
 - `runner.status` and `runner.overview` carry `agentAuth`: for each active (not archived) project whose roles use `claude-agent`, or that has a pending task whose `tools` override uses it, `{ projectId, roles, allowed, via: "gateway" | "project-key" | null, reason }`. A project on the gateway with no client key, or with no agent key, is `allowed: false` (unless it falls back to its project key). In the desktop app every entry is `allowed: false` with the unavailable reason, and the desktop app never asks the gateway.
 - `tasks.inject` input `model`: optional, only with `mode: "now"` (otherwise 400 `model needs mode now`). It switches the model for the rest of the step. `claude-agent` interrupts the session and continues it in place; if the interrupt fails, boof kills the process and resumes the session. The other tools resume or rerun the step with the new model. A step takes at most 5 steers. `next-step` keeps its pipeline meaning for every tool.
 
@@ -100,7 +119,7 @@ internals; validation errors list `details: [{ path, message }]`.
 | `not_a_git_repo`           | 400    | The project directory is not a git work tree.                                                            |
 | `nothing_to_import`        | 400    | The repository has no goal.boof.xml files to import.                                                     |
 | `no_default_project`       | 404    | The unversioned task routes need settings.defaultProject, which is unset.                                |
-| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key.                                               |
+| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key; `details.reason` names a keyless refusal.     |
 | `forbidden_scope`          | 403    | The client lacks the scope the operation needs.                                                          |
 | `forbidden_project`        | 403    | The client may not access this project.                                                                  |
 | `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.                                           |
@@ -326,11 +345,12 @@ local agent host) and `POST /mcp` on the HTTP server (Streamable HTTP, for remot
 Each tool calls the same operation as its REST route, so scopes, project restrictions, trust
 rules, input validation and error codes are identical, and every call is audited.
 
-- **Auth.** HTTP: `Authorization: Bearer boof_...` (or no header from a loopback peer under
-  `local-trust`; that caller is not the UI's administrator but the review-trust `local-mcp` principal, with its own rate-limit bucket and audit name, no administration tools, and `403` while `clients.json` holds a stored client of that reserved id), after the Host guard, an `Origin` check (absent, or an allowed host, and no
-  `Sec-Fetch-Site: cross-site`; else `403 origin_not_allowed`), the body limit and the rate limit. stdio: `--client <id>` (no key
-  needed), or the local principal under `local-trust`; with `auth.mode = "required"` and no
-  `--client` the command refuses to start.
+- **Auth.** HTTP: `Authorization: Bearer boof_...` is required (a keyless request answers `401`
+  with the reason `mcp_key_required`, even from loopback and even with the browser session cookie),
+  after the Host guard, an `Origin` check (absent, or an allowed host, and no
+  `Sec-Fetch-Site: cross-site`; else `403 origin_not_allowed`), the body limit and the rate limit. stdio:
+  `--client <id>` (no key needed, but the client is required); without it, and with the removed
+  `--admin`, the command refuses to start (exit 3) and names the fix.
 - **Stateless.** One request, one answer (`application/json`). No sessions, so GET and DELETE on
   `/mcp` answer `405` and there are no server-initiated notifications. Use `boof_wait_task`
   (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress. A wait ends as soon as the caller goes away: an HTTP disconnect, or an MCP `notifications/cancelled`. The server advertises `listChanged: false` for tools, resources and prompts.
@@ -348,17 +368,14 @@ rules, input validation and error codes are identical, and every call is audited
 - **Administration tools.** Every operation is a tool except attachment upload and download (REST
   only), including API clients, webhooks, settings, command templates and project deletion. Keys
   and signing secrets appear once, in the result (never in the summary line). Over stdio,
-  `boof-runner mcp` without `--client` acts as the reserved review-trust principal `local-mcp`
-  (every scope except `admin`, `auth:admin` and `settings:write`; not stored in `clients.json`), so
-  everything a review-trust client may not do is refused: tasks and plans it creates are drafts a
-  human approves, it cannot queue, retry, answer, activate a plan or switch the runner, it changes
-  only its own work and only the name, labels and paused state of a project, and it creates no
-  project. With `--admin` it is the local administrator and lists the administration tools too;
-  with `--client <id>` that client's scopes decide and `--admin` is refused. All keyless hosts share this one `local-mcp` identity; a client of that id left over from before
-  the id was reserved makes the keyless server refuse to start (and `serve` warns). It is a boundary
-  for MCP-only hosts only: a host whose model also has a shell can approve its own drafts through the
-  CLI or `curl` to the loopback API (goal `agent-containment`). Give agent hosts
-  `--client` with a narrow client. `projects.archive`, `unarchive` and `delete` (purge) are
+  `boof-runner mcp --client <id>` serves that client's tools: its scopes decide, and a `review`-trust
+  client's tasks and plans are drafts a human approves, it cannot queue, retry, answer, activate a
+  plan or switch the runner, it changes only its own work and only the name, labels and paused
+  state of a project, and it creates no project. A `trusted` client with the scopes you choose lists
+  the administration tools too. The keyless `local-mcp` identity and `--admin` are removed (the id
+  `local-mcp` stays reserved: a stored client of that id cannot authenticate). It is a boundary for
+  MCP-only hosts only: a host whose model also has a shell and runs as your user can edit the data
+  root (goal `agent-containment`, layer 2). Give agent hosts a narrow `--client`. `projects.archive`, `unarchive` and `delete` (purge) are
   refused to review-trust keys over REST and MCP alike. `POST /mcp` refuses JSON-RPC batches.
 
 Tools (the names are stable). Plan tools take `expectedVersion`, task updates `expectedUpdated`

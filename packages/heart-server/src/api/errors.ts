@@ -8,6 +8,7 @@ import {
   TaskNotFoundError,
   TaskNotRunningError,
   TaskRunningError,
+  UnsafeSecretPathError,
 } from "@boof/heart";
 
 /**
@@ -135,6 +136,8 @@ export function formatIssues(err: ZodError): { path: string; message: string }[]
 /** Map any thrown value to an {@link OpError}. Never leaks internals (unknown errors are `internal`). */
 export function toOpError(err: unknown): OpError {
   if (err instanceof OpError) return err;
+  if (err instanceof UnsafeSecretPathError)
+    return new OpError(503, err.message, "auth_store_unavailable" as ErrorCode);
   if (err instanceof EpicError) {
     if (err.code === "not_found") return new OpError(404, err.message, "epic_not_found");
     if (err.code === "modified") return new OpError(409, err.message, "epic_modified");

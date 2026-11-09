@@ -7,13 +7,15 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { Project } from "@boof/heart/schema";
 import { BudgetBanner } from "./shell/BudgetBanner.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
-import { TokenGate } from "./components/TokenGate.js";
+import { SignInStorageError, TokenGate } from "./components/TokenGate.js";
+import { getSignInStorageError, onSignInStorageError } from "./token.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import {
@@ -56,6 +58,11 @@ export function App() {
   const reloadProjects = useCallback(() => reloadRef.current(), []);
   const data = useAppData(selectedId, reloadProjects);
   const { settings, budget, refresh, needsToken, clearNeedsToken } = data;
+  const storageError = useSyncExternalStore(
+    onSignInStorageError,
+    getSignInStorageError,
+    getSignInStorageError,
+  );
   const { projects, projectsDenied, selected, select, reload } = useProjects(
     settings,
     routePid(route),
@@ -104,9 +111,13 @@ export function App() {
     void refresh().catch(() => {});
   };
 
+  // Sign-in cannot work while the server refuses to store sessions: show why instead of the gate.
+  if (storageError) return <SignInStorageError message={storageError} />;
+
   if (needsToken) {
     return (
       <TokenGate
+        reason={needsToken}
         onSubmit={() => {
           clearNeedsToken();
           void refresh().catch(() => {});

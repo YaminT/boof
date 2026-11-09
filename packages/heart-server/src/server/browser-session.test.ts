@@ -1,0 +1,580 @@
+import { chmod, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { request as nodeRequest } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  AuthStore,
+  BrowserSessionStore,
+  UnsafeBrowserSessionPathError,
+  type BrowserSessionVerifier,
+  dataRootPaths,
+  defaultSettings,
+  SettingsStore,
+  type SecuritySettings,
+} from "@boof/heart";
+import { MockTool, ToolRegistry } from "@boof/runner";
+import { TaskService } from "../api/index.js";
+import { createApp } from "./app.js";
+import { DataWatcher } from "./watch.js";
+import { startServer } from "./server.js";
+
+let base: string;
+let root: string;
+let service: TaskService;
+let authStore: AuthStore;
+let sessions: BrowserSessionStore;
+let peer: string | undefined;
+let watcher: DataWatcher | undefined;
+
+const request = (app: ReturnType<typeof createApp>, path: string, init: RequestInit = {}) =>
+  app.request(`http://localhost${path}`, init);
+
+function build(extra: Partial<Parameters<typeof createApp>[0]> = {}) {
+  return createApp({
+    service,
+    authStore,
+    browserSessions: sessions,
+    sessionCookieName: () => "boof_ui_4319",
+    peerAddress: () => peer,
+    ...(watcher ? { watcher } : {}),
+    ...extra,
+  });
+}
+
+async function setMode(next: "local-trust" | "required", unauthenticatedPerMinute = 30) {
+  const settings = defaultSettings();
+  settings.security = {
+    allowedHosts: [],
+    auth: { mode: next },
+    allowedProjectRoots: [],
+    externalTasksRequireApproval: true,
+    rateLimit: { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute },
+    trustedProxies: ["loopback"],
+    audit: { enabled: true, retentionDays: 90 },
+  } satisfies SecuritySettings;
+  await new SettingsStore(root).save(settings);
+}
+
+async function signIn(app = build()) {
+  const { code } = await sessions.createLink();
+  const response = await request(app, `/auth/browser?code=${encodeURIComponent(code)}`);
+  return { code, response };
+}
+
+async function auditLines(): Promise<Record<string, unknown>[]> {
+  const lines: Record<string, unknown>[] = [];
+  for (const file of await readdir(dataRootPaths(root).audit).catch(() => [])) {
+    for (const line of (await readFile(join(dataRootPaths(root).audit, file), "utf8")).split(
+      "\n",
+    )) {
+      if (line) lines.push(JSON.parse(line));
+    }
+  }
+  return lines;
+}
+
+beforeEach(async () => {
+  base = await mkdtemp(join(tmpdir(), "boof-browser-session-"));
+  root = join(base, "data");
+  await setMode("local-trust");
+  service = new TaskService(root, new ToolRegistry([new MockTool()]));
+  authStore = new AuthStore(root);
+  sessions = new BrowserSessionStore(root);
+  peer = "127.0.0.1";
+});
+
+afterEach(async () => {
+  await watcher?.stop();
+  watcher = undefined;
+  await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
+
+describe("browser session authentication", () => {
+  it("keyless loopback /api without a session is 401 browser_session_required", async () => {
+    const res = await request(build(), "/api/v1/whoami");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({
+      error: {
+        code: "unauthenticated",
+        message: expect.stringContaining("boof-runner open"),
+        details: { reason: "browser_session_required" },
+      },
+    });
+  });
+
+  it("a redeemed link signs in: 303 to /, cookie HttpOnly + SameSite=Strict, then whoami is local", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const cookie = response.headers.get("set-cookie")!;
+    expect(cookie).toMatch(/^boof_ui_4319=bs_[^;]+;/);
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).toContain("Max-Age=2592000");
+    const token = cookie.match(/^boof_ui_4319=([^;]+)/)![1];
+    const who = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=${token}` },
+    });
+    expect(who.status).toBe(200);
+    expect(await who.json()).toMatchObject({ principal: { id: "local", kind: "local" } });
+  });
+
+  it("keyless /mcp under local-trust is 401 mcp_key_required", async () => {
+    const res = await request(build(), "/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({
+      error: {
+        details: { reason: "mcp_key_required" },
+        message: expect.stringContaining("API key"),
+      },
+    });
+  });
+
+  it("a valid session cookie is ignored on /mcp", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const res = await request(app, "/mcp", {
+      method: "POST",
+      headers: {
+        cookie: `boof_ui_4319=${token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.details.reason).toBe("mcp_key_required");
+  });
+
+  it.each(["same-site", "cross-site"])(
+    "a session cookie with Sec-Fetch-Site: %s is refused",
+    async (site) => {
+      const app = build();
+      const { response } = await signIn(app);
+      const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+      const res = await request(app, "/api/v1/whoami", {
+        headers: { cookie: `boof_ui_4319=${token}`, "sec-fetch-site": site },
+      });
+      expect(res.status).toBe(site === "cross-site" ? 403 : 401);
+      if (site === "same-site")
+        expect((await res.json()).error.details.reason).toBe("browser_session_required");
+    },
+  );
+
+  it.each([
+    "x-forwarded-for",
+    "forwarded",
+    "x-real-ip",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "via",
+  ])("a session cookie with proxy header %s is refused", async (header) => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=${token}`, [header]: "127.0.0.1" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("a session cookie from a non-loopback peer is refused", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    peer = "10.0.0.4";
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=${token}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("auth.mode required: a valid session cookie is ignored (401)", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    await setMode("required");
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=${token}` },
+    });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.code).toBe("unauthenticated");
+  });
+
+  it("/auth/browser is 404 for a non-loopback peer, with a proxy header, and in required mode", async () => {
+    const app = build();
+    const { code } = await sessions.createLink();
+    peer = "10.0.0.4";
+    expect((await request(app, `/auth/browser?code=${code}`)).status).toBe(404);
+    peer = "127.0.0.1";
+    expect(
+      (await request(app, `/auth/browser?code=${code}`, { headers: { via: "proxy" } })).status,
+    ).toBe(404);
+    await setMode("required");
+    expect((await request(app, `/auth/browser?code=${code}`)).status).toBe(404);
+  });
+
+  it("/auth/browser is 404 for a non-loopback Host even when the host guard allows it", async () => {
+    const app = build({ allowedHosts: ["boof.lan"] });
+    const { code } = await sessions.createLink();
+    const res = await request(app, `/auth/browser?code=${code}`, { headers: { host: "boof.lan" } });
+    expect(res.status).toBe(404);
+    expect(await sessions.redeemLink(code)).not.toBeNull();
+  });
+
+  it("HEAD does not redeem a browser sign-in link", async () => {
+    const app = build();
+    const { code } = await sessions.createLink();
+    expect((await request(app, `/auth/browser?code=${code}`, { method: "HEAD" })).status).toBe(405);
+    expect((await request(app, `/auth/browser?code=${code}`)).status).toBe(303);
+  });
+
+  it("/auth/browser with a used or bad code is 400 M3 and spends the unauthenticated budget", async () => {
+    await setMode("local-trust", 1);
+    const app = build();
+    const { code } = await sessions.createLink();
+    expect((await request(app, `/auth/browser?code=${code}`)).status).toBe(303);
+    const bad = await request(app, `/auth/browser?code=${code}`);
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain("This sign-in link is invalid, used or expired");
+    expect((await request(app, "/auth/browser?code=bad")).status).toBe(429);
+  });
+
+  it("keyless refusals do not spend the failed-authentication budget", async () => {
+    await setMode("local-trust", 1);
+    const app = build();
+    for (let i = 0; i < 100; i += 1) {
+      const res = await request(app, "/api/v1/whoami");
+      expect(res.status).toBe(401);
+      expect((await res.json()).error.details.reason).toBe("browser_session_required");
+    }
+    const final = await request(app, "/api/v1/whoami");
+    expect(final.status).toBe(401);
+    expect((await final.json()).error.details.reason).toBe("browser_session_required");
+    const badCode = await request(app, "/auth/browser?code=bad");
+    expect(badCode.status).toBe(400);
+    expect((await request(app, "/auth/browser?code=bad")).status).toBe(429);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "an unsafe session store returns a permission-fix 503",
+    async () => {
+      const { code } = await sessions.createLink();
+      await chmod(dataRootPaths(root).browserLinks, 0o666);
+      const res = await request(build(), `/auth/browser?code=${code}`);
+      expect(res.status).toBe(503);
+      const body = await res.text();
+      expect(body).toContain(dataRootPaths(root).browserLinks);
+      expect(body).toContain(`chmod go-w ${dataRootPaths(root).browserLinks}`);
+      expect(body).not.toMatch(/uid|mode \d/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "an unsafe session store returns its permission-fix 503 on /api",
+    async () => {
+      const app = build();
+      const { response } = await signIn(app);
+      expect(response.status).toBe(303);
+      await chmod(dataRootPaths(root).browserSessions, 0o666);
+      const res = await request(app, "/api/v1/whoami");
+      expect(res.status).toBe(503);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const json = await res.json();
+      const path = dataRootPaths(root).browserSessions;
+      expect(json).toEqual({
+        error: {
+          code: "browser_sessions_unavailable",
+          message: expect.stringContaining(`chmod go-w ${path}`),
+          details: { reason: "browser_sessions_unavailable" },
+        },
+      });
+      const text = JSON.stringify(json);
+      expect(text).toContain(path);
+      expect(text).not.toMatch(/uid|mode \d|666/);
+      expect(text).not.toContain("admin");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "an unsafe auth store answers auth_store_unavailable for a key and the session error for a cookie, never admin",
+    async () => {
+      const app = build();
+      const { response } = await signIn(app);
+      const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+      const authDir = join(root, "auth");
+      await chmod(authDir, 0o770);
+      const keyed = await request(app, "/api/v1/whoami", {
+        headers: { authorization: "Bearer boof_notakey" },
+      });
+      expect(keyed.status).toBe(503);
+      const keyedJson = await keyed.json();
+      expect(keyedJson.error.code).toBe("auth_store_unavailable");
+      expect(keyedJson.error.message).toContain(authDir);
+      const cookie = await request(app, "/api/v1/whoami", {
+        headers: { cookie: `boof_ui_4319=${token}` },
+      });
+      expect(cookie.status).toBe(503);
+      const cookieJson = await cookie.json();
+      expect(cookieJson.error.code).toBe("browser_sessions_unavailable");
+      expect(cookieJson.error.message).toContain(authDir);
+      expect(JSON.stringify(cookieJson)).not.toMatch(/uid|mode \d|"admin"/);
+    },
+  );
+
+  describe("session cookie values", () => {
+    const wellFormed = (n: number) => `bs_${String(n).padStart(43, "x")}`;
+    const countingVerifier = (inner: BrowserSessionVerifier) => {
+      const seen: (string | undefined)[] = [];
+      const verifier: BrowserSessionVerifier = {
+        verify: async (token) => {
+          seen.push(token);
+          return inner.verify(token);
+        },
+      };
+      return { seen, verifier };
+    };
+    const tokenOf = (response: Response) =>
+      response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+
+    it("700 values: only well-formed ones count, at most 4 are tried, and one of the first 4 still signs in", async () => {
+      const { response } = await signIn();
+      const valid = tokenOf(response);
+      const { seen, verifier } = countingVerifier(sessions);
+      const app = build({ browserSessions: verifier });
+      const junk = Array.from({ length: 696 }, (_, i) => (i % 2 ? `bs_${i}` : `junk${i}`));
+      const cookie = (values: string[]) => values.map((v) => `boof_ui_4319=${v}`).join("; ");
+      const ok = await request(app, "/api/v1/whoami", {
+        headers: { cookie: cookie([...junk, wellFormed(1), wellFormed(2), wellFormed(3), valid]) },
+      });
+      expect(ok.status).toBe(200);
+      expect(seen).toHaveLength(4);
+      seen.length = 0;
+      const late = await request(app, "/api/v1/whoami", {
+        headers: {
+          cookie: cookie([
+            ...junk,
+            wellFormed(1),
+            wellFormed(2),
+            wellFormed(3),
+            wellFormed(4),
+            valid,
+          ]),
+        },
+      });
+      expect(late.status).toBe(401);
+      expect(seen).toHaveLength(4);
+      seen.length = 0;
+      const none = await request(app, "/api/v1/whoami", {
+        headers: { cookie: cookie(junk) },
+      });
+      expect(none.status).toBe(401);
+      expect(seen.length).toBeLessThanOrEqual(1);
+    });
+
+    it("a failing session cookie spends the failed-authentication budget (401, then 429)", async () => {
+      await setMode("local-trust", 1);
+      const app = build();
+      const headers = { cookie: "boof_ui_4319=bs_bad" };
+      expect((await request(app, "/api/v1/whoami", { headers })).status).toBe(401);
+      expect((await request(app, "/api/v1/whoami", { headers })).status).toBe(429);
+    });
+
+    it("a verifier that throws on one value does not hide a later value that verifies", async () => {
+      const { response } = await signIn();
+      const valid = tokenOf(response);
+      const verifier: BrowserSessionVerifier = {
+        verify: async (token) => {
+          if (token === wellFormed(1)) throw new Error("boom");
+          if (token === wellFormed(2)) throw new UnsafeBrowserSessionPathError("/x", "unsafe /x");
+          return sessions.verify(token);
+        },
+      };
+      const res = await request(build({ browserSessions: verifier }), "/api/v1/whoami", {
+        headers: {
+          cookie: `boof_ui_4319=${wellFormed(1)}; boof_ui_4319=${wellFormed(2)}; boof_ui_4319=${valid}`,
+        },
+      });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  it("cookie name follows the bound port: boof_ui_9999 does not sign in a server whose name is boof_ui_4319", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_9999=${token}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("via a proxy Host on another port (Vite on 5319) the bound-port cookie still signs in", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=${token}`, host: "127.0.0.1:5319" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("startServer names the cookie for its bound port, regardless of Host port", async () => {
+    const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: () => {},
+    });
+    try {
+      const { code } = await new BrowserSessionStore(root).createLink();
+      const socketRequest = (path: string, cookie?: string) =>
+        new Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders }>(
+          (resolve, reject) => {
+            const req = nodeRequest(
+              {
+                host: "127.0.0.1",
+                port: running.port,
+                path,
+                headers: {
+                  host: "127.0.0.1:5319",
+                  ...(cookie ? { cookie } : {}),
+                },
+              },
+              (res) => {
+                res.resume();
+                res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers }));
+              },
+            );
+            req.on("error", reject);
+            req.end();
+          },
+        );
+      const signedIn = await socketRequest(`/auth/browser?code=${encodeURIComponent(code)}`);
+      expect(signedIn.status).toBe(303);
+      const setCookie = signedIn.headers["set-cookie"]![0];
+      const name = `boof_ui_${running.port}`;
+      expect(setCookie).toMatch(new RegExp(`^${name}=bs_[^;]+;`));
+      const token = setCookie.match(new RegExp(`^${name}=([^;]+)`))![1];
+      const who = await socketRequest("/api/v1/whoami", `${name}=${token}`);
+      expect(who.status).toBe(200);
+      const wrongPort = await socketRequest("/api/v1/whoami", `boof_ui_5319=${token}`);
+      expect(wrongPort.status).toBe(401);
+    } finally {
+      await running.stop();
+    }
+  });
+
+  it("revokeAll ends an open /api/v1/events stream with event: unauthorized", async () => {
+    watcher = new DataWatcher(root);
+    watcher.start();
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const stream = await request(app, "/api/v1/events", {
+      headers: { cookie: `boof_ui_4319=${token}`, accept: "text/event-stream" },
+    });
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = decoder.decode((await reader.read()).value);
+    expect(text).toContain("event: ready");
+    await sessions.revokeAll();
+    const until = Date.now() + 5000;
+    while (!text.includes("event: unauthorized") && Date.now() < until) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("SSE revoke timeout")), 5100),
+        ),
+      ]);
+      if (next.done) break;
+      text += decoder.decode(next.value);
+    }
+    expect(text).toContain("event: unauthorized");
+    await reader.cancel();
+  });
+
+  it("revokeAll ends an open legacy /api/events stream with event: unauthorized", async () => {
+    watcher = new DataWatcher(root);
+    watcher.start();
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const stream = await request(app, "/api/events", {
+      headers: { cookie: `boof_ui_4319=${token}`, accept: "text/event-stream" },
+    });
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = decoder.decode((await reader.read()).value);
+    expect(text).toContain("event: ready");
+    await sessions.revokeAll();
+    const until = Date.now() + 5000;
+    while (!text.includes("event: unauthorized") && Date.now() < until) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("SSE revoke timeout")), 5100),
+        ),
+      ]);
+      if (next.done) break;
+      text += decoder.decode(next.value);
+    }
+    expect(text).toContain("event: unauthorized");
+    await reader.cancel();
+  });
+
+  it("accepts any same-name cookie value that verifies", async () => {
+    const app = build();
+    const { response } = await signIn(app);
+    const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const res = await request(app, "/api/v1/whoami", {
+      headers: { cookie: `boof_ui_4319=junk; boof_ui_4319=${token}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("Bearer keys behave as before from loopback and through a proxy", async () => {
+    const key = (
+      await authStore.create({ name: "test", scopes: ["projects:read"], trust: "trusted" })
+    ).key;
+    const app = build();
+    expect(
+      (await request(app, "/api/v1/whoami", { headers: { authorization: `Bearer ${key}` } }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await request(app, "/api/v1/whoami", {
+          headers: { authorization: `Bearer ${key}`, "x-forwarded-for": "203.0.113.2" },
+        })
+      ).status,
+    ).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  it("audit: sign-in writes auth:browser-session without the code; a keyless refusal records its reason", async () => {
+    const app = build();
+    const { code, response } = await signIn(app);
+    expect(response.status).toBe(303);
+    await request(app, "/api/v1/whoami");
+    const lines = await auditLines();
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: "auth:browser-session", status: 303 }),
+        expect.objectContaining({ reason: "browser_session_required", status: 401 }),
+      ]),
+    );
+    expect(JSON.stringify(lines)).not.toContain(code);
+  });
+});

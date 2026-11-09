@@ -1,4 +1,5 @@
 export * from "./agent-env.js";
+export * from "./agent-marker.js";
 export * from "./agent-auth.js";
 export * from "./gateway-env.js";
 export * from "./prompt-hierarchy.js";

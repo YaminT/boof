@@ -180,6 +180,15 @@ describe("unit file text", () => {
 });
 
 describe("service install", () => {
+  it("install and status print the exact sign-in command with the service's data root and port", async () => {
+    expect(await run(["install", "-d", data, "-p", "5123"])).toBe(0);
+    const line = `Sign in to the web UI: boof-runner open -d "${data}" --port 5123`;
+    expect(out).toContain(line);
+    out.length = 0;
+    expect(await run(["status"])).toBe(0);
+    expect(out).toContain(line);
+  });
+
   it("writes the unit and runs daemon-reload then enable --now", async () => {
     const code = await run(["install", "--data", data, "--env", "FOO=bar baz"]);
     expect(code).toBe(0);

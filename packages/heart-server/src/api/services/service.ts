@@ -1275,6 +1275,15 @@ export class TaskService {
     actor?: Principal,
     expectedUpdated?: string,
   ): Promise<Project> {
+    // Archiving and unarchiving are operator actions, like removing a project: a review-trust
+    // client may not do either, whatever `externalTasksRequireApproval` says.
+    if (actor?.kind === "client" && actor.trust === "review" && patch.archived !== undefined) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot archive or unarchive projects; a human or a trusted client must",
+        "forbidden_trust",
+      );
+    }
     await this.assertMayChangeProject(patch, actor, false);
     if (
       actor &&
@@ -1331,8 +1340,16 @@ export class TaskService {
     opts: { purge?: boolean } = {},
     actor?: Principal,
   ): Promise<{ ok: true }> {
-    // Archiving and purging a project are operator actions, not a review-trust client's.
-    await this.assertMayChangeProject({ archived: true }, actor, false);
+    // Archiving and purging a project are operator actions, not a review-trust client's: refused
+    // whatever `externalTasksRequireApproval` says (`assertMayChangeProject` only applies when
+    // that setting or `alwaysReview` is on).
+    if (actor?.kind === "client" && actor.trust === "review") {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot archive or delete projects; a human or a trusted client must",
+        "forbidden_trust",
+      );
+    }
     try {
       await this.projects.remove(id, opts);
     } catch (err) {

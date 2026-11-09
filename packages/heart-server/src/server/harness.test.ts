@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +82,7 @@ describe("public docs routes", () => {
     await new SettingsStore(root).save(settings);
     // A remote peer: no local trust, so any 200 below proves the routes need no key.
     app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       peerAddress: () => "10.1.2.3",
     });

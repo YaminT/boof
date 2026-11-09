@@ -1,17 +1,19 @@
 import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import {
   AuthStore,
+  browserSessionCookieName,
   dataRootPaths,
-  LOCAL_MCP_ID,
   migrateDataRoot,
   securitySettings,
+  tightenDataRoot,
   type Settings,
   type ToolCatalog,
   type ConciergeAgent,
+  reservedIdWarning,
 } from "@boof/heart";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
@@ -92,6 +94,14 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const warn = opts.warn ?? ((m: string) => console.warn(m));
   // Bring a v1 data root to v2 before any store opens (also scaffolds a fresh root).
   const migration = await migrateDataRoot(opts.root);
+  const tightened = await tightenDataRoot(opts.root);
+  if (tightened.changed) {
+    warn(
+      `tightened data root ${opts.root} from ${tightened.before.toString(8)} to 700 (other local users could read it)`,
+    );
+  } else if (["not-owner", "home-or-root", "chmod-failed"].includes(tightened.reason)) {
+    await warnIfDataRootOpen(opts.root, warn);
+  }
   if (migration.kind === "migrated")
     warn(`migrated data root ${opts.root} to v2 (see migration-v2.log)`);
   const authStore = new AuthStore(opts.root);
@@ -103,12 +113,6 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);
   await assertBindAllowed(host, settings, authStore);
-  if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
-    warn(
-      `auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID}: a keyless "boof-runner mcp" refuses to start, and a keyless /mcp answers 403, until its entry is removed`,
-    );
-  }
-
   let tls: { cert: Buffer; key: Buffer } | undefined;
   if (opts.tlsCert || opts.tlsKey) {
     if (!opts.tlsCert || !opts.tlsKey) throw new Error("TLS needs both a certificate and a key");
@@ -121,9 +125,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     );
   }
   // The data root holds keys' hashes and prompts; only nag once that matters.
-  if (!loopback || (await authStore.list().catch(() => [])).length > 0) {
-    await warnIfDataRootOpen(opts.root, warn);
-  }
+  const reserved = reservedIdWarning(await authStore.list().catch(() => []));
+  if (reserved) warn(reserved);
   await pruneAudit(opts.root, sec.audit.retentionDays).catch(() => []);
   await new IdempotencyStore(opts.root).prune().catch(() => 0);
 
@@ -158,6 +161,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     uiDir: opts.uiDir,
     allowedHosts,
     authStore,
+    sessionCookieName: () => browserSessionCookieName(boundPort),
     operatorClients: opts.operatorClients,
     isSelfUrl,
     version: opts.version,
@@ -220,10 +224,11 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   };
 }
 
-/** Log a warning when the data root (which holds keys and prompts) is group/world accessible. */
+/** Retain the existing warning when the root could not safely be tightened. */
 async function warnIfDataRootOpen(root: string, warn: (m: string) => void): Promise<void> {
   if (process.platform === "win32") return;
   try {
+    const { stat } = await import("node:fs/promises");
     const mode = (await stat(root)).mode & 0o777;
     if (mode & 0o077) {
       warn(
