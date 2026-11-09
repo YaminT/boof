@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { pinnedPost } from "./pinned-post.js";
+import { pinnedPost, pinnedRequest } from "./pinned-post.js";
 
 interface Seen {
   host: string | undefined;
@@ -137,4 +137,55 @@ describe("pinnedPost", () => {
     },
     30_000,
   );
+
+  it("pinnedRequest GET reads the body up to the cap and rejects above it", async () => {
+    answer = { status: 200 }; // the fake body is "ignored body" (12 bytes)
+    const base = `http://never-resolves.test:${port}/`;
+    const get = (cap?: number) =>
+      pinnedRequest(base, ["127.0.0.1"], {
+        method: "GET",
+        headers: {},
+        signal: AbortSignal.timeout(5_000),
+        maxResponseBytes: cap,
+      });
+    expect(await get(12)).toEqual({ status: 200, body: "ignored body" });
+    expect(await get(0)).toEqual({ status: 200, body: "" });
+    expect(await get()).toEqual({ status: 200, body: "" });
+    await expect(get(11)).rejects.toThrow("response too large");
+    expect(seen.every((s) => s.method === "GET" && s.body === "")).toBe(true);
+  });
+
+  it("pinnedRequest never follows a redirect and returns the 3xx status", async () => {
+    answer = { status: 302, headers: { Location: "http://169.254.169.254/latest" } };
+    const res = await pinnedRequest(`http://never-resolves.test:${port}/`, ["127.0.0.1"], {
+      method: "GET",
+      headers: {},
+      signal: AbortSignal.timeout(5_000),
+      maxResponseBytes: 100,
+    });
+    expect(res.status).toBe(302);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("a timeout after the body was sent rejects with bodySent: true", async () => {
+    answer = { status: 200, delayMs: 2_000 };
+    const err = await pinnedRequest(`http://never-resolves.test:${port}/`, ["127.0.0.1"], {
+      method: "POST",
+      headers: {},
+      body: "{}",
+      signal: AbortSignal.timeout(200),
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { bodySent?: boolean }).bodySent).toBe(true);
+  });
+
+  it("a connection that fails before the body is written rejects with bodySent: false", async () => {
+    const err = await pinnedRequest(`http://never-resolves.test:1/`, ["127.0.0.1"], {
+      method: "POST",
+      headers: {},
+      body: "{}",
+      signal: AbortSignal.timeout(2_000),
+    }).catch((e: unknown) => e);
+    expect((err as { bodySent?: boolean }).bodySent).toBe(false);
+  });
 });

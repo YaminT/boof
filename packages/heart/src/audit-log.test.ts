@@ -121,4 +121,34 @@ describe("audit log", () => {
     ]);
     expect((await readdir(join(root, "audit"))).sort()).toEqual(["2026-02-27.jsonl", "notes.txt"]);
   });
+
+  it("auditOperation writes extra fields after the core keys and never overrides them", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    await auditOperation(root, {
+      principal: { id: "runner", kind: "runner" },
+      action: "n8n:trigger",
+      via: "runner",
+      ok: true,
+      ms: 3,
+      at: Date.parse("2026-03-01T10:00:00Z"),
+      extra: {
+        host: "n8n.local:5678",
+        httpStatus: 200,
+        ts: "evil",
+        outcome: "evil",
+        action: "evil",
+      },
+    });
+    const [line] = await lines();
+    expect(line).toMatchObject({
+      ts: "2026-03-01T10:00:00.000Z",
+      principal: "runner",
+      action: "n8n:trigger",
+      via: "runner",
+      outcome: "ok",
+      host: "n8n.local:5678",
+      httpStatus: 200,
+    });
+    expect(Object.keys(line!).slice(-2)).toEqual(["host", "httpStatus"]);
+  });
 });

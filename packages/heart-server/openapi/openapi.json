@@ -144,6 +144,9 @@
                   "rate_limited",
                   "not_configured",
                   "gateway_error",
+                  "n8n_not_configured",
+                  "upstream_failed",
+                  "invalid_step_token",
                   "internal"
                 ],
                 "type": "string"
@@ -15069,8 +15072,16 @@
       "description": "A plan or goal in the input is invalid (schema, dangling dependency, cycle).",
       "status": 400
     },
+    "invalid_step_token": {
+      "description": "The external-step callback token is missing, wrong, used or expired.",
+      "status": 401
+    },
     "invalid_transition": {
       "description": "The task status transition is not allowed.",
+      "status": 409
+    },
+    "n8n_not_configured": {
+      "description": "No n8n instance is configured (settings.n8n is not set).",
       "status": 409
     },
     "no_default_project": {
@@ -15160,6 +15171,10 @@
     "unsupported_media_type": {
       "description": "A JSON operation needs Content-Type: application/json.",
       "status": 415
+    },
+    "upstream_failed": {
+      "description": "The n8n instance failed or refused the call; details.reason says why (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>).",
+      "status": 502
     }
   }
 }
