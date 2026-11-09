@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStore } from "@boof/heart";
+import { AuthStore, BROWSER_SESSION_MAX_MS, browserSessionCookieName } from "@boof/heart";
 import {
   createQuitHandler,
+  desktopSessionCookie,
   isAppUrl,
   isExternalUrl,
   operatorClientId,
@@ -185,5 +186,22 @@ describe("isExternalUrl", () => {
       expect(boot).toContain("defaultTools(");
       expect(boot).toContain("claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON");
     });
+  });
+});
+
+describe("desktop session cookie", () => {
+  it("desktopSessionCookie targets the app origin with boof_ui_<port>, HttpOnly, SameSite strict, 30-day expiry", () => {
+    const nowMs = 1_700_000_000_000;
+    const cookie = desktopSessionCookie("http://127.0.0.1:4319", 4319, "bs_abc", nowMs);
+    expect(cookie).toEqual({
+      url: "http://127.0.0.1:4319",
+      name: browserSessionCookieName(4319),
+      value: "bs_abc",
+      httpOnly: true,
+      sameSite: "strict",
+      path: "/",
+      expirationDate: (nowMs + BROWSER_SESSION_MAX_MS) / 1000,
+    });
+    expect(cookie.name).toBe("boof_ui_4319");
   });
 });

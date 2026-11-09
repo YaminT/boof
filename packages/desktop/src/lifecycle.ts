@@ -1,7 +1,7 @@
 // Desktop lifecycle logic kept free of `electron` so it can be unit-tested without an
 // Electron runtime. main.ts wires these functions to the app, the server and the engine.
 import type { RunnerEngine } from "@boof/runner";
-import { parseKey } from "@boof/heart";
+import { BROWSER_SESSION_MAX_MS, browserSessionCookieName, parseKey } from "@boof/heart";
 import type { RunningServer } from "@boof/heart-server";
 
 /**
@@ -85,4 +85,34 @@ export function isExternalUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The cookie the desktop app sets in its own window when it has no desktop key (safeStorage is
+ * unavailable). It is the browser-session cookie the server already accepts, named after the
+ * server's bound port, and it expires with the session's absolute 30-day limit.
+ */
+export function desktopSessionCookie(
+  appOrigin: string,
+  port: number,
+  token: string,
+  nowMs: number,
+): {
+  url: string;
+  name: string;
+  value: string;
+  httpOnly: true;
+  sameSite: "strict";
+  path: "/";
+  expirationDate: number;
+} {
+  return {
+    url: appOrigin,
+    name: browserSessionCookieName(port),
+    value: token,
+    httpOnly: true,
+    sameSite: "strict",
+    path: "/",
+    expirationDate: (nowMs + BROWSER_SESSION_MAX_MS) / 1000,
+  };
 }

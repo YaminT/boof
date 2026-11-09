@@ -1,13 +1,30 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Notification,
+  safeStorage,
+  session,
+  shell,
+} from "electron";
 import { RunnerEngine } from "@boof/runner";
 import { boot } from "@boof/boof/boot";
-import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof/heart";
+import {
+  AuthStore,
+  BrowserSessionStore,
+  dataRootPaths,
+  migrateDataRoot,
+  securitySettings,
+  SettingsStore,
+} from "@boof/heart";
 import type { RunningServer } from "@boof/heart-server";
 import {
   createQuitHandler,
+  desktopSessionCookie,
   isAppUrl,
   isExternalUrl,
   operatorClientId,
@@ -24,7 +41,7 @@ const SHUTDOWN_GRACE_MS = shutdownGraceMs();
 let server: RunningServer | null = null;
 let engine: RunnerEngine | null = null;
 let win: BrowserWindow | null = null;
-/** API key for the bundled UI; undefined when safeStorage is unavailable (local-trust fallback). */
+/** API key for the bundled UI; undefined when safeStorage is unavailable (browser-session fallback). */
 let desktopToken: string | undefined;
 
 const DESKTOP_CLIENT_NAME = "desktop-ui";
@@ -33,11 +50,11 @@ const DESKTOP_CLIENT_NAME = "desktop-ui";
  * Make sure a `desktop-ui` admin client exists and return its key. The secret is
  * kept encrypted with Electron safeStorage (OS keychain) in a file under
  * userData. Without safeStorage there is nowhere safe to keep it, so the app
- * falls back to local-trust (loopback, no token) and says so in the log.
+ * signs its own window in with a browser session instead (see startComposition).
  */
 async function ensureDesktopToken(root: string): Promise<string | undefined> {
   if (!safeStorage.isEncryptionAvailable()) {
-    console.warn("safeStorage unavailable: desktop UI falls back to local-trust (no API key)");
+    console.warn("safeStorage unavailable: the desktop UI uses a browser session set by the app");
     return undefined;
   }
   const store = new AuthStore(root);
@@ -155,7 +172,7 @@ ipcMain.handle(
 async function startComposition(): Promise<void> {
   const root = await ensureDataRoot();
   desktopToken = await ensureDesktopToken(root).catch((err) => {
-    console.error("desktop auth setup failed; using local-trust:", err);
+    console.error("desktop auth setup failed; using a browser session:", err);
     return undefined;
   });
   const composition = await boot({
@@ -174,7 +191,33 @@ async function startComposition(): Promise<void> {
       engine = activeEngine;
     },
   });
+  if (!desktopToken) {
+    await signInWindow(root, composition.server.port).catch((err) => {
+      console.error(
+        "desktop UI: could not create a browser session; the window shows the sign-in gate:",
+        err,
+      );
+    });
+  }
   createWindow(composition.server.port);
+}
+
+/**
+ * Without a desktop key the window is signed in by a browser session the app creates itself:
+ * no keyless local access exists any more. Under `required` a session is not accepted, so the
+ * user pastes an API key in the window.
+ */
+async function signInWindow(root: string, port: number): Promise<void> {
+  const mode = securitySettings(await new SettingsStore(root).load()).auth.mode;
+  if (mode === "required") {
+    console.warn(
+      'desktop UI: safeStorage unavailable and auth.mode is "required"; paste an API key in the window',
+    );
+    return;
+  }
+  const origin = `http://127.0.0.1:${port}`;
+  const { token } = await new BrowserSessionStore(root).createSession();
+  await session.defaultSession.cookies.set(desktopSessionCookie(origin, port, token, Date.now()));
 }
 
 // Single-instance: a second launch focuses the existing window instead of
