@@ -38,6 +38,26 @@ describe("boof-runner top level", () => {
     expect(errs[0]).not.toMatch(/UnsafeSecretPathError|at /);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "open refuses an unsafe store with one clean line",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "boof-cli-open-"));
+      try {
+        const unsafeRoot = join(parent, "data");
+        await mkdir(unsafeRoot, { mode: 0o700 });
+        await chmod(parent, 0o777);
+        await main(["open", "-d", unsafeRoot]);
+        expect(process.exitCode).toBe(1);
+        expect(errs).toHaveLength(1);
+        expect(errs[0]).toContain(`chmod o-w ${parent}`);
+        expect(errs[0]).not.toMatch(/UnsafeSecretPathError|at |bl_/);
+        expect(logs.join("\n")).not.toContain("bl_");
+      } finally {
+        await rm(parent, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("only serve's own flags fall through to serve", () => {
     for (const t of [
       "-d",

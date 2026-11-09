@@ -307,6 +307,32 @@ describe("browser session authentication", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "an unsafe auth store answers auth_store_unavailable for a key and the session error for a cookie, never admin",
+    async () => {
+      const app = build();
+      const { response } = await signIn(app);
+      const token = response.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+      const authDir = join(root, "auth");
+      await chmod(authDir, 0o770);
+      const keyed = await request(app, "/api/v1/whoami", {
+        headers: { authorization: "Bearer boof_notakey" },
+      });
+      expect(keyed.status).toBe(503);
+      const keyedJson = await keyed.json();
+      expect(keyedJson.error.code).toBe("auth_store_unavailable");
+      expect(keyedJson.error.message).toContain(authDir);
+      const cookie = await request(app, "/api/v1/whoami", {
+        headers: { cookie: `boof_ui_4319=${token}` },
+      });
+      expect(cookie.status).toBe(503);
+      const cookieJson = await cookie.json();
+      expect(cookieJson.error.code).toBe("browser_sessions_unavailable");
+      expect(cookieJson.error.message).toContain(authDir);
+      expect(JSON.stringify(cookieJson)).not.toMatch(/uid|mode \d|"admin"/);
+    },
+  );
+
   describe("session cookie values", () => {
     const wellFormed = (n: number) => `bs_${String(n).padStart(43, "x")}`;
     const countingVerifier = (inner: BrowserSessionVerifier) => {
