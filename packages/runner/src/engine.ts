@@ -192,6 +192,11 @@ export class RunnerEngine {
         for (const key of this.authRefusalEvents)
           if (key.startsWith(`${project.id}\0${task.frontmatter.id}\0`))
             this.authRefusalEvents.delete(key);
+        // A check task runs no agent and spends nothing: no tool, auth, pool or budget gate.
+        if (task.frontmatter.n8nCheck) {
+          if (!best || compareSelection({ project, task }, best) < 0) best = { project, task };
+          continue;
+        }
         const eff = effectiveSettings(settings, project);
         const tools = (["planner", "developer", "reviewer", "observer"] as const)
           .map((role) => resolveRole(eff, task, role as "observer")?.tool)

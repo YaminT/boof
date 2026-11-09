@@ -32,11 +32,9 @@ import {
 } from "@boof/heart";
 import { RunnerEngine, ToolRegistry, type TickResult } from "@boof/runner";
 import { createN8nTransport } from "@boof/heart-server";
-import { selfUrlCheck } from "./boot.js";
+import { headlessSelfCheck } from "./boot.js";
 
-// A headless run has no server of its own; the one that receives callbacks listens on the default port
-// unless told otherwise, so that is the port the n8n client must never reach as "n8n".
-const DEFAULT_SERVER_PORT = 4319;
+// A headless run has no server of its own; `headlessSelfCheck` (boot.ts) works out which addresses are boof's.
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";
@@ -221,7 +219,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
     external: createN8nTransport({
       root: opts.root,
       via: "runner",
-      isSelfUrl: selfUrlCheck(DEFAULT_SERVER_PORT),
+      isSelfUrl: headlessSelfCheck(settings),
     }),
   });
   // Drive until our task leaves the active states. One tick fully runs the
@@ -272,6 +270,7 @@ export async function drainQueue(opts: {
   }
   if (opts.project) opts.onProject?.(opts.project);
   await ensureRunnerEnabled(opts.root, out);
+  const settings = await new SettingsStore(opts.root).load();
   const engine = new RunnerEngine({
     root: opts.root,
     registry: opts.registry ?? new ToolRegistry(),
@@ -279,7 +278,7 @@ export async function drainQueue(opts: {
     external: createN8nTransport({
       root: opts.root,
       via: "runner",
-      isSelfUrl: selfUrlCheck(DEFAULT_SERVER_PORT),
+      isSelfUrl: headlessSelfCheck(settings),
     }),
   });
   let ran = 0;

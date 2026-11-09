@@ -188,11 +188,26 @@ describe("external steps in the pipeline", () => {
     ]);
     const reviewer = asked.find((a) => a.role === "reviewer")!;
     expect(reviewer.prompt).toContain(HEADING);
-    expect(reviewer.prompt).toContain("### CI (ok)\nreport of ci");
+    expect(reviewer.prompt).toMatch(/### CI \(ok\)\n(`{3,})\nreport of ci\n\1\n/);
     expect(asked.find((a) => a.role === "developer")!.prompt).not.toContain("report of ci");
     const task = (await store.get("t1"))!;
     expect(task.body.log).toContain("### n8n: CI (ok)\nreport of ci");
     expect(n8n.calls).toHaveLength(1);
+  });
+
+  it("the reports reach the developer's fix prompt after CHANGES_REQUESTED", async () => {
+    const n8n = fakeN8n();
+    const outcome = await runTask(
+      await pipeline([ci()], n8n),
+      newTask(fm(), "Do the thing. [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]"),
+    );
+    expect(outcome.kind).toBe("done");
+    const developers = asked.filter((a) => a.role === "developer");
+    expect(developers.length).toBeGreaterThanOrEqual(2);
+    const fix = developers.find((a) => a.prompt.includes("## Findings (reviewer round 1)"))!;
+    expect(fix).toBeDefined();
+    expect(fix.prompt).toContain(HEADING);
+    expect(fix.prompt).toContain("report of ci");
   });
 
   it("after-planner: the report reaches the developer prompt", async () => {
@@ -276,8 +291,8 @@ describe("external steps in the pipeline", () => {
     expect(outcome.kind).toBe("done");
     const task = (await store.get("t1"))!;
     expect(task.body.log).toContain("### n8n: CI (failed)\nflaky deploy");
-    expect(asked.find((a) => a.role === "reviewer")!.prompt).toContain(
-      "### CI (failed)\nflaky deploy",
+    expect(asked.find((a) => a.role === "reviewer")!.prompt).toMatch(
+      /### CI \(failed\)\n(`{3,})\nflaky deploy\n\1\n/,
     );
   });
 

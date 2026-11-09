@@ -59,6 +59,8 @@ export interface RunningServer {
   webhooks: WebhookDispatcher;
   service: TaskService;
   port: number;
+  /** True for a URL that points at this server (its port on one of its names). */
+  isSelfUrl: (url: URL) => boolean;
   stop: () => Promise<void>;
 }
 
@@ -230,6 +232,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     webhooks,
     service,
     port,
+    isSelfUrl,
     stop: async () => {
       clearInterval(pruneTimer);
       await dispatcherGate.stop();
