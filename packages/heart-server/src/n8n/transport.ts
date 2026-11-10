@@ -79,9 +79,9 @@ export function createN8nTransport(
       };
       if (!target.ok)
         return finish({ ok: false, retryable: false, reason: `blocked: ${target.reason}` });
-      const refusal = n8nSendRefusal(target.url, target.addresses, opts.listener);
-      if (refusal)
-        return finish({ ok: false, retryable: refusal.retryable, reason: refusal.reason });
+      const decision = await n8nSendRefusal(target.url, target.addresses, opts.listener);
+      if (!decision.ok)
+        return finish({ ok: false, retryable: decision.retryable, reason: decision.reason });
 
       const secret = await new N8nSecretStore(
         opts.root,
@@ -89,7 +89,7 @@ export function createN8nTransport(
       ).getWebhookSecret();
       const timeout = AbortSignal.timeout(opts.timeouts?.triggerMs ?? N8N_TRIGGER_TIMEOUT_MS);
       try {
-        const res = await (opts.request ?? pinnedRequest)(target.url.href, target.addresses, {
+        const res = await (opts.request ?? pinnedRequest)(target.url.href, decision.addresses, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

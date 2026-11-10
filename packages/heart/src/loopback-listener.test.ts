@@ -140,15 +140,35 @@ describe("openLoopbackRefusal", () => {
     );
   });
 
-  it("allows this user, or nobody, and skips the check off Linux", () => {
+  it("allows this user only when every address has a listener, and skips the check off Linux", () => {
     expect(openLoopbackRefusal("127.0.0.1", 4319, linux(tables(row(V4_LOOP, 4319, 1000))))).toBe(
       null,
     );
-    expect(openLoopbackRefusal("127.0.0.1", 4319, linux(tables("")))).toBeNull();
+    expect(openLoopbackRefusal("127.0.0.1", 4319, linux(tables("")))).toBe(
+      "nothing is listening on port 4319; start boof first",
+    );
+    const half = linux(tables(row(V4_LOOP, 4319, 1000)));
+    expect(openLoopbackRefusal("localhost", 4319, half)).toBe(
+      "nothing is listening on port 4319; start boof first",
+    );
+    expect(
+      openLoopbackRefusal(
+        "localhost",
+        4319,
+        linux(tables(row(V4_LOOP, 4319, 1000), row(V6_LOOP, 4319, 1000))),
+      ),
+    ).toBeNull();
     const readFile = (): string => {
       throw new Error("proc");
     };
     expect(openLoopbackRefusal("127.0.0.1", 4319, { platform: "darwin", readFile })).toBeNull();
+  });
+
+  it("a foreign uid wins over an address where nothing is listening", () => {
+    const mixed = linux(tables(row(V4_LOOP, 4319, 1001)));
+    expect(openLoopbackRefusal("localhost", 4319, mixed)).toBe(
+      "port 4319 is held by uid 1001, not by your boof",
+    );
   });
 
   it("localhost is refused when either address is held by someone else", () => {
@@ -211,51 +231,121 @@ describe("n8nLoopbackRefusal", () => {
   });
 });
 
+const V4_DOCKER = "010011AC"; // 172.17.0.1
+
 describe("n8nSendRefusal", () => {
-  it("refuses a foreign uid and a port with nobody listening, before any send", () => {
-    const foreign = n8nSendRefusal(
+  it("refuses a foreign uid and a port with nobody listening, before any send", async () => {
+    const foreign = await n8nSendRefusal(
       new URL("http://127.0.0.1:5678/api/v1/workflows"),
       ["127.0.0.1"],
       linux(tables(row(V4_LOOP, 5678, 1001))),
     );
-    expect(foreign).toMatchObject({ retryable: false });
-    expect(foreign?.reason).toMatch(/listener_not_owner/);
-    expect(foreign?.reason).toContain("uid 1001");
-    expect(
+    expect(foreign).toMatchObject({ ok: false, retryable: false });
+    if (foreign.ok) return;
+    expect(foreign.reason).toMatch(/listener_not_owner/);
+    expect(foreign.reason).toContain("uid 1001");
+    await expect(
       n8nSendRefusal(new URL("http://127.0.0.1:5678/webhook/x"), ["127.0.0.1"], linux(tables(""))),
-    ).toMatchObject({ retryable: true });
+    ).resolves.toMatchObject({ ok: false, retryable: true });
   });
 
-  it("allows this user or root, judges localhost on the resolved address, and skips off Linux", () => {
+  it("allows this user or root, judges localhost on the resolved address, and skips off Linux", async () => {
     const owned = linux(tables(row(V4_LOOP, 5678, 1000)));
-    expect(n8nSendRefusal(new URL("http://127.0.0.1:5678/"), ["127.0.0.1"], owned)).toBeNull();
-    expect(n8nSendRefusal(new URL("http://localhost:5678/api"), ["127.0.0.1"], owned)).toBeNull();
+    expect(await n8nSendRefusal(new URL("http://127.0.0.1:5678/"), ["127.0.0.1"], owned)).toEqual({
+      ok: true,
+      addresses: ["127.0.0.1"],
+    });
     expect(
-      n8nSendRefusal(
+      await n8nSendRefusal(new URL("http://localhost:5678/api"), ["127.0.0.1"], owned),
+    ).toEqual({
+      ok: true,
+      addresses: ["127.0.0.1"],
+    });
+    expect(
+      await n8nSendRefusal(
         new URL("http://127.0.0.1:5678/"),
         ["127.0.0.1"],
         linux(tables(row(V4_WILD, 5678, 0))),
       ),
-    ).toBeNull();
+    ).toEqual({ ok: true, addresses: ["127.0.0.1"] });
     const readFile = (): string => {
       throw new Error("proc");
     };
     expect(
-      n8nSendRefusal(new URL("http://127.0.0.1:5678/"), ["127.0.0.1"], {
+      await n8nSendRefusal(new URL("http://127.0.0.1:5678/"), ["127.0.0.1"], {
         platform: "darwin",
         readFile,
       }),
-    ).toBeNull();
+    ).toEqual({ ok: true, addresses: ["127.0.0.1"] });
     expect(
-      n8nSendRefusal(new URL("http://93.184.216.34/hook"), ["93.184.216.34"], linux(readFile)),
-    ).toBeNull();
+      await n8nSendRefusal(new URL("http://93.184.216.34/hook"), ["93.184.216.34"], {
+        ...linux(readFile),
+        localAddresses: [],
+      }),
+    ).toEqual({ ok: true, addresses: ["93.184.216.34"] });
   });
 
-  it("a foreign listener wins over an address where nothing is listening", () => {
+  it("a foreign listener wins over an address where nothing is listening", async () => {
     const deps = linux(tables(row(V4_LOOP, 5678, 1001)));
-    expect(
+    await expect(
       n8nSendRefusal(new URL("http://localhost:5678/"), ["127.0.0.1", "::1"], deps),
-    ).toMatchObject({ retryable: false });
+    ).resolves.toMatchObject({ ok: false, retryable: false });
+  });
+
+  it("resolves an empty address list for a hostname and pins what it checked", async () => {
+    const owned = linux(tables(row(V4_LOOP, 5678, 1000)));
+    expect(
+      await n8nSendRefusal(new URL("http://localhost:5678/"), [], {
+        ...owned,
+        resolveHost: async () => ["127.0.0.1"],
+      }),
+    ).toEqual({ ok: true, addresses: ["127.0.0.1"] });
+    const foreign = await n8nSendRefusal(new URL("http://n8n.lan:5678/hook"), [], {
+      ...linux(tables(row(V4_LOOP, 5678, 1001))),
+      resolveHost: async () => ["127.0.0.1"],
+      localAddresses: [],
+    });
+    expect(foreign).toMatchObject({ ok: false, retryable: false });
+    await expect(
+      n8nSendRefusal(new URL("http://n8n.lan:5678/hook"), [], {
+        ...linux(tables("")),
+        resolveHost: async () => [],
+        localAddresses: [],
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      retryable: true,
+      reason: expect.stringContaining("does not resolve"),
+    });
+  });
+
+  it("checks a non-loopback address of this host and leaves a remote one alone", async () => {
+    const here = { localAddresses: ["172.17.0.1"] };
+    const foreign = await n8nSendRefusal(new URL("http://172.17.0.1:5678/"), ["172.17.0.1"], {
+      ...linux(tables(row(V4_WILD, 5678, 1001))),
+      ...here,
+    });
+    expect(foreign).toMatchObject({ ok: false, retryable: false });
+    if (!foreign.ok) expect(foreign.reason).toContain("uid 1001");
+    expect(
+      await n8nSendRefusal(new URL("http://172.17.0.1:5678/"), ["172.17.0.1"], {
+        ...linux(tables(row(V4_DOCKER, 5678, 0))),
+        ...here,
+      }),
+    ).toEqual({ ok: true, addresses: ["172.17.0.1"] });
+    expect(
+      await n8nSendRefusal(new URL("http://172.17.0.1:5678/"), ["172.17.0.1"], {
+        ...linux(tables(row(V4_WILD, 5678, 1001))),
+        localAddresses: [],
+      }),
+    ).toEqual({ ok: true, addresses: ["172.17.0.1"] });
+  });
+
+  it("pins only the address that had an allowed listener", async () => {
+    const deps = linux(tables(row(V4_LOOP, 5678, 1000)));
+    expect(
+      await n8nSendRefusal(new URL("http://localhost:5678/"), ["::1", "127.0.0.1"], deps),
+    ).toEqual({ ok: true, addresses: ["127.0.0.1"] });
   });
 });
 

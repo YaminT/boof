@@ -48,7 +48,7 @@ export async function openCommand(
   out: (line: string) => void = console.log,
   err: (line: string) => void = console.error,
   portProbe: (host: string, port: number) => Promise<boolean> = defaultPortProbe,
-  /** Linux: one-line refusal when another uid holds the port. Other platforms return null. */
+  /** Linux: one-line refusal unless this user is listening. Other platforms return null. */
   listenerRefusal: (host: string, port: number) => string | null = openLoopbackRefusal,
 ): Promise<number> {
   let parsed;

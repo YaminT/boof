@@ -162,6 +162,75 @@ describe("n8n transport", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  const procHead =
+    "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+  const listenerRow = (port: number, uid: number) => {
+    const portHex = port.toString(16).toUpperCase().padStart(4, "0");
+    return `   0: 0100007F:${portHex} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 ${uid} 0 1 1 0000000000000000 100 0 0 10 0\n`;
+  };
+
+  it("pins the webhook to the address that had an allowed listener", async () => {
+    await configure({ baseUrl: "http://localhost:5678" });
+    const request = vi.fn(async () => ({ status: 200 }));
+    const result = await make({
+      request: request as never,
+      resolveHost: async () => ["::1", "127.0.0.1"],
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        readFile: (path) =>
+          path === "/proc/net/tcp" ? procHead + listenerRow(5678, 1000) : procHead,
+      },
+    }).trigger(req());
+    expect(result).toEqual({ ok: true, sent: "answered" });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[1]).toEqual(["127.0.0.1"]);
+  });
+
+  it("resolves an allowlisted webhook name and sends only to the address it checked", async () => {
+    const settings = defaultSettings();
+    await new SettingsStore(root).save({
+      ...settings,
+      security: { ...settings.security, allowedPrivateWebhookHosts: ["localhost"] },
+      n8n: N8nSettingsSchema.parse({
+        callbackBaseUrl: "https://boof.example",
+        baseUrl: "http://127.0.0.1:5678",
+        webhookBaseUrl: "http://localhost:5679/webhook",
+      }),
+    });
+    const request = vi.fn(async () => ({ status: 200 }));
+    const owned = await make({
+      request: request as never,
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        resolveHost: async () => ["127.0.0.1"],
+        readFile: (path) =>
+          path === "/proc/net/tcp" ? procHead + listenerRow(5679, 1000) : procHead,
+      },
+    }).trigger(req());
+    expect(owned).toEqual({ ok: true, sent: "answered" });
+    expect(request.mock.calls[0]?.[1]).toEqual(["127.0.0.1"]);
+
+    const foreign = vi.fn(async () => ({ status: 200 }));
+    const refused = await make({
+      request: foreign as never,
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        resolveHost: async () => ["127.0.0.1"],
+        readFile: (path) =>
+          path === "/proc/net/tcp" ? procHead + listenerRow(5679, 1001) : procHead,
+      },
+    }).trigger(req());
+    expect(refused).toMatchObject({ ok: false, retryable: false });
+    expect(refused.reason).toMatch(/listener_not_owner/);
+    expect(foreign).not.toHaveBeenCalled();
+  });
+
   it("no webhook secret → no X-Boof-Token header", async () => {
     const f = await fake();
     await configure({ baseUrl: f.url });

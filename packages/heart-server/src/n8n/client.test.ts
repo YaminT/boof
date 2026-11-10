@@ -612,6 +612,30 @@ describe("outbound target rules (owner answer 2)", () => {
     expect(JSON.stringify(request.mock.calls)).toContain(KEY);
   });
 
+  it("pins the API request to the address that had an allowed listener", async () => {
+    const request = vi.fn(async () => ({
+      status: 200,
+      body: JSON.stringify({ data: [], nextCursor: null }),
+    }));
+    await configure({ baseUrl: "http://localhost:5678" });
+    const portHex = (5678).toString(16).toUpperCase().padStart(4, "0");
+    const head =
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    const row = `   0: 0100007F:${portHex} 00000000:0000 0A 00000000:00000000 00:00000000 1000 0 1 1 0000000000000000 100 0 0 10 0\n`;
+    await client({
+      resolveHost: async () => ["::1", "127.0.0.1"],
+      request: request as unknown as typeof pinnedRequest,
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        readFile: (path) => (path === "/proc/net/tcp" ? head + row : head),
+      },
+    }).listWorkflows();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[1]).toEqual(["127.0.0.1"]);
+  });
+
   it("writes one audit line per list with the host, outcome and no path or key", async () => {
     const f = await fake(manyWorkflows(150));
     await configure({ baseUrl: f.url });

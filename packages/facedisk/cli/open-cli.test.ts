@@ -10,6 +10,8 @@ let out: string[];
 let errs: string[];
 const savedPort = process.env.BOOF_RUNNER_PORT;
 
+/** The uid check passed (or this is not Linux). Success cases must not depend on a live port. */
+const allowListener = () => null;
 const run = (...argv: string[]) =>
   openCommand(
     argv,
@@ -17,6 +19,7 @@ const run = (...argv: string[]) =>
     (l) => out.push(l),
     (l) => errs.push(l),
     async () => true,
+    allowListener,
   );
 const runProbe = (up: boolean, ...argv: string[]) =>
   openCommand(
@@ -25,6 +28,7 @@ const runProbe = (up: boolean, ...argv: string[]) =>
     (l) => out.push(l),
     (l) => errs.push(l),
     async () => up,
+    allowListener,
   );
 
 const codeOf = (lines: string[]): string => {
@@ -155,6 +159,23 @@ describe("boof-runner open", () => {
     expect(await run("-d", root, "--revoke-all")).toBe(0);
     expect(out).toEqual(["Signed out 2 browser session(s)."]);
     expect(await store.revokeAll()).toBe(0);
+  });
+
+  it("does not print a link when nothing is listening", async () => {
+    const refusal = "nothing is listening on port 4319; start boof first";
+    expect(
+      await openCommand(
+        ["-d", root],
+        () => root,
+        (l) => out.push(l),
+        (l) => errs.push(l),
+        async () => false,
+        () => refusal,
+      ),
+    ).toBe(1);
+    expect(out).toEqual([]);
+    expect(errs).toEqual([`open: ${refusal}`]);
+    await expect(readFile(dataRootPaths(root).browserLinks, "utf8")).rejects.toThrow();
   });
 
   it("does not print a link when another uid holds the port", async () => {

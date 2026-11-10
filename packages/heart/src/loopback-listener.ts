@@ -10,9 +10,10 @@
  * Linux delivers the connection. A v6 wildcard (`::`) is treated as covering IPv4 too: that is
  * the default (`bindv6only=0`), and the table does not say otherwise.
  */
+import { lookup } from "node:dns/promises";
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { endianness } from "node:os";
+import { endianness, networkInterfaces } from "node:os";
 
 export interface ListenerLookupDeps {
   platform?: NodeJS.Platform;
@@ -22,6 +23,13 @@ export interface ListenerLookupDeps {
   uid?: number;
   /** How `/proc` printed the address words. Default: this machine. Tests pin `LE`. */
   endian?: "LE" | "BE";
+  /** Resolve a hostname when the caller has no addresses yet. Default: `dns.lookup`. */
+  resolveHost?: (hostname: string) => Promise<string[]>;
+  /**
+   * Addresses of this machine, besides loopback. Default: `os.networkInterfaces()`.
+   * A non-loopback target is checked only when it is one of these.
+   */
+  localAddresses?: readonly string[];
 }
 
 export type ListenerLookup =
@@ -208,9 +216,10 @@ export function loopbackListenerUids(
 const currentUid = (deps: ListenerLookupDeps): number | undefined => deps.uid ?? process.getuid?.();
 
 /**
- * `open` on Linux: a message when another uid holds a port the link would use, or when the
- * tables cannot be read. Null when it is fine to print (not Linux, nothing listening, or only
- * this user). Root is another uid here: boof's own server runs as the owner.
+ * `open` on Linux: a message when the link must not be printed. Null only when every address
+ * the link would use has listeners and each of them is this user. Nothing listening is a
+ * refusal, as is another uid (including root: boof's own server runs as the owner) or a table
+ * that cannot be read. Other platforms skip the check.
  */
 export function openLoopbackRefusal(
   host: string,
@@ -227,15 +236,19 @@ export function openLoopbackRefusal(
       : host === "::1" || host === "[::1]"
         ? ["::1"]
         : [host];
+  let nothing = false;
   for (const address of addresses) {
     const found = loopbackListenerUids(address, port, deps);
     if (found.kind === "unreadable")
       return `cannot see who is listening on port ${port}; not printing a sign-in link`;
-    if (found.kind !== "uids") continue;
+    if (found.kind !== "uids") {
+      nothing = true;
+      continue;
+    }
     const foreign = found.uids.filter((id) => id !== uid);
     if (foreign.length > 0) return `port ${port} is held by uid ${foreign[0]}, not by your boof`;
   }
-  return null;
+  return nothing ? `nothing is listening on port ${port}; start boof first` : null;
 }
 
 /**
@@ -250,6 +263,15 @@ export function n8nLoopbackRefusal(
   deps: ListenerLookupDeps = {},
 ): { reason: string; retryable: boolean } | null {
   if (!isLoopbackAddress(address)) return null;
+  return localListenerRefusal(address, port, deps);
+}
+
+/** Linux uid check for one address. Null when the listener is this user or root, or this is not Linux. */
+function localListenerRefusal(
+  address: string,
+  port: number,
+  deps: ListenerLookupDeps,
+): { reason: string; retryable: boolean } | null {
   if ((deps.platform ?? process.platform) !== "linux") return null;
   const uid = currentUid(deps);
   const where = `${address}:${port}`;
@@ -289,41 +311,128 @@ function urlPort(url: URL): number {
   return url.protocol === "https:" ? 443 : 80;
 }
 
+/** Strip brackets and an IPv6 zone id. `::ffff:a.b.c.d` stays so the lookup can see it. */
+function normalizeAddress(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .split("%")[0]!;
+}
+
+/** `::ffff:a.b.c.d` as the IPv4 address; anything else unchanged. */
+function unwrapMapped(address: string): string {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(address);
+  return mapped?.[1] ?? address;
+}
+
+function machineAddresses(deps: ListenerLookupDeps): Set<string> {
+  const listed = deps.localAddresses ?? defaultMachineAddresses();
+  const found = new Set<string>();
+  for (const raw of listed) {
+    const address = unwrapMapped(normalizeAddress(raw));
+    if (address) found.add(address);
+  }
+  return found;
+}
+
+function defaultMachineAddresses(): string[] {
+  const found: string[] = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.address) found.push(entry.address);
+    }
+  }
+  return found;
+}
+
+/** Loopback, or an address configured on this machine. Remote private addresses are not. */
+function isThisHost(address: string, local: ReadonlySet<string>): boolean {
+  if (isLoopbackAddress(address)) return true;
+  const plain = unwrapMapped(normalizeAddress(address));
+  return local.has(plain);
+}
+
+async function defaultResolveHost(hostname: string): Promise<string[]> {
+  const found = await lookup(hostname, { all: true, verbatim: true });
+  return found.map((item) => item.address);
+}
+
 /**
- * Before an n8n API key, webhook secret or run token is sent to `url`.
- * Every loopback address the connection would use is checked. `localhost` is judged on the
- * resolved addresses, not the name. Null when the send may proceed: not loopback, not Linux,
- * or each listener is this user or root (`docker-proxy`). `retryable` only when nothing is
- * listening, so a restarting n8n can be tried again without the secret having been sent.
+ * Addresses the connection would use. When the caller has none and the host is a name, resolve
+ * it here so the listener check and the later pin see the same list.
  */
-export function n8nSendRefusal(
+async function sendCandidates(
   url: URL,
   addresses: readonly string[],
-  deps: ListenerLookupDeps = {},
-): { reason: string; retryable: boolean } | null {
-  const port = urlPort(url);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  deps: ListenerLookupDeps,
+): Promise<string[] | { reason: string; retryable: boolean }> {
   const candidates: string[] = [];
   const push = (raw: string) => {
-    const address = raw.trim().replace(/^\[|\]$/g, "");
-    if (!address || address.toLowerCase() === "localhost") return;
-    if (!isLoopbackAddress(address)) return;
+    const address = normalizeAddress(raw);
+    if (!address || address === "localhost" || !isIP(address)) return;
     if (!candidates.includes(address)) candidates.push(address);
   };
   push(url.hostname);
   for (const address of addresses) push(address);
-  if (candidates.length === 0) return null;
+  if (candidates.length > 0) return candidates;
+  const host = normalizeAddress(url.hostname);
+  if (!host || isIP(host)) return candidates;
+  try {
+    const resolved = await (deps.resolveHost ?? defaultResolveHost)(host);
+    for (const address of resolved) push(address);
+  } catch {
+    return { reason: `listener_not_owner: ${host} does not resolve`, retryable: true };
+  }
+  if (candidates.length === 0)
+    return { reason: `listener_not_owner: ${host} does not resolve`, retryable: true };
+  return candidates;
+}
+
+export type N8nSendDecision =
+  { ok: true; addresses: readonly string[] } | { ok: false; reason: string; retryable: boolean };
+
+/**
+ * Before an n8n API key, webhook secret or run token is sent to `url`.
+ * On Linux, every loopback address and every address of this host is checked. `localhost` and
+ * any other name with an empty address list is resolved here, not left for a later lookup.
+ * `ok` carries only the addresses the request may connect to: a local address with no listener
+ * is left out, and a foreign uid or an unreadable table refuses the send. Off Linux the caller's
+ * list is returned unchanged. `retryable` only when nothing is listening or the name did not
+ * resolve, so a restarting n8n can be tried again without the secret having been sent.
+ */
+export async function n8nSendRefusal(
+  url: URL,
+  addresses: readonly string[],
+  deps: ListenerLookupDeps = {},
+): Promise<N8nSendDecision> {
+  const port = urlPort(url);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: true, addresses };
+  if ((deps.platform ?? process.platform) !== "linux") return { ok: true, addresses };
+  const candidates = await sendCandidates(url, addresses, deps);
+  if (!Array.isArray(candidates)) return { ok: false, ...candidates };
+  const local = machineAddresses(deps);
+  const pinned: string[] = [];
   let none: { reason: string; retryable: boolean } | null = null;
-  let allowed = false;
   for (const address of candidates) {
-    const found = n8nLoopbackRefusal(address, port, deps);
-    if (!found) {
-      allowed = true;
+    if (!isThisHost(address, local)) {
+      pinned.push(address);
       continue;
     }
-    if (!found.retryable) return found;
+    const found = localListenerRefusal(address, port, deps);
+    if (!found) {
+      pinned.push(address);
+      continue;
+    }
+    if (!found.retryable) return { ok: false, reason: found.reason, retryable: false };
     none = found;
   }
-  // A mix of "nothing here" and an allowed listener may proceed. All-none must not send.
-  return allowed ? null : none;
+  if (pinned.length > 0) return { ok: true, addresses: pinned };
+  if (none) return { ok: false, reason: none.reason, retryable: none.retryable };
+  const uid = currentUid(deps);
+  return {
+    ok: false,
+    reason: `listener_not_owner: nothing owned by uid ${uid ?? "unknown"} is listening on ${url.host}`,
+    retryable: true,
+  };
 }

@@ -236,11 +236,11 @@ export class N8nClient {
       this.opts,
     );
     if (!target.ok) throw new Upstream(`blocked: ${target.reason}`);
-    const refusal = n8nSendRefusal(target.url, target.addresses, this.opts.listener);
-    if (refusal) throw new Upstream(refusal.reason);
+    const decision = await n8nSendRefusal(target.url, target.addresses, this.opts.listener);
+    if (!decision.ok) throw new Upstream(decision.reason);
     let res: { status: number; body: string };
     try {
-      res = await (this.opts.request ?? pinnedRequest)(target.url.href, target.addresses, {
+      res = await (this.opts.request ?? pinnedRequest)(target.url.href, decision.addresses, {
         method: "GET",
         headers: { "X-N8N-API-KEY": apiKey, Accept: "application/json", "User-Agent": "boof-n8n" },
         signal: pageSignal(this.opts.timeouts?.pageMs ?? N8N_PAGE_TIMEOUT_MS, signal),
