@@ -1655,6 +1655,12 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(has("You are the REVIEWER")).toBe(true);
     expect(has("Answer the following questions")).toBe(true);
     for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
+    expect(NON_INTERACTIVE).toContain(
+      'd=$(mktemp -d); (cmd; echo $? > "$d/done") > "$d/log" 2>&1 &',
+    );
+    expect(NON_INTERACTIVE).toContain('until [ -f "$d/done" ]');
+    expect(NON_INTERACTIVE).not.toContain("/tmp/x.done");
+    expect(NON_INTERACTIVE).not.toContain("/tmp/x.log");
   });
 
   it("a role's questions are answered by the planner and the role runs again with the answers", async () => {

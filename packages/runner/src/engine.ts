@@ -51,6 +51,8 @@ export interface EngineOptions {
   registry?: ToolRegistry;
   /** Only serve this project (headless `run --all --project`). */
   onlyProject?: string;
+  /** Explicit headless runs may drive tasks without changing the saved runner setting. */
+  runWhenDisabled?: boolean;
   /** The account pool gate; default: built from settings.owlish and the stored client key. */
   pool?: PoolGate;
   /** Compliance resolver; injectable so engine tests can use a fake gateway. */
@@ -107,6 +109,7 @@ export class RunnerEngine {
   readonly registry: ToolRegistry;
   private readonly pollIntervalMs: number;
   private readonly onlyProject?: string;
+  private readonly runWhenDisabled: boolean;
   private readonly external?: ExternalStepTransport;
   /** In-flight pipelines by project id (the at-most-one-per-project invariant). */
   private readonly inflight = new Map<string, Promise<TickResult>>();
@@ -141,6 +144,7 @@ export class RunnerEngine {
       });
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;
     this.onlyProject = opts.onlyProject;
+    this.runWhenDisabled = opts.runWhenDisabled ?? false;
     this.external = opts.external;
     this.pool =
       opts.pool ??
@@ -636,7 +640,7 @@ export class RunnerEngine {
   /** Process at most one task. Returns what happened. */
   async tick(): Promise<TickResult> {
     const settings = await this.settingsStore.load();
-    if (!settings.runner.enabled) return { kind: "disabled" };
+    if (!settings.runner.enabled && !this.runWhenDisabled) return { kind: "disabled" };
 
     await this.syncAutoPlans();
     const { selection, blocked } = await this.selectWithBudget();
