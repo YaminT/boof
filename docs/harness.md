@@ -1876,7 +1876,7 @@ JSON body (unknown keys are rejected):
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, poolWaitMs?: integer, transient?: integer >= 0 }`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }`, optional
 - `roles`: `{ developer: { model: string, tool: string }, observer?: { model: string, tool: string }, planner: { model: string, tool: string }, reviewer: { model: string, tool: string } }`, optional
-- `runner`: `{ agentEnv?: string[], concurrency?: integer >= 1, enabled?: boolean, inheritMcpServers?: boolean }`, optional
+- `runner`: `{ agentEnv?: string[], concurrency?: integer >= 1, enabled?: boolean, inheritMcpServers?: boolean, sandbox?: { denyTcpPorts?: (integer 1..65535)[], mode?: "off" | "enforce", readPaths?: string[], writePaths?: string[] } }`, optional
 - `worktree`: `{ onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string }`, optional
 
 #### `GET /api/v1/health` (Tool health)

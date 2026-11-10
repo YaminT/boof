@@ -192,7 +192,12 @@ async function world(opts: WorldOptions = {}): Promise<World> {
 
   const base: Settings = {
     ...defaultSettings(),
-    runner: { enabled: true, concurrency: 1, inheritMcpServers: false },
+    runner: {
+      ...defaultSettings().runner,
+      enabled: true,
+      concurrency: 1,
+      inheritMcpServers: false,
+    },
     defaultProject: "default",
     roles: {
       planner: { tool: "mock", model: "mock-default" },

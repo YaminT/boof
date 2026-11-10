@@ -451,7 +451,12 @@ describe("settings with projects", () => {
   it("toggling the runner keeps runner.concurrency", async () => {
     await call("/api/settings", put({ runner: { concurrency: 3 } }));
     const s = await (await call("/api/settings", put({ runner: { enabled: true } }))).json();
-    expect(s.runner).toEqual({ enabled: true, concurrency: 3, inheritMcpServers: false });
+    expect(s.runner).toEqual({
+      enabled: true,
+      concurrency: 3,
+      inheritMcpServers: false,
+      sandbox: { mode: "off", readPaths: [], writePaths: [], denyTcpPorts: [] },
+    });
   });
 });
 
