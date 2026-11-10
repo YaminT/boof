@@ -143,7 +143,9 @@ export class CodexTool implements Tool {
       const res = await execCommand(this.bin, args, {
         cwd: opts.cwd,
         env: {
-          ...agentEnv(process.env, opts.agentEnv, opts.agentMarker),
+          ...agentEnv(process.env, opts.agentEnv, opts.agentMarker, {
+            injectPoolCredential: opts.gateway !== undefined,
+          }),
           ...gatewayEnv("openai", opts.gateway),
         },
         input: this.promptText(opts),

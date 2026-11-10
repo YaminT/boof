@@ -28,6 +28,8 @@ describe("agentEnv", () => {
     CLAUDE_CODE_USE_BEDROCK: "1",
     OPENAI_API_KEY: "sk-oai",
     OPENAI_BASE_URL: "http://inherited/v1",
+    OPENAI_API_BASE: "http://inherited/api",
+    ANTHROPIC_CUSTOM_HEADERS: "X-Admin: token",
     CODEX_HOME: "/home/u/.codex",
     OPENCODE_CONFIG: "/x",
     OPENCODE_CONFIG_CONTENT: '{"apiKey":"inherited"}',
@@ -60,6 +62,8 @@ describe("agentEnv", () => {
       "OPENCODE_CONFIG",
       "HTTPS_PROXY",
       "XDG_CONFIG_HOME",
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
     ]) {
       expect(env[k], k).toBe(server[k]);
     }
@@ -73,38 +77,57 @@ describe("agentEnv", () => {
       "SSH_AUTH_SOCK",
       "SOME_OTHER",
       "ANTHROPIC_BASE_URL",
-      "ANTHROPIC_API_KEY",
       "ANTHROPIC_AUTH_TOKEN",
-      "OPENAI_API_KEY",
+      "ANTHROPIC_CUSTOM_HEADERS",
       "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
       "OPENCODE_CONFIG_CONTENT",
     ]) {
       expect(env, k).not.toHaveProperty(k);
     }
   });
 
-  it("runner.agentEnv cannot put gateway credentials back", () => {
+  it("runner.agentEnv cannot put gateway addresses back, and can pass API keys when no pool credential is injected", () => {
     const env = agentEnv(server, [
       "ANTHROPIC_AUTH_TOKEN",
       "ANTHROPIC_API_KEY",
       "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_CUSTOM_HEADERS",
       "OPENAI_API_KEY",
       "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
       "OPENCODE_CONFIG_CONTENT",
       "GITHUB_TOKEN",
     ]);
     expect(env.GITHUB_TOKEN).toBe("ghp");
     expect(env.ANTHROPIC_MODEL).toBe("sonnet");
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant");
+    expect(env.OPENAI_API_KEY).toBe("sk-oai");
     for (const name of [
       "ANTHROPIC_AUTH_TOKEN",
-      "ANTHROPIC_API_KEY",
       "ANTHROPIC_BASE_URL",
-      "OPENAI_API_KEY",
+      "ANTHROPIC_CUSTOM_HEADERS",
       "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
       "OPENCODE_CONFIG_CONTENT",
     ]) {
       expect(env, name).not.toHaveProperty(name);
     }
+  });
+
+  it("drops API keys when a pool credential is injected, even if runner.agentEnv names them", () => {
+    const env = agentEnv(
+      server,
+      ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"],
+      undefined,
+      { injectPoolCredential: true },
+    );
+    expect(env.GITHUB_TOKEN).toBe("ghp");
+    expect(env.ANTHROPIC_MODEL).toBe("sonnet");
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    expect(env).not.toHaveProperty("OPENAI_BASE_URL");
   });
 
   it("passes the names of runner.agentEnv through, but never a BOOF_ variable", () => {
@@ -169,7 +192,8 @@ describe("what each adapter really hands its child", () => {
     set("EXTRA_PASS", "yes");
     set("ANTHROPIC_BASE_URL", "http://gateway.test");
     set("ANTHROPIC_AUTH_TOKEN", "inherited-admin-token");
-    set("OPENAI_API_KEY", "inherited-openai-key");
+    set("ANTHROPIC_API_KEY", "user-anthropic-key");
+    set("OPENAI_API_KEY", "user-openai-key");
     return dir;
   }
   const base = {
@@ -190,7 +214,12 @@ describe("what each adapter really hands its child", () => {
       const dir = await envOf(binVar, name);
       const marker = "0123456789abcdef0123456789abcdef";
       try {
-        await make().run({ ...base, cwd: dir, agentEnv: ["EXTRA_PASS"], agentMarker: marker });
+        await make().run({
+          ...base,
+          cwd: dir,
+          agentEnv: ["EXTRA_PASS", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+          agentMarker: marker,
+        });
       } catch {
         /* an empty answer may be refused; the child has run */
       }
@@ -200,7 +229,8 @@ describe("what each adapter really hands its child", () => {
       expect(env).not.toContain("AWS_SECRET_ACCESS_KEY");
       expect(env).not.toContain("ANTHROPIC_BASE_URL=");
       expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN=");
-      expect(env).not.toContain("OPENAI_API_KEY=");
+      expect(env).toContain("ANTHROPIC_API_KEY=user-anthropic-key");
+      expect(env).toContain("OPENAI_API_KEY=user-openai-key");
       expect(env).toContain("EXTRA_PASS=yes");
       expect(env).toContain("PATH=");
       expect(env).toContain(`BOOF_RUNNER_AGENT_OF=${marker}`);
@@ -457,7 +487,12 @@ describe("routing through the account pool gateway", () => {
 
     it("opencode: provider options through OPENCODE_CONFIG_CONTENT, key not in argv", async () => {
       const dir = await setup("BOOF_RUNNER_OPENCODE_BIN", "opencode");
-      const { env, argv } = await run(() => new OpencodeTool(), dir, { gateway: gw });
+      set("ANTHROPIC_API_KEY", "user-anthropic-key");
+      set("OPENAI_API_KEY", "user-openai-key");
+      const { env, argv } = await run(() => new OpencodeTool(), dir, {
+        gateway: gw,
+        agentEnv: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+      });
       const line = env.split("\n").find((l) => l.startsWith("OPENCODE_CONFIG_CONTENT="))!;
       expect(
         JSON.parse(line.slice("OPENCODE_CONFIG_CONTENT=".length)).provider.anthropic.options,
@@ -466,6 +501,10 @@ describe("routing through the account pool gateway", () => {
         apiKey: "ccf-client-key",
       });
       expect(argv).not.toContain("ccf-client-key");
+      expect(env).not.toContain("user-anthropic-key");
+      expect(env).not.toContain("user-openai-key");
+      expect(env).not.toContain("ANTHROPIC_API_KEY=");
+      expect(env).not.toContain("OPENAI_API_KEY=");
     });
   });
 
