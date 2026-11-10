@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleStartupSignal, isServeFlag, main, routeArgv } from "./boof-runner.js";
 import { AuthStore } from "@boof/heart";
@@ -46,7 +47,15 @@ describe("boof-runner top level", () => {
         const unsafeRoot = join(parent, "data");
         await mkdir(unsafeRoot, { mode: 0o700 });
         await chmod(parent, 0o777);
-        await main(["open", "-d", unsafeRoot]);
+        // `open` checks who owns the port first: listen on a free loopback port as this user.
+        const srv = createServer();
+        await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+        const port = (srv.address() as { port: number }).port;
+        try {
+          await main(["open", "-d", unsafeRoot, "--port", String(port)]);
+        } finally {
+          await new Promise((r) => srv.close(r));
+        }
         expect(process.exitCode).toBe(1);
         expect(errs).toHaveLength(1);
         expect(errs[0]).toContain(`chmod o-w ${parent}`);
