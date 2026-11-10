@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  filterOverrideArgsFromConfig,
+  driverOverridesFromConfig,
   git,
   initGitRepo,
   isGitRepo,
@@ -12,6 +12,7 @@ import {
   registeredWorktreeBranch,
   repoCommonDir,
 } from "./git.js";
+import { createIntegrationBranch } from "./plan-base.js";
 import { execCommand } from "./process.js";
 import { taskDiff } from "./task-diff.js";
 import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
@@ -311,31 +312,27 @@ describe("agent-planted git config does not run server-side", () => {
     expect(await exists(ran)).toBe(false);
   });
 
-  it("turns a planted clean and smudge filter into empty overrides", () => {
+  it("blanks every filter key and merge driver, including names that contain '='", () => {
     const listed = [
       "filter.lfs.clean\ngit-lfs clean -- %f\0",
       "filter.evil.clean\n/tmp/filt.sh\0",
       "filter.evil.smudge\n/tmp/filt.sh\0",
       "filter.evil.required\ntrue\0",
       "filter.bad name.clean\ntouch /tmp/x\0",
+      "filter.x=y.clean\n/tmp/filt.sh\0",
+      "filter.x=y.required\ntrue\0",
+      "merge.ours.name\nbuilt-in label\0",
+      "merge.x=y.driver\n/tmp/merge.sh %O %A %B\0",
     ].join("");
-    expect(filterOverrideArgsFromConfig(listed)).toEqual([
-      "-c",
-      "filter.evil.clean=",
-      "-c",
-      "filter.evil.smudge=",
-      "-c",
-      "filter.evil.process=",
-      "-c",
-      "filter.evil.required=false",
-      "-c",
-      "filter.lfs.clean=",
-      "-c",
-      "filter.lfs.smudge=",
-      "-c",
-      "filter.lfs.process=",
-      "-c",
-      "filter.lfs.required=false",
+    expect(driverOverridesFromConfig(listed)).toEqual([
+      { key: "filter.bad name.clean", value: "" },
+      { key: "filter.evil.clean", value: "" },
+      { key: "filter.evil.required", value: "false" },
+      { key: "filter.evil.smudge", value: "" },
+      { key: "filter.lfs.clean", value: "" },
+      { key: "filter.x=y.clean", value: "" },
+      { key: "filter.x=y.required", value: "false" },
+      { key: "merge.x=y.driver", value: "" },
     ]);
   });
 
@@ -372,5 +369,103 @@ describe("agent-planted git config does not run server-side", () => {
     expect(await untrackedFiles(wt)).toContain("new.txt");
     expect(await untrackedPatch(wt, "new.txt")).toContain("x");
     expect(await exists(ran)).toBe(false);
+  });
+
+  it("server git does not run a planted filter whose name contains '='", async () => {
+    const ran = join(nonRepo, "equals-filter-ran");
+    const script = join(nonRepo, "equals-filter.sh");
+    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+    await g(["config", "filter.x=y.clean", script]);
+    await g(["config", "filter.x=y.smudge", script]);
+    await g(["config", "filter.x=y.required", "true"]);
+    await writeFile(join(repo, ".gitattributes"), "* filter=x=y\n");
+    await writeFile(join(repo, "a.txt"), "one\n");
+    await g(["add", "a.txt"]);
+    expect(await exists(ran)).toBe(true);
+    await rm(ran, { force: true });
+
+    await writeFile(join(repo, "a.txt"), "two\n");
+    const diff = await git(repo, ["diff", "--", "a.txt"]);
+    expect(diff.code).not.toBeNull();
+    expect(diff.out).toContain("two");
+    const added = await git(repo, ["add", "--", "a.txt"]);
+    expect(added.code).toBe(0);
+    expect(await exists(ran)).toBe(false);
+  });
+
+  it("an integration merge does not run a planted merge driver whose name contains '='", async () => {
+    const ran = join(nonRepo, "merge-ran");
+    const script = join(nonRepo, "merge.sh");
+    await writeFile(script, `#!/bin/sh\necho MERGE >> '${ran}'\nexit 0\n`, { mode: 0o755 });
+    await writeFile(join(repo, ".gitattributes"), "* merge=x=y\n");
+    await g(["add", ".gitattributes"]);
+    await g(["commit", "-q", "-m", "attr"]);
+    await g(["checkout", "-q", "-b", "left"]);
+    await writeFile(join(repo, "m.txt"), "left\n");
+    await g(["add", "m.txt"]);
+    await g(["commit", "-q", "-m", "left"]);
+    await g(["checkout", "-q", "main"]);
+    await g(["checkout", "-q", "-b", "right"]);
+    await writeFile(join(repo, "m.txt"), "right\n");
+    await g(["add", "m.txt"]);
+    await g(["commit", "-q", "-m", "right"]);
+    await g(["config", "merge.x=y.driver", script]);
+    const left = (await g(["rev-parse", "left"])).stdout.trim();
+    await g(["checkout", "-q", "left"]);
+    await g(["merge", "--no-ff", "--no-edit", "-m", "plain", "right"]);
+    expect(await exists(ran)).toBe(true);
+    await g(["reset", "--hard", left]);
+    await rm(ran, { force: true });
+
+    const integrated = await createIntegrationBranch(repo, "int-base", ["left", "right"]);
+    expect(integrated.ok).toBe(false);
+    expect(await exists(ran)).toBe(false);
+  });
+
+  /** `git` on PATH fails or hangs the driver listing and records any later git command. */
+  async function withListingShim(body: string, fn: (ran: string) => Promise<void>): Promise<void> {
+    const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
+    const ran = join(shim, "ran");
+    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+    await writeFile(
+      join(shim, "git"),
+      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
+      { mode: 0o755 },
+    );
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${shim}:${oldPath ?? ""}`;
+    try {
+      await fn(ran);
+    } finally {
+      process.env.PATH = oldPath;
+      await rm(shim, { recursive: true, force: true });
+    }
+  }
+
+  it("refuses the git command when the driver list cannot be read", async () => {
+    await withListingShim("    echo 'config unreadable' >&2\n    exit 3", async (ran) => {
+      await expect(git(repo, ["status", "--porcelain"])).rejects.toThrow(
+        /could not list filter and merge drivers \(config unreadable\)/,
+      );
+      expect(await exists(ran)).toBe(false);
+      const merged = await createIntegrationBranch(repo, "int-base", ["main", "missing"]);
+      expect(merged.ok).toBe(false);
+      if (merged.ok) return;
+      expect(merged.reason).toMatch(
+        /could not list filter and merge drivers \(config unreadable\)/,
+      );
+      expect(await exists(ran)).toBe(false);
+    });
+  });
+
+  it("refuses the git command when the driver list times out", async () => {
+    await withListingShim("    exec sleep 30", async (ran) => {
+      const started = Date.now();
+      await expect(git(repo, ["status", "--porcelain"], undefined, 400)).rejects.toThrow(
+        /could not list filter and merge drivers \(timed out after 400 ms\)/,
+      );
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(await exists(ran)).toBe(false);
+    });
   });
 });

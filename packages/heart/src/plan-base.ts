@@ -7,18 +7,31 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hardenedGitArgs } from "./git.js";
-import { execCommand } from "./process.js";
+import { GitDriversUnreadError, hardenedGitCommand } from "./git.js";
+import { execCommand, type ExecResult } from "./process.js";
 
 const GIT_TIMEOUT_MS = 60_000;
 
-async function git(cwd: string, args: string[]) {
+async function git(cwd: string, args: string[]): Promise<ExecResult | null> {
   try {
-    return await execCommand("git", await hardenedGitArgs(cwd, args), {
+    const prepared = await hardenedGitCommand(cwd, args, undefined, GIT_TIMEOUT_MS);
+    return await execCommand("git", prepared.args, {
       cwd,
       timeoutMs: GIT_TIMEOUT_MS,
+      env: prepared.env,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof GitDriversUnreadError) {
+      return {
+        code: 1,
+        stdout: "",
+        stderr: error.message,
+        timedOut: false,
+        stopped: false,
+        steered: false,
+        stalled: false,
+      };
+    }
     return null;
   }
 }
