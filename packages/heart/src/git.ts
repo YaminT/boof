@@ -20,10 +20,14 @@ export async function pathExists(p: string): Promise<boolean> {
  * overrides repository config.
  */
 export const GIT_HARDENING_ARGS: readonly string[] = [
+  // An empty tree makes the attribute source independent of both the worktree and .git/info.
+  "--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
   "-c",
   "core.fsmonitor=false",
   "-c",
   "core.hooksPath=/dev/null",
+  "-c",
+  "core.attributesFile=/dev/null",
 ];
 
 /**

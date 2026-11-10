@@ -2795,6 +2795,9 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
         await mkdir(workingAreaDir(projectDir, id), { recursive: true });
         await writeFile(join(workingAreaDir(projectDir, id), "log.txt"), "live output line\n");
       }
+      const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+      await new Promise<void>((resolve) => exited.on("exit", () => resolve()));
+      await writePidFile(taskPidPath(projectDir, id), { pgid: exited.pid!, command: "node" });
     };
     it("requeues a task left running and keeps the worktree", async () => {
       await crash();
@@ -2848,6 +2851,61 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(await engine.recoverInterrupted()).toEqual(["t1"]);
       expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
       expect(await exists(workingAreaDir(projectDir, "ghost"))).toBe(true);
+    });
+
+    it("fails a running task with no pid file even when its agent is alive", async () => {
+      await crash();
+      await rm(taskPidPath(projectDir, "t1"), { force: true });
+      const agent = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      try {
+        expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+        const t = await store.get("t1");
+        expect(t?.frontmatter.status).toBe("failed");
+        expect(t?.body.log).not.toContain("Recovery requeue count:");
+        expect(t?.body.log).toContain("agent is not confirmed dead");
+        expect(isAlive(agent.pid!)).toBe(true);
+      } finally {
+        try {
+          process.kill(-agent.pid!, "SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+    });
+
+    it("fails a running task while an external run is open", async () => {
+      await crash();
+      const external = new ExternalRunStore(dataRoot);
+      await external.open({
+        projectId: project.id,
+        taskId: "t1",
+        stepId: "step-1",
+        kind: "step",
+        ttlMs: 60_000,
+      });
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      const t = await store.get("t1");
+      expect(t?.frontmatter.status).toBe("failed");
+      expect(t?.body.log).toContain("external run is still open");
+      expect(t?.body.log).not.toContain("Recovery requeue count:");
+    });
+
+    it("fails after the task has already been requeued once", async () => {
+      await crash();
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      expect((await store.get("t1"))?.body.log).toContain("Recovery requeue count: 1");
+      await store.transition("t1", "running");
+      const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+      await new Promise<void>((resolve) => exited.on("exit", () => resolve()));
+      await writePidFile(taskPidPath(projectDir, "t1"), { pgid: exited.pid!, command: "node" });
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      const t = await store.get("t1");
+      expect(t?.frontmatter.status).toBe("failed");
+      expect(t?.body.log).toContain("Recovery requeue count: 1");
+      expect(t?.body.log).toContain("already been requeued once");
     });
 
     it.skipIf(!currentBootIdentity())(

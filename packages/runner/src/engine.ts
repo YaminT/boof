@@ -15,6 +15,7 @@ import {
   SettingsStore,
   statusDir,
   TaskStore,
+  ExternalRunStore,
   taskPidPath,
   workingAreaDir,
   type Project,
@@ -66,6 +67,14 @@ function interruptedNote(requeue: boolean): string {
   return requeue
     ? `${INTERRUPTED_HEAD} It is back in the queue and will run again.`
     : `${INTERRUPTED_HEAD} Retry it to continue from the kept worktree.`;
+}
+
+/** Successful recovery attempts record the requeue count in the task log. */
+function interruptionRequeueCount(log: string): number {
+  return Math.max(
+    0,
+    ...[...log.matchAll(/^Recovery requeue count: (\d+)$/gm)].map((match) => Number(match[1])),
+  );
 }
 
 export type TickResult =
@@ -734,17 +743,27 @@ export class RunnerEngine {
             console.warn(`recovery: skipping ${project.id}/${id}: no task.md in ongoing/${id}`);
             continue;
           }
+          const interruptedTask = await store.get(id);
+          if (!interruptedTask) continue;
           const reaped = await reapOrphan(taskPidPath(dir, id), (l) =>
             console.warn(`recovery: ${project.id}/${id}: ${l}`),
           );
+          let externalInFlight = false;
+          try {
+            externalInFlight = await new ExternalRunStore(this.root).hasOpenForTask(project.id, id);
+          } catch (err) {
+            console.warn(`recovery: ${project.id}/${id}: could not inspect external runs:`, err);
+            externalInFlight = true;
+          }
           const live = await readFile(join(workingAreaDir(dir, id), "log.txt"), "utf8").catch(
             () => "",
           );
-          // `skipped` means the agent was not verified dead (another boot, a reused pid, a
-          // process we refused to signal). Leave those failed so a second agent is not started
-          // on a guess. none/dead/killed are safe to run again.
-          const unsafe = reaped.stillRunning || reaped.maybeRunning || reaped.outcome === "skipped";
-          const to: Status = unsafe ? "failed" : "pending";
+          // Only a verified-dead process or one killed by this recovery can be retried. Missing
+          // pid records also cover failed writes and external steps, so those must fail closed.
+          const processEnded = reaped.outcome === "dead" || reaped.outcome === "killed";
+          const requeues = interruptionRequeueCount(interruptedTask.body.log);
+          const canRequeue = processEnded && !externalInFlight && requeues < 1;
+          const to: Status = canRequeue ? "pending" : "failed";
           const task = await store.transition(
             id,
             to,
@@ -765,7 +784,15 @@ export class RunnerEngine {
                 };
               }
               const block =
-                `### Interrupted\n${interruptedNote(!unsafe)}` +
+                `### Interrupted\n${interruptedNote(canRequeue)}` +
+                (canRequeue ? `\nRecovery requeue count: ${requeues + 1}` : "") +
+                (externalInFlight
+                  ? "\nAn external run is still open or could not be checked; Retry after resolving it."
+                  : !processEnded
+                    ? "\nThe agent is not confirmed dead; Retry after checking for an agent that may still be running."
+                    : requeues >= 1
+                      ? "\nThis task has already been requeued once after an interruption; Retry it manually to continue."
+                      : "") +
                 (reaped.outcome === "killed"
                   ? `\nThe agent process group ${reaped.record!.pgid} was still running and was killed.`
                   : reaped.maybeRunning

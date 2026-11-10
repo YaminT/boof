@@ -422,6 +422,22 @@ describe("agent-planted git config does not run server-side", () => {
     expect(await exists(ran)).toBe(false);
   });
 
+  it("does not select a filter added after the driver list was read", async () => {
+    const ran = join(nonRepo, "late-filter-ran");
+    const script = join(nonRepo, "late-filter.sh");
+    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+    await writeFile(join(repo, ".gitattributes"), "* filter=late\n");
+    await writeFile(join(repo, "late.txt"), "content\n");
+    await withListingShim(
+      `    __REAL_GIT__ "$@"\n    __REAL_GIT__ config filter.late.clean '${script}'\n    __REAL_GIT__ config filter.late.smudge '${script}'`,
+      async () => {
+        const added = await git(repo, ["add", "--", "late.txt"]);
+        expect(added.code).toBe(0);
+      },
+    );
+    expect(await exists(ran)).toBe(false);
+  });
+
   /** `git` on PATH fails or hangs the driver listing and records any later git command. */
   async function withListingShim(body: string, fn: (ran: string) => Promise<void>): Promise<void> {
     const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
@@ -429,7 +445,7 @@ describe("agent-planted git config does not run server-side", () => {
     const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
     await writeFile(
       join(shim, "git"),
-      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
+      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body.replaceAll("__REAL_GIT__", real)}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
       { mode: 0o755 },
     );
     const oldPath = process.env.PATH;
