@@ -9,7 +9,7 @@
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
-        "hono": "^4.13.13",
+        "hono": "^4.13.17",
         "zod": "^4.6.7",
       },
       "devDependencies": {
@@ -35,7 +35,7 @@
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
-        "hono": "^4.13.13",
+        "hono": "^4.13.17",
         "zod": "^4.6.7",
       },
       "devDependencies": {
@@ -53,7 +53,7 @@
         "@hono/node-server": "^2.0.0",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
-        "hono": "^4.13.13",
+        "hono": "^4.13.17",
         "zod": "^4.6.7",
       },
       "devDependencies": {
@@ -112,7 +112,7 @@
         "@hono/node-server": "^2.0.0",
         "@modelcontextprotocol/sdk": "~1.32.2",
         "chokidar": "^6.0.0",
-        "hono": "^4.13.13",
+        "hono": "^4.13.17",
         "zod": "^4.6.7",
       },
     },
@@ -834,7 +834,7 @@
 
     "hasown": ["hasown@2.0.4", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A=="],
 
-    "hono": ["hono@4.13.13", "", {}, "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA=="],
+    "hono": ["hono@4.13.17", "", {}, "sha512-vZIcbkvjOR5hHRWERbGkr8fGfF0GGM1ooYkuH448iO3b2AdVEr3AXZSw4Z3Kn+1L5z0CVoVeyV29VGYmFh05kQ=="],
 
     "hosted-git-info": ["hosted-git-info@4.1.0", "", { "dependencies": { "lru-cache": "^6.0.0" } }, "sha512-kyCuEOWjJqZuDbRHzL8V93NzQhwIB71oFWSyzVo+KPZI+pnQPPxucdkrOZvkLRnrf5URsQM+IJ09Dw29cRALIA=="],
 
