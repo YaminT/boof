@@ -59,12 +59,43 @@ export interface ExecOptions {
 /** Linux's limit for one argv entry, NUL included. */
 export const MAX_ARG_STRLEN = 131_072;
 
+/**
+ * Same ceiling as `runProbeAsync`. A deps probe that never settles must not outlive the
+ * real PowerShell probe, or a stop's `kill` would wait forever and the caller's timeout could not
+ * end it.
+ */
+const PROBE_BOUND_MS = 5_000;
+
+/**
+ * `work`, or `fallback` when it is still pending after {@link PROBE_BOUND_MS}. A late rejection of
+ * `work` is swallowed: the bound may already have won, and that rejection must not be unhandled.
+ */
+function withinProbeBound<T>(work: Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), PROBE_BOUND_MS);
+  });
+  work.catch(() => {
+    /* A rejection that loses the race must not be unhandled. */
+  });
+  return Promise.race([work, bound]).finally(() => clearTimeout(timer));
+}
+
 /** What the live Windows stop may call. Both are async: nothing on this path uses `spawnSync`. */
 export interface WindowsTreeKillDeps {
   /** Process table. Null when the query fails or times out. */
   table?: () => Promise<ProcessTable | null>;
   /** Stop these verified processes (start time re-checked). False when it cannot be run. */
   killList?: (list: VerifiedProcess[]) => Promise<boolean>;
+  /**
+   * After the table query resolves: false when the root pid may no longer be this child.
+   * Node sets `exitCode` and `signalCode` and closes the process handle in the same `onexit`,
+   * and Windows does not reuse a pid while that handle is open — so both still null means the
+   * row at the root pid is ours. Once either is set, the row may be a stranger that reused the
+   * pid: it is ignored and only `killRoot` runs. Omitted when the caller has no child handle
+   * (the row is used).
+   */
+  rootStillOurs?: () => boolean;
 }
 
 export interface ExecCommandDeps {
@@ -85,30 +116,49 @@ export interface ExecCommandDeps {
  * and each child's start time is checked again on an open handle). The root itself is stopped only
  * through `killRoot`, which must be `child.kill` — the handle Node already holds. Windows will not
  * reuse that pid until the handle closes. Never `taskkill /T`, and never a kill by pid number.
- * When the table cannot be read, only the root handle is killed.
+ * When the table cannot be read, or `rootStillOurs` is false, only the root handle is killed.
+ * The root is killed as soon as its children are pinned by creation time, so a child-kill probe
+ * does not keep the agent alive. A probe that never returns still reaches `killRoot`.
  */
 export async function killWindowsProcessTree(
   rootPid: number | undefined,
   killRoot: () => void,
   deps: WindowsTreeKillDeps = {},
 ): Promise<void> {
+  let rooted = false;
+  const finishRoot = () => {
+    if (rooted) return;
+    rooted = true;
+    killRoot();
+  };
   try {
     if (rootPid !== undefined && Number.isInteger(rootPid) && rootPid > 0) {
-      const table = await (deps.table ?? (() => processTableAsync()))();
-      const root = table?.rows.find((row) => row.pid === rootPid);
+      const table = await withinProbeBound(
+        Promise.resolve().then(() => (deps.table ?? (() => processTableAsync()))()),
+        null,
+      );
+      // Checked after the snapshot, not before: `onexit` during the query means the pid may
+      // already belong to someone else, and that row's children are not ours.
+      const root =
+        table && deps.rootStillOurs?.() !== false
+          ? table.rows.find((row) => row.pid === rootPid)
+          : undefined;
       if (table && root) {
         const byPid = new Map(table.rows.map((row) => [row.pid, row]));
         const children = verifiedDescendants(rootPid, table.rows).flatMap((pid) => {
           const row = byPid.get(pid);
           return row ? [{ pid, created: row.created }] : [];
         });
-        if (children.length > 0) await (deps.killList ?? killVerifiedAsync)(children);
+        finishRoot();
+        if (children.length > 0) {
+          await withinProbeBound((deps.killList ?? killVerifiedAsync)(children), false);
+        }
       }
     }
   } catch {
     // A failed probe must not skip the root. The handle is still this process.
   } finally {
-    killRoot();
+    finishRoot();
   }
 }
 
@@ -166,22 +216,18 @@ export function execCommand(
       await pidWritten;
       if (opts.pidFilePath) await rm(opts.pidFilePath, { force: true }).catch(() => {});
     };
-    // One tree walk. A follow-up (the 1.5s SIGKILL) uses the handle and is skipped once the
-    // child has exited: by then Windows may have given the pid to someone else, and the handle
-    // is the only name that still means this process.
+    // One tree walk. A follow-up (the 1.5s SIGKILL, or a timeout that arrives while the walk
+    // is in flight) must not kill the handle yet: TerminateProcess drops the root from the
+    // process table, and the walk then finds no children. The follow-up runs after the walk.
+    // The walk is bounded, so a probe that never returns still reaches the handle and this
+    // kill does not wait forever. Once the child has exited, Windows may have given the pid
+    // to someone else; the handle is the only name that still means this process, and the
+    // walk ignores the table's row at that pid.
     let windowsLatched = false;
+    let windowsWalk: Promise<void> | undefined;
     const kill = (signal: NodeJS.Signals) => {
       if (platform === "win32") {
         if (child.exitCode !== null || child.signalCode !== null) return;
-        if (windowsLatched) {
-          try {
-            child.kill(signal);
-          } catch {
-            /* already gone */
-          }
-          return;
-        }
-        windowsLatched = true;
         const killRoot = () => {
           if (child.exitCode !== null || child.signalCode !== null) return;
           try {
@@ -190,7 +236,15 @@ export function execCommand(
             /* already gone */
           }
         };
-        void killWindowsProcessTree(child.pid, killRoot, deps.windowsKill).catch(() => {});
+        if (windowsLatched) {
+          void (windowsWalk ?? Promise.resolve()).then(killRoot);
+          return;
+        }
+        windowsLatched = true;
+        windowsWalk = killWindowsProcessTree(child.pid, killRoot, {
+          ...deps.windowsKill,
+          rootStillOurs: () => child.exitCode === null && child.signalCode === null,
+        }).catch(() => {});
         return;
       }
       try {

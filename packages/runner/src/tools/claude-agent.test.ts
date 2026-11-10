@@ -1059,7 +1059,7 @@ describe("ClaudeAgentTool", () => {
   const WIN_OLD = "2026-11-02T08:00:00.0000000Z";
 
   async function windowsStop(
-    table: () => Promise<{
+    table: (child?: { kill: { mock: { calls: readonly unknown[] } } }) => Promise<{
       rows: { pid: number; ppid: number; created: string }[];
       droppedNonIso: number;
       unparsed: number;
@@ -1137,7 +1137,7 @@ describe("ClaudeAgentTool", () => {
       windowsStop: {
         table: async () => {
           tableCalls += 1;
-          return table();
+          return table(childRef);
         },
         killList: async (list) => {
           killed.push(list.map((item) => ({ pid: item.pid })));
@@ -1188,6 +1188,29 @@ describe("ClaudeAgentTool", () => {
     expect(error?.stopped).toBe(true);
     expect(tableCalls).toBe(1);
     expect(killed).toEqual([]);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("on Windows a second stop during the walk does not kill the root before the table is read", async () => {
+    const { error, killed, tableCalls, child } = await windowsStop(async (spawned) => {
+      await new Promise((r) => setTimeout(r, 50));
+      const rootGone = (spawned?.kill.mock.calls.length ?? 0) > 0;
+      return {
+        rows: rootGone
+          ? [{ pid: 5000, ppid: 424242, created: WIN_CHILD }]
+          : [
+              { pid: 424242, ppid: 1, created: WIN_ROOT },
+              { pid: 5000, ppid: 424242, created: WIN_CHILD },
+              { pid: 6000, ppid: 424242, created: WIN_OLD },
+            ],
+        droppedNonIso: 0,
+        unparsed: 0,
+      };
+    });
+    expect(error?.stopped).toBe(true);
+    expect(tableCalls).toBe(1);
+    expect(killed).toEqual([[{ pid: 5000 }]]);
     expect(child.kill).toHaveBeenCalledTimes(1);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });

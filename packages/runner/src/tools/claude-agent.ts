@@ -332,24 +332,20 @@ export class ClaudeAgentTool implements Tool {
     let pidWritten: Promise<void> = Promise.resolve();
     let groupKill: Promise<unknown> | undefined;
     let childClosed: Promise<void> | undefined;
-    // One Windows tree walk per child. A second stop (abort, then the poll, then `finally`) uses
-    // the handle and does nothing once `exitCode` or `signalCode` is set.
+    // One Windows tree walk per child. A second stop (abort, then the poll, then `finally`)
+    // waits for that walk and only then kills the handle, so the snapshot still contains the
+    // root and its children. Killing now would drop the root before PowerShell has enumerated.
+    // The walk is bounded, so a probe that never returns still stops the handle and `finally`
+    // does not wait forever. Once `exitCode` or `signalCode` is set the handle is closed and
+    // the pid may belong to someone else: nothing is signalled, and the walk ignores that row.
     let windowsLatched = false;
+    let windowsWalk: Promise<void> | undefined;
     const killChildGroup = () => {
       const pid = spawnedChild?.pid;
       if (this.platform === "win32") {
         const child = spawnedChild;
         if (!child) return Promise.resolve();
         if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-        if (windowsLatched) {
-          try {
-            child.kill("SIGTERM");
-          } catch {
-            /* already exited */
-          }
-          return Promise.resolve();
-        }
-        windowsLatched = true;
         const killRoot = () => {
           if (child.exitCode !== null || child.signalCode !== null) return;
           try {
@@ -358,7 +354,13 @@ export class ClaudeAgentTool implements Tool {
             /* already exited */
           }
         };
-        const pending = killWindowsProcessTree(pid, killRoot, this.windowsStop).catch(() => {});
+        if (windowsLatched) return (windowsWalk ?? Promise.resolve()).then(killRoot);
+        windowsLatched = true;
+        const pending = killWindowsProcessTree(pid, killRoot, {
+          ...this.windowsStop,
+          rootStillOurs: () => child.exitCode === null && child.signalCode === null,
+        }).catch(() => {});
+        windowsWalk = pending;
         groupKill = pending;
         return pending;
       }

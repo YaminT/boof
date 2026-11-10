@@ -565,6 +565,13 @@ describe("isTransientToolError", () => {
     expect(stopped.message).toBe("claude-code stopped by user");
   });
 
+  it("caps a reason on a code point so a surrogate pair is not split", () => {
+    const emoji = "\uD83D\uDE42";
+    const reason = `${"y".repeat(499)}${emoji}${"z".repeat(20)}`;
+    const e = new ToolRunError("claude-code", 1, false, false, "", "", false, 0, { reason });
+    expect(e.message).toBe(`claude-code exited with code 1: ${"y".repeat(499)}${emoji}…`);
+  });
+
   it("does not match stopped, timed out, plain errors or unrelated failures", () => {
     expect(isTransientToolError(err("API Error: 503", "", { stopped: true }))).toBe(false);
     expect(isTransientToolError(err("API Error: 503", "", { timedOut: true }))).toBe(false);

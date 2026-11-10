@@ -22,7 +22,10 @@ function reasonClause(reason: string | undefined): string {
   if (!reason) return "";
   const text = reason.trim();
   if (!text) return "";
-  const capped = text.length > REASON_MAX ? `${text.slice(0, REASON_MAX)}…` : text;
+  // Code points, not UTF-16 units: `slice` would leave a lone surrogate when the cut lands
+  // on an emoji or other non-BMP character.
+  const units = Array.from(text);
+  const capped = units.length > REASON_MAX ? `${units.slice(0, REASON_MAX).join("")}…` : text;
   return `: ${capped}`;
 }
 
