@@ -43,6 +43,10 @@ const POOL_DOWN = (next: string | null = null) => ({
 });
 
 let settings: Settings;
+/** When set, every `/api/accounts` answer uses this status (503 is an outage, 200 accepts the key). */
+let accountReply: number | null = null;
+/** While set, `/api/accounts` is received but not answered until the promise resolves. */
+let accountGate: Promise<void> | null = null;
 const poolEvents = async () =>
   (await readEvents(root, null))
     .map((s) => s.event)
@@ -65,6 +69,8 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-poolgate-"));
   hits = 0;
   accountHits = 0;
+  accountReply = null;
+  accountGate = null;
   clock = Date.parse("2026-11-03T10:00:00Z");
   sleeps = [];
   health = { status: 200, body: POOL_OK };
@@ -78,10 +84,18 @@ beforeEach(async () => {
     }
     if (req.url === "/api/accounts") {
       accountHits += 1;
-      const key = String(req.headers["x-api-key"] ?? "");
-      // An api-only key is refused. Any other key can read this admin route.
-      const agentOnly = /agent/i.test(key) && !/admin/i.test(key);
-      res.writeHead(agentOnly ? 401 : 200).end(agentOnly ? "" : "[]");
+      const send = () => {
+        if (accountReply !== null) {
+          res.writeHead(accountReply).end(accountReply === 200 ? "[]" : "");
+          return;
+        }
+        const key = String(req.headers["x-api-key"] ?? "");
+        // An api-only key is refused. Any other key can read this admin route.
+        const agentOnly = /agent/i.test(key) && !/admin/i.test(key);
+        res.writeHead(agentOnly ? 401 : 200).end(agentOnly ? "" : "[]");
+      };
+      if (accountGate) void accountGate.then(send);
+      else send();
       return;
     }
     res.writeHead(404).end();
@@ -159,13 +173,64 @@ describe("policy and gateway", () => {
     expect(accountHits).toBeGreaterThan(0);
   });
 
-  it("refuses the agent key when the admin-route probe gets no answer", async () => {
-    settings = { ...settings, owlish: { url: "http://127.0.0.1:1", healthGate: "pause" } };
+  it("a connection failure is unreachable, not a bad key", async () => {
+    settings = { ...settings, owlish: { url: "http://127.0.0.1:1", healthGate: "off" } };
     const g = gate();
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(await g.gateway()).toBeUndefined();
+    expect(await g.agentCredentialBlock()).toBeNull();
+    expect(JSON.stringify(await g.childCredential())).not.toContain("btr-agent");
+  });
+
+  it("an unanswered admin-route probe is unreachable and is not asked again for 30 seconds", async () => {
+    accountReply = 503;
+    const g = gate();
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(await g.agentCredentialBlock()).toBeNull();
+    expect(accountHits).toBe(1);
+    clock += 29_000;
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(accountHits).toBe(1);
+    clock += 1_000;
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(accountHits).toBe(2);
+  });
+
+  it("remembers a rejected probe for 30 seconds and shares one in-flight request", async () => {
+    let release!: () => void;
+    accountGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const g = gate();
+    const pending = Promise.all([g.childCredential(), g.childCredential(), g.gateway()]);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(accountHits).toBe(1);
+    release();
+    const [first, second, gw] = await pending;
+    expect(first).toEqual({ kind: "ok", apiKey: "btr-agent" });
+    expect(second).toEqual(first);
+    expect(gw).toEqual({ url, apiKey: "btr-agent" });
+    expect(accountHits).toBe(1);
+    clock += 29_000;
+    await g.childCredential();
+    expect(accountHits).toBe(1);
+    clock += 1_000;
+    await g.childCredential();
+    expect(accountHits).toBe(2);
+  });
+
+  it("an admin-route acceptance is blocked and remembered for 30 seconds", async () => {
+    accountReply = 200;
+    const g = gate();
+    expect(await g.childCredential()).toEqual({ kind: "blocked" });
     expect(await g.gateway()).toBeUndefined();
     const block = await g.agentCredentialBlock();
-    expect(block).toMatch(/owlishAgentKey/);
+    expect(block).toMatch(/not given to task agents/);
     expect(block).not.toContain("btr-agent");
+    expect(accountHits).toBe(1);
+    clock += 29_000;
+    expect(await g.childCredential()).toEqual({ kind: "blocked" });
+    expect(accountHits).toBe(1);
   });
 
   it("pause blocks routed work when degraded, unhealthy or unreachable, not when ok", async () => {

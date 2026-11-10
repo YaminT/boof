@@ -1,13 +1,28 @@
+import { createHash } from "node:crypto";
 import { appendEvent, type Settings } from "@boof/heart";
-import { ABSENT_POOL, agentKeyIsSeparate, OwlishClient, type PoolStatus } from "@boof/owlish";
+import {
+  ABSENT_POOL,
+  agentKeyIsSeparate,
+  OwlishClient,
+  type AdminRouteProbe,
+  type PoolStatus,
+} from "@boof/owlish";
 import type { Gateway } from "./gateway-env.js";
 
 /** Shown when a pool-routed tool would otherwise receive the admin key. */
 export const POOL_AGENT_KEY_REQUIRED =
   "pool routing needs a separate owlishAgentKey; the admin key is not given to task agents";
 
+/** Shown when the admin-route probe got no answer. The key is not known to be wrong; the task waits. */
+export const POOL_GATEWAY_UNREACHABLE = "the better-ccflare gateway is unreachable";
+
 /** Ask the gateway at most this often (a known `nextAvailableAt` may bring the next check forward). */
 export const POOL_POLL_MS = 30_000;
+/**
+ * Admin-route probe answers are reused for this long, the same window as `AgentAuthResolver`.
+ * A down gateway is a 5 s timeout; without this, every task in a selection pass pays it.
+ */
+const PROBE_CACHE_MS = 30_000;
 const MIN_SLEEP_MS = 1000;
 
 const BLOCKING = new Set(["degraded", "unhealthy", "unreachable"]);
@@ -35,6 +50,10 @@ export interface PoolGateOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** What a pool-routed child may be given. `apiKey` is set only for `ok`, and only when one exists. */
+export type PoolChildCredential =
+  { kind: "ok"; apiKey?: string } | { kind: "blocked" } | { kind: "unreachable" };
+
 /**
  * The fail-safe pool gate. With `settings.owlish.healthGate = "pause"`, routed work (tools with
  * `acceptsPool`) does not start while the pool is degraded, unhealthy or unreachable, and a
@@ -47,6 +66,9 @@ export class PoolGate {
   private readonly sleep: (ms: number) => Promise<void>;
   private last?: { at: number; key: string; pool: PoolStatus };
   private episode = false;
+  /** Probe answers, keyed by gateway URL and a hash of the agent key. The key itself is not stored. */
+  private readonly probeCache = new Map<string, { at: number; result: AdminRouteProbe }>();
+  private readonly probeInFlight = new Map<string, Promise<AdminRouteProbe>>();
 
   constructor(private readonly opts: PoolGateOptions) {
     this.now = opts.now ?? Date.now;
@@ -62,30 +84,29 @@ export class PoolGate {
     const owlish = (await this.opts.loadSettings()).owlish;
     if (!owlish) return undefined;
     const cred = await this.childCredential();
-    if (cred.kind === "blocked") return undefined;
+    if (cred.kind !== "ok") return undefined;
     return { url: owlish.url, ...(cred.apiKey ? { apiKey: cred.apiKey } : {}) };
   }
 
   /**
    * Why a tool that would receive the pool gateway must not start, or null when it may.
-   * Null when no pool is configured, and when the gateway has no client key at all.
+   * Null when no pool is configured, when the gateway has no client key, and when the
+   * gateway did not answer (`unreachable`: the task waits, the key is not known to be wrong).
    */
   async agentCredentialBlock(): Promise<string | null> {
-    const owlish = (await this.opts.loadSettings()).owlish;
-    if (!owlish) return null;
-    return (await this.childCredential()).kind === "blocked" ? POOL_AGENT_KEY_REQUIRED : null;
+    const cred = await this.childCredential();
+    return cred.kind === "blocked" ? POOL_AGENT_KEY_REQUIRED : null;
   }
 
   /**
-   * `agent` when `owlishAgentKey` is set, distinct from the admin key, and refused by the
-   * admin-only account list. `open` when neither key is set (the URL is enough). `blocked`
-   * when the admin key cannot be read, when the agent key is missing or the same string, or
-   * when that key is not refused by the admin route: the admin key must not reach a child.
+   * `ok` when the child may use the gateway: the agent key was refused by the admin route,
+   * or neither key is set. `blocked` when the admin route accepted the key, the admin key
+   * cannot be read, or there is no separate agent key. `unreachable` when the probe got no
+   * answer. The admin key is never returned.
    */
-  private async childCredential(): Promise<{
-    kind: "agent" | "open" | "blocked";
-    apiKey?: string;
-  }> {
+  async childCredential(): Promise<PoolChildCredential> {
+    const owlish = (await this.opts.loadSettings()).owlish;
+    if (!owlish) return { kind: "ok" };
     let admin: string | null = null;
     let agent: string | null = null;
     try {
@@ -101,18 +122,36 @@ export class PoolGate {
       agent = null;
     }
     if (agent && agentKeyIsSeparate(admin, agent)) {
-      const owlish = (await this.opts.loadSettings()).owlish;
-      if (!owlish) return { kind: "blocked" };
-      const probe = await new OwlishClient({
-        url: owlish.url,
-        apiKey: agent,
-        now: this.now,
-      }).probeAdminRoute();
+      const probe = await this.cachedAdminProbe(owlish.url, agent);
+      if (probe === "unknown") return { kind: "unreachable" };
       if (probe !== "rejected") return { kind: "blocked" };
-      return { kind: "agent", apiKey: agent };
+      return { kind: "ok", apiKey: agent };
     }
     if (admin) return { kind: "blocked" };
-    return { kind: "open" };
+    return { kind: "ok" };
+  }
+
+  /**
+   * One admin-route probe per gateway and agent key per 30 s. Simultaneous callers share the
+   * request. `rejected` and `accepted` are definitive; `unknown` is an outage and is cached
+   * too, so a selection pass does not wait out a 5 s timeout once per task.
+   */
+  private async cachedAdminProbe(url: string, agentKey: string): Promise<AdminRouteProbe> {
+    const cacheKey = `${url}:${createHash("sha256").update(agentKey).digest("hex")}`;
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && this.now() - cached.at < PROBE_CACHE_MS) return cached.result;
+    let request = this.probeInFlight.get(cacheKey);
+    if (!request) {
+      request = new OwlishClient({ url, apiKey: agentKey, now: this.now }).probeAdminRoute();
+      this.probeInFlight.set(cacheKey, request);
+    }
+    try {
+      const result = await request;
+      this.probeCache.set(cacheKey, { at: this.now(), result });
+      return result;
+    } finally {
+      if (this.probeInFlight.get(cacheKey) === request) this.probeInFlight.delete(cacheKey);
+    }
   }
 
   /** The pool and whether routed work is blocked. Never throws on a gateway failure. */

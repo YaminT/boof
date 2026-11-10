@@ -215,11 +215,14 @@ export function loopbackListenerUids(
 
 const currentUid = (deps: ListenerLookupDeps): number | undefined => deps.uid ?? process.getuid?.();
 
+const shownLoopback = (address: string): string => (address === "::1" ? "[::1]" : address);
+
 /**
  * `open` on Linux: a message when the link must not be printed. Null only when every address
- * the link would use has listeners and each of them is this user. Nothing listening is a
- * refusal, as is another uid (including root: boof's own server runs as the owner) or a table
- * that cannot be read. Other platforms skip the check.
+ * the link would use has listeners and each of them is this user. Nothing owned by this user
+ * names that address, and names the other loopback host when this user is listening there.
+ * Another uid (including root: boof's own server runs as the owner) or an unreadable table
+ * is also a refusal. Other platforms skip the check.
  */
 export function openLoopbackRefusal(
   host: string,
@@ -236,19 +239,25 @@ export function openLoopbackRefusal(
       : host === "::1" || host === "[::1]"
         ? ["::1"]
         : [host];
-  let nothing = false;
+  let missing: string | null = null;
   for (const address of addresses) {
     const found = loopbackListenerUids(address, port, deps);
     if (found.kind === "unreadable")
       return `cannot see who is listening on port ${port}; not printing a sign-in link`;
     if (found.kind !== "uids") {
-      nothing = true;
+      missing ??= address;
       continue;
     }
     const foreign = found.uids.filter((id) => id !== uid);
     if (foreign.length > 0) return `port ${port} is held by uid ${foreign[0]}, not by your boof`;
   }
-  return nothing ? `nothing is listening on port ${port}; start boof first` : null;
+  if (!missing) return null;
+  const other = missing === "::1" ? "127.0.0.1" : "::1";
+  const otherFound = loopbackListenerUids(other, port, deps);
+  const otherOwned = otherFound.kind === "uids" && otherFound.uids.every((id) => id === uid);
+  const where = `${shownLoopback(missing)}:${port}`;
+  if (otherOwned) return `nothing owned by you on ${where}; use --host ${other}`;
+  return `nothing owned by you on ${where}; start boof first`;
 }
 
 /**

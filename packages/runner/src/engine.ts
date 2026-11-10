@@ -34,7 +34,12 @@ import { announceBudgetExceeded } from "./budget.js";
 import { reapOrphan } from "@boof/heart";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { PoolGate, type PoolCheck } from "./pool-gate.js";
+import {
+  PoolGate,
+  POOL_AGENT_KEY_REQUIRED,
+  POOL_GATEWAY_UNREACHABLE,
+  type PoolCheck,
+} from "./pool-gate.js";
 import { OwlishSecretStore } from "@boof/owlish";
 import { ProjectKeyStore } from "@boof/owlish";
 import { AgentAuthResolver } from "./agent-auth.js";
@@ -177,6 +182,7 @@ export class RunnerEngine {
   }> {
     let poolCheck: PoolCheck | undefined;
     let poolSkipped = false;
+    let credentialUnreachable = false;
     const settings = await this.settingsStore.load();
     const projects = await this.runnableProjects();
     const limited = settings.budget !== undefined || projects.some((p) => p.budget !== undefined);
@@ -256,10 +262,17 @@ export class RunnerEngine {
         const gatewayRouted = agentDecision?.ok && agentDecision.via === "gateway";
         const handsGateway = tools.some((t) => this.registry.get(t)?.acceptsPool);
         if (handsGateway) {
-          const reason = await this.pool.agentCredentialBlock();
-          if (reason) {
+          const cred = await this.pool.childCredential();
+          if (cred.kind === "unreachable") {
+            // The admin-route probe got no answer. Same as a claude-agent outage: keep the
+            // task pending. The key is not known to be wrong, so this is not a refusal.
+            poolSkipped = true;
+            credentialUnreachable = true;
+            continue;
+          }
+          if (cred.kind === "blocked") {
             try {
-              await this.refuseBeforeStart(project, task, reason);
+              await this.refuseBeforeStart(project, task, POOL_AGENT_KEY_REQUIRED);
               await this.noteGoalTaskStatus(project, task, "failed");
             } catch (error) {
               console.error(`could not refuse task ${task.frontmatter.id}:`, error);
@@ -286,7 +299,22 @@ export class RunnerEngine {
     if (status) {
       for (const scope of blocked.values()) await announceBudgetExceeded(this.root, status, scope);
     }
-    this.poolBlocked = poolSkipped ? (poolCheck?.pool ?? null) : null;
+    this.poolBlocked = !poolSkipped
+      ? null
+      : poolCheck?.blocked
+        ? poolCheck.pool
+        : credentialUnreachable
+          ? {
+              status: "unreachable",
+              configured: null,
+              routable: null,
+              paused: null,
+              rateLimited: null,
+              usageExhausted: null,
+              nextAvailableAt: null,
+              reason: POOL_GATEWAY_UNREACHABLE,
+            }
+          : (poolCheck?.pool ?? null);
     if (poolSkipped && poolCheck) await this.pool.announceIfBlocked(poolCheck);
     return { selection: best, blocked: [...blocked.values()] };
   }

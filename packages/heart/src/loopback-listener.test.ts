@@ -145,12 +145,18 @@ describe("openLoopbackRefusal", () => {
       null,
     );
     expect(openLoopbackRefusal("127.0.0.1", 4319, linux(tables("")))).toBe(
-      "nothing is listening on port 4319; start boof first",
+      "nothing owned by you on 127.0.0.1:4319; start boof first",
     );
     const half = linux(tables(row(V4_LOOP, 4319, 1000)));
-    expect(openLoopbackRefusal("localhost", 4319, half)).toBe(
-      "nothing is listening on port 4319; start boof first",
+    expect(openLoopbackRefusal("::1", 4319, half)).toBe(
+      "nothing owned by you on [::1]:4319; use --host 127.0.0.1",
     );
+    expect(openLoopbackRefusal("localhost", 4319, half)).toBe(
+      "nothing owned by you on [::1]:4319; use --host 127.0.0.1",
+    );
+    expect(
+      openLoopbackRefusal("127.0.0.1", 4319, linux(tables("", row(V6_LOOP, 4319, 1000)))),
+    ).toBe("nothing owned by you on 127.0.0.1:4319; use --host ::1");
     expect(
       openLoopbackRefusal(
         "localhost",

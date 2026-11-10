@@ -1032,7 +1032,22 @@ export class TaskService {
           url: gateway.url,
           apiKey: agentKey,
         }).probeAdminRoute();
-        if (agentProbe !== "rejected") keysAreSeparate = false;
+        // An outage is not "the keys are the same". Accepted means this key can read the
+        // admin route, so it is not a separate api-only key. Unknown: the gateway is down.
+        if (agentProbe === "unknown") {
+          result.push({
+            projectId: project.id,
+            roles: [...roles],
+            allowed: false,
+            via: null,
+            reason: agentAuthRefusalMessage(
+              project.name,
+              "the better-ccflare gateway is unreachable",
+            ),
+          });
+          continue;
+        }
+        if (agentProbe === "accepted") keysAreSeparate = false;
       }
       if (
         gateway &&

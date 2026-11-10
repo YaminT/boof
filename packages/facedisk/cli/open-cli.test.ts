@@ -72,6 +72,7 @@ describe("boof-runner open", () => {
     expect(out).toHaveLength(2);
     expect(out[0]).toBe("Sign in to the boof web UI (single use, valid for 10 minutes):");
     expect(out[1]).toMatch(/^ {2}http:\/\/127\.0\.0\.1:4319\/auth\/browser\?code=bl_/);
+    expect(out.join("\n")).not.toContain("localhost");
     const code = codeOf(out);
     // A different store instance, as the running server would have.
     const redeemed = await new BrowserSessionStore(root).redeemLink(code);
@@ -114,8 +115,17 @@ describe("boof-runner open", () => {
     await run("-d", root);
     expect(out[1]).toContain(":5001/");
     out.length = 0;
-    await run("-d", root, "--port", "6002", "--host", "localhost");
-    expect(out[1]).toMatch(/^ {2}http:\/\/localhost:6002\/auth\/browser\?code=bl_/);
+    await run("-d", root, "--port", "6002");
+    expect(out[1]).toMatch(/^ {2}http:\/\/127\.0\.0\.1:6002\/auth\/browser\?code=bl_/);
+    expect(out.join("\n")).not.toContain("localhost");
+  });
+
+  it("refuses --host localhost and never prints it in a link", async () => {
+    expect(await run("-d", root, "--port", "6002", "--host", "localhost")).toBe(1);
+    expect(out).toEqual([]);
+    expect(errs.join("\n")).toMatch(/127\.0\.0\.1 or ::1/);
+    expect(errs.join("\n")).toMatch(/never localhost/);
+    await expect(readFile(dataRootPaths(root).browserLinks, "utf8")).rejects.toThrow();
   });
 
   it("--host ::1 prints a bracketed address", async () => {

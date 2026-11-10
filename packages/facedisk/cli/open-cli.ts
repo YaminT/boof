@@ -14,11 +14,11 @@ import { migrateOldRoot } from "./migrate-old-root.js";
 export const OPEN_HELP = `boof-runner open — print a single-use link that signs a browser in to the web UI
 
 Usage:
-  boof-runner open [-d <data>] [--port <n>] [--host 127.0.0.1|localhost|::1] [--revoke-all]
+  boof-runner open [-d <data>] [--port <n>] [--host 127.0.0.1|::1] [--revoke-all]
 
   -d, --data <path>   Data root (default: ./data, or $BOOF_RUNNER_DATA_ROOT)
       --port <n>      Port of the running server (default: $BOOF_RUNNER_PORT, then 4319)
-      --host <addr>   127.0.0.1 (default), localhost or ::1
+      --host <addr>   127.0.0.1 (default) or ::1. The link uses that address, never localhost
       --revoke-all    Sign out every browser session and drop pending links
 
 The link is valid for 10 minutes, works once and only on the port it was minted for. It is printed, never opened for you, because
@@ -81,8 +81,8 @@ export async function openCommand(
     return 1;
   }
   const host = v.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
-    err("open: --host must be 127.0.0.1, localhost or ::1 (sign-in links work on loopback only)");
+  if (host !== "127.0.0.1" && host !== "::1") {
+    err("open: --host must be 127.0.0.1 or ::1 (sign-in links use that address, never localhost)");
     return 1;
   }
   const root = resolve(process.cwd(), v.data ?? defaultRoot());
@@ -120,7 +120,7 @@ export async function openCommand(
     const { code } = await store.createLink({ port });
     await audit.ok();
     if (v.port === undefined && process.env.BOOF_RUNNER_PORT === undefined) {
-      const up = await portProbe(host === "localhost" ? "127.0.0.1" : host, port).catch(() => true);
+      const up = await portProbe(host, port).catch(() => true);
       if (!up) {
         err(
           `open: nothing answers on ${host}:${port}. The link only works on port ${port}; if the server uses another port, run "boof-runner open --port <n>".`,

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultSettings,
   budgetTimeZone,
@@ -41,6 +41,8 @@ let accountOAuth = false;
 let accountRequests = 0;
 let accountOutageFrom = Number.POSITIVE_INFINITY;
 let accountOutageThrough = Number.POSITIVE_INFINITY;
+/** When set, the agent-key admin-route probe answers with this status instead of 401. */
+let agentProbeStatus: number | null = null;
 let clock: number;
 let sleeps: number[];
 let onSleep: (n: number) => Promise<void>;
@@ -173,6 +175,7 @@ beforeEach(async () => {
   accountRequests = 0;
   accountOutageFrom = Number.POSITIVE_INFINITY;
   accountOutageThrough = Number.POSITIVE_INFINITY;
+  agentProbeStatus = null;
   healthy = true;
   clock = Date.parse("2026-11-03T10:00:00Z");
   sleeps = [];
@@ -183,7 +186,7 @@ beforeEach(async () => {
       const key = String(req.headers["x-api-key"] ?? "");
       // The agent-key probe is not an eligibility check. An api-only key is refused here.
       if ((/agent/i.test(key) && !/admin/i.test(key)) || key === "btr-key")
-        return void res.writeHead(401).end();
+        return void res.writeHead(agentProbeStatus ?? 401).end();
       accountRequests += 1;
       if (accountRequests >= accountOutageFrom && accountRequests <= accountOutageThrough)
         return void res
@@ -490,6 +493,31 @@ describe("selection", () => {
     expect(seenGateways.every((g) => g === undefined)).toBe(true);
     expect(seenGateways.length).toBeGreaterThan(0);
     expect(hits).toBe(0);
+  });
+
+  it("a gateway outage keeps a pool-routed task pending and does not fail its goal", async () => {
+    agentProbeStatus = 503;
+    await configure("off");
+    await addTask("routed", "pooled");
+    await addTask("plain", "mock");
+    makeEngine();
+    const noteGoalStatus = vi.spyOn(engine as any, "noteGoalTaskStatus");
+    const results = await engine.runUntilIdle();
+    expect(await status("plain")).toBe("done");
+    expect(await status("routed")).toBe("pending");
+    expect((await tasks(main).get("routed"))?.body.log ?? "").not.toContain("Not started");
+    expect(seenGateways).toEqual([]);
+    expect(results.at(-1)).toEqual({
+      kind: "pool",
+      status: "unreachable",
+      reason: "the better-ccflare gateway is unreachable",
+    });
+    expect(noteGoalStatus.mock.calls.filter((call) => call[2] === "failed")).toEqual([]);
+    expect(
+      (await readEvents(dataRoot, null)).some(
+        (row) => row.event.type === "runner.agent_auth_refused",
+      ),
+    ).toBe(false);
   });
 
   it("a pool-routed task is refused when only the admin key is set, and that key is not handed over", async () => {

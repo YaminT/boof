@@ -20,6 +20,8 @@ let healthBody: object;
 let accountsBody: unknown;
 let healthStatus: number;
 let accountStatus: number;
+/** When set, an api-only agent key gets this status instead of 401. 503 is an outage. */
+let agentAccountStatus: number | null = null;
 let holdHealthResponse: boolean;
 let releaseHealthResponse: (() => void) | undefined;
 
@@ -53,6 +55,7 @@ beforeEach(async () => {
   seen = [];
   healthStatus = 200;
   accountStatus = 200;
+  agentAccountStatus = null;
   accountsBody = undefined;
   holdHealthResponse = false;
   releaseHealthResponse = undefined;
@@ -87,7 +90,8 @@ beforeEach(async () => {
       if (req.url === "/api/accounts") {
         const key = String(req.headers["x-api-key"] ?? "");
         // An api-only agent key is refused even while eligibility is forced into an outage.
-        if (/agent/i.test(key) && !/admin/i.test(key)) return void res.writeHead(401).end("{}");
+        if (/agent/i.test(key) && !/admin/i.test(key))
+          return void res.writeHead(agentAccountStatus ?? 401).end("{}");
         return void res.writeHead(accountStatus).end(
           JSON.stringify(
             accountsBody ?? [
@@ -879,6 +883,32 @@ describe("the separate agent key (owlishAgentKey)", () => {
     expect(accountCalls.filter((r) => r.key === KEY).length).toBeGreaterThan(0);
     expect(accountCalls.some((r) => r.key === AGENT)).toBe(true);
     expect(new Set(accountCalls.map((r) => r.key))).toEqual(new Set([KEY, AGENT]));
+  });
+
+  it("an admin-route outage does not report that the keys are not separate", async () => {
+    accountsBody = consoleAccounts;
+    await configure();
+    await run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: AGENT });
+    await agentProject("gateway-down");
+    agentAccountStatus = 503;
+    const row = (await run("runner.status", LOCAL_PRINCIPAL)).agentAuth[0];
+    expect(row).toMatchObject({ allowed: false, via: null });
+    expect(row.reason).toMatch(/gateway is unreachable/);
+    expect(row.reason).not.toMatch(/separate api-only|not the admin client key/);
+    expect(JSON.stringify(row)).not.toContain(AGENT);
+  });
+
+  it("status says the key is not separate when the gateway accepts it on the admin route", async () => {
+    accountsBody = consoleAccounts;
+    await configure();
+    await run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: AGENT });
+    await agentProject("accepted-agent-key");
+    agentAccountStatus = 200;
+    const row = (await run("runner.status", LOCAL_PRINCIPAL)).agentAuth[0];
+    expect(row).toMatchObject({ allowed: false, via: null });
+    expect(row.reason).toMatch(/separate api-only/);
+    expect(row.reason).not.toMatch(/unreachable/);
+    expect(JSON.stringify(row)).not.toContain(AGENT);
   });
 
   it("accounts.agentSdk honours refresh, and a key read error is a key-free closed gate", async () => {
