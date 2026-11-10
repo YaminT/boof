@@ -1,4 +1,11 @@
-import { spawn } from "node:child_process";
+import {
+  spawn,
+  spawnSync,
+  type ChildProcessByStdio,
+  type SpawnOptions,
+  type SpawnSyncOptions,
+} from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename } from "node:path";
@@ -51,6 +58,46 @@ export interface ExecOptions {
 /** Linux's limit for one argv entry, NUL included. */
 export const MAX_ARG_STRLEN = 131_072;
 
+export interface ExecCommandDeps {
+  /** Tests inject a platform. Production uses `process.platform`. */
+  platform?: NodeJS.Platform;
+  spawn?: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => ChildProcessByStdio<Writable, Readable, Readable>;
+  spawnSync?: (
+    file: string,
+    args: readonly string[],
+    options: SpawnSyncOptions,
+  ) => { status: number | null };
+}
+
+/**
+ * Windows: end this process and every process it started (`taskkill /T /F /PID`).
+ * False when taskkill cannot be run or does not succeed, so the caller can fall back to
+ * killing the top process only.
+ */
+export function killWindowsProcessTree(pid: number, run?: ExecCommandDeps["spawnSync"]): boolean {
+  const exec =
+    run ??
+    ((file: string, args: readonly string[], options: SpawnSyncOptions) => {
+      const result = spawnSync(file, args, options);
+      return { status: result.status };
+    });
+  try {
+    return (
+      exec("taskkill", ["/T", "/F", "/PID", String(pid)], {
+        windowsHide: true,
+        stdio: "ignore",
+        timeout: 5000,
+      }).status === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Spawn a child process scoped to `cwd`, capture stdout/stderr, optionally feed
  * stdin, and enforce a timeout. Portable across Bun + Node (node:child_process
@@ -60,6 +107,7 @@ export function execCommand(
   command: string,
   args: string[],
   opts: ExecOptions,
+  deps: ExecCommandDeps = {},
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     // Node's spawn rejects argv entries / stdin containing NUL bytes. Agent
@@ -79,14 +127,20 @@ export function execCommand(
       });
       return;
     }
-    const child = spawn(command, safeArgs, {
+    const platform = deps.platform ?? process.platform;
+    const spawnFn = deps.spawn ?? spawn;
+    // stdio is always three pipes, so stdout, stderr and stdin are present. The injected
+    // spawn's return type says so; Node's own overloads only see that on an object literal.
+    const child = spawnFn(command, safeArgs, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
-      // Own process group (POSIX): a stop, timeout or stall kills the agent CLI and
-      // everything it spawned, not just the top process.
-      detached: process.platform !== "win32",
-    });
+      // POSIX: own process group, so a stop kills the agent and everything it spawned.
+      // Windows has no groups: the kill below uses taskkill /T. windowsHide keeps a GUI
+      // parent (the desktop app) from opening a console for git or an agent.
+      detached: platform !== "win32",
+      windowsHide: true,
+    }) as ChildProcessByStdio<Writable, Readable, Readable>;
     const pidWritten =
       opts.pidFilePath && child.pid
         ? writePidFile(opts.pidFilePath, { pgid: child.pid, command: basename(command) }).catch(
@@ -98,8 +152,12 @@ export function execCommand(
       if (opts.pidFilePath) await rm(opts.pidFilePath, { force: true }).catch(() => {});
     };
     const kill = (signal: NodeJS.Signals) => {
+      // Windows: one handle's kill does not reach grandchildren. taskkill /T does.
+      if (platform === "win32" && child.pid && killWindowsProcessTree(child.pid, deps.spawnSync)) {
+        return;
+      }
       try {
-        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        if (platform !== "win32" && child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
         try {

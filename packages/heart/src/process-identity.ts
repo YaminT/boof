@@ -8,6 +8,8 @@
  *
  * Nothing here signals a process. Callers that kill (the runner's orphan reaper) or refuse (Retry
  * while a recorded agent is alive) decide with `agentStatus`, and treat "unknown" as "do not act".
+ * On Windows a start time that came back in another form (PowerShell ISO against `wmic`, or a
+ * probe that had to fall back) is "unknown": the strings differ even when the process is the same.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -174,6 +176,8 @@ export interface ProcessProbe {
   /** macOS: `ps` lstart. Windows: the CIM creation time. */
   startTime: string | null;
   ppid: number | null;
+  /** Windows: PowerShell failed and `wmic` supplied `startTime`. */
+  fellBack?: boolean;
 }
 
 const validPid = (pid: number) => Number.isInteger(pid) && pid > 0;
@@ -212,7 +216,12 @@ export function probeProcess(pid: number, d: IdentityDeps = {}): ProcessProbe | 
     const created = /CreationDate=(\S+)/.exec(w ?? "")?.[1];
     const parent = /ParentProcessId=(\d+)/.exec(w ?? "")?.[1];
     return created
-      ? { startTicks: null, startTime: created, ppid: parent ? Number(parent) : null }
+      ? {
+          startTicks: null,
+          startTime: created,
+          ppid: parent ? Number(parent) : null,
+          fellBack: true,
+        }
       : undefined;
   }
   return undefined;
@@ -230,8 +239,9 @@ export interface AgentIdentity {
 /**
  * Is the recorded agent still running? `running`: the same boot, the process exists and its start
  * time equals the recorded one exactly. `gone`: it does not exist, or is another process (a reused
- * pid), or the machine rebooted. `unknown`: not enough was recorded or the probe failed; callers
- * must not kill and must not refuse on it.
+ * pid), or the machine rebooted. `unknown`: not enough was recorded, the probe failed, or (Windows)
+ * the recorded start time and the probed one are different formats, or the probe fell back to
+ * `wmic` and the strings differ. Callers must not kill and must not refuse on `unknown`.
  */
 export function agentStatus(
   id: AgentIdentity,
@@ -248,7 +258,27 @@ export function agentStatus(
   // only a pid that is really gone is `gone`; a live one cannot be told apart, so it is unknown.
   if (!probe) return resolveDeps(d).alive(id.pgid) ? "unknown" : "gone";
   const now = platform === "linux" ? probe.startTicks : probe.startTime;
-  return now === recordedStart ? "running" : "gone";
+  if (now === recordedStart) return "running";
+  // `wmic` prints `YYYYMMDDHHMMSS.mmmmmm±UUU`. That is not the ISO form the writer prefers, so a
+  // mismatch is not proof the pid was reused. A fallback that disagrees is the same: unverifiable.
+  if (
+    platform === "win32" &&
+    typeof now === "string" &&
+    typeof recordedStart === "string" &&
+    (probe.fellBack === true || windowsTimeKind(now) !== windowsTimeKind(recordedStart))
+  ) {
+    return "unknown";
+  }
+  return "gone";
+}
+
+/** `wmic` CreationDate: `YYYYMMDDHHMMSS.mmmmmm±UUU`. */
+const WMIC_CREATION = /^\d{14}\.\d+[+-]\d+$/;
+
+function windowsTimeKind(value: string): "iso" | "wmic" | "other" {
+  if (ISO_O.test(value)) return "iso";
+  if (WMIC_CREATION.test(value)) return "wmic";
+  return "other";
 }
 
 /** One row of the Windows process table. `created` is the CIM CreationDate in UTC, ISO 8601 ("o"). */
@@ -260,11 +290,19 @@ export interface ProcessRow {
 
 export const ISO_O = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/;
 
+/** A Windows process table. `droppedNonIso` counts pid|ppid|time rows that were not `ISO_O`. */
+export interface ProcessTable {
+  rows: ProcessRow[];
+  droppedNonIso: number;
+}
+
 /**
  * Windows: every process with its parent and creation time, from ONE CIM query (null when
- * PowerShell fails). Rows whose creation time is not the fixed-width UTC form are dropped.
+ * PowerShell fails). Rows whose creation time is not the fixed-width UTC form are dropped and
+ * counted. An empty `rows` with `droppedNonIso > 0` means the times were unreadable, not that
+ * the machine has no processes. Callers must not treat that as "the agent is gone".
  */
-export function processTable(d: IdentityDeps = {}): ProcessRow[] | null {
+export function processTable(d: IdentityDeps = {}): ProcessTable | null {
   const { platform, run } = resolveDeps(d);
   if (platform !== "win32") return null;
   const out = run("powershell", [
@@ -275,12 +313,17 @@ export function processTable(d: IdentityDeps = {}): ProcessRow[] | null {
   ]);
   if (out === null) return null;
   const rows: ProcessRow[] = [];
+  let droppedNonIso = 0;
   for (const line of out.split(/\r?\n/)) {
     const m = /^(\d+)\|(\d+)\|(\S+)\s*$/.exec(line);
-    if (m && ISO_O.test(m[3]!))
-      rows.push({ pid: Number(m[1]), ppid: Number(m[2]), created: m[3]! });
+    if (!m) continue;
+    if (!ISO_O.test(m[3]!)) {
+      droppedNonIso += 1;
+      continue;
+    }
+    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), created: m[3]! });
   }
-  return rows;
+  return { rows, droppedNonIso };
 }
 
 /**

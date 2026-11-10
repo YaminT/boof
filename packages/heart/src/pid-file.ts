@@ -174,25 +174,32 @@ export interface ReapResult {
  *
  * The table is a second look, a moment later. If it is readable and does not show the agent with
  * the recorded creation time, the agent has gone (its pid may already belong to someone else):
- * nothing is killed (`"gone"`). Only an unreadable table falls back to stopping the verified agent
- * alone with `taskkill /F /PID`. Otherwise the agent and its children are stopped deepest first
- * by {@link killVerified}: one PowerShell process that opens each process and compares its start
- * time before it kills, so the pid cannot be reused between the check and the kill. A Job Object
- * (kill on close) at spawn is the long-term fix; see goals/desktop-orphan-reaping-macos-windows.
+ * nothing is killed (`"gone"`). A table that is empty only because non-ISO rows were dropped is
+ * not that case: the agent's own time may have been dropped, so the result is `"unverifiable"`
+ * and the record stays. Only an unreadable table (the query failed) falls back to stopping the
+ * verified agent alone with `taskkill /F /PID`. Otherwise the agent and its children are stopped
+ * deepest first by {@link killVerified}: one PowerShell process that opens each process and
+ * compares its start time before it kills, so the pid cannot be reused between the check and the
+ * kill. A Job Object (kill on close) at spawn is the long-term fix; see
+ * goals/desktop-orphan-reaping-macos-windows.
  */
 async function killTree(
   record: PidRecord,
   identity: IdentityDeps,
-): Promise<"exited" | "killed" | "survived" | "gone"> {
+): Promise<"exited" | "killed" | "survived" | "gone" | "unverifiable"> {
   const run = identity.run ?? runProbe;
-  const rows = processTable(identity);
-  if (rows === null) {
+  const table = processTable(identity);
+  if (table === null) {
     run("taskkill", ["/F", "/PID", String(record.pgid)]);
   } else {
-    const root = rows.find((r) => r.pid === record.pgid);
-    if (!root || root.created !== record.startTime) return "gone";
-    const byPid = new Map(rows.map((r) => [r.pid, r]));
-    const list = [...verifiedDescendants(record.pgid, rows), record.pgid].map((pid) => ({
+    const root = table.rows.find((r) => r.pid === record.pgid);
+    if (!root) {
+      if (table.droppedNonIso > 0) return "unverifiable";
+      return "gone";
+    }
+    if (root.created !== record.startTime) return "gone";
+    const byPid = new Map(table.rows.map((r) => [r.pid, r]));
+    const list = [...verifiedDescendants(record.pgid, table.rows), record.pgid].map((pid) => ({
       pid,
       created: byPid.get(pid)!.created,
     }));
@@ -299,6 +306,13 @@ async function reapOffLinux(
     : platform === "win32"
       ? await killTree(record, identity)
       : await killGroup(record.pgid);
+  if (result === "unverifiable") {
+    if (!alive(record.pgid)) return finish("dead");
+    log(
+      `agent process ${record.pgid} (${record.command}) may still be running, but its identity cannot be verified on ${platform}; not killing`,
+    );
+    return { outcome: "skipped", record, maybeRunning: true };
+  }
   if (result === "gone") {
     log(
       `agent ${record.pgid} (${record.command}) is gone: its pid shows another process; not killing`,

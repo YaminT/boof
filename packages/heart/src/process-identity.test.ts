@@ -87,6 +87,7 @@ describe("Windows (mocked: no Windows here)", () => {
       startTicks: null,
       startTime: "20261102173007.123456+000",
       ppid: 777,
+      fellBack: true,
     });
     expect(calls.some((c) => c.startsWith("powershell"))).toBe(true);
     expect(calls.some((c) => c.startsWith("wmic"))).toBe(true);
@@ -162,6 +163,48 @@ describe("agentStatus", () => {
       agentStatus(id, { platform: "darwin", run: mac("  1 Mon Nov  2 17:30:07 2026", null).run }),
     ).toBe("unknown");
   });
+
+  describe("Windows start times", () => {
+    const ISO = "2026-11-02T17:30:07.1234560Z";
+    const WMIC = "20261102173007.123456+000";
+    const bootSec = Math.floor(Date.parse("2024-11-01T08:00:00Z") / 1000);
+    const id = (startTime: string): AgentIdentity => ({
+      pgid: 100,
+      command: "claude",
+      bootId: `boottime:${bootSec}`,
+      startTicks: null,
+      startTime,
+    });
+    const win = (answers: Record<string, string | null>) =>
+      fakeRun({ LastBootUpTime: "2024-11-01T08:00:00.0000000Z", ...answers });
+
+    it("a wmic probe against a recorded ISO time is unknown, not gone", () => {
+      const { run, calls } = win({
+        "wmic process": `CreationDate=${WMIC}\r\nParentProcessId=1\r\n`,
+      });
+      expect(agentStatus(id(ISO), { platform: "win32", run, alive: () => true })).toBe("unknown");
+      expect(calls.some((c) => c.startsWith("wmic"))).toBe(true);
+    });
+
+    it("a probe that fell back to wmic does not call a different wmic time gone", () => {
+      const { run } = win({
+        "wmic process": "CreationDate=20261102180000.000000+000\r\nParentProcessId=1\r\n",
+      });
+      expect(agentStatus(id(WMIC), { platform: "win32", run, alive: () => true })).toBe("unknown");
+    });
+
+    it("the same wmic string from a fallback is still the recorded process", () => {
+      const { run } = win({
+        "wmic process": `CreationDate=${WMIC}\r\nParentProcessId=1\r\n`,
+      });
+      expect(agentStatus(id(WMIC), { platform: "win32", run })).toBe("running");
+    });
+
+    it("two different ISO times are a reused pid and are gone", () => {
+      const { run } = win({ Win32_Process: "2026-11-02T19:00:00.0000000Z|1\r\n" });
+      expect(agentStatus(id(ISO), { platform: "win32", run })).toBe("gone");
+    });
+  });
 });
 
 describe("probe commands", () => {
@@ -223,12 +266,22 @@ describe("Windows process table", () => {
   it("parses pid|ppid|created lines and drops anything else", () => {
     expect(
       table(`10|1|${A}\r\nnot a row\r\n11|10|2026-11-02T10:00:01.0000000Z\r\n12|10|yesterday\r\n`),
-    ).toEqual([
-      { pid: 10, ppid: 1, created: A },
-      { pid: 11, ppid: 10, created: "2026-11-02T10:00:01.0000000Z" },
-    ]);
+    ).toEqual({
+      rows: [
+        { pid: 10, ppid: 1, created: A },
+        { pid: 11, ppid: 10, created: "2026-11-02T10:00:01.0000000Z" },
+      ],
+      droppedNonIso: 1,
+    });
     expect(table(null)).toBeNull();
+    expect(table("")).toEqual({ rows: [], droppedNonIso: 0 });
     expect(processTable({ platform: "linux", run: () => "10|1|" + A })).toBeNull();
+  });
+
+  it("counts rows whose time is not the fixed UTC form, so an empty table is not a failed query", () => {
+    expect(
+      table("4242|1|20261102173007.123456+000\r\n5000|4242|20261102173009.000000+000\r\n"),
+    ).toEqual({ rows: [], droppedNonIso: 2 });
   });
 
   it("descendants are the processes created after their parent, deepest first", () => {

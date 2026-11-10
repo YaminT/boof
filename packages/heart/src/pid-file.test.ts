@@ -512,6 +512,62 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     expect(killed).toEqual([]);
   });
 
+  it("Windows: a wmic probe against an ISO record keeps the pid file and kills nothing", async () => {
+    const calls: string[] = [];
+    const identity = {
+      platform: "win32" as const,
+      run: (cmd: string, args: string[]) => {
+        calls.push(cmd);
+        const text = [cmd, ...args].join(" ");
+        if (cmd === "powershell" && text.includes("LastBootUpTime")) {
+          return "2024-11-01T08:00:00.0000000Z";
+        }
+        if (cmd === "wmic") {
+          return "CreationDate=20261102173007.123456+000\r\nParentProcessId=1\r\n";
+        }
+        return null;
+      },
+    };
+    const path = await winRecord();
+    const res = await reapOrphan(path, log, { identity, isAlive: () => true });
+    expect(res).toMatchObject({ outcome: "skipped", maybeRunning: true });
+    expect(existsSync(path)).toBe(true);
+    expect(calls).not.toContain("taskkill");
+    expect(logs.join("\n")).toMatch(/cannot be verified/);
+    expect(logs.join("\n")).toMatch(/not killing/);
+  });
+
+  it("Windows: a process table emptied by dropped non-ISO rows is unverifiable, not gone", async () => {
+    const box = win("4242|1|20261102173007.123456+000\r\n5000|4242|20261102173009.000000+000");
+    const path = await winRecord();
+    const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
+    expect(res).toMatchObject({ outcome: "skipped", maybeRunning: true });
+    expect(box.taskkills).toEqual([]);
+    expect(box.pairs).toEqual([]);
+    expect(existsSync(path)).toBe(true);
+    expect(logs.join("\n")).toMatch(/cannot be verified/);
+  });
+
+  it("Windows: an empty table that dropped nothing still means the agent is gone", async () => {
+    const box = win("");
+    const path = await winRecord();
+    const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
+    expect(res.outcome).toBe("dead");
+    expect(box.taskkills).toEqual([]);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("Windows: a different ISO creation time is still gone when another row was not ISO", async () => {
+    const box = win(
+      ["4242|1|2026-11-02T17:31:00.0000000Z", "5000|1|20261102173007.123456+000"].join("\n"),
+    );
+    const path = await winRecord();
+    const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
+    expect(res.outcome).toBe("dead");
+    expect(box.taskkills).toEqual([]);
+    expect(existsSync(path)).toBe(false);
+  });
+
   it("Windows: a different creation time is another process and gets no taskkill", async () => {
     const calls: string[] = [];
     const identity = {

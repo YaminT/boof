@@ -1,9 +1,10 @@
+import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { execCommand, MAX_ARG_STRLEN } from "./process.js";
+import { describe, expect, it, vi } from "vitest";
+import { execCommand, killWindowsProcessTree, MAX_ARG_STRLEN } from "./process.js";
 
 describe("execCommand", () => {
   it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {
@@ -126,5 +127,128 @@ describe("execCommand", () => {
     } finally {
       await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
+  });
+
+  /** A child that never really starts. `close` after `fallbackMs` keeps a missed kill from hanging. */
+  const fakeChild = (pid = 4242, fallbackMs = 200) => {
+    const child = new EventEmitter() as EventEmitter & {
+      pid: number;
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: EventEmitter & { write: () => boolean; end: () => void };
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.pid = pid;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const stdin = new EventEmitter() as typeof child.stdin;
+    stdin.write = () => true;
+    stdin.end = () => {};
+    child.stdin = stdin;
+    child.kill = vi.fn(() => {
+      setTimeout(() => child.emit("close", null, "SIGTERM"), 0);
+      return true;
+    });
+    setTimeout(() => child.emit("close", 1, null), fallbackMs);
+    return child;
+  };
+
+  it("spawns with windowsHide so a GUI parent does not open a console", async () => {
+    const child = fakeChild();
+    const spawn = vi.fn(() => child);
+    const res = await execCommand(
+      "git",
+      ["status"],
+      { cwd: process.cwd(), timeoutMs: 1000 },
+      { spawn },
+    );
+    expect(res.code).toBe(1);
+    expect(spawn).toHaveBeenCalledWith(
+      "git",
+      ["status"],
+      expect.objectContaining({
+        windowsHide: true,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  });
+
+  it("on Windows a stop runs taskkill /T /F /PID and does not stop at the top process", async () => {
+    const child = fakeChild();
+    const spawn = vi.fn(() => child);
+    const spawnSync = vi.fn(() => ({ status: 0 }));
+    const dir = await mkdtemp(join(tmpdir(), "boof-exec-win-"));
+    const stop = join(dir, "stop");
+    try {
+      await writeFile(stop, "x\n");
+      const res = await execCommand(
+        "git",
+        ["status"],
+        { cwd: dir, stopSignalPath: stop, stopPollMs: 10, timeoutMs: 1000 },
+        { platform: "win32", spawn, spawnSync },
+      );
+      expect(res.stopped).toBe(true);
+      expect(spawn).toHaveBeenCalledWith(
+        "git",
+        ["status"],
+        expect.objectContaining({ windowsHide: true, detached: false }),
+      );
+      expect(spawnSync).toHaveBeenCalledWith(
+        "taskkill",
+        ["/T", "/F", "/PID", "4242"],
+        expect.objectContaining({ windowsHide: true, stdio: "ignore" }),
+      );
+      expect(child.kill).not.toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("on Windows a failed taskkill falls back to killing the top process", async () => {
+    const child = fakeChild();
+    const spawn = vi.fn(() => child);
+    const dir = await mkdtemp(join(tmpdir(), "boof-exec-win-"));
+    const stop = join(dir, "stop");
+    try {
+      await writeFile(stop, "x\n");
+      const res = await execCommand(
+        "git",
+        ["status"],
+        { cwd: dir, stopSignalPath: stop, stopPollMs: 10, timeoutMs: 1000 },
+        {
+          platform: "win32",
+          spawn,
+          spawnSync: () => {
+            throw new Error("taskkill missing");
+          },
+        },
+      );
+      expect(res.stopped).toBe(true);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("killWindowsProcessTree", () => {
+  it("runs taskkill /T /F /PID with the console hidden", () => {
+    const run = vi.fn(() => ({ status: 0 }));
+    expect(killWindowsProcessTree(4242, run)).toBe(true);
+    expect(run).toHaveBeenCalledWith(
+      "taskkill",
+      ["/T", "/F", "/PID", "4242"],
+      expect.objectContaining({ windowsHide: true, stdio: "ignore" }),
+    );
+  });
+
+  it("reports failure when taskkill exits non-zero or cannot be started", () => {
+    expect(killWindowsProcessTree(4242, () => ({ status: 1 }))).toBe(false);
+    expect(
+      killWindowsProcessTree(4242, () => {
+        throw new Error("ENOENT");
+      }),
+    ).toBe(false);
   });
 });

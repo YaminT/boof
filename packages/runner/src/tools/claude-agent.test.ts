@@ -1054,6 +1054,116 @@ describe("ClaudeAgentTool", () => {
     }
   });
 
+  async function windowsStop(killTree: (pid: number) => boolean) {
+    const { EventEmitter } = await import("node:events");
+    const dir = await mkdtemp(join(tmpdir(), "claude-agent-win-kill-"));
+    const stopSignalPath = join(dir, "stop");
+    const kills: number[] = [];
+    let childRef: EventEmitter & {
+      pid: number;
+      kill: ReturnType<typeof vi.fn>;
+      exitCode: number | null;
+      signalCode: NodeJS.Signals | null;
+    };
+    const spawn = vi.fn(() => {
+      const child = new EventEmitter() as typeof childRef;
+      childRef = child;
+      child.pid = 424242;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = vi.fn(() => {
+        child.signalCode = "SIGTERM";
+        child.emit("close", null, "SIGTERM");
+        return true;
+      });
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.emit("close", 1, null);
+      }, 500);
+      return child;
+    });
+    const sdk = {
+      query: ({ options, prompt }: any) => {
+        options.spawnClaudeCodeProcess({
+          command: "claude",
+          args: ["--sdk-protocol"],
+          cwd: dir,
+          env: options.env,
+          signal: options.abortController.signal,
+        });
+        let ended = false;
+        let wake: () => void = () => {};
+        const finish = () => {
+          ended = true;
+          wake();
+        };
+        options.abortController.signal.addEventListener("abort", finish, { once: true });
+        return {
+          async *[Symbol.asyncIterator]() {
+            const first = await prompt[Symbol.asyncIterator]().next();
+            yield msg("system", { subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+            while (!ended) await new Promise<void>((resolve) => (wake = resolve));
+            yield msg("result", {
+              subtype: "success",
+              result: "stopped",
+              user_message_uuid: first.value.uuid,
+            });
+          },
+          async close() {
+            finish();
+          },
+        };
+      },
+    };
+    const tool = new ClaudeAgentTool({
+      loadSdk: async () => sdk as never,
+      resolveExecutable: async () => ({ path: "/fake", source: "env" }),
+      spawn: spawn as never,
+      signalPollMs: 5,
+      platform: "win32",
+      killTree: (pid) => {
+        kills.push(pid);
+        const ended = killTree(pid);
+        if (ended) {
+          childRef.exitCode = 1;
+          childRef.emit("close", 1, null);
+        }
+        return ended;
+      },
+    });
+    try {
+      const running = tool.run({ ...base, cwd: dir, stopSignalPath });
+      const outcome = running.then(
+        () => undefined,
+        (err) => err as { stopped?: boolean },
+      );
+      await new Promise((r) => setTimeout(r, 20));
+      await writeFile(stopSignalPath, "stop");
+      const error = await outcome;
+      return { error, spawn, kills, child: childRef! };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("on Windows a stop kills the process tree and the spawn hides the console", async () => {
+    const { error, spawn, kills, child } = await windowsStop(() => true);
+    expect(error?.stopped).toBe(true);
+    expect(spawn).toHaveBeenCalledWith(
+      "claude",
+      ["--sdk-protocol"],
+      expect.objectContaining({ windowsHide: true, detached: false }),
+    );
+    expect(kills).toContain(424242);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("on Windows a failed tree kill falls back to the top process", async () => {
+    const { error, kills, child } = await windowsStop(() => false);
+    expect(error?.stopped).toBe(true);
+    expect(kills).toContain(424242);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("stops watching once the in-place steer limit is reached", async () => {
     const dir = await mkdtemp(join(tmpdir(), "claude-agent-steer-limit-"));
     const steerSignalPath = join(dir, "steer.jsonl");

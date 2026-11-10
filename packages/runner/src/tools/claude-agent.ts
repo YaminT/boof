@@ -1,5 +1,5 @@
 import type { TokenUsage } from "@boof/heart";
-import { killGroup, writePidFile } from "@boof/heart";
+import { killGroup, killWindowsProcessTree, writePidFile } from "@boof/heart";
 import { redactSecrets } from "@boof/owlish";
 import { spawn as nodeSpawn } from "node:child_process";
 import { access, readFile, realpath, rm } from "node:fs/promises";
@@ -134,6 +134,13 @@ export interface ClaudeAgentToolOptions {
   spawn?: Spawn;
   signalPollMs?: number;
   unavailableReason?: string;
+  /** Tests inject a platform. Production uses `process.platform`. */
+  platform?: NodeJS.Platform;
+  /**
+   * Windows tree kill (`taskkill /T /F /PID`). Return false to fall back to `child.kill`.
+   * Tests inject it; production uses {@link killWindowsProcessTree}.
+   */
+  killTree?: (pid: number) => boolean;
 }
 
 export class ClaudeAgentTool implements Tool {
@@ -149,6 +156,8 @@ export class ClaudeAgentTool implements Tool {
   private readonly resolveExecutable: typeof resolveClaudeAgentExecutable;
   private readonly spawn: Spawn;
   private readonly signalPollMs: number;
+  private readonly platform: NodeJS.Platform;
+  private readonly killTree: (pid: number) => boolean;
 
   constructor(options: ClaudeAgentToolOptions = {}) {
     this.unavailableReason = options.unavailableReason;
@@ -156,6 +165,8 @@ export class ClaudeAgentTool implements Tool {
     this.resolveExecutable = options.resolveExecutable ?? resolveClaudeAgentExecutable;
     this.spawn = options.spawn ?? nodeSpawn;
     this.signalPollMs = options.signalPollMs ?? 500;
+    this.platform = options.platform ?? process.platform;
+    this.killTree = options.killTree ?? killWindowsProcessTree;
   }
 
   async listModels(): Promise<string[]> {
@@ -205,6 +216,7 @@ export class ClaudeAgentTool implements Tool {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 8000,
         env: agentEnv(),
+        windowsHide: true,
       });
       child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
       child.on("error", () =>
@@ -284,7 +296,8 @@ export class ClaudeAgentTool implements Tool {
           cwd: o.cwd ?? opts.cwd,
           env: o.env ?? childEnv,
           stdio: ["pipe", "pipe", "pipe"],
-          detached: process.platform !== "win32",
+          detached: this.platform !== "win32",
+          windowsHide: true,
         });
         if (opts.pidFilePath && child.pid)
           pidWritten = writePidFile(opts.pidFilePath, { pgid: child.pid, command: "claude" }).catch(
@@ -315,7 +328,17 @@ export class ClaudeAgentTool implements Tool {
     let groupKill: Promise<unknown> | undefined;
     let childClosed: Promise<void> | undefined;
     const killChildGroup = () => {
-      if (!spawnedChild?.pid || process.platform === "win32") {
+      const pid = spawnedChild?.pid;
+      if (this.platform === "win32") {
+        if (pid) {
+          let ended = false;
+          try {
+            ended = this.killTree(pid);
+          } catch {
+            ended = false;
+          }
+          if (ended) return Promise.resolve();
+        }
         try {
           spawnedChild?.kill("SIGTERM");
         } catch {
@@ -323,7 +346,15 @@ export class ClaudeAgentTool implements Tool {
         }
         return Promise.resolve();
       }
-      return (groupKill ??= killGroup(spawnedChild.pid, { termWaitMs: 1500, killWaitMs: 1000 }));
+      if (!pid) {
+        try {
+          spawnedChild?.kill("SIGTERM");
+        } catch {
+          /* already exited */
+        }
+        return Promise.resolve();
+      }
+      return (groupKill ??= killGroup(pid, { termWaitMs: 1500, killWaitMs: 1000 }));
     };
     const query = sdk.query({ prompt: queue, options: queryOptions });
     let queryClosed = false;
