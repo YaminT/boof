@@ -384,7 +384,10 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     ].join("\r\n");
     const box = win(table);
     const path = await winRecord();
-    const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
+    const res = await reapOrphan(path, log, {
+      identity: box.identity,
+      isAlive: () => !box.stopped,
+    });
     expect(res.outcome).toBe("killed");
     expect(box.pairs).toEqual([
       [
@@ -399,7 +402,10 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
 
   it("Windows: the kill script is fixed text; pids and times only travel as JSON on stdin", async () => {
     const box = win([`4242|1|${AGENT_START}`, `5000|4242|2026-11-02T17:30:09.0000000Z`].join("\n"));
-    await reapOrphan(await winRecord(), log, { identity: box.identity, isAlive: () => true });
+    await reapOrphan(await winRecord(), log, {
+      identity: box.identity,
+      isAlive: () => !box.stopped,
+    });
     expect(box.scripts).toHaveLength(1);
     const script = box.scripts[0]!;
     // Opens the process (a held handle keeps the pid from being reused), compares the start time
@@ -429,7 +435,7 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     const box = win(table);
     const res = await reapOrphan(await winRecord(), log, {
       identity: box.identity,
-      isAlive: () => true,
+      isAlive: () => !box.stopped,
     });
     expect(res.outcome).toBe("killed");
     expect(box.pairs[0]!.map((x) => x.pid)).toEqual([5000, 4242]);
@@ -457,7 +463,7 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     const box = win(null);
     const res = await reapOrphan(await winRecord(), log, {
       identity: box.identity,
-      isAlive: () => true,
+      isAlive: () => !box.stopped,
     });
     expect(res.outcome).toBe("killed");
     expect(box.taskkills).toEqual(["/F /PID 4242"]);
@@ -549,6 +555,81 @@ describe("reapOrphan off Linux (mocked platforms)", () => {
     expect(box.pairs).toEqual([]);
     expect(existsSync(path)).toBe(true);
     expect(logs.join("\n")).toMatch(/cannot be verified/);
+  });
+
+  it("Windows: a wmic start time against an ISO table row is unverifiable and is not killed", async () => {
+    const wmic = "20261102173007.123456+000";
+    const inputs: Array<string | undefined> = [];
+    const identity = {
+      platform: "win32" as const,
+      run: (cmd: string, args: string[], opts?: { input?: string }) => {
+        const text = [cmd, ...args].join(" ");
+        if (cmd === "powershell" && text.includes("LastBootUpTime")) return WIN_BOOT;
+        if (cmd === "powershell" && text.includes("-Filter")) return null;
+        if (cmd === "wmic") return `CreationDate=${wmic}\r\nParentProcessId=1\r\n`;
+        if (opts?.input !== undefined) {
+          inputs.push(opts.input);
+          return "";
+        }
+        return `4242|1|${AGENT_START}\r\n5000|4242|2026-11-02T17:30:09.0000000Z`;
+      },
+    };
+    const path = await write(rec({ bootId: `boottime:${winBootSec}`, startTime: wmic }));
+    const res = await reapOrphan(path, log, { identity, isAlive: () => true });
+    expect(res).toMatchObject({ outcome: "skipped", maybeRunning: true });
+    expect(existsSync(path)).toBe(true);
+    expect(inputs).toEqual([]);
+    expect(logs.join("\n")).toMatch(/cannot be verified/);
+  });
+
+  it("Windows: an unknown status after the kill is not treated as killed", async () => {
+    let probes = 0;
+    let killed = false;
+    const identity = {
+      platform: "win32" as const,
+      run: (cmd: string, args: string[], opts?: { input?: string }) => {
+        const text = [cmd, ...args].join(" ");
+        if (cmd === "powershell" && text.includes("LastBootUpTime")) return WIN_BOOT;
+        if (opts?.input !== undefined) {
+          killed = true;
+          return "";
+        }
+        if (cmd === "powershell" && text.includes("ForEach-Object")) return `4242|1|${AGENT_START}`;
+        if (cmd === "powershell" && text.includes("-Filter")) {
+          probes += 1;
+          // The status check and the owner probe match. The wait loop's probe cannot be compared.
+          if (probes <= 2) return `${AGENT_START}|1`;
+          return null;
+        }
+        if (cmd === "wmic")
+          return "CreationDate=20261102173007.123456+000\r\nParentProcessId=1\r\n";
+        return null;
+      },
+    };
+    const path = await winRecord();
+    const res = await reapOrphan(path, log, { identity, isAlive: () => true });
+    expect(killed).toBe(true);
+    expect(probes).toBeGreaterThan(2);
+    expect(res).toMatchObject({ outcome: "skipped", maybeRunning: true });
+    expect(existsSync(path)).toBe(true);
+    expect(logs.join("\n")).toMatch(/cannot be verified/);
+  });
+
+  it("Windows: lines that are not pid|ppid|time are unverifiable, not gone", async () => {
+    for (const table of [
+      "ProcessId|ParentProcessId|CreationDate",
+      ` 4242 | 1 | ${AGENT_START}`,
+      "not a row",
+      `9999|1|${AGENT_START}\nWARNING: partial table`,
+    ]) {
+      const box = win(table);
+      const path = await winRecord();
+      const res = await reapOrphan(path, log, { identity: box.identity, isAlive: () => true });
+      expect(res, table).toMatchObject({ outcome: "skipped", maybeRunning: true });
+      expect(existsSync(path), table).toBe(true);
+      expect(box.taskkills, table).toEqual([]);
+      expect(box.pairs, table).toEqual([]);
+    }
   });
 
   it("Windows: an empty table that dropped nothing still means the agent is gone", async () => {

@@ -1054,11 +1054,22 @@ describe("ClaudeAgentTool", () => {
     }
   });
 
-  async function windowsStop(killTree: (pid: number) => boolean) {
+  const WIN_ROOT = "2026-11-02T17:30:07.1234560Z";
+  const WIN_CHILD = "2026-11-02T17:30:09.0000000Z";
+  const WIN_OLD = "2026-11-02T08:00:00.0000000Z";
+
+  async function windowsStop(
+    table: () => Promise<{
+      rows: { pid: number; ppid: number; created: string }[];
+      droppedNonIso: number;
+      unparsed: number;
+    } | null>,
+  ) {
     const { EventEmitter } = await import("node:events");
     const dir = await mkdtemp(join(tmpdir(), "claude-agent-win-kill-"));
     const stopSignalPath = join(dir, "stop");
-    const kills: number[] = [];
+    const killed: { pid: number }[][] = [];
+    let tableCalls = 0;
     let childRef: EventEmitter & {
       pid: number;
       kill: ReturnType<typeof vi.fn>;
@@ -1071,9 +1082,12 @@ describe("ClaudeAgentTool", () => {
       child.pid = 424242;
       child.exitCode = null;
       child.signalCode = null;
+      // signalCode is set when kill is asked, but `close` waits a turn. The abort listener and
+      // the poll callback both enter the stop in one turn, before that close, which is when a
+      // second pid kill used to slip through. The second call must not walk the tree.
       child.kill = vi.fn(() => {
         child.signalCode = "SIGTERM";
-        child.emit("close", null, "SIGTERM");
+        setTimeout(() => child.emit("close", null, "SIGTERM"), 0);
         return true;
       });
       setTimeout(() => {
@@ -1120,14 +1134,15 @@ describe("ClaudeAgentTool", () => {
       spawn: spawn as never,
       signalPollMs: 5,
       platform: "win32",
-      killTree: (pid) => {
-        kills.push(pid);
-        const ended = killTree(pid);
-        if (ended) {
-          childRef.exitCode = 1;
-          childRef.emit("close", 1, null);
-        }
-        return ended;
+      windowsStop: {
+        table: async () => {
+          tableCalls += 1;
+          return table();
+        },
+        killList: async (list) => {
+          killed.push(list.map((item) => ({ pid: item.pid })));
+          return true;
+        },
       },
     });
     try {
@@ -1139,28 +1154,41 @@ describe("ClaudeAgentTool", () => {
       await new Promise((r) => setTimeout(r, 20));
       await writeFile(stopSignalPath, "stop");
       const error = await outcome;
-      return { error, spawn, kills, child: childRef! };
+      return { error, spawn, killed, tableCalls, child: childRef! };
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   }
 
-  it("on Windows a stop kills the process tree and the spawn hides the console", async () => {
-    const { error, spawn, kills, child } = await windowsStop(() => true);
+  it("on Windows a stop kills verified children and the root handle, once", async () => {
+    const { error, spawn, killed, tableCalls, child } = await windowsStop(async () => ({
+      rows: [
+        { pid: 424242, ppid: 1, created: WIN_ROOT },
+        { pid: 5000, ppid: 424242, created: WIN_CHILD },
+        { pid: 6000, ppid: 424242, created: WIN_OLD },
+      ],
+      droppedNonIso: 0,
+      unparsed: 0,
+    }));
     expect(error?.stopped).toBe(true);
     expect(spawn).toHaveBeenCalledWith(
       "claude",
       ["--sdk-protocol"],
       expect.objectContaining({ windowsHide: true, detached: false }),
     );
-    expect(kills).toContain(424242);
-    expect(child.kill).not.toHaveBeenCalled();
+    // Abort and the poll both call the stop before exitCode is set. One walk, not two.
+    expect(tableCalls).toBe(1);
+    expect(killed).toEqual([[{ pid: 5000 }]]);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
-  it("on Windows a failed tree kill falls back to the top process", async () => {
-    const { error, kills, child } = await windowsStop(() => false);
+  it("on Windows a process table that cannot be read kills only the root handle", async () => {
+    const { error, killed, tableCalls, child } = await windowsStop(async () => null);
     expect(error?.stopped).toBe(true);
-    expect(kills).toContain(424242);
+    expect(tableCalls).toBe(1);
+    expect(killed).toEqual([]);
+    expect(child.kill).toHaveBeenCalledTimes(1);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 

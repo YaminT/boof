@@ -557,6 +557,14 @@ describe("isTransientToolError", () => {
     expect(e.message).toBe("claude-code stalled: no output for 20 min");
   });
 
+  it("caps a long reason in the message", () => {
+    const reason = "y".repeat(5_000);
+    const e = new ToolRunError("claude-code", 1, false, false, "", "", false, 0, { reason });
+    expect(e.message).toBe(`claude-code exited with code 1: ${"y".repeat(500)}…`);
+    const stopped = new ToolRunError("claude-code", 1, false, true, "", "", false, 0, { reason });
+    expect(stopped.message).toBe("claude-code stopped by user");
+  });
+
   it("does not match stopped, timed out, plain errors or unrelated failures", () => {
     expect(isTransientToolError(err("API Error: 503", "", { stopped: true }))).toBe(false);
     expect(isTransientToolError(err("API Error: 503", "", { timedOut: true }))).toBe(false);
@@ -665,6 +673,42 @@ describe("OpencodeTool", () => {
     const res = await tool.run({ ...baseOpts, role: "developer", cwd: dir, prompt });
     expect(res.report).toBe("ok");
     expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
+  });
+
+  it("sets PWD to the worktree even when an inherited PWD points somewhere else", async () => {
+    // `pwd` the command prints the OS cwd, which execCommand already sets. OpenCode reads `$PWD`.
+    // A shell would overwrite that variable, so this binary is node and prints the env it was given.
+    prevBin = process.env.BOOF_RUNNER_OPENCODE_BIN;
+    dir = await mkdtemp(join(tmpdir(), "boof-opencode-test-"));
+    const bin = join(dir, "opencode");
+    const seen = join(dir, "pwd");
+    await writeFile(
+      bin,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(seen)}, process.env.PWD ?? "");
+process.stdout.write('{"type":"text","part":{"text":"ok","messageID":"m1"}}\\n');
+`,
+    );
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_OPENCODE_BIN = bin;
+    const stale = join(dir, "not-the-worktree");
+    const previous = process.env.PWD;
+    process.env.PWD = stale;
+    try {
+      const tool = new OpencodeTool();
+      const res = await tool.run({
+        ...baseOpts,
+        role: "developer",
+        cwd: dir,
+        agentEnv: ["PWD"],
+      });
+      expect(res.report).toBe("ok");
+      expect(await readFile(seen, "utf8")).toBe(dir);
+    } finally {
+      if (previous === undefined) delete process.env.PWD;
+      else process.env.PWD = previous;
+    }
   });
 
   it("runs in the worktree without --dir, streams chunks and returns the report", async () => {
@@ -1061,7 +1105,7 @@ describe("ClaudeCodeTool questions", () => {
     expect((err as ToolRunError).output).toContain("Not logged in · Please run /login");
   });
 
-  it("leaves the result out of the error when assistant text was streamed", async () => {
+  it("puts a login failure in the log and the error even after assistant text", async () => {
     const events = [
       {
         type: "stream_event",
@@ -1081,10 +1125,70 @@ describe("ClaudeCodeTool questions", () => {
       .run({ ...baseOpts, role: "planner", cwd: dir, onChunk: (c) => chunks.push(c) })
       .catch((e: unknown) => e);
     const e = err as ToolRunError;
-    expect(e.message).toBe("claude-code exited with code 1");
+    expect(e.message).toBe("claude-code exited with code 1: Not logged in · Please run /login");
     expect(e.output).toContain("I started");
-    expect(e.output).not.toContain("Not logged in");
-    expect(chunks.join("")).not.toContain("Not logged in");
+    expect(e.output).toContain("Not logged in · Please run /login");
+    expect(chunks.join("")).toContain("Not logged in · Please run /login");
+  });
+
+  it("does not repeat a login line that was already the assistant text", async () => {
+    const login = "Not logged in · Please run /login";
+    const events = [
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: login },
+        },
+      },
+      {
+        type: "stream_event",
+        event: { type: "content_block_stop", index: 0 },
+      },
+      { type: "result", result: login },
+    ];
+    const tool = await setup(
+      `${events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`).join("\n")}\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message).toBe("claude-code exited with code 1");
+    expect(e.output.match(/Not logged in/g)).toHaveLength(1);
+  });
+
+  it("still logs a result that is only a substring of a tool line", async () => {
+    const login = "Not logged in · Please run /login";
+    const events = [
+      {
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", content: `see ${login} for details` }],
+        },
+      },
+      { type: "result", result: login },
+    ];
+    const tool = await setup(
+      `${events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`).join("\n")}\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message).toBe(`claude-code exited with code 1: ${login}`);
+    expect(e.output).toContain(`see ${login} for details`);
+    expect(e.output).toMatch(new RegExp(`\\n${login}\\n`));
+  });
+
+  it("caps a huge result in the error message and keeps it in the log", async () => {
+    const result = `Not logged in ${"x".repeat(2_000)}`;
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "result", result })}'\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message.startsWith("claude-code exited with code 1: Not logged in xxx")).toBe(true);
+    expect(e.message.endsWith("…")).toBe(true);
+    expect(e.message.length).toBeLessThan(600);
+    expect(e.output).toContain(result);
   });
 });
 

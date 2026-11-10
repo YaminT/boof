@@ -57,7 +57,9 @@ describe("Windows reaping with the real default runner", () => {
     );
     const res = await reapOrphan(path, () => {}, {
       identity: { platform: "win32" },
-      isAlive: () => true,
+      // Once the kill script has run, the process is gone. An empty probe of a pid that is still
+      // alive is "unknown", which must not be reported as killed.
+      isAlive: () => !stopped,
     });
     expect(res.outcome).toBe("killed");
     const kill = calls.find((c) => c.input !== undefined);

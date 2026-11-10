@@ -11,6 +11,7 @@ import {
   ticksOf,
   probeProcess,
   processTable,
+  runProbeAsync,
   resetBootCache,
   sameBoot,
   verifiedDescendants,
@@ -272,16 +273,27 @@ describe("Windows process table", () => {
         { pid: 11, ppid: 10, created: "2026-11-02T10:00:01.0000000Z" },
       ],
       droppedNonIso: 1,
+      unparsed: 1,
     });
     expect(table(null)).toBeNull();
-    expect(table("")).toEqual({ rows: [], droppedNonIso: 0 });
+    expect(table("")).toEqual({ rows: [], droppedNonIso: 0, unparsed: 0 });
+    expect(table("\r\n\n")).toEqual({ rows: [], droppedNonIso: 0, unparsed: 0 });
     expect(processTable({ platform: "linux", run: () => "10|1|" + A })).toBeNull();
+  });
+
+  it("counts a header or a spaced row as unparsed, not as an empty machine", () => {
+    expect(table("ProcessId|ParentProcessId|CreationDate\r\n")).toEqual({
+      rows: [],
+      droppedNonIso: 0,
+      unparsed: 1,
+    });
+    expect(table(` 10 | 1 | ${A}\n`)).toEqual({ rows: [], droppedNonIso: 0, unparsed: 1 });
   });
 
   it("counts rows whose time is not the fixed UTC form, so an empty table is not a failed query", () => {
     expect(
       table("4242|1|20261102173007.123456+000\r\n5000|4242|20261102173009.000000+000\r\n"),
-    ).toEqual({ rows: [], droppedNonIso: 2 });
+    ).toEqual({ rows: [], droppedNonIso: 2, unparsed: 0 });
   });
 
   it("descendants are the processes created after their parent, deepest first", () => {
@@ -328,6 +340,28 @@ describe("killVerified", () => {
     expect(seen).toEqual([
       { cmd: "powershell", input: JSON.stringify([{ pid: 7, ticks: ticksOf(T) }]) },
     ]);
+  });
+});
+
+describe("runProbeAsync", () => {
+  it("returns stdout, and null when the command fails or the binary is missing", async () => {
+    expect(await runProbeAsync(process.execPath, ["-e", "process.stdout.write('ok')"])).toBe("ok");
+    expect(await runProbeAsync(process.execPath, ["-e", "process.exit(1)"])).toBeNull();
+    // spawn does not throw for a missing binary; it fails with ENOENT (sync spawn's status: null).
+    expect(await runProbeAsync(`/no/such/boof-probe-${process.pid}`, [])).toBeNull();
+  });
+
+  it("times out a hung probe without blocking the event loop", async () => {
+    let ticked = false;
+    const timer = setTimeout(() => {
+      ticked = true;
+    }, 30);
+    const result = await runProbeAsync(process.execPath, ["-e", "setTimeout(()=>{}, 10000)"], {
+      timeoutMs: 200,
+    });
+    clearTimeout(timer);
+    expect(result).toBeNull();
+    expect(ticked).toBe(true);
   });
 });
 

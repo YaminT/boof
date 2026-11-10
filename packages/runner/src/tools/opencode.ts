@@ -106,9 +106,12 @@ export class OpencodeTool implements Tool {
       }
     }
     const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
+    // OpenCode 2.2 roots the session at `$PWD` when that variable is set (`options.root ??
+    // process.env.PWD ?? process.cwd()`), and v2 has no `--dir`. The worktree has to win over a
+    // `PWD` inherited from the server (`runner.agentEnv` can name it).
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
-      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway) },
+      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway), PWD: opts.cwd },
       input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

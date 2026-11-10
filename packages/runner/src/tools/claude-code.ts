@@ -132,9 +132,11 @@ export class ClaudeCodeTool implements Tool {
       onData: (chunk) => render.push(chunk),
     });
     render.flush();
-    // A login failure (and similar) is only the result event's text: no assistant
-    // deltas and an empty stderr. Put that text in the transcript, which is the
-    // step log, and on the error itself.
+    // A login failure (and similar) is often only the result event's text, with an empty stderr.
+    // Surface it when this exit is the failure itself and that text was not already emitted —
+    // including when some other assistant prose came first. Stop, timeout, steer and stall keep
+    // their own messages. `surface` also appends it to the transcript, which is the step log.
+    const detail = render.resultDetail.trim();
     const bareFailure =
       typeof res.code === "number" &&
       res.code !== 0 &&
@@ -142,8 +144,9 @@ export class ClaudeCodeTool implements Tool {
       !res.stopped &&
       !res.steered &&
       !res.stalled &&
-      !render.hasAssistantText
-        ? render.resultDetail.trim()
+      detail &&
+      !alreadyEmitted(render.transcript, detail)
+        ? detail
         : "";
     if (bareFailure) render.surface(bareFailure);
 
@@ -248,10 +251,11 @@ export class StreamRenderer {
     this.onText(text);
   }
 
-  /** Append result/error text that never arrived as assistant prose. Also forwarded live. */
+  /** Append result/error text that never arrived as its own line. Also forwarded live. */
   surface(text: string): void {
     const body = text.trim();
-    if (!body || this.transcript.includes(body)) return;
+    // A line that merely contains this text (a tool result quoting it) is not a copy of it.
+    if (!body || alreadyEmitted(this.transcript, body)) return;
     this.emit((this.transcript && !this.transcript.endsWith("\n") ? "\n" : "") + body + "\n");
   }
 
@@ -393,6 +397,16 @@ function sumClaudeUsages(
     costUsd,
     known,
   };
+}
+
+/**
+ * True when `body` is already its own line (or its own block of lines) in the transcript.
+ * A longer line that merely contains the text does not count.
+ */
+function alreadyEmitted(transcript: string, body: string): boolean {
+  const trimmed = body.trim();
+  if (!trimmed) return true;
+  return `\n${transcript}\n`.includes(`\n${trimmed}\n`);
 }
 
 /** Result-event explanation: the `result` string plus any `errors` entries not already in it. */

@@ -129,28 +129,62 @@ describe("execCommand", () => {
     }
   });
 
-  /** A child that never really starts. `close` after `fallbackMs` keeps a missed kill from hanging. */
-  const fakeChild = (pid = 4242, fallbackMs = 200) => {
+  /**
+   * A child that never really starts. `close` after `fallbackMs` keeps a missed kill from hanging.
+   * `hold: true` leaves it running so the 1.5s follow-up kill can fire; `kill` then does not set
+   * `signalCode` (a real handle kill does not, until the process actually exits).
+   */
+  const fakeChild = (pid = 4242, fallbackMs = 200, hold = false) => {
     const child = new EventEmitter() as EventEmitter & {
       pid: number;
       stdout: EventEmitter;
       stderr: EventEmitter;
       stdin: EventEmitter & { write: () => boolean; end: () => void };
       kill: ReturnType<typeof vi.fn>;
+      exitCode: number | null;
+      signalCode: NodeJS.Signals | null;
     };
     child.pid = pid;
+    child.exitCode = null;
+    child.signalCode = null;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     const stdin = new EventEmitter() as typeof child.stdin;
     stdin.write = () => true;
     stdin.end = () => {};
     child.stdin = stdin;
-    child.kill = vi.fn(() => {
-      setTimeout(() => child.emit("close", null, "SIGTERM"), 0);
+    child.kill = vi.fn((signal: NodeJS.Signals = "SIGTERM") => {
+      if (!hold) {
+        child.signalCode = signal;
+        setTimeout(() => child.emit("close", null, signal), 0);
+      }
       return true;
     });
-    setTimeout(() => child.emit("close", 1, null), fallbackMs);
+    if (!hold) {
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.emit("close", 1, null);
+      }, fallbackMs);
+    }
     return child;
+  };
+
+  const ROOT = "2026-11-02T17:30:07.1234560Z";
+  const CHILD = "2026-11-02T17:30:09.0000000Z";
+  const GRAND = "2026-11-02T17:30:10.0000000Z";
+  const OLD = "2026-11-02T08:00:00.0000000Z";
+  const windowsTable = {
+    rows: [
+      { pid: 4242, ppid: 1, created: ROOT },
+      { pid: 5000, ppid: 4242, created: CHILD },
+      { pid: 5001, ppid: 5000, created: GRAND },
+      // Started before the agent, still listing its pid as parent. Not ours, nor its child.
+      { pid: 6000, ppid: 4242, created: OLD },
+      { pid: 6001, ppid: 6000, created: "2026-11-02T09:00:00.0000000Z" },
+      // Same instant as the agent: not provably after.
+      { pid: 6002, ppid: 4242, created: ROOT },
+    ],
+    droppedNonIso: 0,
+    unparsed: 0,
   };
 
   it("spawns with windowsHide so a GUI parent does not open a console", async () => {
@@ -174,40 +208,11 @@ describe("execCommand", () => {
     );
   });
 
-  it("on Windows a stop runs taskkill /T /F /PID and does not stop at the top process", async () => {
+  it("on Windows a stop kills verified children and the root handle, never taskkill /T", async () => {
     const child = fakeChild();
     const spawn = vi.fn(() => child);
-    const spawnSync = vi.fn(() => ({ status: 0 }));
-    const dir = await mkdtemp(join(tmpdir(), "boof-exec-win-"));
-    const stop = join(dir, "stop");
-    try {
-      await writeFile(stop, "x\n");
-      const res = await execCommand(
-        "git",
-        ["status"],
-        { cwd: dir, stopSignalPath: stop, stopPollMs: 10, timeoutMs: 1000 },
-        { platform: "win32", spawn, spawnSync },
-      );
-      expect(res.stopped).toBe(true);
-      expect(spawn).toHaveBeenCalledWith(
-        "git",
-        ["status"],
-        expect.objectContaining({ windowsHide: true, detached: false }),
-      );
-      expect(spawnSync).toHaveBeenCalledWith(
-        "taskkill",
-        ["/T", "/F", "/PID", "4242"],
-        expect.objectContaining({ windowsHide: true, stdio: "ignore" }),
-      );
-      expect(child.kill).not.toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("on Windows a failed taskkill falls back to killing the top process", async () => {
-    const child = fakeChild();
-    const spawn = vi.fn(() => child);
+    const killed: { pid: number }[][] = [];
+    const table = vi.fn(async () => windowsTable);
     const dir = await mkdtemp(join(tmpdir(), "boof-exec-win-"));
     const stop = join(dir, "stop");
     try {
@@ -219,36 +224,160 @@ describe("execCommand", () => {
         {
           platform: "win32",
           spawn,
-          spawnSync: () => {
-            throw new Error("taskkill missing");
+          windowsKill: {
+            table,
+            killList: async (list) => {
+              killed.push(list);
+              return true;
+            },
           },
         },
       );
       expect(res.stopped).toBe(true);
+      expect(spawn).toHaveBeenCalledWith(
+        "git",
+        ["status"],
+        expect.objectContaining({ windowsHide: true, detached: false }),
+      );
+      expect(table).toHaveBeenCalledTimes(1);
+      // Deepest first. The root is not in this list: it dies through the handle. Strangers are absent.
+      expect(killed).toEqual([
+        [
+          { pid: 5001, created: GRAND },
+          { pid: 5000, created: CHILD },
+        ],
+      ]);
+      expect(JSON.stringify(killed)).not.toMatch(/6000|6001|6002|4242/);
+      expect(child.kill).toHaveBeenCalledTimes(1);
       expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("on Windows a process table that cannot be read kills only the root handle", async () => {
+    // The old test threw "taskkill missing". spawnSync does not throw when the binary is absent;
+    // it returns { status: null }. That failure is a null table here (see runProbeAsync).
+    const child = fakeChild();
+    const spawn = vi.fn(() => child);
+    const killList = vi.fn(async () => true);
+    const dir = await mkdtemp(join(tmpdir(), "boof-exec-win-"));
+    const stop = join(dir, "stop");
+    try {
+      await writeFile(stop, "x\n");
+      const res = await execCommand(
+        "git",
+        ["status"],
+        { cwd: dir, stopSignalPath: stop, stopPollMs: 10, timeoutMs: 1000 },
+        {
+          platform: "win32",
+          spawn,
+          windowsKill: { table: async () => null, killList },
+        },
+      );
+      expect(res.stopped).toBe(true);
+      expect(killList).not.toHaveBeenCalled();
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("on Windows the follow-up kill uses the handle once and does not walk the tree again", async () => {
+    const child = fakeChild(4242, 0, true);
+    const spawn = vi.fn(() => child);
+    const table = vi.fn(async () => windowsTable);
+    const killList = vi.fn(async () => true);
+    const dir = await mkdtemp(join(tmpdir(), "boof-exec-win-"));
+    const stop = join(dir, "stop");
+    let closed = false;
+    const closeChild = () => {
+      if (closed) return;
+      closed = true;
+      child.signalCode = "SIGKILL";
+      child.emit("close", null, "SIGKILL");
+    };
+    try {
+      await writeFile(stop, "x\n");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      const running = execCommand(
+        "git",
+        ["status"],
+        { cwd: dir, stopSignalPath: stop, stopPollMs: 500, timeoutMs: 10_000 },
+        { platform: "win32", spawn, windowsKill: { table, killList } },
+      );
+      await vi.advanceTimersByTimeAsync(500);
+      expect(table).toHaveBeenCalledTimes(1);
+      expect(killList).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      // Still running: signalCode is unset, so the 1.5s follow-up is a second handle kill, not a
+      // second pid walk. The first kill did not close the child, so the timer was not cleared.
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(table).toHaveBeenCalledTimes(1);
+      expect(killList).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledTimes(2);
+      expect(child.kill).toHaveBeenLastCalledWith("SIGKILL");
+      closeChild();
+      await expect(running).resolves.toMatchObject({ stopped: true });
+      // Exited: another poll must not kill by the pid, nor touch the handle again.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(table).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledTimes(2);
+    } finally {
+      closeChild();
+      vi.useRealTimers();
       await rm(dir, { recursive: true, force: true });
     }
   });
 });
 
 describe("killWindowsProcessTree", () => {
-  it("runs taskkill /T /F /PID with the console hidden", () => {
-    const run = vi.fn(() => ({ status: 0 }));
-    expect(killWindowsProcessTree(4242, run)).toBe(true);
-    expect(run).toHaveBeenCalledWith(
-      "taskkill",
-      ["/T", "/F", "/PID", "4242"],
-      expect.objectContaining({ windowsHide: true, stdio: "ignore" }),
-    );
+  const ROOT = "2026-11-02T17:30:07.1234560Z";
+  const CHILD = "2026-11-02T17:30:09.0000000Z";
+  const OLD = "2026-11-02T08:00:00.0000000Z";
+
+  it("kills children created after the root, then the root handle, and never the root by pid", async () => {
+    const killed: { pid: number; created: string }[] = [];
+    const roots: string[] = [];
+    await killWindowsProcessTree(4242, () => roots.push("root"), {
+      table: async () => ({
+        rows: [
+          { pid: 4242, ppid: 1, created: ROOT },
+          { pid: 5000, ppid: 4242, created: CHILD },
+          { pid: 6000, ppid: 4242, created: OLD },
+        ],
+        droppedNonIso: 0,
+        unparsed: 0,
+      }),
+      killList: async (list) => {
+        killed.push(...list);
+        return true;
+      },
+    });
+    expect(killed).toEqual([{ pid: 5000, created: CHILD }]);
+    expect(roots).toEqual(["root"]);
   });
 
-  it("reports failure when taskkill exits non-zero or cannot be started", () => {
-    expect(killWindowsProcessTree(4242, () => ({ status: 1 }))).toBe(false);
-    expect(
-      killWindowsProcessTree(4242, () => {
-        throw new Error("ENOENT");
-      }),
-    ).toBe(false);
+  it("still kills the root handle when the table cannot be read", async () => {
+    const roots: string[] = [];
+    const killList = vi.fn(async () => true);
+    await killWindowsProcessTree(4242, () => roots.push("root"), {
+      table: async () => null,
+      killList,
+    });
+    expect(roots).toEqual(["root"]);
+    expect(killList).not.toHaveBeenCalled();
+  });
+
+  it("kills the root handle when the table query throws", async () => {
+    const roots: string[] = [];
+    await killWindowsProcessTree(4242, () => roots.push("root"), {
+      table: async () => {
+        throw new Error("probe down");
+      },
+    });
+    expect(roots).toEqual(["root"]);
   });
 });

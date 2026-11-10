@@ -1,5 +1,10 @@
 import type { TokenUsage } from "@boof/heart";
-import { killGroup, killWindowsProcessTree, writePidFile } from "@boof/heart";
+import {
+  killGroup,
+  killWindowsProcessTree,
+  writePidFile,
+  type WindowsTreeKillDeps,
+} from "@boof/heart";
 import { redactSecrets } from "@boof/owlish";
 import { spawn as nodeSpawn } from "node:child_process";
 import { access, readFile, realpath, rm } from "node:fs/promises";
@@ -137,10 +142,10 @@ export interface ClaudeAgentToolOptions {
   /** Tests inject a platform. Production uses `process.platform`. */
   platform?: NodeJS.Platform;
   /**
-   * Windows tree kill (`taskkill /T /F /PID`). Return false to fall back to `child.kill`.
-   * Tests inject it; production uses {@link killWindowsProcessTree}.
+   * Live Windows stop: verified children, then the root handle. Tests inject the table and the
+   * child kill. Production uses {@link killWindowsProcessTree}. Never `taskkill /T`.
    */
-  killTree?: (pid: number) => boolean;
+  windowsStop?: WindowsTreeKillDeps;
 }
 
 export class ClaudeAgentTool implements Tool {
@@ -157,7 +162,7 @@ export class ClaudeAgentTool implements Tool {
   private readonly spawn: Spawn;
   private readonly signalPollMs: number;
   private readonly platform: NodeJS.Platform;
-  private readonly killTree: (pid: number) => boolean;
+  private readonly windowsStop: WindowsTreeKillDeps | undefined;
 
   constructor(options: ClaudeAgentToolOptions = {}) {
     this.unavailableReason = options.unavailableReason;
@@ -166,7 +171,7 @@ export class ClaudeAgentTool implements Tool {
     this.spawn = options.spawn ?? nodeSpawn;
     this.signalPollMs = options.signalPollMs ?? 500;
     this.platform = options.platform ?? process.platform;
-    this.killTree = options.killTree ?? killWindowsProcessTree;
+    this.windowsStop = options.windowsStop;
   }
 
   async listModels(): Promise<string[]> {
@@ -327,24 +332,35 @@ export class ClaudeAgentTool implements Tool {
     let pidWritten: Promise<void> = Promise.resolve();
     let groupKill: Promise<unknown> | undefined;
     let childClosed: Promise<void> | undefined;
+    // One Windows tree walk per child. A second stop (abort, then the poll, then `finally`) uses
+    // the handle and does nothing once `exitCode` or `signalCode` is set.
+    let windowsLatched = false;
     const killChildGroup = () => {
       const pid = spawnedChild?.pid;
       if (this.platform === "win32") {
-        if (pid) {
-          let ended = false;
+        const child = spawnedChild;
+        if (!child) return Promise.resolve();
+        if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+        if (windowsLatched) {
           try {
-            ended = this.killTree(pid);
+            child.kill("SIGTERM");
           } catch {
-            ended = false;
+            /* already exited */
           }
-          if (ended) return Promise.resolve();
+          return Promise.resolve();
         }
-        try {
-          spawnedChild?.kill("SIGTERM");
-        } catch {
-          /* already exited */
-        }
-        return Promise.resolve();
+        windowsLatched = true;
+        const killRoot = () => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            /* already exited */
+          }
+        };
+        const pending = killWindowsProcessTree(pid, killRoot, this.windowsStop).catch(() => {});
+        groupKill = pending;
+        return pending;
       }
       if (!pid) {
         try {

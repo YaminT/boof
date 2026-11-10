@@ -1,15 +1,16 @@
-import {
-  spawn,
-  spawnSync,
-  type ChildProcessByStdio,
-  type SpawnOptions,
-  type SpawnSyncOptions,
-} from "node:child_process";
+import { spawn, type ChildProcessByStdio, type SpawnOptions } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename } from "node:path";
 import { writePidFile } from "./pid-file.js";
+import {
+  killVerifiedAsync,
+  processTableAsync,
+  verifiedDescendants,
+  type ProcessTable,
+  type VerifiedProcess,
+} from "./process-identity.js";
 
 export interface ExecResult {
   code: number | null;
@@ -58,6 +59,14 @@ export interface ExecOptions {
 /** Linux's limit for one argv entry, NUL included. */
 export const MAX_ARG_STRLEN = 131_072;
 
+/** What the live Windows stop may call. Both are async: nothing on this path uses `spawnSync`. */
+export interface WindowsTreeKillDeps {
+  /** Process table. Null when the query fails or times out. */
+  table?: () => Promise<ProcessTable | null>;
+  /** Stop these verified processes (start time re-checked). False when it cannot be run. */
+  killList?: (list: VerifiedProcess[]) => Promise<boolean>;
+}
+
 export interface ExecCommandDeps {
   /** Tests inject a platform. Production uses `process.platform`. */
   platform?: NodeJS.Platform;
@@ -66,35 +75,40 @@ export interface ExecCommandDeps {
     args: readonly string[],
     options: SpawnOptions,
   ) => ChildProcessByStdio<Writable, Readable, Readable>;
-  spawnSync?: (
-    file: string,
-    args: readonly string[],
-    options: SpawnSyncOptions,
-  ) => { status: number | null };
+  /** Live Windows stop. Tests inject the table and the verified-child kill. */
+  windowsKill?: WindowsTreeKillDeps;
 }
 
 /**
- * Windows: end this process and every process it started (`taskkill /T /F /PID`).
- * False when taskkill cannot be run or does not succeed, so the caller can fall back to
- * killing the top process only.
+ * Live Windows stop. Children created strictly after the root are stopped by {@link killVerifiedAsync}
+ * (the same rule as the reaper: a stranger that still names this pid as its parent is left alone,
+ * and each child's start time is checked again on an open handle). The root itself is stopped only
+ * through `killRoot`, which must be `child.kill` — the handle Node already holds. Windows will not
+ * reuse that pid until the handle closes. Never `taskkill /T`, and never a kill by pid number.
+ * When the table cannot be read, only the root handle is killed.
  */
-export function killWindowsProcessTree(pid: number, run?: ExecCommandDeps["spawnSync"]): boolean {
-  const exec =
-    run ??
-    ((file: string, args: readonly string[], options: SpawnSyncOptions) => {
-      const result = spawnSync(file, args, options);
-      return { status: result.status };
-    });
+export async function killWindowsProcessTree(
+  rootPid: number | undefined,
+  killRoot: () => void,
+  deps: WindowsTreeKillDeps = {},
+): Promise<void> {
   try {
-    return (
-      exec("taskkill", ["/T", "/F", "/PID", String(pid)], {
-        windowsHide: true,
-        stdio: "ignore",
-        timeout: 5000,
-      }).status === 0
-    );
+    if (rootPid !== undefined && Number.isInteger(rootPid) && rootPid > 0) {
+      const table = await (deps.table ?? (() => processTableAsync()))();
+      const root = table?.rows.find((row) => row.pid === rootPid);
+      if (table && root) {
+        const byPid = new Map(table.rows.map((row) => [row.pid, row]));
+        const children = verifiedDescendants(rootPid, table.rows).flatMap((pid) => {
+          const row = byPid.get(pid);
+          return row ? [{ pid, created: row.created }] : [];
+        });
+        if (children.length > 0) await (deps.killList ?? killVerifiedAsync)(children);
+      }
+    }
   } catch {
-    return false;
+    // A failed probe must not skip the root. The handle is still this process.
+  } finally {
+    killRoot();
   }
 }
 
@@ -136,8 +150,9 @@ export function execCommand(
       env: opts.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
       // POSIX: own process group, so a stop kills the agent and everything it spawned.
-      // Windows has no groups: the kill below uses taskkill /T. windowsHide keeps a GUI
-      // parent (the desktop app) from opening a console for git or an agent.
+      // Windows has no groups. A stop kills verified children, then the root through this
+      // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
+      // (the desktop app) from opening a console for git or an agent.
       detached: platform !== "win32",
       windowsHide: true,
     }) as ChildProcessByStdio<Writable, Readable, Readable>;
@@ -151,13 +166,35 @@ export function execCommand(
       await pidWritten;
       if (opts.pidFilePath) await rm(opts.pidFilePath, { force: true }).catch(() => {});
     };
+    // One tree walk. A follow-up (the 1.5s SIGKILL) uses the handle and is skipped once the
+    // child has exited: by then Windows may have given the pid to someone else, and the handle
+    // is the only name that still means this process.
+    let windowsLatched = false;
     const kill = (signal: NodeJS.Signals) => {
-      // Windows: one handle's kill does not reach grandchildren. taskkill /T does.
-      if (platform === "win32" && child.pid && killWindowsProcessTree(child.pid, deps.spawnSync)) {
+      if (platform === "win32") {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        if (windowsLatched) {
+          try {
+            child.kill(signal);
+          } catch {
+            /* already gone */
+          }
+          return;
+        }
+        windowsLatched = true;
+        const killRoot = () => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          try {
+            child.kill(signal);
+          } catch {
+            /* already gone */
+          }
+        };
+        void killWindowsProcessTree(child.pid, killRoot, deps.windowsKill).catch(() => {});
         return;
       }
       try {
-        if (platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        if (child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
         try {
