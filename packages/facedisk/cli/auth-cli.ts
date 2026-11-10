@@ -8,13 +8,13 @@ import {
   ScopeSchema,
   SCOPES,
   SettingsStore,
-  scaffoldDataRoot,
   securitySettings,
   TrustSchema,
   type PublicClient,
   type Scope,
 } from "@boof/heart";
 import { beginCliAudit } from "./cli-audit.js";
+import { migrateOldRoot } from "./migrate-old-root.js";
 
 export const AUTH_HELP = `boof-runner auth — manage API clients (keys are root-equivalent: anyone who can create a task can run code as you)
 
@@ -93,7 +93,7 @@ export async function authCommand(
     : defaultRoot();
   // Migrate before any store opens. A 0.3.0 settings file would otherwise fail load() with a
   // raw schema error, and `auth add` is often the first command after an upgrade.
-  await scaffoldDataRoot(root);
+  await migrateOldRoot(root);
   const store = new AuthStore(root);
 
   switch (sub) {
