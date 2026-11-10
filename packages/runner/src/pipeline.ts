@@ -107,10 +107,10 @@ export const NON_INTERACTIVE =
   "background commands, subagents or monitors.\n\n" +
   "A single foreground shell command is limited to about 10 minutes. For anything longer, such " +
   "as a commit whose pre-commit hook runs a long test gate:\n\n" +
-  "1. Start it in the background, writing its exit status to a marker file, for example " +
-  "`(cmd; echo $? > /tmp/x.done) > /tmp/x.log 2>&1 &`.\n" +
+  "1. Start it in the background in a private temporary directory, writing its exit status to a marker " +
+  'file, for example `d=$(mktemp -d); (cmd; echo $? > "$d/done") > "$d/log" 2>&1 &`.\n' +
   "2. Wait for it with repeated foreground loops that each stay under 10 minutes, for example " +
-  "`until [ -f /tmp/x.done ]; do sleep 5; done`, timing out at about 9 minutes, and repeat until " +
+  '`until [ -f "$d/done" ]; do sleep 5; done`, timing out at about 9 minutes, and repeat until ' +
   "the marker exists.\n" +
   "3. Read its status and log.\n\n" +
   "End your turn only when this step's work is complete and your final report is written.";
