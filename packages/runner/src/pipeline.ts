@@ -735,14 +735,27 @@ export class Pipeline {
   }
 
   /**
-   * Notes for a run that continues earlier work: the previous run was stopped (its log ends
-   * with a `### Stopped` block newer than the last worktree line), and/or prompts were injected
-   * into an earlier run (`## Injected`, kept after the control file is gone).
+   * Notes for a run that continues earlier work: the previous run was stopped or interrupted
+   * (a `### Stopped` or `### Interrupted` block newer than the last worktree line), and/or
+   * prompts were injected into an earlier run (`## Injected`, kept after the control file is gone).
    */
   private earlierRunNotes(task: Task): string | null {
     const parts: string[] = [];
     const log = task.body.log;
-    if (log.lastIndexOf("\n### Stopped") > log.lastIndexOf("— worktree at")) {
+    const stoppedAt = log.lastIndexOf("\n### Stopped");
+    const interruptedAt = Math.max(
+      log.lastIndexOf("\n### Interrupted"),
+      log.startsWith("### Interrupted") ? 0 : -1,
+    );
+    const worktreeAt = log.lastIndexOf("— worktree at");
+    if (interruptedAt > stoppedAt && interruptedAt > worktreeAt) {
+      parts.push(
+        "## Previous run interrupted\n" +
+          "The previous run of this task was interrupted because the runner stopped unexpectedly. " +
+          "The working directory holds its partial changes. Run `git status` and `git diff` to " +
+          "inspect them, then continue where it left off rather than restarting from scratch.",
+      );
+    } else if (stoppedAt > worktreeAt) {
       parts.push(
         "## Previous run stopped\n" +
           "The previous run of this task was stopped before it finished (by the user or a server " +

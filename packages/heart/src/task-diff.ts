@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
 import { execCommand } from "./process.js";
-import { GIT_HARDENING_ARGS, leftoversBranch, registeredWorktreeBranch } from "./git.js";
+import { hardenedGitCommand, leftoversBranch, registeredWorktreeBranch } from "./git.js";
 import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";
@@ -87,10 +87,9 @@ async function git(cwd: string, args: string[]) {
   // Read-only plumbing; --literal-pathspecs keeps file names from acting as pathspec magic, and
   // --no-optional-locks keeps status and diff from refreshing the index of a worktree an agent
   // is committing in (that takes index.lock and can fail the agent's own git add or commit).
-  const res = await execCommand(
-    "git",
+  const prepared = await hardenedGitCommand(
+    cwd,
     [
-      ...GIT_HARDENING_ARGS,
       "--no-pager",
       "--no-optional-locks",
       "--literal-pathspecs",
@@ -98,8 +97,14 @@ async function git(cwd: string, args: string[]) {
       "core.quotepath=off",
       ...args,
     ],
-    { cwd, timeoutMs: 30000 },
+    undefined,
+    30000,
   );
+  const res = await execCommand("git", prepared.args, {
+    cwd,
+    timeoutMs: 30000,
+    env: prepared.env,
+  });
   return { code: res.code, out: res.stdout, err: res.stderr.trim() };
 }
 

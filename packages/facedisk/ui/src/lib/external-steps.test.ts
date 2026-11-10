@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { N8nInfo, N8nWorkflowSummary, N8nWorkflowsResult } from "../api-types.js";
 import {
   moveStep,
+  n8nEditorHref,
   n8nStatusLine,
   stepDraftErrors,
   usableWebhooks,
@@ -16,6 +17,39 @@ const wf = (webhooks: N8nWorkflowSummary["webhooks"]): N8nWorkflowSummary => ({
   tags: [],
   webhooks,
   editorUrl: "http://n8n/workflow/w1",
+});
+
+/** A host-only cookie is sent to every port of that exact host and to no other host. */
+function hostOnlyCookieSent(cookieHost: string, target: string): boolean {
+  const bare = (host: string) => host.toLowerCase().replace(/^\[|\]$/g, "");
+  return bare(new URL(target).hostname) === bare(cookieHost);
+}
+
+describe("n8n editor link", () => {
+  it("does not carry a 127.0.0.1 boof cookie to n8n", () => {
+    const editor = "http://127.0.0.1:5678/workflow/w1?x=1#flow";
+    expect(hostOnlyCookieSent("127.0.0.1", editor)).toBe(true);
+    const href = n8nEditorHref(editor, "127.0.0.1");
+    expect(hostOnlyCookieSent("127.0.0.1", href)).toBe(false);
+    const url = new URL(href);
+    expect(url.hostname).toBe("localhost");
+    expect(url.port).toBe("5678");
+    expect(url.pathname).toBe("/workflow/w1");
+    expect(url.search).toBe("?x=1");
+    expect(url.hash).toBe("#flow");
+  });
+
+  it("does not carry a localhost boof cookie, and leaves a link that is already a different host", () => {
+    const same = n8nEditorHref("http://localhost:5678/workflow/w1", "localhost");
+    expect(new URL(same).hostname).toBe("127.0.0.1");
+    expect(hostOnlyCookieSent("localhost", same)).toBe(false);
+    const other = "http://127.0.0.1:5678/workflow/w1";
+    expect(n8nEditorHref(other, "localhost")).toBe(other);
+    expect(hostOnlyCookieSent("localhost", other)).toBe(false);
+    const v6 = n8nEditorHref("http://[::1]:5678/workflow/w1", "::1");
+    expect(new URL(v6).hostname).toBe("localhost");
+    expect(hostOnlyCookieSent("::1", v6)).toBe(false);
+  });
 });
 
 describe("usableWebhooks", () => {

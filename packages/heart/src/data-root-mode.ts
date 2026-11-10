@@ -2,6 +2,15 @@ import { chmod, lstat, open, readFile, readlink, realpath, stat } from "node:fs/
 import { constants } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import {
+  aclNeedsTighten,
+  isFilesystemRoot,
+  parentLetsOthersWrite,
+  parentPath,
+  windowsAclFromRunner,
+  type AclPrincipal,
+  type WindowsAclOps,
+} from "./windows-acl.js";
 
 export const PRIVATE_SUBDIRS = [
   "auth",
@@ -23,10 +32,16 @@ export interface UnsafeParent {
 
 export type TightenResult =
   | { changed: true; before: number; unsafeParent?: UnsafeParent }
+  | { changed: true; via: "acl"; unsafeParent?: UnsafeParent }
   | {
       changed: false;
-      reason:
-        "already-private" | "windows" | "missing" | "not-owner" | "home-or-root" | "chmod-failed";
+      reason: "acl-failed";
+      message: string;
+      unsafeParent?: UnsafeParent;
+    }
+  | {
+      changed: false;
+      reason: "already-private" | "missing" | "not-owner" | "home-or-root" | "chmod-failed";
       mode?: number;
       unsafeParent?: UnsafeParent;
     };
@@ -117,10 +132,12 @@ export async function tightenDataRoot(
     home?: string;
     chmod?: typeof chmod;
     accounts?: AccountFiles;
+    /** Windows ACL reader and writer. Tests pass a fake; win32 uses icacls. */
+    windowsAcl?: WindowsAclOps;
   } = {},
 ): Promise<TightenResult> {
   const platform = opts.platform ?? process.platform;
-  if (platform === "win32") return { changed: false, reason: "windows" };
+  if (platform === "win32") return tightenWindows(root, opts);
   try {
     const rootStat = await stat(root);
     const resolvedRoot = await realpath(root);
@@ -287,14 +304,20 @@ export async function assertSafeForSecrets(
     lstat?: typeof lstat;
     stat?: typeof stat;
     open?: typeof open;
+    /** Windows ACL reader and writer. Tests pass a fake; win32 uses icacls. */
+    windowsAcl?: WindowsAclOps;
   } = {},
 ): Promise<void> {
   const platform = opts.platform ?? process.platform;
+  if (platform === "win32") {
+    await assertSafeWindows(root, path, kind, opts);
+    return;
+  }
   const uid = opts.uid ?? uidFor(platform);
   const lstatFn = opts.lstat ?? lstat;
   const statFn = opts.stat ?? stat;
   const openFn = opts.open ?? open;
-  if (platform === "win32" || uid === undefined) return;
+  if (uid === undefined) return;
   const check = await makeCheck(uid, opts);
 
   let rootInitial;
@@ -437,4 +460,237 @@ export async function assertSafeForSecrets(
       await fileHandle.close();
     }
   }
+}
+
+/** What to tell the operator about a tighten result. Null when the root itself needs nothing said. */
+export function dataRootAccessNotice(root: string, result: TightenResult): string | null {
+  if (result.changed && "before" in result) {
+    return `tightened data root ${root} from ${result.before.toString(8)} to 700 (other local users could read it)`;
+  }
+  if (result.changed && result.via === "acl") {
+    return `tightened data root ${root}: removed other accounts from the access list (current user only)`;
+  }
+  if (!result.changed && result.reason === "acl-failed") return `warning: ${result.message}`;
+  return null;
+}
+
+function icaclsHint(path: string, sid: string): string {
+  return `run icacls "${path}" /inheritance:r /grant:r "*${sid}:(OI)(CI)F" and remove every other entry`;
+}
+
+interface WindowsOpts {
+  home?: string;
+  windowsAcl?: WindowsAclOps;
+  allowMissing?: boolean;
+}
+
+async function resolvedHome(home: string | undefined): Promise<string> {
+  const value = home ?? homedir();
+  if (!value) return "";
+  return realpath(value).catch(() => resolve(value));
+}
+
+async function tightenWindows(root: string, opts: WindowsOpts): Promise<TightenResult> {
+  let rootStat;
+  try {
+    rootStat = await stat(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { changed: false, reason: "missing" };
+    return {
+      changed: false,
+      reason: "acl-failed",
+      message: `could not read ${root} (${(error as Error).message})`,
+    };
+  }
+  if (!rootStat.isDirectory()) {
+    return {
+      changed: false,
+      reason: "acl-failed",
+      message: `${root} is not a directory; choose a directory for the data root`,
+    };
+  }
+  const resolvedRoot = await realpath(root).catch(() => resolve(root));
+  const home = await resolvedHome(opts.home);
+  if (isFilesystemRoot(resolvedRoot) || (home && resolvedRoot === home)) {
+    return { changed: false, reason: "home-or-root" };
+  }
+  const acl = opts.windowsAcl ?? windowsAclFromRunner();
+  const user = await acl.currentUser();
+  if (!user) {
+    return {
+      changed: false,
+      reason: "acl-failed",
+      message: "could not identify the current Windows user, so the access list was not changed",
+    };
+  }
+  const unsafeParent = await windowsUnsafeParent(resolvedRoot, user, acl);
+  const withParent = <T extends TightenResult>(result: T): T =>
+    unsafeParent ? { ...result, unsafeParent } : result;
+  const rootResult = await tightenOne(resolvedRoot, user, acl);
+  if (!rootResult.ok)
+    return withParent({ changed: false, reason: "acl-failed", message: rootResult.message });
+  let changed = rootResult.changed;
+  for (const name of PRIVATE_SUBDIRS) {
+    const path = join(resolvedRoot, name);
+    let entry;
+    try {
+      entry = await lstat(path);
+    } catch {
+      continue;
+    }
+    if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+    const sub = await tightenOne(path, user, acl);
+    if (sub.ok && sub.changed) changed = true;
+  }
+  return withParent(
+    changed ? { changed: true, via: "acl" } : { changed: false, reason: "already-private" },
+  );
+}
+
+async function tightenOne(
+  path: string,
+  user: AclPrincipal,
+  acl: WindowsAclOps,
+): Promise<{ ok: true; changed: boolean } | { ok: false; message: string }> {
+  const view = await acl.readAcl(path);
+  if (!view.ok) {
+    return { ok: false, message: `could not read the access list on ${path} (${view.error})` };
+  }
+  if (!aclNeedsTighten(view.aces, user.sid)) return { ok: true, changed: false };
+  const wrote = await acl.tightenToUser(path, user);
+  if (!wrote) {
+    return {
+      ok: false,
+      message: `could not restrict the access list on ${path} to the current user; ${icaclsHint(path, user.sid)}`,
+    };
+  }
+  const after = await acl.readAcl(path);
+  if (!after.ok || aclNeedsTighten(after.aces, user.sid)) {
+    return {
+      ok: false,
+      message: `could not restrict the access list on ${path} to the current user; ${icaclsHint(path, user.sid)}`,
+    };
+  }
+  return { ok: true, changed: true };
+}
+
+async function windowsUnsafeParent(
+  root: string,
+  user: AclPrincipal,
+  acl: WindowsAclOps,
+): Promise<UnsafeParent | undefined> {
+  let current = parentPath(root);
+  for (let depth = 0; depth < 40; depth++) {
+    if (isFilesystemRoot(current)) return;
+    const view = await acl.readAcl(current);
+    if (view.ok) {
+      const sid = parentLetsOthersWrite(view.aces, user.sid);
+      if (sid) {
+        return {
+          path: current,
+          message: `${current} lets other accounts change it (${sid}); move the data root off that folder`,
+        };
+      }
+    }
+    const next = parentPath(current);
+    if (next === current) return;
+    current = next;
+  }
+  return;
+}
+
+async function assertSafeWindows(
+  root: string,
+  path: string,
+  kind: SecretKind,
+  opts: WindowsOpts,
+): Promise<void> {
+  const acl = opts.windowsAcl ?? windowsAclFromRunner();
+  let rootStat;
+  try {
+    rootStat = await stat(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" && opts.allowMissing) return;
+    throw error;
+  }
+  if (!rootStat.isDirectory()) fail(root, "is not a real directory; use a data root directory");
+  const resolvedRoot = await realpath(root).catch(() => resolve(root));
+  const home = await resolvedHome(opts.home);
+  const user = await acl.currentUser();
+  if (!user)
+    fail(root, "could not identify the current Windows user; the access list was not checked");
+  const skipRewrite = isFilesystemRoot(resolvedRoot) || (home !== "" && resolvedRoot === home);
+  await requireUserOnly(resolvedRoot, user, acl, !skipRewrite);
+  let current = parentPath(resolvedRoot);
+  for (let depth = 0; depth < 40 && !isFilesystemRoot(current); depth++) {
+    const view = await acl.readAcl(current);
+    if (!view.ok) {
+      fail(current, `access list could not be read (${view.error}); move the data root`);
+    }
+    const sid = parentLetsOthersWrite(view.aces, user.sid);
+    if (sid) {
+      fail(current, `lets other accounts change it (${sid}); move the data root off that folder`);
+    }
+    const next = parentPath(current);
+    if (next === current) break;
+    current = next;
+  }
+  const absolutePath = resolve(path);
+  const rootPrefix = `${resolve(root)}${sep}`;
+  const realPrefix = `${resolvedRoot}${sep}`;
+  const relative =
+    absolutePath === resolvedRoot
+      ? ""
+      : absolutePath.startsWith(rootPrefix)
+        ? absolutePath.slice(rootPrefix.length)
+        : absolutePath.startsWith(realPrefix)
+          ? absolutePath.slice(realPrefix.length)
+          : null;
+  if (relative === null)
+    fail(path, "is outside the data root; keep secret files inside the data root");
+  const target = relative === "" ? resolvedRoot : join(resolvedRoot, relative);
+  const parent = kind === "file" ? dirname(target) : target;
+  if (!(await requireExistingUserOnly(parent, user, acl, opts.allowMissing))) return;
+  if (kind === "file") await requireExistingUserOnly(target, user, acl, opts.allowMissing);
+}
+
+/** True when the path is absent and that is allowed. Throws when the ACL is wider. */
+async function requireExistingUserOnly(
+  path: string,
+  user: AclPrincipal,
+  acl: WindowsAclOps,
+  allowMissing: boolean | undefined,
+): Promise<boolean> {
+  let entry;
+  try {
+    entry = await lstat(path);
+  } catch (error) {
+    if (allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  if (entry.isSymbolicLink()) {
+    fail(path, "is a symbolic link; replace it with a real directory or file");
+  }
+  await requireUserOnly(path, user, acl, false);
+  return true;
+}
+
+async function requireUserOnly(
+  path: string,
+  user: AclPrincipal,
+  acl: WindowsAclOps,
+  tighten: boolean,
+): Promise<void> {
+  let view = await acl.readAcl(path);
+  if (!view.ok) fail(path, `access list could not be read (${view.error})`);
+  // A root (tighten) drops inherited entries. A child may keep this user's inherited allow.
+  if (!aclNeedsTighten(view.aces, user.sid, { acceptInheritedUser: !tighten })) return;
+  if (tighten) {
+    await acl.tightenToUser(path, user);
+    view = await acl.readAcl(path);
+    if (!view.ok) fail(path, `access list could not be read (${view.error})`);
+    if (!aclNeedsTighten(view.aces, user.sid)) return;
+  }
+  fail(path, `is readable by other accounts; ${icaclsHint(path, user.sid)}`);
 }

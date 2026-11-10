@@ -1,14 +1,22 @@
-import { chmod, lstat, mkdir, mkdtemp, open, rm, stat, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertSafeForSecrets,
+  dataRootAccessNotice,
   isUserPrivateGroup,
   setAccountFilesForTests,
   tightenDataRoot,
   type AccountFiles,
 } from "./data-root-mode.js";
+import {
+  parentPath,
+  parseIcaclsSave,
+  type AclAce,
+  type AclPrincipal,
+  type WindowsAclOps,
+} from "./windows-acl.js";
 import { ToolRegistry } from "@boof/runner";
 
 const mocks = vi.hoisted(() => ({ home: undefined as string | undefined }));
@@ -223,11 +231,307 @@ describe("tightenDataRoot", () => {
     },
   );
 
-  it("windows is a no-op", async () => {
-    expect(await tightenDataRoot("missing", { platform: "win32" })).toEqual({
+  it("a missing path on win32 is missing and does not ask for an ACL", async () => {
+    const acl = throwingAcl();
+    expect(
+      await tightenDataRoot(join(await temp(), "missing"), { platform: "win32", windowsAcl: acl }),
+    ).toEqual({ changed: false, reason: "missing" });
+    expect(acl.calls).toEqual([]);
+  });
+});
+
+const me: AclPrincipal = { account: "DESKTOP\\me", sid: "S-1-5-21-1" };
+
+function userOnly(): AclAce {
+  return { sid: me.sid, allow: true, inherited: false, inheritOnly: false, rights: "FA" };
+}
+
+function everyoneWrite(): AclAce {
+  return { sid: "WD", allow: true, inherited: true, inheritOnly: false, rights: "FA" };
+}
+
+function acesOf(sddl: string): AclAce[] {
+  const view = parseIcaclsSave(`name\n${sddl}\n`);
+  if (!view.ok) throw new Error(view.error);
+  return view.aces;
+}
+
+/** `(A;OICIID;FA;;;<current user>)`, the ACE a tightened root leaves on a child. */
+function inheritedUser(): AclAce[] {
+  return acesOf("D:AI(A;OICIID;FA;;;S-1-5-21-1)");
+}
+
+function throwingAcl(): WindowsAclOps & { calls: string[] } {
+  const calls: string[] = [];
+  const boom = (name: string) => async () => {
+    calls.push(name);
+    throw new Error(`unexpected ${name}`);
+  };
+  return {
+    calls,
+    currentUser: boom("currentUser"),
+    readAcl: boom("readAcl"),
+    tightenToUser: boom("tightenToUser"),
+  };
+}
+
+/** `wide` paths need a tighten; after tightenToUser they read back as the current user only. */
+function scriptedAcl(wide: (path: string) => boolean): WindowsAclOps & { tightened: string[] } {
+  const tightened: string[] = [];
+  return {
+    tightened,
+    currentUser: async () => me,
+    readAcl: async (path) => ({
+      ok: true,
+      aces: tightened.includes(path) || !wide(path) ? [userOnly()] : [userOnly(), everyoneWrite()],
+    }),
+    tightenToUser: async (path) => {
+      tightened.push(path);
+      return true;
+    },
+  };
+}
+
+describe("windows access list", () => {
+  it("restricts a wider root to the current user and leaves the Unix mode alone", async () => {
+    const root = await temp();
+    await chmod(root, 0o755);
+    const acl = scriptedAcl((path) => path === root);
+    const result = await tightenDataRoot(root, { platform: "win32", windowsAcl: acl });
+    expect(result).toEqual({ changed: true, via: "acl" });
+    expect(acl.tightened).toEqual([root]);
+    expect((await stat(root)).mode & 0o777).toBe(0o755);
+    expect(dataRootAccessNotice(root, result)).toBe(
+      `tightened data root ${root}: removed other accounts from the access list (current user only)`,
+    );
+  });
+
+  it("leaves an explicit user-only root alone", async () => {
+    const root = await temp();
+    const acl = scriptedAcl(() => false);
+    expect(await tightenDataRoot(root, { platform: "win32", windowsAcl: acl })).toEqual({
       changed: false,
-      reason: "windows",
+      reason: "already-private",
     });
+    expect(acl.tightened).toEqual([]);
+  });
+
+  it("restricts an existing private subdir and does not create one", async () => {
+    const root = await temp();
+    const auth = join(root, "auth");
+    await mkdir(auth);
+    const acl = scriptedAcl((path) => path === auth);
+    expect(await tightenDataRoot(root, { platform: "win32", windowsAcl: acl })).toEqual({
+      changed: true,
+      via: "acl",
+    });
+    expect(acl.tightened).toEqual([auth]);
+    await expect(lstat(join(root, "owlish"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not rewrite the home directory or a filesystem root", async () => {
+    const root = await temp();
+    const homeAcl = throwingAcl();
+    expect(
+      await tightenDataRoot(root, { platform: "win32", home: root, windowsAcl: homeAcl }),
+    ).toEqual({
+      changed: false,
+      reason: "home-or-root",
+    });
+    expect(homeAcl.calls).toEqual([]);
+    const rootAcl = throwingAcl();
+    expect(
+      await tightenDataRoot("/", { platform: "win32", home: root, windowsAcl: rootAcl }),
+    ).toEqual({ changed: false, reason: "home-or-root" });
+    expect(rootAcl.calls).toEqual([]);
+  });
+
+  it("reports acl-failed when the write does not stick", async () => {
+    const root = await temp();
+    const acl: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async () => ({ ok: true, aces: [userOnly(), everyoneWrite()] }),
+      tightenToUser: async () => false,
+    };
+    const result = await tightenDataRoot(root, { platform: "win32", windowsAcl: acl });
+    expect(result.changed).toBe(false);
+    if (result.changed || result.reason !== "acl-failed") throw new Error("expected acl-failed");
+    expect(result.message).toContain("icacls");
+    expect(result.message).toContain(me.sid);
+    expect(dataRootAccessNotice(root, result)).toBe(`warning: ${result.message}`);
+  });
+
+  it("warns when a parent grants write to someone other than the user, SYSTEM or Administrators", async () => {
+    const base = await temp();
+    const parent = join(base, "shared");
+    const root = join(parent, "data");
+    await mkdir(parent);
+    await mkdir(root);
+    const benign: AclAce[] = [
+      { sid: "SY", allow: true, inherited: false, inheritOnly: false, rights: "FA" },
+      { sid: "BA", allow: true, inherited: false, inheritOnly: false, rights: "FA" },
+      userOnly(),
+    ];
+    const quiet: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async (path) => ({ ok: true, aces: path === parent ? benign : [userOnly()] }),
+      tightenToUser: async () => true,
+    };
+    expect(await tightenDataRoot(root, { platform: "win32", windowsAcl: quiet })).toEqual({
+      changed: false,
+      reason: "already-private",
+    });
+    const shared: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async (path) => ({
+        ok: true,
+        aces: path === parent ? [userOnly(), everyoneWrite()] : [userOnly()],
+      }),
+      tightenToUser: async () => true,
+    };
+    const result = await tightenDataRoot(root, { platform: "win32", windowsAcl: shared });
+    expect(result).toMatchObject({ changed: false, reason: "already-private" });
+    expect(result.unsafeParent).toEqual({
+      path: parentPath(root),
+      message: expect.stringContaining("S-1-1-0"),
+    });
+    expect(parentPath(root)).toBe(parent);
+  });
+
+  it("accepts a user-only root and refuses a wider secret directory", async () => {
+    const root = await temp();
+    const auth = join(root, "auth");
+    await mkdir(auth);
+    const ok = scriptedAcl(() => false);
+    await expect(
+      assertSafeForSecrets(root, auth, "directory", { platform: "win32", windowsAcl: ok }),
+    ).resolves.toBeUndefined();
+    const wide = scriptedAcl((path) => path === auth);
+    await expect(
+      assertSafeForSecrets(root, auth, "directory", { platform: "win32", windowsAcl: wide }),
+    ).rejects.toThrow(/icacls/);
+    expect(wide.tightened).toEqual([]);
+  });
+
+  it("tightens a wider root once during a secret check, then accepts it", async () => {
+    const root = await temp();
+    const auth = join(root, "auth");
+    await mkdir(auth);
+    const acl = scriptedAcl((path) => path === root);
+    await expect(
+      assertSafeForSecrets(root, auth, "directory", { platform: "win32", windowsAcl: acl }),
+    ).resolves.toBeUndefined();
+    expect(acl.tightened).toEqual([root]);
+  });
+
+  it("refuses a shared parent and a symlink in place of the secret directory", async () => {
+    const base = await temp();
+    const parent = join(base, "shared");
+    const root = join(parent, "data");
+    await mkdir(parent);
+    await mkdir(root);
+    const auth = join(root, "auth");
+    await mkdir(auth);
+    const shared: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async (path) => ({
+        ok: true,
+        aces: path === parent ? [everyoneWrite()] : [userOnly()],
+      }),
+      tightenToUser: async () => true,
+    };
+    await expect(
+      assertSafeForSecrets(root, auth, "directory", { platform: "win32", windowsAcl: shared }),
+    ).rejects.toThrow(/other accounts/);
+    const link = join(root, "linked");
+    await symlink(auth, link);
+    const ok = scriptedAcl(() => false);
+    await expect(
+      assertSafeForSecrets(root, link, "directory", { platform: "win32", windowsAcl: ok }),
+    ).rejects.toThrow(/symbolic link/);
+  });
+
+  it("accepts an inherited full-control ACE for the current user on a child file and folder", async () => {
+    const root = await temp();
+    const folder = join(root, "auth");
+    await mkdir(folder);
+    const file = join(folder, "clients.json");
+    await writeFile(file, "{}\n");
+    const inherited = inheritedUser();
+    const acl: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async (path) => ({
+        ok: true,
+        aces: path === folder || path === file ? inherited : [userOnly()],
+      }),
+      tightenToUser: async () => {
+        throw new Error(
+          "a child with only the current user's inherited allow must not be rewritten",
+        );
+      },
+    };
+    await expect(
+      assertSafeForSecrets(root, folder, "directory", { platform: "win32", windowsAcl: acl }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertSafeForSecrets(root, file, "file", { platform: "win32", windowsAcl: acl }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refuses an inherited ACE for another account on a child file and folder", async () => {
+    const root = await temp();
+    const folder = join(root, "auth");
+    await mkdir(folder);
+    const file = join(folder, "clients.json");
+    await writeFile(file, "{}\n");
+    const wider = acesOf("D:AI(A;OICIID;FA;;;S-1-5-21-1)(A;OICIID;FR;;;WD)");
+    const acl: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async (path) => ({
+        ok: true,
+        aces: path === folder || path === file ? wider : [userOnly()],
+      }),
+      tightenToUser: async () => false,
+    };
+    await expect(
+      assertSafeForSecrets(root, folder, "directory", { platform: "win32", windowsAcl: acl }),
+    ).rejects.toThrow(/icacls/);
+    await expect(
+      assertSafeForSecrets(root, file, "file", { platform: "win32", windowsAcl: acl }),
+    ).rejects.toThrow(/icacls/);
+  });
+
+  it("refuses a conditional ACE on a child file", async () => {
+    const root = await temp();
+    const folder = join(root, "auth");
+    await mkdir(folder);
+    const file = join(folder, "clients.json");
+    await writeFile(file, "{}\n");
+    const conditional = acesOf(
+      'D:(XA;ID;FA;;;S-1-5-21-1;(@User.Title=="PM"))(A;ID;FA;;;S-1-5-21-1)',
+    );
+    const acl: WindowsAclOps = {
+      currentUser: async () => me,
+      readAcl: async (path) => ({
+        ok: true,
+        aces: path === file ? conditional : [userOnly()],
+      }),
+      tightenToUser: async () => false,
+    };
+    await expect(
+      assertSafeForSecrets(root, file, "file", { platform: "win32", windowsAcl: acl }),
+    ).rejects.toThrow(/icacls/);
+  });
+
+  it("refuses a secret path outside the data root", async () => {
+    const root = await temp();
+    const acl = scriptedAcl(() => false);
+    await expect(
+      assertSafeForSecrets(root, join(await temp(), "elsewhere"), "directory", {
+        platform: "win32",
+        windowsAcl: acl,
+      }),
+    ).rejects.toThrow(/outside the data root/);
   });
 });
 

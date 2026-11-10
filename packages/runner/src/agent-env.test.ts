@@ -23,10 +23,16 @@ describe("agentEnv", () => {
     TZ: "UTC",
     ANTHROPIC_BASE_URL: "http://gateway",
     ANTHROPIC_API_KEY: "sk-ant",
+    ANTHROPIC_AUTH_TOKEN: "admin-token",
+    ANTHROPIC_MODEL: "sonnet",
     CLAUDE_CODE_USE_BEDROCK: "1",
     OPENAI_API_KEY: "sk-oai",
+    OPENAI_BASE_URL: "http://inherited/v1",
+    OPENAI_API_BASE: "http://inherited/api",
+    ANTHROPIC_CUSTOM_HEADERS: "X-Admin: token",
     CODEX_HOME: "/home/u/.codex",
     OPENCODE_CONFIG: "/x",
+    OPENCODE_CONFIG_CONTENT: '{"apiKey":"inherited"}',
     HTTPS_PROXY: "http://proxy",
     XDG_CONFIG_HOME: "/home/u/.config",
     BOOF_KEY: "boof_secret",
@@ -50,14 +56,14 @@ describe("agentEnv", () => {
       "TERM",
       "TMPDIR",
       "TZ",
-      "ANTHROPIC_BASE_URL",
-      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_MODEL",
       "CLAUDE_CODE_USE_BEDROCK",
-      "OPENAI_API_KEY",
       "CODEX_HOME",
       "OPENCODE_CONFIG",
       "HTTPS_PROXY",
       "XDG_CONFIG_HOME",
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
     ]) {
       expect(env[k], k).toBe(server[k]);
     }
@@ -70,9 +76,58 @@ describe("agentEnv", () => {
       "GITHUB_TOKEN",
       "SSH_AUTH_SOCK",
       "SOME_OTHER",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_CUSTOM_HEADERS",
+      "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
+      "OPENCODE_CONFIG_CONTENT",
     ]) {
       expect(env, k).not.toHaveProperty(k);
     }
+  });
+
+  it("runner.agentEnv cannot put gateway addresses back, and can pass API keys when no pool credential is injected", () => {
+    const env = agentEnv(server, [
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_CUSTOM_HEADERS",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
+      "OPENCODE_CONFIG_CONTENT",
+      "GITHUB_TOKEN",
+    ]);
+    expect(env.GITHUB_TOKEN).toBe("ghp");
+    expect(env.ANTHROPIC_MODEL).toBe("sonnet");
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant");
+    expect(env.OPENAI_API_KEY).toBe("sk-oai");
+    for (const name of [
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_CUSTOM_HEADERS",
+      "OPENAI_BASE_URL",
+      "OPENAI_API_BASE",
+      "OPENCODE_CONFIG_CONTENT",
+    ]) {
+      expect(env, name).not.toHaveProperty(name);
+    }
+  });
+
+  it("drops API keys when a pool credential is injected, even if runner.agentEnv names them", () => {
+    const env = agentEnv(
+      server,
+      ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"],
+      undefined,
+      { injectPoolCredential: true },
+    );
+    expect(env.GITHUB_TOKEN).toBe("ghp");
+    expect(env.ANTHROPIC_MODEL).toBe("sonnet");
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    expect(env).not.toHaveProperty("OPENAI_BASE_URL");
   });
 
   it("passes the names of runner.agentEnv through, but never a BOOF_ variable", () => {
@@ -136,6 +191,9 @@ describe("what each adapter really hands its child", () => {
     set("AWS_SECRET_ACCESS_KEY", "aws-secret");
     set("EXTRA_PASS", "yes");
     set("ANTHROPIC_BASE_URL", "http://gateway.test");
+    set("ANTHROPIC_AUTH_TOKEN", "inherited-admin-token");
+    set("ANTHROPIC_API_KEY", "user-anthropic-key");
+    set("OPENAI_API_KEY", "user-openai-key");
     return dir;
   }
   const base = {
@@ -151,12 +209,17 @@ describe("what each adapter really hands its child", () => {
     ["codex", "BOOF_RUNNER_CODEX_BIN", () => new CodexTool()],
     ["opencode", "BOOF_RUNNER_OPENCODE_BIN", () => new OpencodeTool()],
   ])(
-    "%s: no BOOF_ or unrelated secret, the gateway variable and agentEnv names do",
+    "%s: no BOOF_, inherited gateway credential, or unrelated secret; agentEnv names do",
     async (name, binVar, make) => {
       const dir = await envOf(binVar, name);
       const marker = "0123456789abcdef0123456789abcdef";
       try {
-        await make().run({ ...base, cwd: dir, agentEnv: ["EXTRA_PASS"], agentMarker: marker });
+        await make().run({
+          ...base,
+          cwd: dir,
+          agentEnv: ["EXTRA_PASS", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+          agentMarker: marker,
+        });
       } catch {
         /* an empty answer may be refused; the child has run */
       }
@@ -164,7 +227,10 @@ describe("what each adapter really hands its child", () => {
       expect(env).not.toContain("BOOF_KEY");
       expect(env).not.toContain("BOOF_URL");
       expect(env).not.toContain("AWS_SECRET_ACCESS_KEY");
-      expect(env).toContain("ANTHROPIC_BASE_URL=http://gateway.test");
+      expect(env).not.toContain("ANTHROPIC_BASE_URL=");
+      expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN=");
+      expect(env).toContain("ANTHROPIC_API_KEY=user-anthropic-key");
+      expect(env).toContain("OPENAI_API_KEY=user-openai-key");
       expect(env).toContain("EXTRA_PASS=yes");
       expect(env).toContain("PATH=");
       expect(env).toContain(`BOOF_RUNNER_AGENT_OF=${marker}`);
@@ -303,11 +369,13 @@ describe("routing through the account pool gateway", () => {
       expect(argv).not.toContain("ccf-client-key");
     });
 
-    it("claude without a gateway: the inherited environment is left alone", async () => {
+    it("claude without a gateway does not inherit the server's gateway URL or token", async () => {
       const dir = await setup("BOOF_RUNNER_CLAUDE_BIN", "claude");
+      set("ANTHROPIC_AUTH_TOKEN", "inherited-admin-token");
       const { env } = await run(() => new ClaudeCodeTool(), dir, {});
-      expect(env).toContain("ANTHROPIC_BASE_URL=http://inherited.test");
-      expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN");
+      expect(env).not.toContain("ANTHROPIC_BASE_URL=");
+      expect(env).not.toContain("inherited-admin-token");
+      expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN=");
     });
 
     it("claude with a gateway but no key: no token is invented", async () => {
@@ -316,6 +384,20 @@ describe("routing through the account pool gateway", () => {
       const { env } = await run(() => new ClaudeCodeTool(), dir, { gateway: { url: gw.url } });
       expect(env).toContain("ANTHROPIC_BASE_URL=http://127.0.0.1:8080\n");
       expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN=");
+    });
+
+    it("codex does not receive an inherited Anthropic token next to the pool key", async () => {
+      const dir = await setup("BOOF_RUNNER_CODEX_BIN", "codex");
+      set("ANTHROPIC_AUTH_TOKEN", "inherited-admin-token");
+      set("ANTHROPIC_API_KEY", "inherited-api-key");
+      set("OPENAI_API_KEY", "inherited-openai-key");
+      const { env } = await run(() => new CodexTool(), dir, { gateway: gw });
+      expect(env).toContain("OPENAI_API_KEY=ccf-client-key");
+      expect(env).not.toContain("inherited-admin-token");
+      expect(env).not.toContain("inherited-api-key");
+      expect(env).not.toContain("inherited-openai-key");
+      expect(env).not.toContain("ANTHROPIC_AUTH_TOKEN=");
+      expect(env).not.toContain("ANTHROPIC_BASE_URL=");
     });
 
     it("codex: /v1 URL and key by env, config isolation kept, key not in argv", async () => {
@@ -405,7 +487,12 @@ describe("routing through the account pool gateway", () => {
 
     it("opencode: provider options through OPENCODE_CONFIG_CONTENT, key not in argv", async () => {
       const dir = await setup("BOOF_RUNNER_OPENCODE_BIN", "opencode");
-      const { env, argv } = await run(() => new OpencodeTool(), dir, { gateway: gw });
+      set("ANTHROPIC_API_KEY", "user-anthropic-key");
+      set("OPENAI_API_KEY", "user-openai-key");
+      const { env, argv } = await run(() => new OpencodeTool(), dir, {
+        gateway: gw,
+        agentEnv: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+      });
       const line = env.split("\n").find((l) => l.startsWith("OPENCODE_CONFIG_CONTENT="))!;
       expect(
         JSON.parse(line.slice("OPENCODE_CONFIG_CONTENT=".length)).provider.anthropic.options,
@@ -414,6 +501,10 @@ describe("routing through the account pool gateway", () => {
         apiKey: "ccf-client-key",
       });
       expect(argv).not.toContain("ccf-client-key");
+      expect(env).not.toContain("user-anthropic-key");
+      expect(env).not.toContain("user-openai-key");
+      expect(env).not.toContain("ANTHROPIC_API_KEY=");
+      expect(env).not.toContain("OPENAI_API_KEY=");
     });
   });
 

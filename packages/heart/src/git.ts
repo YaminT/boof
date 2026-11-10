@@ -26,6 +26,124 @@ export const GIT_HARDENING_ARGS: readonly string[] = [
   "core.hooksPath=/dev/null",
 ];
 
+/**
+ * Assignments that blank every `filter.*` key and every `merge.*.driver` in a
+ * `git config --null --get-regexp` listing. `git -c name=value` splits on the first `=`,
+ * so a driver named `x=y` (`filter.x=y.clean`, `merge.x=y.driver`) cannot be cleared that way.
+ * `GIT_CONFIG_KEY_<n>` can hold those keys. An empty command disables the driver; `required`
+ * is set false so git does not demand a command that was just cleared. A driver created after
+ * this read can still run.
+ */
+export function driverOverridesFromConfig(stdout: string): Array<{ key: string; value: string }> {
+  const byKey = new Map<string, string>();
+  for (const record of stdout.split("\0")) {
+    if (!record) continue;
+    const key = record.split("\n", 1)[0] ?? "";
+    if (key.startsWith("filter.")) byKey.set(key, key.endsWith(".required") ? "false" : "");
+    else if (/^merge\..+\.driver$/.test(key)) byKey.set(key, "");
+  }
+  return [...byKey.keys()].sort().map((key) => ({ key, value: byKey.get(key) ?? "" }));
+}
+
+function isNeutralisedDriverKey(key: string): boolean {
+  return key.startsWith("filter.") || /^merge\..+\.driver$/.test(key);
+}
+
+/**
+ * `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` for `overrides`, keeping
+ * any other pairs already in `base`. Inherited filter and merge-driver pairs are dropped so
+ * they cannot put a command back.
+ */
+function envWithDriverOverrides(
+  base: NodeJS.ProcessEnv,
+  overrides: readonly { key: string; value: string }[],
+): NodeJS.ProcessEnv {
+  const kept: Array<{ key: string; value: string }> = [];
+  const count = Number(base.GIT_CONFIG_COUNT);
+  if (Number.isInteger(count) && count > 0) {
+    for (let i = 0; i < count; i++) {
+      const key = base[`GIT_CONFIG_KEY_${i}`];
+      const value = base[`GIT_CONFIG_VALUE_${i}`];
+      if (typeof key !== "string" || typeof value !== "string" || isNeutralisedDriverKey(key)) {
+        continue;
+      }
+      kept.push({ key, value });
+    }
+  }
+  const pairs = [...kept, ...overrides];
+  const env: NodeJS.ProcessEnv = { ...base, GIT_CONFIG_COUNT: String(pairs.length) };
+  pairs.forEach((pair, index) => {
+    env[`GIT_CONFIG_KEY_${index}`] = pair.key;
+    env[`GIT_CONFIG_VALUE_${index}`] = pair.value;
+  });
+  return env;
+}
+
+function gitEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+  return env ? { ...process.env, ...env } : undefined;
+}
+
+/** Timeout for the config read that finds filter and merge drivers. */
+const DRIVER_LIST_TIMEOUT_MS = 10_000;
+
+/** Matches every filter key and every custom merge driver. POSIX ERE, as git config expects. */
+const DRIVER_LIST_PATTERN = "^filter\\.|^merge\\..*\\.driver$";
+
+/**
+ * The driver list could not be read. Blanking `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`
+ * would leave drivers in the repository's `.git/config` active, so the git command is refused.
+ */
+export class GitDriversUnreadError extends Error {
+  constructor(detail: string) {
+    super(`refusing git command: could not list filter and merge drivers (${detail})`);
+    this.name = "GitDriversUnreadError";
+  }
+}
+
+async function readDriverOverrides(
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined,
+  timeoutMs: number,
+): Promise<Array<{ key: string; value: string }>> {
+  const listTimeout = Math.min(DRIVER_LIST_TIMEOUT_MS, timeoutMs);
+  let listed;
+  try {
+    listed = await execCommand(
+      "git",
+      [...GIT_HARDENING_ARGS, "config", "--null", "--get-regexp", DRIVER_LIST_PATTERN],
+      { cwd, timeoutMs: listTimeout, env },
+    );
+  } catch (error) {
+    throw new GitDriversUnreadError(error instanceof Error ? error.message : String(error));
+  }
+  if (listed.timedOut) {
+    throw new GitDriversUnreadError(`timed out after ${listTimeout} ms`);
+  }
+  if (listed.code !== 0 && listed.code !== 1) {
+    const detail = (listed.stderr || listed.stdout || `exit ${listed.code ?? "unknown"}`).trim();
+    throw new GitDriversUnreadError(detail);
+  }
+  return driverOverridesFromConfig(listed.stdout);
+}
+
+/** Hardening args plus the environment that blanks filter and merge drivers, then `args`. */
+export async function hardenedGitCommand(
+  cwd: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+  timeoutMs: number = DRIVER_LIST_TIMEOUT_MS,
+): Promise<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> {
+  const callerEnv = gitEnv(env);
+  const overrides = await readDriverOverrides(cwd, callerEnv, timeoutMs);
+  return {
+    args: [...GIT_HARDENING_ARGS, ...args],
+    env:
+      overrides.length === 0
+        ? callerEnv
+        : envWithDriverOverrides(callerEnv ?? process.env, overrides),
+  };
+}
+
 /** Timeout for ordinary git calls. */
 export const GIT_TIMEOUT_MS = 30_000;
 export async function git(
@@ -34,10 +152,11 @@ export async function git(
   env?: NodeJS.ProcessEnv,
   timeoutMs: number = GIT_TIMEOUT_MS,
 ): Promise<{ code: number | null; out: string; err: string; timedOut: boolean }> {
-  const res = await execCommand("git", [...GIT_HARDENING_ARGS, ...args], {
+  const prepared = await hardenedGitCommand(cwd, args, env, timeoutMs);
+  const res = await execCommand("git", prepared.args, {
     cwd,
     timeoutMs,
-    env: env ? { ...process.env, ...env } : undefined,
+    env: prepared.env,
   });
   return { code: res.code, out: res.stdout.trim(), err: res.stderr.trim(), timedOut: res.timedOut };
 }

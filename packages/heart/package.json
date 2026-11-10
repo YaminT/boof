@@ -23,6 +23,10 @@
     "./task-types": {
       "types": "./src/task-types.ts",
       "default": "./src/task-types.ts"
+    },
+    "./instance-proof": {
+      "types": "./src/instance-proof.ts",
+      "default": "./src/instance-proof.ts"
     }
   },
   "scripts": {

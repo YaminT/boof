@@ -3,7 +3,12 @@ import type { Project } from "@boof/heart/schema";
 import { api } from "../api.js";
 import type { N8nInfo, N8nUpdateInput, N8nWorkflowsResult, Whoami } from "../api-types.js";
 import { act, errorMessage } from "../lib/act.js";
-import { canAdminN8n, n8nStatusLine, shortWebhookPath } from "../lib/external-steps.js";
+import {
+  canAdminN8n,
+  n8nEditorHref,
+  n8nStatusLine,
+  shortWebhookPath,
+} from "../lib/external-steps.js";
 import { relativeTime } from "../lib/time.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
@@ -356,7 +361,7 @@ export function N8nSection({ whoami, projects }: { whoami: Whoami | null; projec
                     <td className="py-1.5 pr-3">
                       <div>{w.name}</div>
                       <a
-                        href={w.editorUrl}
+                        href={n8nEditorHref(w.editorUrl, window.location.hostname)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-[length:var(--text-meta)] text-ink-muted underline"

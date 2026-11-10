@@ -58,8 +58,15 @@ export interface EngineOptions {
   external?: ExternalStepTransport;
 }
 
-const INTERRUPTED_NOTE =
-  "The runner stopped unexpectedly (server restart or crash) while this task was running. Its worktree and branch are kept. Retry it to continue from the kept worktree.";
+const INTERRUPTED_HEAD =
+  "The runner stopped unexpectedly (server restart or crash) while this task was running. Its worktree and branch are kept.";
+
+/** The agent is gone: put the task back on the queue. Otherwise the user has to retry it. */
+function interruptedNote(requeue: boolean): string {
+  return requeue
+    ? `${INTERRUPTED_HEAD} It is back in the queue and will run again.`
+    : `${INTERRUPTED_HEAD} Retry it to continue from the kept worktree.`;
+}
 
 export type TickResult =
   | { kind: "ran"; outcome: PipelineOutcome; projectId: string }
@@ -701,8 +708,11 @@ export class RunnerEngine {
    * Recover tasks a dead runner left in `running` (crash, SIGKILL, OOM, reboot). Call it only
    * from the process that holds the runner guard, before selecting work: nothing else is
    * driving those tasks. Each one gets an Interrupted block (live log mirrored into the body
-   * first) and moves to `failed`; its worktree and branch are kept so a retry resumes there.
-   * Entries with no readable task.md are skipped with a warning. Returns the recovered ids.
+   * first). When the agent is gone (no pid file, or the process is dead or was just killed)
+   * the task goes back to `pending`, so the loop runs it again; its worktree and branch are
+   * kept. When the agent might still be running, the task moves to `failed` and keeps the
+   * agent identity, and a retry is refused until that process is gone. Entries with no
+   * readable task.md are skipped with a warning. Returns the recovered ids.
    */
   async recoverInterrupted(): Promise<string[]> {
     const recovered: string[] = [];
@@ -730,9 +740,14 @@ export class RunnerEngine {
           const live = await readFile(join(workingAreaDir(dir, id), "log.txt"), "utf8").catch(
             () => "",
           );
+          // `skipped` means the agent was not verified dead (another boot, a reused pid, a
+          // process we refused to signal). Leave those failed so a second agent is not started
+          // on a guess. none/dead/killed are safe to run again.
+          const unsafe = reaped.stillRunning || reaped.maybeRunning || reaped.outcome === "skipped";
+          const to: Status = unsafe ? "failed" : "pending";
           const task = await store.transition(
             id,
-            "failed",
+            to,
             (t) => {
               if (live.trim()) t.body.log = live;
               // An agent that is still running (it survived, its runner still owns it, or it
@@ -750,7 +765,7 @@ export class RunnerEngine {
                 };
               }
               const block =
-                `### Interrupted\n${INTERRUPTED_NOTE}` +
+                `### Interrupted\n${interruptedNote(!unsafe)}` +
                 (reaped.outcome === "killed"
                   ? `\nThe agent process group ${reaped.record!.pgid} was still running and was killed.`
                   : reaped.maybeRunning
@@ -760,7 +775,7 @@ export class RunnerEngine {
             },
             { reason: "interrupted: runner stopped unexpectedly" },
           );
-          await this.noteGoalTaskStatus(project, task, "failed");
+          await this.noteGoalTaskStatus(project, task, to);
           recovered.push(id);
         } catch (err) {
           console.warn(`recovery: skipping ${project.id}/${id}:`, err);

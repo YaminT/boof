@@ -183,6 +183,11 @@ export class ProjectService {
     return this.tasks.list();
   }
 
+  /** Status counts and the running ids. Does not read task bodies. */
+  statusSummary() {
+    return this.tasks.statusSummary();
+  }
+
   get(id: string): Promise<Task | null> {
     return this.tasks.get(id);
   }

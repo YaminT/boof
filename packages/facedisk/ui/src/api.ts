@@ -36,6 +36,7 @@ import type {
 import { parseSse } from "./lib/concierge-stream.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
+import { confirmInstance, noteInstanceHeader } from "./instance.js";
 import {
   authHeaders,
   getToken,
@@ -79,18 +80,35 @@ async function failure(res: Response, data: unknown, sent?: string): Promise<nev
   );
 }
 
+/**
+ * Headers for one credentialed request. A saved key is included only when this listener proved
+ * it is the server the key was bound to. `withhold` means do not connect at all.
+ */
+async function authForRequest(): Promise<{ headers: Record<string, string>; sent?: string }> {
+  const check = await confirmInstance(fetch);
+  if (check === "withhold") throw new ApiError("The server is not responding.", 0);
+  if (check !== "send") return { headers: {} };
+  return { headers: authHeaders(), sent: getToken() };
+}
+
+function rememberInstance(res: Response, sent: boolean): void {
+  if (res.ok && sent) noteInstanceHeader(res.headers.get("X-Boof-Instance"));
+}
+
 async function http<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
-  const sent = getToken();
+  const auth = await authForRequest();
   const res = await fetch(path, {
     credentials: "same-origin",
     ...init,
-    headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
+    headers: { "content-type": "application/json", ...auth.headers, ...(init?.headers ?? {}) },
   });
+  rememberInstance(res, auth.sent !== undefined);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     // The key changed while this request was in flight (a rotation): try once with the new one.
-    if (res.status === 401 && !retried && sent !== getToken()) return http<T>(path, init, true);
-    return failure(res, data, sent);
+    if (res.status === 401 && !retried && auth.sent !== getToken())
+      return http<T>(path, init, true);
+    return failure(res, data, auth.sent);
   }
   return data as T;
 }
@@ -283,14 +301,16 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     // No content-type header: the browser sets the multipart boundary.
+    const auth = await authForRequest();
     const res = await fetch(`${T(pid, id)}/attachments`, {
       credentials: "same-origin",
       method: "POST",
       body: form,
-      headers: authHeaders(),
+      headers: auth.headers,
     });
+    rememberInstance(res, auth.sent !== undefined);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return failure(res, data);
+    if (!res.ok) return failure(res, data, auth.sent);
     return withLog(data as TaskView);
   },
   deleteAttachment: (pid: string, id: string, name: string) =>
@@ -374,11 +394,13 @@ export const api = {
 
   /** Fetch an attachment with the auth header and return a blob: URL for <img>/<a>. */
   attachmentBlobUrl: async (pid: string, id: string, name: string): Promise<string> => {
+    const auth = await authForRequest();
     const res = await fetch(api.attachmentUrl(pid, id, name), {
       credentials: "same-origin",
-      headers: authHeaders(),
+      headers: auth.headers,
     });
-    if (!res.ok) return failure(res, await res.json().catch(() => ({})));
+    rememberInstance(res, auth.sent !== undefined);
+    if (!res.ok) return failure(res, await res.json().catch(() => ({})), auth.sent);
     return URL.createObjectURL(await res.blob());
   },
 
@@ -514,7 +536,7 @@ async function readConciergeStream(
   signal: AbortSignal | undefined,
   retried: boolean,
 ): Promise<void> {
-  const sent = getToken();
+  const auth = await authForRequest();
   const res = await fetch(`${P(pid)}/concierge/messages/stream`, {
     credentials: "same-origin",
     method: "POST",
@@ -523,15 +545,16 @@ async function readConciergeStream(
     headers: {
       "content-type": "application/json",
       accept: "text/event-stream",
-      ...authHeaders(),
+      ...auth.headers,
     },
   });
+  rememberInstance(res, auth.sent !== undefined);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401 && !retried && sent !== getToken()) {
+    if (res.status === 401 && !retried && auth.sent !== getToken()) {
       return readConciergeStream(pid, body, onEvent, signal, true);
     }
-    return failure(res, data, sent);
+    return failure(res, data, auth.sent);
   }
   if (!res.body) throw new ApiError("The assistant stream was empty", res.status);
   const reader = res.body.getReader();

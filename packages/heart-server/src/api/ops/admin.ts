@@ -381,15 +381,11 @@ export const runnerOverview = defineOp({
     const projects = [];
     for (const p of await ctx.services.listProjects()) {
       if (!authorizeProject(ctx.principal, p.id)) continue;
-      const tasks = await ctx.services.forProject(p.id).list();
-      const counts: Record<string, number> = {};
-      for (const t of tasks) counts[t.frontmatter.status] = (counts[t.frontmatter.status] ?? 0) + 1;
+      const { counts, running } = await ctx.services.forProject(p.id).statusSummary();
       projects.push({
         id: p.id,
         paused: p.paused,
-        running: tasks
-          .filter((t) => t.frontmatter.status === "running")
-          .map((t) => t.frontmatter.id),
+        running,
         counts,
       });
     }

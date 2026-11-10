@@ -1,4 +1,4 @@
-import { GIT_HARDENING_ARGS } from "./git.js";
+import { hardenedGitCommand } from "./git.js";
 import { execCommand } from "./process.js";
 
 /** Most untracked files listed or diffed for one review. */
@@ -8,18 +8,17 @@ const GIT_TIMEOUT_MS = 30_000;
 
 async function git(cwd: string, args: string[]) {
   // --literal-pathspecs keeps file names from acting as pathspec magic.
-  return execCommand(
-    "git",
-    [
-      ...GIT_HARDENING_ARGS,
-      "--no-pager",
-      "--literal-pathspecs",
-      "-c",
-      "core.quotepath=off",
-      ...args,
-    ],
-    { cwd, timeoutMs: GIT_TIMEOUT_MS },
+  const prepared = await hardenedGitCommand(
+    cwd,
+    ["--no-pager", "--literal-pathspecs", "-c", "core.quotepath=off", ...args],
+    undefined,
+    GIT_TIMEOUT_MS,
   );
+  return execCommand("git", prepared.args, {
+    cwd,
+    timeoutMs: GIT_TIMEOUT_MS,
+    env: prepared.env,
+  });
 }
 
 /** Untracked, not-ignored files of the worktree at `cwd` (at most MAX_UNTRACKED). */

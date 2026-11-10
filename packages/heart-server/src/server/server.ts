@@ -9,6 +9,7 @@ import {
   dataRootPaths,
   UnsafeBrowserSessionPathError,
   ExternalRunStore,
+  dataRootAccessNotice,
   migrateDataRoot,
   securitySettings,
   tightenDataRoot,
@@ -101,11 +102,10 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   // Bring a v1 data root to v2 before any store opens (also scaffolds a fresh root).
   const migration = await migrateDataRoot(opts.root);
   const tightened = await tightenDataRoot(opts.root);
-  if (tightened.changed) {
-    warn(
-      `tightened data root ${opts.root} from ${tightened.before.toString(8)} to 700 (other local users could read it)`,
-    );
-  } else if (
+  const accessNotice = dataRootAccessNotice(opts.root, tightened);
+  if (accessNotice) warn(accessNotice);
+  else if (
+    !tightened.changed &&
     ["not-owner", "home-or-root", "chmod-failed"].includes(tightened.reason) &&
     !tightened.unsafeParent
   ) {

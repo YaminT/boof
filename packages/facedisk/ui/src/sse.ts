@@ -1,6 +1,7 @@
 // fetch-based Server-Sent Events reader. EventSource cannot send headers, so the
 // API key would have to travel in the URL; this keeps it in an Authorization header.
 
+import { confirmInstance, noteInstanceHeader } from "./instance.js";
 import {
   reportSignInStorageError,
   storageUnavailableMessage,
@@ -121,12 +122,24 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
     let attempt = 0;
     while (!ctrl.signal.aborted) {
       try {
-        const headers = opts.headers();
+        const raw = opts.headers();
+        let headers = raw;
+        if (raw.authorization) {
+          const check = await confirmInstance(doFetch);
+          if (ctrl.signal.aborted) return;
+          // Offline, or the probe itself failed: do not open the credentialed stream.
+          if (check === "withhold") throw new Error("instance unconfirmed");
+          if (check !== "send") {
+            headers = { ...raw };
+            delete headers.authorization;
+          }
+        }
         const res = await doFetch(opts.url, {
           credentials: "same-origin",
           headers: { accept: "text/event-stream", ...headers },
           signal: ctrl.signal,
         });
+        if (res.ok && headers.authorization) noteInstanceHeader(res.headers.get("X-Boof-Instance"));
         if (res.status === 401) {
           // A "browser_session_required" 401 means this browser has no session: pause until the
           // user signs in (or stores a key), instead of reconnecting into more 401s.

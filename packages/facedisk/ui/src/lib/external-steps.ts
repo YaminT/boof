@@ -59,6 +59,41 @@ export function n8nStatusLine(info: N8nInfo, cache: N8nWorkflowsResult, nowMs: n
   return `Connected to ${host} · ${n} ${n === 1 ? "workflow" : "workflows"} · ${when}`;
 }
 
+/** `location.hostname` is `::1`; Node's `URL.hostname` is `[::1]`. Cookie scope uses the bare host. */
+function bareHostname(host: string): string {
+  return host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+}
+
+/**
+ * Host-only cookies ignore the port, so a navigation to n8n on the same host name would send the
+ * boof cookie. Loopback names that share a cookie jar are swapped (`127.0.0.1` ↔ `localhost`,
+ * `::1` → `localhost`); both still reach a loopback listener. A link that is already on a
+ * different host is left as it is.
+ */
+export function n8nEditorHref(editorUrl: string, pageHostname: string): string {
+  let url: URL;
+  try {
+    url = new URL(editorUrl);
+  } catch {
+    return editorUrl;
+  }
+  const editorHost = bareHostname(url.hostname);
+  const pageHost = bareHostname(pageHostname);
+  if (!pageHost || editorHost !== pageHost) return editorUrl;
+  const alt =
+    editorHost === "localhost"
+      ? "127.0.0.1"
+      : editorHost === "127.0.0.1" || editorHost === "::1" || editorHost.startsWith("127.")
+        ? "localhost"
+        : undefined;
+  if (!alt) return editorUrl;
+  url.hostname = alt;
+  return url.href;
+}
+
 /** The n8n connection is global and sends task content out: the local principal or a trusted, unrestricted admin key. */
 export function canAdminN8n(
   w: {
