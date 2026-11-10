@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<boof>
+  <overal>
+    <goal>Build OS sandboxing for task agents. Compare the Claude Code sandbox, the Codex sandbox, a separate OS user for the runner, and a container per task across Linux, macOS and Windows. Cover network access to loopback (especially the boof port), file access outside the task worktree (including the data root and user credentials), setup and runtime cost, desktop app support, and fit with git worktrees. Recommend and implement the selected option. Add tests proving an agent cannot reach the boof port or read the data root while retaining write access to its worktree and access to its model API.</goal>
+    <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
+    <rules>
+      <do>Read README.md (Security model) and docs/boof-runner.md (Agents are not sandboxed) before changing anything.</do>
+      <do>Write the investigation to docs/superpowers/specs/&lt;date&gt;-agent-containment-design.md and get the owner&#x27;s choice before building.</do>
+      <do>Run `npm run typecheck &amp;&amp; npx prettier --check . &amp;&amp; npx vitest run &amp;&amp; npm run build:server` before finishing.</do>
+      <dont>Do not describe an allowlisted environment or MCP isolation as a sandbox; say what is and is not blocked.</dont>
+      <dont>Do not commit secrets, data roots or build output.</dont>
+    </rules>
+  </overal>
+  <progress>
+    <status>
+      <versions>
+        <version number="1" status="plan">Layer 2 was left open when layer 1 was completed on 2026-11-07. Investigate and build OS-level isolation as a separate goal.</version>
+      </versions>
+    </status>
+    <tests>
+      <strategy>An agent started by the runner cannot connect to the boof port or read the data root, and can still write its worktree and reach its model API; verify the selected option on supported platforms.</strategy>
+      <technology>vitest</technology>
+      <run>npx vitest run packages/runner</run>
+    </tests>
+  </progress>
+</boof>

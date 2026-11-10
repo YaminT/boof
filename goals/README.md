@@ -111,12 +111,12 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`ui-phase-3-residuals`](ui-phase-3-residuals/goal.boof.xml) — Three small regressions left by the phase 3 fix wave
 - [x] [`ui-redesign-phase-4`](ui-redesign-phase-4/goal.boof.xml) — Plans screen and the Inbox / Needs-you group
 - [x] [`ui-redesign-phase-5`](ui-redesign-phase-5/goal.boof.xml) — Settings in five pages, API keys, budgets (after: ui-redesign-phase-4)
-- [ ] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
+- [x] [`ui-redesign-phase-6`](ui-redesign-phase-6/goal.boof.xml) — Polish, a11y, remove styles.css, bundle size, deferred minors (after: ui-redesign-phase-5)
 - [x] [`step-closing-entry`](step-closing-entry/goal.boof.xml) — Owner decision: a closing entry in steps[] so the last step has a duration
 - [x] [`boof-split`](boof-split/goal.boof.xml) — Separate Runner, Facedisk, Heart and Owlish with boof as the orchestrator (design first)
 - [x] [`audit-stdio-and-cli-writes`](audit-stdio-and-cli-writes/goal.boof.xml) — Audit the writes made over stdio MCP and through the CLI (after: boof-split, with M3)
 - [x] [`audit-handwritten-cli`](audit-handwritten-cli/goal.boof.xml) — Audit the hand-written CLI commands (they bypass op.execute; route them through ops or audit with the same line shape) (after: audit-stdio-and-cli-writes)
-- [ ] [`agent-containment`](agent-containment/goal.boof.xml) — Run task agents isolated from boof: no route to the boof port, no data root, no credentials (investigate the Claude and Codex sandboxes, a separate OS user, a container)
+- [x] [`agent-containment`](agent-containment/goal.boof.xml) — Layer 1: keyless browser access, MCP keys, no agent credential, and data root mode 0700
 
 ## Verification and release
 
@@ -125,3 +125,5 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`typescript-7`](typescript-7/goal.boof.xml) — Upgrade to TypeScript 7
 - [x] [`publish-runbook`](publish-runbook/goal.boof.xml) — Publish the server runbook on nodets.com
 - [x] [`release-0-3-0`](release-0-3-0/goal.boof.xml) — Release v0.3.0 with a changelog (after: desktop-e2e, verify-steering-codex, publish-runbook)
+- [ ] [`agent-containment-layer-2`](agent-containment-layer-2/goal.boof.xml) — OS-level sandboxing for task agents (after: agent-containment)
+- [ ] [`release-0-4-0`](release-0-4-0/goal.boof.xml) — Prepare the v0.4.0 release (after: desktop-e2e)

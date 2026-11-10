@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <boof>
   <overal>
-    <goal>Run task agents isolated from boof. Today an agent (claude, codex or opencode) runs as the user&#x27;s OS user, in the task&#x27;s worktree, with every permission prompt skipped. It can read the data root and any file the user can, and under `security.auth.mode = local-trust` it can call boof&#x27;s API on 127.0.0.1 with no key and act as the local administrator (queue tasks, create keys and webhooks, flip settings). Boof limits what an agent inherits (an allowlisted environment, no user MCP servers) but does not contain it. Contain it: no route to the boof port, no access to the data root or to the user&#x27;s credentials, write access to the task&#x27;s worktree only. The first step is to investigate each option and report: the Claude Code sandbox (its settings and what it covers on Linux, macOS and Windows), the Codex sandbox (workspace-write needs bubblewrap and does not run on a host without it; this machine has none), a separate OS user for the runner, or a container per task. Compare what each blocks (network to loopback, files outside the worktree), what it costs (setup, platform support, the desktop app), and how it fits the worktree and git model. Then plan and build the chosen one, with a test that an agent cannot reach the boof port or read the data root.</goal>
+    <goal>Layer 1 of agent containment: prevent agents from using keyless local-trust access to boof and keep runner credentials and the data root out of their reach. Agents use browser-only keyless access, MCP keys, no agent credential plus marker, and a data root with mode 0700. OS-level sandboxing is a separate follow-up in agent-containment-layer-2.</goal>
     <stack>TypeScript monorepo (Node 22 / Bun), Hono server, React + Vite UI, vitest</stack>
     <rules>
       <do>Read README.md (Security model) and docs/boof-runner.md (Agents are not sandboxed) before changing anything.</do>
@@ -16,6 +16,7 @@
       <versions>
         <version number="1" status="plan">Raised by the security review on 2026-11-02 (a task agent can call the local API as the administrator under local-trust); not started. Step 1 is the investigation of the four options.</version>
         <version number="2" status="done">Layer 1 (owner decision 2026-11-07): browser-only keyless access, MCP keys, no agent credential plus marker, data root 0700. Layer 2 (OS sandbox) not started.</version>
+        <version number="3" status="done">Layer 1 closed: browser-only keyless access, MCP keys, no agent credential plus marker, and data root mode 0700. OS sandbox work is tracked separately in agent-containment-layer-2.</version>
       </versions>
     </status>
     <tests>
