@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  filterOverrideArgsFromConfig,
   git,
   initGitRepo,
   isGitRepo,
@@ -13,7 +14,7 @@ import {
 } from "./git.js";
 import { execCommand } from "./process.js";
 import { taskDiff } from "./task-diff.js";
-import { untrackedFiles } from "./untracked-diff.js";
+import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 
 let repo: string;
 let nonRepo: string;
@@ -307,6 +308,69 @@ describe("agent-planted git config does not run server-side", () => {
     const diff = await taskDiff({ workingDir: repo, taskId: "t2", worktreePath: wt });
     expect(diff.includesUncommitted).toBe(true);
     await git(wt, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--stat"]);
+    expect(await exists(ran)).toBe(false);
+  });
+
+  it("turns a planted clean and smudge filter into empty overrides", () => {
+    const listed = [
+      "filter.lfs.clean\ngit-lfs clean -- %f\0",
+      "filter.evil.clean\n/tmp/filt.sh\0",
+      "filter.evil.smudge\n/tmp/filt.sh\0",
+      "filter.evil.required\ntrue\0",
+      "filter.bad name.clean\ntouch /tmp/x\0",
+    ].join("");
+    expect(filterOverrideArgsFromConfig(listed)).toEqual([
+      "-c",
+      "filter.evil.clean=",
+      "-c",
+      "filter.evil.smudge=",
+      "-c",
+      "filter.evil.process=",
+      "-c",
+      "filter.evil.required=false",
+      "-c",
+      "filter.lfs.clean=",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.process=",
+      "-c",
+      "filter.lfs.required=false",
+    ]);
+  });
+
+  it("server git does not run a planted clean or smudge filter", async () => {
+    const ran = join(nonRepo, "filter-ran");
+    const script = join(nonRepo, "filter.sh");
+    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+    await g(["config", "filter.evil.clean", script]);
+    await g(["config", "filter.evil.smudge", script]);
+    await g(["config", "filter.evil.required", "true"]);
+    await writeFile(join(repo, ".gitattributes"), "* filter=evil\n");
+    await writeFile(join(repo, "a.txt"), "one\n");
+    await g(["add", "a.txt"]);
+    expect(await exists(ran)).toBe(true);
+    await rm(ran, { force: true });
+
+    await writeFile(join(repo, "a.txt"), "two\n");
+    const diff = await git(repo, ["diff", "--", "a.txt"]);
+    expect(diff.code).not.toBeNull();
+    expect(diff.out).toContain("two");
+    const added = await git(repo, ["add", "--", "a.txt"]);
+    expect(added.code).toBe(0);
+    expect(await exists(ran)).toBe(false);
+
+    await g(["branch", "boof-runner/t3"]);
+    const wt = join(repo, ".wts", "t3");
+    await g(["worktree", "add", "-q", wt, "boof-runner/t3"]);
+    await writeFile(join(wt, ".gitattributes"), "* filter=evil\n");
+    await writeFile(join(wt, "a.txt"), "three\n");
+    await rm(ran, { force: true });
+    const task = await taskDiff({ workingDir: repo, taskId: "t3", worktreePath: wt });
+    expect(task.includesUncommitted).toBe(true);
+    await writeFile(join(wt, "new.txt"), "x\n");
+    expect(await untrackedFiles(wt)).toContain("new.txt");
+    expect(await untrackedPatch(wt, "new.txt")).toContain("x");
     expect(await exists(ran)).toBe(false);
   });
 });

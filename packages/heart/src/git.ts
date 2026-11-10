@@ -26,6 +26,69 @@ export const GIT_HARDENING_ARGS: readonly string[] = [
   "core.hooksPath=/dev/null",
 ];
 
+/**
+ * `-c` overrides that blank every clean/smudge/process filter currently in git config.
+ * An empty command disables the filter. Names come from a config read taken just before the
+ * real command; a driver created after that read can still run.
+ */
+export function filterOverrideArgsFromConfig(stdout: string): string[] {
+  const names = new Set<string>();
+  for (const record of stdout.split("\0")) {
+    if (!record) continue;
+    const key = record.split("\n", 1)[0] ?? "";
+    const match = /^filter\.([^\s=]+)\.(clean|smudge|process|required)$/.exec(key);
+    if (match?.[1]) names.add(match[1]);
+  }
+  const args: string[] = [];
+  for (const name of [...names].sort()) {
+    args.push(
+      "-c",
+      `filter.${name}.clean=`,
+      "-c",
+      `filter.${name}.smudge=`,
+      "-c",
+      `filter.${name}.process=`,
+      "-c",
+      `filter.${name}.required=false`,
+    );
+  }
+  return args;
+}
+
+function gitEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+  return env ? { ...process.env, ...env } : undefined;
+}
+
+/** Timeout for the config read that finds filter drivers. */
+const FILTER_LIST_TIMEOUT_MS = 10_000;
+
+/** Blank every filter driver visible in this repository's config, including global config. */
+export async function gitFilterOverrideArgs(
+  cwd: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  try {
+    const listed = await execCommand(
+      "git",
+      [...GIT_HARDENING_ARGS, "config", "--null", "--get-regexp", "^filter\\."],
+      { cwd, timeoutMs: FILTER_LIST_TIMEOUT_MS, env: gitEnv(env) },
+    );
+    if (listed.timedOut || (listed.code !== 0 && listed.code !== 1)) return [];
+    return filterOverrideArgsFromConfig(listed.stdout);
+  } catch {
+    return [];
+  }
+}
+
+/** Hardening plus filter overrides plus `args`, for every server-run git command. */
+export async function hardenedGitArgs(
+  cwd: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  return [...GIT_HARDENING_ARGS, ...(await gitFilterOverrideArgs(cwd, env)), ...args];
+}
+
 /** Timeout for ordinary git calls. */
 export const GIT_TIMEOUT_MS = 30_000;
 export async function git(
@@ -34,10 +97,10 @@ export async function git(
   env?: NodeJS.ProcessEnv,
   timeoutMs: number = GIT_TIMEOUT_MS,
 ): Promise<{ code: number | null; out: string; err: string; timedOut: boolean }> {
-  const res = await execCommand("git", [...GIT_HARDENING_ARGS, ...args], {
+  const res = await execCommand("git", await hardenedGitArgs(cwd, args, env), {
     cwd,
     timeoutMs,
-    env: env ? { ...process.env, ...env } : undefined,
+    env: gitEnv(env),
   });
   return { code: res.code, out: res.stdout.trim(), err: res.stderr.trim(), timedOut: res.timedOut };
 }
