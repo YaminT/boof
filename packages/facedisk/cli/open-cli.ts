@@ -2,7 +2,12 @@ import { existsSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { BrowserSessionStore, SettingsStore, securitySettings } from "@boof/heart";
+import {
+  BrowserSessionStore,
+  SettingsStore,
+  scaffoldDataRoot,
+  securitySettings,
+} from "@boof/heart";
 import { beginCliAudit } from "./cli-audit.js";
 
 export const OPEN_HELP = `boof-runner open — print a single-use link that signs a browser in to the web UI
@@ -86,6 +91,8 @@ export async function openCommand(
   const revoke = v["revoke-all"] === true;
   const audit = beginCliAudit(root, revoke ? "cli:open.revoke-all" : "cli:open");
   try {
+    // Migrate before load(). A 0.3.0 settings file would otherwise surface as a raw schema error.
+    await scaffoldDataRoot(root);
     const store = new BrowserSessionStore(root);
     if (revoke) {
       const n = await store.revokeAll();

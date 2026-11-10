@@ -107,9 +107,10 @@ async function mergeInto(src: string, dst: string): Promise<string[]> {
  *    own precondition);
  *  - `schemaVersion: 2` (a 0.3.0 root): stamp it to 3 with no other field changes;
  *  - the current schema: nothing, apart from webhook-secret and plan-approval backfills.
- * Throws MigrationError when a task is running under a live runner, the root is newer than
- * this release, or a schema 2 file cannot be loaded. 0.3.0 refuses any schemaVersion other
- * than 2, so a root stamped to 3 cannot be opened by going back.
+ * Throws MigrationError when a task is running under a live runner, a 0.3.0 runner still holds
+ * the pid file on a schema 2 root, the root is newer than this release, or a schema 2 file
+ * cannot be loaded. 0.3.0 refuses any schemaVersion other than 2, so a root stamped to 3 cannot
+ * be opened by going back.
  */
 export async function migrateDataRoot(
   root: string,
@@ -276,21 +277,34 @@ export function withMigrationLock<T>(
 
 /**
  * Empty schema step. Rewrites `schemaVersion` 2 as the current schema and keeps every other
- * field as stored. A file this release cannot load is left untouched.
+ * field as stored. A file this release cannot load is left untouched. Call under the migration
+ * lock. While the file is still 2, a live `.runner.pid` can only be boof-runner 0.3.0, which
+ * re-reads settings on every request and would fail after the stamp.
  */
-async function stampSettingsSchema2(settingsPath: string): Promise<string[]> {
-  const raw = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
+async function stampSettingsSchema2(
+  paths: { settings: string; runnerPid: string },
+  opts: MigrateOptions,
+): Promise<string[]> {
+  const raw = JSON.parse(await readFile(paths.settings, "utf8")) as Record<string, unknown>;
   if (raw.schemaVersion !== SETTINGS_SCHEMA_V2) return [];
+  const alive = opts.isProcessAlive ?? defaultAlive;
+  if (await runnerIsLive(paths.runnerPid, { ...opts, isProcessAlive: alive })) {
+    throw new MigrationError(
+      "a boof-runner 0.3.0 process is running on this root; stop it, then start this release",
+    );
+  }
   const next = { ...raw, schemaVersion: SETTINGS_SCHEMA_VERSION };
   const parsed = SettingsSchema.safeParse(next);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");
-    throw new MigrationError(`cannot migrate ${settingsPath} from schema 2 to 3: ${detail}`);
+    throw new MigrationError(`cannot migrate ${paths.settings} from schema 2 to 3: ${detail}`);
   }
   // Write `next`, not the parsed value: parsing strips unknown keys and fills defaults.
-  await lockedAtomicWrite(settingsPath, JSON.stringify(next, null, 2) + "\n");
+  // The read sits outside the settings file lock; the migration lock and the live-runner
+  // refusal above are what keep a 0.3.0 process from writing schema 2 back over the stamp.
+  await lockedAtomicWrite(paths.settings, JSON.stringify(next, null, 2) + "\n");
   return [`${nowIso()} stamped settings schemaVersion from 2 to 3`];
 }
 
@@ -314,7 +328,7 @@ async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<Migr
         `${paths.settings} has schemaVersion ${String(raw.schemaVersion)}, newer than this boof-runner supports (${SETTINGS_SCHEMA_VERSION}); upgrade boof-runner`,
       );
     }
-    const stamped = await stampSettingsSchema2(paths.settings);
+    const stamped = await stampSettingsSchema2(paths, opts);
     const log = [
       ...stamped,
       ...(await moveWebhookSecrets(root)),

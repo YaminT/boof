@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -52,6 +52,17 @@ afterEach(async () => {
 });
 
 describe("boof-runner open", () => {
+  it("stamps a 0.3.0 settings file and still prints a link", async () => {
+    await writeFile(
+      join(root, "settings.json"),
+      JSON.stringify({ ...defaultSettings(), schemaVersion: 2 }, null, 2) + "\n",
+    );
+    expect(await run("-d", root, "--port", "6002")).toBe(0);
+    expect(errs.join("\n")).not.toMatch(/schemaVersion|expected 3|Zod/i);
+    expect(out[1]).toContain(":6002/");
+    expect(JSON.parse(await readFile(join(root, "settings.json"), "utf8")).schemaVersion).toBe(3);
+  });
+
   it("prints a link whose code the server's store redeems", async () => {
     expect(await run("-d", root)).toBe(0);
     expect(out).toHaveLength(2);

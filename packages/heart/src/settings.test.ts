@@ -252,6 +252,22 @@ describe("v2 settings store", () => {
     await expect(new SettingsStore(root).load()).rejects.toThrow(/v1 settings file/);
   });
 
+  it("refuses a 0.3.0 schema 2 file with one line, not a schema dump", async () => {
+    const path = dataRootPaths(root).settings;
+    await writeFile(path, JSON.stringify({ ...defaultSettings(), schemaVersion: 2 }));
+    const err = await new SettingsStore(root).load().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toBe(
+      `${path} is a 0.3.0 settings file; start boof-runner (any command) to migrate the data root`,
+    );
+    expect(message).not.toMatch(/schemaVersion|expected 3|Zod/i);
+    expect(message).not.toContain("\n");
+  });
+
   it("update merges runner per key, so enabling the runner keeps the concurrency", async () => {
     const store = new SettingsStore(root);
     await store.update({ runner: { concurrency: 3 } });

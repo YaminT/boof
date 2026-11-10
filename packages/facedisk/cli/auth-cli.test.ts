@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStore } from "@boof/heart";
+import { AuthStore, defaultSettings } from "@boof/heart";
 import { authCommand } from "./auth-cli.js";
 
 let root: string;
@@ -75,6 +75,17 @@ describe("boof-runner auth", () => {
     expect(await run("revoke", "ci-bot")).toBe(0);
     expect(await run("rotate", "ci-bot")).toBe(1);
     expect(await run("revoke", "ghost")).toBe(1);
+  });
+
+  it("stamps a 0.3.0 settings file before creating a key", async () => {
+    await writeFile(
+      join(root, "settings.json"),
+      JSON.stringify({ ...defaultSettings(), schemaVersion: 2 }, null, 2) + "\n",
+    );
+    expect(await run("add", "--name", "Remote", "--scopes", "tasks:read")).toBe(0);
+    expect(errs.join("\n")).not.toMatch(/schemaVersion|expected 3|Zod/i);
+    expect(out.join("\n")).toContain("boof_remote_");
+    expect(JSON.parse(await readFile(join(root, "settings.json"), "utf8")).schemaVersion).toBe(3);
   });
 
   it("validates input", async () => {

@@ -69,10 +69,19 @@ export class SettingsStore {
     // not write. Startup and the first update create it.
     if (!(await exists(this.path))) return defaultSettings();
     const raw: unknown = JSON.parse(await readText(this.path));
-    if (raw && typeof raw === "object" && !("schemaVersion" in raw)) {
-      throw new Error(
-        `${this.path} is a v1 settings file; start boof-runner (any command) to migrate the data root to v2`,
-      );
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      if (!("schemaVersion" in raw)) {
+        throw new Error(
+          `${this.path} is a v1 settings file; start boof-runner (any command) to migrate the data root to v2`,
+        );
+      }
+      // 2 is a 0.3.0 file. Name it before Zod, which would dump a multi-line error for the
+      // literal. Every command migrates first; this is the message when one did not.
+      if (raw.schemaVersion === 2) {
+        throw new Error(
+          `${this.path} is a 0.3.0 settings file; start boof-runner (any command) to migrate the data root`,
+        );
+      }
     }
     return SettingsSchema.parse(raw);
   }

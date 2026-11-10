@@ -8,6 +8,7 @@ import {
   ScopeSchema,
   SCOPES,
   SettingsStore,
+  scaffoldDataRoot,
   securitySettings,
   TrustSchema,
   type PublicClient,
@@ -90,6 +91,9 @@ export async function authCommand(
       ? values.data
       : resolve(process.cwd(), values.data)
     : defaultRoot();
+  // Migrate before any store opens. A 0.3.0 settings file would otherwise fail load() with a
+  // raw schema error, and `auth add` is often the first command after an upgrade.
+  await scaffoldDataRoot(root);
   const store = new AuthStore(root);
 
   switch (sub) {

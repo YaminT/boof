@@ -780,6 +780,25 @@ describe("schema guard against rollback", () => {
     expect(await readFile(join(root, "migration-v2.log"), "utf8")).toBe(log);
   });
 
+  it("refuses to stamp schema 2 while a 0.3.0 runner holds the pid file, and stamps once that process is gone", async () => {
+    const before = releasedV2File();
+    await writeFile(join(root, "settings.json"), before);
+    await writeFile(join(root, ".runner.pid"), "4242\n");
+    await expect(
+      migrateDataRoot(root, { isProcessAlive: (pid) => pid === 4242 }),
+    ).rejects.toBeInstanceOf(MigrationError);
+    await expect(migrateDataRoot(root, { isProcessAlive: (pid) => pid === 4242 })).rejects.toThrow(
+      /a boof-runner 0\.3\.0 process is running on this root; stop it, then start this release/,
+    );
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(before);
+    expect(await exists(join(root, "migration-v2.log"))).toBe(false);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+
+    const stamped = await migrateDataRoot(root, { isProcessAlive: () => false });
+    expect(stamped.kind).toBe("migrated");
+    expect(JSON.parse(await readFile(join(root, "settings.json"), "utf8")).schemaVersion).toBe(3);
+  });
+
   it("does not rewrite a schema 2 file it cannot load", async () => {
     const text = JSON.stringify({ schemaVersion: 2, runner: { enabled: "yes" } });
     await writeFile(join(root, "settings.json"), text);
