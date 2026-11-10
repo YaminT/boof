@@ -9,7 +9,7 @@ import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
 import { remoteCommand } from "@boof/facedisk/cli/remote-cli.js";
 import { serviceCommand } from "@boof/facedisk/cli/service-cli.js";
-import { TaskService } from "@boof/heart-server";
+import { attachConcierge, TaskService } from "@boof/heart-server";
 import { epicCommand } from "@boof/facedisk/cli/epic-cli.js";
 import {
   HAND_WRITTEN_COMMANDS,
@@ -705,11 +705,14 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       (isOpArea(cmd) && !(cmd in HAND_WRITTEN_COMMANDS)))
   ) {
     return opsCommand([cmd, ...rest], defaultDataRoot, {
-      services: (root) =>
-        new TaskService(root, new ToolRegistry(), {
+      services: (root) => {
+        const service = new TaskService(root, new ToolRegistry(), {
           conciergeAgent: new ClaudeConcierge({ root }),
           authStore: new AuthStore(root),
-        }),
+        });
+        attachConcierge(service);
+        return service;
+      },
     });
   }
   let code = 0;

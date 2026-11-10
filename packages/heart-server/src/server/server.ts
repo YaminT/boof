@@ -18,6 +18,7 @@ import {
   type ConciergeAgent,
   reservedIdWarning,
 } from "@boof/heart";
+import { attachConcierge } from "../concierge/compose.js";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
@@ -120,6 +121,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     conciergeAgent: opts.conciergeAgent,
     authStore,
   });
+  attachConcierge(service);
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);

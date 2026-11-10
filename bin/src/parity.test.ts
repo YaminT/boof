@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  attachConcierge,
   MCP_REVIEW_SCOPES,
   principalFromClient,
   registry,
@@ -54,7 +55,11 @@ describe("read-only operations answer on both local surfaces", () => {
   let taskId: string;
   const open: Client[] = [];
 
-  const makeServices = (r: string) => new TaskService(r, new ToolRegistry([new MockTool()]));
+  const makeServices = (r: string) => {
+    const service = new TaskService(r, new ToolRegistry([new MockTool()]));
+    attachConcierge(service);
+    return service;
+  };
   const cli = async (argv: string[]) => {
     const out: string[] = [];
     const err: string[] = [];

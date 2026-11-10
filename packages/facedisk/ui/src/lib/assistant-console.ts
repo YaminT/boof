@@ -19,15 +19,21 @@ export function restoredChangesHeader(pending: PendingChangeView[]): string {
   return pending.some((item) => item.status === "pending") ? WAITING_HEADER : EARLIER_HEADER;
 }
 
+const FAILURE_WORDS: Record<string, string> = {
+  change_stale: "the target changed",
+  change_expired: "expired",
+  interrupted: "interrupted, check the task",
+  change_not_found: "no longer exists",
+};
+
+/** Words for a failed row. A raw error code is never shown. */
 function failedLabel(code?: string): string {
   if (!code) return "Failed";
-  const words: Record<string, string> = {
-    change_stale: "the item changed since this was proposed",
-    change_expired: "expired",
-    interrupted: "interrupted",
-    change_not_found: "no longer exists",
-  };
-  return words[code] ?? `failed: ${code}`;
+  const words = FAILURE_WORDS[code];
+  if (words) return `Failed: ${words}`;
+  // snake_case tokens are error codes. A sentence is already words.
+  if (/^[a-z0-9]+(?:_[a-z0-9]+)+$/.test(code)) return "Failed";
+  return code.startsWith("Failed") ? code : `Failed: ${code}`;
 }
 
 /** The one line shown when the assistant cannot run. The reason is the server's, word for word. */

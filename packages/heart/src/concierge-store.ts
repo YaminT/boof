@@ -195,6 +195,26 @@ export class ConciergeStore {
     });
   }
 
+  /**
+   * The owner's live conversation, parsed with the store's schemas.
+   * Does not create a directory, expire changes, or write. Null when the index or the file
+   * is missing, corrupt, or belongs to someone else.
+   */
+  async readLive(projectId: string, owner: string): Promise<ConciergeConversation | null> {
+    const index = await this.readIndex(projectId);
+    const id = index.owners[owner];
+    if (!id || !CONV_ID.test(id)) return null;
+    const conversation = await this.readConversation(projectId, id);
+    if (!conversation || conversation === "corrupt") return null;
+    if (
+      conversation.id !== id ||
+      conversation.projectId !== projectId ||
+      conversation.owner !== owner
+    )
+      return null;
+    return conversation;
+  }
+
   /** Ends the live conversation. The file stays, so `get` can still read it. */
   async reset(projectId: string, owner: string): Promise<void> {
     await this.locked(projectId, async () => {
