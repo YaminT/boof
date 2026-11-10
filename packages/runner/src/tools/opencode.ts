@@ -71,10 +71,11 @@ export class OpencodeTool implements Tool {
 
   /** Argument vector for `opencode run`; exported through the class for tests. */
   buildArgs(opts: RunOptions): string[] {
-    // Anchor the project to opts.cwd explicitly: without --dir, opencode
-    // canonicalizes a git worktree cwd back to the main repository and its
-    // file tools (Read/Write/Edit) would bypass the runner's isolation.
-    const args = ["run", "--format", "json", "--dir", opts.cwd, "-m", opts.model];
+    // OpenCode 2.2.6 rejects `--dir` ("Unrecognized flag: --dir in command
+    // opencode run"). The worktree is the child cwd, as with claude-code and
+    // codex. A positional directory is taken as part of the message, so the
+    // prompt stays on stdin and `--format json` stays on the command.
+    const args = ["run", "--format", "json", "-m", opts.model];
     // Continue an earlier session (a steered step): the prompt is then only the new message.
     if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
     if (opts.autoApprove) {

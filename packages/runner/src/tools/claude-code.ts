@@ -132,6 +132,20 @@ export class ClaudeCodeTool implements Tool {
       onData: (chunk) => render.push(chunk),
     });
     render.flush();
+    // A login failure (and similar) is only the result event's text: no assistant
+    // deltas and an empty stderr. Put that text in the transcript, which is the
+    // step log, and on the error itself.
+    const bareFailure =
+      typeof res.code === "number" &&
+      res.code !== 0 &&
+      !res.timedOut &&
+      !res.stopped &&
+      !res.steered &&
+      !res.stalled &&
+      !render.hasAssistantText
+        ? render.resultDetail.trim()
+        : "";
+    if (bareFailure) render.surface(bareFailure);
 
     const header = `$ ${this.bin} --print --output-format stream-json --model ${opts.model}\n[exit ${res.code}]`;
     const output = `${header}\n${render.transcript}`;
@@ -145,7 +159,12 @@ export class ClaudeCodeTool implements Tool {
         res.stderr,
         res.stalled,
         opts.idleTimeoutMs,
-        { steered: res.steered, sessionId: render.sessionId, usage: render.usage },
+        {
+          steered: res.steered,
+          sessionId: render.sessionId,
+          usage: render.usage,
+          reason: bareFailure || undefined,
+        },
       );
     }
     return withQuestions({
@@ -194,6 +213,10 @@ export class StreamRenderer {
   transcript = "";
   report = "";
   usage?: TokenUsage;
+  /** True once a text delta carried non-whitespace assistant prose. */
+  hasAssistantText = false;
+  /** `result` and `errors` text from the latest result event, trimmed and de-duplicated. */
+  resultDetail = "";
   /** `session_id` of the `system`/`init` and `result` events: what `--resume` takes. */
   sessionId?: string;
   /** Per-message usage from `assistant` events, keyed by message id (fallback when no `result`). */
@@ -225,6 +248,13 @@ export class StreamRenderer {
     this.onText(text);
   }
 
+  /** Append result/error text that never arrived as assistant prose. Also forwarded live. */
+  surface(text: string): void {
+    const body = text.trim();
+    if (!body || this.transcript.includes(body)) return;
+    this.emit((this.transcript && !this.transcript.endsWith("\n") ? "\n" : "") + body + "\n");
+  }
+
   private handleLine(line: string): void {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -244,6 +274,7 @@ export class StreamRenderer {
         break;
       case "result":
         if (typeof obj.result === "string") this.report = obj.result;
+        this.resultDetail = resultDetail(obj);
         {
           const u = usageFromResult(obj);
           if (u) {
@@ -279,8 +310,11 @@ export class StreamRenderer {
       if (cb.type === "tool_use") this.emit(`\n⏺ ${cb.name as string}`);
     } else if (ev.type === "content_block_delta") {
       const d = (ev.delta as Record<string, unknown>) ?? {};
-      if (d.type === "text_delta") this.emit(d.text as string);
-      else if (d.type === "input_json_delta") {
+      if (d.type === "text_delta") {
+        const text = typeof d.text === "string" ? d.text : "";
+        if (text.trim()) this.hasAssistantText = true;
+        this.emit(text);
+      } else if (d.type === "input_json_delta") {
         const b = this.blocks.get(ev.index as number);
         if (b) b.json += (d.partial_json as string) ?? "";
       }
@@ -359,6 +393,27 @@ function sumClaudeUsages(
     costUsd,
     known,
   };
+}
+
+/** Result-event explanation: the `result` string plus any `errors` entries not already in it. */
+function resultDetail(obj: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const add = (value: unknown) => {
+    const text = errorText(value);
+    if (text && !parts.includes(text)) parts.push(text);
+  };
+  add(obj.result);
+  if (Array.isArray(obj.errors)) for (const item of obj.errors) add(item);
+  return parts.join("\n");
+}
+
+function errorText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && "message" in value) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string") return message.trim();
+  }
+  return "";
 }
 
 function usageFromResult(obj: Record<string, unknown>): TokenUsage | undefined {

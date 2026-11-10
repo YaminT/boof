@@ -303,6 +303,24 @@ describe("StreamRenderer (claude stream-json)", () => {
     expect(r.transcript).not.toContain("line two"); // only first line of a result
     expect(r.report).toBe("Final plan");
     expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5, costUsd: 0.02, known: true });
+    expect(r.hasAssistantText).toBe(true);
+    expect(r.resultDetail).toBe("Final plan");
+  });
+
+  it("keeps result and errors text when the stream has no assistant prose", () => {
+    const r = new StreamRenderer(() => {});
+    r.push(
+      JSON.stringify({
+        type: "result",
+        result: "Not logged in · Please run /login",
+        errors: ["Not logged in · Please run /login", { message: "extra detail" }],
+      }) + "\n",
+    );
+    r.flush();
+    expect(r.hasAssistantText).toBe(false);
+    expect(r.transcript).toBe("");
+    expect(r.report).toBe("Not logged in · Please run /login");
+    expect(r.resultDetail).toBe("Not logged in · Please run /login\nextra detail");
   });
 });
 
@@ -613,7 +631,7 @@ describe("OpencodeTool", () => {
     expect(res.report).toBe("Need input.");
   });
 
-  it("builds args anchored to the worktree, with --auto only in auto mode", async () => {
+  it("builds run args without --dir, with --auto only in auto mode", async () => {
     const tool = await setup("exit 0");
     const auto = tool.buildArgs({
       ...baseOpts,
@@ -624,7 +642,8 @@ describe("OpencodeTool", () => {
       prompt: "DO",
       autoApprove: true,
     });
-    expect(auto).toEqual(["run", "--format", "json", "--dir", "/tmp/wt", "-m", "p/m", "--auto"]);
+    expect(auto).toEqual(["run", "--format", "json", "-m", "p/m", "--auto"]);
+    expect(auto).not.toContain("--dir");
     expect(tool.promptText({ ...baseOpts, systemPrompt: "SYS", prompt: "DO" })).toBe("SYS\n\nDO");
     const manual = tool.buildArgs({
       ...baseOpts,
@@ -633,16 +652,7 @@ describe("OpencodeTool", () => {
       model: "p/m",
       autoApprove: false,
     });
-    expect(manual).not.toContain("--auto");
-    expect(manual.slice(0, 7)).toEqual([
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/tmp/wt",
-      "-m",
-      "p/m",
-    ]);
+    expect(manual).toEqual(["run", "--format", "json", "-m", "p/m"]);
   });
 
   it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
@@ -656,8 +666,10 @@ describe("OpencodeTool", () => {
     expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
   });
 
-  it("passes the worktree via --dir, streams chunks and returns the report", async () => {
-    const tool = await setup('printf "args:%s\\n" "$*"; printf "done\\n"');
+  it("runs in the worktree without --dir, streams chunks and returns the report", async () => {
+    const tool = await setup(
+      'pwd > "$(dirname "$0")/cwd"\nprintf "args:%s\\n" "$*"\nprintf "done\\n"',
+    );
     const chunks: string[] = [];
     const res = await tool.run({
       ...baseOpts,
@@ -666,7 +678,9 @@ describe("OpencodeTool", () => {
       model: "p/m",
       onChunk: (c) => chunks.push(c),
     });
-    expect(res.output).toContain(`--dir ${dir}`);
+    expect(res.output).toContain("--format json");
+    expect(res.output).not.toContain("--dir");
+    expect((await readFile(join(dir, "cwd"), "utf8")).trim()).toBe(dir);
     expect(res.report).toContain("done");
     expect(chunks.join("")).toContain("done");
   });
@@ -883,8 +897,6 @@ describe("session resume", () => {
       "run",
       "--format",
       "json",
-      "--dir",
-      "/tmp/wt",
       "-m",
       "p/m",
       "--session",
@@ -1017,6 +1029,61 @@ describe("ClaudeCodeTool questions", () => {
     const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
     expect(res.questions).toEqual(["Which DB?"]);
     expect(res.report).toBe("Need input.");
+  });
+
+  it("puts a login-failure result in the log and the ToolRunError message", async () => {
+    const result = "Not logged in · Please run /login";
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "result", subtype: "success", is_error: true, result })}'\nexit 1`,
+    );
+    const chunks: string[] = [];
+    const err = await tool
+      .run({ ...baseOpts, role: "planner", cwd: dir, onChunk: (c) => chunks.push(c) })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ToolRunError);
+    const e = err as ToolRunError;
+    expect(e.code).toBe(1);
+    expect(e.message).toBe(`claude-code exited with code 1: ${result}`);
+    expect(e.output).toContain(result);
+    expect(e.stderr).toBe("");
+    expect(chunks.join("")).toContain(result);
+  });
+
+  it("uses errors text when the result string is empty", async () => {
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "result", is_error: true, result: "", errors: ["Not logged in · Please run /login"] })}'\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    expect((err as ToolRunError).message).toBe(
+      "claude-code exited with code 1: Not logged in · Please run /login",
+    );
+    expect((err as ToolRunError).output).toContain("Not logged in · Please run /login");
+  });
+
+  it("leaves the result out of the error when assistant text was streamed", async () => {
+    const events = [
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "I started" },
+        },
+      },
+      { type: "result", result: "Not logged in · Please run /login" },
+    ];
+    const tool = await setup(
+      `${events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`).join("\n")}\nexit 1`,
+    );
+    const chunks: string[] = [];
+    const err = await tool
+      .run({ ...baseOpts, role: "planner", cwd: dir, onChunk: (c) => chunks.push(c) })
+      .catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message).toBe("claude-code exited with code 1");
+    expect(e.output).toContain("I started");
+    expect(e.output).not.toContain("Not logged in");
+    expect(chunks.join("")).not.toContain("Not logged in");
   });
 });
 

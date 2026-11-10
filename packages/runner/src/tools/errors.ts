@@ -8,6 +8,11 @@ export interface ToolRunErrorExtra {
   sessionId?: string;
   /** Usage of the interrupted attempt, still recorded. */
   usage?: TokenUsage;
+  /**
+   * Extra clause for a non-zero exit (`exited with code N: …`). Used when the
+   * tool's own result text is the only explanation and stderr is empty.
+   */
+  reason?: string;
 }
 
 /** A tool process failed: non-zero exit, timeout, user stop or a stalled stream. */
@@ -33,7 +38,7 @@ export class ToolRunError extends Error {
             ? `${toolId} timed out`
             : stalled
               ? `${toolId} stalled: no output for ${+(idleMs / 60000).toFixed(1)} min`
-              : `${toolId} exited with code ${code ?? "null"}`,
+              : `${toolId} exited with code ${code ?? "null"}${extra.reason ? `: ${extra.reason}` : ""}`,
     );
     this.name = "ToolRunError";
     this.steered = extra.steered === true;
