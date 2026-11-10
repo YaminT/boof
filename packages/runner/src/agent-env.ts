@@ -45,15 +45,35 @@ const KEEP_NAMES = new Set([
   "PROGRAMDATA",
 ]);
 
-/** Prefixes kept: locale, XDG directories, and each tool's own variables (keys, gateway URLs). */
+/**
+ * Prefixes kept: locale, XDG directories, and each tool's own settings. Gateway credentials are
+ * not part of this; see `STRIP_GATEWAY_CREDENTIALS`.
+ */
 const KEEP_PREFIXES = ["LC_", "XDG_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "OPENCODE_"];
+
+/**
+ * Gateway addresses and credentials. Never inherited from the server process, and never restored
+ * by `runner.agentEnv`. A shell that starts boof often exports the better-ccflare admin token
+ * (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, and the same for the other tools). The pool path
+ * adds the credential one task needs afterwards, through `gatewayEnv`.
+ */
+const STRIP_GATEWAY_CREDENTIALS = new Set([
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_API_BASE",
+  "OPENCODE_CONFIG_CONTENT",
+]);
 
 /** Never passed, whatever `extra` says: boof's own variables, which name its data root and port. */
 const NEVER_PREFIX = "BOOF_";
 
 /**
  * `env` reduced to the allowlist, plus the variables named in `extra` (`settings.runner.agentEnv`)
- * that are set. `BOOF_*` is always dropped.
+ * that are set. `BOOF_*` and gateway credentials are always dropped.
  */
 export function agentEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -63,7 +83,8 @@ export function agentEnv(
   const out: NodeJS.ProcessEnv = {};
   const wanted = new Set(extra);
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || name.startsWith(NEVER_PREFIX)) continue;
+    if (value === undefined || name.startsWith(NEVER_PREFIX) || STRIP_GATEWAY_CREDENTIALS.has(name))
+      continue;
     if (KEEP_NAMES.has(name) || KEEP_PREFIXES.some((p) => name.startsWith(p)) || wanted.has(name)) {
       out[name] = value;
     }
