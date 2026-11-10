@@ -2796,20 +2796,14 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
         await writeFile(join(workingAreaDir(projectDir, id), "log.txt"), "live output line\n");
       }
     };
-    const loopBriefly = async () => {
-      const done = engine.loop();
-      await new Promise((r) => setTimeout(r, 150));
-      engine.stop();
-      await done;
-    };
-
-    it("fails a task left running, keeps the worktree, and allows a retry", async () => {
+    it("requeues a task left running and keeps the worktree", async () => {
       await crash();
-      await loopBriefly();
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
       const t = await store.get("t1");
-      expect(t?.frontmatter.status).toBe("failed");
+      expect(t?.frontmatter.status).toBe("pending");
       expect(t?.body.log).toContain("live output line");
       expect(t?.body.log).toContain("### Interrupted\nThe runner stopped unexpectedly");
+      expect(t?.body.log).toContain("back in the queue");
       expect(await exists(wtPath())).toBe(true);
       expect(await exists(workingAreaDir(projectDir, "t1"))).toBe(false);
       const events = (await readFile(join(projectDir, "events.jsonl"), "utf8"))
@@ -2820,13 +2814,23 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
         type: "task.status",
         task: "t1",
         from: "running",
-        to: "failed",
+        to: "pending",
         by: "runner",
       });
       expect(events.at(-1).reason).toContain("interrupted");
+    });
 
-      await store.transition("t1", "pending");
-      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+    it("the next run of a requeued task continues in the kept worktree", async () => {
+      await crash();
+      expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      mockState.prompts = [];
+      const cwds: string[] = [];
+      mockState.onRun = async (opts) => void cwds.push(opts.cwd);
+      const r = await engine.tick();
+      expect(r.kind === "ran" && r.outcome.kind).toBe("done");
+      expect(cwds.every((c) => c === wtPath())).toBe(true);
+      expect(mockState.prompts[0]).toContain("## Previous run interrupted");
+      expect(mockState.prompts[0]).toContain("git diff");
     });
 
     it("is idempotent: a second start recovers nothing", async () => {
@@ -2842,12 +2846,12 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       await crash("t1", false);
       await mkdir(workingAreaDir(projectDir, "ghost"), { recursive: true });
       expect(await engine.recoverInterrupted()).toEqual(["t1"]);
-      expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
       expect(await exists(workingAreaDir(projectDir, "ghost"))).toBe(true);
     });
 
     it.skipIf(!currentBootIdentity())(
-      "kills an agent process group a crashed runner left behind, then fails the task",
+      "kills an agent process group a crashed runner left behind, then requeues the task",
       async () => {
         await crash();
         const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
@@ -2865,8 +2869,9 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
           await gone;
           expect(isAlive(orphan.pid!)).toBe(false);
           const t = await store.get("t1");
-          expect(t?.frontmatter.status).toBe("failed");
+          expect(t?.frontmatter.status).toBe("pending");
           expect(t?.body.log).toContain("### Interrupted\nThe runner stopped unexpectedly");
+          expect(t?.body.log).toContain("back in the queue");
           expect(t?.body.log).toContain(
             `The agent process group ${orphan.pid} was still running and was killed.`,
           );
@@ -2919,7 +2924,9 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
     it("does not store an identity for an agent that was killed or is gone", async () => {
       await crash();
       expect(await engine.recoverInterrupted()).toEqual(["t1"]);
-      expect((await store.get("t1"))?.frontmatter.agentProcess).toBeUndefined();
+      const t = await store.get("t1");
+      expect(t?.frontmatter.status).toBe("pending");
+      expect(t?.frontmatter.agentProcess).toBeUndefined();
     });
 
     it("off Linux, warns in the Interrupted block that a live agent process may still be running", async () => {
@@ -2960,6 +2967,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       await new Promise<void>((r) => done.on("exit", () => r()));
       await writePidFile(taskPidPath(projectDir, "t1"), { pgid: done.pid!, command: "node" });
       expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
       expect((await store.get("t1"))?.body.log).not.toContain("was still running");
       expect(existsSync(taskPidPath(projectDir, "t1"))).toBe(false);
     });
