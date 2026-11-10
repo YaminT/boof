@@ -8,6 +8,8 @@
  * bounded, unknown fields are ignored, and every failure becomes one {@link PoolStatus}.
  */
 
+import { agentSdkEligibility, type AgentSdkEligibility } from "./agent-sdk-gate.js";
+
 export type PoolState = "absent" | "unreachable" | "ok" | "degraded" | "unhealthy";
 
 export interface PoolStatus {
@@ -40,6 +42,7 @@ export interface AccountSummary {
   id: string;
   name: string;
   provider?: string;
+  hasRefreshToken?: boolean;
   priority?: number;
   paused?: boolean;
   tokenStatus?: string;
@@ -51,11 +54,15 @@ export interface AccountSummary {
 /** Usage-pause thresholds, in percent of a window; passed to the gateway as given. */
 export type Thresholds = Record<string, number | null>;
 
+/** What the admin-only account list says about the key this client sent. */
+export type AdminRouteProbe = "rejected" | "accepted" | "unknown";
+
 /** A failed gateway call. `status` is the HTTP status, or null when no answer came. */
 export class OwlishError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
+    readonly kind: "unreachable" | "malformed" | "http" = status === null ? "malformed" : "http",
   ) {
     super(message);
     this.name = "OwlishError";
@@ -188,6 +195,70 @@ export class OwlishClient {
     );
   }
 
+  /** Strict-only account list used by eligibility; never filters malformed entries.
+   * The gate requires a better-ccflare admin client key; api-only keys get HTTP 401 and keep it closed.
+   */
+  private async accountsForEligibility(): Promise<AccountSummary[]> {
+    const body = await this.json("GET", "/api/accounts");
+    if (
+      !Array.isArray(body) ||
+      body.some(
+        (a) =>
+          !isRecord(a) ||
+          typeof a.id !== "string" ||
+          typeof a.name !== "string" ||
+          typeof a.provider !== "string" ||
+          a.provider.length === 0 ||
+          typeof a.hasRefreshToken !== "boolean",
+      )
+    ) {
+      throw new OwlishError("better-ccflare returned a malformed account list", null, "malformed");
+    }
+    return body as AccountSummary[];
+  }
+
+  /**
+   * GET /api/accounts with this client's key. That route is admin-only: an api-only key is
+   * answered 401 or 403. A 2xx means this key can read it. A redirect, a network error, or any
+   * other status is unknown, and the caller must not treat the key as safe to hand out.
+   */
+  async probeAdminRoute(): Promise<AdminRouteProbe> {
+    let res: Response;
+    try {
+      res = await this.request("GET", "/api/accounts", undefined, true);
+    } catch {
+      return "unknown";
+    }
+    await res.body?.cancel().catch(() => undefined);
+    if (res.status === 401 || res.status === 403) return "rejected";
+    if (res.ok) return "accepted";
+    return "unknown";
+  }
+
+  /** Account-type compliance for Claude Agent SDK. Failures are represented as a closed gate. */
+  async agentSdkEligibility(): Promise<AgentSdkEligibility> {
+    try {
+      return agentSdkEligibility(await this.accountsForEligibility(), new Date(this.now()));
+    } catch (error) {
+      let detail = "malformed answer";
+      let failure: "unreachable" | "http-5xx" | undefined;
+      if (error instanceof OwlishError) {
+        detail =
+          error.kind === "unreachable"
+            ? "unreachable"
+            : error.kind === "malformed"
+              ? "malformed answer"
+              : `HTTP ${error.status}`;
+        if (error.kind === "unreachable") failure = "unreachable";
+        else if (error.status !== null && error.status >= 500) failure = "http-5xx";
+      }
+      return {
+        ...agentSdkEligibility(null, new Date(this.now()), detail),
+        ...(failure ? { failure } : {}),
+      };
+    }
+  }
+
   async pause(id: string): Promise<void> {
     await this.mutate(id, "pause");
   }
@@ -214,7 +285,7 @@ export class OwlishClient {
     try {
       res = await this.request(method, path, body, true);
     } catch {
-      throw new OwlishError(`better-ccflare at ${this.base}: unreachable`, null);
+      throw new OwlishError(`better-ccflare at ${this.base}: unreachable`, null, "unreachable");
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);

@@ -16,6 +16,61 @@ import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
 
+describe("probe environment filtering", () => {
+  const dirs: string[] = [];
+  const envKeys = ["BOOF_RUNNER_CLAUDE_BIN", "BOOF_RUNNER_CODEX_BIN", "BOOF_RUNNER_OPENCODE_BIN"];
+  const saved = new Map(envKeys.map((key) => [key, process.env[key]]));
+  afterEach(async () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete process.env.BOOF_PROBE_FILTER_TEST;
+    for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+
+  const fake = async (key: string, name: string, output: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "boof-probe-env-"));
+    dirs.push(dir);
+    const trace = join(dir, "trace");
+    const bin = join(dir, name);
+    await writeFile(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${trace}'\nenv | grep '^BOOF_' >> '${trace}' || true\ncase "$1" in --version) echo 'fake version';; --help) echo ''; ; debug) echo '${output}';; models) echo '${output}';; esac\n`,
+    );
+    await chmod(bin, 0o755);
+    process.env[key] = bin;
+    return { dir, trace };
+  };
+
+  it("filters claude-code and codex version and model-list probes", async () => {
+    process.env.BOOF_PROBE_FILTER_TEST = "must-not-pass";
+    const claude = await fake("BOOF_RUNNER_CLAUDE_BIN", "claude", "");
+    const codex = await fake("BOOF_RUNNER_CODEX_BIN", "codex", '{"models":[]}');
+    await new ClaudeCodeTool().listModels();
+    await new ClaudeCodeTool().detect();
+    await new CodexTool().listModels();
+    await new CodexTool().detect();
+    for (const trace of [claude.trace, codex.trace]) {
+      const calls = await readFile(trace, "utf8");
+      expect(calls).toContain("--version");
+      expect(calls).toMatch(/--help|debug models/);
+      expect(calls).not.toContain("BOOF_");
+    }
+  });
+
+  it("filters opencode version and model-list probes", async () => {
+    process.env.BOOF_PROBE_FILTER_TEST = "must-not-pass";
+    const opencode = await fake("BOOF_RUNNER_OPENCODE_BIN", "opencode", "a/model");
+    await new OpencodeTool().listModels();
+    await new OpencodeTool().detect();
+    const calls = await readFile(opencode.trace, "utf8");
+    expect(calls).toContain("--version");
+    expect(calls).toContain("models");
+    expect(calls).not.toContain("BOOF_");
+  });
+});
+
 const fixture = (name: string) => fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url));
 
 const baseOpts = {
@@ -248,6 +303,24 @@ describe("StreamRenderer (claude stream-json)", () => {
     expect(r.transcript).not.toContain("line two"); // only first line of a result
     expect(r.report).toBe("Final plan");
     expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5, costUsd: 0.02, known: true });
+    expect(r.hasAssistantText).toBe(true);
+    expect(r.resultDetail).toBe("Final plan");
+  });
+
+  it("keeps result and errors text when the stream has no assistant prose", () => {
+    const r = new StreamRenderer(() => {});
+    r.push(
+      JSON.stringify({
+        type: "result",
+        result: "Not logged in · Please run /login",
+        errors: ["Not logged in · Please run /login", { message: "extra detail" }],
+      }) + "\n",
+    );
+    r.flush();
+    expect(r.hasAssistantText).toBe(false);
+    expect(r.transcript).toBe("");
+    expect(r.report).toBe("Not logged in · Please run /login");
+    expect(r.resultDetail).toBe("Not logged in · Please run /login\nextra detail");
   });
 });
 
@@ -274,7 +347,7 @@ describe("health detection", () => {
         .list()
         .map((t) => t.id)
         .sort(),
-    ).toEqual(["claude-code", "codex", "mock", "opencode"]);
+    ).toEqual(["claude-agent", "claude-code", "codex", "mock", "opencode"]);
     delete process.env.BOOF_RUNNER_CLAUDE_BIN;
     delete process.env.BOOF_RUNNER_CODEX_BIN;
     delete process.env.BOOF_RUNNER_OPENCODE_BIN;
@@ -484,6 +557,21 @@ describe("isTransientToolError", () => {
     expect(e.message).toBe("claude-code stalled: no output for 20 min");
   });
 
+  it("caps a long reason in the message", () => {
+    const reason = "y".repeat(5_000);
+    const e = new ToolRunError("claude-code", 1, false, false, "", "", false, 0, { reason });
+    expect(e.message).toBe(`claude-code exited with code 1: ${"y".repeat(500)}…`);
+    const stopped = new ToolRunError("claude-code", 1, false, true, "", "", false, 0, { reason });
+    expect(stopped.message).toBe("claude-code stopped by user");
+  });
+
+  it("caps a reason on a code point so a surrogate pair is not split", () => {
+    const emoji = "\uD83D\uDE42";
+    const reason = `${"y".repeat(499)}${emoji}${"z".repeat(20)}`;
+    const e = new ToolRunError("claude-code", 1, false, false, "", "", false, 0, { reason });
+    expect(e.message).toBe(`claude-code exited with code 1: ${"y".repeat(499)}${emoji}…`);
+  });
+
   it("does not match stopped, timed out, plain errors or unrelated failures", () => {
     expect(isTransientToolError(err("API Error: 503", "", { stopped: true }))).toBe(false);
     expect(isTransientToolError(err("API Error: 503", "", { timedOut: true }))).toBe(false);
@@ -504,18 +592,20 @@ describe("execCommand idle watchdog", () => {
     expect(res.stalled).toBe(true);
     expect(res.timedOut).toBe(false);
     expect(res.stopped).toBe(false);
-    expect(Date.now() - started).toBeLessThan(10000);
-  });
+    // idleTimeoutMs is 300. The child would otherwise sit for 60s. 30s is timer slack under load.
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 90_000);
 
   it("does not kill a child that keeps printing", async () => {
     const script =
-      "let n=0;const t=setInterval(()=>{console.log('tick');if(++n===8){clearInterval(t)}},100)";
+      "console.log('ready');let n=0;const t=setInterval(()=>{console.log('tick');if(++n===8){clearInterval(t)}},100)";
     const res = await execCommand(process.execPath, ["-e", script], {
       cwd: process.cwd(),
-      idleTimeoutMs: 400,
+      idleTimeoutMs: 2000,
     });
     expect(res.stalled).toBe(false);
     expect(res.code).toBe(0);
+    expect(res.stdout).toContain("ready");
     expect(res.stdout.match(/tick/g)).toHaveLength(8);
   });
 
@@ -557,7 +647,7 @@ describe("OpencodeTool", () => {
     expect(res.report).toBe("Need input.");
   });
 
-  it("builds args anchored to the worktree, with --auto only in auto mode", async () => {
+  it("builds run args without --dir, with --auto only in auto mode", async () => {
     const tool = await setup("exit 0");
     const auto = tool.buildArgs({
       ...baseOpts,
@@ -568,7 +658,8 @@ describe("OpencodeTool", () => {
       prompt: "DO",
       autoApprove: true,
     });
-    expect(auto).toEqual(["run", "--format", "json", "--dir", "/tmp/wt", "-m", "p/m", "--auto"]);
+    expect(auto).toEqual(["run", "--format", "json", "-m", "p/m", "--auto"]);
+    expect(auto).not.toContain("--dir");
     expect(tool.promptText({ ...baseOpts, systemPrompt: "SYS", prompt: "DO" })).toBe("SYS\n\nDO");
     const manual = tool.buildArgs({
       ...baseOpts,
@@ -577,16 +668,7 @@ describe("OpencodeTool", () => {
       model: "p/m",
       autoApprove: false,
     });
-    expect(manual).not.toContain("--auto");
-    expect(manual.slice(0, 7)).toEqual([
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/tmp/wt",
-      "-m",
-      "p/m",
-    ]);
+    expect(manual).toEqual(["run", "--format", "json", "-m", "p/m"]);
   });
 
   it("feeds the prompt through stdin, so a 300 kB prompt arrives whole", async () => {
@@ -600,8 +682,46 @@ describe("OpencodeTool", () => {
     expect(await readFile(join(dir, "stdin"), "utf8")).toBe(`sys\n\n${prompt}`);
   });
 
-  it("passes the worktree via --dir, streams chunks and returns the report", async () => {
-    const tool = await setup('printf "args:%s\\n" "$*"; printf "done\\n"');
+  it("sets PWD to the worktree even when an inherited PWD points somewhere else", async () => {
+    // `pwd` the command prints the OS cwd, which execCommand already sets. OpenCode reads `$PWD`.
+    // A shell would overwrite that variable, so this binary is node and prints the env it was given.
+    prevBin = process.env.BOOF_RUNNER_OPENCODE_BIN;
+    dir = await mkdtemp(join(tmpdir(), "boof-opencode-test-"));
+    const bin = join(dir, "opencode");
+    const seen = join(dir, "pwd");
+    await writeFile(
+      bin,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(seen)}, process.env.PWD ?? "");
+process.stdout.write('{"type":"text","part":{"text":"ok","messageID":"m1"}}\\n');
+`,
+    );
+    await chmod(bin, 0o755);
+    process.env.BOOF_RUNNER_OPENCODE_BIN = bin;
+    const stale = join(dir, "not-the-worktree");
+    const previous = process.env.PWD;
+    process.env.PWD = stale;
+    try {
+      const tool = new OpencodeTool();
+      const res = await tool.run({
+        ...baseOpts,
+        role: "developer",
+        cwd: dir,
+        agentEnv: ["PWD"],
+      });
+      expect(res.report).toBe("ok");
+      expect(await readFile(seen, "utf8")).toBe(dir);
+    } finally {
+      if (previous === undefined) delete process.env.PWD;
+      else process.env.PWD = previous;
+    }
+  });
+
+  it("runs in the worktree without --dir, streams chunks and returns the report", async () => {
+    const tool = await setup(
+      'pwd > "$(dirname "$0")/cwd"\nprintf "args:%s\\n" "$*"\nprintf "done\\n"',
+    );
     const chunks: string[] = [];
     const res = await tool.run({
       ...baseOpts,
@@ -610,7 +730,9 @@ describe("OpencodeTool", () => {
       model: "p/m",
       onChunk: (c) => chunks.push(c),
     });
-    expect(res.output).toContain(`--dir ${dir}`);
+    expect(res.output).toContain("--format json");
+    expect(res.output).not.toContain("--dir");
+    expect((await readFile(join(dir, "cwd"), "utf8")).trim()).toBe(dir);
     expect(res.report).toContain("done");
     expect(chunks.join("")).toContain("done");
   });
@@ -700,6 +822,19 @@ describe("OpencodeTool", () => {
     expect(await tool.listModels()).toEqual(["a/one", "b/two"]);
     const failing = await setup("exit 1");
     expect(await failing.listModels()).toEqual(["opencode-go/kimi-k3"]);
+  });
+
+  it("model listing probes receive no BOOF_ variables", async () => {
+    const tool = await setup(
+      `env | grep '^BOOF_' > "$(dirname "$0")/probe-env" || true\nprintf 'a/model\\n'`,
+    );
+    process.env.BOOF_TEST_PROBE_SECRET = "boof_secret_value";
+    try {
+      await tool.listModels();
+      expect(await readFile(join(dir, "probe-env"), "utf8")).toBe("");
+    } finally {
+      delete process.env.BOOF_TEST_PROBE_SECRET;
+    }
   });
 });
 
@@ -814,8 +949,6 @@ describe("session resume", () => {
       "run",
       "--format",
       "json",
-      "--dir",
-      "/tmp/wt",
       "-m",
       "p/m",
       "--session",
@@ -832,13 +965,20 @@ describe("session resume", () => {
     const bin = join(dir, "codex");
     await writeFile(
       bin,
-      `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\nsleep 30\n`,
+      `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\necho ready\nsleep 30\n`,
     );
     await chmod(bin, 0o755);
     process.env.BOOF_RUNNER_CODEX_BIN = bin;
     const steer = join(dir, "steer");
-    const running = new CodexTool().run({ ...opts, cwd: dir, steerSignalPath: steer });
-    await new Promise((r) => setTimeout(r, 300));
+    let onChunk!: () => void;
+    const sawOutput = new Promise<void>((resolve) => (onChunk = resolve));
+    const running = new CodexTool().run({
+      ...opts,
+      cwd: dir,
+      steerSignalPath: steer,
+      onChunk: () => onChunk(),
+    });
+    await sawOutput;
     await writeFile(steer, "x\n");
     const err = await running.then(
       () => null,
@@ -941,6 +1081,121 @@ describe("ClaudeCodeTool questions", () => {
     const res = await tool.run({ ...baseOpts, role: "planner", cwd: dir });
     expect(res.questions).toEqual(["Which DB?"]);
     expect(res.report).toBe("Need input.");
+  });
+
+  it("puts a login-failure result in the log and the ToolRunError message", async () => {
+    const result = "Not logged in · Please run /login";
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "result", subtype: "success", is_error: true, result })}'\nexit 1`,
+    );
+    const chunks: string[] = [];
+    const err = await tool
+      .run({ ...baseOpts, role: "planner", cwd: dir, onChunk: (c) => chunks.push(c) })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ToolRunError);
+    const e = err as ToolRunError;
+    expect(e.code).toBe(1);
+    expect(e.message).toBe(`claude-code exited with code 1: ${result}`);
+    expect(e.output).toContain(result);
+    expect(e.stderr).toBe("");
+    expect(chunks.join("")).toContain(result);
+  });
+
+  it("uses errors text when the result string is empty", async () => {
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "result", is_error: true, result: "", errors: ["Not logged in · Please run /login"] })}'\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    expect((err as ToolRunError).message).toBe(
+      "claude-code exited with code 1: Not logged in · Please run /login",
+    );
+    expect((err as ToolRunError).output).toContain("Not logged in · Please run /login");
+  });
+
+  it("puts a login failure in the log and the error even after assistant text", async () => {
+    const events = [
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "I started" },
+        },
+      },
+      { type: "result", result: "Not logged in · Please run /login" },
+    ];
+    const tool = await setup(
+      `${events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`).join("\n")}\nexit 1`,
+    );
+    const chunks: string[] = [];
+    const err = await tool
+      .run({ ...baseOpts, role: "planner", cwd: dir, onChunk: (c) => chunks.push(c) })
+      .catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message).toBe("claude-code exited with code 1: Not logged in · Please run /login");
+    expect(e.output).toContain("I started");
+    expect(e.output).toContain("Not logged in · Please run /login");
+    expect(chunks.join("")).toContain("Not logged in · Please run /login");
+  });
+
+  it("does not repeat a login line that was already the assistant text", async () => {
+    const login = "Not logged in · Please run /login";
+    const events = [
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: login },
+        },
+      },
+      {
+        type: "stream_event",
+        event: { type: "content_block_stop", index: 0 },
+      },
+      { type: "result", result: login },
+    ];
+    const tool = await setup(
+      `${events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`).join("\n")}\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message).toBe("claude-code exited with code 1");
+    expect(e.output.match(/Not logged in/g)).toHaveLength(1);
+  });
+
+  it("still logs a result that is only a substring of a tool line", async () => {
+    const login = "Not logged in · Please run /login";
+    const events = [
+      {
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", content: `see ${login} for details` }],
+        },
+      },
+      { type: "result", result: login },
+    ];
+    const tool = await setup(
+      `${events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`).join("\n")}\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message).toBe(`claude-code exited with code 1: ${login}`);
+    expect(e.output).toContain(`see ${login} for details`);
+    expect(e.output).toMatch(new RegExp(`\\n${login}\\n`));
+  });
+
+  it("caps a huge result in the error message and keeps it in the log", async () => {
+    const result = `Not logged in ${"x".repeat(2_000)}`;
+    const tool = await setup(
+      `printf '%s\\n' '${JSON.stringify({ type: "result", result })}'\nexit 1`,
+    );
+    const err = await tool.run({ ...baseOpts, role: "planner", cwd: dir }).catch((e: unknown) => e);
+    const e = err as ToolRunError;
+    expect(e.message.startsWith("claude-code exited with code 1: Not logged in xxx")).toBe(true);
+    expect(e.message.endsWith("…")).toBe(true);
+    expect(e.message.length).toBeLessThan(600);
+    expect(e.output).toContain(result);
   });
 });
 

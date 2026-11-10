@@ -1,3 +1,8 @@
+/** macOS, iPhone and iPad, from the user agent. `navigator.platform` is deprecated. */
+export function isMacUserAgent(userAgent: string): boolean {
+  return /Mac|iPhone|iPad/.test(userAgent);
+}
+
 export interface KeyLike {
   key: string;
   metaKey: boolean;

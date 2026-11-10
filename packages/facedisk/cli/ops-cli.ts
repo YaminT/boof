@@ -16,8 +16,15 @@ import {
   type AnyOperation,
   type OpContext,
   type TaskService,
+  createSelfUrlCheck,
 } from "@boof/heart-server";
-import { AuthStore, isKebabId, scaffoldDataRoot, auditOperation } from "@boof/heart";
+import {
+  AuthStore,
+  isKebabId,
+  scaffoldDataRoot,
+  auditOperation,
+  securitySettings,
+} from "@boof/heart";
 import { CliUsageError, dataRootOf } from "./epic-cli.js";
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
@@ -99,6 +106,7 @@ type JsonSchema = {
   oneOf?: JsonSchema[];
   items?: JsonSchema;
   properties?: Record<string, JsonSchema>;
+  writeOnly?: boolean;
 };
 
 const alternatives = (node: JsonSchema): JsonSchema[] => {
@@ -136,13 +144,14 @@ function fieldKind(node: JsonSchema): FieldKind {
 interface Flag {
   key: string;
   field: FieldKind;
+  writeOnly?: boolean;
 }
 
 function flagsOf(op: AnyOperation): Map<string, Flag> {
   const schema = z.toJSONSchema(op.input, { io: "input", unrepresentable: "any" }) as JsonSchema;
   const out = new Map<string, Flag>();
   for (const [key, node] of Object.entries(schema.properties ?? {})) {
-    const flag = { key, field: fieldKind(node) };
+    const flag = { key, field: fieldKind(node), writeOnly: node.writeOnly === true };
     out.set(kebab(key), flag);
     if (key === "projectId") out.set("project", flag);
   }
@@ -158,12 +167,20 @@ const MIME: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
-function readJsonText(flag: string, text: string, cwd: string): unknown {
+function readJsonText(
+  flag: string,
+  text: string,
+  cwd: string,
+  readStdin: () => string = () => readFileSync(0, "utf8"),
+): unknown {
   let raw = text;
   if (text.startsWith("@")) {
     const path = text.slice(1);
     try {
-      raw = readFileSync(isAbsolute(path) ? path : resolve(cwd, path), "utf8");
+      raw =
+        path === "-"
+          ? readStdin()
+          : readFileSync(isAbsolute(path) ? path : resolve(cwd, path), "utf8");
     } catch (e) {
       throw new CliUsageError(`--${flag}: ${(e as Error).message}`);
     }
@@ -173,6 +190,31 @@ function readJsonText(flag: string, text: string, cwd: string): unknown {
   } catch {
     throw new CliUsageError(`--${flag}: not valid JSON`);
   }
+}
+
+// Webhook URL fields are identified from both the operation namespace and its input schema,
+// keeping this CLI-only safeguard tied to the actual webhook URL field.
+function isWebhookUrl(op: AnyOperation, key: string): boolean {
+  return op.name.startsWith("webhooks.") && key === "url";
+}
+
+function hasSecretBearingWebhookUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return true;
+    return url.pathname
+      .split("/")
+      .some((segment) => segment.length >= 16 && /[a-z]/i.test(segment) && /\d/.test(segment));
+  } catch {
+    return false;
+  }
+}
+
+function refuseInlineWebhookUrl(key: string): never {
+  throw new CliUsageError(
+    `--${kebab(key)} looks secret-bearing; pass it with --input @file.json or --input @- to read stdin`,
+  );
 }
 
 function coerce(
@@ -212,6 +254,7 @@ export function parseOpArgs(
   op: AnyOperation,
   rest: string[],
   cwd: string = process.cwd(),
+  readStdin?: () => string,
 ): ParsedOpArgs {
   const flags = flagsOf(op);
   const result: ParsedOpArgs = { input: {}, json: false, help: false };
@@ -242,9 +285,25 @@ export function parseOpArgs(
       if (OWN_VALUE.has(name)) {
         const v = takeValue(name);
         if (name === "input") {
-          const parsed = readJsonText("input", v, cwd);
+          const parsed = readJsonText("input", v, cwd, readStdin);
           if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
             throw new CliUsageError("--input: must be a JSON object");
+          }
+          // Inline JSON is part of argv (visible in `ps` and shell history): a write-only secret
+          // may come only from a file or stdin. Name the field, never its value.
+          if (!v.startsWith("@")) {
+            const inlineInput = parsed as Record<string, unknown>;
+            const secret = Object.keys(parsed).find((k) =>
+              [...flags.values()].some((f) => f.key === k && f.writeOnly),
+            );
+            if (secret)
+              throw new CliUsageError(
+                `--input: "${secret}" is write-only; pass the input with --input @file.json or --input @- to read stdin, not inline`,
+              );
+            const webhookUrl = Object.keys(parsed).find(
+              (k) => isWebhookUrl(op, k) && hasSecretBearingWebhookUrl(inlineInput[k]),
+            );
+            if (webhookUrl) refuseInlineWebhookUrl(webhookUrl);
           }
           base = parsed as Record<string, unknown>;
         } else {
@@ -254,7 +313,25 @@ export function parseOpArgs(
       }
       const negated = name.startsWith("no-") && flags.get(name.slice(3))?.field.kind === "boolean";
       const flag = flags.get(negated ? name.slice(3) : name);
-      if (!flag) throw new CliUsageError(`unknown option --${name}`);
+      if (!flag) {
+        if (
+          [...flags.values()].some(
+            (candidate) => kebab(candidate.key) === name && candidate.writeOnly,
+          )
+        )
+          throw new CliUsageError(
+            `--${name} is write-only; pass it with --input @file.json or --input @- to read stdin`,
+          );
+        throw new CliUsageError(`unknown option --${name}`);
+      }
+      if (flag.writeOnly)
+        throw new CliUsageError(
+          `--${name} is write-only; pass it with --input @file.json or --input @- to read stdin`,
+        );
+      if (isWebhookUrl(op, flag.key)) {
+        const rawValue = inline ?? rest[i + 1];
+        if (hasSecretBearingWebhookUrl(rawValue)) refuseInlineWebhookUrl(flag.key);
+      }
       const f = flag.field;
       if (op.rest.kind === "multipart" && flag.key === "file") {
         const path = takeValue(name);
@@ -348,9 +425,10 @@ function helpFor(op: AnyOperation): string[] {
   ];
   for (const [key, node] of Object.entries(schema.properties ?? {})) {
     const description = (node as { description?: string }).description ?? "";
-    lines.push(
-      `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}  ${description}`.trimEnd(),
-    );
+    if (node.writeOnly !== true)
+      lines.push(
+        `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}  ${description}`.trimEnd(),
+      );
   }
   lines.push(
     "  --input <json|@file>  the whole input as JSON (flags override its keys). Put a secret (a",
@@ -484,21 +562,31 @@ export async function opsCommand(
       authStore,
       now: () => new Date().toISOString(),
       signal,
+      // The n8n operations refuse without one: boof's own address must never be the n8n host.
+      isSelfUrl: createSelfUrlCheck({
+        port: Number(process.env.BOOF_RUNNER_PORT ?? 4319),
+        allowedHosts: securitySettings(settings).allowedHosts,
+        callbackBaseUrl: settings.n8n?.callbackBaseUrl,
+      }),
     };
     // One audit line per operation run, the same log and settings as the web server's: who, what,
     // project, outcome, timing; never the arguments.
     const startedAt = Date.now();
-    const audited = (ok: boolean, code?: string) =>
-      auditOperation(root, {
+    const audited = (ok: boolean, code?: string) => {
+      // A rejected project id (a pasted key) is not a project. The root already exists:
+      // scaffoldDataRoot ran above, and a refusal returns before that, so it creates nothing.
+      const projectId = input.projectId;
+      return auditOperation(root, {
         principal: ctx.principal,
         action: `cli:${op.name}`,
         via: "cli",
-        project: typeof input.projectId === "string" ? input.projectId : undefined,
+        project: typeof projectId === "string" && isKebabId(projectId) ? projectId : undefined,
         ok,
         code,
         ms: Date.now() - startedAt,
         at: startedAt,
       });
+    };
     let result: unknown;
     try {
       result = (await op.execute(ctx, input)) as unknown;

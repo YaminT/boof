@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { appPathOf, basePath, isPlainLeftClick, locationKey, routeFromLocation } from "./location";
 import { blockedByGuard, routeOfPath } from "./leave-guard";
-import { formatRoute, type Route } from "./route";
+import { formatRoute, routeAfterNavigation, type Route } from "./route";
 
 const readRoute = (): Route | null =>
   routeFromLocation(window.location.pathname, basePath(document.baseURI));
@@ -13,9 +13,18 @@ export function useRoute(): {
   navigate(to: Route, opts?: { replace?: boolean }): void;
 } {
   const [route, setRoute] = useState<Route | null>(readRoute);
+  const searchRef = useRef(typeof window === "undefined" ? "" : window.location.search);
 
   useEffect(() => {
-    const sync = () => setRoute(readRoute());
+    const sync = () => {
+      const next = readRoute();
+      const search = window.location.search;
+      const prevSearch = searchRef.current;
+      searchRef.current = search;
+      // Keep the same object when the path and the query are unchanged, so a popstate does not
+      // re-render. A query-only change (`?epic=`, `?manage=`) still produces a new route.
+      setRoute((prev) => routeAfterNavigation(prev, next, prevSearch, search));
+    };
     window.addEventListener("popstate", sync);
     sync();
     return () => window.removeEventListener("popstate", sync);

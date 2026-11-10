@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dataRootPaths } from "./paths.js";
 import {
+  conciergeSettings,
   effectiveSettings,
   resolveObserver,
   resolveRole,
@@ -17,9 +18,12 @@ import {
 import { defaultSettings } from "./settings.js";
 import { newTask, parseTask, serializeTask } from "./task-file.js";
 import {
+  ConciergeSettingsSchema,
   RoleAssignmentSchema,
+  SETTINGS_SCHEMA_VERSION,
   SettingsPatchSchema,
   type Project,
+  type Settings,
   type TaskFrontmatter,
 } from "./schema.js";
 
@@ -48,7 +52,37 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
   ...over,
 });
 
+describe("concierge settings", () => {
+  const defaults = {
+    enabled: true,
+    model: "default",
+    perMessageUsd: 0.25,
+    perConversationUsd: 2,
+    messagesPerMinute: 6,
+    maxTurns: 8,
+    timeoutMs: 120_000,
+    idleMinutes: 30,
+  };
+
+  it("conciergeSettings({}) returns every default", () => {
+    expect(conciergeSettings({} as Settings)).toEqual(defaults);
+    // Scaffolded settings stay unchanged: the defaults are applied at read time.
+    expect(defaultSettings().concierge).toBeUndefined();
+  });
+
+  it("rejects a zero per-message cap and a model with a space", () => {
+    expect(ConciergeSettingsSchema.safeParse({ perMessageUsd: 0 }).success).toBe(false);
+    expect(ConciergeSettingsSchema.safeParse({ model: "a b" }).success).toBe(false);
+  });
+});
+
 describe("settings compatibility", () => {
+  it("adds the claude-agent model without changing default role tools", () => {
+    const settings = defaultSettings();
+    expect(settings.models["claude-agent"]).toEqual(["default"]);
+    expect(settings.roles.planner.tool).toBe("claude-code");
+    expect(settings.roles.reviewer.tool).toBe("claude-code");
+  });
   it("allows an empty model only for Codex role assignments", () => {
     expect(RoleAssignmentSchema.safeParse({ tool: "codex", model: "" }).success).toBe(true);
     expect(RoleAssignmentSchema.safeParse({ tool: "mock", model: "" }).success).toBe(false);
@@ -70,7 +104,7 @@ describe("settings compatibility", () => {
   });
   it("loads an old settings.json without observer or review", async () => {
     const old = {
-      schemaVersion: 2,
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
       runner: { enabled: false },
       roles: {
         planner: { tool: "mock", model: "m" },
@@ -204,9 +238,9 @@ describe("v2 settings store", () => {
     expect((await store.update({ projectsRoot: null })).projectsRoot).toBeUndefined();
   });
 
-  it("scaffolds v2 defaults: schemaVersion 2, no default project, concurrency 1, no workingDirectory", async () => {
+  it("scaffolds defaults at this release's schema, no default project, concurrency 1, no workingDirectory", async () => {
     const s = await new SettingsStore(root).load();
-    expect(s.schemaVersion).toBe(2);
+    expect(s.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
     expect(s.defaultProject).toBeNull();
     expect(s.runner).toEqual({ enabled: false, concurrency: 1, inheritMcpServers: false });
     expect(Object.keys(s)).not.toContain("workingDirectory");
@@ -216,6 +250,22 @@ describe("v2 settings store", () => {
     const path = dataRootPaths(root).settings;
     await writeFile(path, JSON.stringify({ runner: { enabled: false }, workingDirectory: "/x" }));
     await expect(new SettingsStore(root).load()).rejects.toThrow(/v1 settings file/);
+  });
+
+  it("refuses a 0.3.0 schema 2 file with one line, not a schema dump", async () => {
+    const path = dataRootPaths(root).settings;
+    await writeFile(path, JSON.stringify({ ...defaultSettings(), schemaVersion: 2 }));
+    const err = await new SettingsStore(root).load().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toBe(
+      `${path} is a 0.3.0 settings file; start boof-runner (any command) to migrate the data root`,
+    );
+    expect(message).not.toMatch(/schemaVersion|expected 3|Zod/i);
+    expect(message).not.toContain("\n");
   });
 
   it("update merges runner per key, so enabling the runner keeps the concurrency", async () => {
@@ -269,6 +319,13 @@ describe("effectiveSettings", () => {
     expect(e.workingDirectory).toBe("/repos/app");
     expect(e.roles).toEqual(g.roles);
     expect(e.runner).toEqual(g.runner);
+  });
+
+  it("passes the project claudeAgent auth choice through unchanged", () => {
+    const projectSettings = project({ claudeAgent: { auth: "project-key" } });
+    expect(effectiveSettings(defaultSettings(), projectSettings).claudeAgent).toEqual({
+      auth: "project-key",
+    });
   });
 
   it("merges roles, review, worktree and retries per key with the project winning", () => {

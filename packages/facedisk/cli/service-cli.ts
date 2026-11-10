@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof/heart";
 import { assertBindAllowed } from "@boof/heart-server";
+import { beginCliAudit } from "./cli-audit.js";
 
 export const SERVICE_HELP = `boof-runner service — run boof-runner as a systemd user service (Linux)
 
@@ -698,91 +699,120 @@ async function install(
     }
   }
 
-  if (!(await requireSystemd(env, err))) return 1;
-  if (!existsSync(env.scriptPath)) {
-    err(
-      `service install: ${env.scriptPath} does not exist; build first (npm run build -w @boof/boof)`,
-    );
-    return 1;
-  }
-
-  // Refuse what the server would refuse at start-up, instead of installing a unit that crash-loops.
-  await scaffoldDataRoot(data);
+  const audit = beginCliAudit(data, "cli:service.install");
   try {
-    await assertBindAllowed(host, await new SettingsStore(data).load(), new AuthStore(data));
-  } catch (e) {
-    err(
-      `service install: ${(e as Error).message}\n` +
-        "Keep --host 127.0.0.1 behind a reverse proxy, or prepare remote access first: " +
-        "boof-runner remote setup --hostname <public-host> -d " +
-        data,
-    );
-    return 1;
-  }
-
-  const unit = buildUnit({
-    name,
-    data,
-    port,
-    host,
-    nodePath: env.nodePath,
-    scriptPath: env.scriptPath,
-    path: options.path,
-    home: env.home,
-    env: options.env,
-    envFile,
-  });
-  const wasActive =
-    (await env.run("systemctl", ["--user", "is-active", "--quiet", unitName(name)])).code === 0;
-  await mkdir(dirname(file), { recursive: true });
-  // The unit records --env values in its options comment, so keep it private to the owner.
-  // Written to a private temp file next to it and renamed over: no window with wider permissions.
-  const tmp = `${file}.${process.pid}.tmp`;
-  try {
-    await writeFile(tmp, unit, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    await rename(tmp, file);
-  } catch (e) {
-    await rm(tmp, { force: true });
-    throw e;
-  }
-  out(`Wrote ${file}`);
-
-  const steps: [string, string[]][] = [
-    ["systemctl", ["--user", "daemon-reload"]],
-    ["systemctl", ["--user", "enable", "--now", unitName(name)]],
-  ];
-  if (wasActive) steps.push(["systemctl", ["--user", "restart", unitName(name)]]);
-  for (const [cmd, args] of steps) {
-    const r = await env.run(cmd, args);
-    if (r.code !== 0) {
-      err(
-        `service install: \`${cmd} ${args.join(" ")}\` failed: ${r.stderr.trim() || `exit ${r.code}`}`,
-      );
+    if (!(await requireSystemd(env, err))) {
+      await audit.failCode("no_systemd");
       return 1;
     }
-  }
+    if (!existsSync(env.scriptPath)) {
+      err(
+        `service install: ${env.scriptPath} does not exist; build first (npm run build -w @boof/boof)`,
+      );
+      await audit.failCode("script_missing");
+      return 1;
+    }
 
-  const st = await env.run("systemctl", [
-    "--user",
-    "status",
-    unitName(name),
-    "--no-pager",
-    "--lines=5",
-  ]);
-  out(st.stdout.trimEnd());
-  out("");
-  out(`Boof Runner is running as ${unitName(name)} at ${baseUrl(host, port)}`);
-  out(`Data root: ${data}`);
+    // Refuse what the server would refuse at start-up, instead of installing a unit that crash-loops.
+    await scaffoldDataRoot(data);
+    try {
+      await assertBindAllowed(host, await new SettingsStore(data).load(), new AuthStore(data));
+    } catch (e) {
+      err(
+        `service install: ${(e as Error).message}\n` +
+          "Keep --host 127.0.0.1 behind a reverse proxy, or prepare remote access first: " +
+          "boof-runner remote setup --hostname <public-host> -d " +
+          data,
+      );
+      await audit.failCode("bind_refused");
+      return 1;
+    }
 
-  const linger = await env.run("loginctl", ["show-user", env.user, "-p", "Linger"]);
-  if (!/^Linger=yes$/m.test(linger.stdout)) {
+    const unit = buildUnit({
+      name,
+      data,
+      port,
+      host,
+      nodePath: env.nodePath,
+      scriptPath: env.scriptPath,
+      path: options.path,
+      home: env.home,
+      env: options.env,
+      envFile,
+    });
+    const wasActive =
+      (await env.run("systemctl", ["--user", "is-active", "--quiet", unitName(name)])).code === 0;
+    await mkdir(dirname(file), { recursive: true });
+    // The unit records --env values in its options comment, so keep it private to the owner.
+    // Written to a private temp file next to it and renamed over: no window with wider permissions.
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      await writeFile(tmp, unit, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      await rename(tmp, file);
+    } catch (e) {
+      await rm(tmp, { force: true });
+      throw e;
+    }
+    out(`Wrote ${file}`);
+
+    const steps: [string, string[]][] = [
+      ["systemctl", ["--user", "daemon-reload"]],
+      ["systemctl", ["--user", "enable", "--now", unitName(name)]],
+    ];
+    if (wasActive) steps.push(["systemctl", ["--user", "restart", unitName(name)]]);
+    for (const [cmd, args] of steps) {
+      const r = await env.run(cmd, args);
+      if (r.code !== 0) {
+        err(
+          `service install: \`${cmd} ${args.join(" ")}\` failed: ${r.stderr.trim() || `exit ${r.code}`}`,
+        );
+        await audit.failCode("systemctl");
+        return 1;
+      }
+    }
+
+    const st = await env.run("systemctl", [
+      "--user",
+      "status",
+      unitName(name),
+      "--no-pager",
+      "--lines=5",
+    ]);
+    out(st.stdout.trimEnd());
     out("");
-    out(
-      "warning: lingering is off, so the service stops when you log out and does not start at boot.\n" +
-        `Enable it with: sudo loginctl enable-linger ${env.user}`,
-    );
+    out(`Boof Runner is running as ${unitName(name)} at ${baseUrl(host, port)}`);
+    out(`Data root: ${data}`);
+    out(openHint(data, port));
+
+    const linger = await env.run("loginctl", ["show-user", env.user, "-p", "Linger"]);
+    if (!/^Linger=yes$/m.test(linger.stdout)) {
+      out("");
+      out(
+        "warning: lingering is off, so the service stops when you log out and does not start at boot.\n" +
+          `Enable it with: sudo loginctl enable-linger ${env.user}`,
+      );
+    }
+    await audit.ok();
+    return 0;
+  } catch (e) {
+    await audit.fail(e);
+    throw e;
   }
-  return 0;
+}
+
+/** Data root recorded in the unit the command is removing. Never `$PWD/data`. */
+async function servedDataRoot(env: ServiceEnv, name: string): Promise<string | undefined> {
+  const file = unitPath(env, name);
+  if (!existsSync(file)) return undefined;
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const saved = inspectInstallOptions(text);
+  if (saved.kind === "ok") return saved.options.data;
+  return readLegacyUnitOptions(text)?.data;
 }
 
 async function uninstall(
@@ -791,26 +821,43 @@ async function uninstall(
   err: (l: string) => void,
   env: ServiceEnv,
 ): Promise<number> {
-  if (!(await requireSystemd(env, err))) return 1;
-  const file = unitPath(env, name);
-  if (!existsSync(file)) out(`No unit file at ${file}; cleaning up anyway.`);
-  await env.run("systemctl", ["--user", "disable", "--now", unitName(name)]);
-  await rm(file, { force: true });
-  const r = await env.run("systemctl", ["--user", "daemon-reload"]);
-  if (r.code !== 0) {
-    err(`service uninstall: daemon-reload failed: ${r.stderr.trim() || `exit ${r.code}`}`);
-    return 1;
+  // The line goes to the data root the unit served, and only when that directory is already
+  // there. A missing unit has no recorded root, so uninstall does not create `$PWD/data`.
+  const served = await servedDataRoot(env, name);
+  const audit =
+    served !== undefined && existsSync(served)
+      ? beginCliAudit(served, "cli:service.uninstall")
+      : undefined;
+  try {
+    if (!(await requireSystemd(env, err))) {
+      await audit?.failCode("no_systemd");
+      return 1;
+    }
+    const file = unitPath(env, name);
+    if (!existsSync(file)) out(`No unit file at ${file}; cleaning up anyway.`);
+    await env.run("systemctl", ["--user", "disable", "--now", unitName(name)]);
+    await rm(file, { force: true });
+    const r = await env.run("systemctl", ["--user", "daemon-reload"]);
+    if (r.code !== 0) {
+      err(`service uninstall: daemon-reload failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+      await audit?.failCode("systemctl");
+      return 1;
+    }
+    await env.run("systemctl", ["--user", "reset-failed", unitName(name)]);
+    out(`Removed ${unitName(name)}. Task data was not removed.`);
+    await audit?.ok();
+    return 0;
+  } catch (e) {
+    await audit?.fail(e);
+    throw e;
   }
-  await env.run("systemctl", ["--user", "reset-failed", unitName(name)]);
-  out(`Removed ${unitName(name)}. Data was not touched.`);
-  return 0;
 }
 
 /** Port and host the installed unit serves on, read from its ExecStart line. */
 async function unitEndpoint(
   env: ServiceEnv,
   name: string,
-): Promise<{ host: string; port: number }> {
+): Promise<{ host: string; port: number; data?: string }> {
   let text = "";
   try {
     text = await readFile(unitPath(env, name), "utf8");
@@ -820,7 +867,13 @@ async function unitEndpoint(
   const exec = text.split("\n").find((l) => l.startsWith("ExecStart=")) ?? "";
   const port = Number(/ -p (\d+)/.exec(exec)?.[1] ?? 4319);
   const host = /--host (\S+)/.exec(exec)?.[1] ?? "127.0.0.1";
-  return { host: host.replace(/^"|"$/g, ""), port };
+  const data = readLegacyUnitOptions(text)?.data;
+  return { host: host.replace(/^"|"$/g, ""), port, ...(data ? { data } : {}) };
+}
+
+/** The exact command that signs a browser in to this service (its data root and port). */
+function openHint(data: string | undefined, port: number): string {
+  return `Sign in to the web UI: boof-runner open -d "${data ?? "<data root>"}" --port ${port}`;
 }
 
 async function status(
@@ -838,10 +891,11 @@ async function status(
     "--lines=10",
   ]);
   out((st.stdout || st.stderr).trimEnd());
-  const { host, port } = await unitEndpoint(env, name);
+  const { host, port, data } = await unitEndpoint(env, name);
   const h = await env.health(baseUrl(host, port));
   out("");
   out(`healthz: ${h.summary}`);
+  out(openHint(data, port));
   return st.code === 0 && h.ok ? 0 : 1;
 }
 

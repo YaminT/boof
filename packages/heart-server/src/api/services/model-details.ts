@@ -14,13 +14,19 @@ export interface ModelDetail {
 
 export interface ToolModelDetails {
   displayName: string;
+  unavailableReason?: string;
   health: CachedHealth | null;
   models: ModelDetail[];
 }
 
 export interface ModelDetailsInput {
   /** Registered tools (id, display name, built-in default models). */
-  tools: readonly { id: string; displayName: string; defaultModels: readonly string[] }[];
+  tools: readonly {
+    id: string;
+    displayName: string;
+    defaultModels: readonly string[];
+    unavailableReason?: string;
+  }[];
   /** What each tool's listModels() returned now; a tool with no live list maps to []. */
   live: Readonly<Record<string, readonly string[]>>;
   /** Global settings: the role assignments and the user-listed models. */
@@ -58,6 +64,7 @@ export function buildModelDetails(input: ModelDetailsInput): Record<string, Tool
     ]);
     out[tool.id] = {
       displayName: tool.displayName,
+      ...(tool.unavailableReason ? { unavailableReason: tool.unavailableReason } : {}),
       health: input.health[tool.id] ?? null,
       models: ids.map((id) => ({
         id,

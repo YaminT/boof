@@ -13,6 +13,7 @@ import {
   scaffoldDataRoot,
 } from "@boof/heart";
 import { ZodError } from "zod";
+import { auditProjectRefusal, beginCliAudit } from "./cli-audit.js";
 
 export const EPIC_HELP = `boof-runner epic — manage the epics (named groups of tasks) of a project
 
@@ -111,7 +112,33 @@ export async function epicCommand(
   await scaffoldDataRoot(root);
 
   try {
-    const { dir } = await resolveProjectDir(root, values.project);
+    if (sub === "add" && !positionals[0]?.trim()) throw new CliUsageError("a title is required");
+    if ((sub === "archive" || sub === "remove") && !positionals[0]) {
+      throw new CliUsageError("an epic id is required");
+    }
+    if (
+      sub === "add" &&
+      values.priority !== undefined &&
+      !Number.isInteger(Number(values.priority))
+    ) {
+      throw new CliUsageError("--priority must be an integer");
+    }
+    let projectId: string;
+    let dir: string;
+    try {
+      ({ id: projectId, dir } = await resolveProjectDir(root, values.project));
+    } catch (e) {
+      if (sub === "add" || sub === "archive" || sub === "remove") {
+        const action =
+          sub === "add"
+            ? "cli:epic.add"
+            : sub === "archive"
+              ? "cli:epic.archive"
+              : "cli:epic.remove";
+        await auditProjectRefusal(root, action, values.project, e);
+      }
+      throw e;
+    }
     const epics = new EpicStore(dir);
     switch (sub) {
       case "add": {
@@ -120,19 +147,25 @@ export async function epicCommand(
         let priority: number | undefined;
         if (values.priority !== undefined) {
           priority = Number(values.priority);
-          if (!Number.isInteger(priority)) throw new CliUsageError("--priority must be an integer");
         }
-        const epic = await epics.create(
-          {
-            title,
-            ...(values.id ? { id: values.id } : {}),
-            ...(values.description !== undefined ? { description: values.description } : {}),
-            ...(priority !== undefined ? { priority } : {}),
-          },
-          { by: "cli" },
-        );
-        out(`Added epic '${epic.id}' (${epic.title})`);
-        return 0;
+        const audit = beginCliAudit(root, "cli:epic.add", projectId);
+        try {
+          const epic = await epics.create(
+            {
+              title,
+              ...(values.id ? { id: values.id } : {}),
+              ...(values.description !== undefined ? { description: values.description } : {}),
+              ...(priority !== undefined ? { priority } : {}),
+            },
+            { by: "cli" },
+          );
+          out(`Added epic '${epic.id}' (${epic.title})`);
+          await audit.ok();
+          return 0;
+        } catch (e) {
+          await audit.fail(e);
+          throw e;
+        }
       }
       case "list": {
         const [list, tasks] = await Promise.all([
@@ -161,18 +194,32 @@ export async function epicCommand(
       case "archive": {
         const id = positionals[0];
         if (!id) throw new CliUsageError("an epic id is required");
-        await epics.update(id, { archived: !values.undo }, { by: "cli" });
-        out(`${values.undo ? "Unarchived" : "Archived"} epic '${id}'`);
-        return 0;
+        const audit = beginCliAudit(root, "cli:epic.archive", projectId);
+        try {
+          await epics.update(id, { archived: !values.undo }, { by: "cli" });
+          out(`${values.undo ? "Unarchived" : "Archived"} epic '${id}'`);
+          await audit.ok();
+          return 0;
+        } catch (e) {
+          await audit.fail(e);
+          throw e;
+        }
       }
       case "remove": {
         const id = positionals[0];
         if (!id) throw new CliUsageError("an epic id is required");
-        const { detached } = await removeEpic(dir, id, { detach: values.detach, by: "cli" });
-        out(
-          `Removed epic '${id}'${detached.length ? ` (${detached.length} task(s) detached)` : ""}`,
-        );
-        return 0;
+        const audit = beginCliAudit(root, "cli:epic.remove", projectId);
+        try {
+          const { detached } = await removeEpic(dir, id, { detach: values.detach, by: "cli" });
+          out(
+            `Removed epic '${id}'${detached.length ? ` (${detached.length} task(s) detached)` : ""}`,
+          );
+          await audit.ok();
+          return 0;
+        } catch (e) {
+          await audit.fail(e);
+          throw e;
+        }
       }
       default:
         err(`epic: unknown subcommand "${sub}"\n`);

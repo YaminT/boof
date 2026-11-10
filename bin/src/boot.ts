@@ -1,9 +1,25 @@
-import { RunnerEngine, ToolRegistry } from "@boof/runner";
-import { startServer, type RunningServer, type StartServerOptions } from "@boof/heart-server";
+import {
+  DESKTOP_CLAUDE_AGENT_REASON,
+  ClaudeConcierge,
+  RunnerEngine,
+  ToolRegistry,
+  defaultTools,
+} from "@boof/runner";
+import type { ConciergeAgent, Settings } from "@boof/heart";
+import {
+  createN8nTransport,
+  createSelfUrlCheck,
+  startServer,
+  type RunningServer,
+  type StartServerOptions,
+} from "@boof/heart-server";
 import { RunnerGuard } from "./runner-guard.js";
 
 export interface BootOptions extends Omit<StartServerOptions, "catalog" | "runnerRunning"> {
   runner?: boolean;
+  claudeAgent?: "enabled" | "unavailable";
+  /** Replaces the assistant implementation. Only the dev flag in `boof-runner.ts` sets it. */
+  conciergeAgent?: ConciergeAgent;
   guard?: RunnerGuard;
   /** Root-specific server settings such as desktop operator clients. */
   serverOptions?: Partial<StartServerOptions>;
@@ -23,21 +39,65 @@ export function isRunnerStartFailure(error: unknown): boolean {
   return typeof error === "object" && error !== null && runnerStartFailures.has(error);
 }
 
+const DEFAULT_SERVER_PORT = 4319;
+
+/**
+ * The self check for a process without the server: the one in heart-server, with
+ * `$BOOF_RUNNER_PORT` (default 4319), the configured `allowedHosts` and the port of
+ * `n8n.callbackBaseUrl` when its host is local.
+ */
+export function headlessSelfCheck(settings: Settings): (u: URL) => boolean {
+  return createSelfUrlCheck({
+    port: Number(process.env.BOOF_RUNNER_PORT ?? DEFAULT_SERVER_PORT),
+    allowedHosts: settings.security?.allowedHosts,
+    callbackBaseUrl: settings.n8n?.callbackBaseUrl,
+  });
+}
+
 /** Compose the shared server and runner lifecycle used by the CLI and Electron. */
 export async function boot(opts: BootOptions): Promise<Booted> {
-  const { runner, guard, serverOptions, onServer, onRunner, ...commonServerOptions } = opts;
+  const {
+    runner,
+    guard,
+    serverOptions,
+    onServer,
+    onRunner,
+    claudeAgent,
+    conciergeAgent: conciergeOverride,
+    ...commonServerOptions
+  } = opts;
+  const registry = new ToolRegistry(
+    defaultTools(
+      claudeAgent === "unavailable" ? { claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON } : {},
+    ),
+  );
+  const conciergeAgent =
+    conciergeOverride ??
+    new ClaudeConcierge({
+      root: opts.root,
+      unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
+    });
   let engine: RunnerEngine | null = null;
   const server = await startServer({
     ...commonServerOptions,
     ...serverOptions,
     root: opts.root,
-    catalog: new ToolRegistry(),
+    catalog: registry,
+    conciergeAgent,
     runnerRunning: () => engine !== null,
   });
   await onServer?.(server);
   try {
     if (runner !== false && (!guard || (await guard.acquire()))) {
-      engine = new RunnerEngine({ root: opts.root });
+      engine = new RunnerEngine({
+        root: opts.root,
+        registry,
+        external: createN8nTransport({
+          root: opts.root,
+          via: "runner",
+          isSelfUrl: server.isSelfUrl,
+        }),
+      });
       onRunner?.(engine);
       void engine.loop();
     } else {

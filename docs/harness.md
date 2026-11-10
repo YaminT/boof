@@ -134,7 +134,7 @@ Tell the user the steps to expose it safely. Never advise exposing boof without 
 
 What the command does, if you need to explain or do it by hand: it sets `"security": { "auth": { "mode": "required" }, "allowedHosts": ["<public-hostname>"], "allowedProjectRoots": [...] }` in `settings.json`, creates a key like `auth add` (full harness scopes, `review` trust) and runs `chmod 700` on the data root.
 
-- `auth.mode: "required"` turns off the trust given to loopback callers.
+- `auth.mode: "required"` turns off the trust given to a signed-in browser on loopback.
 - `allowedHosts` lists the host names clients use in the URL. Any other `Host` header answers `421 host_not_allowed`.
 - `allowedProjectRoots` lists the absolute directories (or `~/...`) under which a key may register projects.
 - The server refuses to bind a non-loopback address unless `auth.mode` is `"required"` and at least one active key exists. Use a specific IP instead of `0.0.0.0` to bind one interface.
@@ -170,7 +170,7 @@ Read the result:
 - `principal.scopes`. An operation that needs a scope you lack answers `403 forbidden_scope`. The scope `admin` includes every scope. Plan your work with the scopes you have. Tell the user which scope is missing for a task you cannot do.
 - `principal.trust`. If it is `review`, plans and ad-hoc tasks you create land as `draft`. Tell the user that a human must approve them in the boof web UI (Plans tab, button Approve; Tasks tab, filter "Proposed by clients"). See section 4, "Trust and draft approval".
 - `principal.projects`. `"*"` means every project. A list means only those projects.
-- `server.authMode`. `local-trust` means a caller on the same machine needs no key. `required` means every caller needs a key.
+- `server.authMode`. `local-trust` means the boof web UI works without a key after the user signs in with a link; a script or agent on the same machine still needs a key. `required` means every caller needs a key.
 - `server.mcpEnabled`. If `false`, use REST. `/mcp` answers 404.
 
 Then check the runner:
@@ -186,26 +186,26 @@ The answer is `{ "enabled": true, "concurrency": 1, "budgetExceeded": [], "proje
 
 Fix errors this way:
 
-| Result                                     | Cause                                                          | What you do                                                                                                                       |
-| ------------------------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `401 unauthenticated`                      | Key missing, malformed, wrong, expired or revoked.             | Check that the header is exactly `Authorization: Bearer <key>`. Do not retry. Ask the user for a new key.                         |
-| `421 host_not_allowed`                     | The host name in `BOOF_URL` is not allowed.                    | Tell the user to add the host name to `security.allowedHosts` in `settings.json` on the boof machine. The change applies at once. |
-| `404` with `not_found` on `/api/v1/whoami` | An old boof version without `whoami`, or the URL is not boof.  | Check `BOOF_URL`. Ask the user to update boof.                                                                                    |
-| `429 rate_limited`                         | Too many requests.                                             | Wait for the `Retry-After` seconds. Then retry.                                                                                   |
-| Connection refused, timeout or DNS error   | Server not running, wrong host or port, firewall.              | Ask the user to check that `boof-runner serve` runs and that the URL and port are right.                                          |
-| TLS or certificate error                   | Self-signed or wrong certificate.                              | Ask the user. Never use `curl -k` or disable verification unless the user tells you to.                                           |
-| HTML or non-JSON response                  | `BOOF_URL` points at a proxy, a login page or another service. | Ask the user for the right URL.                                                                                                   |
+| Result                                     | Cause                                                                                                                                                                                         | What you do                                                                                                                                                               |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401 unauthenticated`                      | Key missing, malformed, wrong, expired or revoked. `details.reason` `browser_session_required` means no key and no browser session; `mcp_key_required` means `/mcp` was called without a key. | Check that the header is exactly `Authorization: Bearer <key>`. Do not retry. Ask the user for a new key (a sign-in link is for the browser UI only; do not ask for one). |
+| `421 host_not_allowed`                     | The host name in `BOOF_URL` is not allowed.                                                                                                                                                   | Tell the user to add the host name to `security.allowedHosts` in `settings.json` on the boof machine. The change applies at once.                                         |
+| `404` with `not_found` on `/api/v1/whoami` | An old boof version without `whoami`, or the URL is not boof.                                                                                                                                 | Check `BOOF_URL`. Ask the user to update boof.                                                                                                                            |
+| `429 rate_limited`                         | Too many requests.                                                                                                                                                                            | Wait for the `Retry-After` seconds. Then retry.                                                                                                                           |
+| Connection refused, timeout or DNS error   | Server not running, wrong host or port, firewall.                                                                                                                                             | Ask the user to check that `boof-runner serve` runs and that the URL and port are right.                                                                                  |
+| TLS or certificate error                   | Self-signed or wrong certificate.                                                                                                                                                             | Ask the user. Never use `curl -k` or disable verification unless the user tells you to.                                                                                   |
+| HTML or non-JSON response                  | `BOOF_URL` points at a proxy, a login page or another service.                                                                                                                                | Ask the user for the right URL.                                                                                                                                           |
 
 ## 3. Choose a transport
 
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 79 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 85 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
 
 ### MCP over HTTP (remote)
 
-The endpoint is `$BOOF_URL/mcp`. It uses Streamable HTTP in stateless mode. There are no sessions. Use `POST` only. `GET` and `DELETE` answer `405`. Send the header `Authorization: Bearer <key>`. Without it, a loopback caller on a server in `local-trust` mode is not an administrator: it acts as the review-trust principal `local-mcp` (as on stdio without `--admin`: administration tools hidden, your tasks and plans are drafts a human approves) with its own rate limit, and `403 forbidden_trust` while `auth/clients.json` holds a stored client of that reserved id. Administration over HTTP needs a key.
+The endpoint is `$BOOF_URL/mcp`. It uses Streamable HTTP in stateless mode. There are no sessions. Use `POST` only. `GET` and `DELETE` answer `405`. Send the header `Authorization: Bearer <key>`. Without it the request answers `401` with the reason `mcp_key_required`, also on loopback and also from a signed-in browser: there is no keyless MCP, and the keyless `local-mcp` identity of older versions is removed. Administration over HTTP needs a key with the right scopes.
 
 Claude Code:
 
@@ -272,7 +272,7 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (79). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (85). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
 | Area                       | Tools                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -286,21 +286,22 @@ Tools (79). Arguments that name a project use `projectId`; plan tools use `planI
 | Command templates          | `boof_list_commands`, `boof_create_command`, `boof_update_command`, `boof_delete_command`                                                                                                                                                                                                                                                                                                     |
 | API clients                | `boof_list_clients`, `boof_create_client`, `boof_revoke_client`, `boof_rotate_client`                                                                                                                                                                                                                                                                                                         |
 | Webhooks                   | `boof_list_webhooks`, `boof_create_webhook`, `boof_update_webhook`, `boof_delete_webhook`                                                                                                                                                                                                                                                                                                     |
-| Account pool               | `boof_list_accounts`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`                                                                                                                                                                                                                                         |
+| Account pool               | `boof_list_accounts`, `boof_get_agent_sdk_eligibility`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`                                                                                                                                                                                                       |
+| n8n                        | `boof_get_n8n`, `boof_update_n8n`, `boof_delete_n8n`, `boof_list_n8n_workflows`, `boof_refresh_n8n_workflows`                                                                                                                                                                                                                                                                                 |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
 
 ### MCP over stdio (agent on the boof machine)
 
-If you run on the same machine as boof, the host starts boof as a child process. No server and no key are needed:
+If you run on the same machine as boof, the host starts boof as a child process. No server and no key are needed, but you need a client (`--client`). Without one the command refuses to start (exit 3):
 
 ```bash
 claude mcp add boof -- boof-runner mcp -d <data-root> --client <client-id>
 ```
 
-- `--client <id>`: act as this API client. Its scopes, projects and trust apply, so it is the right choice for an agent host. Give an agent the client the user created for it.
-- Without `--client` (and only when `security.auth.mode` is `local-trust`) you act as the reserved review-trust principal `local-mcp`, shared by every keyless host on the machine: your tasks and plans are drafts a human approves in the UI, you cannot queue, retry, answer, activate a plan, switch the runner or create a project, you change only your own work and only the name, labels and paused state of a project (you cannot resume one), and you have no administration tools (API clients, webhooks, settings writes, command templates, the health check, project deletion).
-- `--admin`: without `--client`, act as the local administrator with every tool. It is refused together with `--client`.
+- `--client <id>` (required): act as this API client. Its scopes, projects and trust apply. Give an agent the client the user created for it. If there is none, tell the user to run `boof-runner auth add --name <name> --scopes <list> --trust review` on the boof machine.
+- Without `--client` the command refuses to start. The keyless review-trust principal `local-mcp` of older versions is removed. A `review`-trust client sees the same limits: your tasks and plans are drafts a human approves in the UI, you cannot queue, retry, answer, activate a plan or switch the runner, you change only your own work and only the name, labels and paused state of a project, and a `trusted` client with the scopes the user chose gets the administration tools too.
+- `--admin` is removed. The command refuses it and names `--client`.
 - `--project <id>`: serve one project. The `projectId` argument is filled in and hidden from the tool schemas, you reach no other project, and the API-client and webhook tools are hidden.
 - `-d <data-root>`: the data root (default `./data` or `$BOOF_RUNNER_DATA_ROOT`).
 
@@ -443,6 +444,8 @@ For each task the runner runs these steps and writes a report for each:
 4. observer (optional role): reads the diff and writes a verdict.
 5. reviewer: gives the final verdict.
 
+If the project lists `externalSteps` (n8n), more steps run at three points: after the planner, after the developer, and after the reviewer approves. They show in `steps[]` as `n8n: <label>` (a check task from an n8n workflow edit shows `n8n check`). Expect them only when the project lists `externalSteps`; without it the steps above are all there is. An external step's report reaches the developer, observer, reviewer and fix prompts as untrusted data. See [n8n.md](n8n.md).
+
 The observer is optional. It runs only if `settings.roles` has an `observer` entry (or the project overrides it). To check, read `GET /api/v1/settings` (scope `settings:read`) and look for `roles.observer`; if the key is missing, there is no observer. Then a task has an empty `body.reports.observer` and you must not expect an observer verdict: report the reviewer verdict only and write "no observer configured".
 
 Observer and reviewer reports end with exactly one line: `VERDICT: APPROVE`, `VERDICT: CHANGES_REQUESTED` or `VERDICT: REJECT`.
@@ -560,49 +563,62 @@ Every error has this shape:
 
 ### Error codes
 
-| Code                       | Status | What you do                                                                                                                                                     |
-| -------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_input`            | 400    | Fix the request using `details`. Do not retry unchanged. A 400 for a non-running task on stop or inject also uses this code.                                    |
-| `invalid_plan`             | 400    | Fix the goals using `details` (schema error, unknown `dependsOn` id, cycle). Do not retry unchanged.                                                            |
-| `not_a_git_repo`           | 400    | The directory is not a git work tree. Ask the user for the right path.                                                                                          |
-| `nothing_to_import`        | 400    | The repository has no `goal.boof.xml` files. Create the plan with `plans.create` instead.                                                                       |
-| `no_default_project`       | 404    | You used an unversioned task route. Use `/api/v1/projects/{projectId}/tasks` instead.                                                                           |
-| `unauthenticated`          | 401    | The key is invalid, expired or revoked. Stop. Ask the user for a new key.                                                                                       |
-| `forbidden_scope`          | 403    | You lack the scope in `details.scope`. Tell the user. Do not retry.                                                                                             |
-| `forbidden_project`        | 403    | Your key may not use this project. Tell the user.                                                                                                               |
-| `forbidden_trust`          | 403    | Your key has `review` trust. Tell the user to approve the item in the web UI. Do not retry.                                                                     |
-| `project_root_not_allowed` | 403    | The directory is outside `security.allowedProjectRoots`. Tell the user to add the root in `settings.json`.                                                      |
-| `origin_not_allowed`       | 403    | You sent an `Origin` header a browser sends. A page on another site cannot call the API from the browser; call it from a server-side harness instead.           |
-| `not_found`                | 404    | The task, command, client or webhook id is wrong. List the items and check the id.                                                                              |
-| `project_not_found`        | 404    | Check the project id with `projects.list`.                                                                                                                      |
-| `branch_not_found`         | 404    | The task branch `boof-runner/<task-id>` does not exist (deleted by `onDone: "delete"`, or the task never ran in a worktree). Read the task and its log instead. |
-| `epic_not_found`           | 404    | Check the epic id (epics are per project).                                                                                                                      |
-| `parent_not_found`         | 404    | Check the parent task id with `tasks.list` in the same project.                                                                                                 |
-| `plan_not_found`           | 404    | Check the plan id with `plans.list`.                                                                                                                            |
-| `goal_not_found`           | 404    | Check the goal id with `plans.get`.                                                                                                                             |
-| `conflict`                 | 409    | The change conflicts with the current state (for example a project id is taken). Read the message. Change the input.                                            |
-| `invalid_transition`       | 409    | The task is in a status that does not allow this move. Read the task and check its status.                                                                      |
-| `invalid_hierarchy`        | 409    | One level of subtasks only, and a subtask has no epic of its own. Pass `parentId` or `epicId`, not both, and do not nest.                                       |
-| `has_children`             | 409    | The task has subtasks. Detach them first, or pass `detach`.                                                                                                     |
-| `has_tasks`                | 409    | The epic has tasks. Pass `detach`, or archive the epic.                                                                                                         |
-| `plan_version_conflict`    | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                   |
-| `epic_modified`            | 409    | The epic changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
-| `settings_modified`        | 409    | The settings changed. Read them again, re-apply your change, send the new ETag.                                                                                 |
-| `task_modified`            | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                            |
-| `plan_exists`              | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                              |
-| `plan_not_active`          | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                       |
-| `goal_has_dependents`      | 409    | Other goals depend on this goal (`details.dependents`). Ask the user. Then repeat with `cascade=true` or change the dependents first.                           |
-| `project_exists`           | 409    | A project for this directory exists. Use `projects.list` to find it.                                                                                            |
-| `project_busy`             | 409    | A task of the project runs, or another project is being created. Wait or stop it (ask the user first).                                                          |
-| `directory_not_empty`      | 409    | Ask the user; retry with `path.confirm: true` only if they agree to initialise the folder.                                                                      |
-| `idempotency_conflict`     | 409    | You reused an `Idempotency-Key` with a different request. Use a new key for a new request.                                                                      |
-| `host_not_allowed`         | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                  |
-| `payload_too_large`        | 413    | Shorten the body. Split the work.                                                                                                                               |
-| `unsupported_media_type`   | 415    | Send the body with `Content-Type: application/json`.                                                                                                            |
-| `rate_limited`             | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                   |
-| `not_configured`           | 409    | No account pool (better-ccflare) is set up. Tell the user to set `settings.owlish`; do not retry.                                                               |
-| `gateway_error`            | 502    | The account pool gateway failed or is unreachable. Check `accounts.health`; retry later.                                                                        |
-| `internal`                 | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                 |
+| Code                           | Status | What you do                                                                                                                                                                                          |
+| ------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_input`                | 400    | Fix the request using `details`. Do not retry unchanged. A 400 for a non-running task on stop or inject also uses this code.                                                                         |
+| `invalid_plan`                 | 400    | Fix the goals using `details` (schema error, unknown `dependsOn` id, cycle). Do not retry unchanged.                                                                                                 |
+| `not_a_git_repo`               | 400    | The directory is not a git work tree. Ask the user for the right path.                                                                                                                               |
+| `nothing_to_import`            | 400    | The repository has no `goal.boof.xml` files. Create the plan with `plans.create` instead.                                                                                                            |
+| `no_default_project`           | 404    | You used an unversioned task route. Use `/api/v1/projects/{projectId}/tasks` instead.                                                                                                                |
+| `unauthenticated`              | 401    | The key is invalid, expired or revoked. Stop. Ask the user for a new key.                                                                                                                            |
+| `forbidden_scope`              | 403    | You lack the scope in `details.scope`. Tell the user. Do not retry.                                                                                                                                  |
+| `forbidden_project`            | 403    | Your key may not use this project. Tell the user.                                                                                                                                                    |
+| `forbidden_trust`              | 403    | Your key has `review` trust. Tell the user to approve the item in the web UI. Do not retry.                                                                                                          |
+| `project_root_not_allowed`     | 403    | The directory is outside `security.allowedProjectRoots`. Tell the user to add the root in `settings.json`.                                                                                           |
+| `origin_not_allowed`           | 403    | You sent an `Origin` header a browser sends. A page on another site cannot call the API from the browser; call it from a server-side harness instead.                                                |
+| `not_found`                    | 404    | The task, command, client or webhook id is wrong. List the items and check the id.                                                                                                                   |
+| `project_not_found`            | 404    | Check the project id with `projects.list`.                                                                                                                                                           |
+| `branch_not_found`             | 404    | The task branch `boof-runner/<task-id>` does not exist (deleted by `onDone: "delete"`, or the task never ran in a worktree). Read the task and its log instead.                                      |
+| `epic_not_found`               | 404    | Check the epic id (epics are per project).                                                                                                                                                           |
+| `parent_not_found`             | 404    | Check the parent task id with `tasks.list` in the same project.                                                                                                                                      |
+| `plan_not_found`               | 404    | Check the plan id with `plans.list`.                                                                                                                                                                 |
+| `goal_not_found`               | 404    | Check the goal id with `plans.get`.                                                                                                                                                                  |
+| `conflict`                     | 409    | The change conflicts with the current state (for example a project id is taken). Read the message. Change the input.                                                                                 |
+| `invalid_transition`           | 409    | The task is in a status that does not allow this move. Read the task and check its status.                                                                                                           |
+| `invalid_hierarchy`            | 409    | One level of subtasks only, and a subtask has no epic of its own. Pass `parentId` or `epicId`, not both, and do not nest.                                                                            |
+| `has_children`                 | 409    | The task has subtasks. Detach them first, or pass `detach`.                                                                                                                                          |
+| `has_tasks`                    | 409    | The epic has tasks. Pass `detach`, or archive the epic.                                                                                                                                              |
+| `plan_version_conflict`        | 409    | The plan changed. Read the plan again (`details.currentVersion`), re-apply your change, send the new version.                                                                                        |
+| `epic_modified`                | 409    | The epic changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                                                                 |
+| `project_modified`             | 409    | The project changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                                                              |
+| `settings_modified`            | 409    | The settings changed. Read them again, re-apply your change, send the new ETag.                                                                                                                      |
+| `task_modified`                | 409    | The task changed. Read it again, re-apply your change, send the new `updated` stamp.                                                                                                                 |
+| `plan_exists`                  | 409    | A plan with this id exists. Choose another id, or merge on import.                                                                                                                                   |
+| `plan_not_active`              | 409    | Set the plan `status` to `active` (or ask the user if you are `review` trust), then sync.                                                                                                            |
+| `goal_has_dependents`          | 409    | Other goals depend on this goal (`details.dependents`). Ask the user. Then repeat with `cascade=true` or change the dependents first.                                                                |
+| `project_exists`               | 409    | A project for this directory exists. Use `projects.list` to find it.                                                                                                                                 |
+| `project_busy`                 | 409    | A task of the project runs, or another project is being created. Wait or stop it (ask the user first).                                                                                               |
+| `directory_not_empty`          | 409    | Ask the user; retry with `path.confirm: true` only if they agree to initialise the folder.                                                                                                           |
+| `idempotency_conflict`         | 409    | You reused an `Idempotency-Key` with a different request. Use a new key for a new request.                                                                                                           |
+| `host_not_allowed`             | 421    | Tell the user to add the host name to `security.allowedHosts`.                                                                                                                                       |
+| `payload_too_large`            | 413    | Shorten the body. Split the work.                                                                                                                                                                    |
+| `unsupported_media_type`       | 415    | Send the body with `Content-Type: application/json`.                                                                                                                                                 |
+| `concierge_unavailable`        | 409    | The assistant cannot run in this process. Read the message for the reason; use console commands while unavailable.                                                                                   |
+| `concierge_busy`               | 409    | Another assistant reply is still running. Wait for it to finish.                                                                                                                                     |
+| `concierge_limit`              | 409    | The conversation reached its cost cap. Start a new conversation.                                                                                                                                     |
+| `budget_exceeded`              | 409    | A daily budget that covers the assistant is used up. Check the listed scopes and `resetsAt`.                                                                                                         |
+| `change_not_found`             | 404    | The pending change is missing, belongs to another user, or was already used. Read the conversation again.                                                                                            |
+| `change_stale`                 | 409    | The target changed after the proposal. Ask the assistant to propose it again.                                                                                                                        |
+| `change_expired`               | 409    | The proposal expired. Ask the assistant to propose it again.                                                                                                                                         |
+| `auth_store_unavailable`       | 503    | The server's data folder has unsafe permissions, so no key can be checked. Tell the user to read the server log and run the `chmod` it names; do not retry.                                          |
+| `browser_sessions_unavailable` | 503    | The same for browser sign-in. Tell the user to read the server log; do not retry.                                                                                                                    |
+| `rate_limited`                 | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                                                        |
+| `not_configured`               | 409    | No account pool (better-ccflare) is set up. Tell the user to set `settings.owlish`; do not retry.                                                                                                    |
+| `n8n_not_configured`           | 409    | No n8n instance is configured. Tell the user to connect n8n in the settings; do not retry.                                                                                                           |
+| `upstream_failed`              | 502    | The n8n instance failed or refused the call. Read `details.reason` (`unauthorized`, `unreachable`, `blocked`, `redirected`, `bad_response`, `too_many`, `HTTP <n>`), tell the user, and retry later. |
+| `invalid_step_token`           | 401    | Only n8n's callback gets this: the run token is missing, wrong, used or expired. Do not retry with the same token.                                                                                   |
+| `gateway_error`                | 502    | The account pool gateway failed or is unreachable. Check `accounts.health`; retry later.                                                                                                             |
+| `internal`                     | 500    | Wait 5 seconds and retry up to 3 times with doubling waits. Then tell the user.                                                                                                                      |
 
 `origin_not_allowed` (403) appears on `/api/*` and `/mcp` for requests with a cross-site `Origin` header.
 
@@ -631,7 +647,7 @@ A create can answer with `warnings` when the server changed a requested value be
 
 ### Rate limits
 
-The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications are limited separately per client address (default 30 per minute): after that a request that fails authentication answers `429` instead of `401` until the bucket refills, so never retry a `401` in a loop. A request with a valid key is never limited by this bucket.
+The default limit is 600 requests per minute per key (30 per minute for attachment uploads). The event stream is not counted. A `429` response has the header `Retry-After` (seconds) and `details.retryAfter`. Wait that long. Failed authentications that carry a key or a session cookie are limited separately per client address (default 30 per minute): after that such a request answers `429` instead of `401` until the bucket refills, so never retry a `401` in a loop. A keyless request answers `401` and does not spend that bucket. A request with a valid key is never limited by this bucket.
 
 ### Host errors
 
@@ -652,7 +668,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 81 operations. Every path below starts with `/api/v1`.
+There are 92 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -665,8 +681,10 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `archived`: `boolean`, required; default `false`
 - `brief`: `string`, optional
 - `budget`: `{ onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }`, optional
+- `claudeAgent`: `{ auth: "gateway" | "project-key" }`, optional
 - `created`: `ISO-8601 string`, required
 - `defaultBase`: `string`, optional
+- `externalSteps`: `{ at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[]`, optional; max 10 item(s)
 - `id`: `kebab-id`, required
 - `labels`: `string[]`, required; default `[]`
 - `name`: `string`, required
@@ -708,6 +726,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `epicId`: `kebab-id`, optional
 - `id`: `kebab-id`, required
 - `labels`: `string[]`, required; default `[]`
+- `n8nCheck`: `{ updatedAt: ISO-8601 string, webhookPath: string, workflowId: string, workflowName: string }`, optional
 - `origin`: `{ client?: kebab-id, kind: "ui" | "cli" | "api" | "mcp" }`, optional
 - `parentId`: `kebab-id`, optional
 - `planRef`: `{ goalId: kebab-id, planId: kebab-id, revision: integer >= 1 }`, optional
@@ -868,7 +887,7 @@ Path parameters (all required):
 - MCP tool: `boof_list_projects`
 - CLI: `boof-runner projects list`
 - What it does: Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.
-- Success: HTTP 200 with `{ projects: { archived: boolean, brief?: string, budget?: object, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planWriteBack: boolean, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
+- Success: HTTP 200 with `{ projects: { anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: object, claudeAgent?: object, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, externalSteps?: object[], id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planWriteBack: boolean, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 Query parameters:
@@ -909,7 +928,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_project`
 - CLI: `boof-runner projects get`
 - What it does: Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.
-- Success: HTTP 200 with `{ archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`.
+- Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -922,9 +941,10 @@ Path parameters (all required):
 - Scope: `projects:write`
 - MCP tool: `boof_update_project`
 - CLI: `boof-runner projects update`
-- What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.
-- Success: HTTP 200 with `Project`.
-- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `400 not_a_git_repo`, `403 project_root_not_allowed`
+- What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.
+- Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
+- Header `If-Match`: The ETag of GET /projects/{projectId} you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A project that changed since answers 409 project_modified.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 project_modified`, `400 not_a_git_repo`, `403 forbidden_trust`, `403 project_root_not_allowed`
 
 Path parameters (all required):
 
@@ -932,10 +952,14 @@ Path parameters (all required):
 
 JSON body (unknown keys are rejected):
 
+- `anthropicApiKey`: `string | null`, optional; Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it
 - `archived`: `boolean`, optional
 - `brief`: `string | null`, optional
 - `budget`: `{ onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } } | null`, optional
+- `claudeAgent`: `{ auth?: "gateway" | "project-key" } | null`, optional
 - `defaultBase`: `string | null`, optional
+- `expectedUpdated`: `string`, optional; The project's `updated` stamp you last saw (HTTP: If-Match with the ETag); a changed project answers 409 project_modified; max length 100
+- `externalSteps`: `{ at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure?: "fail" | "continue", sendDiff?: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[] | null`, optional
 - `labels`: `string[]`, optional; max 50 item(s)
 - `name`: `string`, optional; max length 200
 - `paused`: `boolean`, optional
@@ -1611,7 +1635,7 @@ Path parameters (all required):
 - Scope: `tasks:control`
 - MCP tool: `boof_inject_prompt`
 - CLI: `boof-runner tasks inject`
-- What it does: Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).
+- What it does: Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` steers claude-agent in place, continuing the same session, with a kill-and-resume fallback if in-place steering fails. For other tools, `now` resumes or reruns the interrupted step with the prompt. Optional model (only with mode now) switches the model for the continuation or rerun. The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).
 - Success: HTTP 200 with `{ applied: "pending", mode: "next-step" | "now", ok: true }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `404 not_found`, `400 invalid_input (the task is not running)`
 
@@ -1623,6 +1647,7 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `mode`: `"next-step" | "now"`, optional; default `"next-step"`; `next-step` (default): the prompt is picked up before the next pipeline step. `now`: also interrupts the running step, which is resumed (or rerun) with the prompt
+- `model`: `string`, optional
 - `prompt`: `string`, required; max length 100000
 
 #### `GET /api/v1/projects/{projectId}/tasks/{taskId}/live-log` (Read a task's live log)
@@ -1845,6 +1870,7 @@ JSON body (unknown keys are rejected):
 - `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
 - `models`: `{ [key: string]: string[] }`, optional
 - `owlish`: `{ healthGate?: "pause" | "warn" | "off", url: string } | null`, optional
+- `owlishAgentKey`: `string | null`, optional; An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins)
 - `owlishApiKey`: `string | null`, optional; boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)
 - `projectsRoot`: `string | null`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, poolWaitMs?: integer, transient?: integer >= 0 }`, optional
@@ -1860,7 +1886,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_health`
 - CLI: `boof-runner settings health`
 - What it does: Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.
-- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
+- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", unavailableReason?: string, version?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 #### `POST /api/v1/health/check` (Check tool health)
@@ -1870,7 +1896,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_check_health`
 - CLI: `boof-runner settings check-health`
 - What it does: Checks that each agent tool (claude-code, codex, opencode) is installed and usable, and remembers the result for settings.health. No input. Spawns each tool and sends it a short prompt (a paid model call per tool). Concurrent calls share one check, and a check less than a minute old is not repeated. Needs settings:write.
-- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", version?: string } } }`.
+- Success: HTTP 200 with `{ tools: { [key: string]: { checkedAt?: string, message: string, status: "available" | "unavailable", unavailableReason?: string, version?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/models` (List models)
@@ -1902,7 +1928,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_model_details`
 - CLI: `boof-runner models details`
 - What it does: Lists each tool's models with their source (live CLI list, built-in default or settings), whether each is the default, the roles that use it, and the last health result of this server process (null if none ran). No input. Lists models only; runs no tool (it uses the lists settings.refreshModels last fetched).
-- Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[] } } }`.
+- Success: HTTP 200 with `{ tools: { [key: string]: { displayName: string, health: object | null, models: object[], unavailableReason?: string } } }`.
 - Errors: `403 forbidden_scope`
 
 ### Usage
@@ -1936,7 +1962,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_runner`
 - CLI: `boof-runner runner status`
 - What it does: Returns whether the runner is enabled and its concurrency. No input. No side effects.
-- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null } }`.
+- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/runner/status` (Runner and queue status)
@@ -1946,7 +1972,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_runner_status`
 - CLI: `boof-runner runner overview`
 - What it does: Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.
-- Success: HTTP 200 with `{ budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
+- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, projects: { counts: { [key: string]: integer }, id: string, paused: boolean, running: string[] }[] }`.
 - Errors: `403 forbidden_scope`
 
 #### `PUT /api/v1/runner` (Start or pause the runner)
@@ -2047,14 +2073,28 @@ Path parameters (all required):
 - Success: HTTP 200 with `{ accounts: { id: string, name: string, paused?: boolean, priority?: number, provider?: string, rateLimitReset?: string | number | null, rateLimitStatus?: string, tokenStatus?: string }[], configured: boolean }`.
 - Errors: `403 forbidden_scope`
 
+#### `GET /api/v1/accounts/agent-sdk` (Claude Agent SDK eligibility)
+
+- Operation: `accounts.agentSdk`
+- Scope: `settings:read`
+- MCP tool: `boof_get_agent_sdk_eligibility`
+- CLI: `boof-runner accounts agent-sdk`
+- What it does: Checks whether every better-ccflare account uses API-key authentication. Input: optional refresh. No side effects.
+- Success: HTTP 200 with `{ allowed: boolean, blocking: { id: string, name: string, provider: string | null, why: "subscription" | "oauth-token" | "unknown-type" }[], checkedAt: string, gateway: "absent" | "checked", reason: string }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Query parameters:
+
+- `refresh`: `boolean`, optional
+
 #### `GET /api/v1/accounts/health` (Pool health)
 
 - Operation: `accounts.health`
 - Scope: `settings:read`
 - MCP tool: `boof_get_pool_health`
 - CLI: `boof-runner accounts health`
-- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.
-- Success: HTTP 200 with `{ configured: boolean, healthGate: "pause" | "warn" | "off" | null, keySource: "file" | "env" | null, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, url: string | null }`.
+- What it does: Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null) and where the claude-agent key comes from (`agentKeySource`); neither key is ever returned. Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.
+- Success: HTTP 200 with `{ agentKeySource: "file" | "env" | null, configured: boolean, healthGate: "pause" | "warn" | "off" | null, keySource: "file" | "env" | null, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, url: string | null }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 Query parameters:
@@ -2188,6 +2228,148 @@ JSON body (unknown keys are rejected):
 Path parameters (all required):
 
 - `webhookId`: `kebab-id`, required; Webhook id
+
+### n8n
+
+#### `GET /api/v1/n8n` (Get the n8n connection)
+
+- Operation: `n8n.get`
+- Scope: `settings:read`
+- MCP tool: `boof_get_n8n`
+- CLI: `boof-runner n8n get`
+- What it does: Returns how boof is connected to n8n: the URLs, the timeout, the check settings, and whether an API key and a webhook secret are set. Never returns the key or the secret. { configured: false } when n8n is not set up. No side effects, no call to n8n.
+- Success: HTTP 200 with `{ apiKeySet: boolean, apiKeySource: "env" | "file" | null, baseUrl?: string, callbackBaseUrl?: string, checks?: { autoQueue: boolean, enabled: boolean, pollIntervalMs: number, projectId: string }, configured: boolean, defaultTimeoutMs?: number, webhookBaseUrl?: string, webhookSecretSet: boolean }`.
+- Errors: `403 forbidden_scope`
+
+#### `PUT /api/v1/n8n` (Configure n8n)
+
+- Operation: `n8n.update`
+- Scope: `admin`
+- MCP tool: `boof_update_n8n`
+- CLI: `boof-runner n8n update`
+- What it does: Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Changing the origin of baseUrl without a new apiKey removes the stored key and the workflow cache (`notice` says so). Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.
+- Success: HTTP 200 with `{ apiKeySet: boolean, apiKeySource: "env" | "file" | null, baseUrl?: string, callbackBaseUrl?: string, checks?: { autoQueue: boolean, enabled: boolean, pollIntervalMs: number, projectId: string }, configured: boolean, defaultTimeoutMs?: number, notice?: string, secret?: string, webhookBaseUrl?: string, webhookSecretSet: boolean }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`, `403 forbidden_trust`, `404 project_not_found`
+
+JSON body (unknown keys are rejected):
+
+- `apiKey`: `string | null`, optional; The n8n API key. Write-only: stored apart from settings.json (n8n/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_N8N_API_KEY, when set, still wins)
+- `baseUrl`: `string`, optional; max length 2000
+- `callbackBaseUrl`: `string`, optional; max length 2000
+- `checks`: `{ autoQueue?: boolean, enabled?: boolean, pollIntervalMs?: integer 60000..86400000, projectId: kebab-id } | null`, optional
+- `defaultTimeoutMs`: `integer 10000..86400000`, optional
+- `rotateWebhookSecret`: `boolean`, optional; Make a new webhook header secret (X-Boof-Token). It is returned once, as `secret`; the first configuration makes one anyway
+- `webhookBaseUrl`: `string | null`, optional
+
+#### `DELETE /api/v1/n8n` (Disconnect n8n)
+
+- Operation: `n8n.delete`
+- Scope: `admin`
+- MCP tool: `boof_delete_n8n`
+- CLI: `boof-runner n8n delete`
+- What it does: Removes the n8n connection: settings.n8n, the stored API key and webhook secret, and the workflow cache. Projects keep their externalSteps (those steps then fail with "n8n is not configured"); the answer lists those projects. Needs admin and a trusted, project-unrestricted client.
+- Success: HTTP 200 with `{ ok: true, projectsWithSteps: string[] }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_trust`
+
+#### `GET /api/v1/n8n/workflows` (List n8n workflows)
+
+- Operation: `n8n.workflows.list`
+- Scope: `settings:read`
+- MCP tool: `boof_list_n8n_workflows`
+- CLI: `boof-runner n8n workflows list`
+- What it does: Lists the n8n workflows from the last refresh (cache only; no call to n8n). Each has its webhooks (only a single POST webhook is `usable` for a step) and an editor link. { configured: false, workflows: [] } when n8n is not set up; `lastError` shows why the last refresh failed.
+- Success: HTTP 200 with `{ configured: boolean, fetchedAt: string | null, lastError?: string, workflows: { active: boolean, editorUrl: string, id: string, name: string, tags: string[], updatedAt: string, webhooks: object[] }[] }`.
+- Errors: `403 forbidden_scope`
+
+#### `POST /api/v1/n8n/workflows/refresh` (Refresh the n8n workflow list)
+
+- Operation: `n8n.workflows.refresh`
+- Scope: `settings:write`
+- MCP tool: `boof_refresh_n8n_workflows`
+- CLI: `boof-runner n8n workflows refresh`
+- What it does: Fetches the workflow list from n8n (its public API, with the stored API key) and rewrites the cache. 409 n8n_not_configured when n8n is not set up; 502 upstream_failed with details.reason (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>) when n8n cannot be read, and the cached list stays.
+- Success: HTTP 200 with `{ configured: boolean, fetchedAt: string | null, lastError?: string, workflows: { active: boolean, editorUrl: string, id: string, name: string, tags: string[], updatedAt: string, webhooks: object[] }[] }`.
+- Errors: `403 forbidden_scope`, `409 n8n_not_configured`, `502 upstream_failed`
+
+### concierge
+
+#### `GET /api/v1/projects/{projectId}/concierge` (Get assistant status)
+
+- Operation: `concierge.status`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge status`
+- What it does: Gets assistant availability and the current conversation for a project. Inputs: projectId. No side effects.
+- Success: HTTP 200 with `{ available: boolean, conversation: { id: string, messages: integer, pending: object[], spentUsd: number } | null, limits: { messagesPerMinute: integer, perConversationUsd: number, perMessageUsd: number }, model: string, reason: string | null, via: "gateway" | "project-key" | null }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
+#### `POST /api/v1/projects/{projectId}/concierge/messages` (Ask the assistant)
+
+- Operation: `concierge.ask`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge ask`
+- What it does: Sends a message to the assistant for the selected project. Inputs: projectId, text and optional page context or conversationId. May create drafts and pending changes, and records model spend.
+- Success: HTTP 200 with `{ changes: { op: string, summary: string, target: object | null }[], conversationId: string, costUsd: number | null, pending: { blocked?: string, destructive: boolean, details: string[], error?: string, expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }[], stopReason: "done" | "max_turns" | "max_budget", text: string }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
+JSON body (unknown keys are rejected):
+
+- `context`: `{ goalId?: string, planId?: string, screen: "overview" | "tasks" | "task" | "plans" | "settings" | "inbox", taskId?: string }`, optional
+- `conversationId`: `string`, optional
+- `text`: `string`, required; max length 4000
+
+#### `POST /api/v1/projects/{projectId}/concierge/changes/{changeId}/apply` (Apply an assistant change)
+
+- Operation: `concierge.apply`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge apply`
+- What it does: Applies a pending assistant change with the caller's own rights. Inputs: projectId and changeId. Changes one project item once.
+- Success: HTTP 200 with `{ change: { blocked?: string, destructive: boolean, details: string[], error?: string, expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string }, result: any }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `changeId`: `string`, required
+
+#### `POST /api/v1/projects/{projectId}/concierge/changes/{changeId}/discard` (Discard an assistant change)
+
+- Operation: `concierge.discard`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge discard`
+- What it does: Discards a pending assistant change. Inputs: projectId and changeId. The proposed change is not applied.
+- Success: HTTP 200 with `{ change: { blocked?: string, destructive: boolean, details: string[], error?: string, expiresAt: string, id: string, op: string, reason: "confirm" | "needs-approval", status: "pending" | "applying" | "applied" | "discarded" | "expired" | "failed", title: string } }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `changeId`: `string`, required
+
+#### `POST /api/v1/projects/{projectId}/concierge/reset` (Reset assistant conversation)
+
+- Operation: `concierge.reset`
+- Scope: `tasks:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner concierge reset`
+- What it does: Ends the caller's current assistant conversation for a project. Inputs: projectId. Pending changes remain available until discarded or expired.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
 
 ### Event stream
 

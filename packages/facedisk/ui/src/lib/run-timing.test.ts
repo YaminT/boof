@@ -35,6 +35,21 @@ describe("startedAtMs", () => {
 });
 
 describe("stepStrip", () => {
+  it("counts the answering window once, using the reviewer’s step times", () => {
+    const t = task({
+      steps: steps(
+        ["Planner", 0],
+        ["Developer", 10],
+        ["Planner (answering developer question)", 30],
+        ["Developer (with answers)", 50],
+      ),
+    });
+    const r = byRole(stepStrip(t, T0 + 60_000));
+    expect(r.planner.seconds).toBe(30);
+    expect(r.developer.seconds).toBe(30);
+    expect((r.planner.seconds ?? 0) + (r.developer.seconds ?? 0)).toBe(60);
+  });
+
   it("collapses planner and refinement, times done and current roles", () => {
     const t = task({
       steps: steps(["Planner", 0], ["Planner (refinement)", 20], ["Developer", 50]),
@@ -70,6 +85,9 @@ describe("stepStrip", () => {
     const r = byRole(segs);
     expect(r.reviewer).toMatchObject({ round: 2, state: "current" });
     expect(r.developer.state).toBe("done");
+    // Two developer visits (10s, then 10s), and two reviewer visits. Not wall-clock from the first.
+    expect(r.developer.seconds).toBe(20);
+    expect(r.reviewer.seconds).toBe(20);
   });
 
   it("keeps reviewed roles done during a fix round", () => {
@@ -88,7 +106,7 @@ describe("stepStrip", () => {
     const segs = stepStrip(t, T0 + 50_000);
     const r = byRole(segs);
     expect(r.planner.state).toBe("done");
-    expect(r.developer.state).toBe("current");
+    expect(r.developer).toMatchObject({ state: "current", seconds: 20 });
     expect(r.observer.state).toBe("done");
     expect(r.reviewer).toMatchObject({ state: "done", verdict: "REJECT" });
     for (const s of segs) if (s.seconds !== null) expect(s.seconds).toBeGreaterThanOrEqual(0);
@@ -271,6 +289,16 @@ describe("stepStrip", () => {
     const r = byRole(stepStrip(t, T0 + 40_000));
     expect(r.developer.state).toBe("current");
     expect(r.planner.state).toBe("done");
+  });
+
+  it("closes the developer visit when the planner starts answering", () => {
+    const t = task({
+      steps: steps(["Planner", 0], ["Developer", 10], ["Planner (answering developer)", 30]),
+    });
+    const r = byRole(stepStrip(t, T0 + 40_000));
+    // The developer visit ends at 30s; the planner's answer runs from 30s to now.
+    expect(r.developer).toMatchObject({ state: "current", seconds: 20 });
+    expect(r.planner).toMatchObject({ state: "done", seconds: 20 });
   });
 
   it("counts only the last iteration of a multi-run task", () => {

@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite, withFileLock } from "./atomic.js";
 import { projectPaths } from "./paths.js";
+import { withProcessLock } from "./process-lock.js";
 import type { BudgetSettings, Project, Settings, TokenUsage } from "./schema.js";
 
 export interface DailyLedger {
@@ -88,11 +89,25 @@ async function modifyLedger(
   fn: (l: DailyLedger) => void,
 ): Promise<void> {
   const path = dailyLedgerPath(dir, date);
-  await withFileLock(path, async () => {
-    const ledger = await readDailyLedger(dir, date, timezone);
-    fn(ledger);
-    await atomicWrite(path, JSON.stringify(ledger, null, 2) + "\n");
-  });
+  // The file lock queues writers in this process. The pid lock (`.ledger.lock` on the ledger
+  // directory) queues a second process, so a CLI `concierge ask` and the server cannot drop
+  // each other's spend. One lock per directory: a single recordSpend takes the project ledger,
+  // then the data-root ledger, and never holds both.
+  await withFileLock(path, () =>
+    withProcessLock(
+      join(dir, ".ledger.lock"),
+      {},
+      async () => {
+        const ledger = await readDailyLedger(dir, date, timezone);
+        fn(ledger);
+        await atomicWrite(path, JSON.stringify(ledger, null, 2) + "\n");
+      },
+      (holder, lockPath) =>
+        new Error(
+          `Another boof process is updating the spend ledger (pid ${holder}); try again in a moment, or remove ${lockPath} if no boof process is running`,
+        ),
+    ),
+  );
 }
 
 export interface RecordSpendInput {

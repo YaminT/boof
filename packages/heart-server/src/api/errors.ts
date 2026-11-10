@@ -8,6 +8,7 @@ import {
   TaskNotFoundError,
   TaskNotRunningError,
   TaskRunningError,
+  UnsafeSecretPathError,
 } from "@boof/heart";
 
 /**
@@ -57,6 +58,7 @@ export const ERROR_CODES = {
     409,
     "The epic has tasks; pass detach to clear their epic, or archive the epic instead.",
   ],
+  project_modified: [409, "The project changed since the ETag in If-Match."],
   epic_modified: [409, "The epic changed since the ETag in If-Match."],
   plan_version_conflict: [409, "The plan changed since the version in If-Match / expectedVersion."],
   settings_modified: [409, "The settings changed since the ETag in If-Match."],
@@ -77,9 +79,30 @@ export const ERROR_CODES = {
   host_not_allowed: [421, "The Host header is not a loopback name or an allowed host."],
   payload_too_large: [413, "The request body exceeds the size limit."],
   unsupported_media_type: [415, "A JSON operation needs Content-Type: application/json."],
+  concierge_unavailable: [409, "The assistant cannot run here; the message says why."],
+  concierge_busy: [409, "A message to the assistant is still being answered."],
+  concierge_limit: [409, "The conversation reached its cost limit; start a new one."],
+  budget_exceeded: [409, "A daily budget that covers the assistant is used up."],
+  change_not_found: [404, "The pending change does not exist or is no longer available."],
+  change_stale: [409, "The target changed since the assistant proposed this change."],
+  change_expired: [409, "The pending change expired."],
+  auth_store_unavailable: [
+    503,
+    "The server's data folder has unsafe permissions, so no key can be checked; see the server log.",
+  ],
+  browser_sessions_unavailable: [
+    503,
+    "The server's data folder has unsafe permissions, so no browser session can be checked; see the server log.",
+  ],
   rate_limited: [429, "Too many requests; retry after the Retry-After header."],
   not_configured: [409, "No account pool is configured (settings.owlish is not set)."],
   gateway_error: [502, "The account pool gateway (better-ccflare) failed or is unreachable."],
+  n8n_not_configured: [409, "No n8n instance is configured (settings.n8n is not set)."],
+  upstream_failed: [
+    502,
+    "The n8n instance failed or refused the call; details.reason says why (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>).",
+  ],
+  invalid_step_token: [401, "The external-step callback token is missing, wrong, used or expired."],
   internal: [500, "Unexpected server error; details are in the server log."],
 } as const;
 
@@ -124,9 +147,26 @@ export function formatIssues(err: ZodError): { path: string; message: string }[]
   return err.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
 }
 
+/** What an HTTP client sees when the data folder is unsafe; the path and fix go to the server log. */
+export const UNSAFE_DATA_FOLDER_MESSAGE =
+  "the server's data folder has unsafe permissions; see the server log";
+
+const loggedUnsafe = new Set<string>();
+
+/** Log an unsafe-folder refusal once per path, on one line (message holds the path and the fix). */
+export function logUnsafeDataFolder(error: { path: string; message: string }): void {
+  if (loggedUnsafe.has(error.path)) return;
+  loggedUnsafe.add(error.path);
+  console.error(`auth store: ${error.message.replace(/[\r\n]+/g, " ")}`);
+}
+
 /** Map any thrown value to an {@link OpError}. Never leaks internals (unknown errors are `internal`). */
 export function toOpError(err: unknown): OpError {
   if (err instanceof OpError) return err;
+  if (err instanceof UnsafeSecretPathError) {
+    logUnsafeDataFolder(err);
+    return new OpError(503, UNSAFE_DATA_FOLDER_MESSAGE, "auth_store_unavailable");
+  }
   if (err instanceof EpicError) {
     if (err.code === "not_found") return new OpError(404, err.message, "epic_not_found");
     if (err.code === "modified") return new OpError(409, err.message, "epic_modified");

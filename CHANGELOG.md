@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+- Add optional n8n external pipeline steps: a project's `externalSteps` run an n8n workflow after the planner, after the developer or after the reviewer approves. boof calls the workflow's webhook and waits for an authenticated, single-use callback (`POST /callbacks/external-steps/{runId}`, `invalid_step_token`); steps use no model tokens. Admins connect n8n with `n8n.get`, `n8n.update` (write-only API key), `n8n.delete`, `n8n.workflows.list` and `n8n.workflows.refresh` (REST, MCP, CLI and the Settings › Automation page). The configured n8n host may be private, loopback or LAN without `allowedPrivateWebhookHosts`, narrowly; boof's own address and link-local addresses are always refused. Only trusted clients change `externalSteps`. Without n8n boof is unchanged. See `docs/n8n.md`.
+- Add an opt-in n8n watcher (`settings.n8n.checks`): when a workflow's `updatedAt` changes, boof creates a draft check task (pending with `autoQueue`) that runs only that workflow and finishes `done` on an `ok` callback. It makes at most 10 tasks per pass and 50 per hour.
+- The console assistant can propose a new project description (the `brief`); it never applies it: you confirm it from a preview that shows the whole new text (at most 4,000 characters and 60 lines), it is applied with your rights, and a change to the project in between answers `change_stale`. The assistant itself never holds `projects:write`.
+- `projects.update` takes `expectedUpdated` (HTTP: `If-Match` with the project's `ETag`); a changed project answers `409 project_modified`. `projects.get` and `projects.update` return the `ETag`.
+- Fix secret masking in assistant change previews, preserving commit SHAs and slash paths.
+- Add the console assistant: free text in the bottom console goes to a concierge on claude-agent with boof's own MCP server under a narrow, review-trust principal. It creates drafts; deleting, archiving, queueing and changing others' work wait for your confirmation. Spend is recorded as `tool:concierge`. Without a compliant model, and in the desktop app, the console works as before and says why.
+- Add the write-only `owlishAgentKey`, an api-only better-ccflare key that `claude-agent` processes receive instead of the admin client key. Gateway mode without it falls back to the project key or is refused.
+- Refuse write-only secrets in inline `--input` JSON on the CLI (use `--input @file` or `--input @-`).
+- Refuse secret-bearing webhook URLs in CLI arguments and inline `--input` JSON; use `--input @file` or `--input @-`.
+
+### Fixed
+
+- The hand-written CLI commands (`auth add`, `task move`, `plan sync`, `run`, ...) now write audit lines (`cli:<command>`, `via: "cli"`), like the generated commands.
+- Ctrl-C stops `boof-runner run` again.
+- Web UI: agent-proposed drafts appear in their own "Proposed" group and stay in "Needs you"; step time is counted once; stop actions are not duplicated and a failed stop in the palette clears the stop latch.
+- Applying a pending change reports a concurrent edit as `409 change_stale`, including when the operation itself answers `plan_version_conflict`, `task_modified` or `epic_modified`. The stored stamp is copied only into the `If-Match` field that matches the guard kind.
+- A failure writing the `concierge:ask` audit line is logged and no longer replaces the turn.
+- An assistant conversation id the caller owns, once it has been idle for `idleMinutes`, starts a fresh conversation. An id owned by someone else is still `404 not_found`.
+- A failure while recording assistant spend no longer drops the conversation update, the audit line, or the turn. The failure is logged and written as `concierge:spend`.
+- Applying a pending change copies the stored stale-guard stamp into `expectedUpdated` or `expectedVersion` when the operation accepts it, so the operation refuses a concurrent edit.
+
+### Runner and agent workflow
+
+- Add the opt-in `claude-agent` tool on the Claude Agent SDK: in-place steering of a `now` injection (with an optional model switch, and a kill-and-resume fallback), session resume and an SDK-reported cost estimate. It runs in bare mode with a per-project config folder and only the repo's permission rules. It runs through better-ccflare only when every pool account uses an API key, and otherwise with the project's own Anthropic API key; a task that cannot be authenticated does not start. It is not in the desktop app. Claude Code stays the default.
+
+### Security
+
+Agent containment, layer 1. This is not a sandbox: a process that runs as your OS user (a task agent included) can still edit the data root, unset the agent marker, read your browser's cookie store or drive your browser. Layer 2, an OS-level sandbox, is future work.
+
+- Browser sign-in (T3): under `local-trust` a keyless loopback request is the administrator only when it carries a valid browser session cookie (`boof_ui_<port>`, `HttpOnly`, `SameSite=Strict`). Any other keyless caller gets `401` with the reason and the fix. When the session store cannot be used safely the API answers `503` with the path and the fix. The cookie is shared across ports on `127.0.0.1`, so another local OS user who runs a server on any loopback port can receive it if your browser loads a page there, and could replay it as administrator. Port-isolated sessions are future work.
+- Sign-in links (T5): `boof-runner open` (with `-d`, `--port`, `--host`, `--revoke-all`) and the line `serve` prints give a single-use link, valid for 10 minutes. Under systemd (`JOURNAL_STREAM`) `serve` prints the `boof-runner open -d <data> --port <port>` command instead of a live link. `service install` and `status` print the same command with the data root and port.
+- MCP (T6): `boof-runner mcp` needs `--client <id>`; the keyless `local-mcp` identity and `--admin` are removed.
+- Agents (T7): task agents get no boof credential. They also get a marker, `BOOF_RUNNER_AGENT_OF`, that makes `boof-runner` refuse to act on the data root of the server that started them (exit 3). The check follows symlinks and `..`, and also covers `-d` roots in any position, `--data=` and `$BOOF_RUNNER_DATA_ROOT`. An agent that works in the server's own folder, where `./data` is the server's data root, is refused even with `-d <scratch>`; start it from another folder. A scratch data root elsewhere keeps working.
+- Data root (T8): the data root and its existing `auth`, `owlish`, `webhooks`, `audit`, `idempotency`, `concierge`, `claude-agent-config`, `n8n` and `external-runs` folders are set to mode 700 at every start when you own them. `$HOME` and `/` are never changed, and a root that refuses `chmod` is logged and left alone. Sign-in sessions and `auth/clients.json` are refused (with a message that names the `chmod`) when a file or folder is owned by another user or is writable by group or others. A group-writable parent folder is accepted only in your user private group (named like you, no other members); any other group, including a shared primary group such as `users` or `staff`, is refused with `chmod g-w <folder>`. HTTP clients get a fixed 503 message; the folder and the fix are in the server log.
+- Folders created after start (such as `audit/`) are now made with mode 700 as well, not the umask default.
+- Desktop (T9): without `safeStorage` the app signs its own window in with a session it sets, instead of using keyless local trust.
+
+### Breaking changes and upgrade notes
+
+- Keyless access on loopback now works only for the web UI after sign-in. Open the UI with the link that boof-runner serve prints, or run boof-runner open and open its link. Scripts and curl on 127.0.0.1 need Authorization: Bearer <key> (boof-runner auth add).
+- MCP needs a client. POST /mcp needs an API key, and boof-runner mcp needs --client <id>; the keyless local-mcp identity and --admin are gone. Create a client once with boof-runner auth add --name mcp-host --scopes <list> --trust review and add --client <id> to your MCP host's command.
+- boof-runner refuses to act on the data root of the server whose task agent runs it (exit 3). This is a guard against careless or injected commands, not a sandbox.
+- The data root and its auth, owlish, webhooks, audit, idempotency, concierge, claude-agent-config, n8n and external-runs folders are set to mode 700 at start when you own them. This keeps other local users out. It does not isolate task agents, which run as your user.
+- The desktop app without safeStorage now signs its window in with a session it sets itself, instead of keyless local trust. It renews that session daily while a window stays open.
+- A parent folder of the data root that is group-writable by a group other than your own user private group (a shared group such as `users` or `staff`) is refused: sign-in and API keys answer 503 until you run `chmod g-w <folder>`. A parent in your own private group (the usual `~/.local/share` with umask 002) is accepted.
+- A data root on WSL `/mnt/c` (or another filesystem that reports mode 0777 and refuses `chmod`) cannot pass the secret-folder check, so sign-in and keys are refused there. Put the data root on the Linux filesystem, or set `metadata` in `/etc/wsl.conf` so modes are real.
+- Sign-in links are bound to the port they were minted for. A link opened on another port is refused and burned. `boof-runner open` without `--port` warns when nothing answers on the default port.
+- Server-run git in agent worktrees runs with `core.fsmonitor` and hooks disabled; your repository's hooks no longer run for boof's own git calls. Server-run `git diff` also disables external diff drivers and textconv; clean/smudge filters are not disabled.
+- Do not go back to 0.3.0 on an upgraded data root: it makes keyless loopback administrator again, drops `settings.n8n` on the next save, and runs pending n8n check tasks as full agent tasks.
+
 ## 0.3.0 (2026-11-05)
 
 ### Fixes

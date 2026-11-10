@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   dataPaths,
   dataRootPaths,
+  claudeAgentConfigDir,
+  conciergeConfigDir,
+  conciergeDir,
+  conciergeScratchDir,
   InvalidIdError,
   projectPaths,
   taskAssetsDir,
@@ -49,6 +53,8 @@ describe("data root layout v2 paths", () => {
       projects: "/d/projects",
       auth: "/d/auth",
       audit: "/d/audit",
+      owlishProjectKeys: "/d/owlish/project-keys.json",
+      claudeAgentConfigs: "/d/claude-agent-config",
     });
     expect(projectPaths("/d", "app")).toEqual({
       dir: "/d/projects/app",
@@ -63,6 +69,18 @@ describe("data root layout v2 paths", () => {
 
   it("dataPaths stays as a deprecated alias", () => {
     expect(dataPaths("/d")).toMatchObject({ settings: "/d/settings.json", tasks: "/d/tasks" });
+  });
+
+  it("builds isolated Claude config paths by project", () => {
+    expect(claudeAgentConfigDir("/d", "app")).toBe("/d/claude-agent-config/app");
+    expect(() => claudeAgentConfigDir("/d", "../escape")).toThrow(InvalidIdError);
+  });
+
+  it("builds concierge directories under the data root", () => {
+    expect(conciergeDir("/d", "app")).toBe("/d/concierge/app");
+    expect(conciergeConfigDir("/d", "app")).toBe("/d/concierge/app/claude-config");
+    expect(conciergeScratchDir("/d", "app")).toBe("/d/concierge/app/cwd");
+    expect(() => conciergeDir("/d", "../escape")).toThrow(InvalidIdError);
   });
 
   it("a project dir is a valid root for the task path helpers", () => {

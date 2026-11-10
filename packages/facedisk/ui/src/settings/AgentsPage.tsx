@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Project, RoleAssignment } from "@boof/heart/schema";
 import { api } from "../api.js";
-import type { HealthResult, ToolModelDetails } from "../api-types.js";
+import type { AgentAuthEntry, HealthResult, ToolModelDetails } from "../api-types.js";
+import { isDesktop } from "../desktop.js";
+import { claudeAgentRoles } from "../lib/claude-agent.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
 import {
   checkedAgo,
   roleModelLabel,
+  roleToolNote,
   ROLES,
+  toolOptionLabel,
   usageLabel,
   type AgentsValues,
   type RoleName,
@@ -18,6 +22,7 @@ import { AdvancedSection } from "./AdvancedSection.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { AddModelDialog } from "./AddModelDialog.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
+import { ClaudeAgentNote } from "./ClaudeAgentNote.js";
 import { RoleSelects } from "./RoleSelects.js";
 
 export function inheritedRoleLabel(tool: string, model: string): string {
@@ -57,12 +62,15 @@ export function AgentsPage({
   set,
   project,
   advancedOpen,
+  onUnavailable,
 }: {
   form: AgentsValues;
   set: (update: (v: AgentsValues) => AgentsValues) => void;
   project: Project;
   /** Show the advanced sections (expanded view, or the page has unsaved edits). */
   advancedOpen: boolean;
+  /** Told which tools the API lists as unavailable (`unavailableReason`), so Save can be blocked. */
+  onUnavailable?: (reasons: Record<string, string>) => void;
 }) {
   const g = form.global;
   const o = form.project;
@@ -78,6 +86,7 @@ export function AgentsPage({
   const [failed, setFailed] = useState(false);
   const [addFor, setAddFor] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [agentAuth, setAgentAuth] = useState<AgentAuthEntry[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,19 +107,41 @@ export function AgentsPage({
       })
       .catch(() => !cancelled && setFailed(true))
       .finally(() => !cancelled && setLoading(false));
+    // The live "ready or refused" line of the claude-agent note; it needs settings:read, like this page.
+    void api
+      .runnerStatus()
+      .then((r) => !cancelled && setAgentAuth(r.agentAuth))
+      .catch(() => !cancelled && setAgentAuth([]));
     return () => {
       cancelled = true;
     };
   }, [attempt]);
 
+  const unavailable = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [tool, info] of Object.entries(details ?? {}))
+      if (info.unavailableReason) out[tool] = info.unavailableReason;
+    return out;
+  }, [details]);
+  const unavailableKey = JSON.stringify(unavailable);
+  useEffect(() => {
+    onUnavailable?.(unavailable);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unavailableKey]);
+  const env = useMemo(() => ({ isDesktop, unavailable }), [unavailable]);
+
   // The model lists a select offers: the draft's, plus what the tools report.
   const models = useMemo(() => {
     const out: Record<string, string[]> = {};
-    for (const src of [g.models, fetched])
+    // A tool the server lists (claude-agent among them) is offered even before it has any model.
+    const listed = Object.fromEntries(
+      Object.entries(details ?? {}).map(([tool, info]) => [tool, info.models.map((m) => m.id)]),
+    );
+    for (const src of [g.models, fetched, listed])
       for (const [tool, list] of Object.entries(src))
         out[tool] = [...new Set([...(out[tool] ?? []), ...list])];
     return out;
-  }, [g.models, fetched]);
+  }, [g.models, fetched, details]);
   const tools = Object.keys(models);
 
   const setRole = (role: RoleName, next: RoleAssignment | undefined) =>
@@ -124,6 +155,10 @@ export function AgentsPage({
     const { [role]: _drop, ...rest } = o.roles;
     setO({ roles: next ? { ...rest, [role]: next } : rest });
   };
+
+  // One note for the roles this project would run on claude-agent (its own choices over the shared ones).
+  const agentRoles = claudeAgentRoles(g.roles, o.roles);
+  const agentNote = agentRoles.length > 0 ? roleToolNote("claude-agent", env) : null;
 
   return (
     <div className="flex max-w-[1000px] flex-col gap-8">
@@ -164,6 +199,7 @@ export function AgentsPage({
                 allowNone={role === "observer"}
                 onChange={(n) => setRole(role, n)}
                 onAddModel={setAddFor}
+                toolLabel={(t) => toolOptionLabel(t, env)}
               />
             }
             override={
@@ -175,10 +211,19 @@ export function AgentsPage({
                 allowNone={false}
                 onChange={(n) => setOwnRole(role, n)}
                 onAddModel={setAddFor}
+                toolLabel={(t) => toolOptionLabel(t, env)}
               />
             }
           />
         ))}
+        {agentNote && (
+          <ClaudeAgentNote
+            kind={agentNote.kind}
+            text={agentNote.text}
+            auth={agentAuth?.find((a) => a.projectId === project.id)}
+            checked={agentAuth !== null}
+          />
+        )}
       </section>
 
       <AdvancedSection title="Review" className="flex flex-col" open={advancedOpen}>
@@ -340,6 +385,7 @@ export function AgentsPage({
                 <strong className="text-[length:var(--text-body)]">
                   {info?.displayName ?? tool}
                 </strong>
+                {info?.unavailableReason && <TonePill tone="neutral">unavailable</TonePill>}
                 {h && (
                   <TonePill tone={h.status === "available" ? "done" : "failed"}>
                     {h.status}
@@ -357,6 +403,11 @@ export function AgentsPage({
                   Add model…
                 </Button>
               </div>
+              {info?.unavailableReason && (
+                <p className="m-0 text-[length:var(--text-meta)] text-ink-muted">
+                  {info.unavailableReason}
+                </p>
+              )}
               <div className="flex flex-wrap gap-1.5">
                 {(models[tool] ?? []).map((m) => {
                   // A model added on this page is not saved yet, so it counts as an added one.

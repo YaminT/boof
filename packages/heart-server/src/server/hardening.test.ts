@@ -1,8 +1,9 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSettings, SettingsStore, execCommand } from "@boof/heart";
+import { BrowserSessionStore, defaultSettings, SettingsStore, execCommand } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
 import { TaskService } from "../api/index.js";
@@ -30,7 +31,11 @@ beforeEach(async () => {
   await execCommand("git", ["init", "-q"], { cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
   await service.projects.create({ workingDirectory: repo, id: "default" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 
 afterEach(async () => {
@@ -39,6 +44,17 @@ afterEach(async () => {
 });
 
 describe("host guard", () => {
+  it("requires a real browser session on an otherwise accepted local Host", async () => {
+    app = createApp({
+      service,
+      browserSessions: new BrowserSessionStore(root),
+      peerAddress: () => "127.0.0.1",
+    });
+    const res = await req("/api/v1/whoami", undefined, "localhost:4319");
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.details.reason).toBe("browser_session_required");
+  });
+
   it("rejects a foreign Host header with 421", async () => {
     const res = await req("/api/tasks", undefined, "evil.example.com");
     expect(res.status).toBe(421);
@@ -53,7 +69,12 @@ describe("host guard", () => {
   );
 
   it("accepts explicitly allowed hosts", async () => {
-    app = createApp({ service, peerAddress: () => "127.0.0.1", allowedHosts: ["boof.lan"] });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+      allowedHosts: ["boof.lan"],
+    });
     expect((await req("/api/tasks", undefined, "boof.lan:80")).status).toBe(200);
   });
 
@@ -64,7 +85,12 @@ describe("host guard", () => {
 
   it("sends HSTS only when it terminates TLS itself, never with includeSubDomains", async () => {
     expect((await req("/api/tasks")).headers.get("strict-transport-security")).toBeNull();
-    app = createApp({ service, peerAddress: () => "127.0.0.1", tls: true });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+      tls: true,
+    });
     expect((await req("/api/tasks")).headers.get("strict-transport-security")).toBe(
       "max-age=15552000",
     );

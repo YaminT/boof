@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   dayKey,
+  ExternalRunStore,
   defaultSettings,
   newTask,
   ProjectStore,
@@ -183,6 +184,48 @@ describe("day limits", () => {
     const events = await budgetEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ scope: "global", limitUsd: 1.2 });
+  });
+
+  it("an n8n check task still runs while the global budget is spent; a normal task does not", async () => {
+    await useBudget({ perDayUsd: 1.2 });
+    await addTask(main, "t1");
+    await engine.runUntilIdle();
+    expect(await engine.tick()).toEqual({ kind: "budget", scopes: ["global"] });
+    const external = {
+      preflight: async () => null,
+      trigger: async (req: { runId: string }) => {
+        await new ExternalRunStore(dataRoot).complete(req.runId, { status: "ok", report: "fine" });
+        return { ok: true as const, sent: "answered" as const };
+      },
+    };
+    const checking = new RunnerEngine({ root: dataRoot, pollIntervalMs: 10, external });
+    await settings.save({
+      ...(await settings.load()),
+      n8n: {
+        baseUrl: "http://n8n.test:5678",
+        callbackBaseUrl: "https://boof.test/boof",
+        defaultTimeoutMs: 600_000,
+      },
+    });
+    await addTask(main, "t2");
+    await tasksOf(main).create(
+      newTask(
+        fm("chk", {
+          priority: 90,
+          n8nCheck: {
+            workflowId: "wf1",
+            workflowName: "Nightly",
+            webhookPath: "boof/check",
+            updatedAt: "2026-06-04T10:00:00.000Z",
+          },
+        }),
+        "Check.",
+      ),
+    );
+    const result = await checking.tick();
+    expect(result).toMatchObject({ kind: "ran", outcome: { kind: "done" } });
+    expect((await tasksOf(main).get("chk"))?.frontmatter.status).toBe("done");
+    expect((await tasksOf(main).get("t2"))?.frontmatter.status).toBe("pending");
   });
 
   it("starts a new day with an empty ledger", async () => {

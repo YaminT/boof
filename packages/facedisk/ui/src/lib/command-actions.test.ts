@@ -32,6 +32,7 @@ function effects(): ActionEffects {
     createEpic: vi.fn(),
     openNewEpic: vi.fn(),
     moveTask: vi.fn(),
+    resetAssistant: vi.fn(),
   };
 }
 const ctx = (over: Partial<ActionContext> = {}): ActionContext => ({
@@ -70,6 +71,7 @@ describe("createCommandActions", () => {
       "queue-t1",
       "stop-t2",
       "new-epic",
+      "assistant.new",
       "toggle-runner",
       "theme-light",
       "theme-dark",
@@ -139,6 +141,19 @@ describe("createCommandActions", () => {
     expect(by["queue-t1"]).toBe("tasks:write");
     expect(by["stop-t2"]).toBe("tasks:control");
     expect(by["go-tasks"]).toBeUndefined();
+    expect(by["assistant.new"]).toBe("tasks:read");
+  });
+
+  it("offers a new assistant conversation that resets this project's assistant", async () => {
+    const c = ctx();
+    const action = createCommandActions(c).find((a) => a.id === "assistant.new")!;
+    expect(action.label).toBe("New assistant conversation");
+    expect(action.keywords).toEqual(["/new", "assistant", "reset"]);
+    await action.run();
+    expect(c.effects.resetAssistant).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(createCommandActions(ctx({ pid: null })).some((a) => a.id === "assistant.new")).toBe(
+      false,
+    );
   });
 });
 

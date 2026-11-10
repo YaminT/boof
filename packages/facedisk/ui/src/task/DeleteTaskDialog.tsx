@@ -8,7 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/ui/dialog";
-import { DETACH_ARM_MS, deleteDialogModel } from "../lib/task-delete.js";
+import { DETACH_ARM_MS, DELETE_TASK_WARNING, deleteDialogModel } from "../lib/task-delete.js";
+
+export { DELETE_TASK_WARNING };
 
 /**
  * Confirm before deleting a task; the only place a task can be deleted. A task with subtasks asks

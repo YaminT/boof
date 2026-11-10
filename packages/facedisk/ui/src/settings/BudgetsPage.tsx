@@ -6,7 +6,7 @@ import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
 import { resetText, scopeLabel, todayScopes, usageText } from "../lib/spend.js";
-import type { BudgetsValues } from "../lib/settings-budgets.js";
+import { CONCIERGE_LABEL, type BudgetsValues } from "../lib/settings-budgets.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
 
 const h2 = "m-0 text-[length:var(--text-section)] font-semibold";
@@ -225,6 +225,25 @@ export function BudgetsPage({
             (v) => setO({ perTool: v }),
             "Per day, each tool, this project",
             "codex=5",
+          )}
+        />
+        <OverrideRow
+          label={CONCIERGE_LABEL}
+          inherit={false}
+          onInherit={() => {}}
+          inheritedText=""
+          showChoice={false}
+          global={usdInput(
+            g.concierge,
+            (v) => setG({ concierge: v }),
+            `Per day, ${CONCIERGE_LABEL}, all projects`,
+            "No limit",
+          )}
+          override={usdInput(
+            o.concierge,
+            (v) => setO({ concierge: v }),
+            `Per day, ${CONCIERGE_LABEL}, this project`,
+            "Same as all projects",
           )}
         />
         <OverrideRow

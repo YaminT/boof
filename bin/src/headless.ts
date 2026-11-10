@@ -31,6 +31,10 @@ import {
   type ScannedUnit,
 } from "@boof/heart";
 import { RunnerEngine, ToolRegistry, type TickResult } from "@boof/runner";
+import { createN8nTransport } from "@boof/heart-server";
+import { headlessSelfCheck } from "./boot.js";
+
+// A headless run has no server of its own; `headlessSelfCheck` (boot.ts) works out which addresses are boof's.
 
 /** Id of the plan `scan` keeps for a project. */
 const SCAN_PLAN_ID = "repo";
@@ -141,6 +145,10 @@ export interface RunTaskOptions {
   parentId?: string;
   registry?: ToolRegistry;
   out?: Out;
+  /** When aborted, stop between ticks. A real SIGINT kills the process instead. */
+  signal?: AbortSignal;
+  /** Called once the project id is an existing project. */
+  onProject?: (projectId: string) => void;
 }
 
 export interface RunResultSummary {
@@ -159,6 +167,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
   const project = await resolveProject(opts.root, opts, out);
+  opts.onProject?.(project.id);
   if (project.paused) {
     throw new ProjectResolutionError(`Project '${project.id}' is paused; resume it first.`);
   }
@@ -203,10 +212,22 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   }
   const id = created.frontmatter.id;
 
-  const engine = new RunnerEngine({ root: opts.root, registry, onlyProject: project.id });
+  const engine = new RunnerEngine({
+    root: opts.root,
+    registry,
+    onlyProject: project.id,
+    external: createN8nTransport({
+      root: opts.root,
+      via: "runner",
+      isSelfUrl: headlessSelfCheck(settings),
+    }),
+  });
   // Drive until our task leaves the active states. One tick fully runs the
   // highest-priority pending task (ours), so this normally loops once.
   for (;;) {
+    if (opts.signal?.aborted) {
+      return { id, projectId: project.id, status: "stopped", ok: false };
+    }
     const located = await store.locate(id);
     const status = located?.status;
     if (!status || ["done", "failed", "stopped", "action", "archived"].includes(status)) break;
@@ -220,6 +241,13 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   out(
     `\n${ok ? "[done]" : finalStatus === "stopped" ? "[stopped]" : "[not done]"} task ${project.id}/${id}: ${finalStatus}\n`,
   );
+  if (!ok && !["stopped", "action", "archived"].includes(finalStatus)) {
+    const task = await store.get(id);
+    const refusal = task?.body.log
+      .match(/(?:^|\n)### Not started\n([\s\S]*?)(?=\n### |$)/)?.[1]
+      ?.trim();
+    if (refusal) out(`${refusal}\n`);
+  }
   return { id, projectId: project.id, status: finalStatus as Status, ok };
 }
 
@@ -230,28 +258,41 @@ export async function drainQueue(opts: {
   project?: string;
   registry?: ToolRegistry;
   out?: Out;
+  /** When aborted, stop between ticks. A real SIGINT kills the process instead. */
+  signal?: AbortSignal;
+  /** Called once `--project` names an existing project. */
+  onProject?: (projectId: string) => void;
 }): Promise<{ ran: number; failed: number }> {
   const out = opts.out ?? stdoutWrite;
   await scaffoldDataRoot(opts.root);
   if (opts.project && !(await new ProjectStore(opts.root).get(opts.project))) {
     throw new ProjectResolutionError(`Project not found: ${opts.project}`);
   }
+  if (opts.project) opts.onProject?.(opts.project);
   await ensureRunnerEnabled(opts.root, out);
+  const settings = await new SettingsStore(opts.root).load();
   const engine = new RunnerEngine({
     root: opts.root,
     registry: opts.registry ?? new ToolRegistry(),
     onlyProject: opts.project,
+    external: createN8nTransport({
+      root: opts.root,
+      via: "runner",
+      isSelfUrl: headlessSelfCheck(settings),
+    }),
   });
   let ran = 0;
   let failed = 0;
   let stopped = 0;
   for (;;) {
+    if (opts.signal?.aborted) return { ran, failed: failed + stopped };
     const res = await streamTick(engine, out);
     if (res.kind !== "ran") break;
     ran += 1;
     if (res.outcome.kind === "failed") failed += 1;
     if (res.outcome.kind === "stopped") stopped += 1;
   }
+  if (opts.signal?.aborted) return { ran, failed: failed + stopped };
   out(
     `\nqueue drained: ${ran} task(s) ran, ${failed} failed` +
       `${stopped > 0 ? `, ${stopped} stopped` : ""}\n`,
@@ -271,6 +312,8 @@ export interface ScanOptions {
   model?: string;
   registry?: ToolRegistry;
   out?: Out;
+  /** Called once the project id is an existing project. */
+  onProject?: (projectId: string) => void;
 }
 
 export interface ScanSummary {
@@ -313,6 +356,7 @@ export async function scanRepoToTasks(opts: ScanOptions): Promise<ScanSummary> {
     opts.project ? { project: opts.project } : { repo },
     out,
   );
+  opts.onProject?.(project.id);
   if ((await realpath(repo)) !== project.workingDirectory) {
     throw new ProjectResolutionError(
       `Project '${project.id}' works on ${project.workingDirectory}, not ${repo}; scan that directory or omit --project.`,

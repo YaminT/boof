@@ -183,6 +183,7 @@ describe("task-file injected section", () => {
         text: "steer\nme",
         mode: "now",
         appliedAt: "2026-06-04T10:05:02.000Z",
+        model: "opus",
       }),
       formatInjectedEntry({ at: "2026-06-04T10:06:00.000Z", by: "user", text: "plain" }),
       formatInjectedEntry({
@@ -199,6 +200,7 @@ describe("task-file injected section", () => {
         text: "steer\nme",
         mode: "now",
         appliedAt: "2026-06-04T10:05:02.000Z",
+        model: "opus",
       },
       { at: "2026-06-04T10:06:00.000Z", by: "user", text: "plain" },
       { at: "2026-06-04T10:07:00.000Z", by: "user", text: "later", mode: "next-step" },

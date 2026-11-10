@@ -1,15 +1,24 @@
+import { createHash } from "node:crypto";
 import {
   ABSENT_POOL,
   OwlishClient,
   OwlishError,
   OwlishSecretStore,
+  type AdminRouteProbe,
+  ProjectKeyStore,
+  decideAgentAuth,
+  withAgentKey,
+  agentAuthRefusalMessage,
+  agentKeyIsSeparate,
+  type AgentSdkEligibility,
   type PoolStatus,
 } from "@boof/owlish";
-import { appendFile, readFile, realpath, rm } from "node:fs/promises";
+import { appendFile, readFile, realpath, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   agentStatus,
+  AuthStore,
   appendEvent,
   AttachmentStore,
   evaluateBudget,
@@ -18,6 +27,7 @@ import {
   buildHierarchyIndex,
   clearMissingCommand,
   CommandStore,
+  auditOperation,
   createTaskInHierarchy,
   moveTask as moveTaskInHierarchy,
   removeTask,
@@ -67,6 +77,7 @@ import {
   type TaskReviewInfo,
   appendAnswerRound,
   WebhookSecretStore,
+  N8nSecretStore,
   atomicWrite,
   settingsVersion,
   initGitRepo,
@@ -88,6 +99,9 @@ import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
+import { ConciergeService } from "../../concierge/service.js";
+import type { ConciergeAgent } from "@boof/heart";
+import { cleanN8nName } from "../../n8n/text.js";
 
 export interface CreateTaskInput {
   title: string;
@@ -190,6 +204,7 @@ export class ProjectService {
   /** True when `actor` is a review-trust client and approval is required (the default). */
   private async needsApproval(actor?: Principal): Promise<boolean> {
     if (!actor || actor.kind !== "client" || actor.trust !== "review") return false;
+    if (actor.alwaysReview) return true;
     return securitySettings(await this.parent.loadSettings()).externalTasksRequireApproval;
   }
 
@@ -681,6 +696,7 @@ export class ProjectService {
     prompt: string,
     actor?: Principal,
     mode: InjectMode = "next-step",
+    model?: string,
   ): Promise<{ ok: true; mode: InjectMode; applied: "pending" }> {
     const text = prompt.trim();
     if (!text) throw new OpError(400, "Prompt is required");
@@ -701,7 +717,7 @@ export class ProjectService {
           // The pipeline interrupts the running step on this file and consumes (removes) it.
           await appendFile(
             taskSteerRequestPath(this.root, id),
-            JSON.stringify({ at: now, text }) + "\n",
+            JSON.stringify({ at: now, text, ...(model ? { model } : {}) }) + "\n",
             "utf8",
           );
         }
@@ -712,12 +728,14 @@ export class ProjectService {
         ).catch(() => {});
       },
       // Durable copy: the control directory is deleted when the task leaves `running`.
-      (t) =>
+      (t) => {
         appendInjectedEntry(t, {
           text,
           by: actor && actor.kind === "client" ? actor.name : "user",
           mode,
-        }),
+          ...(model ? { model } : {}),
+        });
+      },
     );
     return { ok: true, mode, applied: "pending" };
   }
@@ -834,25 +852,40 @@ export class TaskService {
   readonly commands: CommandStore;
   readonly settingsStore: SettingsStore;
   readonly webhookSecrets: WebhookSecretStore;
+  /** The n8n API key and webhook header secret (n8n/secrets.json). */
+  readonly n8nSecrets: N8nSecretStore;
   /** boof's one better-ccflare client key (file or BOOF_OWLISH_API_KEY); never part of settings. */
   readonly owlishSecrets: OwlishSecretStore;
+  readonly projectKeys: ProjectKeyStore;
   /** The tools, injected by the composition root (bin, desktop): Heart never builds one. */
   readonly catalog: ToolCatalog;
   private readonly cache = new Map<string, ProjectService>();
+  readonly conciergeAgent: ConciergeAgent | null;
+  readonly authStore: AuthStore;
+  private conciergeService?: ConciergeService;
+  private readonly pendingAgentRoleCache = new Map<
+    string,
+    { signature: string; roles: Set<string> }
+  >();
 
   constructor(
     readonly root: string,
     catalog: ToolCatalog,
+    opts: { conciergeAgent?: ConciergeAgent | null; authStore?: AuthStore } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
     this.settingsStore = new SettingsStore(root);
     this.webhookSecrets = new WebhookSecretStore(root);
+    this.n8nSecrets = new N8nSecretStore(root);
     this.owlishSecrets = new OwlishSecretStore(root);
+    this.projectKeys = new ProjectKeyStore(root);
     void this.owlishSecrets.tighten().catch(() => {
       console.error("could not secure Owlish secret storage");
     });
     this.catalog = catalog;
+    this.conciergeAgent = opts.conciergeAgent ?? null;
+    this.authStore = opts.authStore ?? new AuthStore(root);
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -877,6 +910,224 @@ export class TaskService {
       url: owlish.url,
       healthGate: owlish.healthGate,
     };
+  }
+
+  async hasProjectKey(projectId: string): Promise<boolean> {
+    return this.projectKeys.has(projectId).catch(() => false);
+  }
+
+  private agentSdkCache?: { id: string; at: number; value: AgentSdkEligibility };
+
+  /**
+   * Whether claude-agent may use the gateway: every account is API-key auth (checked with the admin
+   * client key) and an api-only agent key is stored. Never throws and never queries without a key:
+   * an unreadable or missing key is a closed gate with a key-free reason. `refresh` skips the 10 s cache.
+   */
+  async agentSdkEligibility(refresh = false): Promise<AgentSdkEligibility> {
+    const owlish = (await this.loadSettings()).owlish;
+    const closed = (reason: string): AgentSdkEligibility => ({
+      gateway: "checked",
+      allowed: false,
+      reason,
+      blocking: [],
+      checkedAt: new Date().toISOString(),
+    });
+    if (!owlish) {
+      const now = new Date().toISOString();
+      return {
+        gateway: "absent",
+        allowed: false,
+        reason: "no better-ccflare gateway is configured",
+        blocking: [],
+        checkedAt: now,
+      };
+    }
+    let key: string | null;
+    try {
+      key = await this.owlishSecrets.get();
+    } catch {
+      return closed("authentication settings or credentials could not be read");
+    }
+    if (!key) return closed("no better-ccflare client key is configured");
+    const hasAgentKey = await this.owlishSecrets
+      .getAgent()
+      .then((k) => Boolean(k))
+      .catch(() => false);
+    const id = `${owlish.url}\n${createHash("sha256").update(key).digest("hex")}`;
+    const cached = this.agentSdkCache;
+    let value: AgentSdkEligibility;
+    if (!refresh && cached?.id === id && Date.now() - cached.at < 10_000) value = cached.value;
+    else {
+      value = await new OwlishClient({ url: owlish.url, apiKey: key }).agentSdkEligibility();
+      this.agentSdkCache = { id, at: Date.now(), value };
+    }
+    return withAgentKey(value, hasAgentKey);
+  }
+
+  async agentAuthStatus(authorized: (projectId: string) => boolean) {
+    const settings = await this.loadSettings();
+    const result = [];
+    let gatewayEligibility: AgentSdkEligibility | null | undefined;
+    // One admin-route probe for the whole status. A key the gateway accepts is not separate.
+    let agentProbe: AdminRouteProbe | undefined;
+    for (const project of await this.listProjects()) {
+      if (!authorized(project.id) || project.archived) continue;
+      const effective = effectiveSettings(settings, project);
+      const pendingRoles = await this.pendingAgentRoles(project.id);
+      const roles = (["planner", "developer", "observer", "reviewer"] as const).filter(
+        (role) => effective.roles[role]?.tool === "claude-agent" || pendingRoles.has(role),
+      );
+      if (!roles.length) continue;
+      const unavailable = this.catalog.get("claude-agent")?.unavailableReason;
+      if (unavailable) {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: unavailable,
+        });
+        continue;
+      }
+      let hasProjectKey = false;
+      try {
+        hasProjectKey = await this.hasProjectKey(project.id);
+      } catch {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: agentAuthRefusalMessage(
+            project.name,
+            "authentication settings or credentials could not be read",
+          ),
+        });
+        continue;
+      }
+      const gateway = settings.owlish;
+      const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
+      let agentKey: string | null = null;
+      let adminKey: string | null = null;
+      try {
+        agentKey = await this.owlishSecrets.getAgent();
+        adminKey = await this.owlishSecrets.get();
+      } catch {
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: false,
+          via: null,
+          reason: agentAuthRefusalMessage(
+            project.name,
+            "authentication settings or credentials could not be read",
+          ),
+        });
+        continue;
+      }
+      const hasAgentKey = Boolean(agentKey);
+      let keysAreSeparate = agentKeyIsSeparate(adminKey, agentKey);
+      if (gateway && useGateway && agentKey && keysAreSeparate) {
+        agentProbe ??= await new OwlishClient({
+          url: gateway.url,
+          apiKey: agentKey,
+        }).probeAdminRoute();
+        // An outage is not "the keys are the same". Accepted means this key can read the
+        // admin route, so it is not a separate api-only key. Unknown: the gateway is down.
+        if (agentProbe === "unknown") {
+          result.push({
+            projectId: project.id,
+            roles: [...roles],
+            allowed: false,
+            via: null,
+            reason: agentAuthRefusalMessage(
+              project.name,
+              "the better-ccflare gateway is unreachable",
+            ),
+          });
+          continue;
+        }
+        if (agentProbe === "accepted") keysAreSeparate = false;
+      }
+      if (
+        gateway &&
+        useGateway &&
+        hasAgentKey &&
+        keysAreSeparate &&
+        gatewayEligibility === undefined
+      )
+        gatewayEligibility = await this.agentSdkEligibility();
+      const eligibility =
+        gateway && useGateway
+          ? hasAgentKey && keysAreSeparate
+            ? (gatewayEligibility ?? null)
+            : {
+                gateway: "checked" as const,
+                allowed: true,
+                reason: "",
+                blocking: [],
+                checkedAt: new Date().toISOString(),
+              }
+          : null;
+      const decision = decideAgentAuth({
+        projectName: project.name,
+        choice: project.claudeAgent?.auth ?? "gateway",
+        gatewayConfigured: !!gateway,
+        eligibility,
+        hasProjectKey,
+        // agentSdkEligibility() already applied the agent-key rule: `allowed` implies a key.
+        hasAgentKey,
+        keysAreSeparate,
+      });
+      const waiting = hasAgentKey && keysAreSeparate && !!eligibility?.failure;
+      result.push({
+        projectId: project.id,
+        roles: [...roles],
+        allowed: waiting ? false : decision.ok,
+        via: decision.ok ? decision.via : null,
+        reason: waiting
+          ? agentAuthRefusalMessage(
+              project.name,
+              "waiting for the gateway: eligibility could not be checked",
+            )
+          : decision.ok
+            ? null
+            : decision.reason,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Pending task overrides are needed for the status summary. Fingerprint the pending filenames
+   * and their mtimes first; unchanged task lists then avoid parsing every task on each poll.
+   */
+  private async pendingAgentRoles(projectId: string): Promise<Set<string>> {
+    const pendingDir = join(this.projects.dir(projectId), "tasks", "pending");
+    let signature = "";
+    try {
+      const names = (await readdir(pendingDir)).filter((name) => name.endsWith(".md")).sort();
+      const entries = await Promise.all(
+        names.map(async (name) => {
+          const info = await stat(join(pendingDir, name), { bigint: true });
+          return `${name}:${info.size}:${info.mtimeNs}`;
+        }),
+      );
+      signature = entries.join("|");
+    } catch {
+      // A missing pending directory is an empty list; TaskStore.list handles other read errors.
+    }
+    const cached = this.pendingAgentRoleCache.get(projectId);
+    if (cached?.signature === signature) return cached.roles;
+    const tasks = await new TaskStore(this.projects.dir(projectId)).list();
+    const roles = new Set<string>();
+    for (const task of tasks) {
+      if (task.frontmatter.status !== "pending") continue;
+      for (const [role, tool] of Object.entries(task.frontmatter.tools ?? {}))
+        if (tool?.tool === "claude-agent") roles.add(role);
+    }
+    this.pendingAgentRoleCache.set(projectId, { signature, roles });
+    return roles;
   }
 
   /** The pool right now: `absent` (no request) without `settings.owlish`; never throws. */
@@ -923,6 +1174,76 @@ export class TaskService {
   async requireProject(id: string): Promise<ProjectService> {
     if (!(await this.projects.get(id))) throw projectNotFound(id);
     return this.forProject(id);
+  }
+
+  /**
+   * The check task for an edited n8n workflow (the edit watcher's, `by: "n8n-watcher"`): an open
+   * (draft or pending) task for the same workflow is updated in place, otherwise one is created,
+   * as a draft unless `opts.queue`. 404 `project_not_found` for an unknown project.
+   */
+  async createN8nCheckTask(
+    projectId: string,
+    rawCheck: { workflowId: string; workflowName: string; webhookPath: string; updatedAt: string },
+    opts: { queue: boolean },
+  ): Promise<{ id: string; created: boolean }> {
+    const project = await this.requireProject(projectId);
+    const check = {
+      ...rawCheck,
+      workflowName: cleanN8nName(rawCheck.workflowName, rawCheck.workflowId),
+    };
+    const title = `Check n8n workflow "${check.workflowName}" after edit`;
+    const prompt = `Runs the n8n workflow "${check.workflowName}" (${check.workflowId}) once with boof.kind = "check" and passes when its callback reports ok. Created by boof after the workflow changed in n8n at ${check.updatedAt}.`;
+    const start = Date.now();
+    const audit = (task: string, updated: boolean) =>
+      auditOperation(this.root, {
+        principal: { id: "n8n-watcher", kind: "server" },
+        action: "n8n:check-task",
+        via: "server",
+        project: projectId,
+        ok: true,
+        ms: Date.now() - start,
+        at: start,
+        extra: { workflowId: check.workflowId, task, ...(updated ? { updated: true } : {}) },
+      });
+    const open = (await project.tasks.list()).find(
+      (t) =>
+        (t.frontmatter.status === "draft" || t.frontmatter.status === "pending") &&
+        t.frontmatter.n8nCheck?.workflowId === check.workflowId,
+    );
+    if (open) {
+      await project.tasks.modify(open.frontmatter.id, (t) => {
+        t.frontmatter.n8nCheck = { ...check };
+        t.frontmatter.title = title;
+        t.body.prompt = prompt;
+      });
+      await audit(open.frontmatter.id, true);
+      return { id: open.frontmatter.id, created: false };
+    }
+    const task = await createTaskInHierarchy(
+      project.root,
+      newTask(
+        {
+          id: "pending-id",
+          title,
+          status: opts.queue ? "pending" : "draft",
+          priority: 50,
+          skip: false,
+          labels: ["n8n-check"],
+          command: null,
+          attachments: [],
+          questions: "none",
+          runs: 1,
+          completedRuns: 0,
+          n8nCheck: { ...check },
+          created: "",
+          updated: "",
+        },
+        prompt,
+      ),
+      { by: "n8n-watcher" },
+    );
+    await audit(task.frontmatter.id, false);
+    return { id: task.frontmatter.id, created: true };
   }
 
   // --- Projects ---
@@ -1024,7 +1345,8 @@ export class TaskService {
     const review =
       actor?.kind === "client" &&
       actor.trust === "review" &&
-      securitySettings(await this.loadSettings()).externalTasksRequireApproval;
+      (actor.alwaysReview ||
+        securitySettings(await this.loadSettings()).externalTasksRequireApproval);
     if (!review) return;
     if (creating) {
       throw new OpError(
@@ -1048,7 +1370,21 @@ export class TaskService {
     }
   }
 
-  async updateProject(id: string, patch: ProjectPatch, actor?: Principal): Promise<Project> {
+  async updateProject(
+    id: string,
+    patch: ProjectPatch,
+    actor?: Principal,
+    expectedUpdated?: string,
+  ): Promise<Project> {
+    // Archiving and unarchiving are operator actions, like removing a project: a review-trust
+    // client may not do either, whatever `externalTasksRequireApproval` says.
+    if (actor?.kind === "client" && actor.trust === "review" && patch.archived !== undefined) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot archive or unarchive projects; a human or a trusted client must",
+        "forbidden_trust",
+      );
+    }
     await this.assertMayChangeProject(patch, actor, false);
     if (
       actor &&
@@ -1072,7 +1408,7 @@ export class TaskService {
       assertTarget = (real) => this.assertRegistrationAllowed(actor, real);
     }
     try {
-      return await this.projects.update(id, patch, { assertTarget });
+      return await this.projects.update(id, patch, { assertTarget, expectedUpdated });
     } catch (err) {
       throw this.mapProjectError(err, actor);
     }
@@ -1105,8 +1441,16 @@ export class TaskService {
     opts: { purge?: boolean } = {},
     actor?: Principal,
   ): Promise<{ ok: true }> {
-    // Archiving and purging a project are operator actions, not a review-trust client's.
-    await this.assertMayChangeProject({ archived: true }, actor, false);
+    // Archiving and purging a project are operator actions, not a review-trust client's: refused
+    // whatever `externalTasksRequireApproval` says (`assertMayChangeProject` only applies when
+    // that setting or `alwaysReview` is on).
+    if (actor?.kind === "client" && actor.trust === "review") {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot archive or delete projects; a human or a trusted client must",
+        "forbidden_trust",
+      );
+    }
     try {
       await this.projects.remove(id, opts);
     } catch (err) {
@@ -1134,6 +1478,8 @@ export class TaskService {
         return new OpError(404, err.message, "project_not_found");
       case "id_taken":
         return new OpError(409, err.message, "conflict");
+      case "modified":
+        return new OpError(409, err.message, "project_modified");
       case "duplicate":
       case "same_repo":
         return new OpError(409, err.message, "project_exists");
@@ -1362,6 +1708,18 @@ export class TaskService {
   }
 
   // --- Settings / health ---
+
+  concierge(): ConciergeService {
+    if (!this.conciergeService) {
+      this.conciergeService = new ConciergeService({
+        root: this.root,
+        services: this,
+        authStore: this.authStore,
+        agent: this.conciergeAgent,
+      });
+    }
+    return this.conciergeService;
+  }
 
   loadSettings(): Promise<Settings> {
     return this.settingsStore.load();

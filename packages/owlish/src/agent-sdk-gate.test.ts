@@ -1,0 +1,178 @@
+import { describe, expect, it } from "vitest";
+import {
+  AGENT_SDK_API_KEY_PROVIDERS,
+  agentKeyIsSeparate,
+  agentSdkEligibility,
+  decideAgentAuth,
+  withAgentKey,
+} from "./agent-sdk-gate.js";
+
+const account = (id: string, provider?: string, extra = {}) => ({
+  id,
+  name: id,
+  provider,
+  ...extra,
+});
+const now = new Date("2026-11-05T00:00:00.000Z");
+
+describe("agentKeyIsSeparate", () => {
+  it("treats equal string lengths with different UTF-8 byte lengths as separate", () => {
+    expect(agentKeyIsSeparate("é-padding", "e-padding")).toBe(true);
+  });
+});
+
+describe("agentSdkEligibility", () => {
+  it("allows only known API-key providers without refresh tokens", () => {
+    expect([...AGENT_SDK_API_KEY_PROVIDERS]).toHaveLength(15);
+    for (const provider of AGENT_SDK_API_KEY_PROVIDERS) {
+      expect(agentSdkEligibility([account(provider, provider)], now).allowed, provider).toBe(true);
+    }
+  });
+  it.each(["anthropic", "codex", "codebuddy", "qwen", "xai"])(
+    "blocks %s, including paused and mixed accounts",
+    (provider) => {
+      for (const accounts of [
+        [account("named", provider, { paused: true })],
+        [account("named", provider), account("api", "claude-console-api")],
+      ]) {
+        const result = agentSdkEligibility(accounts, now);
+        expect(result.allowed).toBe(false);
+        expect(result.blocking[0]).toMatchObject({ name: "named", why: "subscription" });
+        expect(result.reason).toContain("named");
+      }
+    },
+  );
+  it("blocks refresh tokens and unknown providers", () => {
+    expect(
+      agentSdkEligibility([account("oauth", "bedrock", { hasRefreshToken: true })], now).blocking[0]
+        ?.why,
+    ).toBe("oauth-token");
+    for (const provider of ["", undefined, "future-thing"]) {
+      expect(agentSdkEligibility([account("unknown", provider)], now).blocking[0]?.why).toBe(
+        "unknown-type",
+      );
+    }
+  });
+  it("fails closed for unreadable and empty pools and bounds blocking detail", () => {
+    for (const detail of ["HTTP 401", "unreachable", "malformed answer"]) {
+      expect(agentSdkEligibility(null, now, detail).reason).toContain(detail);
+    }
+    expect(agentSdkEligibility([], now).allowed).toBe(false);
+    const many = agentSdkEligibility(
+      Array.from({ length: 50 }, (_, i) => account(`blocked-${i}`, "anthropic")),
+      now,
+    );
+    expect(many.blocking).toHaveLength(20);
+    expect(many.reason.length).toBeLessThanOrEqual(300);
+    expect(many.reason).toContain("50 subscription accounts");
+    expect(many.reason).not.toContain("blocked-0");
+    const injected = agentSdkEligibility(
+      [account("safe", "anthropic", { name: "evil\n\u0000name" })],
+      now,
+    );
+    expect(injected.blocking[0]?.name).toBe("evil  name");
+  });
+  it("sanitizes Unicode line separators and control characters in account names and ids", () => {
+    const result = agentSdkEligibility(
+      [account("a\u2028b\u2029c\u0085d", "anthropic", { name: "x\u2028y\u2029z\u0085!" })],
+      now,
+    );
+    expect(result.blocking[0]).toMatchObject({ id: "a b c d", name: "x y z !" });
+    expect(result.reason).not.toMatch(/[\u0085\u2028\u2029]/u);
+  });
+});
+
+describe("decideAgentAuth", () => {
+  const allowed = agentSdkEligibility([account("console", "claude-console-api")], now);
+  const denied = agentSdkEligibility([account("alice-max", "anthropic")], now);
+  it("implements the four decisions and exact refusal copy", () => {
+    expect(
+      decideAgentAuth({
+        projectName: "p",
+        choice: "project-key",
+        gatewayConfigured: false,
+        eligibility: null,
+        hasProjectKey: true,
+      }),
+    ).toEqual({ ok: true, via: "project-key", note: null });
+    expect(
+      decideAgentAuth({
+        projectName: "p",
+        choice: "gateway",
+        gatewayConfigured: true,
+        eligibility: allowed,
+        hasProjectKey: false,
+        hasAgentKey: true,
+      }),
+    ).toEqual({ ok: true, via: "gateway", note: null });
+    // An allowed gateway without an agent key is not usable: refuse, or fall back to the project key.
+    const noAgent = {
+      projectName: "p",
+      choice: "gateway" as const,
+      gatewayConfigured: true,
+      eligibility: allowed,
+    };
+    expect(decideAgentAuth({ ...noAgent, hasProjectKey: false })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        "set an api-only better-ccflare agent key (Settings › Accounts) or a project API key",
+      ),
+    });
+    expect(decideAgentAuth({ ...noAgent, hasProjectKey: true })).toMatchObject({
+      ok: true,
+      via: "project-key",
+    });
+    expect(withAgentKey(allowed, false)).toMatchObject({ allowed: false });
+    expect(withAgentKey(allowed, true)).toBe(allowed);
+    expect(
+      decideAgentAuth({
+        projectName: "p",
+        choice: "gateway",
+        gatewayConfigured: true,
+        eligibility: denied,
+        hasProjectKey: true,
+      }),
+    ).toMatchObject({
+      ok: true,
+      via: "project-key",
+      note: expect.stringContaining("using the project's API key"),
+    });
+    const refusal = decideAgentAuth({
+      projectName: "My project",
+      choice: "gateway",
+      gatewayConfigured: false,
+      eligibility: null,
+      hasProjectKey: false,
+    });
+    expect(refusal).toEqual({
+      ok: false,
+      reason:
+        'claude-agent cannot start: no better-ccflare gateway is configured. Anthropic allows the Agent SDK only with API-key authentication; subscription (OAuth) accounts stay on the claude-code CLI. Set an Anthropic API key for project "My project" (Settings › Project), or use claude-code for this role.',
+    });
+  });
+  it("refuses or falls back when the admin and agent keys are equal", () => {
+    const equalKeysAreSeparate = false;
+    for (const hasProjectKey of [false, true]) {
+      expect(
+        decideAgentAuth({
+          projectName: "p",
+          choice: "gateway",
+          gatewayConfigured: true,
+          eligibility: allowed,
+          hasProjectKey,
+          hasAgentKey: true,
+          keysAreSeparate: equalKeysAreSeparate,
+        }),
+      ).toMatchObject(
+        hasProjectKey
+          ? { ok: true, via: "project-key" }
+          : {
+              ok: false,
+              reason: expect.stringContaining(
+                "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+              ),
+            },
+      );
+    }
+  });
+});

@@ -4,6 +4,7 @@ import {
   AuthStore,
   ClientKindSchema,
   parseDuration,
+  reservedIdWarning,
   ScopeSchema,
   SCOPES,
   SettingsStore,
@@ -12,6 +13,8 @@ import {
   type PublicClient,
   type Scope,
 } from "@boof/heart";
+import { beginCliAudit } from "./cli-audit.js";
+import { migrateOldRoot } from "./migrate-old-root.js";
 
 export const AUTH_HELP = `boof-runner auth — manage API clients (keys are root-equivalent: anyone who can create a task can run code as you)
 
@@ -88,6 +91,9 @@ export async function authCommand(
       ? values.data
       : resolve(process.cwd(), values.data)
     : defaultRoot();
+  // Migrate before any store opens. A 0.3.0 settings file would otherwise fail load() with a
+  // raw schema error, and `auth add` is often the first command after an upgrade.
+  await migrateOldRoot(root);
   const store = new AuthStore(root);
 
   switch (sub) {
@@ -133,30 +139,44 @@ export async function authCommand(
         !values.projects || values.projects === "*"
           ? "*"
           : values.projects.split(",").map((p) => p.trim());
-      const { client, key } = await store.create({
-        name: values.name.trim(),
-        kind: kind.data,
-        scopes,
-        projects,
-        trust: trust.data,
-        expiresAt,
-      });
-      out(`Created client "${client.id}" (${client.trust} trust).`);
-      out("");
-      out(`  ${key}`);
-      out("");
-      out("Store this key now; it is shown once and cannot be recovered.");
-      const mode = securitySettings(await new SettingsStore(root).load()).auth.mode;
-      if (mode !== "required") {
-        out(
-          'Note: security.auth.mode is "local-trust"; set it to "required" in settings.json before using --host.',
-        );
+      const audit = beginCliAudit(root, "cli:auth.add");
+      // Load before create. A failure here means the key was not written. Once create returns,
+      // the write has happened: a later step records success, not an error.
+      let created = false;
+      try {
+        const mode = securitySettings(await new SettingsStore(root).load()).auth.mode;
+        const { client, key } = await store.create({
+          name: values.name.trim(),
+          kind: kind.data,
+          scopes,
+          projects,
+          trust: trust.data,
+          expiresAt,
+        });
+        created = true;
+        out(`Created client "${client.id}" (${client.trust} trust).`);
+        out("");
+        out(`  ${key}`);
+        out("");
+        out("Store this key now; it is shown once and cannot be recovered.");
+        if (mode !== "required") {
+          out(
+            'Note: security.auth.mode is "local-trust"; set it to "required" in settings.json before using --host.',
+          );
+        }
+        await audit.ok();
+        return 0;
+      } catch (e) {
+        if (created) await audit.ok();
+        else await audit.fail(e);
+        throw e;
       }
-      return 0;
     }
     case "list": {
       const clients = await store.list();
       if (clients.length === 0) out("No clients.");
+      const reserved = reservedIdWarning(clients);
+      if (reserved) err(reserved);
       for (const c of clients) {
         const { keyHash: _h, ...pub } = c;
         out(describe(pub));
@@ -170,26 +190,36 @@ export async function authCommand(
         err(`auth ${sub}: a client id is required`);
         return 1;
       }
-      if (sub === "revoke") {
-        const c = await store.revoke(id);
-        if (!c) {
-          err(`auth revoke: no client "${id}"`);
+      const audit = beginCliAudit(root, sub === "revoke" ? "cli:auth.revoke" : "cli:auth.rotate");
+      try {
+        if (sub === "revoke") {
+          const c = await store.revoke(id);
+          if (!c) {
+            err(`auth revoke: no client "${id}"`);
+            await audit.failCode("not_found");
+            return 1;
+          }
+          out(`Revoked "${id}". It stops working immediately.`);
+          await audit.ok();
+          return 0;
+        }
+        const r = await store.rotate(id);
+        if (!r) {
+          err(`auth rotate: no active client "${id}"`);
+          await audit.failCode("not_found");
           return 1;
         }
-        out(`Revoked "${id}". It stops working immediately.`);
+        out(`Rotated "${id}". The old key is invalid now. New key:`);
+        out("");
+        out(`  ${r.key}`);
+        out("");
+        out("Store this key now; it is shown once.");
+        await audit.ok();
         return 0;
+      } catch (e) {
+        await audit.fail(e);
+        throw e;
       }
-      const r = await store.rotate(id);
-      if (!r) {
-        err(`auth rotate: no active client "${id}"`);
-        return 1;
-      }
-      out(`Rotated "${id}". The old key is invalid now. New key:`);
-      out("");
-      out(`  ${r.key}`);
-      out("");
-      out("Store this key now; it is shown once.");
-      return 0;
     }
     default:
       err(`auth: unknown subcommand "${sub}"\n`);

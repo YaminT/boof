@@ -54,14 +54,9 @@ export function mcpRoute(deps: McpRouteDeps) {
       c.set("auditExtra", { action: `mcp:${method}` });
     }
 
-    // A keyless loopback caller under local-trust is a model host, not the administrator: the
-    // route middleware (app.ts) made it the review-trust `local-mcp` principal; the
-    // administration tools are hidden, as on stdio.
-    const keyless = c.get("keylessMcp") === true;
     return handleMcpHttp(c.req.raw, {
       root: deps.service.root,
       principal: c.get("principal"),
-      ...(keyless ? { adminTools: false } : {}),
       services: deps.service,
       authStore: deps.authStore,
       isSelfUrl: deps.isSelfUrl,

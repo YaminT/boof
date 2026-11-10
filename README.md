@@ -21,6 +21,22 @@ Boof Runner queues coding tasks and runs them through a disciplined **planner �
 
 > Boof Runner runs agents with permission prompts disabled inside your repositories. Treat access to it like access to your shell. See [Security model](#security-model).
 
+## Screenshots
+
+Simple view at desktop width. Dark versions: [Overview](docs/images/ui/overview-dark.png), [Tasks](docs/images/ui/tasks-dark.png), [a task](docs/images/ui/task-dark.png), [Settings](docs/images/ui/settings-dark.png).
+
+![Overview: a running task, questions, and the queue](docs/images/ui/overview-light.png)
+
+![Tasks: needs you, running, queued, drafts, and failed](docs/images/ui/tasks-light.png)
+
+![A running task, with its step strip and live log](docs/images/ui/task-light.png)
+
+![Project settings](docs/images/ui/settings-light.png)
+
+The same Overview at 420px:
+
+![Overview on a phone](docs/images/ui/overview-phone.png)
+
 ## Requirements
 
 - **Node.js ≥ 22.22** or **Bun** (the code runs on both)
@@ -35,7 +51,7 @@ npm run build        # build the web UI + the CLI bundle
 npm run dev          # run from source (tsx): boots the web UI and the runner
 ```
 
-Open the URL it prints (default <http://127.0.0.1:4319>). A fresh data root (`./data`) has **no projects**.
+Open the sign-in link it prints (default port 4319; later, run `boof-runner open` for a new link). A fresh data root (`./data`) has **no projects**.
 
 **First project.** Register a git repository in the UI (the project picker) or from the command line:
 
@@ -160,17 +176,17 @@ Exactly what happens:
 
 ### Optional account pool (better-ccflare)
 
-Boof can route supported task tools through the better-ccflare HTTP gateway. **Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; it does not include the later Accounts settings tab or the Agent SDK adapter (8b).
+Boof can route supported task tools through the better-ccflare HTTP gateway. **Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.** Provider sign-in and account setup happen in the better-ccflare dashboard; boof never handles provider credentials. The 8a integration exposes API, MCP and generated CLI controls; the opt-in `claude-agent` tool (Claude Agent SDK) can use the gateway only when every pool account is an API-key account (checked again before each step), and otherwise needs the project's own Anthropic API key; the desktop app does not offer it. See [The claude-agent tool](docs/boof-runner.md#the-claude-agent-tool).
 
 Configure `settings.owlish` in `settings.json` (or through `settings.update`) with the gateway `url` and `healthGate: "pause" | "warn" | "off"` (default `pause`). With `pause`, selection of work using a pool-routed tool pauses when the configured gateway is degraded, unhealthy or unreachable; the reason is visible in runner pool status. `warn` reports health without blocking and `off` disables the gate. With no `settings.owlish`, there is no gateway request or gate.
 
-The optional better-ccflare client key is set once with `settings.update`'s write-only `owlishApiKey`, or supplied through `BOOF_OWLISH_API_KEY` (which takes precedence). The file store is `<data>/owlish/secrets.json` with mode 0600; the key is never returned after setting it. Boof does not store provider credentials. If the pool runs out between pipeline steps, the task stays running and waits in place for `retries.poolWaitMs` (default 30 minutes), then fails as pool exhausted.
+The optional better-ccflare client key is set once with `settings.update`'s write-only `owlishApiKey`, or supplied through `BOOF_OWLISH_API_KEY` (which takes precedence). The `claude-agent` tool uses a separate api-only key, the write-only `owlishAgentKey` (or `BOOF_OWLISH_AGENT_KEY`), stored in the same file; the admin client key is never given to it. The file store is `<data>/owlish/secrets.json` with mode 0600; the key is never returned after setting it. Boof does not store provider credentials. If the pool runs out between pipeline steps, the task stays running and waits in place for `retries.poolWaitMs` (default 30 minutes), then fails as pool exhausted.
 
 Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Credentials, query strings and fragments are rejected.
 
 Routed agents receive the gateway client key in their process environment. Agents run as the server's OS user and can call ccflare's `/api/*` endpoints directly with that key, outside boof's account-operation authorization; see [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](docs/superpowers/specs/2026-10-29-boof-roadmap.md).
 
-The registry-generated commands are `boof-runner accounts list`, `pause`, `resume`, `priority`, `thresholds` and `health`; run `boof-runner accounts --help` or `boof-runner accounts <command> --help` for inputs. Reads need `settings:read`; changes need `settings:write` and a trusted, project-unrestricted principal because the pool is shared. `review-trust` and `local-mcp` principals cannot change account state or gateway settings.
+The registry-generated commands are `boof-runner accounts list`, `pause`, `resume`, `priority`, `thresholds` and `health`; run `boof-runner accounts --help` or `boof-runner accounts <command> --help` for inputs. Reads need `settings:read`; changes need `settings:write` and a trusted, project-unrestricted principal because the pool is shared. `review-trust` principals cannot change account state or gateway settings.
 
 ### Install or update from source
 
@@ -179,6 +195,10 @@ bash scripts/install-or-update-boof-runner.sh
 ```
 
 The script clones or fast-forwards the source checkout, installs dependencies, builds the web UI and CLI (and the desktop app, unless `BOOF_RUNNER_SKIP_DESKTOP=1`, which is the default on Linux without a display), and globally links the `boof-runner` command. Without bun it uses `npm install` (`package-lock.json` is git-ignored; `bun.lock` is the lockfile). A checkout with uncommitted changes stops the update with a message; `BOOF_RUNNER_FORCE_UPDATE=1` saves them to a backup patch and resets. Set `BOOF_RUNNER_DIR`, `BOOF_RUNNER_REPO`, or `BOOF_RUNNER_BRANCH` to override the source location. The default remote is `https://github.com/YaminT/boof.git`; set `BOOF_RUNNER_REPO=git@github.com:YaminT/boof.git` to clone over SSH.
+
+## n8n (optional)
+
+An [n8n](https://n8n.io) workflow can run as an extra step of a project's pipeline: boof calls its webhook, and the workflow reports back through a single-use callback. Admins can also list n8n's workflows in boof and, if they opt in, get a check task after each workflow edit. boof runs fully without n8n: with no n8n connection nothing changes and nothing calls out, and boof never starts n8n. See [docs/n8n.md](docs/n8n.md).
 
 ## Run on a server
 
@@ -229,7 +249,8 @@ Common option: `-d, --data <path>` (data root, default `./data` or `$BOOF_RUNNER
 | `auth`    | `add --name <text> --scopes <a,b,c> [--projects <id,id>\|*] [--trust trusted\|review] [--expires 30d] [--kind harness\|mcp\|cli]`, `list`, `revoke <id>`, `rotate <id>`                                                                                    |
 | `remote`  | `setup --hostname <host> [--allowed-root <dir>]... [--name] [--scopes] [--trust review\|trusted] [--expires] [--no-key] [-p]`, `status`, `disable`                                                                                                         |
 | `service` | `install [--data] [--port] [--host] [--env KEY=VALUE]... [--env-file <path>] [--name] [--reset]`, `uninstall`, `status`, `logs [-f]` (Linux, systemd user unit; omitted options are kept from the existing unit, see [deploy/README.md](deploy/README.md)) |
-| `mcp`     | `--client <id>`, `--project <id>`, `--admin`                                                                                                                                                                                                               |
+| `open`    | `[--port <n>] [--host 127.0.0.1\|localhost\|::1] [--revoke-all]` (single-use browser sign-in link; see [Security model](#security-model))                                                                                                                  |
+| `mcp`     | `--client <id>` (required), `--project <id>`                                                                                                                                                                                                               |
 
 Exit codes: 0 success; 1 a task failed, was stopped, parked, nothing was actionable, or bad usage.
 
@@ -245,7 +266,7 @@ boof-runner auth clients create --name ci --scopes tasks:read,tasks:write
 
 - **Flags** may stand before the command words too (`boof-runner -d ./data tasks list`, `boof-runner --client reader tasks list`). They are the input fields in kebab-case (`projectId` is `--project-id`, and `--project` also works). A value may start with `-` or contain `=`. Booleans are bare (`--dry-run`), `--dry-run=false` or `--no-dry-run`. Lists are comma-separated or repeated; objects and arrays of objects are JSON text or `@file.json`; `null` clears a nullable field. `--input '<json>'` or `--input @file.json` gives the whole input, and flags override its keys. A project-scoped command without `--project` uses `settings.defaultProject`.
 - **Output** is for people by default (the summary line). `--json` prints the result as JSON and nothing else, so `| jq` works; warnings (`warning (subtasks_open): ...`) go to stderr. A key or signing secret shown once (`auth clients create`, `auth clients rotate`, `webhooks create`) is printed as a `key:` or `secret:` line in human mode; keep it, it is not shown again. A download needs `--out <file>` (or `--out -`, refused on a terminal). A secret input such as a webhook URL belongs in a file: `--input @hook.json` (a flag shows in your shell history and in `ps`). `serve` refuses stray words (`boof-runner serve tasks list` is an error, not a server).
-- **Identity** is the local administrator under `security.auth.mode = "local-trust"`, the same as a command you type on the machine. With `required`, pass `--client <id>` (no key is needed: the OS user owns the data root); that client's scopes, projects and trust apply. A revoked client is refused on the next command. The hand-written commands (`auth add`, `task move`, `plan sync`, `run`) always act as the local administrator, even in `required` mode; only the generated operation commands refuse without `--client`.
+- **Identity** is the local administrator under `security.auth.mode = "local-trust"`, the same as a command you type on the machine. It needs no key, because the CLI runs in-process as the owner of the data root. It is refused (exit 3) inside a task agent of the same data root, see [Task agents are not sandboxed](#remote-access): `boof-runner` checks `-d`, `--data=` and `$BOOF_RUNNER_DATA_ROOT`, and the default `./data`, even with `-d <scratch>` when the agent's current folder holds the server's `./data`. With `required`, pass `--client <id>` (no key is needed: the OS user owns the data root); that client's scopes, projects and trust apply. A revoked client is refused on the next command. The hand-written commands (`auth add`, `task move`, `plan sync`, `run`) always act as the local administrator, even in `required` mode; only the generated operation commands refuse without `--client`.
 - **Exit codes** of these commands: 0 success; 1 bad usage or any other error; 2 not found; 3 not allowed (identity, scope, project, trust); 130 interrupted (Ctrl-C ends a `tasks wait` at once).
 
 ## Configuration
@@ -313,9 +334,19 @@ A data root from before multi-project support is migrated automatically the firs
 
 ### Remote access
 
-A request from a loopback peer with no `Authorization` header is the trusted `local` principal (while `security.auth.mode` is `"local-trust"`, the default). Anything else needs an API key.
+Under `security.auth.mode = "local-trust"` (the default) the **web UI** works without a key, but only after you sign in. A request from a loopback peer with no `Authorization` header is the trusted `local` principal only when it carries the browser session cookie `boof_ui_<port>`. Every other keyless request, `curl` and scripts included, gets `401` with the reason and the fix. `/mcp` never accepts the cookie; it needs a key. Anything else needs an API key too.
 
-**Task agents are not sandboxed.** An agent runs as your OS user with every permission prompt skipped: it can read your files and the data root, and under `local-trust` it can call boof's own API on `127.0.0.1` with no key and act as the local administrator (queue tasks, create keys and webhooks, change settings). boof gives agents an allowlisted environment (no `BOOF_*`, no cloud credentials) and keeps your MCP servers away from them (claude and codex; not opencode), but this is not isolation. `security.auth.mode = "required"` closes the API route; a separate OS user or a container is the way to isolate the rest. See [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed).
+**Signing in.** `boof-runner serve` prints a single-use sign-in link (valid for 10 minutes) when it starts on a loopback address. Open it in your browser (the link works only on the port it was printed for; `boof-runner open` warns when nothing answers on the default port and you gave no `--port`); the session lasts 30 days, or 7 idle days. Later, run `boof-runner open` on the same machine for a new link. Add `-d <data>` and `--port <n>` when the server does not use `./data` and port 4319; under a systemd service (`boof-runner service install`) `serve` does not write a live link into the journal, and `service status` prints the exact `open` command instead. `boof-runner open --revoke-all` signs every browser out and drops pending links; open event streams end within a few seconds. A link is minted only by someone who can already act as the owner of the data root. The session store (`<data>/auth/`) is refused, and sign-in answers `503` with the path and the fix, when a file or folder is owned by another user or is group- or world-writable, or when a parent folder could be renamed by someone else. Run the `chmod` the message names, then `boof-runner open` again. On WSL, a data root under `/mnt/c` shows mode 777; mount with `metadata,umask=077` (`/etc/wsl.conf`, `[automount] options`) or keep the data root on the Linux filesystem. The desktop app signs its own window in. With `auth.mode = "required"` the browser UI asks for an API key, as before.
+
+An open browser tab from before the upgrade shows the sign-in page once and tells you to run `boof-runner open`. Two boof servers on one machine (for example the desktop app and `serve -p 4320`) keep separate sessions, because the cookie name follows the server's port.
+
+**Task agents are not sandboxed.** An agent runs as your OS user with every permission prompt skipped: it can read your files and the data root. Layer 1 of agent containment closes the routes that needed no effort:
+
+- **What it stops.** A process whose only access is a TCP connection to loopback (`curl`, scripts, an MCP host without a key, another OS user, or an agent that follows an injected instruction) gets `401` on `/api/*` and `/mcp`, and no sign-in code. Agents get no boof credential at all, and an allowlisted environment (no `BOOF_*`, no cloud credentials). A marker in the agent's environment makes `boof-runner` refuse to act on the data root of the server that started it (exit 3); a scratch data root elsewhere still works. Your MCP servers are kept away from agents (claude and codex; not opencode). Other local users cannot read the data root, which is set to mode 700 (see below).
+- **What it does not stop.** A process that runs as your OS user, an agent included, can still edit the data root (`settings.json`, task files, `auth/*.json`), run `boof-runner` after unsetting the marker, read your browser's cookie store, read the desktop app's stored key (it sits in the OS keyring, which a same-user process can usually read), or drive your browser. This is not a sandbox. Same-user isolation is layer 2, an OS-level sandbox (a container or a Linux wrapper), which is future work. Today a separate OS user or a container is the way to isolate the rest.
+- **Another local user and the cookie.** Cookies are shared across ports on `127.0.0.1`. Another OS user who runs a server on any loopback port receives the `boof_ui_<port>` cookie when your browser loads a page from it, and could replay it as administrator. Do not browse untrusted local servers in the browser you use for boof. A port-isolated browser session is future work.
+- **Server-run git.** The server's own `git status`, `diff` and similar in an agent's worktree run with `core.fsmonitor` and hooks disabled, so a planted `core.fsmonitor` or hook never runs with the server's environment. Server-run `git diff` also passes `--no-ext-diff --no-textconv`, so `diff.external` and textconv drivers do not run. Not prevented: clean/smudge filters (`filter.<name>.clean`, set in the shared `.git/config` and enabled by `.gitattributes`) still run when the server runs `git status` or `git add` in the worktree, with the server's environment.
+- **Data root modes.** At every start the server sets the data root and its `auth`, `owlish`, `webhooks`, `audit`, `idempotency`, `concierge`, `claude-agent-config`, `n8n` and `external-runs` folders to mode 700 when you own them, with no opt-out. It never changes `$HOME` or `/`, never fails on a root that refuses `chmod` (vfat, WSL `/mnt/c`, a root owned by a service user), and logs that. Files inside keep their own modes (secret files are 0600). The sign-in sessions and `auth/clients.json` need files and folders that you own and that group and others cannot write, and a data root owned by you or by root. With umask 002 (the Ubuntu and Fedora default) a parent folder such as `~/.local/share/boof-runner` is often mode 775, owned by you and in your user private group; that is accepted. A user private group is named like you and has no other members (read from `/etc/group` and `/etc/passwd`; with no entry for the group, it counts when its id equals your user id). A parent folder that is group-writable by any other group, including a primary group shared with other users (`users`, `staff`), is refused: `chmod g-w` it. The message names the folder and the fix. Over HTTP the server answers 503 with a fixed message and logs the folder and the fix. See [Agents are not sandboxed](docs/boof-runner.md#agents-are-not-sandboxed).
 
 One command prepares the server for a remote AI harness:
 
@@ -344,7 +375,7 @@ boof-runner --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
 - `boof-runner auth list | revoke <id> | rotate <id>` manage clients. Revoked and expired keys stop working within 5 seconds, open event streams included (they end with an `unauthorized` event at their next tick; up to about 7 s when the revoke runs in another process). Each principal may hold 16 event streams; the local principal shares that cap across all local tabs and CLI clients (each UI tab holds up to two).
 - **Keys are root-equivalent.** Scope them narrowly, set `--expires`, and keep the default `review` trust for anything you do not fully control: its tasks and plans land as drafts that a human approves in the UI. Use `--trust trusted` only for clients you would give your own shell.
 - Without TLS, keys travel in clear text; the server warns when you bind a non-loopback address without `--tls-cert`/`--tls-key`. Tailscale or a reverse proxy are fine alternatives. Requests carrying `X-Forwarded-For` never get local trust.
-- Tool calls of the stdio MCP server (`boof-runner mcp`, keyless `local-mcp`, `--admin` or `--client`) and the generated CLI commands (`boof-runner <area> <verb>`) append one line to the same log under the same `security.audit` settings: `{ts, principal, kind, action: "mcp:<tool>" | "cli:<operation>", via: "stdio-mcp" | "cli", project?, outcome: "ok" | "error", error?, ms}`, never arguments. The hand-written commands (`auth add`, `task move`, `plan sync`, `run`, ...) are not audited yet. Every `/api` and `/mcp` call is appended to `<data>/audit/<day>.jsonl` (principal, action, status, timing, the peer `ip` and, behind a proxy, `forwardedFor`; never bodies, prompts or keys). Requests are rate limited per principal (`security.rateLimit.perMinute`, default 600/min); failed authentications are limited per client address (`unauthenticatedPerMinute`, default 30/min): a request with a valid key is never limited by it, and a request that fails authentication answers `429` instead of `401` once the address has used its budget. `security.trustedProxies` defaults to `["loopback"]` (a reverse proxy on the same host): the last `X-Forwarded-For` entry (the one your proxy appended) then keys that limit, and `forwardedFor` is trustworthy only when the peer is listed there. A raw TCP forwarder on loopback (`ssh -R`, `socat`, frp, ngrok tcp) passes client headers through unchanged, so set it to `[]` in that setup. Set it to `[]` when nothing proxies, or list your proxy's address.
+- Tool calls of the stdio MCP server (`boof-runner mcp --client <id>`) and the generated CLI commands (`boof-runner <area> <verb>`) append one line to the same log under the same `security.audit` settings: `{ts, principal, kind, action: "mcp:<tool>" | "cli:<operation>", via: "stdio-mcp" | "cli", project?, outcome: "ok" | "error", error?, ms}`, never arguments. The hand-written commands (`auth add`, `task move`, `plan sync`, `run`, ...) are audited too, as `cli:<command>` lines (see [docs/boof-runner.md](docs/boof-runner.md)). Every `/api` and `/mcp` call is appended to `<data>/audit/<day>.jsonl` (principal, action, status, timing, the peer `ip` and, behind a proxy, `forwardedFor`; never bodies, prompts or keys). Requests are rate limited per principal (`security.rateLimit.perMinute`, default 600/min); failed authentications are limited per client address (`unauthenticatedPerMinute`, default 30/min): a request with a valid key is never limited by it, and a request that fails authentication while carrying an `Authorization` header or the session cookie (and a bad sign-in link) answers `429` instead of `401` once the address has used its budget. A keyless request without a session is refused with `401` and does not spend the budget. `security.trustedProxies` defaults to `["loopback"]` (a reverse proxy on the same host): the last `X-Forwarded-For` entry (the one your proxy appended) then keys that limit, and `forwardedFor` is trustworthy only when the peer is listed there. A raw TCP forwarder on loopback (`ssh -R`, `socat`, frp, ngrok tcp) passes client headers through unchanged, so set it to `[]` in that setup. Set it to `[]` when nothing proxies, or list your proxy's address.
 
 The full REST reference, error codes and webhooks are in [docs/api.md](docs/api.md).
 
@@ -361,18 +392,18 @@ Tell the agent: _"Read https://nodets.com/boof/harness.txt and use it to operate
 
 Boof speaks the Model Context Protocol with the same scopes, trust and audit as REST. The tool list is in [docs/api.md](docs/api.md#mcp).
 
-**Local agent (stdio).** The agent host starts `boof-runner mcp`; no server and no key are needed.
+**Local agent (stdio).** The agent host starts `boof-runner mcp --client <id>`; no server and no key are needed, but a client is. Create one once: `boof-runner auth add --name mcp-host --scopes <list> --trust review`.
 
 ```bash
 # everything the data root serves, limited to an API client's scopes and projects (recommended)
 claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1
-# one repository: the projectId argument is filled in and hidden
-claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --project pim
+# one repository: the projectId argument is filled in and hidden (still needs --client)
+claude mcp add boof -- boof-runner mcp -d ~/.local/share/boof-runner/data --client agent-1 --project pim
 ```
 
-Give agent hosts `--client` with a narrow client. Without `--client` (and it only works while `security.auth.mode` is `local-trust`), **an MCP host acts like a review-trust client unless you add `--admin`**: its tasks and plans are drafts a human approves in the UI, it cannot queue, retry, answer, activate a plan or switch the runner, it cannot create a project or change a project beyond its name, labels and paused state, and it has no administration tools. `--admin` makes it the local administrator, with every tool. The same holds for `/mcp` over HTTP: a request on loopback without a key under `local-trust` is the `local-mcp` principal with the administration tools hidden (a key makes it that client). All keyless MCP hosts on a machine share the one `local-mcp` identity (it is not stored; the id is reserved, and a client of that id left from before makes the keyless server refuse to start). The boundary holds only for MCP-only hosts: **a host whose model also has a shell can approve its own drafts through `boof-runner` commands or `curl` to `127.0.0.1`** (a task agent can too, see [Task agents are not sandboxed](#security-model)); containing that is the goal `agent-containment`. The server writes logs to stderr only.
+Give agent hosts `--client` with a narrow client and the default `review` trust: its tasks and plans are drafts a human approves in the UI. `boof-runner mcp` without `--client` refuses to start (exit 3), and `--admin` and the keyless `local-mcp` identity are gone (see the CHANGELOG). A client with `--trust trusted` and the scopes you choose gives the same tools explicitly. The boundary holds only for MCP-only hosts: **a host whose model also has a shell, and that runs as your user, can approve its own drafts by editing the data root** (a task agent can too, see [Task agents are not sandboxed](#security-model)); same-user isolation is layer 2. The server writes logs to stderr only.
 
-**Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback) and point the client at `/mcp`. Without a key, a loopback caller under `local-trust` is the review-trust `local-mcp` principal (its own rate-limit bucket and audit name, no administration tools, as on stdio), not the administrator the UI is; administration over `/mcp` needs a key. While `auth/clients.json` holds a stored client with the reserved id `local-mcp`, keyless `/mcp` answers `403`:
+**Remote harness (HTTP).** Start `boof-runner serve` (with TLS and a key when it is not loopback) and point the client at `/mcp`. `/mcp` always needs an API key (`Authorization: Bearer <key>`); a keyless request, even from loopback with a signed-in browser cookie, answers `401 mcp_key_required`:
 
 ```bash
 claude mcp add --transport http boof https://boof.example.com/mcp \
@@ -467,6 +498,8 @@ All pipeline tests drive the **mock** tool, so CI never makes network calls or b
 ## Credits
 
 Account pooling by [better-ccflare](https://github.com/tombii/better-ccflare) (MIT, © 2025 snipeship & tombii), a fork of ccflare by snipeship.
+
+The `claude-agent` tool uses Anthropic's Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), © Anthropic PBC, used under Anthropic's Commercial Terms of Service; it is not open source. See [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
 
 ## License
 

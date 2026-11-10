@@ -1,4 +1,7 @@
+import type { Project, Settings } from "@boof/heart/schema";
 import type { TaskView } from "../api.js";
+import { switchModelChoices } from "../lib/claude-agent.js";
+import { runningTool } from "../overview/RunningCard.js";
 import { SteerBox } from "../overview/SteerBox.js";
 import { InjectedList } from "./InjectedList.js";
 import { LiveLog } from "./LiveLog.js";
@@ -9,10 +12,14 @@ export function RunTab({
   pid,
   task,
   reload,
+  settings = null,
+  project = null,
 }: {
   pid: string;
   task: TaskView;
   reload: () => Promise<void>;
+  settings?: Settings | null;
+  project?: Project | null;
 }) {
   const id = task.frontmatter.id;
   const running = task.frontmatter.status === "running";
@@ -20,7 +27,14 @@ export function RunTab({
     <div className="flex flex-col gap-4">
       <LiveLog pid={pid} taskId={id} text={task.body.log} running={running} />
       <ReportList task={task} />
-      {running && <SteerBox pid={pid} taskId={id} onSent={() => void reload()} />}
+      {running && (
+        <SteerBox
+          pid={pid}
+          taskId={id}
+          onSent={() => void reload()}
+          modelChoices={switchModelChoices(runningTool(task, project, settings), settings?.models)}
+        />
+      )}
       <InjectedList task={task} />
     </div>
   );

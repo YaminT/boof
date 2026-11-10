@@ -20,10 +20,30 @@ import type {
   Whoami,
   AccountsHealth,
   AccountsList,
+  AgentSdkEligibility,
+  ConciergeAnswer,
+  ConciergeAskBody,
+  ConciergeEvent,
+  ConciergeStatus,
+  PendingChangeView,
+  ProjectView,
+  RunnerStatus,
+  N8nInfo,
+  N8nUpdateInput,
+  N8nUpdateResult,
+  N8nWorkflowsResult,
 } from "./api-types.js";
+import { parseSse } from "./lib/concierge-stream.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
-import { authHeaders, getToken, notifyUnauthorized } from "./token.js";
+import {
+  authHeaders,
+  getToken,
+  notifyUnauthorized,
+  reportSignInStorageError,
+  storageUnavailableMessage,
+  unauthorizedReason,
+} from "./token.js";
 
 /** An error response of the v1 API, with its machine-readable code and details. */
 export class ApiError extends Error {
@@ -42,8 +62,11 @@ export class ApiError extends Error {
 /** Throw a readable error for a failed response; a 401 also opens the token gate. */
 async function failure(res: Response, data: unknown, sent?: string): Promise<never> {
   // A 401 for a key that was replaced or is being rotated is not worth a message.
-  const verdict = res.status === 401 ? notifyUnauthorized(sent) : undefined;
+  const verdict =
+    res.status === 401 ? notifyUnauthorized(sent, unauthorizedReason(data)) : undefined;
   const quiet = verdict === "stale" || verdict === "held";
+  const storage = storageUnavailableMessage(res.status, data);
+  if (storage !== undefined) reportSignInStorageError(storage);
   const err = (data as { error?: { message?: string; code?: string; details?: unknown } | string })
     .error;
   const message = typeof err === "string" ? err : err?.message;
@@ -59,6 +82,7 @@ async function failure(res: Response, data: unknown, sent?: string): Promise<nev
 async function http<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const sent = getToken();
   const res = await fetch(path, {
+    credentials: "same-origin",
     ...init,
     headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
@@ -244,10 +268,12 @@ export const api = {
     id: string,
     prompt: string,
     mode: "next-step" | "now" = "next-step",
+    /** Switch the running step to this model; only with mode "now". */
+    model?: string,
   ) =>
     http<{ ok: true; mode: "next-step" | "now"; applied: "pending" }>(`${T(pid, id)}/inject`, {
       method: "POST",
-      body: JSON.stringify({ prompt, mode }),
+      body: JSON.stringify(model && mode === "now" ? { prompt, mode, model } : { prompt, mode }),
     }),
   submitAnswers: (pid: string, id: string, answers: string) =>
     httpTask(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
@@ -258,6 +284,7 @@ export const api = {
     form.append("file", file);
     // No content-type header: the browser sets the multipart boundary.
     const res = await fetch(`${T(pid, id)}/attachments`, {
+      credentials: "same-origin",
       method: "POST",
       body: form,
       headers: authHeaders(),
@@ -287,11 +314,17 @@ export const api = {
     http<{ referencedBy: string[] }>(`${V1}/commands/${id}`, { method: "DELETE" }),
 
   getSettings: () => http<Settings>(`${V1}/settings`),
-  updateSettings: (patch: SettingsPatch & { owlishApiKey?: string | null }) =>
-    http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
+  updateSettings: (
+    patch: SettingsPatch & { owlishApiKey?: string | null; owlishAgentKey?: string | null },
+  ) => http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
   accountsHealth: (refresh = false) =>
     http<AccountsHealth>(`${V1}/accounts/health${refresh ? "?refresh=true" : ""}`),
   listAccounts: () => http<AccountsList>(`${V1}/accounts`),
+  /** May claude-agent use the gateway, and which accounts block it. */
+  agentSdkEligibility: (refresh = false) =>
+    http<AgentSdkEligibility>(`${V1}/accounts/agent-sdk${refresh ? "?refresh=true" : ""}`),
+  /** Runner state, with the claude-agent authentication result per project. */
+  runnerStatus: () => http<RunnerStatus>(`${V1}/runner`),
   accountAction: (verb: "pause" | "resume", accountId: string) =>
     http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/${verb}`, {
       method: "POST",
@@ -324,14 +357,14 @@ export const api = {
   projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
 
   listProjects: (includeArchived = false) =>
-    http<{ projects: Project[] }>(
+    http<{ projects: ProjectView[] }>(
       `${V1}/projects${includeArchived ? "?includeArchived=1" : ""}`,
     ).then((r) => r.projects),
-  getProject: (pid: string) => http<Project>(P(pid)),
+  getProject: (pid: string) => http<ProjectView>(P(pid)),
   createProject: (input: CreateProjectInput) =>
     http<Project>(`${V1}/projects`, { method: "POST", body: JSON.stringify(input) }),
-  updateProject: (pid: string, patch: ProjectPatch) =>
-    http<Project>(P(pid), { method: "PUT", body: JSON.stringify(patch) }),
+  updateProject: (pid: string, patch: ProjectPatch & { anthropicApiKey?: string | null }) =>
+    http<ProjectView>(P(pid), { method: "PUT", body: JSON.stringify(patch) }),
   archiveProject: (pid: string) => http<Project>(`${P(pid)}/archive`, { method: "POST" }),
   unarchiveProject: (pid: string) => http<Project>(`${P(pid)}/unarchive`, { method: "POST" }),
   pauseProject: (pid: string) => http<Project>(`${P(pid)}/pause`, { method: "POST" }),
@@ -341,7 +374,10 @@ export const api = {
 
   /** Fetch an attachment with the auth header and return a blob: URL for <img>/<a>. */
   attachmentBlobUrl: async (pid: string, id: string, name: string): Promise<string> => {
-    const res = await fetch(api.attachmentUrl(pid, id, name), { headers: authHeaders() });
+    const res = await fetch(api.attachmentUrl(pid, id, name), {
+      credentials: "same-origin",
+      headers: authHeaders(),
+    });
     if (!res.ok) return failure(res, await res.json().catch(() => ({})));
     return URL.createObjectURL(await res.blob());
   },
@@ -362,6 +398,14 @@ export const api = {
     }),
   deleteWebhook: (id: string) =>
     http<{ ok: true }>(`${V1}/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getN8n: () => http<N8nInfo>(`${V1}/n8n`),
+  updateN8n: (input: N8nUpdateInput) =>
+    http<N8nUpdateResult>(`${V1}/n8n`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteN8n: () =>
+    http<{ ok: true; projectsWithSteps: string[] }>(`${V1}/n8n`, { method: "DELETE" }),
+  listN8nWorkflows: () => http<N8nWorkflowsResult>(`${V1}/n8n/workflows`),
+  refreshN8nWorkflows: () =>
+    http<N8nWorkflowsResult>(`${V1}/n8n/workflows/refresh`, { method: "POST" }),
   whoami: () => http<Whoami>(`${V1}/whoami`),
   listClients: () => http<{ clients: PublicClient[] }>(`${V1}/auth/clients`).then((r) => r.clients),
   createClient: (input: {
@@ -432,6 +476,100 @@ export const api = {
     http<Record<string, string>>(`${PL(pid, planId)}/export`),
   syncPlan: (pid: string, planId: string, dryRun: boolean) =>
     http<SyncReport>(`${PL(pid, planId)}/sync`, json("POST", { dryRun })),
+
+  conciergeStatus: (pid: string) => http<ConciergeStatus>(`${P(pid)}/concierge`),
+  conciergeAsk: (pid: string, body: ConciergeAskBody) =>
+    http<ConciergeAnswer>(`${P(pid)}/concierge/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  conciergeApply: (pid: string, changeId: string) =>
+    http<{ change: PendingChangeView; result: unknown }>(
+      `${P(pid)}/concierge/changes/${encodeURIComponent(changeId)}/apply`,
+      { method: "POST" },
+    ),
+  conciergeDiscard: (pid: string, changeId: string) =>
+    http<{ change: PendingChangeView }>(
+      `${P(pid)}/concierge/changes/${encodeURIComponent(changeId)}/discard`,
+      { method: "POST" },
+    ),
+  conciergeReset: (pid: string) =>
+    http<{ ok: true }>(`${P(pid)}/concierge/reset`, { method: "POST" }),
+  /**
+   * POST the message and read typed SSE events. A non-2xx answer is JSON (the same error as
+   * `http`) and never opens the stream. The key travels in `Authorization`, never in the URL.
+   */
+  conciergeStream: (
+    pid: string,
+    body: ConciergeAskBody,
+    onEvent: (event: ConciergeEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => readConciergeStream(pid, body, onEvent, signal, false),
 };
+
+async function readConciergeStream(
+  pid: string,
+  body: ConciergeAskBody,
+  onEvent: (event: ConciergeEvent) => void,
+  signal: AbortSignal | undefined,
+  retried: boolean,
+): Promise<void> {
+  const sent = getToken();
+  const res = await fetch(`${P(pid)}/concierge/messages/stream`, {
+    credentials: "same-origin",
+    method: "POST",
+    body: JSON.stringify(body),
+    signal,
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      ...authHeaders(),
+    },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && !retried && sent !== getToken()) {
+      return readConciergeStream(pid, body, onEvent, signal, true);
+    }
+    return failure(res, data, sent);
+  }
+  if (!res.body) throw new ApiError("The assistant stream was empty", res.status);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let carry = "";
+  const emit = (events: { data: string }[]) => {
+    for (const event of events) {
+      let data: unknown;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        throw new ApiError("The assistant stream sent invalid data", 502, "internal");
+      }
+      if (typeof data !== "object" || data === null || !("type" in data)) {
+        throw new ApiError("The assistant stream sent invalid data", 502, "internal");
+      }
+      onEvent(data as ConciergeEvent);
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        const tail = decoder.decode();
+        if (tail) {
+          const parsed = parseSse(carry, tail);
+          carry = parsed.carry;
+          emit(parsed.events);
+        }
+        break;
+      }
+      const parsed = parseSse(carry, decoder.decode(value, { stream: true }));
+      carry = parsed.carry;
+      emit(parsed.events);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 export type { Goal, GoalInput, GoalStatus, Plan, PlanStatus };

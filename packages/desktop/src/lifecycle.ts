@@ -1,7 +1,7 @@
 // Desktop lifecycle logic kept free of `electron` so it can be unit-tested without an
 // Electron runtime. main.ts wires these functions to the app, the server and the engine.
 import type { RunnerEngine } from "@boof/runner";
-import { parseKey } from "@boof/heart";
+import { browserSessionCookieName, parseKey } from "@boof/heart";
 import type { RunningServer } from "@boof/heart-server";
 
 /**
@@ -25,6 +25,8 @@ export interface QuitDeps {
   server: () => Pick<RunningServer, "stop"> | null;
   exit: (code: number) => void;
   graceMs: number;
+  /** Best-effort work after the engine drains (e.g. revoking the window's browser session). */
+  cleanup?: () => Promise<void> | void;
   log: (line: string) => void;
   /** Shown to the user while the engine drains (a notification or the window title). */
   notify?: (message: string) => void;
@@ -57,6 +59,7 @@ export function createQuitHandler(deps: QuitDeps): (event: QuitEvent) => Promise
           if (stopped.length > 0) deps.log(`Stopped running task(s): ${stopped.join(", ")}`);
           if (timedOut) deps.log(`Grace period of ${deps.graceMs} ms elapsed; quitting anyway`);
         }
+        await deps.cleanup?.();
         await deps.server()?.stop();
       } catch (err) {
         deps.log(`Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -85,4 +88,154 @@ export function isExternalUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The cookie the desktop app sets in its own window when it has no desktop key (safeStorage is
+ * unavailable). It is the browser-session cookie the server already accepts, named after the
+ * server's bound port. It has no `expirationDate`: a session cookie is dropped when the app quits,
+ * so no admin-equivalent token is kept in the cookie database on disk.
+ */
+export function desktopSessionCookie(
+  appOrigin: string,
+  port: number,
+  token: string,
+): {
+  url: string;
+  name: string;
+  value: string;
+  httpOnly: true;
+  sameSite: "strict";
+  path: "/";
+} {
+  return {
+    url: appOrigin,
+    name: browserSessionCookieName(port),
+    value: token,
+    httpOnly: true,
+    sameSite: "strict",
+    path: "/",
+  };
+}
+
+export interface WindowAuthDeps {
+  /** The desktop key when safeStorage works; with one, no session is needed. */
+  desktopToken: () => string | undefined;
+  /** The data root's `auth.mode`. */
+  loadAuthMode: () => Promise<string>;
+  createSession: () => Promise<{ token: string; session: { id: string } }>;
+  revokeSession: (id: string) => Promise<unknown>;
+  setCookie: (cookie: ReturnType<typeof desktopSessionCookie>) => Promise<void>;
+  warn: (line: string) => void;
+  error: (line: string, err?: unknown) => void;
+  /** Tells the user why the window will show the sign-in gate (a native dialog). */
+  showFailure: (message: string) => Promise<void> | void;
+  origin: string;
+  port: number;
+  /** How long before the fallback session is replaced while a window stays open. Default 24 h. */
+  renewMs?: number;
+  /** Timer seam for tests. Returns a cancel function. Default: setTimeout, unref'd. */
+  schedule?: (fn: () => void, ms: number) => () => void;
+}
+
+/** A browser session lasts 30 days; a window left open renews well before that. */
+export const WINDOW_SESSION_RENEW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Signs the app's own window in when there is no desktop key. `prepare()` runs before every
+ * window load (first start and macOS `activate`): it mints a fresh browser session, sets the
+ * session cookie, then revokes the session of the previous window so launches do not churn the
+ * store's session cap. It never rejects: on failure the window still opens, on the sign-in gate.
+ * Calls are serialised. A timer renews the session (same steps) every `renewMs` while the app
+ * runs, so a window kept open past the session's 30-day limit stays signed in. `release()` stops
+ * the timer and revokes the current session on quit (best effort).
+ */
+export function createWindowAuth(deps: WindowAuthDeps): {
+  prepare: () => Promise<void>;
+  release: () => Promise<void>;
+} {
+  let currentId: string | undefined;
+  let chain: Promise<unknown> = Promise.resolve();
+  let cancelRenew: (() => void) | undefined;
+  let released = false;
+  const schedule =
+    deps.schedule ??
+    ((fn: () => void, ms: number) => {
+      const timer = setTimeout(fn, ms);
+      timer.unref?.();
+      return () => clearTimeout(timer);
+    });
+
+  const revoke = async (id: string): Promise<void> => {
+    try {
+      await deps.revokeSession(id);
+    } catch (err) {
+      deps.error("desktop UI: could not revoke the previous browser session:", err);
+    }
+  };
+
+  const run = async (): Promise<void> => {
+    if (deps.desktopToken()) return;
+    try {
+      if ((await deps.loadAuthMode()) === "required") {
+        deps.warn(
+          'desktop UI: safeStorage unavailable and auth.mode is "required"; paste an API key in the window',
+        );
+        return;
+      }
+      const { token, session } = await deps.createSession();
+      await deps.setCookie(desktopSessionCookie(deps.origin, deps.port, token));
+      const previous = currentId;
+      currentId = session.id;
+      if (previous) await revoke(previous);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      deps.error(
+        "desktop UI: could not create a browser session; the window shows the sign-in gate:",
+        reason,
+      );
+      try {
+        await deps.showFailure(
+          `Boof Runner could not sign its window in: ${reason}\n\nThe window will show the sign-in gate. Fix the problem named in this message and restart the app, or create an API key with "boof-runner auth add".`,
+        );
+      } catch {
+        // the dialog is a courtesy
+      }
+    }
+  };
+
+  const prepare = (): Promise<void> => {
+    const next = chain.then(run, run).then(() => {
+      cancelRenew?.();
+      cancelRenew = undefined;
+      // Only a fallback session needs renewing: with a desktop key there is none.
+      if (!released && !deps.desktopToken()) {
+        cancelRenew = schedule(() => void prepare(), deps.renewMs ?? WINDOW_SESSION_RENEW_MS);
+      }
+    });
+    chain = next;
+    return next;
+  };
+
+  // A helper, not an inline call: TypeScript narrows `cancelRenew` to `undefined` after the
+  // assignment in release(), so a second direct call there is rejected by the typecheck.
+  const stopRenew = (): void => {
+    const cancel = cancelRenew;
+    cancelRenew = undefined;
+    cancel?.();
+  };
+
+  return {
+    prepare,
+    release: async () => {
+      released = true;
+      stopRenew();
+      await chain.catch(() => {});
+      // A renew scheduled while the chain settled must be cancelled too.
+      stopRenew();
+      const id = currentId;
+      currentId = undefined;
+      if (id) await revoke(id);
+    },
+  };
 }

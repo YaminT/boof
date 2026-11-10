@@ -91,7 +91,6 @@ describe("UI coverage of the operations", () => {
         "epics.get",
         "settings.health",
         "settings.models",
-        "runner.status",
         "runner.overview",
       ]
     `);

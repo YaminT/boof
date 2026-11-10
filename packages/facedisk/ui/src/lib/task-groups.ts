@@ -7,6 +7,7 @@ export type NeedsYouItem =
 
 export interface TaskGroups {
   needsYou: NeedsYouItem[];
+  proposed: TaskView[];
   running: TaskView[];
   /** Pending, not skipped, in run order. */
   queued: TaskView[];
@@ -19,7 +20,17 @@ export interface TaskGroups {
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** `updated` uses localeCompare, the same order the runner selects tasks with. */
+const byUpdated = (a: string, b: string) => a.localeCompare(b);
 const byCreated = (a: { created: string }, b: { created: string }) => cmp(a.created, b.created);
+
+/** Newest finished first; equal timestamps tie-break by id so the order is stable. */
+export function compareFinished(a: TaskView, b: TaskView): number {
+  return (
+    byUpdated(b.frontmatter.updated, a.frontmatter.updated) ||
+    cmp(a.frontmatter.id, b.frontmatter.id)
+  );
+}
 
 function isProposed(t: TaskView): boolean {
   const kind = t.frontmatter.origin?.kind;
@@ -30,7 +41,7 @@ function isProposed(t: TaskView): boolean {
 export function runOrder(a: TaskView, b: TaskView): number {
   const fa = a.frontmatter;
   const fb = b.frontmatter;
-  return fb.priority - fa.priority || cmp(fa.updated, fb.updated) || cmp(fa.id, fb.id);
+  return fb.priority - fa.priority || byUpdated(fa.updated, fb.updated) || cmp(fa.id, fb.id);
 }
 
 export function groupTasks(
@@ -47,7 +58,7 @@ export function groupTasks(
 
   const recent = tasks
     .filter((t) => ["done", "failed", "stopped"].includes(t.frontmatter.status))
-    .sort((a, b) => cmp(b.frontmatter.updated, a.frontmatter.updated))
+    .sort(compareFinished)
     .slice(0, Math.max(0, recentLimit));
 
   return {
@@ -56,6 +67,7 @@ export function groupTasks(
       ...proposed.map((task) => ({ kind: "proposed" as const, task })),
       ...draftPlans.map((plan) => ({ kind: "draft-plan" as const, plan })),
     ],
+    proposed,
     running: by("running"),
     queued: by("pending")
       .filter((t) => !t.frontmatter.skip)
@@ -76,4 +88,25 @@ export function groupTasks(
 /** In simple Tasks view, failed tasks remain actionable through Retry. */
 export function failedTasksVisible(expanded: boolean, finished: TaskView[]): TaskView[] {
   return expanded ? [] : finished.filter((task) => task.frontmatter.status === "failed");
+}
+
+/** Tasks listed under Finished. The heading count and the "done N, failed N" line both use this. */
+export function finishedSectionTasks(finished: TaskView[], expanded: boolean): TaskView[] {
+  const aside = new Set(failedTasksVisible(expanded, finished).map((t) => t.frontmatter.id));
+  return finished.filter((t) => !aside.has(t.frontmatter.id));
+}
+
+export function finishedStatusCounts(tasks: TaskView[]): {
+  done: number;
+  failed: number;
+  stopped: number;
+  archived: number;
+} {
+  const counts = { done: 0, failed: 0, stopped: 0, archived: 0 };
+  for (const t of tasks) {
+    const status = t.frontmatter.status;
+    if (status === "done" || status === "failed" || status === "stopped" || status === "archived")
+      counts[status]++;
+  }
+  return counts;
 }

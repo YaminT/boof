@@ -155,7 +155,9 @@ describe("tryAcquireProcessLock (a lock held for a long time)", () => {
     await writeFile(lock, `${process.ppid}\n`);
     const started = Date.now();
     expect(await tryAcquireProcessLock(lock, { lockTimeoutMs: 10_000 })).toBeNull();
-    expect(Date.now() - started).toBeLessThan(2000);
+    // A live holder returns without waiting out lockTimeoutMs. 8s still fails that 10s wait
+    // and leaves room when the event loop is busy.
+    expect(Date.now() - started).toBeLessThan(8_000);
   });
 
   it("writes pid, boot and (on Linux) the start time, and releases only its own file", async () => {

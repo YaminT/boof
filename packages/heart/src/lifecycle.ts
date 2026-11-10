@@ -7,7 +7,8 @@ import type { Status } from "./schema.js";
 const TRANSITIONS: Record<Status, Status[]> = {
   // Any non-running task can be archived; running tasks must finish first.
   draft: ["pending", "archived"],
-  pending: ["running", "archived"],
+  // The runner may refuse a task before a worktree exists (for example, a closed Agent SDK auth gate).
+  pending: ["running", "failed", "archived"],
   // running → pending re-queues the task for its next iteration (multi-run).
   running: ["pending", "action", "done", "failed", "stopped"],
   action: ["pending", "archived"],

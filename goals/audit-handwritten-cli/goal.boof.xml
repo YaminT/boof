@@ -16,6 +16,8 @@
     <status>
       <versions>
         <version number="1" status="plan">Filed 2026-11-03 from the audit-stdio-and-cli-writes slice: generated CLI paths are audited, the hand-written commands are not.</version>
+        <version number="2" status="review">Hand-written writes append one local cli audit line; lists, status, logs, export and dry-runs do not.</version>
+        <version number="3" status="done">Merged on dev/finish-goals in commits d848619..2ce651b.</version>
       </versions>
     </status>
     <tests>

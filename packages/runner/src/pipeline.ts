@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:f
 import { join } from "node:path";
 import {
   blockingScopes,
+  BOOF_VERSION,
   budgetExceededMessage,
   budgetTimeZone,
   evaluateBudget,
@@ -20,9 +21,13 @@ import {
   taskStopRequestPath,
   TaskStore,
   EpicStore,
+  ExternalRunStore,
   workingAreaDir,
   worktreeSettings,
   type EffectiveSettings,
+  type ExternalStepPayload,
+  type ExternalStepPoint,
+  type ExternalStepTransport,
   type Project,
   type Task,
   type TokenUsage,
@@ -33,14 +38,25 @@ import {
   sumUsage,
   UsageStore,
 } from "@boof/heart";
+import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
 import type { Gateway } from "./gateway-env.js";
 import type { PoolGate } from "./pool-gate.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
+import { AgentAuthRefusedError, claudeAgentEnv, type AgentAuthResolver } from "./agent-auth.js";
 import { announceBudgetExceeded } from "./budget.js";
 import { hierarchyPromptSection } from "./prompt-hierarchy.js";
+import { agentMarkerFor } from "./agent-marker.js";
+import {
+  ExternalStepFailedError,
+  externalReportsSection,
+  runExternalStep,
+  type CheckStep,
+  type ExternalStepOutcome,
+} from "./external-step.js";
+import { RESUME_PROMPT_PREFIX } from "./tools/steer.js";
 import {
   diffAgainstBase,
   discardWorktree,
@@ -67,6 +83,9 @@ export interface PipelineDeps {
   gateway?: Gateway;
   /** The fail-safe pool gate: a pool-routed step waits in place while the pool is unusable. */
   pool?: PoolGate;
+  agentAuth?: AgentAuthResolver;
+  /** Triggers n8n workflows for the project's external steps and check tasks. */
+  external?: ExternalStepTransport;
 }
 
 const VERDICT_PROTOCOL =
@@ -239,16 +258,12 @@ class PoolExhaustedError extends Error {
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true }
+  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true; authRefused?: true }
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
 /** Steer requests one step takes before further ones wait for the next step (loop guard). */
 export const MAX_STEERS_PER_STEP = 5;
-
-const RESUME_PROMPT_PREFIX =
-  "The user sent new instructions while you were working. Continue the same task from where " +
-  "you stopped and apply them:\n\n";
 
 /** First word of a stop-request file written by RunnerEngine.shutdown. */
 export const SHUTDOWN_STOP_MARKER = "shutdown";
@@ -266,6 +281,8 @@ export class Pipeline {
   private readonly resumeNotes = new Map<string, string>();
   /** Per task id: usage of failed attempts that returned no result, folded in by persistUsage. */
   private readonly lostUsages = new Map<string, TokenUsage[]>();
+  /** Per task id: outcomes of the external steps run so far in this run. */
+  private readonly externalOutcomes = new Map<string, ExternalStepOutcome[]>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
   }
@@ -319,22 +336,26 @@ export class Pipeline {
     tool: Tool,
     opts: RunOptions,
   ): Promise<RunResult> {
+    if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
-    await this.awaitPool(id, tool);
+    if (!tool.needsAgentAuth) await this.awaitPool(id, tool);
     await this.assertBudget(id, tool.id);
     await this.log(id, `\n### ${label}`);
     await this.deps.store.appendStep(id, label).catch(() => {});
     const { transient, backoffMs, idleTimeoutMs } = retrySettings(this.deps.settings);
     // Prompts the user steered in, accumulated for a rerun that cannot resume the tool session.
     const steerTexts: string[] = [];
+    let stepModel = opts.model;
     // A steer that arrived between steps (or before this step started): it is simply applied
     // here, no kill. The prompt was built earlier, so add what it may have missed.
     const early = await this.takeSteer(id);
-    if (early.length > 0) {
-      steerTexts.push(...early.filter((t) => !opts.prompt.includes(t)));
-      await this.log(id, `\n### Steered\n${early.join("\n\n")}`);
+    if (early.texts.length > 0) {
+      steerTexts.push(...early.texts.filter((t) => !opts.prompt.includes(t)));
+      await this.log(id, `\n### Steered\n${early.texts.join("\n\n")}`);
     }
+    if (early.model)
+      await this.log(id, "\nDropped model switch from a steer that arrived after its step ended");
     this.deps.store.markInjectedApplied(id).catch(() => {});
     const compose = (interruptedBy: string | null): string => {
       let text = opts.prompt;
@@ -359,21 +380,112 @@ export class Pipeline {
         : { ...result, usage: sumUsage([...interrupted, ...(result.usage ? [result.usage] : [])]) };
     let steers = 0;
     let failures = 0;
+    let authNoteLogged = false;
+    let authViaGateway = false;
     try {
       for (;;) {
         const canSteer = steers < MAX_STEERS_PER_STEP;
+        authViaGateway = false;
         try {
+          let authOptions: Partial<RunOptions> = {};
+          if (tool.needsAgentAuth) {
+            if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
+            if (!this.deps.agentAuth || !this.deps.project)
+              throw new AgentAuthRefusedError(
+                "claude-agent cannot start: no authentication resolver",
+              );
+            const claudeConfigDir = await this.deps.agentAuth.configDir(this.deps.project);
+            const initial = await this.deps.agentAuth.decide(this.deps.project);
+            if (initial.ok && initial.via === "gateway") {
+              authViaGateway = true;
+              await this.awaitPool(id, { ...tool, acceptsPool: true }, true);
+            }
+            await this.assertBudget(id, tool.id);
+            let decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+            if (!decision.ok && "unreachable" in decision && decision.unreachable) {
+              const waitMs = retrySettings(this.deps.settings).poolWaitMs;
+              const started = Date.now();
+              const deadline = started + waitMs;
+              await this.log(id, "\n### Waiting for the better-ccflare gateway (unreachable)");
+              while (!decision.ok && "unreachable" in decision && decision.unreachable) {
+                const left = deadline - Date.now();
+                if (left <= 0)
+                  throw new PoolExhaustedError(
+                    "better-ccflare gateway is unreachable",
+                    Date.now() - started,
+                  );
+                await this.backoff(id, Math.min(1000, left));
+                decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+              }
+            }
+            if (
+              decision.ok &&
+              decision.via === "gateway" &&
+              !(initial.ok && initial.via === "gateway")
+            ) {
+              // Auth settings may have changed from project-key to gateway while this attempt
+              // was being prepared. Route it through the pool, then decide afresh once more.
+              await this.awaitPool(id, { ...tool, acceptsPool: true }, true);
+              await this.assertBudget(id, tool.id);
+              decision = await this.deps.agentAuth.decide(this.deps.project, { fresh: true });
+            }
+            if (!decision.ok) throw new AgentAuthRefusedError(decision.reason);
+            authViaGateway = decision.via === "gateway";
+            if (decision.note && !authNoteLogged) {
+              void this.log(id, `\n${decision.note}`);
+              authNoteLogged = true;
+            }
+            const auth = await this.deps.agentAuth.credentials(this.deps.project, decision);
+            authOptions = {
+              agentAuth: auth,
+              claudeConfigDir,
+              env: claudeAgentEnv(
+                process.env,
+                auth,
+                `boof-runner/${BOOF_VERSION}`,
+                claudeConfigDir,
+                this.deps.dataRoot ? agentMarkerFor(this.deps.dataRoot) : undefined,
+              ),
+            };
+          }
+          if (tool.acceptsPool && this.deps.settings.owlish && !this.deps.gateway)
+            throw new Error(POOL_AGENT_KEY_REQUIRED);
           const result = await tool.run({
             ...opts,
+            model: stepModel,
+            ...authOptions,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             agentEnv: this.deps.settings.runner.agentEnv,
+            agentMarker: this.deps.dataRoot ? agentMarkerFor(this.deps.dataRoot) : undefined,
             ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
             prompt,
             resumeSessionId,
+            ...(resumeSessionId ? { resumeBaseline: sumUsage(interrupted) } : {}),
             idleTimeoutMs,
             stopSignalPath: taskStopRequestPath(this.deps.root, id),
             pidFilePath: taskPidPath(this.deps.root, id),
             steerSignalPath: canSteer ? taskSteerRequestPath(this.deps.root, id) : undefined,
+            ...(tool.steersInPlace && canSteer
+              ? {
+                  onSteer: async () => {
+                    const request = await this.takeSteer(id);
+                    steers++;
+                    steerTexts.push(...request.texts);
+                    if (request.model) stepModel = request.model;
+                    this.deps.store.markInjectedApplied(id).catch(() => {});
+                    await this.log(id, `\n### Steered (in place)\n${request.texts.join("\n\n")}`);
+                    await this.log(id, `\n### ${label} (steer ${steers})`);
+                    const last = steers >= MAX_STEERS_PER_STEP;
+                    if (last) {
+                      await this.log(
+                        id,
+                        `\nSteer limit reached for ${label} (${MAX_STEERS_PER_STEP}); later prompts apply at the next step`,
+                      );
+                    }
+                    return { ...request, last };
+                  },
+                }
+              : {}),
             onChunk: (c) => void this.streamChunk(id, c),
           });
           await this.recordStepCost(id, tool.id, result.usage);
@@ -389,7 +501,9 @@ export class Pipeline {
             await this.assertNotStopped(id);
             // A steered rerun is paid like a retry: never start it on a spent budget.
             await this.assertBudget(id, tool.id);
-            const texts = await this.takeSteer(id);
+            const request = await this.takeSteer(id);
+            const texts = request.texts;
+            if (request.model) stepModel = request.model;
             steers++;
             steerTexts.push(...texts);
             this.deps.store.markInjectedApplied(id).catch(() => {});
@@ -414,12 +528,19 @@ export class Pipeline {
           const reason = transientReason(err);
           // A failure that looks like the pool's (proxy 5xx) while the pool is unusable is not the
           // step's fault: wait for the pool instead of spending a retry, then run the step again.
-          if (reason !== null && (await this.poolDown(tool))) {
+          if (
+            reason !== null &&
+            (await this.poolDown(tool, tool.needsAgentAuth && authViaGateway))
+          ) {
             await this.log(
               id,
               `\nTransient failure in ${label}: ${reason}; the account pool is not usable`,
             );
-            await this.awaitPool(id, tool, true);
+            await this.awaitPool(
+              id,
+              tool.needsAgentAuth && authViaGateway ? { ...tool, acceptsPool: true } : tool,
+              true,
+            );
             await this.assertBudget(id, tool.id);
             await this.log(id, `\n### ${label} (after the pool recovered)`);
             prompt = compose("a transient error (API or network failure, or a stalled stream)");
@@ -453,27 +574,30 @@ export class Pipeline {
    * Take the pending steer request: the prompts it carries (written by the inject API next to the
    * durable copies), removing the file. Empty when there is none.
    */
-  private async takeSteer(id: string): Promise<string[]> {
+  private async takeSteer(id: string): Promise<{ texts: string[]; model?: string }> {
     const path = taskSteerRequestPath(this.deps.root, id);
     const taken = `${path}.taken`;
     try {
       await rename(path, taken);
     } catch {
-      return [];
+      return { texts: [] };
     }
     const raw = await readFile(taken, "utf8").catch(() => "");
     await rm(taken, { force: true });
     const texts: string[] = [];
+    let model: string | undefined;
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       try {
-        const text = (JSON.parse(line) as { text?: unknown }).text;
+        const request = JSON.parse(line) as { text?: unknown; model?: unknown };
+        const text = request.text;
         if (typeof text === "string" && text.trim()) texts.push(text.trim());
+        if (typeof request.model === "string" && request.model.trim()) model = request.model.trim();
       } catch {
         /* a hand-written marker file: nothing to carry */
       }
     }
-    return texts;
+    return { texts, ...(model ? { model } : {}) };
   }
 
   /** Add a finished step's cost to the run total and the daily ledgers; never fails the step. */
@@ -521,9 +645,9 @@ export class Pipeline {
   }
 
   /** Is the pool unusable right now (a fresh look)? False for tools it does not serve. */
-  private async poolDown(tool: Tool): Promise<boolean> {
+  private async poolDown(tool: Tool, agentGateway = false): Promise<boolean> {
     const pool = this.deps.pool;
-    if (!pool || !tool.acceptsPool) return false;
+    if (!pool || (!tool.acceptsPool && !agentGateway)) return false;
     return (await pool.check({ fresh: true })).blocked;
   }
 
@@ -666,6 +790,131 @@ export class Pipeline {
     }
   }
 
+  /** The reports of the external steps that ran so far, as prompt text; "" when none. */
+  private externalSection(id: string): string {
+    return externalReportsSection(this.externalOutcomes.get(id) ?? []) ?? "";
+  }
+
+  /** The step context shared by external steps and check tasks. */
+  private externalContext(task: Task) {
+    const id = task.frontmatter.id;
+    return {
+      taskId: id,
+      projectId: this.deps.project?.id ?? "",
+      settings: this.deps.settings,
+      transport: this.deps.external,
+      runs: new ExternalRunStore(this.deps.dataRoot!),
+      log: (line: string) => this.log(id, line),
+      appendStep: (label: string) => this.deps.store.appendStep(id, label).then(() => undefined),
+      assertNotStopped: () => this.assertNotStopped(id),
+      sleep: (ms: number) => this.backoff(id, ms),
+    };
+  }
+
+  /**
+   * Run the project's external steps for `point`, in list order. Each outcome is recorded in the
+   * task body and log and kept for the prompts of the later roles. No steps: nothing happens.
+   */
+  private async externalAt(
+    task: Task,
+    point: ExternalStepPoint,
+    worktree: Worktree | null,
+    reports: ExternalStepPayload["reports"],
+    appendLog: (line: string) => Promise<void>,
+  ): Promise<void> {
+    const steps = (this.deps.project?.externalSteps ?? []).filter((s) => s.at === point);
+    if (steps.length === 0) return;
+    const id = task.frontmatter.id;
+    if (!this.deps.dataRoot) {
+      throw new ExternalStepFailedError(steps[0]!.id, "no data root for external step runs");
+    }
+    const context = this.externalContext(task);
+    for (const step of steps) {
+      const payload: Omit<ExternalStepPayload, "run"> = {
+        boof: { version: BOOF_VERSION, kind: "step" },
+        step: { id: step.id, label: step.label, at: step.at },
+        task: {
+          project: context.projectId,
+          id,
+          title: task.frontmatter.title,
+          prompt: task.body.prompt,
+          labels: task.frontmatter.labels,
+          priority: task.frontmatter.priority,
+          iteration: currentIteration(task),
+          ...(worktree ? { branch: worktree.branch, base: worktree.base } : {}),
+        },
+        reports,
+        ...(step.sendDiff ? { diff: await this.inlineDiff(id, worktree) } : {}),
+      };
+      const outcome = await runExternalStep(context, step, payload);
+      const all = this.externalOutcomes.get(id) ?? [];
+      all.push(outcome);
+      this.externalOutcomes.set(id, all);
+      await appendLog(`### n8n: ${outcome.label} (${outcome.status})\n${outcome.report}`);
+    }
+  }
+
+  /**
+   * A check task (created after an n8n workflow edit): no worktree and no tool, one external
+   * step that runs only the edited workflow.
+   */
+  private async runCheck(task: Task): Promise<PipelineOutcome> {
+    const id = task.frontmatter.id;
+    const check = task.frontmatter.n8nCheck!;
+    const appendLog = async (line: string): Promise<void> => {
+      task.body.log = task.body.log ? `${task.body.log}\n\n${line}` : line;
+      await this.log(id, line);
+    };
+    try {
+      if (!this.deps.dataRoot) {
+        throw new ExternalStepFailedError("n8n-check", "no data root for external step runs");
+      }
+      const step: CheckStep = {
+        id: "n8n-check",
+        label: "n8n check",
+        workflowId: check.workflowId,
+        webhookPath: check.webhookPath,
+        onFailure: "fail",
+      };
+      const outcome = await runExternalStep(this.externalContext(task), step, {
+        boof: { version: BOOF_VERSION, kind: "check" },
+        step: { id: step.id, label: step.label, at: "check" },
+        task: {
+          project: this.deps.project?.id ?? "",
+          id,
+          title: task.frontmatter.title,
+          prompt: task.body.prompt,
+          labels: task.frontmatter.labels,
+          priority: task.frontmatter.priority,
+          iteration: currentIteration(task),
+        },
+        reports: {},
+      });
+      await appendLog(`### ${outcome.label} (${outcome.status})\n${outcome.report}`);
+      await this.mirrorLiveLog(task);
+      await this.persistUsage(task, []);
+      await this.closeSteps(id, "Finished");
+      return { kind: "done", task };
+    } catch (err) {
+      const message =
+        err instanceof ExternalStepFailedError
+          ? err.message
+          : err instanceof Error
+            ? `${err.name}: ${err.message}`
+            : String(err);
+      const stopped = await this.stopRequested(id);
+      const stopReason = stopped ? await this.stopReason(id) : null;
+      const stopNote = stopReason === "shutdown" ? "stopped by server shutdown" : "stopped by user";
+      if (stopped) await appendLog(`### Stopped\n${stopNote}`);
+      else await appendLog(`ERROR: ${message}`);
+      await this.closeSteps(id, stopped ? "Stopped" : "Failed");
+      await this.mirrorLiveLog(task).catch(() => {});
+      await this.persistUsage(task, []).catch(() => {});
+      if (stopReason) return { kind: "stopped", task, reason: stopReason, note: stopNote };
+      return { kind: "failed", task, error: message };
+    }
+  }
+
   private async buildPrompt(task: Task, extra: string): Promise<string> {
     const parts = [`# Task: ${task.frontmatter.title}`];
     const brief = this.deps.project?.brief?.trim();
@@ -705,7 +954,9 @@ export class Pipeline {
    * status transition based on it.
    */
   async run(task: Task): Promise<PipelineOutcome> {
+    if (task.frontmatter.n8nCheck) return this.runCheck(task);
     const id = task.frontmatter.id;
+    this.externalOutcomes.delete(id);
     const usages: TokenUsage[] = [];
     const record = (r: RunResult) => {
       if (r.usage) usages.push(r.usage);
@@ -837,6 +1088,12 @@ export class Pipeline {
         `${planResult.report}\n\n## Refinement\n${refineResult.report}`,
       );
       const finalPlan = refineResult.report;
+      // The external reports so far, appended to a prompt's extra text.
+      const withExternal = (extra: string): string => {
+        const section = this.externalSection(id);
+        return section ? `${extra}\n\n${section}` : extra;
+      };
+      await this.externalAt(task, "after-planner", worktree, { planner: finalPlan }, appendLog);
 
       // --- Step 3: Developer ---
       const developer = this.tool(task, "developer");
@@ -844,7 +1101,7 @@ export class Pipeline {
         role: "developer" as const,
         model: developer.model,
         systemPrompt: SYSTEM_PROMPTS.developer,
-        prompt: await this.buildPrompt(task, `## Plan\n${finalPlan}`),
+        prompt: await this.buildPrompt(task, withExternal(`## Plan\n${finalPlan}`)),
         cwd: stepCwd,
         autoApprove: true,
       };
@@ -867,7 +1124,7 @@ export class Pipeline {
               ...devOpts,
               prompt: await this.buildPrompt(
                 task,
-                `## Plan\n${finalPlan}\n\n${answersSection(answers)}`,
+                withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
               ),
             });
             record(again);
@@ -877,6 +1134,13 @@ export class Pipeline {
         );
       }
       await this.writeReport(task, "developer", devResult.report);
+      await this.externalAt(
+        task,
+        "after-developer",
+        worktree,
+        { planner: finalPlan, developer: devResult.report },
+        appendLog,
+      );
 
       // --- Step 4: Observer (optional) and Reviewer, gated by verdicts ---
       const observer = this.observerTool(task);
@@ -892,7 +1156,7 @@ export class Pipeline {
           systemPrompt: SYSTEM_PROMPTS[role],
           prompt: await this.buildPrompt(
             task,
-            `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}`,
+            withExternal(`## Plan\n${finalPlan}\n\n## Diff under review\n${diff}`),
           ),
           cwd: stepCwd,
           autoApprove: true,
@@ -921,7 +1185,9 @@ export class Pipeline {
                   ...checkOpts,
                   prompt: await this.buildPrompt(
                     task,
-                    `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
+                    withExternal(
+                      `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
+                    ),
                   ),
                 },
               );
@@ -953,7 +1219,7 @@ export class Pipeline {
           role: "developer" as const,
           model: developer.model,
           systemPrompt: SYSTEM_PROMPTS.developerFix,
-          prompt: await this.buildPrompt(task, fixBase),
+          prompt: await this.buildPrompt(task, withExternal(fixBase)),
           cwd: stepCwd,
           autoApprove: true,
         };
@@ -981,7 +1247,10 @@ export class Pipeline {
                 developer.tool,
                 {
                   ...fixOpts,
-                  prompt: await this.buildPrompt(task, `${fixBase}\n\n${answersSection(answers)}`),
+                  prompt: await this.buildPrompt(
+                    task,
+                    withExternal(`${fixBase}\n\n${answersSection(answers)}`),
+                  ),
                 },
               );
               record(again);
@@ -1004,6 +1273,7 @@ export class Pipeline {
       let revFix = 0;
       let obsRound = 0;
       let revRound = 0;
+      let lastReviewerReport = "";
       for (;;) {
         if (observer) {
           for (;;) {
@@ -1016,12 +1286,25 @@ export class Pipeline {
           }
         }
         const rev = await checkRole("reviewer", ++revRound);
+        lastReviewerReport = rev.report;
         if (!gate || rev.verdict === "APPROVE") break;
         if (rev.verdict !== "CHANGES_REQUESTED" || revFix >= maxFixRounds) {
           throw new ReviewNotApprovedError("reviewer", rev.verdict);
         }
         await fix(++revFix, "reviewer", revRound, rev.report);
       }
+
+      await this.externalAt(
+        task,
+        "after-review",
+        worktree,
+        {
+          planner: finalPlan,
+          developer: task.body.reports.developer,
+          reviewer: lastReviewerReport,
+        },
+        appendLog,
+      );
 
       // Only finalize the worktree on the final iteration, per settings.worktree.onDone
       // (default: leftovers go to a side branch, the directory goes, the task branch stays).
@@ -1054,8 +1337,13 @@ export class Pipeline {
       }
       const overBudget = err instanceof BudgetExceededError;
       const poolExhausted = err instanceof PoolExhaustedError;
+      const authRefused = err instanceof AgentAuthRefusedError;
       const message =
-        err instanceof ReviewNotApprovedError || overBudget || poolExhausted
+        err instanceof ReviewNotApprovedError ||
+        err instanceof ExternalStepFailedError ||
+        overBudget ||
+        poolExhausted ||
+        authRefused
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -1077,7 +1365,8 @@ export class Pipeline {
         if (
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
           !stopped &&
-          !keepForBudget
+          !keepForBudget &&
+          !authRefused
         ) {
           for (const line of await discardWorktree(workingDirectory, worktree)) {
             await appendLog(line).catch(() => {});
@@ -1099,6 +1388,7 @@ export class Pipeline {
         error: message,
         ...(overBudget ? { budget: true as const } : {}),
         ...(poolExhausted ? { pool: true as const } : {}),
+        ...(authRefused ? { authRefused: true as const } : {}),
       };
     }
   }

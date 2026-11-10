@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { execFile, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,6 +17,7 @@ import {
 import { TaskService } from "../api/index.js";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { createApp } from "./app.js";
+import { encodeFeedCursor, GLOBAL_SCOPE, liveCursor } from "./events.js";
 
 let base: string;
 let root: string;
@@ -58,6 +60,20 @@ const until = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
   }
 };
 
+// The holder saves a webhook's cursor only at the end of a tick, after its posts. Killing it before
+// that save is a crash mid-delivery, where the next holder legitimately posts again (at-least-once),
+// so the test waits until every event so far is recorded as delivered.
+const cursorCaughtUp = async () => {
+  const live = encodeFeedCursor(await liveCursor(root, [GLOBAL_SCOPE, "a"]));
+  return readFile(join(root, "webhooks", "state.json"), "utf8").then(
+    (t) =>
+      Object.values(JSON.parse(t) as Record<string, { cursor: string }>).every(
+        (h) => h.cursor === live,
+      ),
+    () => false,
+  );
+};
+
 const startChild = (): Promise<ChildProcess> =>
   new Promise((resolve, reject) => {
     const child = execFile(process.execPath, ["--import", "tsx", childFile, root], {
@@ -97,7 +113,11 @@ describe("one webhook dispatcher per data root", () => {
     });
     const service = new TaskService(root, new ToolRegistry([new MockTool()]));
     await service.projects.create({ workingDirectory: repo, id: "a" });
-    const app = createApp({ service, peerAddress: () => "127.0.0.1" });
+    const app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      peerAddress: () => "127.0.0.1",
+    });
     const made = await app.request("http://localhost/api/v1/webhooks", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -121,6 +141,7 @@ describe("one webhook dispatcher per data root", () => {
       await appendEvent(join(root, "projects", "a"), event(t));
     }
     await until(() => delivered.length >= 5);
+    await until(cursorCaughtUp);
     await new Promise((r) => setTimeout(r, 1500)); // a second dispatcher would have posted by now
     expect([...delivered].sort()).toEqual(["e1", "e2", "e3", "e4", "e5"]);
 

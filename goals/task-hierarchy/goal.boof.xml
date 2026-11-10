@@ -19,6 +19,7 @@
         <version number="1" status="plan">Requested by the owner on 2026-10-29; not started.</version>
         <version number="2" status="plan">D3 (owner, 2026-10-29): approved — subtasks carry parentId; epics are a small record per project; priority stays on each task (epic priority a tiebreak at most); progress is derived; the scheduler is unchanged. &#x27;Add these only to todos&#x27; meant: put it on the backlog.</version>
         <version number="3" status="develop">Data, API, MCP, CLI, prompts and plan sync landed (plan 2026-11-02-task-hierarchy-data); UI half (design phases 4-5) pending with roadmap step 11.</version>
+        <version number="4" status="done">The UI half landed: row chips and epic grouping (cd7991b, a8495b2), the task-page hierarchy (040f181), commands and detach-safe delete (e11e844), and the console (fc4c6e5). Create, move, list-by-parent and derived progress are in e698a3b and f92d6ba (packages/heart/src/hierarchy.ts); the runner adds them to prompts (prompt-hierarchy.ts). The scheduler is unchanged, as D3 required.</version>
       </versions>
     </status>
     <tests>

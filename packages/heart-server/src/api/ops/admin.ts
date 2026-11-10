@@ -7,6 +7,7 @@ import {
   settingsVersion,
   TokenUsageSchema,
 } from "@boof/heart";
+import { AGENT_KEY_MUST_BE_SEPARATE, OwlishClient } from "@boof/owlish";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { buildModelDetails } from "../services/model-details.js";
@@ -20,6 +21,7 @@ import {
   PublicClientSchema,
   BudgetExceededListSchema,
   BudgetStatusSchema,
+  AgentAuthStatusSchema,
   PoolStatusSchema,
   PublicSettingsSchema,
   TaskViewSchema,
@@ -34,8 +36,10 @@ import {
 } from "./common.js";
 
 /** Settings without the webhook list (secrets): see the webhooks operations. */
-export function publicSettings<T extends { webhooks?: unknown }>(s: T): Omit<T, "webhooks"> {
-  const { webhooks: _w, ...rest } = s;
+export function publicSettings<T extends { webhooks?: unknown; n8n?: unknown }>(
+  s: T,
+): Omit<T, "webhooks" | "n8n"> {
+  const { webhooks: _w, n8n: _n, ...rest } = s;
   return rest;
 }
 
@@ -81,18 +85,63 @@ export const settingsUpdate = defineOp({
       .meta({
         description:
           "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
+        writeOnly: true,
+      }),
+    owlishAgentKey: z
+      .string()
+      .regex(/^[\x21-\x7e]{1,512}$/)
+      .nullable()
+      .optional()
+      .meta({
+        description:
+          "An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins).",
+        writeOnly: true,
       }),
   }),
   output: PublicSettingsSchema,
   rest: { method: "PUT", path: "/settings", ifMatch: "expectedUpdated", etag: settingsEtag },
   mcp: { expose: true, name: "boof_update_settings", annotations: IDEMPOTENT_WRITE },
   summary: () => "Settings updated",
-  handler: async (ctx, { expectedUpdated, owlishApiKey, ...patch }) => {
+  handler: async (ctx, { expectedUpdated, owlishApiKey, owlishAgentKey, ...patch }) => {
     assertMayWriteSettings(ctx);
     const saved = await ctx.services.updateSettings(patch, ctx.principal, expectedUpdated);
     // Write the separate secret only after settings and its ETag check succeeded.
-    if (typeof owlishApiKey === "string") await ctx.services.owlishSecrets.set(owlishApiKey);
-    else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
+    if (typeof owlishApiKey === "string") {
+      try {
+        await ctx.services.owlishSecrets.set(owlishApiKey);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes("agent key must be a separate") ||
+            error.message.startsWith("owlish/secrets.json"))
+        )
+          throw new OpError(400, error.message, "invalid_input");
+        throw error;
+      }
+    } else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
+    if (typeof owlishAgentKey === "string") {
+      try {
+        // A second admin key is a different string. Ask the admin-only account list before
+        // storing it. No gateway URL yet, or no answer, still stores: the next use probes again.
+        const gatewayUrl = saved.owlish?.url;
+        if (gatewayUrl) {
+          const probe = await new OwlishClient({
+            url: gatewayUrl,
+            apiKey: owlishAgentKey,
+          }).probeAdminRoute();
+          if (probe === "accepted") throw new Error(AGENT_KEY_MUST_BE_SEPARATE);
+        }
+        await ctx.services.owlishSecrets.setAgent(owlishAgentKey);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes("agent key must be a separate") ||
+            error.message.startsWith("owlish/secrets.json"))
+        )
+          throw new OpError(400, error.message, "invalid_input");
+        throw error;
+      }
+    } else if (owlishAgentKey === null) await ctx.services.owlishSecrets.deleteAgent();
     return publicSettings(saved);
   },
 });
@@ -112,7 +161,19 @@ export const settingsHealth = defineOp({
     Object.entries(r.tools)
       .map(([k, v]) => `${k}: ${v.status}`)
       .join(", "),
-  handler: async (ctx) => ({ tools: ctx.services.cachedHealth() }),
+  handler: async (ctx) => ({
+    tools: Object.fromEntries(
+      Object.entries(ctx.services.cachedHealth()).map(([id, health]) => [
+        id,
+        {
+          ...health,
+          ...(ctx.services.catalog.get(id)?.unavailableReason
+            ? { unavailableReason: ctx.services.catalog.get(id)!.unavailableReason }
+            : {}),
+        },
+      ]),
+    ),
+  }),
 });
 
 export const settingsCheckHealth = defineOp({
@@ -132,7 +193,19 @@ export const settingsCheckHealth = defineOp({
       .join(", "),
   handler: async (ctx) => {
     await ctx.services.health();
-    return { tools: ctx.services.cachedHealth() };
+    return {
+      tools: Object.fromEntries(
+        Object.entries(ctx.services.cachedHealth()).map(([id, health]) => [
+          id,
+          {
+            ...health,
+            ...(ctx.services.catalog.get(id)?.unavailableReason
+              ? { unavailableReason: ctx.services.catalog.get(id)!.unavailableReason }
+              : {}),
+          },
+        ]),
+      ),
+    };
   },
 });
 
@@ -247,6 +320,7 @@ export const runnerStatus = defineOp({
     budgetExceeded: BudgetExceededListSchema,
     /** The account pool (absent when settings.owlish is not set). */
     pool: PoolStatusSchema,
+    agentAuth: AgentAuthStatusSchema,
   }),
   rest: { method: "GET", path: "/runner" },
   mcp: { expose: true, name: "boof_get_runner", annotations: READ },
@@ -259,6 +333,9 @@ export const runnerStatus = defineOp({
       concurrency: runner.concurrency,
       budgetExceeded: budget.exceeded,
       pool: await ctx.services.poolStatus(),
+      agentAuth: await ctx.services.agentAuthStatus((pid: string) =>
+        authorizeProject(ctx.principal, pid),
+      ),
     };
   },
 });
@@ -278,6 +355,7 @@ export const runnerOverview = defineOp({
     budgetExceeded: BudgetExceededListSchema,
     /** The account pool (absent when settings.owlish is not set). */
     pool: PoolStatusSchema,
+    agentAuth: AgentAuthStatusSchema,
     projects: z.array(
       z.object({
         id: z.string(),
@@ -321,6 +399,9 @@ export const runnerOverview = defineOp({
       concurrency: runner.concurrency,
       budgetExceeded: budget.exceeded,
       pool: await ctx.services.poolStatus(),
+      agentAuth: await ctx.services.agentAuthStatus((pid: string) =>
+        authorizeProject(ctx.principal, pid),
+      ),
       projects,
     };
   },

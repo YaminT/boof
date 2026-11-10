@@ -104,11 +104,36 @@ export const PlanViewSchema = PlanSchema.extend({
 
 /** A project as `projects.get` and `projects.list` show it: the stored project plus the live branch. */
 export const ProjectViewSchema = ProjectSchema.extend({
+  anthropicApiKeySet: z.boolean(),
   currentBranch: z.string().nullable().meta({
     description:
       "Branch checked out in the working directory (git symbolic-ref); null when detached or not a repository.",
   }),
 });
+
+export const AgentSdkEligibilitySchema = z.object({
+  gateway: z.enum(["absent", "checked"]),
+  allowed: z.boolean(),
+  reason: z.string(),
+  blocking: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      provider: z.string().nullable(),
+      why: z.enum(["subscription", "oauth-token", "unknown-type"]),
+    }),
+  ),
+  checkedAt: z.string(),
+});
+export const AgentAuthStatusSchema = z.array(
+  z.object({
+    projectId: z.string(),
+    roles: z.array(z.enum(["planner", "developer", "observer", "reviewer"])),
+    allowed: z.boolean(),
+    via: z.enum(["gateway", "project-key"]).nullable(),
+    reason: z.string().nullable(),
+  }),
+);
 
 /** An epic with its derived progress: non-archived top-level tasks and how many are done. */
 export const EpicViewSchema = EpicSchema.extend({
@@ -183,17 +208,83 @@ export const ImportResultSchema = z.object({
 });
 
 /** Settings as the API shows them: webhooks are managed (and hidden) through their own operations. */
-export const PublicSettingsSchema = SettingsSchema.omit({ webhooks: true });
+export const PublicSettingsSchema = SettingsSchema.omit({ webhooks: true, n8n: true });
 
 export const PublicClientSchema = ClientSchema.omit({ keyHash: true });
 
 /** A webhook as listed: `notDelivering` says why one that is enabled still sends nothing. */
 export const PublicWebhookSchema = WebhookSchema.extend({ notDelivering: z.string().optional() });
 
+const ConciergePendingChangeSchema = z.object({
+  id: z.string(),
+  op: z.string(),
+  title: z.string(),
+  details: z.array(z.string()),
+  destructive: z.boolean(),
+  blocked: z.string().optional(),
+  reason: z.enum(["confirm", "needs-approval"]),
+  status: z.enum(["pending", "applying", "applied", "discarded", "expired", "failed"]),
+  expiresAt: z.string(),
+  error: z.string().optional(),
+});
+const ConciergeTargetSchema = z
+  .object({ kind: z.enum(["task", "plan", "epic"]), id: z.string() })
+  .nullable();
+export const ConciergeStatusSchema = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+  via: z.enum(["gateway", "project-key"]).nullable(),
+  model: z.string(),
+  limits: z.object({
+    perMessageUsd: z.number(),
+    perConversationUsd: z.number(),
+    messagesPerMinute: z.number().int(),
+  }),
+  conversation: z
+    .object({
+      id: z.string(),
+      spentUsd: z.number(),
+      messages: z.number().int(),
+      pending: z.array(ConciergePendingChangeSchema),
+    })
+    .nullable(),
+});
+export const ConciergeAnswerSchema = z.object({
+  conversationId: z.string(),
+  text: z.string(),
+  changes: z.array(
+    z.object({ op: z.string(), summary: z.string(), target: ConciergeTargetSchema }),
+  ),
+  pending: z.array(ConciergePendingChangeSchema),
+  costUsd: z.number().nullable(),
+  stopReason: z.enum(["done", "max_turns", "max_budget"]),
+});
+export const ConciergeChangeSchema = ConciergePendingChangeSchema;
+export const ConciergeEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("conversation"), conversationId: z.string() }),
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("tool"),
+    tool: z.string(),
+    phase: z.enum(["start", "end"]),
+    ok: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("change"),
+    op: z.string(),
+    summary: z.string(),
+    target: ConciergeTargetSchema,
+  }),
+  z.object({ type: z.literal("pending"), change: ConciergePendingChangeSchema }),
+  z.object({ type: z.literal("done"), answer: ConciergeAnswerSchema }),
+  z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
+]);
+
 export const HealthResultSchema = z.object({
   status: z.enum(["available", "unavailable"]),
   message: z.string(),
   version: z.string().optional(),
+  unavailableReason: z.string().optional(),
   checkedAt: z
     .string()
     .optional()
@@ -219,6 +310,7 @@ export const ModelDetailsSchema = z.object({
     z.string(),
     z.object({
       displayName: z.string(),
+      unavailableReason: z.string().optional(),
       health: HealthResultSchema.extend({
         checkedAt: z.string().meta({
           description: "ISO-8601 time the health check ran in this server process.",

@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { authorizeProject, ProjectPatchSchema, type Project, currentBranch } from "@boof/heart";
+import {
+  authorizeProject,
+  ProjectPatchSchema,
+  ANTHROPIC_API_KEY_PATTERN,
+  type Project,
+  currentBranch,
+} from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { CreateProjectBody } from "../validation.js";
+import { OpError } from "../errors.js";
 import { OkSchema, ProjectSchema, ProjectViewSchema, TokenUsageSchema } from "../schemas.js";
 import { DESTRUCTIVE, IDEMPOTENT_WRITE, projectIdParam, READ, WRITE } from "./common.js";
 
@@ -9,6 +16,13 @@ import { DESTRUCTIVE, IDEMPOTENT_WRITE, projectIdParam, READ, WRITE } from "./co
 const withBranch = async (p: Project) => ({
   ...p,
   currentBranch: p.workingDirectory ? await currentBranch(p.workingDirectory) : null,
+});
+const projectView = async (
+  ctx: { services: { hasProjectKey(id: string): Promise<boolean> } },
+  p: Project,
+) => ({
+  ...(await withBranch(p)),
+  anthropicApiKeySet: await ctx.services.hasProjectKey(p.id),
 });
 
 const byProject = z.strictObject({ projectId: projectIdParam });
@@ -29,7 +43,7 @@ export const projectsList = defineOp({
     projects: await Promise.all(
       (await ctx.services.listProjects({ includeArchived: input.includeArchived === true }))
         .filter((p) => authorizeProject(ctx.principal, p.id))
-        .map(withBranch),
+        .map((p) => projectView(ctx, p)),
     ),
   }),
 });
@@ -49,6 +63,8 @@ export const projectsCreate = defineOp({
   handler: (ctx, input) => ctx.services.createProject(input, ctx.principal),
 });
 
+const projectEtag = (p: { updated: string }) => `W/"${p.updated}"`;
+
 export const projectsGet = defineOp({
   name: "projects.get",
   title: "Get a project",
@@ -58,26 +74,80 @@ export const projectsGet = defineOp({
   projectScoped: true,
   input: byProject,
   output: ProjectViewSchema,
-  rest: { method: "GET", path: "/projects/{projectId}" },
+  rest: { method: "GET", path: "/projects/{projectId}", etag: projectEtag },
   mcp: { expose: true, name: "boof_get_project", annotations: READ },
   summary: (p) => `Project ${p.id}: ${p.name}${p.paused ? " (paused)" : ""}`,
-  handler: async (ctx, input) => withBranch(await ctx.services.getProject(input.projectId)),
+  handler: async (ctx, input) => projectView(ctx, await ctx.services.getProject(input.projectId)),
 });
 
 export const projectsUpdate = defineOp({
   name: "projects.update",
   title: "Update a project",
   description:
-    "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
+    "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.",
   scope: "projects:write",
   projectScoped: true,
-  input: z.strictObject({ projectId: projectIdParam, ...ProjectPatchSchema.shape }),
-  output: ProjectSchema,
-  rest: { method: "PUT", path: "/projects/{projectId}" },
+  input: z.strictObject({
+    projectId: projectIdParam,
+    ...ProjectPatchSchema.shape,
+    anthropicApiKey: z.string().regex(ANTHROPIC_API_KEY_PATTERN).nullable().optional().meta({
+      description:
+        "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it",
+      writeOnly: true,
+    }),
+    expectedUpdated: z.string().max(100).optional().meta({
+      description:
+        "The project's `updated` stamp you last saw (HTTP: If-Match with the ETag); a changed project answers 409 project_modified.",
+    }),
+  }),
+  output: ProjectSchema.extend({ anthropicApiKeySet: z.boolean() }),
+  rest: {
+    method: "PUT",
+    path: "/projects/{projectId}",
+    ifMatch: "expectedUpdated",
+    etag: projectEtag,
+  },
   mcp: { expose: true, name: "boof_update_project", annotations: IDEMPOTENT_WRITE },
   summary: (p) => `Updated project ${p.id}`,
-  handler: (ctx, { projectId, ...patch }) =>
-    ctx.services.updateProject(projectId, patch, ctx.principal),
+  audit: ({ anthropicApiKey }) =>
+    anthropicApiKey === undefined
+      ? {}
+      : { anthropicApiKey: anthropicApiKey === null ? "removed" : "set" },
+  handler: async (ctx, { projectId, anthropicApiKey, expectedUpdated, ...patch }) => {
+    if (anthropicApiKey !== undefined) {
+      if (
+        ctx.principal.kind === "client" &&
+        (ctx.principal.trust === "review" || ctx.principal.id === "local-mcp")
+      ) {
+        throw new OpError(403, "forbidden", "forbidden_trust");
+      }
+    }
+    // External steps send task content to n8n: a review-trust client may not change them.
+    if (
+      "externalSteps" in patch &&
+      patch.externalSteps !== undefined &&
+      ctx.principal.trust === "review"
+    ) {
+      throw new OpError(
+        403,
+        "External steps send task content to n8n; only a trusted client may change them",
+        "forbidden_trust",
+      );
+    }
+    // Fail before anything is saved when the key store cannot be read, so a store that is corrupt
+    // or locked cannot leave the project changed (say, to project-key auth) and its key unstored.
+    if (anthropicApiKey !== undefined) await ctx.services.projectKeys.has(projectId);
+    const project = await ctx.services.updateProject(
+      projectId,
+      patch,
+      ctx.principal,
+      expectedUpdated,
+    );
+    if (typeof anthropicApiKey === "string")
+      await ctx.services.projectKeys.set(projectId, anthropicApiKey);
+    else if (anthropicApiKey === null) await ctx.services.projectKeys.delete(projectId);
+    return { ...project, anthropicApiKeySet: await ctx.services.hasProjectKey(projectId) };
+  },
 });
 
 export const projectsArchive = defineOp({

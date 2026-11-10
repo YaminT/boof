@@ -538,3 +538,21 @@ describe("TaskStore.save and agentProcess", () => {
     expect((await store.get("t1"))!.frontmatter.agentProcess).toBeUndefined();
   });
 });
+
+describe("injected model persistence", () => {
+  it("keeps model metadata when marking an injection applied", async () => {
+    const task = newTask(fm());
+    await store.create(task);
+    await store.transition("t1", "running", () => {});
+    await store.whileRunning(
+      "t1",
+      async () => {},
+      (t) => appendInjectedEntry(t, { text: "steer", mode: "now", model: "opus" }),
+    );
+    await store.markInjectedApplied("t1", "2026-06-04T10:05:02.000Z");
+    expect(parseInjected((await store.get("t1"))!.body.injected)[0]).toMatchObject({
+      model: "opus",
+      appliedAt: "2026-06-04T10:05:02.000Z",
+    });
+  });
+});

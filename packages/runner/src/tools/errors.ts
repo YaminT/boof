@@ -8,6 +8,25 @@ export interface ToolRunErrorExtra {
   sessionId?: string;
   /** Usage of the interrupted attempt, still recorded. */
   usage?: TokenUsage;
+  /**
+   * Extra clause for a non-zero exit (`exited with code N: …`). Used when the
+   * tool's own result text is the only explanation and stderr is empty.
+   */
+  reason?: string;
+}
+
+/** How much of a tool's own result text may land in the Error message. The step log keeps the rest. */
+const REASON_MAX = 500;
+
+function reasonClause(reason: string | undefined): string {
+  if (!reason) return "";
+  const text = reason.trim();
+  if (!text) return "";
+  // Code points, not UTF-16 units: `slice` would leave a lone surrogate when the cut lands
+  // on an emoji or other non-BMP character.
+  const units = Array.from(text);
+  const capped = units.length > REASON_MAX ? `${units.slice(0, REASON_MAX).join("")}…` : text;
+  return `: ${capped}`;
 }
 
 /** A tool process failed: non-zero exit, timeout, user stop or a stalled stream. */
@@ -33,7 +52,7 @@ export class ToolRunError extends Error {
             ? `${toolId} timed out`
             : stalled
               ? `${toolId} stalled: no output for ${+(idleMs / 60000).toFixed(1)} min`
-              : `${toolId} exited with code ${code ?? "null"}`,
+              : `${toolId} exited with code ${code ?? "null"}${reasonClause(extra.reason)}`,
     );
     this.name = "ToolRunError";
     this.steered = extra.steered === true;

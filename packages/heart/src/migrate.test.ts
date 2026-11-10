@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -11,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   backfillPlanApprovals,
@@ -19,10 +21,11 @@ import {
   MigrationError,
   withMigrationLock,
 } from "./migrate.js";
+import { scaffoldDataRoot } from "./scaffold.js";
 import { WebhookSecretStore } from "./webhook-secrets.js";
 import { PlanStore } from "./plan-store.js";
 import { testGoal } from "./plan-fixtures.js";
-import { ProjectSchema } from "./schema.js";
+import { ProjectSchema, SETTINGS_SCHEMA_VERSION } from "./schema.js";
 import { defaultSettings, SettingsStore } from "./settings.js";
 import { TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
@@ -83,6 +86,19 @@ const v1Settings = (workingDirectory: string) => ({
   worktree: { onDone: "delete" },
 });
 
+/** settings.json as 0.3.0 writes it (schema 2), with fields the empty step must keep. */
+function releasedV2File(): string {
+  const body = {
+    ...(defaultSettings() as unknown as Record<string, unknown>),
+    schemaVersion: 2,
+    defaultProject: "shop",
+    projectsRoot: "~/boof-projects",
+  };
+  return JSON.stringify(body, null, 2) + "\n";
+}
+
+const STAMP_LINE = /schemaVersion from 2 to 3/g;
+
 /** A v1 data root: every status directory holds a task, plus usage.json and a command template. */
 async function writeV1Root(workingDirectory: string): Promise<void> {
   await mkdir(join(root, "commands"), { recursive: true });
@@ -127,7 +143,7 @@ describe("migrateDataRoot", () => {
     const r = await migrateDataRoot(root);
     expect(r.kind).toBe("fresh");
     const s = await new SettingsStore(root).load();
-    expect(s.schemaVersion).toBe(2);
+    expect(s.schemaVersion).toBe(3);
     expect(s.defaultProject).toBeNull();
     expect(await readdir(join(root, "projects"))).toEqual([]);
   });
@@ -192,7 +208,7 @@ describe("migrateDataRoot", () => {
 
     // Settings rewritten as v2 without the removed keys; the runner flag survives.
     const raw = JSON.parse(await readFile(join(root, "settings.json"), "utf8"));
-    expect(raw.schemaVersion).toBe(2);
+    expect(raw.schemaVersion).toBe(3);
     expect(raw.defaultProject).toBe("default");
     expect(raw.runner).toEqual({ enabled: true, concurrency: 1, inheritMcpServers: false });
     expect(raw.worktree).toEqual({ onDone: "delete", onFailure: "keep" });
@@ -314,7 +330,7 @@ describe("migrateDataRoot", () => {
     expect(await exists(join(dest, "usage.json"))).toBe(true);
     expect(await exists(join(root, "usage.json"))).toBe(false);
     expect(await new TaskStore(dest).list()).toHaveLength(7);
-    expect((await new SettingsStore(root).load()).schemaVersion).toBe(2);
+    expect((await new SettingsStore(root).load()).schemaVersion).toBe(3);
   });
 
   it("recovers when both a v1 tasks/ and projects/default/tasks exist, keeping files already moved", async () => {
@@ -329,9 +345,11 @@ describe("migrateDataRoot", () => {
     expect(r.log.join("\n")).toContain("kept conflicting v1 file in place");
   });
 
-  it("refuses a data root written by a newer release", async () => {
-    await writeFile(join(root, "settings.json"), JSON.stringify({ schemaVersion: 3 }));
+  it("refuses a data root written by a newer release and changes nothing", async () => {
+    const text = JSON.stringify({ schemaVersion: 4, runner: { enabled: true } });
+    await writeFile(join(root, "settings.json"), text);
     await expect(migrateDataRoot(root)).rejects.toThrow(/newer/);
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(text);
   });
 
   it("treats a v1 tasks/ tree without settings.json as v1 with no working directory", async () => {
@@ -415,7 +433,7 @@ describe("migration lock", () => {
     expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
   });
 
-  it("never takes the lock for a v2 root", async () => {
+  it("never takes the lock for a root already at this release's schema", async () => {
     await writeV1Root(repo);
     await migrateDataRoot(root);
     expect((await migrateDataRoot(root)).kind).toBe("current");
@@ -628,6 +646,166 @@ describe("webhook secrets", () => {
     );
     expect(err?.message).toBe("webhooks/secrets.json is not valid JSON");
     expect(err?.message).not.toContain("leakme");
+  });
+});
+
+describe("schema guard against rollback", () => {
+  it("upgrades a 0.3.0 root (schema 2) once and only once, changing nothing else", async () => {
+    const before = releasedV2File();
+    await writeFile(join(root, "settings.json"), before);
+    const first = await migrateDataRoot(root);
+    expect(first.kind).toBe("migrated");
+    expect(first.log.join("\n")).toMatch(STAMP_LINE);
+    const upgraded = await readFile(join(root, "settings.json"), "utf8");
+    expect(upgraded).toBe(before.replace('"schemaVersion": 2', '"schemaVersion": 3'));
+    expect(JSON.parse(upgraded)).toMatchObject({
+      schemaVersion: 3,
+      defaultProject: "shop",
+      projectsRoot: "~/boof-projects",
+    });
+    const log = await readFile(join(root, "migration-v2.log"), "utf8");
+    expect(log.match(STAMP_LINE)).toHaveLength(1);
+
+    expect((await migrateDataRoot(root)).kind).toBe("current");
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(upgraded);
+    expect(await readFile(join(root, "migration-v2.log"), "utf8")).toBe(log);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(3);
+  });
+
+  it("migrates a v1 root through the v2 layout to schemaVersion 3, once", async () => {
+    await writeV1Root(repo);
+    const first = await migrateDataRoot(root);
+    expect(first.kind).toBe("migrated");
+    expect(first.log.join("\n")).toContain("from v1 to v2");
+    const settings = await readFile(join(root, "settings.json"), "utf8");
+    expect(JSON.parse(settings).schemaVersion).toBe(3);
+    expect(JSON.parse(settings).defaultProject).toBe("default");
+    expect(await exists(join(root, "projects", "default", "project.json"))).toBe(true);
+    expect(await exists(join(root, "projects", "default", "tasks"))).toBe(true);
+    expect(await exists(join(root, "tasks"))).toBe(false);
+    expect(await new TaskStore(join(root, "projects", "default")).list()).toHaveLength(7);
+
+    expect((await migrateDataRoot(root)).kind).toBe("current");
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(settings);
+  });
+
+  it("two processes starting together stamp a 0.3.0 root once and leave a valid file", async () => {
+    const before = releasedV2File();
+    await writeFile(join(root, "settings.json"), before);
+    const [a, b] = await Promise.all([migrateDataRoot(root), migrateDataRoot(root)]);
+    expect([a.kind, b.kind].sort()).toEqual(["current", "migrated"]);
+    const upgraded = await readFile(join(root, "settings.json"), "utf8");
+    expect(upgraded).toBe(before.replace('"schemaVersion": 2', '"schemaVersion": 3'));
+    expect(JSON.parse(upgraded).schemaVersion).toBe(3);
+    expect((await readFile(join(root, "migration-v2.log"), "utf8")).match(STAMP_LINE)).toHaveLength(
+      1,
+    );
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+  });
+
+  it("the desktop app and the CLI stamp the same schema and accept each other's root", async () => {
+    const desktopRoot = join(root, "desktop");
+    const cliRoot = join(root, "cli");
+    const before = releasedV2File();
+    await mkdir(desktopRoot, { recursive: true });
+    await mkdir(cliRoot, { recursive: true });
+    await writeFile(join(desktopRoot, "settings.json"), before);
+    await writeFile(join(cliRoot, "settings.json"), before);
+
+    const desktop = await migrateDataRoot(desktopRoot);
+    const cli = await scaffoldDataRoot(cliRoot);
+    expect(desktop.kind).toBe("migrated");
+    expect(cli.migration.kind).toBe("migrated");
+    const expected = before.replace('"schemaVersion": 2', '"schemaVersion": 3');
+    const desktopFile = await readFile(join(desktopRoot, "settings.json"), "utf8");
+    expect(desktopFile).toBe(expected);
+    expect(await readFile(join(cliRoot, "settings.json"), "utf8")).toBe(desktopFile);
+
+    expect((await scaffoldDataRoot(desktopRoot)).migration.kind).toBe("current");
+    expect((await migrateDataRoot(cliRoot)).kind).toBe("current");
+    expect(await readFile(join(desktopRoot, "settings.json"), "utf8")).toBe(desktopFile);
+    expect(await readFile(join(cliRoot, "settings.json"), "utf8")).toBe(desktopFile);
+  });
+
+  it("desktop, the server and the CLI call the shared migration rather than a private schema", () => {
+    const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+    const desktop = readFileSync(join(repoRoot, "packages/desktop/src/main.ts"), "utf8");
+    const server = readFileSync(
+      join(repoRoot, "packages/heart-server/src/server/server.ts"),
+      "utf8",
+    );
+    const cli = readFileSync(join(repoRoot, "bin/src/boof-runner.ts"), "utf8");
+    const headless = readFileSync(join(repoRoot, "bin/src/headless.ts"), "utf8");
+    const scaffold = readFileSync(join(repoRoot, "packages/heart/src/scaffold.ts"), "utf8");
+    expect(desktop).toMatch(/\bmigrateDataRoot\s*\(/);
+    expect(server).toMatch(/\bmigrateDataRoot\s*\(/);
+    expect(cli).toMatch(/\bscaffoldDataRoot\s*\(/);
+    expect(headless).toMatch(/\bscaffoldDataRoot\s*\(/);
+    expect(scaffold).toMatch(/\bmigrateDataRoot\s*\(/);
+    for (const source of [desktop, server, cli, headless]) {
+      expect(source).not.toMatch(/SETTINGS_SCHEMA_VERSION\s*=/);
+    }
+  });
+
+  it("stamps schema 2 and still moves an inline webhook secret, once", async () => {
+    const secret = "whsec_" + "c".repeat(48);
+    const body = {
+      ...(defaultSettings() as unknown as Record<string, unknown>),
+      schemaVersion: 2,
+      webhooks: [
+        {
+          id: "wh-1",
+          url: "https://hook.test/in",
+          events: ["*"],
+          projects: "*",
+          enabled: true,
+          createdBy: "local",
+          created: "2026-06-04T10:00:00.000Z",
+          secret,
+        },
+      ],
+    };
+    await writeFile(join(root, "settings.json"), JSON.stringify(body, null, 2) + "\n");
+    const first = await migrateDataRoot(root);
+    expect(first.kind).toBe("migrated");
+    expect(first.log.join("\n")).toMatch(STAMP_LINE);
+    expect(first.log.join("\n")).toContain("moved the secret of webhook wh-1");
+    const text = await readFile(join(root, "settings.json"), "utf8");
+    expect(text).not.toContain(secret);
+    expect(JSON.parse(text).schemaVersion).toBe(3);
+    expect(await new WebhookSecretStore(root).get("wh-1")).toBe(secret);
+    const log = await readFile(join(root, "migration-v2.log"), "utf8");
+    expect((await migrateDataRoot(root)).log).toEqual([]);
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(text);
+    expect(await readFile(join(root, "migration-v2.log"), "utf8")).toBe(log);
+  });
+
+  it("refuses to stamp schema 2 while a 0.3.0 runner holds the pid file, and stamps once that process is gone", async () => {
+    const before = releasedV2File();
+    await writeFile(join(root, "settings.json"), before);
+    await writeFile(join(root, ".runner.pid"), "4242\n");
+    await expect(
+      migrateDataRoot(root, { isProcessAlive: (pid) => pid === 4242 }),
+    ).rejects.toBeInstanceOf(MigrationError);
+    await expect(migrateDataRoot(root, { isProcessAlive: (pid) => pid === 4242 })).rejects.toThrow(
+      /a boof-runner 0\.3\.0 process is running on this root; stop it, then start this release/,
+    );
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(before);
+    expect(await exists(join(root, "migration-v2.log"))).toBe(false);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
+
+    const stamped = await migrateDataRoot(root, { isProcessAlive: () => false });
+    expect(stamped.kind).toBe("migrated");
+    expect(JSON.parse(await readFile(join(root, "settings.json"), "utf8")).schemaVersion).toBe(3);
+  });
+
+  it("does not rewrite a schema 2 file it cannot load", async () => {
+    const text = JSON.stringify({ schemaVersion: 2, runner: { enabled: "yes" } });
+    await writeFile(join(root, "settings.json"), text);
+    await expect(migrateDataRoot(root)).rejects.toBeInstanceOf(MigrationError);
+    expect(await readFile(join(root, "settings.json"), "utf8")).toBe(text);
+    expect(await exists(join(root, "migration-v2.log"))).toBe(false);
+    expect(await exists(join(root, MIGRATION_LOCK_FILE))).toBe(false);
   });
 });
 

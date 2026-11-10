@@ -5,7 +5,7 @@
 export interface DesktopBridge {
   isDesktop: true;
   platform: string;
-  /** API key for the in-process server (absent when the desktop falls back to local trust). */
+  /** API key for the in-process server (absent when the desktop falls back to a browser-session cookie). */
   token?: string;
   /** Open a native folder picker; resolves to the chosen path or null. */
   pickDirectory(current?: string, opts?: { title?: string }): Promise<string | null>;

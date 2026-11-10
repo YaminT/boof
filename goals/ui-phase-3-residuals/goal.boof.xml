@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Carried over from the UI redesign (phase 3 final review, 2026-10-29); not started.</version>
+        <version number="2" status="done">1f15aaa: the selected task row keeps its outline (outline-none removed beside outline-2), the task refetch key includes the injected section length, and the lost-edit notice shows for any dirty edit, with Copy unsaved prompt only when the prompt differed.</version>
       </versions>
     </status>
     <tests>

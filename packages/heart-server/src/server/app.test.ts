@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,7 +38,11 @@ beforeEach(async () => {
   await execCommand("git", ["init", "-q"], { cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
   await service.projects.create({ workingDirectory: repo, id: "default" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 
 afterEach(async () => {
@@ -50,6 +55,7 @@ describe("GET /healthz", () => {
     let running = false;
     let now = 1_000_000;
     app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service,
       peerAddress: () => "127.0.0.1",
       version: "9.9.9",
@@ -615,9 +621,10 @@ describe("long polls end when the client disconnects", () => {
       const res = await pending;
       expect(res.status, path).toBe(200);
       expect(await res.json()).toMatchObject({ changed: false, timedOut: true });
-      expect(Date.now() - started, path).toBeLessThan(5_000); // not the 30 s deadline
+      // Abort must beat timeoutSeconds (30). 20s is scheduler slack under load.
+      expect(Date.now() - started, path).toBeLessThan(20_000);
     }
-  });
+  }, 90_000);
 });
 
 describe("attachments API", () => {

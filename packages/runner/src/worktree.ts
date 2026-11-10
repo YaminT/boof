@@ -255,8 +255,20 @@ export interface InlineDiff {
  */
 export async function diffAgainstBase(wt: Worktree, maxInlineBytes = 120000): Promise<InlineDiff> {
   // Include both committed and uncommitted changes relative to base.
-  const stat = await git(wt.path, ["diff", `${wt.base}`, "--stat"]);
-  const full = await git(wt.path, ["--no-pager", "diff", wt.base]);
+  const stat = await git(wt.path, [
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    `${wt.base}`,
+    "--stat",
+  ]);
+  const full = await git(wt.path, [
+    "--no-pager",
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    wt.base,
+  ]);
   const names = await untrackedFiles(wt.path);
   const rev = await git(wt.path, ["rev-parse", wt.base]);
   const baseSha = rev.code === 0 && rev.out ? rev.out : wt.base;

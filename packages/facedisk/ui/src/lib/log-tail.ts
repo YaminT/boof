@@ -15,6 +15,14 @@ export function tailLines(log: string, n: number): string[] {
   return lines.slice(-n);
 }
 
+/**
+ * What the live log follows. The whole text, not the line count: a streamed partial line grows
+ * without a newline, and the tail must still move.
+ */
+export function liveFollowKey(log: string): string {
+  return log.replace(/\n+$/, "");
+}
+
 /** The `### ` step headers of a log, in order. */
 export function stepHeaders(log: string): string[] {
   return [...log.matchAll(/^### (.+)$/gm)].map((m) => m[1]);

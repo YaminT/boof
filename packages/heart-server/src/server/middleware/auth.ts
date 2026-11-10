@@ -1,10 +1,15 @@
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
+import { UNSAFE_DATA_FOLDER_MESSAGE, logUnsafeDataFolder } from "../../api/errors.js";
 import type { ClientAddress } from "./client-address.js";
 import {
+  UnsafeBrowserSessionPathError,
+  browserSessionUnavailableMessage,
   authorize,
   LOCAL_PRINCIPAL,
+  UnsafeSecretPathError,
   type AuthStore,
+  type BrowserSessionVerifier,
   type Client,
   type Principal,
   type Scope,
@@ -16,13 +21,16 @@ declare module "hono" {
     principal: Principal;
     peerAddress: string | undefined;
     clientAddress: ClientAddress;
-    /** Set on /mcp when a keyless loopback caller was turned into the `local-mcp` principal. */
-    keylessMcp: boolean;
     /** Extra fields the handler wants recorded in the audit line (never bodies or secrets). */
     auditExtra: Record<string, unknown>;
     /** Set by the unauthenticated limiter: called when authentication fails; returns a 429 when the address is over its budget. */
     authFailed: (c: Context) => Response | undefined;
   }
+}
+
+/** One line for a log: the message of an error, never its stack. */
+function errorLine(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).replace(/[\r\n]+/g, " ");
 }
 
 /** Resolves the TCP peer address of a request; undefined when there is no socket (tests). */
@@ -70,19 +78,20 @@ class ClientCache {
     const t = this.now();
     const localChange = this.version !== this.store.version;
     if (localChange || t - this.checkedAt >= CACHE_CHECK_MS) {
-      this.checkedAt = t;
       const mtime = await this.store.mtimeMs();
       if (localChange || mtime !== this.mtime) {
         this.clients = await this.store.list();
         this.mtime = mtime;
         this.version = this.store.version;
       }
+      // Only after the check ran: a failing check stays failing instead of serving the cache.
+      this.checkedAt = t;
     }
     return this.clients;
   }
 }
 
-const PROXY_HEADERS = [
+export const PROXY_HEADERS = [
   "x-forwarded-for",
   "forwarded",
   "x-real-ip",
@@ -90,6 +99,17 @@ const PROXY_HEADERS = [
   "x-forwarded-proto",
   "via",
 ];
+
+/** Port used when deriving a cookie name from an HTTP Host header. */
+export function hostPort(host: string | undefined): number {
+  if (!host) return 80;
+  try {
+    const port = new URL(`http://${host}`).port;
+    return port ? Number(port) : 80;
+  } catch {
+    return 80;
+  }
+}
 
 export function principalFromClient(client: Client, opts: { operator?: boolean } = {}): Principal {
   return {
@@ -104,9 +124,30 @@ export function principalFromClient(client: Client, opts: { operator?: boolean }
   };
 }
 
-function unauthenticated(c: Context, message = "Authentication required") {
-  c.header("WWW-Authenticate", 'Bearer realm="boof-runner"');
-  return c.json({ error: { code: "unauthenticated", message } }, 401);
+const M1 =
+  'MCP needs an API key. Send "Authorization: Bearer <key>"; create one with "boof-runner auth add --name <name> --scopes <list> --trust review". Keyless MCP on loopback was removed (see the CHANGELOG, "Breaking changes and upgrade notes").';
+const M2 =
+  'Keyless access on this machine is only for the boof web UI after sign-in. Open the UI with the link that "boof-runner open" prints, or send "Authorization: Bearer <key>" (create one with "boof-runner auth add").';
+
+function cookieValues(c: Context, name: string): string[] {
+  const raw = c.req.header("cookie");
+  if (!raw) return [];
+  const values: string[] = [];
+  for (const part of raw.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    values.push(part.slice(separator + 1).trim());
+  }
+  return values;
+}
+
+const WELL_FORMED_SESSION = /^bs_[A-Za-z0-9_-]{43}$/;
+/** A request is checked against at most this many well-formed session values; the rest are ignored. */
+const MAX_SESSION_VALUES = 4;
+
+function unavailableMessage(error: unknown): string | undefined {
+  if (!(error instanceof UnsafeBrowserSessionPathError)) return undefined;
+  return browserSessionUnavailableMessage(error.path);
 }
 
 export interface AuthenticateOptions {
@@ -119,9 +160,19 @@ export interface AuthenticateOptions {
    * scope, trusted, every project, no expiry) used from loopback without proxy headers.
    */
   operatorClients?: ReadonlySet<string>;
+  /** Optional browser-session verifier; consumed by the local-trust browser gate. */
+  browserSessions?: BrowserSessionVerifier;
+  /** Cookie name for the bound server port. */
+  sessionCookieName?: (c: Context) => string;
 }
 
-export type AuthResult = { ok: true; principal: Principal } | { ok: false; message: string };
+export type AuthResult =
+  | { ok: true; principal: Principal }
+  | {
+      ok: false;
+      message: string;
+      reason?: "browser_session_required" | "mcp_key_required" | "browser_sessions_unavailable";
+    };
 
 export interface Authenticator {
   middleware: MiddlewareHandler;
@@ -132,13 +183,17 @@ export interface Authenticator {
 /**
  * Establish the request's principal.
  * - `Authorization: Bearer boof_...` is verified against the client registry.
- * - No header, loopback peer, no proxy headers, mode `local-trust` -> the local principal.
+ * - No header, loopback peer, no proxy headers, mode `local-trust`, valid browser cookie -> local principal.
  * - Anything else -> 401.
  */
 export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
   const now = opts.now ?? Date.now;
   const cache = new ClientCache(opts.store, now);
   const lastTouch = new Map<string, number>();
+  const unavailable = (error: UnsafeSecretPathError, c: Context) => (
+    logUnsafeDataFolder(error),
+    c.json({ error: { code: "auth_store_unavailable", message: UNSAFE_DATA_FOLDER_MESSAGE } }, 503)
+  );
 
   const resolve = async (c: Context): Promise<AuthResult> => {
     const peer = opts.peerAddress(c);
@@ -146,13 +201,47 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
 
     if (header === undefined) {
       const { auth } = await opts.security();
-      // A local reverse proxy makes every peer look like loopback; never trust those.
-      const proxied =
-        c.req.header("x-forwarded-for") !== undefined || c.req.header("forwarded") !== undefined;
-      if (auth.mode === "local-trust" && isLoopbackAddress(peer) && !proxied) {
+      if (auth.mode !== "local-trust") return { ok: false, message: "Authentication required" };
+      const proxied = PROXY_HEADERS.some((name) => c.req.header(name) !== undefined);
+      if (!isLoopbackAddress(peer) || proxied) {
+        return { ok: false, message: "Authentication required" };
+      }
+      if (c.req.path === "/mcp") {
+        c.set("auditExtra", { reason: "mcp_key_required" });
+        return { ok: false, message: M1, reason: "mcp_key_required" };
+      }
+      const fetchSite = c.req.header("sec-fetch-site");
+      const allowedFetchSite =
+        fetchSite === undefined || fetchSite === "same-origin" || fetchSite === "none";
+      const tokens = cookieValues(c, opts.sessionCookieName?.(c) ?? "")
+        .filter((value) => WELL_FORMED_SESSION.test(value))
+        .slice(0, MAX_SESSION_VALUES);
+      let session = null;
+      let unavailable: string | undefined;
+      if (allowedFetchSite) {
+        for (const token of tokens.length > 0 ? tokens : [undefined]) {
+          try {
+            session = (await opts.browserSessions?.verify(token)) ?? null;
+          } catch (error) {
+            // A throw is "not valid", unless it is the store's unsafe-path error.
+            unavailable = unavailableMessage(error) ?? unavailable;
+          }
+          if (session) break;
+        }
+      }
+      if (!session && opts.browserSessions?.unavailableMessage) {
+        unavailable = (await opts.browserSessions.unavailableMessage()) ?? unavailable;
+      }
+      if (!session && unavailable) {
+        c.set("auditExtra", { reason: "browser_sessions_unavailable" });
+        return { ok: false, message: unavailable, reason: "browser_sessions_unavailable" };
+      }
+      if (session) {
+        c.set("auditExtra", { auth: "browser-session", session: session.id });
         return { ok: true, principal: LOCAL_PRINCIPAL };
       }
-      return { ok: false, message: "Authentication required" };
+      c.set("auditExtra", { reason: "browser_session_required" });
+      return { ok: false, message: M2, reason: "browser_session_required" };
     }
 
     const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
@@ -172,10 +261,12 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
     const t = now();
     if (t - (lastTouch.get(client.id) ?? -Infinity) >= TOUCH_INTERVAL_MS) {
       lastTouch.set(client.id, t);
-      opts.store.touch(client.id).catch((err) => console.error("lastUsedAt update failed", err));
+      opts.store.touch(client.id).catch((err) => {
+        if (err instanceof UnsafeSecretPathError) logUnsafeDataFolder(err);
+        else console.error(`lastUsedAt update failed: ${errorLine(err)}`);
+      });
     }
-    // A local reverse proxy makes every peer look like loopback. For this check any common
-    // proxy header counts (the local-trust branch above reads only the first two).
+    // A local reverse proxy makes every peer look like loopback. Any common proxy header counts.
     const proxied = PROXY_HEADERS.some((h) => c.req.header(h) !== undefined);
     const operator =
       opts.operatorClients?.has(client.id) === true &&
@@ -190,8 +281,44 @@ export function createAuthenticator(opts: AuthenticateOptions): Authenticator {
 
   const middleware: MiddlewareHandler = async (c, next) => {
     c.set("peerAddress", opts.peerAddress(c));
-    const r = await resolve(c);
-    if (!r.ok) return c.get("authFailed")?.(c) ?? unauthenticated(c, r.message);
+    let r: AuthResult;
+    try {
+      r = await resolve(c);
+    } catch (error) {
+      if (error instanceof UnsafeSecretPathError) return unavailable(error, c);
+      throw error;
+    }
+    if (!r.ok) {
+      const name = opts.sessionCookieName?.(c) ?? "";
+      const presentedCredential =
+        c.req.header("authorization") !== undefined || cookieValues(c, name).length > 0;
+      const limited = presentedCredential ? c.get("authFailed")?.(c) : undefined;
+      if (limited) return limited;
+      if (r.reason === "browser_sessions_unavailable") {
+        return c.json(
+          {
+            error: {
+              code: "browser_sessions_unavailable",
+              message: UNSAFE_DATA_FOLDER_MESSAGE,
+              details: { reason: r.reason },
+            },
+          },
+          503,
+          { "Cache-Control": "no-store" },
+        );
+      }
+      c.header("WWW-Authenticate", 'Bearer realm="boof-runner"');
+      return c.json(
+        {
+          error: {
+            code: "unauthenticated",
+            message: r.message,
+            ...(r.reason ? { details: { reason: r.reason } } : {}),
+          },
+        },
+        401,
+      );
+    }
     c.set("principal", r.principal);
     return next();
   };

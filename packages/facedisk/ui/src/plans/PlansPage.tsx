@@ -84,7 +84,14 @@ export function PlansPage({
         </Button>
         <FocusToggle mode={focus.mode} onToggle={focus.toggle} className="ml-auto" />
       </div>
-      {data.plans.length === 0 ? (
+      {data.plansError && data.plans.length === 0 ? (
+        <div className="py-6">
+          <p className="mt-0 mb-3 text-ink-muted">Could not load plans.</p>
+          <Button variant="outline" onClick={() => void data.refresh()}>
+            Try again
+          </Button>
+        </div>
+      ) : data.plans.length === 0 ? (
         <p className="m-0 py-6 text-ink-muted">
           No plans yet. Create one, or import plan.boof.xml from the repo.
         </p>

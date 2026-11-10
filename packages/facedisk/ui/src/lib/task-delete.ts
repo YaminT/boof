@@ -1,5 +1,9 @@
 import { ApiError } from "../api.js";
 
+/** The warning every task deletion shows; the assistant's confirm dialog reuses it word for word. */
+export const DELETE_TASK_WARNING =
+  "Delete this task? Its file, reports and log are removed. This cannot be undone.";
+
 export interface DeleteDialogModel {
   /** Send `detach: true`: the user has agreed that the subtasks become top-level tasks. */
   detach: boolean;
@@ -17,7 +21,7 @@ export function deleteDialogModel(subtasks: number, refused: boolean): DeleteDia
     return {
       detach: false,
       title: "Delete task",
-      body: "Delete this task? Its file, reports and log are removed. This cannot be undone.",
+      body: DELETE_TASK_WARNING,
       confirmLabel: "Delete task",
     };
   }

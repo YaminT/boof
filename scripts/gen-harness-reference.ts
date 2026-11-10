@@ -125,7 +125,10 @@ const EXTRA_ERRORS: Record<string, string[]> = {
     "409 directory_not_empty",
     "409 project_busy",
   ],
-  "projects.update": ["400 not_a_git_repo", "403 project_root_not_allowed"],
+  "projects.update": ["400 not_a_git_repo", "403 forbidden_trust", "403 project_root_not_allowed"],
+  "n8n.update": ["403 forbidden_trust", "404 project_not_found"],
+  "n8n.delete": ["403 forbidden_trust"],
+  "n8n.workflows.refresh": ["409 n8n_not_configured", "502 upstream_failed"],
   "projects.delete": ["409 project_busy"],
   "epics.get": ["404 epic_not_found"],
   "epics.create": ["409 conflict"],
@@ -186,7 +189,13 @@ function errorsFor(opName: string): string[] {
   if (Object.keys(shape).length > 0) list.push(`400 ${invalid}`);
   if (op.rest.ifMatch === "expectedVersion") list.push("409 plan_version_conflict");
   if (op.rest.ifMatch === "expectedUpdated")
-    list.push(op.name === "settings.update" ? "409 settings_modified" : "409 task_modified");
+    list.push(
+      op.name === "settings.update"
+        ? "409 settings_modified"
+        : op.name === "projects.update"
+          ? "409 project_modified"
+          : "409 task_modified",
+    );
   if (op.rest.idempotent) list.push("409 idempotency_conflict");
   list.push(...(EXTRA_ERRORS[op.name] ?? []));
   return [...new Set(list)];

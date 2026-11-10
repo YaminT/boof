@@ -1,23 +1,30 @@
-import { networkInterfaces } from "node:os";
 import { createServer as createHttpsServer } from "node:https";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import {
   AuthStore,
+  BrowserSessionStore,
+  browserSessionCookieName,
   dataRootPaths,
-  LOCAL_MCP_ID,
+  UnsafeBrowserSessionPathError,
+  ExternalRunStore,
   migrateDataRoot,
   securitySettings,
+  tightenDataRoot,
   type Settings,
   type ToolCatalog,
+  type ConciergeAgent,
+  reservedIdWarning,
 } from "@boof/heart";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
 import { pruneAudit } from "./middleware/audit.js";
 import { IdempotencyStore, TaskService } from "../api/index.js";
 import { DataWatcher } from "./watch.js";
-import { hostnameOf } from "./middleware/host-guard.js";
+import { createSelfUrlCheck } from "./self-url.js";
+import { N8nClient } from "../n8n/client.js";
+import { N8nWatcher } from "../n8n/watcher.js";
 import { runDispatcherWhileHolding, WebhookDispatcher } from "./webhooks.js";
 
 export interface StartServerOptions {
@@ -32,6 +39,8 @@ export interface StartServerOptions {
   allowedHosts?: string[];
   /** The tools. Required: the composition root (bin, desktop) builds the registry; Heart never does. */
   catalog: ToolCatalog;
+  /** Assistant implementation supplied by the composition root; absent in standalone server mode. */
+  conciergeAgent?: ConciergeAgent;
   /** PEM file paths; when both are set the server speaks HTTPS. */
   tlsCert?: string;
   tlsKey?: string;
@@ -53,6 +62,8 @@ export interface RunningServer {
   webhooks: WebhookDispatcher;
   service: TaskService;
   port: number;
+  /** True for a URL that points at this server (its port on one of its names). */
+  isSelfUrl: (url: URL) => boolean;
   stop: () => Promise<void>;
 }
 
@@ -89,21 +100,30 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const warn = opts.warn ?? ((m: string) => console.warn(m));
   // Bring a v1 data root to v2 before any store opens (also scaffolds a fresh root).
   const migration = await migrateDataRoot(opts.root);
+  const tightened = await tightenDataRoot(opts.root);
+  if (tightened.changed) {
+    warn(
+      `tightened data root ${opts.root} from ${tightened.before.toString(8)} to 700 (other local users could read it)`,
+    );
+  } else if (
+    ["not-owner", "home-or-root", "chmod-failed"].includes(tightened.reason) &&
+    !tightened.unsafeParent
+  ) {
+    await warnIfDataRootOpen(opts.root, warn);
+  }
+  if (tightened.unsafeParent)
+    warn(`warning: ${tightened.unsafeParent.message}; the server refuses key checks until then`);
   if (migration.kind === "migrated")
     warn(`migrated data root ${opts.root} to v2 (see migration-v2.log)`);
-  const service = new TaskService(opts.root, opts.catalog);
+  const authStore = new AuthStore(opts.root);
+  const service = new TaskService(opts.root, opts.catalog, {
+    conciergeAgent: opts.conciergeAgent,
+    authStore,
+  });
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);
-  const authStore = new AuthStore(opts.root);
-
   await assertBindAllowed(host, settings, authStore);
-  if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
-    warn(
-      `auth/clients.json holds a client with the reserved id ${LOCAL_MCP_ID}: a keyless "boof-runner mcp" refuses to start, and a keyless /mcp answers 403, until its entry is removed`,
-    );
-  }
-
   let tls: { cert: Buffer; key: Buffer } | undefined;
   if (opts.tlsCert || opts.tlsKey) {
     if (!opts.tlsCert || !opts.tlsKey) throw new Error("TLS needs both a certificate and a key");
@@ -116,9 +136,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     );
   }
   // The data root holds keys' hashes and prompts; only nag once that matters.
-  if (!loopback || (await authStore.list().catch(() => [])).length > 0) {
-    await warnIfDataRootOpen(opts.root, warn);
-  }
+  const reserved = reservedIdWarning(await authStore.list().catch(() => []));
+  if (reserved) warn(reserved);
   await pruneAudit(opts.root, sec.audit.retentionDays).catch(() => []);
   await new IdempotencyStore(opts.root).prune().catch(() => 0);
 
@@ -129,30 +148,35 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (!loopback && !WILDCARD_HOSTS.has(host)) allowedHosts.push(host);
 
   // A webhook must not call back into this server: remember the names and port it answers to.
-  const selfNames = new Set(
-    [
-      "localhost",
-      "127.0.0.1",
-      "[::1]",
-      "0.0.0.0",
-      host.toLowerCase(),
-      ...allowedHosts.map(hostnameOf),
-    ].map((h) => (h.includes(":") && !h.startsWith("[") ? `[${h}]` : h)),
-  );
-  for (const list of Object.values(networkInterfaces())) {
-    for (const a of list ?? []) selfNames.add(a.family === "IPv6" ? `[${a.address}]` : a.address);
-  }
   let boundPort = opts.port ?? 4319;
-  const isSelfUrl = (url: URL): boolean =>
-    Number(url.port || (url.protocol === "https:" ? 443 : 80)) === boundPort &&
-    selfNames.has(url.hostname.toLowerCase());
+  const isSelfUrl = createSelfUrlCheck({ port: () => boundPort, bindHost: host, allowedHosts });
+
+  // Expired external-step run records and results: pruned at start and hourly.
+  const externalRuns = new ExternalRunStore(opts.root);
+  await externalRuns.prune().catch(() => 0);
+  const pruneTimer = setInterval(() => void externalRuns.prune().catch(() => 0), 3600_000);
+  pruneTimer.unref();
+
+  // A new epoch on every start. Cookies minted by the previous process no longer verify.
+  // An unsafe data root already refuses session checks; do not fail startup over it.
+  const browserSessions = new BrowserSessionStore(opts.root);
+  try {
+    await browserSessions.beginEpoch();
+  } catch (error) {
+    if (!(error instanceof UnsafeBrowserSessionPathError)) throw error;
+    warn(`warning: could not rotate browser sessions (${error.message})`);
+  }
 
   const app = createApp({
     service,
+    externalRuns,
     watcher,
     uiDir: opts.uiDir,
     allowedHosts,
     authStore,
+    browserSessions,
+    sessionCookieName: () => browserSessionCookieName(boundPort),
+    linkPort: () => boundPort,
     operatorClients: opts.operatorClients,
     isSelfUrl,
     version: opts.version,
@@ -174,6 +198,10 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
         )
       : serve(base, listening);
     s.once("error", reject);
+  }).catch(async (err: unknown) => {
+    clearInterval(pruneTimer);
+    await watcher.stop().catch(() => {});
+    throw err;
   });
 
   const address = server.address();
@@ -190,8 +218,24 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     authStore,
     intervalMs: opts.webhookIntervalMs,
   });
+  // The n8n edit watcher polls only where webhooks are delivered, so one server per data root
+  // does it; it stops before the lock is released.
+  const n8nWatcher = new N8nWatcher({
+    root: opts.root,
+    service,
+    client: new N8nClient({ root: opts.root, isSelfUrl }),
+  });
   const dispatcherGate = runDispatcherWhileHolding(
-    webhooks,
+    {
+      start: () => {
+        webhooks.start();
+        n8nWatcher.start();
+      },
+      stop: async () => {
+        await n8nWatcher.stop();
+        await webhooks.stop();
+      },
+    },
     join(dataRootPaths(opts.root).webhooks, ".dispatcher.lock"),
     { retryMs: opts.webhookLockRetryMs },
   );
@@ -203,7 +247,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     webhooks,
     service,
     port,
+    isSelfUrl,
     stop: async () => {
+      clearInterval(pruneTimer);
       await dispatcherGate.stop();
       await watcher.stop();
       await new Promise<void>((resolve) => {
@@ -215,7 +261,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   };
 }
 
-/** Log a warning when the data root (which holds keys and prompts) is group/world accessible. */
+/** Retain the existing warning when the root could not safely be tightened. */
 async function warnIfDataRootOpen(root: string, warn: (m: string) => void): Promise<void> {
   if (process.platform === "win32") return;
   try {

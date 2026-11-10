@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,7 +61,11 @@ beforeEach(async () => {
   await new SettingsStore(dataRoot).save(s);
   await service.projects.create({ workingDirectory: workDir, id: "default" });
 
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
   engine = new RunnerEngine({ root: dataRoot, pollIntervalMs: 10 });
   resetMock();
 });

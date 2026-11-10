@@ -1,9 +1,28 @@
+import { createHash } from "node:crypto";
 import { appendEvent, type Settings } from "@boof/heart";
-import { ABSENT_POOL, OwlishClient, type PoolStatus } from "@boof/owlish";
+import {
+  ABSENT_POOL,
+  agentKeyIsSeparate,
+  OwlishClient,
+  type AdminRouteProbe,
+  type PoolStatus,
+} from "@boof/owlish";
 import type { Gateway } from "./gateway-env.js";
+
+/** Shown when a pool-routed tool would otherwise receive the admin key. */
+export const POOL_AGENT_KEY_REQUIRED =
+  "pool routing needs a separate owlishAgentKey; the admin key is not given to task agents";
+
+/** Shown when the admin-route probe got no answer. The key is not known to be wrong; the task waits. */
+export const POOL_GATEWAY_UNREACHABLE = "the better-ccflare gateway is unreachable";
 
 /** Ask the gateway at most this often (a known `nextAvailableAt` may bring the next check forward). */
 export const POOL_POLL_MS = 30_000;
+/**
+ * Admin-route probe answers are reused for this long, the same window as `AgentAuthResolver`.
+ * A down gateway is a 5 s timeout; without this, every task in a selection pass pays it.
+ */
+const PROBE_CACHE_MS = 30_000;
 const MIN_SLEEP_MS = 1000;
 
 const BLOCKING = new Set(["degraded", "unhealthy", "unreachable"]);
@@ -19,12 +38,21 @@ export interface PoolGateOptions {
   /** The data root, for the `runner.pool_exhausted` event. */
   root: string;
   loadSettings: () => Promise<Settings>;
-  /** boof's ccflare client key (the secret store); null when none. */
+  /**
+   * boof's admin ccflare key. Compared in-process so it is never handed to a child, and not
+   * sent on the health request. Null when none.
+   */
   readKey: () => Promise<string | null>;
+  /** The api-only agent key. The only gateway credential a pool-routed child receives. */
+  readAgentKey: () => Promise<string | null>;
   now?: () => number;
   /** Tests inject a fake clock: waiting advances it. */
   sleep?: (ms: number) => Promise<void>;
 }
+
+/** What a pool-routed child may be given. `apiKey` is set only for `ok`, and only when one exists. */
+export type PoolChildCredential =
+  { kind: "ok"; apiKey?: string } | { kind: "blocked" } | { kind: "unreachable" };
 
 /**
  * The fail-safe pool gate. With `settings.owlish.healthGate = "pause"`, routed work (tools with
@@ -38,18 +66,92 @@ export class PoolGate {
   private readonly sleep: (ms: number) => Promise<void>;
   private last?: { at: number; key: string; pool: PoolStatus };
   private episode = false;
+  /** Probe answers, keyed by gateway URL and a hash of the agent key. The key itself is not stored. */
+  private readonly probeCache = new Map<string, { at: number; result: AdminRouteProbe }>();
+  private readonly probeInFlight = new Map<string, Promise<AdminRouteProbe>>();
 
   constructor(private readonly opts: PoolGateOptions) {
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  /** Where routed tools send their requests, or undefined without `settings.owlish`. */
+  /**
+   * Where routed tools send their requests, or undefined without `settings.owlish`
+   * or when the only credential is the admin key. The api key is `owlishAgentKey`
+   * only. A gateway with no keys is returned without one. The admin key is never returned.
+   */
   async gateway(): Promise<Gateway | undefined> {
     const owlish = (await this.opts.loadSettings()).owlish;
     if (!owlish) return undefined;
-    const apiKey = await this.opts.readKey().catch(() => null);
-    return { url: owlish.url, apiKey: apiKey ?? undefined };
+    const cred = await this.childCredential();
+    if (cred.kind !== "ok") return undefined;
+    return { url: owlish.url, ...(cred.apiKey ? { apiKey: cred.apiKey } : {}) };
+  }
+
+  /**
+   * Why a tool that would receive the pool gateway must not start, or null when it may.
+   * Null when no pool is configured, when the gateway has no client key, and when the
+   * gateway did not answer (`unreachable`: the task waits, the key is not known to be wrong).
+   */
+  async agentCredentialBlock(): Promise<string | null> {
+    const cred = await this.childCredential();
+    return cred.kind === "blocked" ? POOL_AGENT_KEY_REQUIRED : null;
+  }
+
+  /**
+   * `ok` when the child may use the gateway: the agent key was refused by the admin route,
+   * or neither key is set. `blocked` when the admin route accepted the key, the admin key
+   * cannot be read, or there is no separate agent key. `unreachable` when the probe got no
+   * answer. The admin key is never returned.
+   */
+  async childCredential(): Promise<PoolChildCredential> {
+    const owlish = (await this.opts.loadSettings()).owlish;
+    if (!owlish) return { kind: "ok" };
+    let admin: string | null = null;
+    let agent: string | null = null;
+    try {
+      admin = await this.opts.readKey();
+    } catch {
+      // An unreadable admin key is not "no admin key". There is nothing to compare, so the
+      // agent key stays here.
+      return { kind: "blocked" };
+    }
+    try {
+      agent = await this.opts.readAgentKey();
+    } catch {
+      agent = null;
+    }
+    if (agent && agentKeyIsSeparate(admin, agent)) {
+      const probe = await this.cachedAdminProbe(owlish.url, agent);
+      if (probe === "unknown") return { kind: "unreachable" };
+      if (probe !== "rejected") return { kind: "blocked" };
+      return { kind: "ok", apiKey: agent };
+    }
+    if (admin) return { kind: "blocked" };
+    return { kind: "ok" };
+  }
+
+  /**
+   * One admin-route probe per gateway and agent key per 30 s. Simultaneous callers share the
+   * request. `rejected` and `accepted` are definitive; `unknown` is an outage and is cached
+   * too, so a selection pass does not wait out a 5 s timeout once per task.
+   */
+  private async cachedAdminProbe(url: string, agentKey: string): Promise<AdminRouteProbe> {
+    const cacheKey = `${url}:${createHash("sha256").update(agentKey).digest("hex")}`;
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && this.now() - cached.at < PROBE_CACHE_MS) return cached.result;
+    let request = this.probeInFlight.get(cacheKey);
+    if (!request) {
+      request = new OwlishClient({ url, apiKey: agentKey, now: this.now }).probeAdminRoute();
+      this.probeInFlight.set(cacheKey, request);
+    }
+    try {
+      const result = await request;
+      this.probeCache.set(cacheKey, { at: this.now(), result });
+      return result;
+    } finally {
+      if (this.probeInFlight.get(cacheKey) === request) this.probeInFlight.delete(cacheKey);
+    }
   }
 
   /** The pool and whether routed work is blocked. Never throws on a gateway failure. */
@@ -78,13 +180,8 @@ export class PoolGate {
       const due = age >= POOL_POLL_MS || (Number.isFinite(next) && t >= next && age >= 5_000);
       if (!due) return last.pool;
     }
-    let apiKey: string | undefined;
-    try {
-      apiKey = (await this.opts.readKey()) ?? undefined;
-    } catch {
-      /* /health needs no key */
-    }
-    const pool = await new OwlishClient({ url, apiKey, now: this.now }).health();
+    // /health needs no key. The admin key stays out of this request.
+    const pool = await new OwlishClient({ url, now: this.now }).health();
     this.last = { at: this.now(), key: url, pool };
     return pool;
   }

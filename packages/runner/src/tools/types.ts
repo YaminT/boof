@@ -1,4 +1,5 @@
 import type { HealthResult, Role, TokenUsage } from "@boof/heart";
+import type { AgentAuth } from "@boof/owlish";
 import type { Gateway } from "../gateway-env.js";
 
 export type { Gateway } from "../gateway-env.js";
@@ -18,6 +19,10 @@ export interface RunOptions {
   prompt: string;
   /** Working directory (the per-task worktree, or the working directory). */
   cwd: string;
+  /** Per-project Claude configuration directory under the boof data root. */
+  claudeConfigDir?: string;
+  /** Explicit, credential-scrubbed environment prepared for claude-agent. */
+  env?: Record<string, string>;
   /** Auto mode: pass non-interactive / no-permission-prompt flags. */
   autoApprove: boolean;
   /**
@@ -28,6 +33,8 @@ export interface RunOptions {
   inheritMcpServers?: boolean;
   /** Extra environment variable names the agent may inherit (`runner.agentEnv`); see `agentEnv()`. */
   agentEnv?: readonly string[];
+  /** Marker binding this child process to the boof data root that spawned it. */
+  agentMarker?: string;
   /**
    * Route this run through the account pool: the tool adds the gateway's base URL and key to its
    * child's environment. Set by the pipeline only for tools with `acceptsPool`, and only when a
@@ -56,7 +63,15 @@ export interface RunOptions {
    * steered. Ignored by tools without `supportsResume`.
    */
   resumeSessionId?: string;
+  /** Explicit per-project Claude Agent SDK credentials, set by the pipeline. */
+  agentAuth?: AgentAuth;
+  /** In-place steering request source, consumed by resumable adapters. */
+  onSteer?: () => Promise<SteerRequest>;
+  /** Cumulative SDK usage at the start of a resumed session. */
+  resumeBaseline?: TokenUsage;
 }
+
+export type SteerRequest = { texts: string[]; model?: string; last: boolean };
 
 export interface RunResult {
   /** Raw combined output captured from the tool (also written to log.txt). */
@@ -86,5 +101,11 @@ export interface Tool {
   readonly supportsResume?: boolean;
   /** True when `run` honours `RunOptions.gateway` (the tool can be served by the account pool). */
   readonly acceptsPool?: boolean;
+  /** Requires a fresh per-project Agent SDK authentication decision before running. */
+  readonly needsAgentAuth?: boolean;
+  /** Handles `now` injections in the current session through interrupt and streamed input. */
+  readonly steersInPlace?: boolean;
+  /** Fixed reason shown when this tool is intentionally unavailable in this composition. */
+  readonly unavailableReason?: string;
   run(opts: RunOptions): Promise<RunResult>;
 }

@@ -1,13 +1,31 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Notification,
+  safeStorage,
+  session,
+  shell,
+} from "electron";
 import { RunnerEngine } from "@boof/runner";
 import { boot } from "@boof/boof/boot";
-import { AuthStore, dataRootPaths, migrateDataRoot } from "@boof/heart";
+import {
+  AuthStore,
+  BrowserSessionStore,
+  dataRootPaths,
+  migrateDataRoot,
+  securitySettings,
+  SettingsStore,
+  tightenDataRoot,
+} from "@boof/heart";
 import type { RunningServer } from "@boof/heart-server";
 import {
   createQuitHandler,
+  createWindowAuth,
   isAppUrl,
   isExternalUrl,
   operatorClientId,
@@ -24,7 +42,10 @@ const SHUTDOWN_GRACE_MS = shutdownGraceMs();
 let server: RunningServer | null = null;
 let engine: RunnerEngine | null = null;
 let win: BrowserWindow | null = null;
-/** API key for the bundled UI; undefined when safeStorage is unavailable (local-trust fallback). */
+/** Signs the window in (browser-session cookie) before each load when there is no desktop key. */
+let windowAuth: ReturnType<typeof createWindowAuth> | null = null;
+let windowPending = false;
+/** API key for the bundled UI; undefined when safeStorage is unavailable (browser-session fallback). */
 let desktopToken: string | undefined;
 
 const DESKTOP_CLIENT_NAME = "desktop-ui";
@@ -33,11 +54,11 @@ const DESKTOP_CLIENT_NAME = "desktop-ui";
  * Make sure a `desktop-ui` admin client exists and return its key. The secret is
  * kept encrypted with Electron safeStorage (OS keychain) in a file under
  * userData. Without safeStorage there is nowhere safe to keep it, so the app
- * falls back to local-trust (loopback, no token) and says so in the log.
+ * signs its own window in with a browser session instead (see startComposition).
  */
 async function ensureDesktopToken(root: string): Promise<string | undefined> {
   if (!safeStorage.isEncryptionAvailable()) {
-    console.warn("safeStorage unavailable: desktop UI falls back to local-trust (no API key)");
+    console.warn("safeStorage unavailable: the desktop UI uses a browser session set by the app");
     return undefined;
   }
   const store = new AuthStore(root);
@@ -95,12 +116,22 @@ function uiDir(): string {
 async function ensureDataRoot(): Promise<string> {
   const root = join(app.getPath("userData"), "data");
   await mkdir(root, { recursive: true });
+  const tightened = await tightenDataRoot(root);
+  if (tightened.unsafeParent) console.warn(`warning: ${tightened.unsafeParent.message}`);
   await migrateDataRoot(root);
   await mkdir(dataRootPaths(root).projects, { recursive: true });
   return root;
 }
 
-function createWindow(port: number): void {
+async function createWindow(): Promise<void> {
+  if (!server || !windowAuth || win || windowPending) return;
+  windowPending = true;
+  try {
+    await windowAuth?.prepare();
+  } finally {
+    windowPending = false;
+  }
+  if (win) return;
   win = new BrowserWindow({
     width: 1240,
     height: 860,
@@ -131,7 +162,6 @@ function createWindow(port: number): void {
   };
   win.webContents.on("will-navigate", (event, url) => guard(event, url));
   win.webContents.on("will-redirect", (event, url) => guard(event, url));
-  appOrigin = `http://127.0.0.1:${port}`;
   void win.loadURL(appOrigin);
   win.on("closed", () => {
     win = null;
@@ -155,11 +185,12 @@ ipcMain.handle(
 async function startComposition(): Promise<void> {
   const root = await ensureDataRoot();
   desktopToken = await ensureDesktopToken(root).catch((err) => {
-    console.error("desktop auth setup failed; using local-trust:", err);
+    console.error("desktop auth setup failed; using a browser session:", err);
     return undefined;
   });
   const composition = await boot({
     root,
+    claudeAgent: "unavailable",
     port: PORT,
     uiDir: uiDir(),
     version: app.getVersion(),
@@ -173,7 +204,28 @@ async function startComposition(): Promise<void> {
       engine = activeEngine;
     },
   });
-  createWindow(composition.server.port);
+  appOrigin = `http://127.0.0.1:${composition.server.port}`;
+  const sessions = new BrowserSessionStore(root);
+  windowAuth = createWindowAuth({
+    desktopToken: () => desktopToken,
+    loadAuthMode: async () => securitySettings(await new SettingsStore(root).load()).auth.mode,
+    createSession: () => sessions.createSession(),
+    revokeSession: (id) => sessions.revokeSession(id),
+    setCookie: (cookie) => session.defaultSession.cookies.set(cookie),
+    warn: console.warn,
+    error: console.error,
+    showFailure: async (message) => {
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "Boof Runner",
+        message: "Boof Runner could not sign in",
+        detail: message,
+      });
+    },
+    origin: appOrigin,
+    port: composition.server.port,
+  });
+  await createWindow();
 }
 
 // Single-instance: a second launch focuses the existing window instead of
@@ -197,7 +249,7 @@ if (!app.requestSingleInstanceLock()) {
     });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0 && server) createWindow(server.port);
+    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
 
   app.on("window-all-closed", () => {
@@ -209,6 +261,7 @@ if (!app.requestSingleInstanceLock()) {
     server: () => server,
     exit: (code) => app.exit(code),
     graceMs: SHUTDOWN_GRACE_MS,
+    cleanup: () => windowAuth?.release(),
     log: console.log,
     notify: (message) => {
       win?.setTitle(`Boof Runner — ${message}`);

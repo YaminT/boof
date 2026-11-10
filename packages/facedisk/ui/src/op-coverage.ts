@@ -107,7 +107,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "usage.budget": {
     where: "budget \u2014 useAppData (budget status for the banner and spend bar)",
   },
-  "runner.status": { none: "the shell reads the runner state from settings.get and usage.budget" },
+  "runner.status": {
+    where:
+      "runnerStatus \u2014 AgentsPage, useAgentAuth (the claude-agent ready or refused line; the shell still reads the runner state from settings.get)",
+  },
   "runner.overview": {
     none: "the shell reads the runner state from settings.get and usage.budget",
   },
@@ -124,6 +127,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
   "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
   "accounts.list": { where: "listAccounts — AccountsPage (pool account list)" },
+  "accounts.agentSdk": {
+    where:
+      "agentSdkEligibility \u2014 AccountsPage, ProjectPage (Agent SDK badges and the eligibility line)",
+  },
   "accounts.health": { where: "accountsHealth — AccountsPage (pool status and gate)" },
   "accounts.pause": { where: "accountAction — AccountsPage (pause an account)" },
   "accounts.resume": { where: "accountAction — AccountsPage (resume an account)" },
@@ -135,4 +142,29 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "webhooks.update": { where: "updateWebhook \u2014 Webhooks (enable, disable, edit)" },
   "webhooks.delete": { where: "deleteWebhook \u2014 Webhooks (delete a webhook)" },
+  "n8n.get": { where: "getN8n — N8nSection, ExternalStepsSection (n8n status)" },
+  "n8n.update": {
+    where: "updateN8n — N8nSection (connect, save, replace or remove the key, rotate the secret)",
+  },
+  "n8n.delete": { where: "deleteN8n — N8nSection (disconnect)" },
+  "n8n.workflows.list": {
+    where: "listN8nWorkflows — N8nSection, ExternalStepsSection (workflow table and picker)",
+  },
+  "n8n.workflows.refresh": { where: "refreshN8nWorkflows — N8nSection (refresh workflows)" },
+  "concierge.status": {
+    where:
+      "conciergeStatus \u2014 useConcierge (reloads when the project changes and after each message)",
+  },
+  "concierge.ask": {
+    where: "conciergeStream \u2014 useConcierge (streams one message; refusals arrive as JSON)",
+  },
+  "concierge.apply": {
+    where: "conciergeApply \u2014 useConcierge (applies a pending change with the caller's rights)",
+  },
+  "concierge.discard": {
+    where: "conciergeDiscard \u2014 useConcierge (discards a pending change)",
+  },
+  "concierge.reset": {
+    where: "conciergeReset \u2014 useConcierge (ends the current conversation)",
+  },
 };

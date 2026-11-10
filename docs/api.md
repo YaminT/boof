@@ -14,8 +14,29 @@ Base URL: `http://127.0.0.1:4319/api/v1` (default bind). Every operation has an 
 
 ## Authentication and scopes
 
-- Loopback peers are trusted as the local user when `security.auth.mode` is `local-trust` (the
-  default). Anything else needs `Authorization: Bearer boof_...`.
+- Under `security.auth.mode = "local-trust"` (the default) the web UI works without a key, but only
+  after sign-in: a loopback request with no `Authorization` header is the local user only when it
+  carries the browser session cookie `boof_ui_<port>` (`HttpOnly`, `SameSite=Strict`). Get one by
+  opening the single-use link (valid 10 minutes) that `boof-runner serve` or `boof-runner open`
+  prints, on the port it was minted for (a link redeemed on another port is refused and burned);
+  `GET /auth/browser?code=bl_...` sets the cookie and redirects to `/`. Every other keyless
+  request, `curl` included, gets `401` (see the reasons below). Anything else needs
+  `Authorization: Bearer boof_...`. With `auth.mode = "required"` the UI asks for a key.
+- **Keyless refusals.** `401 unauthenticated` has `details.reason`: `browser_session_required`
+  (keyless, no valid session: open a sign-in link or send a key) or `mcp_key_required` (`/mcp`
+  always needs a key; the cookie does not count). A keyless refusal does not spend the
+  failed-authentication limit. When the session store cannot be used safely the answer is
+  `503 browser_sessions_unavailable`: the message names the path, what is wrong (the owner uid or
+  the file mode) and the `chmod` that fixes it. Only a keyless loopback caller can read it, and
+  other origins cannot (no CORS headers).
+- **What this does not stop.** A process that runs as your OS user can still edit the data root
+  and read your browser's cookie store (or, with the desktop app, the stored `desktop-ui` key: a
+  same-user process can usually read it through the OS keyring), and cookies are shared across ports on `127.0.0.1`: another
+  OS user who runs a server on any loopback port can receive the cookie if your browser loads a
+  page from it, and replay it as the administrator. Same-user isolation is layer 2 (an OS
+  sandbox, future work); a port-isolated browser session is future work too. A request that
+  carries `X-Forwarded-For` or another proxy header never gets the local principal, and
+  `/auth/browser` answers `404` for it: behind a reverse proxy use a key.
 - **Browser requests.** `/api/*` and `/mcp` reject a request whose `Origin` (host and port) is not the request's own `Host` or a `security.allowedHosts` entry. An entry without a port matches only the default port of the Origin's scheme (80 for http, 443 for https); an entry with a port matches that port. Such a request is refused with `403 origin_not_allowed` (`Origin: null` too), and so is any browser request with `Sec-Fetch-Site: cross-site`. A JSON operation with a body needs `Content-Type: application/json` (`415 unsupported_media_type`). Together these stop a web page from driving the local principal with a "simple" cross-site request. The Host guard (`421`) is a DNS-rebinding defence, not a CSRF defence.
 - Create a key (printed once) with the CLI or `POST /auth/clients`:
 
@@ -65,11 +86,20 @@ Set `settings.owlish` to an object with `url` and optional `healthGate` (`pause`
 
 Gateway URLs must use HTTPS except for loopback hosts (`localhost`, `localhost.`, `127.0.0.0/8`, or `[::1]`). Credentials, query strings and fragments are rejected.
 
-The optional client key can be set once using `settings.update` input `owlishApiKey`, which is write-only, or supplied as `BOOF_OWLISH_API_KEY` (environment takes precedence). The stored file is `<data>/owlish/secrets.json`, mode 0600. The setting response does not return the key. The generated CLI commands are `boof-runner accounts list|pause|resume|priority|thresholds|health`; their exact flags are shown by `--help`. `accounts.health` accepts optional `refresh=true` to bypass its 10-second cache for an explicit check; concurrent forced checks share one gateway request. Reads use `settings:read`. Account mutations and gateway configuration use `settings:write` and require a trusted, project-unrestricted principal; `review-trust` and `local-mcp` cannot perform these changes.
+The optional client key can be set once using `settings.update` input `owlishApiKey`, which is write-only, or supplied as `BOOF_OWLISH_API_KEY` (environment takes precedence). The stored file is `<data>/owlish/secrets.json`, mode 0600. The setting response does not return the key. `settings.update` also takes the write-only `owlishAgentKey` (env `BOOF_OWLISH_AGENT_KEY`): an api-only better-ccflare key that only `claude-agent` processes receive, stored in the same file and never returned; `accounts.health` shows only its source as `agentKeySource` (`file`, `env` or null). The CLI takes either key only through `--input @file.json` or `--input @-`; inline `--input` JSON that carries a write-only field is refused. The generated CLI commands are `boof-runner accounts list|pause|resume|priority|thresholds|health`; their exact flags are shown by `--help`. `accounts.health` accepts optional `refresh=true` to bypass its 10-second cache for an explicit check; concurrent forced checks share one gateway request. Reads use `settings:read`. Account mutations and gateway configuration use `settings:write` and require a trusted, project-unrestricted principal; `review-trust` and `local-mcp` cannot perform these changes.
 
 Routed agents receive the gateway key in their environment and can call ccflare `/api/*` endpoints directly, outside boof's account-operation authorization. See [Agents are not sandboxed](boof-runner.md#agents-are-not-sandboxed) and the [agent-containment goal](superpowers/specs/2026-10-29-boof-roadmap.md).
 
-This is the 8a HTTP integration only. The Accounts settings tab and Agent SDK adapter (8b) are not included.
+### claude-agent and the compliance gate
+
+The opt-in `claude-agent` tool (Claude Agent SDK) may use the gateway only when every account in it, paused ones included, is an API-key provider with no refresh token. Anthropic allows the Agent SDK only with API-key authentication, so subscription (OAuth) accounts stay on `claude-code`. The check needs a better-ccflare **admin** client key; an api-only key gets HTTP 401 and keeps the gate closed. The admin key stays inside boof. The gateway is usable for `claude-agent` only when a distinct api-only `owlishAgentKey` is also set; that key is what the agent process receives. Without it boof skips eligibility checking and immediately falls back to the project key or refuses. A network failure, timeout or 5xx while checking eligibility waits (pending at selection; a running step waits up to `retries.poolWaitMs`); a 401/403, subscription account or malformed answer refuses or falls back. Pool-routed claude-code, codex and opencode continue to receive the admin client key as before; only claude-agent gets the separate agent key. See [The claude-agent tool](boof-runner.md#the-claude-agent-tool) for the full rules, bare mode, the per-project config folder and the known limits.
+
+- `accounts.agentSdk` (`GET /api/v1/accounts/agent-sdk`, MCP `boof_get_agent_sdk_eligibility`, CLI `boof-runner accounts agent-sdk`): scope `settings:read`; input `{ refresh? }`; returns `{ gateway: "absent" | "checked", allowed, reason, blocking: [{ id, name, provider, why }], checkedAt }`. `why` is `subscription`, `oauth-token` or `unknown-type`. With no `settings.owlish` it answers `gateway: "absent"`, `allowed: false` and makes no request.
+- `projects.update` input `anthropicApiKey` (`string | null`): the project's own Anthropic API key, write-only. It is stored in `<data>/owlish/project-keys.json` (mode 0600), never returned, and `null` removes it. Only `sk-ant-api…` keys match; OAuth (`sk-ant-oat…`) and admin (`sk-ant-admin…`) keys give 400 without echoing the value. A `review-trust` principal gets 403 `forbidden_trust`. `projects.get` and `projects.list` show only `anthropicApiKeySet: boolean`, and `claudeAgent.auth` (`gateway` or `project-key`) is set through the same operation. The audit log records `set` or `removed`, never the value. The CLI accepts the key only through `--input @file.json` or `--input @-` (stdin); a flag such as `--anthropic-api-key` is refused.
+- `runner.status` and `runner.overview` carry `agentAuth`: for each active (not archived) project whose roles use `claude-agent`, or that has a pending task whose `tools` override uses it, `{ projectId, roles, allowed, via: "gateway" | "project-key" | null, reason }`. A project on the gateway with no client key, or with no agent key, is `allowed: false` (unless it falls back to its project key). In the desktop app every entry is `allowed: false` with the unavailable reason, and the desktop app never asks the gateway.
+- `tasks.inject` input `model`: optional, only with `mode: "now"` (otherwise 400 `model needs mode now`). It switches the model for the rest of the step. `claude-agent` interrupts the session and continues it in place; if the interrupt fails, boof kills the process and resumes the session. The other tools resume or rerun the step with the new model. A step takes at most 5 steers. `next-step` keeps its pipeline meaning for every tool.
+
+Cost reported by `claude-agent` is an estimate. Usage whose model entry has `costBasis: "unknown"` is recorded with `known: false`. On a resumed session boof subtracts the earlier session's totals, and that usage is recorded with `known: false` too.
 
 ## Versioning
 
@@ -84,46 +114,58 @@ creates answer 200). Use `/api/v1` for new code.
 Every error is `{ "error": { "code", "message", "details"? } }` with the status below. Never zod
 internals; validation errors list `details: [{ path, message }]`.
 
-| Code                       | Status | Meaning                                                                                                  |
-| -------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
-| `invalid_input`            | 400    | The input does not match the operation's schema, or an id is malformed.                                  |
-| `invalid_plan`             | 400    | A plan or goal in the input is invalid (schema, dangling dependency, cycle).                             |
-| `not_a_git_repo`           | 400    | The project directory is not a git work tree.                                                            |
-| `nothing_to_import`        | 400    | The repository has no goal.boof.xml files to import.                                                     |
-| `no_default_project`       | 404    | The unversioned task routes need settings.defaultProject, which is unset.                                |
-| `unauthenticated`          | 401    | No credentials, or an invalid, expired or revoked API key.                                               |
-| `forbidden_scope`          | 403    | The client lacks the scope the operation needs.                                                          |
-| `forbidden_project`        | 403    | The client may not access this project.                                                                  |
-| `forbidden_trust`          | 403    | The client has review trust: a human must approve this change.                                           |
-| `project_root_not_allowed` | 403    | The directory is outside security.allowedProjectRoots.                                                   |
-| `origin_not_allowed`       | 403    | The Origin header names a site that is not this server (a cross-site browser request).                   |
-| `not_found`                | 404    | The task, command, client or webhook does not exist.                                                     |
-| `project_not_found`        | 404    | The project does not exist.                                                                              |
-| `branch_not_found`         | 404    | The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).  |
-| `epic_not_found`           | 404    | The epic does not exist in this project.                                                                 |
-| `parent_not_found`         | 404    | The parent task does not exist in this project.                                                          |
-| `plan_not_found`           | 404    | The plan does not exist.                                                                                 |
-| `goal_not_found`           | 404    | The goal does not exist in the plan.                                                                     |
-| `conflict`                 | 409    | The change conflicts with the current state.                                                             |
-| `invalid_transition`       | 409    | The task status transition is not allowed.                                                               |
-| `invalid_hierarchy`        | 409    | The move or create breaks the hierarchy rules (one level of subtasks; a subtask has no epic of its own). |
-| `has_children`             | 409    | The task has subtasks; pass detach to make them top-level tasks.                                         |
-| `has_tasks`                | 409    | The epic has tasks; pass detach to clear their epic, or archive the epic instead.                        |
-| `plan_version_conflict`    | 409    | The plan changed since the version in If-Match / expectedVersion.                                        |
-| `settings_modified`        | 409    | The settings changed since the ETag in If-Match.                                                         |
-| `task_modified`            | 409    | The task changed since the ETag in If-Match.                                                             |
-| `plan_exists`              | 409    | A plan with this id already exists.                                                                      |
-| `plan_not_active`          | 409    | The plan is not active; activate it before syncing.                                                      |
-| `goal_has_dependents`      | 409    | Other goals depend on this one; pass cascade to remove them too.                                         |
-| `project_exists`           | 409    | A project for this directory already exists.                                                             |
-| `project_busy`             | 409    | A task of the project is running, or another project is being created right now; retry shortly.          |
-| `directory_not_empty`      | 409    | The directory exists and is not empty; send path.confirm: true to initialise it anyway.                  |
-| `idempotency_conflict`     | 409    | The Idempotency-Key was already used with a different request.                                           |
-| `host_not_allowed`         | 421    | The Host header is not a loopback name or an allowed host.                                               |
-| `payload_too_large`        | 413    | The request body exceeds the size limit.                                                                 |
-| `unsupported_media_type`   | 415    | A JSON operation needs Content-Type: application/json.                                                   |
-| `rate_limited`             | 429    | Too many requests; retry after the Retry-After header.                                                   |
-| `internal`                 | 500    | Unexpected server error; details are in the server log.                                                  |
+| Code                           | Status | Meaning                                                                                                                                                                                                                                                                      |
+| ------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_input`                | 400    | The input does not match the operation's schema, or an id is malformed.                                                                                                                                                                                                      |
+| `invalid_plan`                 | 400    | A plan or goal in the input is invalid (schema, dangling dependency, cycle).                                                                                                                                                                                                 |
+| `not_a_git_repo`               | 400    | The project directory is not a git work tree.                                                                                                                                                                                                                                |
+| `nothing_to_import`            | 400    | The repository has no goal.boof.xml files to import.                                                                                                                                                                                                                         |
+| `no_default_project`           | 404    | The unversioned task routes need settings.defaultProject, which is unset.                                                                                                                                                                                                    |
+| `unauthenticated`              | 401    | No credentials, or an invalid, expired or revoked API key; `details.reason` names a keyless refusal.                                                                                                                                                                         |
+| `forbidden_scope`              | 403    | The client lacks the scope the operation needs.                                                                                                                                                                                                                              |
+| `forbidden_project`            | 403    | The client may not access this project.                                                                                                                                                                                                                                      |
+| `forbidden_trust`              | 403    | The client has review trust: a human must approve this change.                                                                                                                                                                                                               |
+| `project_root_not_allowed`     | 403    | The directory is outside security.allowedProjectRoots.                                                                                                                                                                                                                       |
+| `origin_not_allowed`           | 403    | The Origin header names a site that is not this server (a cross-site browser request).                                                                                                                                                                                       |
+| `not_found`                    | 404    | The task, command, client or webhook does not exist.                                                                                                                                                                                                                         |
+| `project_not_found`            | 404    | The project does not exist.                                                                                                                                                                                                                                                  |
+| `branch_not_found`             | 404    | The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).                                                                                                                                                                      |
+| `epic_not_found`               | 404    | The epic does not exist in this project.                                                                                                                                                                                                                                     |
+| `parent_not_found`             | 404    | The parent task does not exist in this project.                                                                                                                                                                                                                              |
+| `plan_not_found`               | 404    | The plan does not exist.                                                                                                                                                                                                                                                     |
+| `goal_not_found`               | 404    | The goal does not exist in the plan.                                                                                                                                                                                                                                         |
+| `conflict`                     | 409    | The change conflicts with the current state.                                                                                                                                                                                                                                 |
+| `invalid_transition`           | 409    | The task status transition is not allowed.                                                                                                                                                                                                                                   |
+| `invalid_hierarchy`            | 409    | The move or create breaks the hierarchy rules (one level of subtasks; a subtask has no epic of its own).                                                                                                                                                                     |
+| `has_children`                 | 409    | The task has subtasks; pass detach to make them top-level tasks.                                                                                                                                                                                                             |
+| `has_tasks`                    | 409    | The epic has tasks; pass detach to clear their epic, or archive the epic instead.                                                                                                                                                                                            |
+| `plan_version_conflict`        | 409    | The plan changed since the version in If-Match / expectedVersion.                                                                                                                                                                                                            |
+| `settings_modified`            | 409    | The settings changed since the ETag in If-Match.                                                                                                                                                                                                                             |
+| `task_modified`                | 409    | The task changed since the ETag in If-Match.                                                                                                                                                                                                                                 |
+| `plan_exists`                  | 409    | A plan with this id already exists.                                                                                                                                                                                                                                          |
+| `plan_not_active`              | 409    | The plan is not active; activate it before syncing.                                                                                                                                                                                                                          |
+| `goal_has_dependents`          | 409    | Other goals depend on this one; pass cascade to remove them too.                                                                                                                                                                                                             |
+| `project_exists`               | 409    | A project for this directory already exists.                                                                                                                                                                                                                                 |
+| `project_busy`                 | 409    | A task of the project is running, or another project is being created right now; retry shortly.                                                                                                                                                                              |
+| `directory_not_empty`          | 409    | The directory exists and is not empty; send path.confirm: true to initialise it anyway.                                                                                                                                                                                      |
+| `idempotency_conflict`         | 409    | The Idempotency-Key was already used with a different request.                                                                                                                                                                                                               |
+| `auth_store_unavailable`       | 503    | `auth/clients.json` or a folder above it has unsafe permissions, so no key can be checked. The body is generic ("the server's data folder has unsafe permissions; see the server log"); the log names the folder and the fix (`chmod g-w <dir>`). Never a fallback to admin. |
+| `browser_sessions_unavailable` | 503    | The same for the browser-session store, on a keyless request or a sign-in link. The body is generic; the log names the path and the fix.                                                                                                                                     |
+| `host_not_allowed`             | 421    | The Host header is not a loopback name or an allowed host.                                                                                                                                                                                                                   |
+| `payload_too_large`            | 413    | The request body exceeds the size limit.                                                                                                                                                                                                                                     |
+| `unsupported_media_type`       | 415    | A JSON operation needs Content-Type: application/json.                                                                                                                                                                                                                       |
+| `concierge_unavailable`        | 409    | The assistant cannot run here; the message says why.                                                                                                                                                                                                                         |
+| `concierge_busy`               | 409    | A message to the assistant is still being answered.                                                                                                                                                                                                                          |
+| `concierge_limit`              | 409    | The conversation reached its cost limit; start a new one.                                                                                                                                                                                                                    |
+| `budget_exceeded`              | 409    | A daily budget that covers the assistant is used up.                                                                                                                                                                                                                         |
+| `change_not_found`             | 404    | The pending change does not exist, belongs to another caller, or is no longer pending.                                                                                                                                                                                       |
+| `change_stale`                 | 409    | The target changed since the assistant proposed this change.                                                                                                                                                                                                                 |
+| `change_expired`               | 409    | The pending change expired (15 minutes).                                                                                                                                                                                                                                     |
+| `rate_limited`                 | 429    | Too many requests; retry after the Retry-After header.                                                                                                                                                                                                                       |
+| `n8n_not_configured`           | 409    | No n8n instance is configured; connect one with `n8n.update` first.                                                                                                                                                                                                          |
+| `upstream_failed`              | 502    | The n8n instance failed or refused the call; `details.reason` is `unauthorized`, `unreachable`, `blocked`, `redirected`, `bad_response`, `too_many` or `HTTP <n>`. The cached workflow list stays.                                                                           |
+| `invalid_step_token`           | 401    | Only on n8n's callback route: the run token is missing, wrong, already used, expired, or the run was closed.                                                                                                                                                                 |
+| `internal`                     | 500    | Unexpected server error; details are in the server log.                                                                                                                                                                                                                      |
 
 ## Concurrency (ETag / If-Match)
 
@@ -310,11 +352,12 @@ local agent host) and `POST /mcp` on the HTTP server (Streamable HTTP, for remot
 Each tool calls the same operation as its REST route, so scopes, project restrictions, trust
 rules, input validation and error codes are identical, and every call is audited.
 
-- **Auth.** HTTP: `Authorization: Bearer boof_...` (or no header from a loopback peer under
-  `local-trust`; that caller is not the UI's administrator but the review-trust `local-mcp` principal, with its own rate-limit bucket and audit name, no administration tools, and `403` while `clients.json` holds a stored client of that reserved id), after the Host guard, an `Origin` check (absent, or an allowed host, and no
-  `Sec-Fetch-Site: cross-site`; else `403 origin_not_allowed`), the body limit and the rate limit. stdio: `--client <id>` (no key
-  needed), or the local principal under `local-trust`; with `auth.mode = "required"` and no
-  `--client` the command refuses to start.
+- **Auth.** HTTP: `Authorization: Bearer boof_...` is required (a keyless request answers `401`
+  with the reason `mcp_key_required`, even from loopback and even with the browser session cookie),
+  after the Host guard, an `Origin` check (absent, or an allowed host, and no
+  `Sec-Fetch-Site: cross-site`; else `403 origin_not_allowed`), the body limit and the rate limit. stdio:
+  `--client <id>` (no key needed, but the client is required); without it, and with the removed
+  `--admin`, the command refuses to start (exit 3) and names the fix.
 - **Stateless.** One request, one answer (`application/json`). No sessions, so GET and DELETE on
   `/mcp` answer `405` and there are no server-initiated notifications. Use `boof_wait_task`
   (long poll, at most 60 s) or the SSE stream and webhooks above to follow progress. A wait ends as soon as the caller goes away: an HTTP disconnect, or an MCP `notifications/cancelled`. The server advertises `listChanged: false` for tools, resources and prompts.
@@ -332,17 +375,14 @@ rules, input validation and error codes are identical, and every call is audited
 - **Administration tools.** Every operation is a tool except attachment upload and download (REST
   only), including API clients, webhooks, settings, command templates and project deletion. Keys
   and signing secrets appear once, in the result (never in the summary line). Over stdio,
-  `boof-runner mcp` without `--client` acts as the reserved review-trust principal `local-mcp`
-  (every scope except `admin`, `auth:admin` and `settings:write`; not stored in `clients.json`), so
-  everything a review-trust client may not do is refused: tasks and plans it creates are drafts a
-  human approves, it cannot queue, retry, answer, activate a plan or switch the runner, it changes
-  only its own work and only the name, labels and paused state of a project, and it creates no
-  project. With `--admin` it is the local administrator and lists the administration tools too;
-  with `--client <id>` that client's scopes decide and `--admin` is refused. All keyless hosts share this one `local-mcp` identity; a client of that id left over from before
-  the id was reserved makes the keyless server refuse to start (and `serve` warns). It is a boundary
-  for MCP-only hosts only: a host whose model also has a shell can approve its own drafts through the
-  CLI or `curl` to the loopback API (goal `agent-containment`). Give agent hosts
-  `--client` with a narrow client. `projects.archive`, `unarchive` and `delete` (purge) are
+  `boof-runner mcp --client <id>` serves that client's tools: its scopes decide, and a `review`-trust
+  client's tasks and plans are drafts a human approves, it cannot queue, retry, answer, activate a
+  plan or switch the runner, it changes only its own work and only the name, labels and paused
+  state of a project, and it creates no project. A `trusted` client with the scopes you choose lists
+  the administration tools too. The keyless `local-mcp` identity and `--admin` are removed (the id
+  `local-mcp` stays reserved: a stored client of that id cannot authenticate). It is a boundary for
+  MCP-only hosts only: a host whose model also has a shell and runs as your user can edit the data
+  root (goal `agent-containment`, layer 2). Give agent hosts a narrow `--client`. `projects.archive`, `unarchive` and `delete` (purge) are
   refused to review-trust keys over REST and MCP alike. `POST /mcp` refuses JSON-RPC batches.
 
 Tools (the names are stable). Plan tools take `expectedVersion`, task updates `expectedUpdated`
@@ -411,6 +451,151 @@ curl -s http://127.0.0.1:4319/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boof_list_projects","arguments":{}}}'
 ```
+
+## Console assistant (concierge)
+
+Free text in the bottom console that is not a command goes to the concierge, one project at a
+time (the project being viewed). It does not answer across projects, and it does not propose
+project descriptions. The same five operations are REST and CLI. They are not MCP tools.
+
+| Operation           | Method and path                                                   | CLI                             |
+| ------------------- | ----------------------------------------------------------------- | ------------------------------- |
+| `concierge.status`  | `GET /projects/{projectId}/concierge`                             | `boof-runner concierge status`  |
+| `concierge.ask`     | `POST /projects/{projectId}/concierge/messages`                   | `boof-runner concierge ask`     |
+| `concierge.apply`   | `POST /projects/{projectId}/concierge/changes/{changeId}/apply`   | `boof-runner concierge apply`   |
+| `concierge.discard` | `POST /projects/{projectId}/concierge/changes/{changeId}/discard` | `boof-runner concierge discard` |
+| `concierge.reset`   | `POST /projects/{projectId}/concierge/reset`                      | `boof-runner concierge reset`   |
+
+Each needs `tasks:read` and is project-scoped. `ask` takes `{ text }` (1–4000 characters after
+trim), and optionally `context` (`screen`, and `taskId`, `planId`, `goalId`) and `conversationId`.
+A `conversationId` the caller owns that has been idle for `idleMinutes` starts a new conversation.
+An id owned by someone else, or an unknown id, is `404 not_found`.
+The audit line stores a fingerprint of the text, not the text. `apply` returns `{ change, result }`
+and runs the stored operation **as the caller** (the caller's scopes, trust and projects), after
+the stale-guard check. When the operation accepts it, that call also sets `expectedUpdated`
+(a task or epic stamp) or `expectedVersion` (a plan version) from the stored stamp, and only
+when that field is the one the operation declares for `If-Match` and it matches the guard
+(`plan` uses `expectedVersion`; a task or epic uses `expectedUpdated`). The operation then
+refuses a target that moves between the check and the write. Its `plan_version_conflict`,
+`task_modified`, `epic_modified` or `project_modified` is stored and returned as `409 change_stale`.
+A second apply, another caller, or a change that is no longer pending is
+`404 change_not_found`. A changed target is `409 change_stale`. `discard` runs nothing.
+
+`POST /api/v1/projects/{projectId}/concierge/messages/stream` (and the unversioned path, because
+the other SSE routes have one) takes the same body, the same scope and `authorizeProject`. It
+answers `text/event-stream` with `X-Accel-Buffering: no`. Events, in the order the turn produces
+them: `conversation`, `text`, `tool` (`start` / `end`), `change`, `pending`, `done`, `error`.
+Validation and refusals that happen before a model call answer as normal JSON, with the same
+codes, before the stream opens.
+
+**Principal.** Each request builds an in-memory principal `concierge-<userId>` (`trust: "review"`,
+`alwaysReview`). Its scopes are {`projects:read`, `plans:read`, `plans:write`, `tasks:read`,
+`tasks:write`} ∩ the user's scopes. Its projects are {the pinned project} ∩ the user's projects.
+It never holds `admin`, `auth:admin`, `settings:*`, `runner:control`, `tasks:control` or
+`projects:write`. Confirm tools are listed by the user's rights, not the principal's, and run only
+after confirmation, with the user's rights. No key is stored. New client ids that would start with `concierge-` are issued
+as `client-concierge…` instead. A leftover `concierge-*` row in `auth/clients.json` still appears
+in the client list, but `get`, revoke and rotate return 404 for that id and the key cannot
+authenticate. For the user whose id matches that row, the assistant answers `409 concierge_unavailable` and names the file: remove
+the entry from `auth/clients.json`.
+
+**Tools** the concierge may call, on the pinned project only. Reads run. Writes run only where
+review trust already allows them (its own drafts). A `confirm` tool, or a `write` that boof
+refuses with `forbidden_trust`, does not run: the server stores a pending change (validated
+input, a preview computed from the store, a stale-guard) and tells the model it is waiting.
+The user sees the title and details. A change the operation will refuse is marked `blocked`
+with the reason and the dialog offers no Confirm, only Discard and Close.
+
+| Mode      | Operations                                                                                                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`    | `projects.get`, `plans.list`, `plans.get`, `tasks.list`, `tasks.get`, `tasks.liveLog`, `epics.list`, `epics.get`, `usage.budget`, `commands.list`                             |
+| `write`   | `tasks.create`, `tasks.update`, `tasks.move`, `epics.create`, `epics.update`, `plans.create`, `plans.update`, `plans.upsertGoal`, `plans.reorderGoals`, `plans.setGoalStatus` |
+| `confirm` | `tasks.delete`, `tasks.archive`, `tasks.queue`, `epics.delete`, `plans.removeGoal`, `plans.replaceGoals`, `projects.update` (description only)                                |
+
+`projects.update` is offered as a confirm action for one change only: the description (the `brief`
+field) of the pinned project. The model sees a narrowed tool (`brief` only). It is listed only for
+a user who holds `projects:write` for the project, and a proposal from any other user is refused
+(`403 forbidden_scope`); any confirm tool is refused at propose when the user could not apply it.
+Any other field, another project id, or a missing `brief` is refused (`403 forbidden_scope`,
+`403 forbidden_project`) before a pending change exists, and again at apply. A description over
+4,000 characters or 60 lines, one with control, bidi, tag or other invisible format characters, one
+with a secret-like string ("remove secrets from the description"), and one equal to the stored text
+are refused (`400 invalid_input`). CRLF is turned into LF; NBSP, ideographic space, soft hyphen and a
+single ZWJ/ZWNJ between two visible characters (Persian text, emoji sequences) are allowed. The
+description tool is also not offered to a review-trust user, who may not apply it.
+The preview reads `Change the description (brief) of project "<name>"` and lists the whole new text
+line by line with leading indentation marked (`·` space, `→` tab), so the user confirms exactly what is stored. The stamp is the
+project's `updated`; the apply passes it as `expectedUpdated`, and a change in between, even one
+that lands during the write, answers `409 change_stale`.
+
+Not offered: `tasks.diff`, `plans.import`, the `*.wait` polls, `tasks.stop`, `tasks.inject`,
+`tasks.answers`, `tasks.retry`, `tasks.skip`, `plans.sync`, other project writes, settings, accounts,
+the runner, auth, webhooks, command writes and attachments. One message stores at most 5 pending
+changes; a conversation holds at most 20. A pending change stays appliable for 15 minutes
+(`change_expired` after that). `concierge.reset` (the console's `/new`) ends the live
+conversation and leaves pending changes appliable until they expire or are discarded.
+
+**Caps** come from `settings.concierge`, which is file-only: it is not in `PUT /settings`. An
+invalid block fails settings load. `"enabled": false` is how you turn the assistant off
+(`The assistant is turned off (settings.concierge.enabled is false).`). Bounds and defaults:
+
+| Key                  | Default   | Allowed                     |
+| -------------------- | --------- | --------------------------- |
+| `enabled`            | `true`    | boolean                     |
+| `model`              | `default` | 1–100 of `A-Za-z0-9._:[]/-` |
+| `perMessageUsd`      | `0.25`    | `> 0` and `≤ 50`            |
+| `perConversationUsd` | `2`       | `> 0` and `≤ 500`           |
+| `messagesPerMinute`  | `6`       | integer 1–60, per user      |
+| `maxTurns`           | `8`       | integer 1–20                |
+| `timeoutMs`          | `120000`  | integer 10 000–600 000      |
+| `idleMinutes`        | `30`      | integer 5–240               |
+
+One message is in flight per (user, project) (`409 concierge_busy`). A message counts toward
+`messagesPerMinute` once availability has passed, including when a later check refuses it
+(`concierge_busy`, `budget_exceeded`, `concierge_limit`, an unknown conversation). Turned off,
+not wired, a reserved-id collision and an unavailable model do not count. The CLI builds a new
+service per invocation, so the per-minute window and the busy flag start empty each time; the
+daily budgets and the conversation cost cap are on disk and still apply. Spend is `tool:concierge`
+(`tool:concierge` and `project:<id>/tool:concierge`). A spent day scope is `409 budget_exceeded`
+before any model call. The conversation cap is `409 concierge_limit`.
+
+**No MCP tools.** `mcp.expose` is false because an MCP host is itself a model: driving the
+assistant would spend budget model-to-model and could confirm its own proposals. The operations
+the concierge uses are already MCP tools.
+
+## External steps and n8n
+
+A project can list `externalSteps`: n8n workflows that run after the planner, after the developer or after the reviewer approves. n8n is optional; without it nothing changes. The guide, with the payload, a workflow to import and the security notes, is [n8n.md](n8n.md).
+
+Operations (all need a configured n8n except `n8n.get`, `n8n.update` and the cached list):
+
+| Operation               | REST                                 | MCP                          | Scope            |
+| ----------------------- | ------------------------------------ | ---------------------------- | ---------------- |
+| `n8n.get`               | `GET /api/v1/n8n`                    | `boof_get_n8n`               | `settings:read`  |
+| `n8n.update`            | `PUT /api/v1/n8n`                    | `boof_update_n8n`            | `admin`          |
+| `n8n.delete`            | `DELETE /api/v1/n8n`                 | `boof_delete_n8n`            | `admin`          |
+| `n8n.workflows.list`    | `GET /api/v1/n8n/workflows`          | `boof_list_n8n_workflows`    | `settings:read`  |
+| `n8n.workflows.refresh` | `POST /api/v1/n8n/workflows/refresh` | `boof_refresh_n8n_workflows` | `settings:write` |
+
+- `n8n.update` and `n8n.delete` need an admin client that is trusted and not restricted to projects. The API key is a write-only `apiKey` field (never returned; `n8n.get` shows `apiKeySet`); the first `n8n.update` returns the webhook header secret once as `secret`. A changed `baseUrl` origin without a new `apiKey` drops the stored key and the workflow cache. On the CLI, `--api-key` and an inline `--input` with `apiKey` are refused: use `--input @file` or `--input @-`.
+- `n8n.workflows.list` reads the cache and never calls n8n; `n8n.workflows.refresh` does (`409 n8n_not_configured`, `502 upstream_failed`).
+- **Addresses.** The configured n8n `baseUrl` host and port may be private, loopback or LAN, for the API and the step webhooks, with the connection pinned and no redirects. Link-local and metadata addresses are never allowed, and boof's own address is always refused.
+- **Webhook paths are readable.** `externalSteps[].webhookPath` (in `projects.get`, `projects.list`, `boof://projects/{pid}`) and `n8nCheck.webhookPath` in task outputs are visible to every client that can read the project or its tasks. Protect each n8n webhook with the `X-Boof-Token` header check (Header Auth with the webhook secret, see [n8n.md](n8n.md) section 3); do not rely on the path being secret.
+- **`projects.update` trust rule.** `externalSteps` (and `null`, which clears them) send task content to n8n, so only a trusted client may set them; a review-trust client gets `403 forbidden_trust` even when `externalTasksRequireApproval` is off. Steps are otherwise edited through `projects.update`.
+
+### The callback (not an operation)
+
+`POST /callbacks/external-steps/{runId}` is where n8n reports a step's result. It is n8n's protocol endpoint, not an operation, so it has no MCP tool or CLI command and is not in the OpenAPI document (like `/auth/browser`). It sits outside the API-key chain and works the same with `auth.mode` `local-trust` and `required`.
+
+```
+Authorization: Bearer <run.token>
+Content-Type: application/json
+{ "status": "ok" | "failed", "report": "<at most 65 536 chars>", "summary": "<at most 300 chars, optional>" }
+```
+
+- The token is minted per run, single use, scoped to that run, and valid until `expiresAt`. It is not an API key and cannot reach `/api` or `/mcp`; an API key cannot complete a step.
+- Answers: `200 {ok: true}`; `400 invalid_input` (the token is kept: retry with a fixed body); `401 invalid_step_token` for every bad, replayed, expired or closed run, with no hint which; `403 origin_not_allowed` for a request with `Origin` or `Sec-Fetch-Site`; `413 payload_too_large` (over 300 000 bytes); `415 unsupported_media_type`; `429 rate_limited` (its own budget of `security.rateLimit.unauthenticatedPerMinute` refusals per address and minute; a valid token is never counted).
+- Audit: one `callback:external-step` line per call. The outcome is `ok` or the error code above (or `error`); project, task, step and result status appear only when the token verified. Never the token or the body.
 
 ## Operations
 

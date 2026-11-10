@@ -1,28 +1,56 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { Project, Settings } from "@boof/heart/schema";
+import { effectiveTool, stepRole, switchModelChoices } from "../lib/claude-agent.js";
 import { Button } from "@/ui/button";
 import { api, type TaskView } from "../api.js";
 import { act } from "../lib/act.js";
 import { currentStep, tailLines } from "../lib/log-tail.js";
 import { formatRoute } from "../lib/route.js";
 import { formatDuration } from "../lib/run-timing.js";
+import {
+  clearStopPending,
+  markStopPending,
+  stopDisabled,
+  useStopRequested,
+} from "../lib/stop-request.js";
 import { StopTaskDialog } from "../shell/StopTaskDialog.js";
 import { SteerBox } from "./SteerBox.js";
 import { useElapsed } from "./useElapsed.js";
 import { useLiveLog } from "./useLiveLog.js";
 
+/** The tool of the role whose step the task is in (from its last step entry), or null. */
+export function runningTool(
+  task: TaskView,
+  project: Project | null | undefined,
+  settings: Settings | null | undefined,
+): string | null {
+  const steps = task.frontmatter.steps;
+  const role = stepRole(steps?.[steps.length - 1]?.label);
+  return role ? effectiveTool(role, task.frontmatter.tools, project, settings) : null;
+}
+
 /** One running task: step, elapsed time, the tail of its log, a steer box and Stop. */
 export function RunningCard({
   pid,
   task,
+  settings = null,
+  project = null,
   onChange,
 }: {
   pid: string;
   task: TaskView;
+  settings?: Settings | null;
+  project?: Project | null;
   onChange: () => void;
 }) {
   const id = task.frontmatter.id;
   const { log, failed: logFailed } = useLiveLog(pid, id, true);
   const [confirmStop, setConfirmStop] = useState(false);
+  const stopping = useStopRequested(pid, id);
+  const status = task.frontmatter.status;
+  useEffect(() => {
+    if (status !== "running") clearStopPending(pid, id);
+  }, [status, pid, id]);
   const elapsed = useElapsed(pid, task, true);
 
   const step = currentStep(log);
@@ -63,8 +91,18 @@ export function RunningCard({
       </pre>
 
       <div className="mt-3">
-        <SteerBox pid={pid} taskId={id} onSent={onChange}>
-          <Button type="button" variant="destructive" onClick={() => setConfirmStop(true)}>
+        <SteerBox
+          pid={pid}
+          taskId={id}
+          onSent={onChange}
+          modelChoices={switchModelChoices(runningTool(task, project, settings), settings?.models)}
+        >
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={stopDisabled(status, stopping)}
+            onClick={() => !stopping && setConfirmStop(true)}
+          >
             Stop
           </Button>
         </SteerBox>
@@ -75,10 +113,14 @@ export function RunningCard({
         onOpenChange={setConfirmStop}
         onConfirm={() => {
           setConfirmStop(false);
+          markStopPending(pid, id);
           void act(() => api.stopTask(pid, id), {
             success: "Stop requested",
             failure: "Could not stop",
-          }).then(onChange);
+          }).then((result) => {
+            if (result === undefined) clearStopPending(pid, id);
+            onChange();
+          });
         }}
       />
     </section>

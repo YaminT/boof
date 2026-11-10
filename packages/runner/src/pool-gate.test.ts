@@ -11,6 +11,7 @@ let root: string;
 let server: Server;
 let url: string;
 let hits: number;
+let accountHits: number;
 let health: { status: number; body: object };
 let clock: number;
 let sleeps: number[];
@@ -42,6 +43,10 @@ const POOL_DOWN = (next: string | null = null) => ({
 });
 
 let settings: Settings;
+/** When set, every `/api/accounts` answer uses this status (503 is an outage, 200 accepts the key). */
+let accountReply: number | null = null;
+/** While set, `/api/accounts` is received but not answered until the promise resolves. */
+let accountGate: Promise<void> | null = null;
 const poolEvents = async () =>
   (await readEvents(root, null))
     .map((s) => s.event)
@@ -50,7 +55,8 @@ const gate = (over: Partial<ConstructorParameters<typeof PoolGate>[0]> = {}) =>
   new PoolGate({
     root,
     loadSettings: async () => settings,
-    readKey: async () => "btr-key",
+    readKey: async () => "btr-admin",
+    readAgentKey: async () => "btr-agent",
     now: () => clock,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -62,6 +68,9 @@ const gate = (over: Partial<ConstructorParameters<typeof PoolGate>[0]> = {}) =>
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-poolgate-"));
   hits = 0;
+  accountHits = 0;
+  accountReply = null;
+  accountGate = null;
   clock = Date.parse("2026-11-03T10:00:00Z");
   sleeps = [];
   health = { status: 200, body: POOL_OK };
@@ -71,7 +80,25 @@ beforeEach(async () => {
       res
         .writeHead(health.status, { "content-type": "application/json" })
         .end(JSON.stringify(health.body));
-    } else res.writeHead(404).end();
+      return;
+    }
+    if (req.url === "/api/accounts") {
+      accountHits += 1;
+      const send = () => {
+        if (accountReply !== null) {
+          res.writeHead(accountReply).end(accountReply === 200 ? "[]" : "");
+          return;
+        }
+        const key = String(req.headers["x-api-key"] ?? "");
+        // An api-only key is refused. Any other key can read this admin route.
+        const agentOnly = /agent/i.test(key) && !/admin/i.test(key);
+        res.writeHead(agentOnly ? 401 : 200).end(agentOnly ? "" : "[]");
+      };
+      if (accountGate) void accountGate.then(send);
+      else send();
+      return;
+    }
+    res.writeHead(404).end();
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -91,16 +118,119 @@ describe("policy and gateway", () => {
     expect(hits).toBe(0);
   });
 
-  it("the gateway carries the url and the key; the key is read each time", async () => {
-    expect(await gate().gateway()).toEqual({ url, apiKey: "btr-key" });
-    expect(await gate({ readKey: async () => null }).gateway()).toEqual({ url, apiKey: undefined });
-    expect(
-      await gate({
-        readKey: async () => {
-          throw new Error("damaged");
-        },
-      }).gateway(),
-    ).toEqual({ url, apiKey: undefined });
+  it("the child gateway is the agent key, never the admin key", async () => {
+    expect(await gate().gateway()).toEqual({ url, apiKey: "btr-agent" });
+    expect(await gate({ readKey: async () => null }).gateway()).toEqual({
+      url,
+      apiKey: "btr-agent",
+    });
+    const damaged = gate({
+      readAgentKey: async () => {
+        throw new Error("damaged");
+      },
+    });
+    expect(await damaged.gateway()).toBeUndefined();
+    expect(await damaged.agentCredentialBlock()).toMatch(/owlishAgentKey/);
+    const onlyAdmin = gate({ readAgentKey: async () => null });
+    expect(await onlyAdmin.gateway()).toBeUndefined();
+    expect(await onlyAdmin.agentCredentialBlock()).toBe(
+      "pool routing needs a separate owlishAgentKey; the admin key is not given to task agents",
+    );
+    const same = gate({
+      readKey: async () => "same-secret",
+      readAgentKey: async () => "same-secret",
+    });
+    expect(await same.gateway()).toBeUndefined();
+    expect(await same.agentCredentialBlock()).toMatch(/not given to task agents/);
+    expect(await same.agentCredentialBlock()).not.toContain("same-secret");
+    const none = gate({ readKey: async () => null, readAgentKey: async () => null });
+    expect(await none.gateway()).toEqual({ url });
+    expect(await none.agentCredentialBlock()).toBeNull();
+    expect(JSON.stringify(await none.gateway())).not.toContain("btr-admin");
+  });
+
+  it("does not hand out the agent key when the admin key cannot be read", async () => {
+    const unreadable = gate({
+      readKey: async () => {
+        throw new Error("secret-file-unreadable");
+      },
+    });
+    expect(await unreadable.gateway()).toBeUndefined();
+    expect(await unreadable.agentCredentialBlock()).toMatch(/owlishAgentKey/);
+    expect(accountHits).toBe(0);
+    expect(JSON.stringify(await unreadable.agentCredentialBlock())).not.toContain("secret-file");
+  });
+
+  it("refuses an agent key that the gateway accepts on the admin route", async () => {
+    const second = gate({
+      readKey: async () => "btr-admin",
+      readAgentKey: async () => "btr-second-admin",
+    });
+    expect(await second.gateway()).toBeUndefined();
+    const block = await second.agentCredentialBlock();
+    expect(block).toMatch(/not given to task agents/);
+    expect(block).not.toContain("btr-second-admin");
+    expect(accountHits).toBeGreaterThan(0);
+  });
+
+  it("a connection failure is unreachable, not a bad key", async () => {
+    settings = { ...settings, owlish: { url: "http://127.0.0.1:1", healthGate: "off" } };
+    const g = gate();
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(await g.gateway()).toBeUndefined();
+    expect(await g.agentCredentialBlock()).toBeNull();
+    expect(JSON.stringify(await g.childCredential())).not.toContain("btr-agent");
+  });
+
+  it("an unanswered admin-route probe is unreachable and is not asked again for 30 seconds", async () => {
+    accountReply = 503;
+    const g = gate();
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(await g.agentCredentialBlock()).toBeNull();
+    expect(accountHits).toBe(1);
+    clock += 29_000;
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(accountHits).toBe(1);
+    clock += 1_000;
+    expect(await g.childCredential()).toEqual({ kind: "unreachable" });
+    expect(accountHits).toBe(2);
+  });
+
+  it("remembers a rejected probe for 30 seconds and shares one in-flight request", async () => {
+    let release!: () => void;
+    accountGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const g = gate();
+    const pending = Promise.all([g.childCredential(), g.childCredential(), g.gateway()]);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(accountHits).toBe(1);
+    release();
+    const [first, second, gw] = await pending;
+    expect(first).toEqual({ kind: "ok", apiKey: "btr-agent" });
+    expect(second).toEqual(first);
+    expect(gw).toEqual({ url, apiKey: "btr-agent" });
+    expect(accountHits).toBe(1);
+    clock += 29_000;
+    await g.childCredential();
+    expect(accountHits).toBe(1);
+    clock += 1_000;
+    await g.childCredential();
+    expect(accountHits).toBe(2);
+  });
+
+  it("an admin-route acceptance is blocked and remembered for 30 seconds", async () => {
+    accountReply = 200;
+    const g = gate();
+    expect(await g.childCredential()).toEqual({ kind: "blocked" });
+    expect(await g.gateway()).toBeUndefined();
+    const block = await g.agentCredentialBlock();
+    expect(block).toMatch(/not given to task agents/);
+    expect(block).not.toContain("btr-agent");
+    expect(accountHits).toBe(1);
+    clock += 29_000;
+    expect(await g.childCredential()).toEqual({ kind: "blocked" });
+    expect(accountHits).toBe(1);
   });
 
   it("pause blocks routed work when degraded, unhealthy or unreachable, not when ok", async () => {
@@ -183,7 +313,9 @@ describe("episodes", () => {
     health = POOL_DOWN();
     const g = gate();
     await g.announceIfBlocked(await g.check());
-    expect(JSON.stringify(await readEvents(root, null))).not.toContain("btr-key");
+    const text = JSON.stringify(await readEvents(root, null));
+    expect(text).not.toContain("btr-admin");
+    expect(text).not.toContain("btr-agent");
   });
 });
 

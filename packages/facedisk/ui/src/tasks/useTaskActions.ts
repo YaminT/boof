@@ -6,7 +6,7 @@ import type { AppData } from "../useAppData.js";
 /** The things a row can do; each reports through a toast and refreshes the list. */
 export function useTaskActions(pid: string, data: AppData, navigate: (to: Route) => void) {
   const run = (fn: () => Promise<unknown>, success: string | undefined, failure: string) =>
-    void act(fn, { success, failure }).then(() => data.refresh());
+    act(fn, { success, failure }).then(() => data.refresh());
   const go = (taskId: string, view: RouteView = "edit") =>
     navigate({ name: "task", pid, taskId, view });
 
@@ -27,7 +27,14 @@ export function useTaskActions(pid: string, data: AppData, navigate: (to: Route)
         skip ? "Skipped" : "Unskipped",
         skip ? "Could not skip" : "Could not unskip",
       ),
-    stop: (id: string) => run(() => api.stopTask(pid, id), "Stop requested", "Could not stop"),
+    stop: (id: string) =>
+      act(() => api.stopTask(pid, id), {
+        success: "Stop requested",
+        failure: "Could not stop",
+      }).then(async (result) => {
+        await data.refresh();
+        return result !== undefined;
+      }),
     duplicate: (task: TaskView) =>
       run(
         async () => {

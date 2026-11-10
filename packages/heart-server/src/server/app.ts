@@ -1,24 +1,24 @@
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import {
   AuthStore,
+  BrowserSessionStore,
+  browserSessionCookieName,
   authorize,
   authorizeProject,
   isKebabId,
-  LOCAL_PRINCIPAL,
   MAX_ATTACHMENT_BYTES,
+  ExternalRunStore,
+  type BrowserSessionVerifier,
   type Principal,
 } from "@boof/heart";
 import {
   buildOpenApi,
   IdempotencyStore,
-  LOCAL_MCP_ID,
-  LOCAL_MCP_PRINCIPAL,
   OpError,
   registry,
-  RESERVED_ID_MESSAGE,
   toOpError,
   type AnyOperation,
   type ResolveHost,
@@ -29,6 +29,7 @@ import { originGuard } from "./middleware/origin-guard.js";
 import {
   createAuthenticator,
   defaultPeerAddress,
+  hostPort,
   requireScope,
   type PeerAddressResolver,
 } from "./middleware/auth.js";
@@ -49,7 +50,11 @@ import {
 } from "./events.js";
 import { LEGACY_SUNSET, mountOps } from "./rest.js";
 import { mcpRoute } from "./mcp-route.js";
+import { browserSignin } from "./browser-signin.js";
+import { externalCallbackRoutes } from "./external-callback.js";
 import { HARNESS_MD } from "./generated/harness.js";
+import { ConciergeAskInputSchema } from "../api/ops/concierge.js";
+import { ConciergeEventSchema } from "../api/schemas.js";
 
 export interface AppDeps {
   service: TaskService;
@@ -64,6 +69,10 @@ export interface AppDeps {
   authStore?: AuthStore;
   /** Resolves the TCP peer address (loopback detection). Default: the socket's remote address. */
   peerAddress?: PeerAddressResolver;
+  browserSessions?: BrowserSessionVerifier;
+  sessionCookieName?: (c: Context) => string;
+  /** Port sign-in links are bound to. Default: the port in the request's Host header. */
+  linkPort?: (c: Context) => number;
   /** True when a URL points at this server itself (webhook targets must not). */
   isSelfUrl?: (url: URL) => boolean;
   /** DNS for the webhook target check; tests inject a fake. */
@@ -74,6 +83,8 @@ export interface AppDeps {
   runnerRunning?: () => boolean;
   /** Clock override for tests (rate limit, client cache, audit). */
   now?: () => number;
+  /** Run records for external-step callbacks; defaults to a store on the service root (test seam). */
+  externalRuns?: ExternalRunStore;
   /** True when this process terminates TLS itself (--tls-cert): the only case boof sends Strict-Transport-Security. */
   tls?: boolean;
 }
@@ -124,6 +135,10 @@ export function createApp(deps: AppDeps): Hono {
   const security = securityConfigReader(service);
   const authStore = deps.authStore ?? new AuthStore(service.root, deps.now);
   const peerAddress = deps.peerAddress ?? defaultPeerAddress;
+  const browserSessions = deps.browserSessions ?? new BrowserSessionStore(service.root);
+  const sessionCookieName =
+    deps.sessionCookieName ??
+    ((c: Context) => browserSessionCookieName(hostPort(c.req.header("host"))));
 
   app.use(
     "*",
@@ -177,6 +192,17 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/harness.md", (c) => c.body(HARNESS_MD, 200, { "Content-Type": MARKDOWN }));
   app.get("/harness.txt", (c) => c.body(HARNESS_MD, 200, { "Content-Type": PLAIN }));
   app.get("/llms.txt", (c) => c.body(LLMS_TXT, 200, { "Content-Type": PLAIN }));
+  // n8n's callback: outside the API-key chain, authenticated by its per-run token only.
+  app.route(
+    "/callbacks",
+    externalCallbackRoutes({
+      root: service.root,
+      runs: deps.externalRuns ?? new ExternalRunStore(service.root, deps.now),
+      security,
+      peerAddress,
+      now: deps.now,
+    }),
+  );
   // Outermost on /api so rejected requests (401/403/429) are audited too.
   // `/mcp` (the MCP endpoint) runs through the same chain as `/api/*`.
   const guarded = ["/api/*", "/mcp"];
@@ -205,36 +231,38 @@ export function createApp(deps: AppDeps): Hono {
     peerAddress,
     now: deps.now,
     operatorClients: deps.operatorClients,
+    browserSessions,
+    sessionCookieName,
   });
   const limiter = rateLimit({ security, now: deps.now });
   // Before authenticate, so failed authentications are counted per address; a request whose key
   // verifies is never limited. After the Origin guard, so cross-site rejections do not spend a
   // client's bucket.
   const unauthenticated = unauthenticatedRateLimit({ security, peerAddress, now: deps.now });
-  // A keyless loopback caller of /mcp (local-trust) is a model host, not the UI: it becomes the
-  // review-trust `local-mcp` principal here, before the limiter and the handler, so it has its
-  // own rate-limit bucket and the audit line names it. As on stdio, it is refused while
-  // clients.json holds a stored client of that reserved id (the two would share ownership).
-  const keylessMcp: MiddlewareHandler = async (c, next) => {
-    const p = c.get("principal");
-    if (p.kind === LOCAL_PRINCIPAL.kind && p.id === LOCAL_PRINCIPAL.id) {
-      if (await authStore.get(LOCAL_MCP_ID).catch(() => null)) {
-        throw new OpError(403, RESERVED_ID_MESSAGE, "forbidden_trust");
-      }
-      c.set("principal", LOCAL_MCP_PRINCIPAL);
-      c.set("keylessMcp", true);
-    }
-    return next();
-  };
   for (const path of guarded) {
     app.use(path, unauthenticated);
     app.use(path, auth.middleware);
-    if (path === "/mcp") app.use(path, keylessMcp);
     app.use(path, limiter);
   }
 
+  // Sign-in is deliberately concealed outside the owner's local-trust browser context.
+  app.use("/auth/browser", auditor);
+  app.use("/auth/browser", unauthenticated);
+  app.get(
+    "/auth/browser",
+    browserSignin({
+      security,
+      peerAddress,
+      sessions: browserSessions,
+      sessionCookieName,
+      ...(deps.linkPort ? { linkPort: deps.linkPort } : {}),
+    }),
+  );
+
   app.onError((err, c) => {
     const e = toOpError(err);
+    // An aborted request has no client to receive an error body (and 499 is not public API data).
+    if (e.status === 499) return c.body(null, 499 as 400);
     return c.json(e.toBody(), e.status as 400);
   });
 
@@ -277,6 +305,113 @@ export function createApp(deps: AppDeps): Hono {
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "", legacy: true });
 
+  const streamConcierge = async (c: Context) => {
+    const principal = who(c);
+    const projectId = c.req.param("projectId") ?? "";
+    if (!authorizeProject(principal, projectId)) {
+      throw new OpError(
+        403,
+        `This client may not access project: ${projectId}`,
+        "forbidden_project",
+        { project: projectId },
+      );
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new OpError(400, "Request body must be valid JSON", "invalid_input");
+    }
+    const parsed = ConciergeAskInputSchema.safeParse({
+      ...(body as Record<string, unknown>),
+      projectId,
+    });
+    if (!parsed.success)
+      throw new OpError(400, "Invalid input", "invalid_input", parsed.error.issues);
+
+    const queued: Array<{ type: string; data: unknown }> = [];
+    let wake: (() => void) | undefined;
+    let complete = false;
+    let failure: unknown;
+    const notify = () => {
+      wake?.();
+      wake = undefined;
+    };
+    const run = service
+      .concierge()
+      .ask(
+        principal,
+        projectId,
+        {
+          text: parsed.data.text,
+          context: parsed.data.context,
+          conversationId: parsed.data.conversationId,
+        },
+        (event) => {
+          const validated = ConciergeEventSchema.parse(event);
+          queued.push({ type: validated.type, data: validated });
+          notify();
+        },
+        c.req.raw.signal,
+      )
+      .then(
+        () => {
+          complete = true;
+          notify();
+        },
+        (err: unknown) => {
+          failure = err;
+          complete = true;
+          notify();
+        },
+      );
+
+    // ConciergeService emits `conversation` only after all pre-model checks. Wait for that
+    // boundary so validation, authorization, budget and availability refusals remain JSON.
+    while (queued.length === 0 && !complete)
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    if (queued.length === 0) {
+      await run;
+      const error = toOpError(failure);
+      if (error.status === 499) return c.body(null, 499 as 400);
+      return c.json(error.toBody(), error.status as 400);
+    }
+
+    c.header("X-Accel-Buffering", "no");
+    return streamSSE(c, async (stream) => {
+      let errorEventSent = false;
+      while (queued.length > 0 || !complete) {
+        while (queued.length > 0) {
+          const event = queued.shift()!;
+          if (event.type === "error") errorEventSent = true;
+          await stream.writeSSE({ event: event.type, data: JSON.stringify(event.data) });
+        }
+        if (!complete)
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+      }
+      if (failure) {
+        const error = toOpError(failure);
+        if (error.status !== 499 && !errorEventSent)
+          await stream.writeSSE({ event: "error", data: JSON.stringify(error.toBody().error) });
+      }
+      await run;
+    });
+  };
+  api.post(
+    "/v1/projects/:projectId/concierge/messages/stream",
+    requireScope("tasks:read"),
+    streamConcierge,
+  );
+  api.post(
+    "/projects/:projectId/concierge/messages/stream",
+    requireScope("tasks:read"),
+    streamConcierge,
+  );
+
   const who = (c: Context) => c.get("principal");
 
   // Open event streams per principal: each holds a watcher subscription and two timers.
@@ -307,13 +442,24 @@ export function createApp(deps: AppDeps): Hono {
     return r.principal;
   };
   // Tell a stalled client at most 1 s: a full socket buffer must not hold the slot.
-  const sendUnauthorized = (stream: {
-    writeSSE(m: { event: string; data: string }): Promise<void>;
-  }) =>
+  const sendUnauthorized = (
+    stream: { writeSSE(m: { event: string; data: string }): Promise<void> },
+    principal: Principal,
+  ) =>
     Promise.race([
-      stream.writeSSE({ event: "unauthorized", data: UNAUTHORIZED }).catch(() => {}),
+      stream
+        .writeSSE({
+          event: "unauthorized",
+          data: principal.kind === "local" ? SIGNED_OUT : UNAUTHORIZED,
+        })
+        .catch(() => {}),
       new Promise<void>((r) => setTimeout(r, 1000).unref()),
     ]);
+  // A browser session is the local principal; a key is a client principal.
+  const SIGNED_OUT = JSON.stringify({
+    message:
+      'Signed out: this browser session ended. Run "boof-runner open" for a new sign-in link.',
+  });
   const UNAUTHORIZED = JSON.stringify({
     message: "API key revoked, expired or no longer authorized",
   });
@@ -379,6 +525,7 @@ export function createApp(deps: AppDeps): Hono {
         event: "ready",
         data: JSON.stringify({ cursor: encodeFeedCursor(cursor) }),
       });
+      if (ended) return; // the client left during the greeting: nothing is subscribed yet
       let running: Promise<void> | null = null;
       let again = false;
       const readAll = async () => {
@@ -408,7 +555,7 @@ export function createApp(deps: AppDeps): Hono {
         if (!fresh) {
           if (ended) return false;
           ended = true; // stops the replay before the event goes out
-          await sendUnauthorized(stream);
+          await sendUnauthorized(stream, principal);
           finish();
           return false;
         }
@@ -465,6 +612,7 @@ export function createApp(deps: AppDeps): Hono {
       let principal = who(c);
       let ended = false;
       let unsub = () => {};
+      let poll: ReturnType<typeof setInterval> | undefined;
       let wake = () => {};
       let closed = false;
       const finish = () => {
@@ -472,6 +620,7 @@ export function createApp(deps: AppDeps): Hono {
         if (closed) return;
         closed = true;
         unsub();
+        clearInterval(poll);
         releaseStream(streamId);
         wake();
       };
@@ -480,6 +629,7 @@ export function createApp(deps: AppDeps): Hono {
       if (sig.aborted) finish();
       else sig.addEventListener("abort", finish, { once: true });
       await stream.writeSSE({ event: "ready", data: "connected" });
+      if (ended) return;
       if (!deps.watcher) {
         // No watcher (e.g. tests): end after the greeting.
         finish();
@@ -491,7 +641,7 @@ export function createApp(deps: AppDeps): Hono {
           const fresh = await resolveSame(c, principal);
           if (!fresh) {
             ended = true;
-            await sendUnauthorized(stream);
+            await sendUnauthorized(stream, principal);
             finish();
             return;
           }
@@ -502,6 +652,19 @@ export function createApp(deps: AppDeps): Hono {
           await stream.writeSSE({ event, data: JSON.stringify(data) });
         })().catch(() => {});
       });
+      poll = setInterval(() => {
+        void (async () => {
+          if (ended) return;
+          const fresh = await resolveSame(c, principal);
+          if (!fresh) {
+            ended = true;
+            await sendUnauthorized(stream, principal);
+            finish();
+            return;
+          }
+          principal = fresh;
+        })().catch(() => {});
+      }, 2000);
       // Keep the connection open until the client disconnects or the key stops working.
       if (!ended)
         await new Promise<void>((resolve) => {

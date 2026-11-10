@@ -9,7 +9,7 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./index.css";
 import { legacyHashTarget } from "./lib/location.js";
-import { applyTheme, readThemePref } from "./lib/theme.js";
+import { applyTheme, readThemePref, retainThemeStore } from "./lib/theme.js";
 
 // Pin the server's relative <base> to an absolute one, so pushState to another depth cannot move
 // it, then replace an old #/... link with its path once.
@@ -24,6 +24,9 @@ if (legacy !== null) {
 }
 
 applyTheme(readThemePref());
+// Behind the token gate no theme control is mounted. This subscription is what hears the OS
+// and other tabs until one is.
+retainThemeStore();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

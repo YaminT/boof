@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvalidIdError, projectPaths } from "./paths.js";
-import { ProjectPatchSchema, ProjectSchema } from "./schema.js";
+import { isAnthropicApiKey, ProjectPatchSchema, ProjectSchema } from "./schema.js";
 import { ProjectError, ProjectStore } from "./project-store.js";
 import { TaskStore } from "./store.js";
 
@@ -194,6 +194,22 @@ describe("ProjectStore", () => {
     expect(p.labels).toEqual(["x"]);
   });
 
+  it("update with expectedUpdated applies once; the loser of a race gets modified", async () => {
+    const created = await store.create({ workingDirectory: await makeRepo("a"), id: "a" });
+    const results = await Promise.allSettled([
+      store.update("a", { brief: "one" }, { expectedUpdated: created.updated }),
+      store.update("a", { brief: "two" }, { expectedUpdated: created.updated }),
+    ]);
+    const lost = results.filter((r) => r.status === "rejected");
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as PromiseRejectedResult).reason).toMatchObject({ code: "modified" });
+    expect(["one", "two"]).toContain((await store.get("a"))!.brief);
+    await expect(
+      store.update("a", { brief: "late" }, { expectedUpdated: created.updated }),
+    ).rejects.toBeInstanceOf(ProjectError);
+  });
+
   it("updates fields, clears optional ones with null and bumps `updated`", async () => {
     const p = await store.create({ workingDirectory: await makeRepo("app") });
     const u = await store.update("app", {
@@ -272,8 +288,25 @@ it("ProjectSchema parses a project.json without brief, and ProjectPatchSchema ta
     updated: "2026-01-01T00:00:00.000Z",
   };
   expect(ProjectSchema.parse(minimal).brief).toBeUndefined();
+  expect(ProjectSchema.parse(minimal).claudeAgent).toBeUndefined();
+  expect(ProjectSchema.parse({ ...minimal, claudeAgent: {} }).claudeAgent).toEqual({
+    auth: "gateway",
+  });
+  expect(ProjectSchema.safeParse({ ...minimal, claudeAgent: { auth: "oauth" } }).success).toBe(
+    false,
+  );
+  expect(ProjectPatchSchema.parse({ claudeAgent: null })).toEqual({ claudeAgent: null });
   expect(ProjectPatchSchema.parse({ brief: "  Build it  " })).toEqual({ brief: "Build it" });
   expect(ProjectPatchSchema.parse({ brief: null })).toEqual({ brief: null });
+});
+
+it("accepts only Anthropic API keys for project-key auth", () => {
+  expect(isAnthropicApiKey("sk-ant-api03-" + "a".repeat(40))).toBe(true);
+  expect(isAnthropicApiKey("sk-ant-oat01-" + "a".repeat(40))).toBe(false);
+  expect(isAnthropicApiKey("sk-ant-admin01-" + "a".repeat(40))).toBe(false);
+  expect(isAnthropicApiKey("btr-" + "a".repeat(40))).toBe(false);
+  expect(isAnthropicApiKey("sk-ant-api03-" + "a".repeat(19) + " " + "a".repeat(20))).toBe(false);
+  expect(isAnthropicApiKey("sk-ant-api03-" + "a".repeat(600))).toBe(false);
 });
 
 describe("create with path modes", () => {

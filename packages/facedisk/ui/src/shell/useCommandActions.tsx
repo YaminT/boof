@@ -9,7 +9,14 @@ import { useTheme } from "../lib/theme.js";
 import { toggleRunner } from "./RunnerSwitch.js";
 import type { Epics } from "../tasks/useEpics.js";
 import { withQuery } from "../lib/task-links.js";
+import { requestPaletteStop } from "../lib/palette-stop.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
+import {
+  isStopPending,
+  markStopPending,
+  clearStopPending,
+  usePendingStopKeys,
+} from "../lib/stop-request.js";
 
 interface PendingStop {
   task: TaskView;
@@ -30,6 +37,7 @@ export function useCommandActions({
   onSelectProject,
   epics,
   currentTask,
+  resetAssistant,
   mode,
 }: {
   data: AppData;
@@ -40,10 +48,13 @@ export function useCommandActions({
   epics: Epics;
   /** The task open on screen, which the hierarchy actions apply to. */
   currentTask: TaskView | null;
+  /** Start a new assistant conversation (`/new`). */
+  resetAssistant: () => Promise<void> | void;
   mode: "toast" | "throw";
 }): { actions: CommandAction[]; stopDialog: ReactNode } {
   const { setPref } = useTheme();
   const [stopping, setStopping] = useState<PendingStop | null>(null);
+  const pendingStops = usePendingStopKeys(data.tasks);
 
   const mutate = async (
     fn: () => Promise<unknown>,
@@ -69,7 +80,9 @@ export function useCommandActions({
       selectProject: onSelectProject,
       setTheme: setPref,
       requestStop: (task) =>
-        new Promise<void>((resolve, reject) => setStopping({ task, resolve, reject })),
+        stopping || isStopPending(pid ?? "", task.frontmatter.id)
+          ? undefined
+          : new Promise<void>((resolve, reject) => setStopping({ task, resolve, reject })),
       activatePlan: (id, plan) =>
         mutate(
           () => api.updatePlan(id, plan, { status: "active" }),
@@ -82,6 +95,7 @@ export function useCommandActions({
           "Queued",
           "Could not queue",
         ),
+      resetAssistant: () => resetAssistant(),
       createEpic: (id, title) =>
         mutate(() => api.createEpic(id, { title }), "Epic added", "Could not add the epic"),
       openNewEpic: (id) => {
@@ -102,6 +116,12 @@ export function useCommandActions({
           : toggleRunner(enabled).then(() => data.refresh()),
     },
   });
+  for (const action of actions) {
+    if (action.id.startsWith("stop-") && pid) {
+      const taskId = action.id.slice("stop-".length);
+      if (pendingStops.has(`${pid}/${taskId}`)) action.disabled = true;
+    }
+  }
 
   const stopDialog = (
     <StopTaskDialog
@@ -116,9 +136,18 @@ export function useCommandActions({
         setStopping(null);
         if (!s || !pid) return s?.reject(new Error("no project selected"));
         const id = s.task.frontmatter.id;
-        mutate(() => api.stopTask(pid, id), "Stop requested", "Could not stop").then(
-          s.resolve,
-          s.reject,
+        markStopPending(pid, id);
+        const stop = () => api.stopTask(pid, id);
+        const request = mode === "toast" ? requestPaletteStop(pid, id, stop) : stop();
+        request.then(
+          () => {
+            void Promise.all([data.refresh(), epics.reload()]);
+            s.resolve();
+          },
+          (err) => {
+            clearStopPending(pid, id);
+            s.reject(err);
+          },
         );
       }}
     />

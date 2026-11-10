@@ -51,6 +51,10 @@ export interface DataRootPaths {
   projects: string;
   auth: string;
   authClients: string;
+  /** Signed-in browser sessions, mode 0600. sha256 hashes only. */
+  browserSessions: string;
+  /** Single-use browser sign-in links, mode 0600. sha256 hashes only. */
+  browserLinks: string;
   audit: string;
   /** Global events (runner toggles); project events live in the project directory. */
   events: string;
@@ -60,6 +64,17 @@ export interface DataRootPaths {
   webhookSecrets: string;
   /** boof's better-ccflare client key, mode 0600. */
   owlishSecrets: string;
+  /** Project Anthropic API keys, mode 0600. */
+  owlishProjectKeys: string;
+  /** Private Claude Agent SDK config folders, isolated per project. */
+  claudeAgentConfigs: string;
+  n8n: string;
+  /** n8n API key and webhook secret, mode 0600. */
+  n8nSecrets: string;
+  n8nWorkflows: string;
+  n8nSeen: string;
+  /** One record per external-step run (token hash only). */
+  externalRuns: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -71,13 +86,42 @@ export function dataRootPaths(root: string): DataRootPaths {
     projects: join(root, "projects"),
     auth: join(root, "auth"),
     authClients: join(root, "auth", "clients.json"),
+    browserSessions: join(root, "auth", "browser-sessions.json"),
+    browserLinks: join(root, "auth", "browser-links.json"),
     audit: join(root, "audit"),
     events: join(root, "events.jsonl"),
     idempotency: join(root, "idempotency"),
     webhooks: join(root, "webhooks"),
     webhookSecrets: join(root, "webhooks", "secrets.json"),
     owlishSecrets: join(root, "owlish", "secrets.json"),
+    owlishProjectKeys: join(root, "owlish", "project-keys.json"),
+    claudeAgentConfigs: join(root, "claude-agent-config"),
+    n8n: join(root, "n8n"),
+    n8nSecrets: join(root, "n8n", "secrets.json"),
+    n8nWorkflows: join(root, "n8n", "workflows.json"),
+    n8nSeen: join(root, "n8n", "seen.json"),
+    externalRuns: join(root, "external-runs"),
   };
+}
+
+/** Private Claude Agent SDK configuration folder for one project. */
+export function claudeAgentConfigDir(root: string, projectId: string): string {
+  return join(dataRootPaths(root).claudeAgentConfigs, assertKebabId(projectId));
+}
+
+/** `<root>/concierge/<projectId>`. Callers create it with mode 0700. */
+export function conciergeDir(root: string, projectId: string): string {
+  return join(root, "concierge", assertKebabId(projectId));
+}
+
+/** Claude config for the concierge, under {@link conciergeDir}. Callers create it with mode 0700. */
+export function conciergeConfigDir(root: string, projectId: string): string {
+  return join(conciergeDir(root, projectId), "claude-config");
+}
+
+/** Empty working directory for one concierge turn. Callers create it with mode 0700. */
+export function conciergeScratchDir(root: string, projectId: string): string {
+  return join(conciergeDir(root, projectId), "cwd");
 }
 
 /** Locations of one project; `dir` is the `root` to hand to TaskStore, AttachmentStore, UsageStore. */

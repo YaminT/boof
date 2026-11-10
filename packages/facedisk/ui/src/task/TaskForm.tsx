@@ -7,6 +7,7 @@ import { api, type TaskView } from "../api.js";
 import type { CommandTemplate } from "../api-types.js";
 import { conflictOf, overwriteStatus } from "../lib/conflict.js";
 import { act } from "../lib/act.js";
+import { afterSave, formKey, parseLabels, undoElsewhere } from "../lib/task-form-sync.js";
 import { relativeTime } from "../lib/time.js";
 import { TaskAttachments } from "./TaskAttachments.js";
 
@@ -29,15 +30,6 @@ const toValues = (t: TaskView): Values => ({
   labels: t.frontmatter.labels.join(", "),
   command: t.frontmatter.command,
 });
-
-const parseLabels = (s: string) =>
-  s
-    .split(",")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-/** Equal ignoring how the labels are spaced. */
-const key = (v: Values) => JSON.stringify({ ...v, labels: parseLabels(v.labels) });
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -119,7 +111,7 @@ export function TaskForm({
   const busy = useRef(false);
   const [isBusy, setBusy] = useState(false);
   const createdId = useRef<string | null>(null);
-  const dirty = key(form) !== key(base);
+  const dirty = formKey(form) !== formKey(base);
 
   useEffect(() => {
     void api
@@ -131,7 +123,7 @@ export function TaskForm({
   // The server copy moved: follow it while the form is clean, otherwise keep the edits and say so.
   useEffect(() => {
     if (!task) return;
-    if (key(server) === key(base)) {
+    if (formKey(server) === formKey(base)) {
       // The server copy matches what the form started from again: nothing to warn about.
       baseUpdated.current = task.frontmatter.updated;
       setElsewhere(false);
@@ -146,6 +138,17 @@ export function TaskForm({
       baseUpdated.current = task.frontmatter.updated;
     }
   }, [server]);
+
+  // Undoing every edit clears the elsewhere notice and takes the server copy.
+  useEffect(() => {
+    if (!task || conflict) return;
+    const adopted = undoElsewhere(elsewhere, form, base, server);
+    if (!adopted) return;
+    setBase(adopted.base);
+    setForm(adopted.form);
+    setElsewhere(false);
+    baseUpdated.current = task.frontmatter.updated;
+  }, [elsewhere, form, base, server, task, conflict]);
 
   // A run started: the form is locked, so show the server copy, never unsaved values.
   useEffect(() => {
@@ -211,8 +214,10 @@ export function TaskForm({
         },
       );
       if (!ok) return false;
+      const sentFrom = form;
       baseUpdated.current = ok.frontmatter.updated;
-      setBase(form);
+      setBase(afterSave(sentFrom, sentFrom).base);
+      setForm((cur) => afterSave(sentFrom, cur).form);
       setElsewhere(false);
       clearConflict();
       setSavedAt(new Date().toISOString());

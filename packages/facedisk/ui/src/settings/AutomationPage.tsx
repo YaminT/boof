@@ -3,6 +3,7 @@ import type { Project } from "@boof/heart/schema";
 import { api } from "../api.js";
 import type { Whoami } from "../api-types.js";
 import { CommandTemplates } from "./CommandTemplates.js";
+import { N8nSection } from "./N8nSection.js";
 import { Webhooks } from "./Webhooks.js";
 
 /** Settings › Automation: command templates and webhooks. Each change saves through its own dialog. */
@@ -24,6 +25,7 @@ export function AutomationPage({
     <div className="flex max-w-[1000px] flex-col gap-10">
       <CommandTemplates whoami={whoami} onChange={onChange} />
       <Webhooks whoami={whoami} projects={projects} />
+      <N8nSection whoami={whoami} projects={projects} />
     </div>
   );
 }

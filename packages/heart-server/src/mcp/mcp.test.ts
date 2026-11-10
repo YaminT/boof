@@ -6,27 +6,40 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AuthStore,
+  authorize,
   BOOF_VERSION,
   defaultSettings,
   LOCAL_PRINCIPAL,
+  SCOPES,
+  SecuritySettingsSchema,
   SettingsStore,
   type Principal,
   type Scope,
   execCommand,
 } from "@boof/heart";
+import { registry } from "../api/index.js";
 import { resetMock, RunnerEngine, MockTool, ToolRegistry } from "@boof/runner";
 import { TaskService } from "../api/index.js";
 import {
   closeWhenDrained,
   createBoofMcpServer,
+  createConciergeMcpServer,
   handleMcpHttp,
   exposedOps,
+  McpStartError,
   principalFromClient,
   stdioAudit,
   stdioPrincipal,
+  stdioSelfUrlCheck,
   type BoofMcpOptions,
   type ToolCallInfo,
 } from "./index.js";
+import {
+  CONCIERGE_TOOLS,
+  conciergeCanList,
+  conciergeOps,
+  conciergePrincipal,
+} from "../concierge/policy.js";
 
 let base: string;
 let root: string;
@@ -60,6 +73,76 @@ async function connect(
   open.push(client);
   return client;
 }
+
+// Fixed on purpose (not derived from the registry): the tools of a client made with the printed
+// recipe. No administration tool; boof_delete_project is listed and refused at call time.
+const EXPECTED_REVIEW_TOOLS: string[] = [
+  "boof_answer_task",
+  "boof_archive_project",
+  "boof_archive_task",
+  "boof_create_epic",
+  "boof_create_plan",
+  "boof_create_project",
+  "boof_create_task",
+  "boof_delete_epic",
+  "boof_delete_project",
+  "boof_delete_task",
+  "boof_export_plan",
+  "boof_get_agent_sdk_eligibility",
+  "boof_get_budget",
+  "boof_get_epic",
+  "boof_get_health",
+  "boof_get_model_details",
+  "boof_get_n8n",
+  "boof_get_plan",
+  "boof_get_pool_health",
+  "boof_get_project",
+  "boof_get_project_usage",
+  "boof_get_runner",
+  "boof_get_settings",
+  "boof_get_task",
+  "boof_get_task_diff",
+  "boof_get_task_log",
+  "boof_get_usage",
+  "boof_import_plan",
+  "boof_inject_prompt",
+  "boof_list_accounts",
+  "boof_list_actions",
+  "boof_list_commands",
+  "boof_list_epics",
+  "boof_list_models",
+  "boof_list_n8n_workflows",
+  "boof_list_plans",
+  "boof_list_projects",
+  "boof_list_tasks",
+  "boof_move_task",
+  "boof_pause_project",
+  "boof_queue_task",
+  "boof_refresh_models",
+  "boof_remove_attachment",
+  "boof_remove_goal",
+  "boof_reorder_goals",
+  "boof_reorder_tasks",
+  "boof_replace_goals",
+  "boof_resume_project",
+  "boof_retry_task",
+  "boof_runner_status",
+  "boof_set_goal_status",
+  "boof_set_runner",
+  "boof_skip_task",
+  "boof_stop_task",
+  "boof_sync_plan",
+  "boof_unarchive_project",
+  "boof_unarchive_task",
+  "boof_update_epic",
+  "boof_update_plan",
+  "boof_update_project",
+  "boof_update_task",
+  "boof_upsert_goal",
+  "boof_wait_plan",
+  "boof_wait_task",
+  "boof_whoami",
+];
 
 async function clientPrincipal(
   scopes: Scope[],
@@ -153,8 +236,9 @@ describe("tools generated from the registry", () => {
     // The server side is the proof: onCall fires only when the handler returned.
     const info = await done;
     expect(info).toMatchObject({ tool: "boof_wait_task", ok: true });
-    expect(Date.now() - started).toBeLessThan(5_000);
-  });
+    // Cancel must beat timeoutSeconds (30). 20s is scheduler slack under load.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 45_000);
 
   it("lists the tools with their scopes (snapshot of names)", async () => {
     const client = await connect(LOCAL_PRINCIPAL);
@@ -232,6 +316,7 @@ describe("tools generated from the registry", () => {
         "boof_revoke_client",
         "boof_rotate_client",
         "boof_list_accounts",
+        "boof_get_agent_sdk_eligibility",
         "boof_get_pool_health",
         "boof_pause_account",
         "boof_resume_account",
@@ -241,15 +326,19 @@ describe("tools generated from the registry", () => {
         "boof_create_webhook",
         "boof_update_webhook",
         "boof_delete_webhook",
+        "boof_get_n8n",
+        "boof_update_n8n",
+        "boof_delete_n8n",
+        "boof_list_n8n_workflows",
+        "boof_refresh_n8n_workflows",
       ]
     `);
-    // Every operation except file upload and download (the plan said 70 before the epic and
-    // health operations were added).
+    // Every exposed JSON operation except file upload and download. Concierge is REST/CLI only.
     const jsonOps = (await import("../api/index.js")).registry.filter(
-      (o) => !o.rest.kind || o.rest.kind === "json",
+      (o) => (!o.rest.kind || o.rest.kind === "json") && o.mcp.expose,
     );
     expect(names).toHaveLength(jsonOps.length);
-    expect(names).toHaveLength(79);
+    expect(names).toHaveLength(85);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("../api/index.js").then((m) => m.registry)).map((o) => [
         o.mcp.name,
@@ -262,6 +351,7 @@ describe("tools generated from the registry", () => {
       boof_stop_task: "tasks:control",
       boof_wait_task: "tasks:read",
       boof_runner_status: "settings:read",
+      boof_get_agent_sdk_eligibility: "settings:read",
       boof_set_runner: "runner:control|settings:write",
       boof_revoke_client: "auth:admin",
       boof_create_webhook: "admin",
@@ -420,53 +510,65 @@ describe("tools generated from the registry", () => {
     }
   });
 
-  it("a review-trust client cannot archive, unarchive or purge a project over MCP", async () => {
-    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
-    const rev = await connect(await clientPrincipal(["projects:write", "projects:read"], "review"));
-    for (const [tool, args] of [
-      ["boof_archive_project", { projectId: "shop" }],
-      ["boof_unarchive_project", { projectId: "shop" }],
-      ["boof_delete_project", { projectId: "shop", purge: true }],
-    ] as const) {
-      const res = await call(rev, tool, args);
-      expect(res.isError, tool).toBe(true);
-      expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
-    }
-    expect((await services.getProject("shop")).archived).toBe(false);
-  });
+  it.each([true, false])(
+    "a review-trust client cannot archive, unarchive or purge a project over MCP (approval setting %s)",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+      const rev = await connect(
+        await clientPrincipal(["projects:write", "projects:read"], "review"),
+      );
+      // Archiving and unarchiving are refused whatever the approval setting says.
+      for (const [tool, args] of [
+        ["boof_archive_project", { projectId: "shop" }],
+        ["boof_unarchive_project", { projectId: "shop" }],
+        ["boof_delete_project", { projectId: "shop", purge: true }],
+        ["boof_delete_project", { projectId: "shop" }],
+      ] as const) {
+        const res = await call(rev, tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.content[0].text.startsWith("forbidden_trust:"), tool).toBe(true);
+      }
+      expect((await services.getProject("shop")).archived).toBe(false);
+    },
+  );
 
-  it("a keyless stdio server hides the administration tools unless --admin is given", async () => {
-    const hidden = (
-      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false })).listTools()
-    ).tools.map((t) => t.name);
-    for (const n of [
-      "boof_create_client",
-      "boof_list_clients",
-      "boof_revoke_client",
-      "boof_create_webhook",
-      "boof_list_webhooks",
-      "boof_update_settings",
-      "boof_check_health",
-      "boof_create_command",
-      "boof_update_command",
-      "boof_delete_command",
-      "boof_delete_project",
-    ]) {
-      expect(hidden, n).not.toContain(n);
-    }
-    // Everything else stays: the project, plan and task tools, and the runner switch.
-    for (const n of ["boof_create_task", "boof_set_runner", "boof_list_projects", "boof_whoami"]) {
-      expect(hidden, n).toContain(n);
-    }
-    const shown = (
-      await (await connect(LOCAL_PRINCIPAL, undefined, { adminTools: true })).listTools()
-    ).tools.map((t) => t.name);
-    expect(shown).toContain("boof_create_client");
-    // A hidden tool is not callable either.
-    const c = await connect(LOCAL_PRINCIPAL, undefined, { adminTools: false });
-    await expect(
-      call(c, "boof_create_client", { name: "z", scopes: ["tasks:read"] }),
-    ).rejects.toThrow(/Unknown tool/);
+  it.each([true, false])(
+    "a trusted client can still archive and unarchive a project over MCP (approval setting %s)",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+      const admin = await connect(
+        await clientPrincipal(["projects:write", "projects:read"], "trusted"),
+      );
+      const archived = await call(admin, "boof_archive_project", { projectId: "shop" });
+      expect(archived.isError).not.toBe(true);
+      expect((await services.getProject("shop")).archived).toBe(true);
+      const unarchived = await call(admin, "boof_unarchive_project", { projectId: "shop" });
+      expect(unarchived.isError).not.toBe(true);
+      expect((await services.getProject("shop")).archived).toBe(false);
+    },
+  );
+
+  it("a trusted client with projects:write can still delete a project over MCP", async () => {
+    const settings = await new SettingsStore(root).load();
+    settings.security = SecuritySettingsSchema.parse({ externalTasksRequireApproval: false });
+    await new SettingsStore(root).save(settings);
+    await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
+    const admin = await connect(
+      await clientPrincipal(["projects:write", "projects:read"], "trusted"),
+    );
+    const res = await call(admin, "boof_delete_project", { projectId: "shop", purge: true });
+    expect(res.isError).not.toBe(true);
+    await expect(services.getProject("shop")).rejects.toThrow();
   });
 
   it("boof_update_epic lets a review client change only its own epics", async () => {
@@ -721,16 +823,14 @@ describe("prompts", () => {
 });
 
 describe("stdio principal", () => {
-  it("uses the local principal only in local-trust mode", async () => {
-    // Keyless: the review-trust local-mcp principal, or the local administrator with --admin.
-    expect(await (await stdioPrincipal(services, authStore, { root }))()).toMatchObject({
-      kind: "client",
-      id: "local-mcp",
-      trust: "review",
-    });
-    expect((await (await stdioPrincipal(services, authStore, { root, admin: true }))()).kind).toBe(
-      "local",
+  it("refuses to start without --client, in local-trust and when auth is required", async () => {
+    const refused = await stdioPrincipal(services, authStore, { root }).then(
+      () => null,
+      (err: unknown) => err,
     );
+    expect(refused).toBeInstanceOf(McpStartError);
+    expect((refused as Error).message).toMatch(/boof-runner mcp needs --client <id>/);
+    expect((refused as Error).message).toMatch(/Keyless MCP was removed/);
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({
       ...settings,
@@ -744,7 +844,23 @@ describe("stdio principal", () => {
         audit: { enabled: true, retentionDays: 90 },
       },
     });
-    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/--client/);
+    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(
+      /Keyless MCP was removed/,
+    );
+  });
+
+  it("MCP_REVIEW_SCOPES equals SCOPES minus admin, auth:admin, settings:write", async () => {
+    const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+    expect(MCP_REVIEW_SCOPES).toEqual(
+      SCOPES.filter((s) => s !== "admin" && s !== "auth:admin" && s !== "settings:write"),
+    );
+  });
+
+  it("a review-trust client with MCP_REVIEW_SCOPES lists exactly the expected tools (boof_delete_project is listed but refused)", async () => {
+    const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+    const principal = await clientPrincipal([...(MCP_REVIEW_SCOPES as readonly Scope[])], "review");
+    const listed = (await (await connect(principal)).listTools()).tools.map((t) => t.name).sort();
+    expect(listed).toEqual(EXPECTED_REVIEW_TOOLS);
   });
 
   it("resolves --client from the registry and follows a revocation", async () => {
@@ -763,9 +879,16 @@ describe("stdio principal", () => {
   });
 
   it("refuses to start when settings.mcp.enabled is false", async () => {
+    const { client } = await authStore.create({
+      name: "x",
+      scopes: ["tasks:read"],
+      trust: "review",
+    });
     const settings = await services.loadSettings();
     await new SettingsStore(root).save({ ...settings, mcp: { enabled: false } });
-    await expect(stdioPrincipal(services, authStore, { root })).rejects.toThrow(/disabled/);
+    await expect(stdioPrincipal(services, authStore, { root, client: client.id })).rejects.toThrow(
+      /disabled/,
+    );
   });
 });
 
@@ -924,7 +1047,34 @@ describe("handleMcpHttp", () => {
     ctrl.abort();
     await pending.catch(() => undefined); // the transport may reject once the request is aborted
     expect((await done).tool).toBe("boof_wait_task");
-    expect(Date.now() - started).toBeLessThan(5_000);
+    // Abort must beat timeoutSeconds (30). 20s is scheduler slack under load.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 45_000);
+
+  describe("stdio n8n self check", () => {
+    const update = (c: Client, port: number) =>
+      call(c, "boof_update_n8n", {
+        baseUrl: `http://127.0.0.1:${port}`,
+        callbackBaseUrl: "https://boof.example",
+      });
+
+    it("F1 the stdio server's check refuses boof's own port; without one the tool refuses", async () => {
+      const admin = await clientPrincipal(["admin", "settings:read", "settings:write"], "trusted");
+      const withCheck = await connect(admin, undefined, {
+        isSelfUrl: await stdioSelfUrlCheck(services, { BOOF_RUNNER_PORT: "4321" }),
+      });
+      const own = await update(withCheck, 4321);
+      expect(own.isError).toBe(true);
+      expect(own.content[0]!.text).toContain("not allowed");
+      const dflt = await connect(admin, undefined, {
+        isSelfUrl: await stdioSelfUrlCheck(services, {}),
+      });
+      expect((await update(dflt, 4319)).isError).toBe(true);
+      const bare = await connect(admin);
+      const refused = await update(bare, 5678);
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0]!.text).toContain("own address");
+    });
   });
 
   describe("stdio audit", () => {
@@ -969,18 +1119,16 @@ describe("handleMcpHttp", () => {
       expect(JSON.stringify(lines)).not.toMatch(/SECRET/);
     });
 
-    it("a keyless local-mcp call is recorded as local-mcp, a refusal as an error", async () => {
+    it("a review client's call is recorded under its name, a refusal as an error", async () => {
       const auditor = stdioAudit(root);
-      const { LOCAL_MCP_PRINCIPAL } = await import("../api/index.js");
-      const c = await connect(LOCAL_MCP_PRINCIPAL, undefined, {
-        onCall: auditor.onCall,
-        adminTools: false,
-      });
+      const { MCP_REVIEW_SCOPES } = await import("../api/local-principal.js");
+      const reviewer = await clientPrincipal([...MCP_REVIEW_SCOPES], "review");
+      const c = await connect(reviewer, undefined, { onCall: auditor.onCall });
       await call(c, "boof_set_runner", { enabled: true });
       await auditor.flush();
       expect(await auditLines()).toMatchObject([
         {
-          principal: "local-mcp",
+          principal: reviewer.name,
           action: "mcp:boof_set_runner",
           via: "stdio-mcp",
           outcome: "error",
@@ -1002,4 +1150,270 @@ describe("handleMcpHttp", () => {
       expect(await auditLines()).toEqual([]);
     });
   });
+});
+
+describe("MCP call gates", () => {
+  it("builds the concierge MCP surface with only its pinned allowlist", async () => {
+    const server = createConciergeMcpServer({
+      root,
+      principal: conciergePrincipal(LOCAL_PRINCIPAL, "shop"),
+      services,
+      authStore,
+      project: "shop",
+      gate: {},
+      listable: (op) =>
+        conciergeCanList(op, conciergePrincipal(LOCAL_PRINCIPAL, "shop"), LOCAL_PRINCIPAL, "shop"),
+    });
+    const client = new Client({ name: "concierge-wrapper", version: "1.0.0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    open.push(client);
+    const tools = await client.listTools();
+    expect(tools.tools).toHaveLength(Object.keys(CONCIERGE_TOOLS).length);
+    expect(tools.tools.some((tool) => tool.name === "boof_delete_task_diff")).toBe(false);
+    expect(
+      tools.tools.find((tool) => tool.name === "boof_create_task")?.inputSchema.properties,
+    ).not.toHaveProperty("projectId");
+    const update = tools.tools.find((tool) => tool.name === "boof_update_project");
+    expect(Object.keys(update?.inputSchema.properties ?? {})).toEqual(["brief"]);
+    expect(update?.inputSchema.required).toEqual(["brief"]);
+    expect(update?.description).toContain("description (brief)");
+    await expect(client.listPrompts()).rejects.toThrow();
+  });
+
+  it("never lets the assistant's principal change the project, by tool call or direct op", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    const assistant = conciergePrincipal(LOCAL_PRINCIPAL, "shop");
+    expect(assistant.scopes.has("projects:write")).toBe(false);
+    // Even with no gate at all, the call runs under the assistant's principal and is refused.
+    const server = createConciergeMcpServer({
+      root,
+      principal: assistant,
+      services,
+      authStore,
+      project: "shop",
+      gate: {},
+    });
+    const client = new Client({ name: "concierge-direct", version: "1.0.0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    open.push(client);
+    expect((await client.listTools()).tools.some((t) => t.name === "boof_update_project")).toBe(
+      false,
+    );
+    for (const args of [{ paused: true }, { name: "Renamed" }, { brief: "x" }]) {
+      const result = await client.callTool({ name: "boof_update_project", arguments: args });
+      expect(result.isError).toBe(true);
+    }
+    for (const [name, input] of [
+      ["projects.update", { projectId: "shop", paused: true }],
+      ["projects.update", { projectId: "shop", name: "Renamed" }],
+      ["projects.update", { projectId: "shop", brief: "x" }],
+      ["projects.pause", { projectId: "shop" }],
+    ] as const) {
+      const op = registry.find((o) => o.name === name)!;
+      await expect(
+        op.execute(
+          { root, principal: assistant, services, authStore, now: () => new Date().toISOString() },
+          input,
+        ),
+      ).rejects.toMatchObject({ code: "forbidden_scope" });
+    }
+    const project = await services.getProject("shop");
+    expect(project.paused).toBe(false);
+    expect(project.name).not.toBe("Renamed");
+  });
+
+  it("lets a before answer replace a destructive call without running it", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    await call(await connect(LOCAL_PRINCIPAL), "boof_create_task", {
+      projectId: "shop",
+      title: "Keep me",
+      status: "pending",
+    });
+    const client = await connect(LOCAL_PRINCIPAL, "shop", {
+      ops: registry,
+      gate: {
+        before: async (op) =>
+          op.name === "tasks.delete"
+            ? { summary: "Deletion needs your confirmation.", structured: { pending: true } }
+            : undefined,
+      },
+    });
+
+    const listed = await client.listTools();
+    expect(
+      listed.tools.find((tool) => tool.name === "boof_delete_task")?.outputSchema,
+    ).toBeUndefined();
+
+    const result = await call(client, "boof_delete_task", { taskId: "keep-me" });
+    expect(result.content[0]?.text).toBe("Deletion needs your confirmation.");
+    expect(result.content[1]?.text).toBe('{"pending":true}');
+    expect(result.structuredContent).toEqual({ pending: true });
+    expect(
+      (await call(client, "boof_get_task", { taskId: "keep-me" })).structuredContent?.frontmatter,
+    ).toMatchObject({ id: "keep-me" });
+  });
+
+  it("maps a refused error through the hook and leaves other errors unchanged", async () => {
+    await services.projects.create({ workingDirectory: repo, id: "shop" });
+    await call(await connect(LOCAL_PRINCIPAL), "boof_create_task", {
+      projectId: "shop",
+      title: "Review delete",
+      status: "pending",
+    });
+    const review = await clientPrincipal(["tasks:read", "tasks:write"], "review");
+    const client = await connect(review, "shop", {
+      ops: registry,
+      gate: {
+        refused: async (_op, _raw, err) =>
+          err.code === "forbidden_trust"
+            ? { summary: "This action needs your confirmation.", structured: { pending: true } }
+            : undefined,
+      },
+    });
+
+    const refused = await call(client, "boof_delete_task", { taskId: "review-delete" });
+    expect(refused.isError).not.toBe(true);
+    expect(refused.content[0]?.text).toBe("This action needs your confirmation.");
+    const missing = await call(client, "boof_get_task", { taskId: "missing" });
+    expect(missing.isError).toBe(true);
+    expect(missing.content[0]?.text).toContain("not_found");
+  });
+
+  it("lets after replace a successful operation result", async () => {
+    const client = await connect(LOCAL_PRINCIPAL, undefined, {
+      ops: registry,
+      gate: { after: async (_op, _raw, result) => ({ ...(result as object), replaced: true }) },
+    });
+    const result = await call(client, "boof_list_projects", {});
+    expect(result.structuredContent).toMatchObject({ replaced: true, projects: [] });
+  });
+
+  it("can disable resources and prompts", async () => {
+    const client = await connect(LOCAL_PRINCIPAL, undefined, { resources: false });
+    await expect(client.listResources()).rejects.toThrow();
+    await expect(client.listResourceTemplates()).rejects.toThrow();
+    await expect(client.listPrompts()).rejects.toThrow();
+  });
+
+  it("uses custom server instructions", async () => {
+    const client = await connect(LOCAL_PRINCIPAL, undefined, {
+      ops: registry,
+      instructions: "Only use the project tools provided.",
+    });
+    expect(client.getInstructions()).toBe("Only use the project tools provided.");
+  });
+
+  it("reports successful gate answers in the call audit", async () => {
+    const calls: ToolCallInfo[] = [];
+    const client = await connect(LOCAL_PRINCIPAL, undefined, {
+      ops: registry,
+      onCall: (info) => calls.push(info),
+      gate: {
+        before: async () => ({ summary: "Gated", structured: { gated: true } }),
+      },
+    });
+    await call(client, "boof_list_projects", {});
+    expect(calls[0]).toMatchObject({ ok: true, gated: true });
+  });
+
+  it("keeps gate hook failures from misreporting or retrying an operation", async () => {
+    const refusedCalls: string[] = [];
+    const before = await connect(LOCAL_PRINCIPAL, undefined, {
+      ops: registry,
+      gate: {
+        before: async () => {
+          throw new Error("before failed");
+        },
+        refused: async () => {
+          refusedCalls.push("called");
+          return undefined;
+        },
+      },
+    });
+    const beforeResult = await call(before, "boof_list_projects", {});
+    expect(beforeResult.isError).toBe(true);
+    expect(beforeResult.content[0]?.text).toContain("Internal error");
+    expect(refusedCalls).toEqual([]);
+
+    const after = await connect(LOCAL_PRINCIPAL, undefined, {
+      ops: registry,
+      gate: {
+        after: async () => {
+          throw new Error("after failed");
+        },
+      },
+    });
+    const afterResult = await call(after, "boof_list_projects", {});
+    expect(afterResult.isError).not.toBe(true);
+    expect(afterResult.structuredContent).toEqual({ projects: [] });
+
+    const refused = await connect(LOCAL_PRINCIPAL, undefined, {
+      ops: registry,
+      gate: {
+        before: async () => undefined,
+        refused: async () => {
+          throw new Error("refused hook failed");
+        },
+      },
+    });
+    const refusedResult = await call(refused, "boof_get_task", {
+      projectId: "shop",
+      taskId: "missing",
+    });
+    expect(refusedResult.isError).toBe(true);
+    expect(refusedResult.content[0]?.text).toContain("not_found");
+  });
+
+  it.each([true, false])(
+    "concierge write behavior stays restricted with external approval setting %s",
+    async (approvalRequired) => {
+      const settings = await new SettingsStore(root).load();
+      settings.security = SecuritySettingsSchema.parse({
+        externalTasksRequireApproval: approvalRequired,
+      });
+      await new SettingsStore(root).save(settings);
+      await services.projects.create({ workingDirectory: repo, id: "shop" });
+      await call(await connect(LOCAL_PRINCIPAL), "boof_create_task", {
+        projectId: "shop",
+        title: "Human task",
+        status: "pending",
+      });
+      const concierge = conciergePrincipal(LOCAL_PRINCIPAL, "shop");
+      const client = await connect(concierge, "shop", {
+        ops: conciergeOps(registry),
+        gate: {
+          refused: async (_op, _raw, err) =>
+            err.code === "forbidden_trust"
+              ? { summary: "Waiting for confirmation", structured: { pending: true } }
+              : undefined,
+        },
+      });
+      const listed = await client.listTools();
+      expect(
+        listed.tools.find((tool) => tool.name === "boof_create_task")?.outputSchema,
+      ).toBeUndefined();
+      const created = await call(client, "boof_create_task", {
+        title: "Assistant task",
+        status: "pending",
+      });
+      expect(created.structuredContent?.frontmatter.status).toBe("draft");
+      const humanUpdate = await call(client, "boof_update_task", {
+        taskId: "human-task",
+        prompt: "EVIL PROMPT",
+      });
+      expect(humanUpdate.content[0]?.text).toBe("Waiting for confirmation");
+      expect(humanUpdate.isError).not.toBe(true);
+      const saved = await call(await connect(LOCAL_PRINCIPAL, "shop"), "boof_get_task", {
+        taskId: "human-task",
+      });
+      expect(saved.structuredContent?.frontmatter.prompt).not.toBe("EVIL PROMPT");
+      const plan = await call(client, "boof_create_plan", {
+        title: "Assistant plan",
+        status: "active",
+      });
+      expect(plan.structuredContent?.status).toBe("draft");
+    },
+  );
 });

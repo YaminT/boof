@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,11 @@ beforeEach(async () => {
   await new SettingsStore(root).save(defaultSettings());
   const service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "demo" });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
 });
 
 afterEach(async () => {
@@ -207,6 +212,7 @@ describe("v1 conventions", () => {
       "plans.sync",
     );
     const remote = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       peerAddress: () => "10.1.2.3",
     });
@@ -245,6 +251,7 @@ describe("v1 conventions", () => {
       projects: ["demo"],
     });
     const remote = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "10.1.2.3",
@@ -273,6 +280,7 @@ describe("v1 conventions", () => {
   it("GET /whoami reports the expiry of the calling key, and none for a key that never expires", async () => {
     const authStore = new AuthStore(root);
     const remote = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service: new TaskService(root, new ToolRegistry([new MockTool()])),
       authStore,
       peerAddress: () => "10.1.2.3",

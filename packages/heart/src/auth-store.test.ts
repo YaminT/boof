@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setAccountFilesForTests } from "./data-root-mode.js";
 import { atomicWrite } from "./atomic.js";
 import {
   AuthStore,
@@ -13,6 +14,7 @@ import {
   LOCAL_PRINCIPAL,
   parseDuration,
   parseKey,
+  reservedIdWarning,
   sha256Hex,
   tightenAuthDir,
   type Principal,
@@ -32,6 +34,31 @@ afterEach(async () => {
 });
 
 describe("key format", () => {
+  it.skipIf(process.platform === "win32")(
+    "creates clients below an owned 0775 parent",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "boof-runner-parent-"));
+      const parent = join(base, "boof-runner");
+      const root = join(parent, "data");
+      try {
+        await mkdir(parent, { mode: 0o775 });
+        await chmod(parent, 0o775);
+        await mkdir(root, { mode: 0o700 });
+        setAccountFilesForTests({
+          username: "me",
+          group: `me:x:${process.getgid!()}:\n`,
+          passwd: `me:x:${process.getuid!()}:${process.getgid!()}::/home/me:/bin/sh\n`,
+        });
+        const local = new AuthStore(root);
+        const made = await local.create({ name: "parent test", scopes: ["tasks:read"] });
+        expect(await local.verify(made.key)).toMatchObject({ ok: true });
+      } finally {
+        setAccountFilesForTests(undefined);
+        await rm(base, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("is boof_<clientId>_<base64url(32 bytes)> and round-trips", async () => {
     const { client, key } = await store.create({ name: "CI Bot", scopes: ["tasks:read"] });
     expect(client.id).toBe("ci-bot");
@@ -66,6 +93,35 @@ describe("verification", () => {
     const unknown = await store.verify(formatKey("zzz", "x".repeat(43)));
     expect(unknown).toEqual({ ok: false, reason: "unknown" });
     expect(await store.verify("garbage")).toEqual({ ok: false, reason: "malformed" });
+  });
+
+  it("does not load or authenticate legacy clients in the concierge principal namespace", async () => {
+    const { client, key } = await store.create({ name: "legacy", scopes: ["tasks:read"] });
+    const raw = JSON.parse(await readFile(store.filePath, "utf8"));
+    const secret = parseKey(key)!.secret;
+    raw.clients[0].id = `concierge-${client.id}`;
+    await atomicWrite(store.filePath, JSON.stringify(raw, null, 2) + "\n", 0o600);
+    const reservedId = `concierge-${client.id}`;
+    expect(await store.get(reservedId)).toBeNull();
+    expect(await store.verify(formatKey(reservedId, secret))).toEqual({
+      ok: false,
+      reason: "unknown",
+    });
+  });
+
+  it("does not authenticate a legacy client holding the reserved id local-mcp, and warns until it is revoked", async () => {
+    const { key } = await store.create({ name: "old", scopes: ["tasks:read"] });
+    const raw = JSON.parse(await readFile(store.filePath, "utf8"));
+    const secret = parseKey(key)!.secret;
+    raw.clients[0].id = "local-mcp";
+    await atomicWrite(store.filePath, JSON.stringify(raw, null, 2) + "\n", 0o600);
+    expect(await store.verify(formatKey("local-mcp", secret))).toEqual({
+      ok: false,
+      reason: "unknown",
+    });
+    expect(reservedIdWarning(await store.list())).toMatch(/auth revoke local-mcp/);
+    await store.revoke("local-mcp");
+    expect(reservedIdWarning(await store.list())).toBeUndefined();
   });
 
   it("revoked clients fail immediately", async () => {
@@ -136,6 +192,25 @@ describe("storage", () => {
     expect(await store.list()).toEqual([]);
     expect(await store.mtimeMs()).toBe(0);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses unsafe auth paths with a repair hint",
+    async () => {
+      await store.create({ name: "a", scopes: ["tasks:read"] });
+      await chmod(join(root, "auth"), 0o770);
+      await expect(store.list()).rejects.toThrow(/chmod 700/);
+      await expect(store.verify("anything")).rejects.toThrow(/chmod 700/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a foreign-mode clients file instead of authenticating",
+    async () => {
+      const { key } = await store.create({ name: "a", scopes: ["tasks:read"] });
+      await chmod(store.filePath, 0o666);
+      await expect(store.verify(key)).rejects.toThrow(/chmod 600/);
+    },
+  );
 });
 
 describe("scopes and durations", () => {
@@ -171,6 +246,12 @@ describe("scopes and durations", () => {
 });
 
 describe("client ids", () => {
+  it("never issues an id that starts with the reserved concierge prefix", async () => {
+    const { client } = await store.create({ name: "concierge-local", scopes: [] });
+    expect(client.id.startsWith("client-concierge")).toBe(true);
+    expect(client.id.startsWith("concierge")).toBe(false);
+  });
+
   it("never gives a client the id local (the local principal's), and suffixes on request", async () => {
     const { client } = await store.create({ name: "Local", scopes: ["tasks:read"] });
     expect(client.id).not.toBe("local");

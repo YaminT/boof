@@ -17,6 +17,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-30; not started.</version>
+        <version number="2" status="done">81fe439 keeps the URL valid: a project switch stays on the equivalent screen and drops the old task or plan id (routeForProject), and a missing or deleted task or plan is replaced with its list. Corrections use history replace (correctedRoute in App.tsx, TaskDetailPage, PlanPage); 529564f records the browser check.</version>
       </versions>
     </status>
     <tests>

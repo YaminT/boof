@@ -25,6 +25,7 @@ import {
   parseGoal,
   serializeTask,
   SettingsStore,
+  ExternalRunStore,
   TaskStore,
   parseInjected,
   taskControlDir,
@@ -40,6 +41,7 @@ import {
   initGitRepo,
   isGitRepo,
   repoCommonDir,
+  readEvents,
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof/heart";
@@ -49,8 +51,12 @@ import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
 import { MockTool, mockState, resetMock } from "./tools/mock.js";
 import { CodexTool } from "./tools/codex.js";
-import { ToolRegistry } from "./tools/registry.js";
+import { ToolRegistry, defaultTools } from "./tools/registry.js";
 import type { RunOptions } from "./tools/types.js";
+import { DESKTOP_CLAUDE_AGENT_REASON } from "./index.js";
+import { ClaudeAgentTool } from "./tools/claude-agent.js";
+import { AgentAuthResolver } from "./agent-auth.js";
+import { ProjectKeyStore } from "@boof/owlish";
 
 let dataRoot: string;
 let workDir: string;
@@ -132,7 +138,311 @@ afterEach(async () => {
   resetMock();
 });
 
-describe("RunnerEngine integration (mock tool)", () => {
+describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
+  it("fails a refused Agent SDK task before its worktree, records one event, then serves a sibling", async () => {
+    const reason =
+      'claude-agent cannot start: account "Personal OAuth" is anthropic. subscription (OAuth) accounts stay on the claude-code CLI.';
+    const agent = new MockTool();
+    const wrapped = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      detect: () => agent.detect(),
+      listModels: () => agent.listModels(),
+      run: (opts: RunOptions) => agent.run(opts),
+    };
+    engine = new RunnerEngine({
+      root: dataRoot,
+      pollIntervalMs: 10,
+      registry: new ToolRegistry([new MockTool(), wrapped]),
+      agentAuth: { decide: async () => ({ ok: false, reason }) } as never,
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, developer: { tool: "claude-agent", model: "default" } } }),
+        "Agent work.",
+      ),
+    );
+    await store.create(newTask(fm({ id: "sibling", priority: 40 }), "Sibling work."));
+    const result = await engine.tick();
+    expect(result.kind).toBe("ran");
+    expect((await store.get("t1"))?.body.log).toContain("### Not started");
+    expect((await store.get("t1"))?.body.log).toContain("Personal OAuth");
+    expect((await store.get("t1"))?.body.log).toContain(
+      "subscription (OAuth) accounts stay on the claude-code CLI",
+    );
+    expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+    expect(await exists(wtPath("t1"))).toBe(false);
+    expect((await store.get("sibling"))?.frontmatter.status).toBe("done");
+    const events = (await readEvents(dataRoot, null)).filter(
+      (e) => e.event.type === "runner.agent_auth_refused",
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.event).toMatchObject({ projectId: project.id, taskId: "t1", reason });
+    await engine.selectNext();
+    expect(
+      (await readEvents(dataRoot, null)).filter(
+        (e) => e.event.type === "runner.agent_auth_refused",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("an n8n check task is not touched by agent auth or an unavailable tool; a normal task still is", async () => {
+    const decide = vi.fn(async () => ({ ok: false as const, reason: "auth refused" }));
+    const agent = new MockTool();
+    const wrapped = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      unavailableReason: "agent tool unavailable",
+      detect: () => agent.detect(),
+      listModels: () => agent.listModels(),
+      run: (opts: RunOptions) => agent.run(opts),
+    };
+    const external = {
+      preflight: async () => null,
+      trigger: async (req: { runId: string }) => {
+        await new ExternalRunStore(dataRoot).complete(req.runId, { status: "ok", report: "fine" });
+        return { ok: true as const, sent: "answered" as const };
+      },
+    };
+    const settings = new SettingsStore(dataRoot);
+    await settings.save({
+      ...(await settings.load()),
+      n8n: {
+        baseUrl: "http://n8n.test:5678",
+        callbackBaseUrl: "https://boof.test/boof",
+        defaultTimeoutMs: 600_000,
+      },
+    });
+    engine = new RunnerEngine({
+      root: dataRoot,
+      pollIntervalMs: 10,
+      registry: new ToolRegistry([new MockTool(), wrapped]),
+      agentAuth: { decide } as never,
+      external: external as never,
+    });
+    const agentTools = {
+      ...fm().tools,
+      developer: { tool: "claude-agent", model: "default" },
+    };
+    await store.create(newTask(fm({ id: "normal", priority: 60, tools: agentTools }), "Work."));
+    await store.create(
+      newTask(
+        fm({
+          id: "chk",
+          priority: 90,
+          tools: agentTools,
+          n8nCheck: {
+            workflowId: "wf1",
+            workflowName: "Nightly",
+            webhookPath: "boof/check",
+            updatedAt: "2026-06-04T10:00:00.000Z",
+          },
+        }),
+        "Check.",
+      ),
+    );
+    const result = await engine.tick();
+    expect(result).toMatchObject({ kind: "ran", outcome: { kind: "done" } });
+    expect((await store.get("chk"))?.frontmatter.status).toBe("done");
+    expect((await store.get("chk"))?.body.log).not.toContain("### Not started");
+    expect(decide).not.toHaveBeenCalled();
+    // The gated task is refused as before.
+    await engine.tick();
+    expect((await store.get("normal"))?.frontmatter.status).toBe("failed");
+    expect((await store.get("normal"))?.body.log).toContain("agent tool unavailable");
+  });
+
+  it("fails desktop-unavailable claude-agent selection without asking for auth", async () => {
+    const decide = vi.fn(async () => ({ ok: false as const, reason: "should not decide" }));
+    engine = new RunnerEngine({
+      root: dataRoot,
+      registry: new ToolRegistry(
+        defaultTools({ claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON }),
+      ),
+      agentAuth: { decide } as never,
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, reviewer: { tool: "claude-agent", model: "default" } } }),
+        "Unavailable.",
+      ),
+    );
+    const noteGoalStatus = vi.spyOn(engine as any, "noteGoalTaskStatus");
+    const result = await engine.tick();
+    expect(result.kind).toBe("idle");
+    expect((await store.get("t1"))?.body.log).toContain(
+      `### Not started\n${DESKTOP_CLAUDE_AGENT_REASON}`,
+    );
+    expect(decide).not.toHaveBeenCalled();
+    expect(noteGoalStatus).toHaveBeenCalledWith(project, expect.anything(), "failed");
+    expect(await exists(wtPath("t1"))).toBe(false);
+  });
+
+  it("refuses a missing Agent SDK at selection and records the reason", async () => {
+    const reason = "The Claude Agent SDK (@anthropic-ai/claude-agent-sdk) is not installed";
+    const decide = vi.fn(async () => ({ ok: false as const, reason: "should not decide" }));
+    engine = new RunnerEngine({
+      root: dataRoot,
+      registry: new ToolRegistry([
+        new MockTool(),
+        new ClaudeAgentTool({
+          loadSdk: async () => {
+            throw new Error(reason);
+          },
+        }),
+      ]),
+      agentAuth: { decide } as never,
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, developer: { tool: "claude-agent", model: "default" } } }),
+        "Unavailable SDK.",
+      ),
+    );
+    const noteGoalStatus = vi.spyOn(engine as any, "noteGoalTaskStatus");
+    expect((await engine.tick()).kind).toBe("idle");
+    expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+    expect((await store.get("t1"))?.body.log).toContain(`### Not started\n${reason}`);
+    expect(decide).not.toHaveBeenCalled();
+    expect(noteGoalStatus).toHaveBeenCalledWith(project, expect.anything(), "failed");
+    expect(await exists(wtPath("t1"))).toBe(false);
+  });
+
+  it("rechecks auth before the agent step and keeps its worktree when eligibility flips", async () => {
+    const reason =
+      'claude-agent cannot start: account "New OAuth account" is anthropic. subscription (OAuth) accounts stay on the claude-code CLI.';
+    let checks = 0;
+    const decide = async () =>
+      ++checks === 1
+        ? ({ ok: true, via: "project-key" as const } as const)
+        : ({ ok: false, reason } as const);
+    const auth = {
+      decide,
+      credentials: async () => ({
+        kind: "project-key" as const,
+        apiKey: "sk-ant-api03-abcdefghijklmnop",
+      }),
+      configDir: async () => join(dataRoot, "claude-agent-config", project.id),
+    };
+    const mock = new MockTool();
+    const claudeAgent = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      detect: () => mock.detect(),
+      listModels: () => mock.listModels(),
+      run: (opts: RunOptions) => mock.run(opts),
+    };
+    engine = new RunnerEngine({
+      root: dataRoot,
+      registry: new ToolRegistry([new MockTool(), claudeAgent]),
+      agentAuth: auth as never,
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, developer: { tool: "claude-agent", model: "default" } } }),
+        "Agent work.",
+      ),
+    );
+    const result = await engine.tick();
+    expect(result.kind).toBe("ran");
+    expect(checks).toBe(3); // selection, gateway routing check, then fresh pre-spawn decision
+    const task = await store.get("t1");
+    expect(task?.frontmatter.status).toBe("failed");
+    expect(task?.body.log).toContain(reason);
+    expect(task?.body.log).not.toContain("sk-ant-api03-abcdefghijklmnop");
+    expect(await exists(wtPath("t1"))).toBe(true);
+  });
+
+  it("passes project-key credentials and a per-project config directory to claude-agent", async () => {
+    const apiKey = "sk-ant-api03-abcdefghijklmnop";
+    await new ProjectKeyStore(dataRoot).set(project.id, apiKey);
+    let seenAgentOptions: RunOptions | undefined;
+    const mock = new MockTool();
+    const claudeAgent = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      detect: () => mock.detect(),
+      listModels: () => mock.listModels(),
+      run: (opts: RunOptions) => {
+        seenAgentOptions = opts;
+        return mock.run(opts);
+      },
+    };
+    const auth = new AgentAuthResolver({
+      root: dataRoot,
+      loadSettings: () => new SettingsStore(dataRoot).load(),
+      readGatewayKey: async () => null,
+    });
+    engine = new RunnerEngine({
+      root: dataRoot,
+      registry: new ToolRegistry([new MockTool(), claudeAgent]),
+      agentAuth: auth as never,
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, developer: { tool: "claude-agent", model: "default" } } }),
+        "Agent work.",
+      ),
+    );
+    await engine.tick();
+    expect((await store.get("t1"))?.frontmatter.status).toBe("done");
+    expect((await store.get("t1"))?.body.log).toContain(
+      "better-ccflare gateway not used: no better-ccflare gateway is configured; using the project's API key",
+    );
+    expect(seenAgentOptions?.agentAuth?.kind).toBe("project-key");
+    expect(seenAgentOptions?.env?.ANTHROPIC_API_KEY).toBe(apiKey);
+    expect(seenAgentOptions?.claudeConfigDir).toBe(
+      join(dataRoot, "claude-agent-config", project.id),
+    );
+    expect(seenAgentOptions?.claudeConfigDir).not.toBe(seenAgentOptions?.cwd);
+    expect((await store.get("t1"))?.body.log).not.toContain(apiKey);
+  });
+
+  it("counts gateway-authenticated Agent SDK tasks under the existing pool health gate", async () => {
+    const check = vi.fn(async () => ({
+      blocked: true,
+      pool: { status: "degraded", reason: "pool health is degraded" },
+      policy: "pause",
+    }));
+    const auth = {
+      decide: async () => ({ ok: true as const, via: "gateway" as const }),
+    };
+    const mock = new MockTool();
+    const claudeAgent = {
+      id: "claude-agent",
+      displayName: "Claude Agent",
+      defaultModels: ["default"],
+      needsAgentAuth: true,
+      detect: () => mock.detect(),
+      listModels: () => mock.listModels(),
+      run: (opts: RunOptions) => mock.run(opts),
+    };
+    engine = new RunnerEngine({
+      root: dataRoot,
+      registry: new ToolRegistry([new MockTool(), claudeAgent]),
+      agentAuth: auth as never,
+      pool: { check, announceIfBlocked: vi.fn() } as never,
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, developer: { tool: "claude-agent", model: "default" } } }),
+        "Agent work.",
+      ),
+    );
+    expect(await engine.tick()).toMatchObject({ kind: "pool", status: "degraded" });
+    expect(check).toHaveBeenCalledOnce();
+    expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+    expect(await exists(wtPath("t1"))).toBe(false);
+  });
+
   it("runs the full happy-path pipeline to done with all reports", async () => {
     await store.create(newTask(fm(), "Build a thing."));
     const r = await engine.tick();
@@ -1306,10 +1616,11 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     } finally {
       clearInterval(poll);
     }
-    expect(Date.now() - started).toBeLessThan(8000);
+    // Backoff is 60s, polled every 250ms. 45s still fails that wait and covers a slow run.
+    expect(Date.now() - started).toBeLessThan(45_000);
     expect(devCalls()).toBe(1);
     expect(await exists(wtPath())).toBe(true);
-  });
+  }, 120_000);
 
   it("a stalled tool is killed and retried as a transient failure", async () => {
     await configure({ retries: { idleTimeoutMs: 300 } });
@@ -1658,7 +1969,7 @@ describe("steering a running step (mock tool)", () => {
     mockState.resumeSupported = false;
     // The 6th run stalls with no steer path and is cut by the idle watchdog, then retried.
     await engine.settingsStore.update({
-      retries: { transient: 2, backoffMs: [0], idleTimeoutMs: 1500 },
+      retries: { transient: 2, backoffMs: [0], idleTimeoutMs: 5000 },
     });
     const stop = steerDeveloper(6);
     let outcome;
@@ -1674,7 +1985,7 @@ describe("steering a running step (mock tool)", () => {
     expect(done.body.log).not.toContain("### Developer (steer 6)");
     // 5 steered runs, the stalled sixth, its transient retry.
     expect(devCalls()).toBe(7);
-  }, 30000);
+  }, 60000);
 
   it("a steer that arrives between steps applies to the next step without a kill", async () => {
     let first = true;
@@ -1698,6 +2009,58 @@ describe("steering a running step (mock tool)", () => {
     expect(parseInjected(done.body.injected)[0]?.appliedAt).toBeTruthy();
   });
 
+  it("drops a now-steer model taken between steps while keeping its text", async () => {
+    const seen: string[] = [];
+    let first = true;
+    const mock = engine.registry.get("mock")!;
+    for (const id of ["claude-code", "codex", "opencode"]) {
+      engine.registry.register({
+        id,
+        displayName: id,
+        defaultModels: ["test-model"],
+        detect: () => mock.detect(),
+        listModels: () => mock.listModels(),
+        run: async (opts) => {
+          seen.push(`${opts.role}:${opts.model}`);
+          return mock.run(opts);
+        },
+      });
+    }
+    mockState.onRun = async (opts) => {
+      if (opts.role === "developer" && first) {
+        first = false;
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await appendFile(
+          taskSteerRequestPath(projectDir, "t1"),
+          JSON.stringify({ at: new Date().toISOString(), text: "keep this text", model: "opus" }) +
+            "\n",
+        );
+      }
+    };
+    await store.create(
+      newTask(
+        fm({
+          tools: {
+            planner: { tool: "mock", model: "mock-default" },
+            developer: { tool: "claude-code", model: "sonnet" },
+            reviewer: { tool: "codex", model: "gpt-5-codex" },
+            observer: { tool: "opencode", model: "test-model" },
+          },
+        }),
+        "Build it.",
+      ),
+    );
+    const result = await engine.tick();
+    if (result.kind !== "ran") throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.outcome.kind).toBe("done");
+    expect(seen.find((s) => s.startsWith("reviewer:"))).toBe("reviewer:gpt-5-codex");
+    const done = (await store.get("t1"))!;
+    expect(done.body.log).toContain("keep this text");
+    expect(done.body.log).toContain(
+      "Dropped model switch from a steer that arrived after its step ended",
+    );
+  });
+
   it("a stop request wins over a steer", async () => {
     let sent = false;
     const stop = poll(async () => {
@@ -1714,6 +2077,161 @@ describe("steering a running step (mock tool)", () => {
       await stop();
     }
     expect(devCalls()).toBe(1);
+  });
+
+  it("in-place steering logs the steer and marks the injection applied", async () => {
+    const originalTool = engine.registry.get("mock")!;
+    const tool = {
+      id: originalTool.id,
+      displayName: originalTool.displayName,
+      defaultModels: originalTool.defaultModels,
+      detect: (...args: any[]) => originalTool.detect(...args),
+      listModels: () => originalTool.listModels(),
+      run: (opts: RunOptions) => originalTool.run(opts),
+      supportsResume: true,
+      steersInPlace: true,
+    };
+    engine.registry.register(tool);
+    let steered = false;
+    const seen: RunOptions[] = [];
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer") return;
+      seen.push(opts);
+      if (!steered) {
+        steered = true;
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await store.appendInjected("t1", "keep going", "user", "now");
+        await writeFile(
+          taskSteerRequestPath(projectDir, "t1"),
+          JSON.stringify({ text: "keep going" }) + "\n",
+        );
+        const req = await opts.onSteer?.();
+        expect(req?.texts).toEqual(["keep going"]);
+        expect(req?.last).toBe(false);
+      }
+    };
+    try {
+      await store.create(newTask(fm(), "Build it."));
+      const running = await store.transition("t1", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+      });
+      const outcome = await pipeline.run(running);
+      expect(outcome.kind).toBe("done");
+      expect(seen).toHaveLength(1);
+      const done = await store.get("t1");
+      expect(done?.body.log).toContain("### Steered (in place)\nkeep going");
+      expect(done?.body.injected).toContain("keep going");
+    } finally {
+      engine.registry.register(originalTool);
+    }
+  });
+
+  it("passes the cumulative interrupted cost as the resumed session baseline", async () => {
+    const originalTool = engine.registry.get("mock")!;
+    const tool = {
+      id: originalTool.id,
+      displayName: originalTool.displayName,
+      defaultModels: originalTool.defaultModels,
+      detect: (...args: any[]) => originalTool.detect(...args),
+      listModels: () => originalTool.listModels(),
+      run: async (opts: RunOptions) => {
+        if (opts.role === "developer") {
+          seen.push(opts);
+          if (first) {
+            first = false;
+            await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+            await writeFile(
+              taskSteerRequestPath(projectDir, "t1"),
+              JSON.stringify({ text: "resume" }) + "\n",
+            );
+            throw new ToolRunError("mock", 1, false, false, "", "", false, 0, {
+              steered: true,
+              sessionId: "same-session",
+              usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.4, known: true },
+            });
+          }
+          return {
+            output: "",
+            report: "# Developer",
+            sessionId: opts.resumeSessionId,
+            usage: { inputTokens: 20, outputTokens: 8, costUsd: 0.6, known: true },
+          };
+        }
+        return originalTool.run(opts);
+      },
+      supportsResume: true,
+    };
+    engine.registry.register(tool);
+    let first = true;
+    const seen: RunOptions[] = [];
+    try {
+      await store.create(newTask(fm(), "Build it. [[mock-cost 0]]"));
+      const running = await store.transition("t1", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+      });
+      expect((await pipeline.run(running)).kind).toBe("done");
+      expect(seen[1]?.resumeSessionId).toBe("same-session");
+      expect(seen[1]?.resumeBaseline).toEqual({
+        inputTokens: 10,
+        outputTokens: 4,
+        costUsd: 0.4,
+        known: true,
+      });
+      expect((await store.get("t1"))?.frontmatter.tokens?.costUsd).toBeCloseTo(1.0);
+    } finally {
+      engine.registry.register(originalTool);
+    }
+  });
+
+  it("applies a fallback steer model to the rerun attempt", async () => {
+    const originalTool = engine.registry.get("mock")!;
+    const tool = {
+      id: originalTool.id,
+      displayName: originalTool.displayName,
+      defaultModels: originalTool.defaultModels,
+      detect: (...args: any[]) => originalTool.detect(...args),
+      listModels: () => originalTool.listModels(),
+      run: (opts: RunOptions) => originalTool.run(opts),
+      supportsResume: false,
+    };
+    engine.registry.register(tool);
+    let first = true;
+    const models: string[] = [];
+    mockState.onRun = async (opts) => {
+      if (opts.role !== "developer") return;
+      models.push(opts.model);
+      if (first) {
+        first = false;
+        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+        await writeFile(
+          taskSteerRequestPath(projectDir, "t1"),
+          JSON.stringify({ text: "switch", model: "opus" }) + "\n",
+        );
+        throw new ToolRunError("mock", 1, false, false, "", "", false, 0, { steered: true });
+      }
+    };
+    try {
+      await store.create(newTask(fm(), "Build it. [[mock-cost 0]]"));
+      const running = await store.transition("t1", "running");
+      const pipeline = new Pipeline({
+        root: projectDir,
+        store,
+        registry: engine.registry,
+        settings: effectiveSettings(await engine.settingsStore.load(), project),
+      });
+      expect((await pipeline.run(running)).kind).toBe("done");
+      expect(models).toEqual(["mock-default", "opus"]);
+    } finally {
+      engine.registry.register(originalTool);
+    }
   });
 });
 

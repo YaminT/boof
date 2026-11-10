@@ -48,6 +48,7 @@ describe("spendFor", () => {
       limitUsd: null,
       fraction: null,
     });
+    expect(spendFor(budget([scope("global", 3, 0)]), null)?.fraction).toBeNull();
   });
 });
 
@@ -55,6 +56,7 @@ describe("scopeLabel", () => {
   it("names scopes for people", () => {
     expect(scopeLabel("global")).toBe("All work");
     expect(scopeLabel("tool:codex")).toBe("tool codex");
+    expect(scopeLabel("tool:concierge")).toBe("Console assistant (concierge)");
     expect(
       scopeLabel("project:alpha/tool:codex", (id) => (id === "alpha" ? "Alpha" : undefined)),
     ).toBe("Project Alpha, tool codex");

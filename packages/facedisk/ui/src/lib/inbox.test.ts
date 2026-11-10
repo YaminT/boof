@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlanSummary, TaskView } from "../api.js";
 import { inboxCount, inboxGroups } from "./inbox.js";
-import type { NeedsYouItem } from "./task-groups.js";
+import { groupTasks, type NeedsYouItem } from "./task-groups.js";
 
 const task = (projectId: string, id: string, created = "2026-01-01T00:00:00.000Z"): TaskView =>
   ({ projectId, frontmatter: { id, title: id, created } }) as unknown as TaskView;
@@ -42,6 +42,16 @@ describe("inboxGroups", () => {
     ];
     const g = inboxGroups([task("alpha", "a1")], { pid: "alpha", needsYou }, projects);
     expect(g[0].items.map((i) => i.kind)).toEqual(["question", "proposed", "draft-plan"]);
+  });
+  it("includes a proposed draft from the shared Needs you groups", () => {
+    const proposed = {
+      ...task("alpha", "proposal"),
+      frontmatter: { id: "proposal", title: "proposal", status: "draft", origin: { kind: "api" } },
+    } as unknown as TaskView;
+    const needsYou = groupTasks([proposed]).needsYou;
+    const groups = inboxGroups([], { pid: "alpha", needsYou }, projects);
+    expect(groups[0].items).toEqual([{ kind: "proposed", task: proposed }]);
+    expect(inboxCount(groups)).toBe(1);
   });
   it("sorts questions oldest first", () => {
     const g = inboxGroups(

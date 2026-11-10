@@ -119,6 +119,7 @@
                   "invalid_hierarchy",
                   "has_children",
                   "has_tasks",
+                  "project_modified",
                   "epic_modified",
                   "plan_version_conflict",
                   "settings_modified",
@@ -133,9 +134,21 @@
                   "host_not_allowed",
                   "payload_too_large",
                   "unsupported_media_type",
+                  "concierge_unavailable",
+                  "concierge_busy",
+                  "concierge_limit",
+                  "budget_exceeded",
+                  "change_not_found",
+                  "change_stale",
+                  "change_expired",
+                  "auth_store_unavailable",
+                  "browser_sessions_unavailable",
                   "rate_limited",
                   "not_configured",
                   "gateway_error",
+                  "n8n_not_configured",
+                  "upstream_failed",
+                  "invalid_step_token",
                   "internal"
                 ],
                 "type": "string"
@@ -459,6 +472,37 @@
               "reason",
               "nextAvailableAt",
               "by"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "projectId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "taskId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "type": {
+                "const": "runner.agent_auth_refused",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "ts",
+              "projectId",
+              "taskId",
+              "reason"
             ],
             "type": "object"
           },
@@ -1223,6 +1267,23 @@
             },
             "type": "object"
           },
+          "claudeAgent": {
+            "additionalProperties": false,
+            "properties": {
+              "auth": {
+                "default": "gateway",
+                "enum": [
+                  "gateway",
+                  "project-key"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "auth"
+            ],
+            "type": "object"
+          },
           "created": {
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -1231,6 +1292,67 @@
           "defaultBase": {
             "minLength": 1,
             "type": "string"
+          },
+          "externalSteps": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "enum": [
+                    "after-planner",
+                    "after-developer",
+                    "after-review"
+                  ],
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "label": {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "onFailure": {
+                  "default": "fail",
+                  "enum": [
+                    "fail",
+                    "continue"
+                  ],
+                  "type": "string"
+                },
+                "sendDiff": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "timeoutMs": {
+                  "maximum": 86400000,
+                  "minimum": 10000,
+                  "type": "integer"
+                },
+                "webhookPath": {
+                  "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                  "type": "string"
+                },
+                "workflowId": {
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "at",
+                "workflowId",
+                "webhookPath",
+                "onFailure",
+                "sendDiff"
+              ],
+              "type": "object"
+            },
+            "maxItems": 10,
+            "type": "array"
           },
           "id": {
             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -1491,6 +1613,67 @@
             ],
             "type": "object"
           },
+          "concierge": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "idleMinutes": {
+                "default": 30,
+                "maximum": 240,
+                "minimum": 5,
+                "type": "integer"
+              },
+              "maxTurns": {
+                "default": 8,
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "messagesPerMinute": {
+                "default": 6,
+                "maximum": 60,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "model": {
+                "default": "default",
+                "pattern": "^[A-Za-z0-9._:\\[\\]\\/-]{1,100}$",
+                "type": "string"
+              },
+              "perConversationUsd": {
+                "default": 2,
+                "exclusiveMinimum": 0,
+                "maximum": 500,
+                "type": "number"
+              },
+              "perMessageUsd": {
+                "default": 0.25,
+                "exclusiveMinimum": 0,
+                "maximum": 50,
+                "type": "number"
+              },
+              "timeoutMs": {
+                "default": 120000,
+                "maximum": 600000,
+                "minimum": 10000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "enabled",
+              "model",
+              "perMessageUsd",
+              "perConversationUsd",
+              "messagesPerMinute",
+              "maxTurns",
+              "timeoutMs",
+              "idleMinutes"
+            ],
+            "type": "object"
+          },
           "defaultProject": {
             "anyOf": [
               {
@@ -1742,7 +1925,7 @@
             "type": "object"
           },
           "schemaVersion": {
-            "const": 2,
+            "const": 3,
             "type": "number"
           },
           "security": {
@@ -2248,6 +2431,36 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "n8nCheck": {
+            "additionalProperties": false,
+            "properties": {
+              "updatedAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "type": "string"
+              },
+              "webhookPath": {
+                "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                "type": "string"
+              },
+              "workflowId": {
+                "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                "type": "string"
+              },
+              "workflowName": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "workflowId",
+              "workflowName",
+              "webhookPath",
+              "updatedAt"
+            ],
+            "type": "object"
           },
           "origin": {
             "additionalProperties": false,
@@ -2898,9 +3111,114 @@
         "x-mcp-tool": "boof_set_account_thresholds"
       }
     },
+    "/accounts/agent-sdk": {
+      "get": {
+        "description": "Checks whether every better-ccflare account uses API-key authentication. Input: optional refresh. No side effects.",
+        "operationId": "accounts.agentSdk",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "blocking": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "why": {
+                            "enum": [
+                              "subscription",
+                              "oauth-token",
+                              "unknown-type"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "provider",
+                          "why"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "checkedAt": {
+                      "type": "string"
+                    },
+                    "gateway": {
+                      "enum": [
+                        "absent",
+                        "checked"
+                      ],
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "gateway",
+                    "allowed",
+                    "reason",
+                    "blocking",
+                    "checkedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Claude Agent SDK eligibility",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_agent_sdk_eligibility"
+      }
+    },
     "/accounts/health": {
       "get": {
-        "description": "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
+        "description": "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null) and where the claude-agent key comes from (`agentKeySource`); neither key is ever returned. Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
         "operationId": "accounts.health",
         "parameters": [
           {
@@ -2919,6 +3237,21 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "agentKeySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "file",
+                            "env"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Where the api-only claude-agent key comes from; null when none is set. The key is never returned."
+                    },
                     "configured": {
                       "type": "boolean"
                     },
@@ -3063,6 +3396,7 @@
                     "url",
                     "healthGate",
                     "keySource",
+                    "agentKeySource",
                     "pool"
                   ],
                   "type": "object"
@@ -3804,6 +4138,9 @@
                             ],
                             "type": "string"
                           },
+                          "unavailableReason": {
+                            "type": "string"
+                          },
                           "version": {
                             "type": "string"
                           }
@@ -3876,6 +4213,9 @@
                               "available",
                               "unavailable"
                             ],
+                            "type": "string"
+                          },
+                          "unavailableReason": {
                             "type": "string"
                           },
                           "version": {
@@ -4013,6 +4353,9 @@
                                     ],
                                     "type": "string"
                                   },
+                                  "unavailableReason": {
+                                    "type": "string"
+                                  },
                                   "version": {
                                     "type": "string"
                                   }
@@ -4067,6 +4410,9 @@
                               "type": "object"
                             },
                             "type": "array"
+                          },
+                          "unavailableReason": {
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -4163,6 +4509,588 @@
         "x-mcp-tool": "boof_refresh_models"
       }
     },
+    "/n8n": {
+      "delete": {
+        "description": "Removes the n8n connection: settings.n8n, the stored API key and webhook secret, and the workflow cache. Projects keep their externalSteps (those steps then fail with \"n8n is not configured\"); the answer lists those projects. Needs admin and a trusted, project-unrestricted client.",
+        "operationId": "n8n.delete",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    },
+                    "projectsWithSteps": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "projectsWithSteps"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Disconnect n8n",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_delete_n8n"
+      },
+      "get": {
+        "description": "Returns how boof is connected to n8n: the URLs, the timeout, the check settings, and whether an API key and a webhook secret are set. Never returns the key or the secret. { configured: false } when n8n is not set up. No side effects, no call to n8n.",
+        "operationId": "n8n.get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeySet": {
+                      "type": "boolean"
+                    },
+                    "apiKeySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "env",
+                            "file"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "baseUrl": {
+                      "type": "string"
+                    },
+                    "callbackBaseUrl": {
+                      "type": "string"
+                    },
+                    "checks": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "autoQueue": {
+                          "type": "boolean"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "pollIntervalMs": {
+                          "type": "number"
+                        },
+                        "projectId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "projectId",
+                        "autoQueue",
+                        "pollIntervalMs"
+                      ],
+                      "type": "object"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "defaultTimeoutMs": {
+                      "type": "number"
+                    },
+                    "webhookBaseUrl": {
+                      "type": "string"
+                    },
+                    "webhookSecretSet": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "apiKeySet",
+                    "apiKeySource",
+                    "webhookSecretSet"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get the n8n connection",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_get_n8n"
+      },
+      "put": {
+        "description": "Connects boof to an n8n instance or changes the connection. The first call needs baseUrl and callbackBaseUrl (the address n8n uses to reach boof, proxy prefix included) and returns the webhook header secret once as `secret`. baseUrl and the host of webhookBaseUrl may be on loopback or a LAN when they are the n8n host itself; any other private webhook host must be listed in security.allowedPrivateWebhookHosts. Neither may be this boof server. apiKey is write-only and stored in n8n/secrets.json (mode 0600). rotateWebhookSecret returns a new secret once. checks.projectId must exist. Changing the origin of baseUrl without a new apiKey removes the stored key and the workflow cache (`notice` says so). Needs admin and a trusted, project-unrestricted client: n8n steps send task content to n8n.",
+        "operationId": "n8n.update",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "apiKey": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[\\x21-\\x7e]{1,2048}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The n8n API key. Write-only: stored apart from settings.json (n8n/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_N8N_API_KEY, when set, still wins).",
+                    "writeOnly": true
+                  },
+                  "baseUrl": {
+                    "maxLength": 2000,
+                    "type": "string"
+                  },
+                  "callbackBaseUrl": {
+                    "maxLength": 2000,
+                    "type": "string"
+                  },
+                  "checks": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "autoQueue": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "enabled": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "pollIntervalMs": {
+                            "default": 300000,
+                            "maximum": 86400000,
+                            "minimum": 60000,
+                            "type": "integer"
+                          },
+                          "projectId": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "projectId"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "defaultTimeoutMs": {
+                    "maximum": 86400000,
+                    "minimum": 10000,
+                    "type": "integer"
+                  },
+                  "rotateWebhookSecret": {
+                    "description": "Make a new webhook header secret (X-Boof-Token). It is returned once, as `secret`; the first configuration makes one anyway.",
+                    "type": "boolean"
+                  },
+                  "webhookBaseUrl": {
+                    "anyOf": [
+                      {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeySet": {
+                      "type": "boolean"
+                    },
+                    "apiKeySource": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "env",
+                            "file"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "baseUrl": {
+                      "type": "string"
+                    },
+                    "callbackBaseUrl": {
+                      "type": "string"
+                    },
+                    "checks": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "autoQueue": {
+                          "type": "boolean"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "pollIntervalMs": {
+                          "type": "number"
+                        },
+                        "projectId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "projectId",
+                        "autoQueue",
+                        "pollIntervalMs"
+                      ],
+                      "type": "object"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "defaultTimeoutMs": {
+                      "type": "number"
+                    },
+                    "notice": {
+                      "type": "string"
+                    },
+                    "secret": {
+                      "type": "string"
+                    },
+                    "webhookBaseUrl": {
+                      "type": "string"
+                    },
+                    "webhookSecretSet": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "apiKeySet",
+                    "apiKeySource",
+                    "webhookSecretSet"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Configure n8n",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "admin",
+        "x-mcp-tool": "boof_update_n8n"
+      }
+    },
+    "/n8n/workflows": {
+      "get": {
+        "description": "Lists the n8n workflows from the last refresh (cache only; no call to n8n). Each has its webhooks (only a single POST webhook is `usable` for a step) and an editor link. { configured: false, workflows: [] } when n8n is not set up; `lastError` shows why the last refresh failed.",
+        "operationId": "n8n.workflows.list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "fetchedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "workflows": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "editorUrl": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "webhooks": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "method": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "usable": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "method",
+                                "usable"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "active",
+                          "updatedAt",
+                          "tags",
+                          "webhooks",
+                          "editorUrl"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "fetchedAt",
+                    "workflows"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List n8n workflows",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "settings:read",
+        "x-mcp-tool": "boof_list_n8n_workflows"
+      }
+    },
+    "/n8n/workflows/refresh": {
+      "post": {
+        "description": "Fetches the workflow list from n8n (its public API, with the stored API key) and rewrites the cache. 409 n8n_not_configured when n8n is not set up; 502 upstream_failed with details.reason (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>) when n8n cannot be read, and the cached list stays.",
+        "operationId": "n8n.workflows.refresh",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "fetchedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "workflows": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "editorUrl": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "webhooks": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "method": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "usable": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "method",
+                                "usable"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "active",
+                          "updatedAt",
+                          "tags",
+                          "webhooks",
+                          "editorUrl"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "fetchedAt",
+                    "workflows"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Refresh the n8n workflow list",
+        "tags": [
+          "n8n"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_refresh_n8n_workflows"
+      }
+    },
     "/projects": {
       "get": {
         "description": "Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.",
@@ -4188,6 +5116,9 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "anthropicApiKeySet": {
+                            "type": "boolean"
+                          },
                           "archived": {
                             "default": false,
                             "type": "boolean"
@@ -4227,6 +5158,23 @@
                             },
                             "type": "object"
                           },
+                          "claudeAgent": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "auth": {
+                                "default": "gateway",
+                                "enum": [
+                                  "gateway",
+                                  "project-key"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "auth"
+                            ],
+                            "type": "object"
+                          },
                           "created": {
                             "format": "date-time",
                             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -4242,6 +5190,67 @@
                           "defaultBase": {
                             "minLength": 1,
                             "type": "string"
+                          },
+                          "externalSteps": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "at": {
+                                  "enum": [
+                                    "after-planner",
+                                    "after-developer",
+                                    "after-review"
+                                  ],
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "maxLength": 80,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "onFailure": {
+                                  "default": "fail",
+                                  "enum": [
+                                    "fail",
+                                    "continue"
+                                  ],
+                                  "type": "string"
+                                },
+                                "sendDiff": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "timeoutMs": {
+                                  "maximum": 86400000,
+                                  "minimum": 10000,
+                                  "type": "integer"
+                                },
+                                "webhookPath": {
+                                  "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                                  "type": "string"
+                                },
+                                "workflowId": {
+                                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "label",
+                                "at",
+                                "workflowId",
+                                "webhookPath",
+                                "onFailure",
+                                "sendDiff"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 10,
+                            "type": "array"
                           },
                           "id": {
                             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -4453,6 +5462,7 @@
                           "origin",
                           "created",
                           "updated",
+                          "anthropicApiKeySet",
                           "currentBranch"
                         ],
                         "type": "object"
@@ -4900,6 +5910,9 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "anthropicApiKeySet": {
+                      "type": "boolean"
+                    },
                     "archived": {
                       "default": false,
                       "type": "boolean"
@@ -4939,6 +5952,23 @@
                       },
                       "type": "object"
                     },
+                    "claudeAgent": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "auth": {
+                          "default": "gateway",
+                          "enum": [
+                            "gateway",
+                            "project-key"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "auth"
+                      ],
+                      "type": "object"
+                    },
                     "created": {
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -4954,6 +5984,67 @@
                     "defaultBase": {
                       "minLength": 1,
                       "type": "string"
+                    },
+                    "externalSteps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "at": {
+                            "enum": [
+                              "after-planner",
+                              "after-developer",
+                              "after-review"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "label": {
+                            "maxLength": 80,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "onFailure": {
+                            "default": "fail",
+                            "enum": [
+                              "fail",
+                              "continue"
+                            ],
+                            "type": "string"
+                          },
+                          "sendDiff": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "timeoutMs": {
+                            "maximum": 86400000,
+                            "minimum": 10000,
+                            "type": "integer"
+                          },
+                          "webhookPath": {
+                            "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                            "type": "string"
+                          },
+                          "workflowId": {
+                            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "at",
+                          "workflowId",
+                          "webhookPath",
+                          "onFailure",
+                          "sendDiff"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 10,
+                      "type": "array"
                     },
                     "id": {
                       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -5165,13 +6256,21 @@
                     "origin",
                     "created",
                     "updated",
+                    "anthropicApiKeySet",
                     "currentBranch"
                   ],
                   "type": "object"
                 }
               }
             },
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -5192,7 +6291,7 @@
         "x-mcp-tool": "boof_get_project"
       },
       "put": {
-        "description": "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json.",
+        "description": "Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.",
         "operationId": "projects.update",
         "parameters": [
           {
@@ -5205,6 +6304,15 @@
               "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
               "type": "string"
             }
+          },
+          {
+            "description": "The ETag of GET /projects/{projectId} you last saw, e.g. W/\"2026-10-01T00:00:00.000Z\". A project that changed since answers 409 project_modified.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -5213,6 +6321,19 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "anthropicApiKey": {
+                    "anyOf": [
+                      {
+                        "pattern": "^sk-ant-api\\d{2}-[\\x21-\\x7e]{16,500}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Write-only; stored in owlish/project-keys.json (0600), never returned; null removes it",
+                    "writeOnly": true
+                  },
                   "archived": {
                     "type": "boolean"
                   },
@@ -5266,11 +6387,103 @@
                       }
                     ]
                   },
+                  "claudeAgent": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "auth": {
+                            "default": "gateway",
+                            "enum": [
+                              "gateway",
+                              "project-key"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "defaultBase": {
                     "anyOf": [
                       {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "expectedUpdated": {
+                    "description": "The project's `updated` stamp you last saw (HTTP: If-Match with the ETag); a changed project answers 409 project_modified.",
+                    "maxLength": 100,
+                    "type": "string"
+                  },
+                  "externalSteps": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "at": {
+                              "enum": [
+                                "after-planner",
+                                "after-developer",
+                                "after-review"
+                              ],
+                              "type": "string"
+                            },
+                            "id": {
+                              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "maxLength": 80,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "onFailure": {
+                              "default": "fail",
+                              "enum": [
+                                "fail",
+                                "continue"
+                              ],
+                              "type": "string"
+                            },
+                            "sendDiff": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "timeoutMs": {
+                              "maximum": 86400000,
+                              "minimum": 10000,
+                              "type": "integer"
+                            },
+                            "webhookPath": {
+                              "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                              "type": "string"
+                            },
+                            "workflowId": {
+                              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "label",
+                            "at",
+                            "workflowId",
+                            "webhookPath"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 10,
+                        "type": "array"
                       },
                       {
                         "type": "null"
@@ -5482,11 +6695,361 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Project"
+                  "additionalProperties": false,
+                  "properties": {
+                    "anthropicApiKeySet": {
+                      "type": "boolean"
+                    },
+                    "archived": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "brief": {
+                      "type": "string"
+                    },
+                    "budget": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "onExceed": {
+                          "enum": [
+                            "pause",
+                            "fail"
+                          ],
+                          "type": "string"
+                        },
+                        "perProjectDayUsd": {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        "perTaskUsd": {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        "perToolDayUsd": {
+                          "additionalProperties": {
+                            "exclusiveMinimum": 0,
+                            "type": "number"
+                          },
+                          "propertyNames": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "claudeAgent": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "auth": {
+                          "default": "gateway",
+                          "enum": [
+                            "gateway",
+                            "project-key"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "auth"
+                      ],
+                      "type": "object"
+                    },
+                    "created": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "defaultBase": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "externalSteps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "at": {
+                            "enum": [
+                              "after-planner",
+                              "after-developer",
+                              "after-review"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "label": {
+                            "maxLength": 80,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "onFailure": {
+                            "default": "fail",
+                            "enum": [
+                              "fail",
+                              "continue"
+                            ],
+                            "type": "string"
+                          },
+                          "sendDiff": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "timeoutMs": {
+                            "maximum": 86400000,
+                            "minimum": 10000,
+                            "type": "integer"
+                          },
+                          "webhookPath": {
+                            "pattern": "^(?!\\/)(?!.*\\.\\.)(?!.*\\/\\/)(?!(?:.*\\/)?\\.(?:\\/|$))[A-Za-z0-9._~:/-]{1,200}$",
+                            "type": "string"
+                          },
+                          "workflowId": {
+                            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "at",
+                          "workflowId",
+                          "webhookPath",
+                          "onFailure",
+                          "sendDiff"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 10,
+                      "type": "array"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "labels": {
+                      "default": [],
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "origin": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "ui",
+                            "cli",
+                            "api",
+                            "migration"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "paused": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "planWriteBack": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "retries": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "backoffMs": {
+                          "items": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": "array"
+                        },
+                        "idleTimeoutMs": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "transient": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "review": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gate": {
+                          "type": "boolean"
+                        },
+                        "maxFixRounds": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxInlineDiffBytes": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "roles": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "developer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "observer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "planner": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "reviewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "updated": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "workingDirectory": {
+                      "type": "string"
+                    },
+                    "worktree": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "onDone": {
+                          "enum": [
+                            "keep-branch",
+                            "keep",
+                            "delete"
+                          ],
+                          "type": "string"
+                        },
+                        "onFailure": {
+                          "enum": [
+                            "keep",
+                            "delete"
+                          ],
+                          "type": "string"
+                        },
+                        "root": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "workingDirectory",
+                    "paused",
+                    "archived",
+                    "planWriteBack",
+                    "labels",
+                    "origin",
+                    "created",
+                    "updated",
+                    "anthropicApiKeySet"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -5552,6 +7115,753 @@
         ],
         "x-boof-scope": "projects:write",
         "x-mcp-tool": "boof_archive_project"
+      }
+    },
+    "/projects/{projectId}/concierge": {
+      "get": {
+        "description": "Gets assistant availability and the current conversation for a project. Inputs: projectId. No side effects.",
+        "operationId": "concierge.status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "conversation": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "messages": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "pending": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "blocked": {
+                                    "type": "string"
+                                  },
+                                  "destructive": {
+                                    "type": "boolean"
+                                  },
+                                  "details": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "error": {
+                                    "type": "string"
+                                  },
+                                  "expiresAt": {
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "op": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "enum": [
+                                      "confirm",
+                                      "needs-approval"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "status": {
+                                    "enum": [
+                                      "pending",
+                                      "applying",
+                                      "applied",
+                                      "discarded",
+                                      "expired",
+                                      "failed"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "op",
+                                  "title",
+                                  "details",
+                                  "destructive",
+                                  "reason",
+                                  "status",
+                                  "expiresAt"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "spentUsd": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "spentUsd",
+                            "messages",
+                            "pending"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "limits": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "messagesPerMinute": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "perConversationUsd": {
+                          "type": "number"
+                        },
+                        "perMessageUsd": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "perMessageUsd",
+                        "perConversationUsd",
+                        "messagesPerMinute"
+                      ],
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "via": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "gateway",
+                            "project-key"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "available",
+                    "reason",
+                    "via",
+                    "model",
+                    "limits",
+                    "conversation"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get assistant status",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/changes/{changeId}/apply": {
+      "post": {
+        "description": "Applies a pending assistant change with the caller's own rights. Inputs: projectId and changeId. Changes one project item once.",
+        "operationId": "concierge.apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "changeId",
+            "required": true,
+            "schema": {
+              "pattern": "^chg-[a-f0-9]{8}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "change": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocked": {
+                          "type": "string"
+                        },
+                        "destructive": {
+                          "type": "boolean"
+                        },
+                        "details": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "op": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "confirm",
+                            "needs-approval"
+                          ],
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "pending",
+                            "applying",
+                            "applied",
+                            "discarded",
+                            "expired",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "op",
+                        "title",
+                        "details",
+                        "destructive",
+                        "reason",
+                        "status",
+                        "expiresAt"
+                      ],
+                      "type": "object"
+                    },
+                    "result": {}
+                  },
+                  "required": [
+                    "change",
+                    "result"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Apply an assistant change",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/changes/{changeId}/discard": {
+      "post": {
+        "description": "Discards a pending assistant change. Inputs: projectId and changeId. The proposed change is not applied.",
+        "operationId": "concierge.discard",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "changeId",
+            "required": true,
+            "schema": {
+              "pattern": "^chg-[a-f0-9]{8}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "change": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocked": {
+                          "type": "string"
+                        },
+                        "destructive": {
+                          "type": "boolean"
+                        },
+                        "details": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "op": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "confirm",
+                            "needs-approval"
+                          ],
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "pending",
+                            "applying",
+                            "applied",
+                            "discarded",
+                            "expired",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "op",
+                        "title",
+                        "details",
+                        "destructive",
+                        "reason",
+                        "status",
+                        "expiresAt"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "change"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Discard an assistant change",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/messages": {
+      "post": {
+        "description": "Sends a message to the assistant for the selected project. Inputs: projectId, text and optional page context or conversationId. May create drafts and pending changes, and records model spend.",
+        "operationId": "concierge.ask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "context": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "goalId": {
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "planId": {
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "screen": {
+                        "enum": [
+                          "overview",
+                          "tasks",
+                          "task",
+                          "plans",
+                          "settings",
+                          "inbox"
+                        ],
+                        "type": "string"
+                      },
+                      "taskId": {
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "screen"
+                    ],
+                    "type": "object"
+                  },
+                  "conversationId": {
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "text": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "changes": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "op": {
+                            "type": "string"
+                          },
+                          "summary": {
+                            "type": "string"
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "enum": [
+                                      "task",
+                                      "plan",
+                                      "epic"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "id"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "summary",
+                          "target"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "costUsd": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "pending": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "blocked": {
+                            "type": "string"
+                          },
+                          "destructive": {
+                            "type": "boolean"
+                          },
+                          "details": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "expiresAt": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "op": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "enum": [
+                              "confirm",
+                              "needs-approval"
+                            ],
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "pending",
+                              "applying",
+                              "applied",
+                              "discarded",
+                              "expired",
+                              "failed"
+                            ],
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "op",
+                          "title",
+                          "details",
+                          "destructive",
+                          "reason",
+                          "status",
+                          "expiresAt"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "stopReason": {
+                      "enum": [
+                        "done",
+                        "max_turns",
+                        "max_budget"
+                      ],
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "conversationId",
+                    "text",
+                    "changes",
+                    "pending",
+                    "costUsd",
+                    "stopReason"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Ask the assistant",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
+      }
+    },
+    "/projects/{projectId}/concierge/reset": {
+      "post": {
+        "description": "Ends the caller's current assistant conversation for a project. Inputs: projectId. Pending changes remain available until discarded or expired.",
+        "operationId": "concierge.reset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset assistant conversation",
+        "tags": [
+          "concierge"
+        ],
+        "x-boof-scope": "tasks:read"
       }
     },
     "/projects/{projectId}/epics": {
@@ -10161,7 +12471,7 @@
     },
     "/projects/{projectId}/tasks/{taskId}/inject": {
       "post": {
-        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` also interrupts the running step, which is resumed in the same tool session when the tool supports it or restarted with the prompt otherwise (costs extra tokens). The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
+        "description": "Adds an instruction to a running task. Inputs: projectId, taskId, prompt, optional mode: `next-step` (default) is picked up before the next pipeline step; `now` steers claude-agent in place, continuing the same session, with a kill-and-resume fallback if in-place steering fails. For other tools, `now` resumes or reruns the interrupted step with the prompt. Optional model (only with mode now) switches the model for the continuation or rerun. The prompt is also kept, with a timestamp, the mode and who injected it, in the task's body.injected so it survives after the run. Returns applied: pending; the task log shows `### Steered` once a `now` prompt is applied. Review-trust clients may only inject into tasks they created (403 forbidden_trust).",
         "operationId": "tasks.inject",
         "parameters": [
           {
@@ -10200,6 +12510,10 @@
                       "next-step",
                       "now"
                     ],
+                    "type": "string"
+                  },
+                  "model": {
+                    "pattern": "^[A-Za-z0-9._:\\[\\]/-]{1,100}$",
                     "type": "string"
                   },
                   "prompt": {
@@ -11352,6 +13666,60 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "agentAuth": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "projectId": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "roles": {
+                            "items": {
+                              "enum": [
+                                "planner",
+                                "developer",
+                                "observer",
+                                "reviewer"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "via": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "gateway",
+                                  "project-key"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "projectId",
+                          "roles",
+                          "allowed",
+                          "via",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "budgetExceeded": {
                       "items": {
                         "additionalProperties": false,
@@ -11501,7 +13869,8 @@
                     "enabled",
                     "concurrency",
                     "budgetExceeded",
-                    "pool"
+                    "pool",
+                    "agentAuth"
                   ],
                   "type": "object"
                 }
@@ -11612,6 +13981,60 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "agentAuth": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "projectId": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "roles": {
+                            "items": {
+                              "enum": [
+                                "planner",
+                                "developer",
+                                "observer",
+                                "reviewer"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "via": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "gateway",
+                                  "project-key"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "projectId",
+                          "roles",
+                          "allowed",
+                          "via",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "budgetExceeded": {
                       "items": {
                         "additionalProperties": false,
@@ -11800,6 +14223,7 @@
                     "concurrency",
                     "budgetExceeded",
                     "pool",
+                    "agentAuth",
                     "projects"
                   ],
                   "type": "object"
@@ -11985,6 +14409,19 @@
                       }
                     ]
                   },
+                  "owlishAgentKey": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[\\x21-\\x7e]{1,512}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins).",
+                    "writeOnly": true
+                  },
                   "owlishApiKey": {
                     "anyOf": [
                       {
@@ -11995,7 +14432,8 @@
                         "type": "null"
                       }
                     ],
-                    "description": "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)."
+                    "description": "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
+                    "writeOnly": true
                   },
                   "projectsRoot": {
                     "anyOf": [
@@ -13114,9 +15552,45 @@
     }
   ],
   "x-error-codes": {
+    "auth_store_unavailable": {
+      "description": "The server's data folder has unsafe permissions, so no key can be checked; see the server log.",
+      "status": 503
+    },
     "branch_not_found": {
       "description": "The task branch boof-runner/<id> does not exist (never ran in a worktree, or deleted by onDone=delete).",
       "status": 404
+    },
+    "browser_sessions_unavailable": {
+      "description": "The server's data folder has unsafe permissions, so no browser session can be checked; see the server log.",
+      "status": 503
+    },
+    "budget_exceeded": {
+      "description": "A daily budget that covers the assistant is used up.",
+      "status": 409
+    },
+    "change_expired": {
+      "description": "The pending change expired.",
+      "status": 409
+    },
+    "change_not_found": {
+      "description": "The pending change does not exist or is no longer available.",
+      "status": 404
+    },
+    "change_stale": {
+      "description": "The target changed since the assistant proposed this change.",
+      "status": 409
+    },
+    "concierge_busy": {
+      "description": "A message to the assistant is still being answered.",
+      "status": 409
+    },
+    "concierge_limit": {
+      "description": "The conversation reached its cost limit; start a new one.",
+      "status": 409
+    },
+    "concierge_unavailable": {
+      "description": "The assistant cannot run here; the message says why.",
+      "status": 409
     },
     "conflict": {
       "description": "The change conflicts with the current state.",
@@ -13190,8 +15664,16 @@
       "description": "A plan or goal in the input is invalid (schema, dangling dependency, cycle).",
       "status": 400
     },
+    "invalid_step_token": {
+      "description": "The external-step callback token is missing, wrong, used or expired.",
+      "status": 401
+    },
     "invalid_transition": {
       "description": "The task status transition is not allowed.",
+      "status": 409
+    },
+    "n8n_not_configured": {
+      "description": "No n8n instance is configured (settings.n8n is not set).",
       "status": 409
     },
     "no_default_project": {
@@ -13250,6 +15732,10 @@
       "description": "A project for this directory already exists.",
       "status": 409
     },
+    "project_modified": {
+      "description": "The project changed since the ETag in If-Match.",
+      "status": 409
+    },
     "project_not_found": {
       "description": "The project does not exist.",
       "status": 404
@@ -13277,6 +15763,10 @@
     "unsupported_media_type": {
       "description": "A JSON operation needs Content-Type: application/json.",
       "status": 415
+    },
+    "upstream_failed": {
+      "description": "The n8n instance failed or refused the call; details.reason says why (unauthorized, unreachable, blocked, redirected, bad_response, too_many, HTTP <n>).",
+      "status": 502
     }
   }
 }

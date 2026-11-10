@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 // Minimal, audited surface exposed to the web UI. contextIsolation is on, so the
 // renderer only ever sees this object — never Node or Electron internals.
 // API key for the in-process server, created and kept encrypted by the main
-// process; null when safeStorage is unavailable (the UI then relies on local trust).
+// process; null when safeStorage is unavailable (the app then signs the window in with a browser-session cookie).
 const token: string | null = ipcRenderer.sendSync("boof-runner:get-token");
 
 contextBridge.exposeInMainWorld("boofRunnerDesktop", {

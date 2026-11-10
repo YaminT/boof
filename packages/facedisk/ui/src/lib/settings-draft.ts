@@ -90,7 +90,8 @@ export interface PageValues<G, P> {
 
 export interface PagePatches {
   settings?: SettingsPatch;
-  project?: ProjectPatch;
+  /** `anthropicApiKey` is write-only: a string sets the project's key, null removes it. */
+  project?: ProjectPatch & { anthropicApiKey?: string | null };
 }
 
 /** One form page: how to read its values, check them and turn the changes into patches. */

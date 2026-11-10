@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { defineOp } from "../define-op.js";
-import { AccountSchema, OkSchema, PoolStatusSchema } from "../schemas.js";
+import {
+  AccountSchema,
+  AgentSdkEligibilitySchema,
+  OkSchema,
+  PoolStatusSchema,
+} from "../schemas.js";
 import { accountIdParam, IDEMPOTENT_WRITE, READ } from "./common.js";
 import { assertMayWriteSettings } from "./admin.js";
 
@@ -30,11 +35,26 @@ export const accountsList = defineOp({
   },
 });
 
+export const accountsAgentSdk = defineOp({
+  name: "accounts.agentSdk",
+  title: "Claude Agent SDK eligibility",
+  description:
+    "Checks whether every better-ccflare account uses API-key authentication. Input: optional refresh. No side effects.",
+  scope: "settings:read",
+  projectScoped: false,
+  input: z.strictObject({ refresh: z.boolean().optional() }),
+  output: AgentSdkEligibilitySchema,
+  rest: { method: "GET", path: "/accounts/agent-sdk" },
+  mcp: { expose: true, name: "boof_get_agent_sdk_eligibility", annotations: READ },
+  summary: (r) => (r.allowed ? "Claude Agent SDK gateway eligible" : r.reason),
+  handler: (ctx, { refresh }) => ctx.services.agentSdkEligibility(refresh === true),
+});
+
 export const accountsHealth = defineOp({
   name: "accounts.health",
   title: "Pool health",
   description:
-    "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null; the key itself is never returned). Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
+    "Returns the account pool's health: status (absent, unreachable, ok, degraded, unhealthy), account counts, when the next account is available, and the reason it is not ok; also the gateway address (no credentials), the health gate and where the client key comes from (`file`, `env` or null) and where the claude-agent key comes from (`agentKeySource`); neither key is ever returned. Cached for 10 seconds unless `refresh` is true. Input: optional refresh to bypass the cache; concurrent refreshes are coalesced. No side effects.",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({ refresh: z.boolean().optional() }),
@@ -43,6 +63,10 @@ export const accountsHealth = defineOp({
     url: z.string().nullable().meta({ description: "scheme://host:port of the gateway." }),
     healthGate: z.enum(["pause", "warn", "off"]).nullable(),
     keySource: z.enum(["file", "env"]).nullable(),
+    agentKeySource: z.enum(["file", "env"]).nullable().meta({
+      description:
+        "Where the api-only claude-agent key comes from; null when none is set. The key is never returned.",
+    }),
     pool: PoolStatusSchema,
   }),
   rest: { method: "GET", path: "/accounts/health" },
@@ -60,6 +84,7 @@ export const accountsHealth = defineOp({
         url: null,
         healthGate: null,
         keySource: null,
+        agentKeySource: null,
         pool: await ctx.services.poolStatus(),
       };
     }
@@ -68,6 +93,7 @@ export const accountsHealth = defineOp({
       url: new URL(settings.owlish.url).origin,
       healthGate: settings.owlish.healthGate,
       keySource: await ctx.services.owlishSecrets.source().catch(() => null),
+      agentKeySource: await ctx.services.owlishSecrets.agentSource().catch(() => null),
       pool: pool ? await pool.client.health(refresh) : await ctx.services.poolStatus(),
     };
   },
@@ -163,6 +189,7 @@ export const accountsThresholds = defineOp({
 
 export const accountOps = [
   accountsList,
+  accountsAgentSdk,
   accountsHealth,
   accountsPause,
   accountsResume,

@@ -21,6 +21,7 @@ import {
 import { authorize, BOOF_VERSION, type AuthStore, type Principal, type Scope } from "@boof/heart";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
+import { conciergeOps } from "../concierge/policy.js";
 
 export const SERVER_NAME = "boof-runner";
 
@@ -33,6 +34,8 @@ export interface ToolCallInfo {
   principal: Principal;
   projectId?: string;
   ok: boolean;
+  /** The call was replaced by a policy gate answer. */
+  gated?: boolean;
   /** Error code when `ok` is false. */
   code?: string;
   /** When the call started (ms since the epoch) and how long it took. */
@@ -40,7 +43,34 @@ export interface ToolCallInfo {
   ms: number;
 }
 
+export interface GateAnswer {
+  summary: string;
+  structured: Record<string, unknown>;
+}
+
+export interface McpCallGate {
+  /** Before `op.execute`: an answer replaces the call (the op does not run). */
+  before?(
+    op: AnyOperation,
+    raw: Record<string, unknown>,
+    principal: Principal,
+  ): Promise<GateAnswer | undefined>;
+  /** After a failed call: an answer replaces the error. */
+  refused?(
+    op: AnyOperation,
+    raw: Record<string, unknown>,
+    err: OpError,
+    principal: Principal,
+  ): Promise<GateAnswer | undefined>;
+  /** After a successful call: may replace the structured result (truncation, events). */
+  after?(op: AnyOperation, raw: Record<string, unknown>, result: unknown): Promise<unknown>;
+}
+
 export interface BoofMcpOptions {
+  /** Replaces the scope check of `tools/list` (the call itself is still checked by the op and the gate). */
+  listable?: (op: AnyOperation, principal: Principal) => boolean;
+  /** Replaces the listed definition of a tool (a narrower schema or description). */
+  describeTool?: (op: AnyOperation, tool: Tool) => Tool | undefined;
   /** The data root. */
   root: string;
   /** Resolved for every call, so a revoked client loses access at once (stdio) or per request (HTTP). */
@@ -49,12 +79,6 @@ export interface BoofMcpOptions {
   authStore: AuthStore;
   /** Fix the project: every project-scoped tool gets this `projectId`, and the argument is hidden. */
   project?: string;
-  /**
-   * `false` hides the administration tools (API clients, webhooks, settings writes, commands,
-   * project deletion). The keyless stdio server sets it unless `--admin` is given; an HTTP server
-   * or a stdio server with `--client` leaves it unset and the caller's scopes decide.
-   */
-  adminTools?: boolean;
   /** Called after every tool call (the HTTP transport records it in the audit log). */
   onCall?: (info: ToolCallInfo) => void;
   /** Operations to serve; default is the whole registry (filtered by `mcp.expose`). */
@@ -66,6 +90,9 @@ export interface BoofMcpOptions {
   resolveHost?: ResolveHost;
   /** The HTTP request's signal (stateless HTTP); stdio leaves it unset. */
   signal?: AbortSignal;
+  gate?: McpCallGate;
+  instructions?: string;
+  resources?: boolean;
 }
 
 /** What the server hands to the tool, resource and prompt builders. */
@@ -88,42 +115,21 @@ function narrowToProject(principal: Principal, project: string): Principal {
 /** Scopes that only the server's administrator holds: API clients and webhooks need one of them. */
 export const SERVER_ADMIN_SCOPES: readonly Scope[] = ["admin", "auth:admin"];
 
-/**
- * Operations that change or reveal the server's own configuration, beyond the API-client and
- * webhook operations (which {@link SERVER_ADMIN_SCOPES} select by scope): settings writes, the
- * paid health check, command templates and project deletion. A keyless stdio server hides all of
- * them unless started with `--admin`. Load-bearing: `settings.checkHealth` makes paid calls and
- * `projects.delete` destroys data, so do not "clean up" this list. `settings.refreshModels` and
- * `models.details` are deliberately absent: they cost nothing and stay visible.
- */
-const ADMIN_FLAG_OPS: readonly string[] = [
-  "settings.update",
-  "settings.checkHealth",
-  "commands.create",
-  "commands.update",
-  "commands.delete",
-  "projects.delete",
-];
-
 const isServerAdminOp = (o: AnyOperation): boolean =>
   o.scopes.length > 0 && o.scopes.every((s) => SERVER_ADMIN_SCOPES.includes(s));
 
 /**
  * The operations a server offers as tools: the exposed ones, filtered by the caller's scopes at
  * `tools/list`. `--project` also hides project creation and the API-client and webhook tools (a
- * server pinned to one project is a project tool). `adminTools: false` (a keyless stdio server
- * without `--admin`) hides every administration tool; unset or true leaves them to the scopes.
+ * server pinned to one project is a project tool).
  */
 export function exposedOps(
   ops: readonly AnyOperation[],
-  opts: { project?: string; adminTools?: boolean } = {},
+  opts: { project?: string } = {},
 ): AnyOperation[] {
   return ops.filter((o) => {
     if (!o.mcp.expose) return false;
     if (opts.project !== undefined && (o.name === "projects.create" || isServerAdminOp(o))) {
-      return false;
-    }
-    if (opts.adminTools === false && (isServerAdminOp(o) || ADMIN_FLAG_OPS.includes(o.name))) {
       return false;
     }
     return true;
@@ -146,14 +152,20 @@ function inputSchemaFor(op: AnyOperation, project: string | undefined): JsonSche
 }
 
 /** Build the `tools/list` entry of an operation. */
-export function toolDefinition(op: AnyOperation, project?: string): Tool {
+export function toolDefinition(
+  op: AnyOperation,
+  project?: string,
+  includeOutputSchema = true,
+): Tool {
   const output = toJsonSchema(op.output, "output");
   return {
     name: op.mcp.name!,
     title: op.title,
     description: op.description,
     inputSchema: inputSchemaFor(op, project) as Tool["inputSchema"],
-    ...(output["type"] === "object" ? { outputSchema: output as Tool["outputSchema"] } : {}),
+    ...(includeOutputSchema && output["type"] === "object"
+      ? { outputSchema: output as Tool["outputSchema"] }
+      : {}),
     annotations: { title: op.title, ...op.mcp.annotations },
   };
 }
@@ -186,15 +198,26 @@ function successResult(op: AnyOperation, result: unknown): CallToolResult {
   };
 }
 
+function gateResult(answer: GateAnswer): CallToolResult {
+  return {
+    content: [
+      { type: "text", text: answer.summary },
+      { type: "text", text: JSON.stringify(answer.structured) },
+    ],
+    structuredContent: answer.structured,
+  };
+}
+
 /**
  * Create the MCP server: one tool per exposed registry operation, plus resources and prompts.
  * Every call goes through `op.execute`, so scope checks, input validation, project
  * authorization, trust rules and error codes are exactly those of the REST API.
  */
 export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
-  const ops = exposedOps(options.ops ?? registry, {
+  // A gated server is a restricted surface. If its caller omits an explicit operation set,
+  // fail closed instead of silently exposing the complete registry.
+  const ops = exposedOps(options.ops ?? (options.gate ? [] : registry), {
     project: options.project,
-    adminTools: options.adminTools,
   });
   const allOps = options.ops ?? registry;
   const byTool = new Map(ops.map((o) => [o.mcp.name!, o]));
@@ -238,11 +261,12 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     { name: SERVER_NAME, version: options.version ?? BOOF_VERSION },
     {
       instructions:
+        options.instructions ??
         "Boof runs coding-agent tasks in git repositories. Typical flow: boof_list_projects, " +
-        "boof_create_plan (or boof_import_plan), boof_sync_plan, boof_list_tasks, boof_wait_task, " +
-        "boof_wait_plan, boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
-        "read the plan again and retry. With review trust a plan starts as draft (see warnings) until a " +
-        "human approves it; its tasks are then created pending. Ad-hoc tasks stay draft until a human queues them.",
+          "boof_create_plan (or boof_import_plan), boof_sync_plan, boof_list_tasks, boof_wait_task, " +
+          "boof_wait_plan, boof_get_task. Plan changes take the plan's expectedVersion; on plan_version_conflict " +
+          "read the plan again and retry. With review trust a plan starts as draft (see warnings) until a " +
+          "human approves it; its tasks are then created pending. Ad-hoc tasks stay draft until a human queues them.",
     },
   );
 
@@ -254,8 +278,15 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     const principal = await resolve();
     return {
       tools: ops
-        .filter((op) => op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s)))
-        .map((op) => toolDefinition(op, options.project)),
+        .filter(
+          (op) =>
+            options.listable?.(op, principal) ??
+            (op.scopes.length === 0 || op.scopes.some((s) => authorize(principal, s))),
+        )
+        .map((op) => {
+          const tool = toolDefinition(op, options.project, options.gate === undefined);
+          return options.describeTool?.(op, tool) ?? tool;
+        }),
     };
   });
 
@@ -273,19 +304,84 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
         : undefined;
     const principal = await resolve();
     const startedAt = Date.now();
+    let gated = false;
     try {
-      const result = await run(op, raw, extra.signal);
+      let before: GateAnswer | undefined;
+      try {
+        before = await options.gate?.before?.(op, raw as Record<string, unknown>, principal);
+      } catch (err) {
+        const opErr = toOpError(err);
+        options.onCall?.({
+          tool: op.mcp.name!,
+          principal,
+          projectId,
+          ok: false,
+          code: opErr.code,
+          startedAt,
+          ms: Date.now() - startedAt,
+        });
+        return errorResult(opErr);
+      }
+      if (before) {
+        gated = true;
+        options.onCall?.({
+          tool: op.mcp.name!,
+          principal,
+          projectId,
+          ok: true,
+          gated: true,
+          startedAt,
+          ms: Date.now() - startedAt,
+        });
+        return gateResult(before);
+      }
+      let result = await run(op, raw, extra.signal);
+      if (options.gate?.after) {
+        try {
+          const replaced = await options.gate.after(op, raw as Record<string, unknown>, result);
+          if (replaced !== undefined) {
+            result = replaced;
+            gated = true;
+          }
+        } catch {
+          // The operation already succeeded. Preserve its result so a caller will not retry it.
+        }
+      }
       options.onCall?.({
         tool: op.mcp.name!,
         principal,
         projectId,
         ok: true,
+        ...(gated ? { gated: true } : {}),
         startedAt,
         ms: Date.now() - startedAt,
       });
       return successResult(op, result);
     } catch (err) {
       const opErr = toOpError(err);
+      let replacement: GateAnswer | undefined;
+      try {
+        replacement = await options.gate?.refused?.(
+          op,
+          raw as Record<string, unknown>,
+          opErr,
+          principal,
+        );
+      } catch {
+        // A broken refusal hook must not turn an operation error into a JSON-RPC failure.
+      }
+      if (replacement) {
+        options.onCall?.({
+          tool: op.mcp.name!,
+          principal,
+          projectId,
+          ok: true,
+          gated: true,
+          startedAt,
+          ms: Date.now() - startedAt,
+        });
+        return gateResult(replacement);
+      }
       options.onCall?.({
         tool: op.mcp.name!,
         principal,
@@ -299,15 +395,60 @@ export function createBoofMcpServer(options: BoofMcpOptions): McpServer {
     }
   });
 
-  registerResources(server, runtime);
-  registerPrompts(server, runtime);
-  // The SDK advertises listChanged: true for resources and prompts; the HTTP server is stateless
-  // and never notifies (stdio does not either). Capabilities merge per key, so this wins.
-  server.server.registerCapabilities({
-    resources: { listChanged: false },
-    prompts: { listChanged: false },
-  });
+  if (options.resources !== false) {
+    registerResources(server, runtime);
+    registerPrompts(server, runtime);
+    // The SDK advertises listChanged: true for resources and prompts; the HTTP server is stateless
+    // and never notifies (stdio does not either). Capabilities merge per key, so this wins.
+    server.server.registerCapabilities({
+      resources: { listChanged: false },
+      prompts: { listChanged: false },
+    });
+  }
   return server;
+}
+
+/** Build the concierge's pinned, allowlisted MCP surface with resources and prompts disabled. */
+export function createConciergeMcpServer(
+  options: Omit<BoofMcpOptions, "ops" | "resources" | "project" | "gate" | "describeTool"> & {
+    project: string;
+    gate: McpCallGate;
+  },
+): McpServer {
+  return createBoofMcpServer({
+    ...options,
+    ops: conciergeOps(registry),
+    resources: false,
+    describeTool: conciergeToolDefinition,
+  });
+}
+
+/**
+ * The model sees `projects.update` as what it is here: a proposal to change the description.
+ * The project is pinned and every other field is refused, so the schema offers neither.
+ */
+function conciergeToolDefinition(op: AnyOperation, tool: Tool): Tool | undefined {
+  if (op.name !== "projects.update") return undefined;
+  return {
+    ...tool,
+    title: "Propose a new project description (brief)",
+    description:
+      "Proposes replacing the description (brief) of this project, which is given to every agent as context. " +
+      "Input: brief, the complete new text (at most 4000 characters and 60 lines, plain text). " +
+      "It is never applied by you: the user reviews the whole text and confirms it. No other project field can be changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        brief: {
+          type: "string",
+          maxLength: 4000,
+          description: "The complete new description (brief) text.",
+        },
+      },
+      required: ["brief"],
+      additionalProperties: false,
+    },
+  };
 }
 
 export { McpError, ErrorCode };

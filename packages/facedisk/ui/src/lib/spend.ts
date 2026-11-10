@@ -16,6 +16,7 @@ export function spendFor(budget: BudgetStatus | null, projectId: string | null):
     (projectId !== null && budget.scopes.find((s) => s.scope === `project:${projectId}`)) ||
     budget.scopes.find((s) => s.scope === "global");
   if (!scope) return null;
+  // No limit, or a limit of zero (there is no bar to fill): the fraction stays null.
   const fraction =
     scope.limitUsd === null || scope.limitUsd <= 0
       ? null
@@ -39,6 +40,7 @@ export function scopeLabel(scope: string, nameOf?: (id: string) => string | unde
         const id = part.slice(8);
         return `Project ${nameOf?.(id) ?? id}`;
       }
+      if (part === "tool:concierge") return "Console assistant (concierge)";
       if (part.startsWith("tool:")) return `tool ${part.slice(5)}`;
       return part;
     })

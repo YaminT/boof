@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { PlanSummary, TaskView } from "../api.js";
-import { failedTasksVisible, groupTasks } from "./task-groups.js";
+import {
+  compareFinished,
+  failedTasksVisible,
+  finishedSectionTasks,
+  finishedStatusCounts,
+  groupTasks,
+} from "./task-groups.js";
 
 function task(p: {
   id: string;
@@ -51,6 +57,7 @@ describe("groupTasks", () => {
   it("is empty for no tasks", () => {
     expect(groupTasks([])).toEqual({
       needsYou: [],
+      proposed: [],
       running: [],
       queued: [],
       drafts: [],
@@ -66,7 +73,7 @@ describe("groupTasks", () => {
     expect(ids(g.running)).toEqual(["a", "b"]);
   });
 
-  it("orders needsYou: questions, proposed drafts, draft plans, oldest first", () => {
+  it("includes proposed drafts in Needs you and keeps a separate Tasks group", () => {
     const g = groupTasks(
       [
         task({ id: "q2", status: "action", created: "2026-01-03T00:00:00Z" }),
@@ -83,14 +90,7 @@ describe("groupTasks", () => {
     expect(
       g.needsYou.map((i) => (i.kind === "draft-plan" ? i.plan.id : i.task.frontmatter.id)),
     ).toEqual(["q1", "q2", "pr-api", "pr-mcp", "pl1", "pl2"]);
-    expect(g.needsYou.map((i) => i.kind)).toEqual([
-      "question",
-      "question",
-      "proposed",
-      "proposed",
-      "draft-plan",
-      "draft-plan",
-    ]);
+    expect(ids(g.proposed)).toEqual(["pr-api", "pr-mcp"]);
   });
 
   it("puts ui and cli drafts in drafts, not needsYou", () => {
@@ -128,5 +128,37 @@ describe("groupTasks", () => {
     expect(g.finished.counts).toEqual({ done: 2, failed: 1, stopped: 1, archived: 1 });
     expect(ids(g.finished.recent)).toEqual(["d2", "f", "s"]);
     expect(groupTasks([task({ id: "x", status: "done" })]).finished.recent).toHaveLength(1);
+  });
+
+  it("keeps five recent finished tasks unless a limit is given", () => {
+    const tasks = [1, 2, 3, 4, 5, 6].map((n) =>
+      task({ id: `d${n}`, status: "done", updated: `2026-01-0${n}T00:00:00Z` }),
+    );
+    expect(groupTasks(tasks).finished.recent).toHaveLength(5);
+    expect(groupTasks(tasks).finished.recent[0].frontmatter.id).toBe("d6");
+  });
+
+  it("builds the Finished summary from the same tasks as the Finished count", () => {
+    const done = task({ id: "shipped", status: "done" });
+    const failed = task({ id: "export", status: "failed" });
+    const shown = finishedSectionTasks([done, failed], false);
+    expect(ids(shown)).toEqual(["shipped"]);
+    expect(shown).toHaveLength(1);
+    expect(finishedStatusCounts(shown)).toEqual({ done: 1, failed: 0, stopped: 0, archived: 0 });
+    // Expanded view lists the failed task under Finished, so the summary counts it too.
+    const expanded = finishedSectionTasks([done, failed], true);
+    expect(finishedStatusCounts(expanded)).toEqual({
+      done: 1,
+      failed: 1,
+      stopped: 0,
+      archived: 0,
+    });
+  });
+
+  it("orders equal finished timestamps by id", () => {
+    const a = task({ id: "b", status: "done", updated: "2026-01-01T00:00:00Z" });
+    const b = task({ id: "a", status: "done", updated: "2026-01-01T00:00:00Z" });
+    expect(compareFinished(a, b)).toBeGreaterThan(0);
+    expect(compareFinished(a, a)).toBe(0);
   });
 });

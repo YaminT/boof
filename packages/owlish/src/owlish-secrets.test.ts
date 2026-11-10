@@ -84,6 +84,55 @@ describe("OwlishSecretStore", () => {
     );
   });
 
+  it("keeps a separate agent key in the same 0600 file without disturbing the admin key", async () => {
+    const store = new OwlishSecretStore(root, {});
+    await store.set(KEY);
+    await store.setAgent("btr-agent-key-0001");
+    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    expect(await store.get()).toBe(KEY);
+    expect(await store.getAgent()).toBe("btr-agent-key-0001");
+    expect(await store.agentSource()).toBe("file");
+    await store.set("btr-new-admin-0001");
+    expect(await store.getAgent()).toBe("btr-agent-key-0001");
+    await store.delete();
+    expect(await store.get()).toBeNull();
+    expect(await store.getAgent()).toBe("btr-agent-key-0001");
+    await store.deleteAgent();
+    expect(await store.getAgent()).toBeNull();
+    await expect(stat(store.filePath)).rejects.toThrow();
+  });
+  it("refuses equal keys and refuses writes when secrets.json is unreadable", async () => {
+    const store = new OwlishSecretStore(root, {});
+    await store.set(KEY);
+    await expect(store.setAgent(KEY)).rejects.toThrow(
+      "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+    );
+    await store.setAgent("btr-agent-distinct-0001");
+    await expect(store.set("btr-agent-distinct-0001")).rejects.toThrow(
+      "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+    );
+    await writeFile(store.filePath, "not-json");
+    await expect(store.setAgent("btr-new-agent-0001")).rejects.toThrow(
+      "owlish/secrets.json is not valid JSON",
+    );
+    await expect(store.set("btr-new-admin-0001")).rejects.toThrow(
+      "owlish/secrets.json is not valid JSON",
+    );
+    expect(await readFile(store.filePath, "utf8")).toBe("not-json");
+  });
+
+  it("BOOF_OWLISH_AGENT_KEY wins for the agent key; concurrent sets of both keys survive", async () => {
+    const env = new OwlishSecretStore(root, { BOOF_OWLISH_AGENT_KEY: "btr-env-agent-0001" });
+    expect(await env.getAgent()).toBe("btr-env-agent-0001");
+    expect(await env.agentSource()).toBe("env");
+    expect(await env.get()).toBeNull();
+    const store = new OwlishSecretStore(root, {});
+    await Promise.all([store.set(KEY), store.setAgent("btr-agent-key-0002")]);
+    expect(await store.get()).toBe(KEY);
+    expect(await store.getAgent()).toBe("btr-agent-key-0002");
+    await expect(store.setAgent("a b")).rejects.toThrow(/key/);
+  });
+
   it("tighten brings a loose file to 0600", async () => {
     const store = new OwlishSecretStore(root, {});
     await store.set(KEY);

@@ -2,7 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import type { Scope } from "@boof/heart/schema";
 import { ApiError } from "../api.js";
 import type { CommandAction } from "./command-actions.js";
-import { appendOutput, pushHistory, recall, submitConsole } from "./console-session.js";
+import {
+  appendOutput,
+  pushHistory,
+  recall,
+  submitConsole,
+  type ConsoleLine,
+} from "./console-session.js";
+
+const result = (text: string): ConsoleLine => ({ kind: "result", text });
 
 const action = (id: string, run: () => unknown, requiredScope?: Scope): CommandAction => ({
   id,
@@ -48,7 +56,10 @@ describe("recall", () => {
 
 describe("appendOutput", () => {
   it("keeps the newest lines", () => {
-    expect(appendOutput(["1", "2"], "3", 2)).toEqual(["2", "3"]);
+    expect(appendOutput([result("1"), result("2")], result("3"), 2)).toEqual([
+      result("2"),
+      result("3"),
+    ]);
   });
 });
 
@@ -57,7 +68,7 @@ describe("submitConsole", () => {
     const run = vi.fn();
     const r = await submitConsole("go-x", [action("go-x", run)], "all");
     expect(run).toHaveBeenCalledOnce();
-    expect(r.line).toBe("ok: go-x");
+    expect(r.line).toEqual(result("ok: go-x"));
   });
 
   it("hands the typed arguments to the action", async () => {
@@ -69,7 +80,7 @@ describe("submitConsole", () => {
   it("reports a refusal as an error line, never ok", async () => {
     const run = vi.fn().mockRejectedValue(new ApiError("not allowed", 403, "forbidden"));
     const r = await submitConsole("go-x", [action("go-x", run)], "all");
-    expect(r.line).toBe("error: go-x: not allowed");
+    expect(r.line).toEqual(result("error: go-x: not allowed"));
     expect(r.outcome.kind).toBe("error");
   });
 
@@ -83,7 +94,7 @@ describe("submitConsole", () => {
       ],
       "all",
     );
-    expect(r.line).toBe("error: go-x: boom");
+    expect(r.line).toEqual(result("error: go-x: boom"));
   });
 
   it("does not run an action the held scopes lack", async () => {
@@ -99,6 +110,7 @@ describe("submitConsole", () => {
 
   it("answers unknown input without running anything", async () => {
     const r = await submitConsole("/nope", [], "all");
-    expect(r.line).toContain('unknown: "/nope"');
+    expect(r.line.text).toContain('unknown: "/nope"');
+    expect(r.line.kind).toBe("result");
   });
 });

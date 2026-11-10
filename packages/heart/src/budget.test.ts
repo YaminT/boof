@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   blockingScopes,
@@ -62,6 +64,45 @@ describe("ledger", () => {
     const day = await readDailyLedger(root, "2026-10-26", "UTC");
     expect(day).toMatchObject({ costUsd: 0.5, unknownSteps: 1, tools: { codex: 0.5 } });
   });
+
+  it("recordSpend from two processes adds up", async () => {
+    // A real second process: a lock naming our own pid that we do not hold reads as stale, so two
+    // module instances in one process (vi.resetModules) cannot stand in for two processes.
+    const child = fileURLToPath(new URL("../test-support/spend-child.mts", import.meta.url));
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const now = new Date("2026-10-26T12:00:00Z");
+    const startAt = Date.now() + 1500;
+    const other = new Promise<{ ok: boolean; message?: string }>((resolve, reject) =>
+      execFile(
+        process.execPath,
+        ["--import", "tsx", child, root, String(startAt), "10", "2"],
+        { cwd: repoRoot },
+        (err, stdout) => {
+          try {
+            resolve(JSON.parse(stdout.trim().split("\n").pop() ?? ""));
+          } catch {
+            reject(err ?? new Error(`no result: ${stdout}`));
+          }
+        },
+      ),
+    );
+    await new Promise((r) => setTimeout(r, Math.max(0, startAt - Date.now())));
+    for (let i = 0; i < 10; i++) {
+      await recordSpend({
+        dataRoot: root,
+        projectId: "p",
+        tool: "concierge",
+        usage: { costUsd: 1, known: true },
+        timezone: "UTC",
+        now,
+      });
+    }
+    expect(await other).toEqual({ ok: true });
+    const day = await readDailyLedger(root, "2026-10-26", "UTC");
+    expect(day.costUsd).toBe(30);
+    expect(day.tools.concierge).toBe(30);
+    expect(day.projects?.p).toBe(30);
+  }, 60_000);
 
   it("announces a scope once per day", async () => {
     expect(await markBudgetNotified(root, "2026-10-26", "UTC", "global")).toBe(true);

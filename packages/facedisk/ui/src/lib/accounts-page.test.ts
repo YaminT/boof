@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   accountActionAccess,
+  accountAgentBadges,
   gatePauses,
   priorityProblem,
   thresholdFields,
@@ -37,5 +38,43 @@ describe("accounts page helpers", () => {
     expect(priorityProblem("2.5")).not.toBeNull();
     expect(priorityProblem("150")).not.toBeNull();
     expect(priorityProblem("42")).toBeNull();
+  });
+});
+
+describe("Agent SDK badges", () => {
+  const accounts = [
+    { id: "a", name: "console" },
+    { id: "b", name: "max" },
+    { id: "c", name: "token" },
+    { id: "d", name: "odd" },
+  ];
+  const eligibility = {
+    gateway: "checked" as const,
+    allowed: false,
+    reason: "the better-ccflare gateway would route to max (subscription)",
+    blocking: [
+      { id: "b", name: "max", provider: "anthropic", why: "subscription" as const },
+      { id: "c", name: "token", provider: "anthropic", why: "oauth-token" as const },
+      { id: "d", name: "odd", provider: null, why: "unknown-type" as const },
+    ],
+    checkedAt: "2026-11-05T10:00:00Z",
+  };
+
+  it("maps blocking accounts to a not-allowed badge with the reason", () => {
+    expect(accountAgentBadges(accounts, eligibility)).toEqual({
+      a: { allowed: true, text: "Agent SDK: allowed" },
+      b: { allowed: false, text: "Agent SDK: not allowed (subscription)" },
+      c: { allowed: false, text: "Agent SDK: not allowed (OAuth token)" },
+      d: { allowed: false, text: "Agent SDK: not allowed (unknown type)" },
+    });
+  });
+
+  it("shows no badge before the eligibility is known, without a gateway, or when the gate is closed with nothing to blame", () => {
+    expect(accountAgentBadges(accounts, null).a).toBeNull();
+    expect(accountAgentBadges(accounts, { ...eligibility, gateway: "absent" }).a).toBeNull();
+    expect(accountAgentBadges(accounts, { ...eligibility, blocking: [] }).a).toBeNull();
+    expect(
+      accountAgentBadges(accounts, { ...eligibility, allowed: true, blocking: [] }).a?.allowed,
+    ).toBe(true);
   });
 });

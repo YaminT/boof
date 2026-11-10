@@ -113,6 +113,93 @@ export const TaskOriginSchema = z.object({
 });
 export type TaskOrigin = z.infer<typeof TaskOriginSchema>;
 
+// ---- n8n (optional external pipeline steps) ----
+
+/** Where an external step runs in the pipeline. */
+export const EXTERNAL_STEP_POINTS = ["after-planner", "after-developer", "after-review"] as const;
+export type ExternalStepPoint = (typeof EXTERNAL_STEP_POINTS)[number];
+export const N8N_DEFAULT_TIMEOUT_MS = 1_800_000;
+/** No `.` or `..` segment, no `//`, no `?` or `#`, no leading `/`, 1-200 chars of [A-Za-z0-9._~:/-]. */
+export const WEBHOOK_PATH_PATTERN =
+  /^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!(?:.*\/)?\.(?:\/|$))[A-Za-z0-9._~:/-]{1,200}$/;
+
+/** The canonical form of an n8n URL, or null when the input is not exactly that form. */
+function canonicalN8nUrl(v: string): string | null {
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.username !== "" || u.password !== "" || u.search !== "" || u.hash !== "") return null;
+    if (v.includes("?") || v.includes("#") || v.includes("@") || u.port === "0") return null;
+    const canonical = u.href.replace(/\/+$/, "");
+    // Refuse anything the URL parser rewrites (backslashes, %2e%2e, whitespace, default ports...):
+    // what an admin reads must be what boof calls.
+    if (v.replace(/\/+$/, "") !== canonical) return null;
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+
+/** An http(s) URL in canonical form, without credentials, query or hash; a path (a proxy prefix) is allowed. */
+const n8nUrl = z
+  .string()
+  .max(2000)
+  .refine((v) => canonicalN8nUrl(v) !== null, {
+    message: "must be a canonical http(s) URL without credentials, query or hash",
+  })
+  .transform((v) => canonicalN8nUrl(v) as string);
+
+const n8nTimeoutMs = z.number().int().min(10_000).max(86_400_000);
+
+export const N8nSettingsSchema = z.strictObject({
+  /** The n8n instance (editor and API); a path is allowed when n8n sits behind a prefix. */
+  baseUrl: n8nUrl,
+  /** Where webhooks live; default `${baseUrl}/webhook`. */
+  webhookBaseUrl: n8nUrl.optional(),
+  /** The URL n8n uses to reach boof, proxy prefix included. */
+  callbackBaseUrl: n8nUrl,
+  defaultTimeoutMs: n8nTimeoutMs.default(N8N_DEFAULT_TIMEOUT_MS),
+  /** Opt-in: a check task after a workflow edit. */
+  checks: z
+    .strictObject({
+      enabled: z.boolean().default(false),
+      projectId: kebab,
+      autoQueue: z.boolean().default(false),
+      pollIntervalMs: z.number().int().min(60_000).max(86_400_000).default(300_000),
+    })
+    .optional(),
+});
+export type N8nSettings = z.infer<typeof N8nSettingsSchema>;
+
+/** One external (n8n) step of a project's pipeline. */
+export const ExternalStepSchema = z.strictObject({
+  id: kebab,
+  label: z.string().trim().min(1).max(80),
+  at: z.enum(EXTERNAL_STEP_POINTS),
+  workflowId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  webhookPath: z.string().regex(WEBHOOK_PATH_PATTERN, "invalid webhook path"),
+  timeoutMs: n8nTimeoutMs.optional(),
+  onFailure: z.enum(["fail", "continue"]).default("fail"),
+  sendDiff: z.boolean().default(false),
+});
+export type ExternalStep = z.infer<typeof ExternalStepSchema>;
+
+const ExternalStepsSchema = z
+  .array(ExternalStepSchema)
+  .max(10)
+  .superRefine((steps, ctx) => {
+    const seen = new Set<string>();
+    for (const [i, s] of steps.entries()) {
+      if (seen.has(s.id))
+        ctx.addIssue({
+          code: "custom",
+          message: `duplicate external step id: ${s.id}`,
+          path: [i, "id"],
+        });
+      seen.add(s.id);
+    }
+  });
+
 /** Canonical task frontmatter (task-file spec). */
 export const TaskFrontmatterSchema = z.object({
   id: kebab,
@@ -165,6 +252,15 @@ export const TaskFrontmatterSchema = z.object({
   epicId: kebab.optional(),
   // The parent task (one level only). Written only by hierarchy.ts, through TaskStore.modify.
   parentId: kebab.optional(),
+  // Set on a check task created after an n8n workflow edit.
+  n8nCheck: z
+    .object({
+      workflowId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+      workflowName: z.string().min(1).max(200),
+      webhookPath: z.string().regex(WEBHOOK_PATH_PATTERN),
+      updatedAt: isoDatetime,
+    })
+    .optional(),
   created: isoDatetime,
   updated: isoDatetime,
 });
@@ -363,6 +459,25 @@ export const McpSettingsSchema = z.object({
 export type McpSettings = z.infer<typeof McpSettingsSchema>;
 
 /**
+ * Console assistant (concierge). Absent on `Settings`: `conciergeSettings` applies these defaults.
+ * `model: "default"` lets the Agent SDK choose. Spend is capped per message and per conversation.
+ */
+export const ConciergeSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  model: z
+    .string()
+    .regex(/^[A-Za-z0-9._:\[\]\/-]{1,100}$/)
+    .default("default"),
+  perMessageUsd: z.number().positive().max(50).default(0.25),
+  perConversationUsd: z.number().positive().max(500).default(2),
+  messagesPerMinute: z.int().min(1).max(60).default(6),
+  maxTurns: z.int().min(1).max(20).default(8),
+  timeoutMs: z.int().min(10_000).max(600_000).default(120_000),
+  idleMinutes: z.int().min(5).max(240).default(30),
+});
+export type ConciergeSettings = z.infer<typeof ConciergeSettingsSchema>;
+
+/**
  * A webhook subscription (settings.webhooks). `events` holds event types or `prefix.*` patterns
  * (`task.status`, `plan.*`, `*`). The signing secret is not part of it: see WebhookSecretStore.
  */
@@ -476,10 +591,14 @@ export const RunnerSettingsSchema = z.object({
 });
 export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
 
-/** The `schemaVersion` written by this release. Absent in settings.json means v1. */
-export const SETTINGS_SCHEMA_VERSION = 2 as const;
+/**
+ * The `schemaVersion` written by this release. Absent in settings.json means v1.
+ * 2 is a 0.3.0 file: the first start stamps it to 3 and changes nothing else.
+ * 0.3.0 refuses any other version, so a stamped root cannot be opened by 0.3.0.
+ */
+export const SETTINGS_SCHEMA_VERSION = 3 as const;
 
-/** settings.json schema, v2 (global settings; per-project directories live in projects/). */
+/** settings.json (directory layout v2). `schemaVersion` is {@link SETTINGS_SCHEMA_VERSION}. */
 export const SettingsSchema = z.object({
   schemaVersion: z.literal(SETTINGS_SCHEMA_VERSION),
   runner: RunnerSettingsSchema,
@@ -494,10 +613,14 @@ export const SettingsSchema = z.object({
   budget: BudgetSettingsSchema.optional(),
   security: SecuritySettingsSchema.optional(),
   mcp: McpSettingsSchema.optional(),
+  /** Console assistant switch and limits. Absent: the defaults from `conciergeSettings`. */
+  concierge: ConciergeSettingsSchema.optional(),
   /** The optional better-ccflare account pool. */
   owlish: OwlishSettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
   webhooks: z.array(WebhookSchema).optional(),
+  /** The optional n8n instance; managed through the n8n operations, never PUT /settings. */
+  n8n: N8nSettingsSchema.optional(),
   models: z.record(z.string(), z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -578,6 +701,18 @@ export const ProjectOriginSchema = z.object({
 });
 export type ProjectOrigin = z.infer<typeof ProjectOriginSchema>;
 
+/** Per-project authentication choice for the opt-in Claude Agent SDK tool. */
+export const ClaudeAgentProjectSchema = z.strictObject({
+  auth: z.enum(["gateway", "project-key"]).default("gateway"),
+});
+export type ClaudeAgentProject = z.infer<typeof ClaudeAgentProjectSchema>;
+
+export const ANTHROPIC_API_KEY_PATTERN = /^sk-ant-api\d{2}-[\x21-\x7e]{16,500}$/;
+
+export function isAnthropicApiKey(v: unknown): v is string {
+  return typeof v === "string" && ANTHROPIC_API_KEY_PATTERN.test(v);
+}
+
 /** projects/<id>/project.json. */
 export const ProjectSchema = z.object({
   /** Directory name under projects/. */
@@ -590,6 +725,7 @@ export const ProjectSchema = z.object({
   workingDirectory: z.string(),
   /** What the project is for; given to every agent prompt as `## Project`. Absent on projects created before 0.3. */
   brief: z.string().optional(),
+  claudeAgent: ClaudeAgentProjectSchema.optional(),
   /** The runner skips a paused project. */
   paused: z.boolean().default(false),
   archived: z.boolean().default(false),
@@ -600,6 +736,8 @@ export const ProjectSchema = z.object({
   worktree: ProjectWorktreeOverrideSchema.optional(),
   retries: ProjectRetriesOverrideSchema.optional(),
   budget: ProjectBudgetOverrideSchema.optional(),
+  /** External (n8n) steps, at most 10. */
+  externalSteps: ExternalStepsSchema.optional(),
   /** Plan 03: write goal status back into the repo XML. */
   planWriteBack: z.boolean().default(true),
   labels: z.array(z.string()).default([]),
@@ -615,6 +753,7 @@ export const ProjectPatchSchema = z
     name: z.string().trim().min(1).max(200),
     workingDirectory: z.string().min(1),
     brief: z.string().trim().max(20_000).nullable(),
+    claudeAgent: ClaudeAgentProjectSchema.nullable(),
     paused: z.boolean(),
     archived: z.boolean(),
     defaultBase: z.string().min(1).nullable(),
@@ -623,6 +762,7 @@ export const ProjectPatchSchema = z
     worktree: ProjectWorktreeOverrideSchema.nullable(),
     retries: ProjectRetriesOverrideSchema.nullable(),
     budget: ProjectBudgetOverrideSchema.nullable(),
+    externalSteps: ExternalStepsSchema.nullable(),
     planWriteBack: z.boolean(),
     labels: z.array(z.string().max(100)).max(50),
   })

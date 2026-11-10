@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { lockedAtomicWrite, readText, withFileLock } from "./atomic.js";
 import { dataRootPaths } from "./paths.js";
 import {
+  ConciergeSettingsSchema,
   McpSettingsSchema,
   RetrySettingsSchema,
   ReviewSettingsSchema,
@@ -12,6 +13,7 @@ import {
   SettingsSchema,
   SETTINGS_SCHEMA_VERSION,
   WorktreeSettingsSchema,
+  type ConciergeSettings,
   type McpSettings,
   type Project,
   type RetrySettings,
@@ -41,6 +43,7 @@ export function defaultSettings(): Settings {
       "claude-code": ["opus", "sonnet", "haiku"],
       codex: [],
       opencode: ["opencode-go/kimi-k3"],
+      "claude-agent": ["default"],
       mock: ["mock-default"],
     },
   };
@@ -66,10 +69,19 @@ export class SettingsStore {
     // not write. Startup and the first update create it.
     if (!(await exists(this.path))) return defaultSettings();
     const raw: unknown = JSON.parse(await readText(this.path));
-    if (raw && typeof raw === "object" && !("schemaVersion" in raw)) {
-      throw new Error(
-        `${this.path} is a v1 settings file; start boof-runner (any command) to migrate the data root to v2`,
-      );
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      if (!("schemaVersion" in raw)) {
+        throw new Error(
+          `${this.path} is a v1 settings file; start boof-runner (any command) to migrate the data root to v2`,
+        );
+      }
+      // 2 is a 0.3.0 file. Name it before Zod, which would dump a multi-line error for the
+      // literal. Every command migrates first; this is the message when one did not.
+      if (raw.schemaVersion === 2) {
+        throw new Error(
+          `${this.path} is a 0.3.0 settings file; start boof-runner (any command) to migrate the data root`,
+        );
+      }
     }
     return SettingsSchema.parse(raw);
   }
@@ -113,11 +125,11 @@ export class SettingsStore {
 }
 
 /**
- * A short token of the settings a client can read (everything but the webhook list, which has its
- * own operations): it changes whenever one of them does. The ETag of GET/PUT /settings.
+ * A short token of the settings a client can read (everything but the webhook list and the n8n block,
+ * which have their own operations and are never sent to clients): it changes whenever one of them does. The ETag of GET/PUT /settings.
  */
-export function settingsVersion(settings: { webhooks?: unknown }): string {
-  const { webhooks: _w, ...visible } = settings;
+export function settingsVersion(settings: { webhooks?: unknown; n8n?: unknown }): string {
+  const { webhooks: _w, n8n: _n, ...visible } = settings;
   return createHash("sha256").update(JSON.stringify(visible)).digest("hex").slice(0, 16);
 }
 
@@ -181,13 +193,21 @@ export function mcpSettings(settings: Settings): McpSettings {
   return McpSettingsSchema.parse(settings.mcp ?? {});
 }
 
+/** Concierge settings with defaults applied. `defaultSettings()` does not store this block. */
+export function conciergeSettings(s: Settings): ConciergeSettings {
+  return ConciergeSettingsSchema.parse(s.concierge ?? {});
+}
+
 /** Security settings with defaults applied. */
 export function securitySettings(settings: Settings): SecuritySettings {
   return SecuritySettingsSchema.parse(settings.security ?? {});
 }
 
 /** Settings of one project: the global settings with the project's overrides and working directory. */
-export type EffectiveSettings = Settings & { workingDirectory: string };
+export type EffectiveSettings = Settings & {
+  workingDirectory: string;
+  claudeAgent?: Project["claudeAgent"];
+};
 
 /**
  * Merge a project over the global settings. `roles`, `review`, `worktree`, `retries` and `budget` merge
@@ -195,6 +215,7 @@ export type EffectiveSettings = Settings & { workingDirectory: string };
  */
 export function effectiveSettings(global: Settings, project: Project): EffectiveSettings {
   const merged: EffectiveSettings = { ...global, workingDirectory: project.workingDirectory };
+  if (project.claudeAgent) merged.claudeAgent = project.claudeAgent;
   if (project.roles) merged.roles = { ...global.roles, ...definedOnly(project.roles) };
   if (project.review) merged.review = { ...global.review, ...definedOnly(project.review) } as never;
   if (project.worktree) {

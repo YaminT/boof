@@ -41,6 +41,34 @@ export function runLabel(task: TaskView): string | null {
   return `run ${Math.min(completedRuns + 1, runs)} of ${runs}`;
 }
 
+function activeSeconds(
+  entries: Entry[],
+  role: StepRole,
+  state: StepSegment["state"],
+  now: number,
+  closingMs: number,
+  taskIsRunning: boolean,
+): number | null {
+  if (state === "upcoming" || state === "skipped") return null;
+  let total = 0;
+  let any = false;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.role !== role || e.ms === null) continue;
+    const next = entries.slice(i + 1).find((x) => x.ms !== null);
+    let end: number | null = null;
+    if (next?.ms != null) end = next.ms;
+    else if (state === "current" || (taskIsRunning && /^Planner \(answering/.test(e.label)))
+      end = now;
+    else if (!Number.isNaN(closingMs)) end = closingMs;
+    if (end !== null && end >= e.ms) {
+      total += end - e.ms;
+      any = true;
+    }
+  }
+  return any ? Math.round(total / 1000) : null;
+}
+
 const roleOf = (label: string): StepRole | null => {
   const word = label.trim().split(/\s+/)[0]?.toLowerCase();
   return ROLES.find((r) => r === word) ?? null;
@@ -101,20 +129,9 @@ export function stepStrip(task: TaskView, now: number, logHeaders: string[] = []
       state = status === "action" ? "waiting" : status;
     else if (mine.length > 0) state = "done";
     else state = idx < maxIdx ? "skipped" : "upcoming";
-    const first = mine[0]?.ms ?? null;
-
-    let seconds: number | null = null;
-    if (state !== "upcoming" && state !== "skipped" && first !== null) {
-      const after = entries.slice(entries.indexOf(mine[0]) + 1);
-      const next =
-        after.find((e) => ROLES.indexOf(e.role) > idx) ?? after.find((e) => e.role !== role);
-      let end: number | null = null;
-      if (state === "current") end = now;
-      else if (next?.ms != null) end = next.ms;
-      // The last role of a task that is no longer running ends at its closing entry, if any.
-      else if (!next && !Number.isNaN(closingMs)) end = closingMs;
-      if (end !== null && end >= first) seconds = Math.round((end - first) / 1000);
-    }
+    // Active time: each visit to this role, not the wall clock from its first start (a fix round
+    // would otherwise count the reviews that ran between two developer visits).
+    const seconds = activeSeconds(entries, role, state, now, closingMs, running);
 
     let round = 1;
     if (role === "developer") {

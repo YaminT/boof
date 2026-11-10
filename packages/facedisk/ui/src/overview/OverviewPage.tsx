@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Project } from "@boof/heart/schema";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
+import { Button } from "@/ui/button";
 import { FocusToggle } from "@/ui/focus-toggle";
 import { overviewParts } from "../lib/focus-views.js";
 import { spendFor } from "../lib/spend.js";
@@ -51,14 +52,36 @@ export function OverviewPage({
       </header>
       <section aria-label="Now" className="flex flex-col gap-3">
         <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Now</h2>
-        <NowLane
-          pid={pid}
-          projectPaused={!!project?.paused}
-          groups={groups}
-          settings={data.settings}
-          navigate={navigate}
-          onChange={() => data.refresh()}
-        />
+        {data.tasksError && data.tasks.length === 0 ? (
+          <div className="rounded-lg border border-line bg-surface p-4">
+            <p className="mt-0 mb-3 text-ink-muted">Could not load tasks.</p>
+            <Button variant="outline" onClick={() => void data.refresh()}>
+              Try again
+            </Button>
+          </div>
+        ) : !data.tasksLoaded ? (
+          <p className="m-0 text-ink-muted">Loading tasks…</p>
+        ) : (
+          <NowLane
+            pid={pid}
+            projectPaused={!!project?.paused}
+            groups={groups}
+            settings={data.settings}
+            project={project}
+            navigate={navigate}
+            onChange={() => data.refresh()}
+          />
+        )}
+        {data.plansError && (
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="m-0 text-[length:var(--text-row)] text-ink-muted">
+              Could not load plans.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void data.refresh()}>
+              Try again
+            </Button>
+          </div>
+        )}
       </section>
       {parts.showRecent && (
         <section className="flex flex-col gap-2">

@@ -26,6 +26,7 @@ export interface ToolInfo {
   displayName: string;
   defaultModels: readonly string[];
   supportsResume?: boolean;
+  unavailableReason?: string;
 }
 
 export interface HealthOptions {

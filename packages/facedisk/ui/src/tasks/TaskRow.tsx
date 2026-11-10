@@ -4,6 +4,7 @@ import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "../lib/run-timing.js";
+import { stopDisabled, useStopRequested } from "../lib/stop-request.js";
 import { StatusPill } from "../shell/StatusPill.js";
 import { useElapsed } from "../overview/useElapsed.js";
 import { TaskRowMenu } from "./TaskRowMenu.js";
@@ -183,6 +184,7 @@ export function TaskRow({
       : actions.open(entry.task.frontmatter.id);
   const action = primary(entry, ctx);
   const f = task?.frontmatter;
+  const stopRequested = useStopRequested(pid, task?.frontmatter.id ?? "");
   const hier = entry.kind === "plan" ? undefined : entry.hier;
   return (
     <li
@@ -194,7 +196,7 @@ export function TaskRow({
       onFocus={() => onSelect(entry.key)}
       onClick={() => onSelect(entry.key)}
       className={cn(
-        "flex h-10 items-center gap-2 border-b border-line px-1 text-[length:var(--text-row)] last:border-b-0",
+        "flex h-10 items-center gap-2 border-b border-line px-1 text-[length:var(--text-row)] last:border-b-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
         selected && "bg-accent outline-2 -outline-offset-2 outline-accent-brand",
       )}
     >
@@ -230,7 +232,14 @@ export function TaskRow({
       )}
       <span className="flex shrink-0 justify-end min-[720px]:w-24">
         {action && (
-          <Button size="sm" variant="outline" onClick={action.run}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={
+              entry.kind === "running" && stopDisabled(entry.task.frontmatter.status, stopRequested)
+            }
+            onClick={action.run}
+          >
             {action.label}
           </Button>
         )}

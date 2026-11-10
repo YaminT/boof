@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Project } from "@boof/heart/schema";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
@@ -7,11 +7,15 @@ import { NativeSelect } from "@/ui/native-select";
 import { Textarea } from "@/ui/textarea";
 import { AddProjectModal } from "../components/Projects.js";
 import { FolderOpenIcon } from "../components/Icons.js";
-import { desktop } from "../desktop.js";
+import type { AgentSdkEligibility, ProjectView, Whoami } from "../api-types.js";
+import { desktop, isDesktop } from "../desktop.js";
+import { isApiKeyShape } from "../lib/claude-agent.js";
 import { act } from "../lib/act.js";
 import type { ProjectPageValues } from "../lib/settings-project.js";
 import { ArchivedProjects } from "./ArchivedProjects.js";
+import { ClaudeAgentSection } from "./ClaudeAgentSection.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { ExternalStepsSection } from "./ExternalStepsSection.js";
 
 import { AdvancedSection } from "./AdvancedSection.js";
 const label = "flex flex-col gap-1.5 text-[length:var(--text-body)] font-medium";
@@ -45,6 +49,32 @@ export function ProjectPage({
 }) {
   const [archiving, setArchiving] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [eligibility, setEligibility] = useState<AgentSdkEligibility | null>(null);
+  const [eligibilityFailed, setEligibilityFailed] = useState(false);
+  const [whoami, setWhoami] = useState<Whoami | null>(null);
+  useEffect(() => {
+    void api
+      .whoami()
+      .then(setWhoami)
+      .catch(() => {});
+  }, []);
+  // Whether a key is stored; the key itself never reaches the browser.
+  const keySet = (project as ProjectView).anthropicApiKeySet === true;
+  useEffect(() => {
+    setReplacing(false);
+  }, [keySet, project.id]);
+  useEffect(() => {
+    if (isDesktop) return;
+    let live = true;
+    api
+      .agentSdkEligibility()
+      .then((e) => live && setEligibility(e))
+      .catch(() => live && setEligibilityFailed(true));
+    return () => {
+      live = false;
+    };
+  }, []);
   const p = form.project;
   const g = form.global;
   const setP = (patch: Partial<ProjectPageValues["project"]>) =>
@@ -127,6 +157,33 @@ export function ProjectPage({
         </div>
       </section>
 
+      <ClaudeAgentSection
+        desktop={isDesktop}
+        auth={p.claudeAuth}
+        onAuth={(claudeAuth) => setP({ claudeAuth })}
+        keySet={keySet}
+        typedKey={p.anthropicApiKey}
+        onTypedKey={(anthropicApiKey) => setP({ anthropicApiKey, removeApiKey: false })}
+        replacing={replacing}
+        onReplace={() => setReplacing(true)}
+        removing={p.removeApiKey}
+        onRemove={() => {
+          setReplacing(false);
+          setP({ removeApiKey: true, anthropicApiKey: "" });
+        }}
+        onKeep={() => {
+          setReplacing(false);
+          setP({ removeApiKey: false, anthropicApiKey: "" });
+        }}
+        problem={
+          p.anthropicApiKey.trim() && !isApiKeyShape(p.anthropicApiKey.trim())
+            ? "That is not an Anthropic API key. It starts with sk-ant-api."
+            : null
+        }
+        eligibility={eligibility}
+        eligibilityFailed={eligibilityFailed}
+      />
+
       <AdvancedSection title="All projects" className="flex flex-col gap-4" open={advancedOpen}>
         <label className={label}>
           Default project
@@ -162,6 +219,8 @@ export function ProjectPage({
           </Button>
         </div>
       </AdvancedSection>
+
+      <ExternalStepsSection project={project} whoami={whoami} onSaved={reloadProjects} />
 
       <ArchivedProjects reloadProjects={reloadProjects} />
 

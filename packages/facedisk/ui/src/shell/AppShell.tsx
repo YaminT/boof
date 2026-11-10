@@ -4,7 +4,9 @@ import { TooltipProvider } from "@/ui/tooltip";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { AddProjectModal } from "../components/Projects.js";
-import { CommandConsole } from "./CommandConsole.js";
+import { CommandConsole, type ConsoleAssistant } from "./CommandConsole.js";
+import { useConcierge } from "./useConcierge.js";
+import type { ConciergeContext } from "../api-types.js";
 import { CommandPalette, SearchButton } from "./CommandPalette.js";
 import { availableActions } from "../lib/console-command.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
@@ -31,6 +33,23 @@ function restoreMoreFocus() {
     const more = document.querySelector<HTMLElement>("[data-more-trigger]");
     if (more && more.offsetParent !== null) more.focus();
   }, 100);
+}
+
+/** What the assistant is told about the screen: the screen name and ids; the server adds titles. */
+export function conciergeContextOf(route: Route | null): ConciergeContext | null {
+  if (!route) return null;
+  switch (route.name) {
+    case "task":
+      return { screen: "task", taskId: route.taskId };
+    case "plans":
+      return {
+        screen: "plans",
+        ...(route.planId ? { planId: route.planId } : {}),
+        ...(route.goalId ? { goalId: route.goalId } : {}),
+      };
+    default:
+      return { screen: route.name };
+  }
 }
 
 export function AppShell({
@@ -62,6 +81,24 @@ export function AppShell({
       ? (data.tasks.find((t) => t.frontmatter.id === route.taskId) ?? null)
       : null;
   const held = useHeldScopes();
+  const concierge = useConcierge(pid, conciergeContextOf(route), () => {
+    void Promise.all([data.refresh(), epics.reload()]);
+  });
+  const conciergeAvailable = concierge.status?.available === true;
+  const assistant: ConsoleAssistant = {
+    available: conciergeAvailable,
+    reason: concierge.status
+      ? concierge.status.reason
+      : "The assistant's status could not be read.",
+    noProject: pid === null,
+    state: concierge.state,
+    ask: (text) => void concierge.ask(text),
+    apply: concierge.apply,
+    discard: concierge.discard,
+    cancel: concierge.cancel,
+  };
+  // Without the assistant there is no conversation to reset; the command still succeeds.
+  const resetAssistant = () => (conciergeAvailable ? concierge.reset() : undefined);
   const palette = useCommandActions({
     data,
     projects,
@@ -70,6 +107,7 @@ export function AppShell({
     onSelectProject,
     epics,
     currentTask,
+    resetAssistant,
     mode: "toast",
   });
   const consoleActions = useCommandActions({
@@ -80,6 +118,7 @@ export function AppShell({
     onSelectProject,
     epics,
     currentTask,
+    resetAssistant,
     mode: "throw",
   });
   const counts: NavCounts = {
@@ -142,7 +181,7 @@ export function AppShell({
           <main className="mx-auto w-full max-w-[1320px] min-w-0 flex-1 pt-6 pb-8 min-[720px]:pb-12">
             {children}
           </main>
-          <CommandConsole actions={consoleActions.actions} />
+          <CommandConsole actions={consoleActions.actions} assistant={assistant} />
         </div>
         <BottomBar
           active={navKey(route)}

@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthStore,
   defaultSettings,
+  LOCAL_MCP_ID,
   LOCAL_PRINCIPAL,
   SecuritySettingsSchema,
   type Settings,
 } from "@boof/heart";
-import { LOCAL_MCP_ID, LocalPrincipalError, localPrincipal } from "./local-principal.js";
+import { LocalPrincipalError, localPrincipal } from "./local-principal.js";
 
 let root: string;
 let authStore: AuthStore;
@@ -99,55 +100,22 @@ describe("localPrincipal", () => {
     expect(await resolve()).toEqual(LOCAL_PRINCIPAL);
   });
 
-  it("without a client and as the MCP default, it is the reserved review-trust local-mcp principal", async () => {
-    const resolve = await localPrincipal({
-      settings: settings(),
-      authStore,
-      withoutClient: "review",
-    });
-    const p = await resolve();
-    expect(p).toMatchObject({ kind: "client", id: LOCAL_MCP_ID, trust: "review", projects: "*" });
-    expect(p.scopes.has("tasks:write")).toBe(true);
-    expect(p.scopes.has("plans:write")).toBe(true);
-    for (const s of ["admin", "auth:admin", "settings:write"] as const) {
-      expect(p.scopes.has(s), s).toBe(false);
-    }
-    // It is not stored: no client of that id exists, and none can be created.
-    expect(await authStore.get(LOCAL_MCP_ID)).toBeNull();
+  it("the reserved id stays reserved: no client can be created with it", async () => {
     const made = await authStore.create({ name: "local-mcp", scopes: ["tasks:read"] });
     expect(made.client.id).not.toBe(LOCAL_MCP_ID);
-    // The generated CLI keeps the local admin.
-    expect(await (await localPrincipal({ settings: settings(), authStore }))()).toEqual(
-      LOCAL_PRINCIPAL,
-    );
-    // A named client is that client, whatever the default.
-    const { client } = await authStore.create({ name: "x", scopes: ["tasks:read"] });
-    const named = await localPrincipal({
-      settings: settings(),
-      authStore,
-      client: client.id,
-      withoutClient: "review",
-    });
-    expect((await named()).id).toBe(client.id);
-    // required mode still refuses without a client.
-    await expect(
-      localPrincipal({ settings: settings("required"), authStore, withoutClient: "review" }),
-    ).rejects.toThrow(LocalPrincipalError);
   });
 
-  it("refuses the keyless MCP default when clients.json already holds a client named local-mcp", async () => {
-    // A client of that id from before the reservation (written to the file directly).
-    const { client } = await authStore.create({ name: "old", scopes: ["tasks:read"] });
+  it("refuses --client local-mcp when clients.json holds a client from before the reservation", async () => {
+    await authStore.create({ name: "old", scopes: ["tasks:read"] });
     const { readFile, writeFile } = await import("node:fs/promises");
     const file = join(root, "auth", "clients.json");
     const raw = JSON.parse(await readFile(file, "utf8"));
     raw.clients[0].id = LOCAL_MCP_ID;
     await writeFile(file, JSON.stringify(raw));
-    expect(client.id).not.toBe(LOCAL_MCP_ID);
     await expect(
-      localPrincipal({ settings: settings(), authStore, withoutClient: "review" }),
-    ).rejects.toThrow(/local-mcp.*clients\.json/s);
-    // The administrator and a named client are not affected.
+      localPrincipal({ settings: settings(), authStore, client: LOCAL_MCP_ID }),
+    ).rejects.toThrow(/reserved.*auth revoke local-mcp/s);
+    // The administrator is not affected.
     await expect(localPrincipal({ settings: settings(), authStore })).resolves.toBeTypeOf(
       "function",
     );

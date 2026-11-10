@@ -278,6 +278,77 @@ describe("OwlishClient.health", () => {
   });
 });
 
+describe("OwlishClient.agentSdkEligibility", () => {
+  it("uses the account list and client key", async () => {
+    reply = () => [
+      200,
+      JSON.stringify([
+        { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+      ]),
+    ];
+    const result = await new OwlishClient({ url, apiKey: "btr-secret" }).agentSdkEligibility();
+    expect(result).toMatchObject({ gateway: "checked", allowed: true });
+    expect(seen[0]?.headers["x-api-key"]).toBe("btr-secret");
+  });
+  it("maps HTTP, malformed and unreachable errors without throwing", async () => {
+    reply = () => [401, "{}"];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain("HTTP 401");
+    reply = () => [200, "not json"];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain(
+      "malformed answer",
+    );
+    reply = () => [
+      200,
+      JSON.stringify([
+        { id: "known", name: "console", provider: "claude-console-api" },
+        { nope: true },
+      ]),
+    ];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain(
+      "malformed answer",
+    );
+    const dead = new OwlishClient({ url: "http://127.0.0.1:1" });
+    expect((await dead.agentSdkEligibility()).reason).toContain("unreachable");
+  });
+  it.each([
+    [
+      "wrapped object",
+      {
+        accounts: [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: false }],
+      },
+    ],
+    [
+      "pagination field",
+      {
+        accounts: [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: false }],
+        nextCursor: "p2",
+      },
+    ],
+    ["error field", { accounts: [], error: "partial" }],
+    [
+      "renamed refresh field",
+      [{ id: "a", name: "ok", provider: "claude-console-api", has_refresh_token: false }],
+    ],
+    ["missing refresh field", [{ id: "a", name: "ok", provider: "claude-console-api" }]],
+    [
+      "string refresh field",
+      [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: "true" }],
+    ],
+    [
+      "numeric refresh field",
+      [{ id: "a", name: "ok", provider: "claude-console-api", hasRefreshToken: 1 }],
+    ],
+    ["missing provider", [{ id: "a", name: "ok", hasRefreshToken: false }]],
+    ["empty provider", [{ id: "a", name: "ok", provider: "", hasRefreshToken: false }]],
+  ])("closes on non-v3.6.3 response shape: %s", async (_label, body) => {
+    reply = () => [200, JSON.stringify(body)];
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).allowed).toBe(false);
+    expect((await new OwlishClient({ url }).agentSdkEligibility()).reason).toContain(
+      "malformed answer",
+    );
+  });
+});
+
 describe("OwlishClient accounts", () => {
   const account = {
     id: "a1",
@@ -308,6 +379,9 @@ describe("OwlishClient accounts", () => {
     expect(seen[0]!.headers["x-api-key"]).toBe("btr-secret");
     reply = () => [200, JSON.stringify({ accounts: [account, { nope: true }, 5] })];
     expect((await c.accounts()).map((a) => a.id)).toEqual(["a1"]);
+    // Lenient, as before 8b: a body that is no list is an empty list (only the gate is strict).
+    reply = () => [200, JSON.stringify({ unexpected: true })];
+    expect(await c.accounts()).toEqual([]);
   });
 
   it("pause, resume, priority and thresholds use the documented routes", async () => {
@@ -351,6 +425,26 @@ describe("OwlishClient accounts", () => {
     expect(down).toBeInstanceOf(OwlishError);
     expect((down as OwlishError).status).toBeNull();
     expect(String((down as Error).message)).not.toContain("btr-secret");
+  });
+
+  it("probeAdminRoute treats 401 and 403 as rejected, 2xx as accepted, and the rest as unknown", async () => {
+    const probe = (status: number) => {
+      reply = () => [status, "{}"];
+      return new OwlishClient({ url, apiKey: "btr-agent" }).probeAdminRoute();
+    };
+    expect(await probe(401)).toBe("rejected");
+    expect(await probe(403)).toBe("rejected");
+    expect(await probe(200)).toBe("accepted");
+    expect(await probe(204)).toBe("accepted");
+    expect(await probe(500)).toBe("unknown");
+    expect(await probe(307)).toBe("unknown");
+    expect(
+      await new OwlishClient({
+        url: "http://127.0.0.1:1",
+        apiKey: "btr-agent",
+        timeoutMs: 200,
+      }).probeAdminRoute(),
+    ).toBe("unknown");
   });
 
   it("a mutation clears the cached health", async () => {

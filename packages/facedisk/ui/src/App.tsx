@@ -7,16 +7,24 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { Project } from "@boof/heart/schema";
 import { BudgetBanner } from "./shell/BudgetBanner.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
-import { TokenGate } from "./components/TokenGate.js";
+import { SignInStorageError, TokenGate } from "./components/TokenGate.js";
+import { getSignInStorageError, onSignInStorageError } from "./token.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
-import { correctedRoute, routeForProject, routePid, type Route } from "./lib/route.js";
+import {
+  correctedRoute,
+  nextPrevious,
+  routeForProject,
+  routePid,
+  type Route,
+} from "./lib/route.js";
 import { useRoute } from "./lib/useRoute.js";
 import { epicFromSearch, manageEpicsFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
@@ -50,6 +58,11 @@ export function App() {
   const reloadProjects = useCallback(() => reloadRef.current(), []);
   const data = useAppData(selectedId, reloadProjects);
   const { settings, budget, refresh, needsToken, clearNeedsToken } = data;
+  const storageError = useSyncExternalStore(
+    onSignInStorageError,
+    getSignInStorageError,
+    getSignInStorageError,
+  );
   const { projects, projectsDenied, selected, select, reload } = useProjects(
     settings,
     routePid(route),
@@ -59,12 +72,7 @@ export function App() {
   const current = useRef<Route | null>(route);
   const previous = useRef<Route | null>(null);
   if (current.current !== route) {
-    const sameTask =
-      current.current?.name === "task" &&
-      route?.name === "task" &&
-      current.current.pid === route.pid &&
-      current.current.taskId === route.taskId;
-    if (!sameTask) previous.current = current.current;
+    previous.current = nextPrevious(previous.current, current.current, route);
     current.current = route;
   }
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
@@ -103,9 +111,13 @@ export function App() {
     void refresh().catch(() => {});
   };
 
+  // Sign-in cannot work while the server refuses to store sessions: show why instead of the gate.
+  if (storageError) return <SignInStorageError message={storageError} />;
+
   if (needsToken) {
     return (
       <TokenGate
+        reason={needsToken}
         onSubmit={() => {
           clearNeedsToken();
           void refresh().catch(() => {});
@@ -161,6 +173,7 @@ export function App() {
             data={data}
             navigate={navigate}
             previous={previous.current}
+            project={selected}
           />
         )}
         {routeReady && route.name === "plans" && (

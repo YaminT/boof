@@ -18,6 +18,7 @@
       <versions>
         <version number="1" status="plan">Requested by the owner on 2026-10-29; design conversation started, not finished.</version>
         <version number="2" status="plan">D1 (owner, 2026-10-29): same repo, different boundaries — enforced package boundaries (import lint, four packages: Runner, Heart, Facedisk, Owlish), not processes or repos. Heart holds the stores, settings and auth; Facedisk is the UI, desktop app and CLI; ops goes to Heart. Files move once, late (roadmap step 15), after the backlog fixes.</version>
+        <version number="3" status="done">M1-M8 are in the tree: Heart daee676, Heart server d232c1b, Owlish 744f48a, Facedisk 465aafa, Runner 715cfee, shared boot 090dad0, @boof/boof and desktop 7963f66, package-map lint 0345aee (M1 closed the allow-list in f99a38f). bin/src/boundaries.ts matches the design graph with an empty allow-list; parity is bin/src/parity.test.ts.</version>
       </versions>
     </status>
     <tests>

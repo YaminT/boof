@@ -23,7 +23,8 @@ export type ProjectErrorCode =
   | "directory_not_empty"
   | "directory_create_failed"
   | "directory_not_allowed"
-  | "busy";
+  | "busy"
+  | "modified";
 
 /** A project operation was refused; `code` is stable for API mapping. */
 export class ProjectError extends Error {
@@ -489,11 +490,13 @@ export class ProjectStore {
   async update(
     id: string,
     patch: ProjectPatch,
-    opts: { assertTarget?: (real: string) => Promise<void> } = {},
+    opts: { assertTarget?: (real: string) => Promise<void>; expectedUpdated?: string } = {},
   ): Promise<Project> {
     const path = projectPaths(this.root, id).json;
     return withFileLock(`${path}#mutate`, async () => {
       const current = await this.require(id);
+      if (opts.expectedUpdated !== undefined && opts.expectedUpdated !== current.updated)
+        throw new ProjectError("modified", `Project ${id} changed since it was read`);
       const next: Record<string, unknown> = { ...current };
       for (const [key, value] of Object.entries(patch)) {
         if (value === undefined) continue;

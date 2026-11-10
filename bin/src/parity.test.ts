@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { LOCAL_MCP_PRINCIPAL, registry, TaskService, type AnyOperation } from "@boof/heart-server";
+import {
+  MCP_REVIEW_SCOPES,
+  principalFromClient,
+  registry,
+  TaskService,
+  type AnyOperation,
+} from "@boof/heart-server";
 import { createBoofMcpServer, exposedOps } from "@boof/heart-server";
 import {
   AuthStore,
@@ -24,9 +30,11 @@ import { cliOps, commandPath, matchOpCommand, opsCommand } from "@boof/facedisk/
 const json = (o: AnyOperation) => !o.rest.kind || o.rest.kind === "json";
 
 describe("every operation is reachable", () => {
-  it("is an MCP tool unless it moves a file", () => {
+  it("is an MCP tool unless the registry explains why it is REST/CLI only", () => {
     const exposed = new Set(exposedOps(registry).map((o) => o.name));
-    for (const op of registry) expect(exposed.has(op.name), op.name).toBe(json(op));
+    for (const op of registry) expect(exposed.has(op.name), op.name).toBe(json(op) && !op.mcp.why);
+    for (const op of registry.filter((item) => item.mcp.why))
+      expect(op.name.startsWith("concierge."), op.name).toBe(true);
   });
 
   it("is a CLI command", () => {
@@ -122,6 +130,12 @@ describe("read-only operations answer on both local surfaces", () => {
     taskId = (await services.forProject("shop").list())[0]!.frontmatter.id;
   });
 
+  it("prints the unavailable reason through the generated concierge CLI", async () => {
+    const result = await cli(["concierge", "status", "--project", "shop", "--json", "-d", root]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("The assistant is not set up in this boof process.");
+  });
+
   afterEach(async () => {
     await Promise.all(open.splice(0).map((c) => c.close()));
     await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -149,24 +163,28 @@ describe("read-only operations answer on both local surfaces", () => {
     expect(READ_ONLY.length).toBeGreaterThan(20);
   });
 
-  it.each(READ_ONLY.map((o) => [o.name, o] as const))("%s over the CLI", async (_name, op) => {
-    const r = await cli([
-      ...commandPath(op),
-      "--input",
-      JSON.stringify(inputFor(op)),
-      "--json",
-      "-d",
-      root,
-    ]);
-    const expected = EXPECTED_FAILURE[op.name];
-    if (expected) {
-      expect(r.code).toBe(2);
-      expect(JSON.parse(r.err[0]!).error.code).toBe(expected);
-    } else {
-      expect(r.code, r.err.join("\n")).toBe(0);
-      expect(() => JSON.parse(r.out)).not.toThrow();
-    }
-  });
+  it.each(READ_ONLY.map((o) => [o.name, o] as const))(
+    "%s over the CLI",
+    async (_name, op) => {
+      const r = await cli([
+        ...commandPath(op),
+        "--input",
+        JSON.stringify(inputFor(op)),
+        "--json",
+        "-d",
+        root,
+      ]);
+      const expected = EXPECTED_FAILURE[op.name];
+      if (expected) {
+        expect(r.code).toBe(2);
+        expect(JSON.parse(r.err[0]!).error.code).toBe(expected);
+      } else {
+        expect(r.code, r.err.join("\n")).toBe(0);
+        expect(() => JSON.parse(r.out)).not.toThrow();
+      }
+    },
+    20000,
+  );
 
   it.each(READ_ONLY.map((o) => [o.name, o] as const))("%s over MCP", async (_name, op) => {
     const server = createBoofMcpServer({
@@ -192,14 +210,18 @@ describe("read-only operations answer on both local surfaces", () => {
     }
   });
 
-  describe("the keyless default (local-mcp, no administration tools)", () => {
+  describe("a review-trust MCP client (no administration scopes)", () => {
     it("still reaches every read-only tool it lists", async () => {
+      const { client: made } = await authStore.create({
+        name: "reviewer",
+        scopes: [...MCP_REVIEW_SCOPES],
+        trust: "review",
+      });
       const server = createBoofMcpServer({
         root,
-        principal: LOCAL_MCP_PRINCIPAL,
+        principal: principalFromClient((await authStore.get(made.id))!),
         services,
         authStore,
-        adminTools: false,
       });
       const client = new Client({ name: "parity", version: "1" });
       const [a, b] = InMemoryTransport.createLinkedPair();

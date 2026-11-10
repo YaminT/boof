@@ -3,11 +3,20 @@ import { toast } from "sonner";
 import type { Scope, Settings } from "@boof/heart/schema";
 import type { AccountsGlobal } from "../lib/settings-accounts.js";
 import { api } from "../api.js";
-import type { AccountSummary, AccountsHealth, PoolState, Thresholds } from "../api-types.js";
+import type {
+  AccountSummary,
+  AccountsHealth,
+  AgentSdkEligibility,
+  PoolState,
+  Thresholds,
+} from "../api-types.js";
+import { agentSdkBadge, agentSdkSummary } from "../lib/claude-agent.js";
+import { AgentSdkBadge, AgentSdkSummaryLine } from "./AgentSdkBadge.js";
 import { gatePauses } from "../lib/accounts-page.js";
 import { heldScopes } from "../lib/clients.js";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
+import { AGENT_KEY_HINT, GatewayKeyField } from "./GatewayKeyField.js";
 import type { Whoami } from "../api-types.js";
 import { inputErrorLines } from "../lib/automation.js";
 import { thresholdFields, accountActionAccess, priorityProblem } from "../lib/accounts-page.js";
@@ -75,16 +84,24 @@ export function AccountsPage({
   const [now, setNow] = useState(Date.now());
   const [health, setHealth] = useState<AccountsHealth | null>(null);
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [eligibility, setEligibility] = useState<AgentSdkEligibility | null>(null);
   const [error, setError] = useState("");
   const [listError, setListError] = useState("");
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState("");
+  const [agentKey, setAgentKey] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const refresh = useCallback(async (force = false) => {
     setError("");
     try {
-      const [h, a] = await Promise.allSettled([api.accountsHealth(force), api.listAccounts()]);
+      const [h, a, e] = await Promise.allSettled([
+        api.accountsHealth(force),
+        api.listAccounts(),
+        api.agentSdkEligibility(force),
+      ]);
+      // A failed eligibility check only hides the badges; they must not say "allowed" without it.
+      setEligibility(e.status === "fulfilled" ? e.value : null);
       if (h.status === "fulfilled") setHealth(h.value);
       if (a.status === "fulfilled") setAccounts(a.value.accounts);
       setListError(a.status === "rejected" ? inputErrorLines(a.reason).join("; ") : "");
@@ -139,11 +156,40 @@ export function AccountsPage({
       setBusy(false);
     }
   };
+  const saveAgentKey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateSettings({ owlishAgentKey: agentKey });
+      setAgentKey("");
+      await onChanged();
+      await refresh();
+      toast.success("Agent key saved");
+    } catch (e) {
+      setError(inputErrorLines(e).join("; "));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clearAgentKey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateSettings({ owlishAgentKey: null });
+      await onChanged();
+      await refresh();
+      toast.success("Agent key cleared");
+    } catch (e) {
+      setError(inputErrorLines(e).join("; "));
+    } finally {
+      setBusy(false);
+    }
+  };
   const removeGateway = async () => {
     setBusy(true);
     setError("");
     try {
-      await api.updateSettings({ owlish: null, owlishApiKey: null });
+      await api.updateSettings({ owlish: null, owlishApiKey: null, owlishAgentKey: null });
       setRemoveOpen(false);
       await onChanged();
       await refresh();
@@ -165,7 +211,7 @@ export function AccountsPage({
         open={removeOpen}
         onOpenChange={setRemoveOpen}
         title="Remove gateway?"
-        body="This clears the better-ccflare gateway settings and stored client key. Boof will continue to work without an account pool."
+        body="This clears the better-ccflare gateway settings and its stored client and agent keys. Boof will continue to work without an account pool."
         confirmLabel="Remove gateway"
         destructive
         onConfirm={() => void removeGateway()}
@@ -216,25 +262,23 @@ export function AccountsPage({
               <option value="off">Off</option>
             </NativeSelect>
           </label>
-          <label className={labelClass}>
-            Client key (write only)
-            <Input
-              type="password"
-              autoComplete="new-password"
-              className={inputClass}
-              placeholder={
-                health?.keySource ? "Key is set; enter to replace" : "Optional client key"
-              }
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              disabled={!canWrite}
-            />
-          </label>
-          {health?.keySource && (
-            <p className="m-0 self-end text-sm text-ink-muted">
-              Client key: set ({health.keySource})
-            </p>
-          )}
+          <GatewayKeyField
+            label="Client key"
+            noun="Client key"
+            source={health?.keySource}
+            value={key}
+            onChange={setKey}
+            disabled={!canWrite}
+          />
+          <GatewayKeyField
+            label="Agent key"
+            noun="Agent key"
+            source={health?.agentKeySource}
+            value={agentKey}
+            onChange={setAgentKey}
+            disabled={!canWrite}
+            hint={AGENT_KEY_HINT}
+          />
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {!configured && canWrite && (
@@ -247,6 +291,11 @@ export function AccountsPage({
               Save client key
             </Button>
           )}
+          {canWrite && agentKey && (
+            <Button className="" disabled={busy} onClick={() => void saveAgentKey()}>
+              Save agent key
+            </Button>
+          )}
           {configured && canWrite && (
             <Button variant="outline" disabled={busy} onClick={() => setRemoveOpen(true)}>
               Remove gateway
@@ -256,6 +305,16 @@ export function AccountsPage({
             <Button variant="outline" disabled={busy} onClick={() => void clearClientKey()}>
               Clear client key
             </Button>
+          )}
+          {health?.agentKeySource === "file" && canWrite && (
+            <Button variant="outline" disabled={busy} onClick={() => void clearAgentKey()}>
+              Clear agent key
+            </Button>
+          )}
+          {health?.agentKeySource === "env" && (
+            <p className="m-0 self-center text-sm text-ink-muted">
+              Agent key comes from BOOF_OWLISH_AGENT_KEY and cannot be cleared here.
+            </p>
           )}
           {health?.keySource === "env" && (
             <p className="m-0 self-center text-sm text-ink-muted">
@@ -306,6 +365,7 @@ export function AccountsPage({
         <section className={cardClass}>
           <h2 className="m-0 mb-3 text-lg font-semibold">Accounts</h2>
           {listError && <Alert>Could not load accounts: {listError}</Alert>}
+          <AgentSdkSummaryLine text={agentSdkSummary(eligibility)} />
           {accounts.length === 0 && !listError ? (
             <p className="text-sm text-ink-muted">No accounts returned by the gateway.</p>
           ) : (
@@ -317,6 +377,7 @@ export function AccountsPage({
                   canWrite={canWrite}
                   expanded={advancedOpen}
                   error={rowErrors[account.id] ?? ""}
+                  agentBadge={agentSdkBadge(account.id, eligibility)}
                   run={runAccount}
                 />
               ))}
@@ -379,9 +440,11 @@ function AccountRow({
   canWrite,
   expanded,
   error,
+  agentBadge,
   run,
 }: {
   account: AccountSummary;
+  agentBadge: { allowed: boolean; text: string } | null;
   canWrite: boolean;
   expanded: boolean;
   error: string;
@@ -405,21 +468,24 @@ function AccountRow({
             {account.provider ? ` · ${account.provider}` : ""}
           </p>
         </div>
-        <TonePill
-          tone={
-            account.paused
-              ? "attention"
-              : account.rateLimitStatus === "rate_limited"
-                ? "failed"
-                : "done"
-          }
-        >
-          {account.paused
-            ? "Paused"
-            : (account.rateLimitStatus ?? account.tokenStatus ?? "Ready")
-                .replaceAll("_", " ")
-                .replace(/^\w/, (c) => c.toUpperCase())}
-        </TonePill>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <AgentSdkBadge badge={agentBadge} />
+          <TonePill
+            tone={
+              account.paused
+                ? "attention"
+                : account.rateLimitStatus === "rate_limited"
+                  ? "failed"
+                  : "done"
+            }
+          >
+            {account.paused
+              ? "Paused"
+              : (account.rateLimitStatus ?? account.tokenStatus ?? "Ready")
+                  .replaceAll("_", " ")
+                  .replace(/^\w/, (c) => c.toUpperCase())}
+          </TonePill>
+        </div>
       </div>
       {canWrite && (
         <div className="mt-3 flex flex-wrap gap-2">

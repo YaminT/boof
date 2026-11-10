@@ -8,8 +8,10 @@
  *
  * Nothing here signals a process. Callers that kill (the runner's orphan reaper) or refuse (Retry
  * while a recorded agent is alive) decide with `agentStatus`, and treat "unknown" as "do not act".
+ * On Windows a start time that came back in another form (PowerShell ISO against `wmic`, or a
+ * probe that had to fall back) is "unknown": the strings differ even when the process is the same.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 export interface IdentityDeps {
@@ -174,6 +176,8 @@ export interface ProcessProbe {
   /** macOS: `ps` lstart. Windows: the CIM creation time. */
   startTime: string | null;
   ppid: number | null;
+  /** Windows: PowerShell failed and `wmic` supplied `startTime`. */
+  fellBack?: boolean;
 }
 
 const validPid = (pid: number) => Number.isInteger(pid) && pid > 0;
@@ -212,7 +216,12 @@ export function probeProcess(pid: number, d: IdentityDeps = {}): ProcessProbe | 
     const created = /CreationDate=(\S+)/.exec(w ?? "")?.[1];
     const parent = /ParentProcessId=(\d+)/.exec(w ?? "")?.[1];
     return created
-      ? { startTicks: null, startTime: created, ppid: parent ? Number(parent) : null }
+      ? {
+          startTicks: null,
+          startTime: created,
+          ppid: parent ? Number(parent) : null,
+          fellBack: true,
+        }
       : undefined;
   }
   return undefined;
@@ -230,8 +239,9 @@ export interface AgentIdentity {
 /**
  * Is the recorded agent still running? `running`: the same boot, the process exists and its start
  * time equals the recorded one exactly. `gone`: it does not exist, or is another process (a reused
- * pid), or the machine rebooted. `unknown`: not enough was recorded or the probe failed; callers
- * must not kill and must not refuse on it.
+ * pid), or the machine rebooted. `unknown`: not enough was recorded, the probe failed, or (Windows)
+ * the recorded start time and the probed one are different formats, or the probe fell back to
+ * `wmic` and the strings differ. Callers must not kill and must not refuse on `unknown`.
  */
 export function agentStatus(
   id: AgentIdentity,
@@ -248,7 +258,31 @@ export function agentStatus(
   // only a pid that is really gone is `gone`; a live one cannot be told apart, so it is unknown.
   if (!probe) return resolveDeps(d).alive(id.pgid) ? "unknown" : "gone";
   const now = platform === "linux" ? probe.startTicks : probe.startTime;
-  return now === recordedStart ? "running" : "gone";
+  if (now === recordedStart) return "running";
+  // `wmic` prints `YYYYMMDDHHMMSS.mmmmmm±UUU`. That is not the ISO form the writer prefers, so a
+  // mismatch is not proof the pid was reused. A fallback that disagrees is the same: unverifiable.
+  if (
+    platform === "win32" &&
+    typeof now === "string" &&
+    typeof recordedStart === "string" &&
+    (probe.fellBack === true || windowsTimeKind(now) !== windowsTimeKind(recordedStart))
+  ) {
+    return "unknown";
+  }
+  return "gone";
+}
+
+/** `wmic` CreationDate: `YYYYMMDDHHMMSS.mmmmmm±UUU`. */
+const WMIC_CREATION = /^\d{14}\.\d+[+-]\d+$/;
+
+/** Fixed-width UTC form of a CIM `CreationDate` (`DateTime.ToString('o')`). */
+export const ISO_O = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/;
+
+/** Which Windows creation-time spelling this string is. Different kinds are not comparable. */
+export function windowsTimeKind(value: string): "iso" | "wmic" | "other" {
+  if (ISO_O.test(value)) return "iso";
+  if (WMIC_CREATION.test(value)) return "wmic";
+  return "other";
 }
 
 /** One row of the Windows process table. `created` is the CIM CreationDate in UTC, ISO 8601 ("o"). */
@@ -258,29 +292,136 @@ export interface ProcessRow {
   created: string;
 }
 
-export const ISO_O = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/;
+/**
+ * A Windows process table.
+ * `droppedNonIso` counts `pid|ppid|time` rows whose time was not `ISO_O`.
+ * `unparsed` counts other non-empty lines (a header, spaces around the pipes, an error on stdout).
+ * Those lines are not "no such process": a table that parsed nothing, or that lost lines, must not
+ * be read as "the agent is gone".
+ */
+export interface ProcessTable {
+  rows: ProcessRow[];
+  droppedNonIso: number;
+  unparsed: number;
+}
+
+const PROCESS_TABLE_COMMAND =
+  "Get-CimInstance Win32_Process | ForEach-Object { if ($_.CreationDate) { '' + $_.ProcessId + '|' + $_.ParentProcessId + '|' + $_.CreationDate.ToUniversalTime().ToString('o') } }";
+
+const powershellArgs = (command: string): string[] => [
+  "-NoProfile",
+  "-NonInteractive",
+  "-Command",
+  command,
+];
+
+/** Split one CIM table listing. Blank lines are ignored. */
+export function parseProcessTable(out: string): ProcessTable {
+  const rows: ProcessRow[] = [];
+  let droppedNonIso = 0;
+  let unparsed = 0;
+  for (const line of out.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const m = /^(\d+)\|(\d+)\|(\S+)\s*$/.exec(line);
+    if (!m) {
+      unparsed += 1;
+      continue;
+    }
+    if (!ISO_O.test(m[3]!)) {
+      droppedNonIso += 1;
+      continue;
+    }
+    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), created: m[3]! });
+  }
+  return { rows, droppedNonIso, unparsed };
+}
 
 /**
  * Windows: every process with its parent and creation time, from ONE CIM query (null when
- * PowerShell fails). Rows whose creation time is not the fixed-width UTC form are dropped.
+ * PowerShell fails). Rows whose creation time is not the fixed-width UTC form are dropped and
+ * counted, and so is every non-empty line that is not `pid|ppid|time`. An empty `rows` with
+ * either counter non-zero means the listing was unreadable, not that the machine has no processes.
+ * Callers must not treat that as "the agent is gone".
  */
-export function processTable(d: IdentityDeps = {}): ProcessRow[] | null {
+export function processTable(d: IdentityDeps = {}): ProcessTable | null {
   const { platform, run } = resolveDeps(d);
   if (platform !== "win32") return null;
-  const out = run("powershell", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    "Get-CimInstance Win32_Process | ForEach-Object { if ($_.CreationDate) { '' + $_.ProcessId + '|' + $_.ParentProcessId + '|' + $_.CreationDate.ToUniversalTime().ToString('o') } }",
-  ]);
+  const out = run("powershell", powershellArgs(PROCESS_TABLE_COMMAND));
   if (out === null) return null;
-  const rows: ProcessRow[] = [];
-  for (const line of out.split(/\r?\n/)) {
-    const m = /^(\d+)\|(\d+)\|(\S+)\s*$/.exec(line);
-    if (m && ISO_O.test(m[3]!))
-      rows.push({ pid: Number(m[1]), ppid: Number(m[2]), created: m[3]! });
-  }
-  return rows;
+  return parseProcessTable(out);
+}
+
+/**
+ * Same query as {@link processTable}, without `spawnSync` on the caller's event loop.
+ * Null on any failure, a non-zero exit, or the timeout (the probe is killed).
+ */
+export async function processTableAsync(
+  d: IdentityDeps & {
+    runAsync?: (
+      cmd: string,
+      args: string[],
+      opts?: { input?: string; timeoutMs?: number },
+    ) => Promise<string | null>;
+  } = {},
+): Promise<ProcessTable | null> {
+  const platform = d.platform ?? process.platform;
+  if (platform !== "win32") return null;
+  const run = d.runAsync ?? runProbeAsync;
+  const out = await run("powershell", powershellArgs(PROCESS_TABLE_COMMAND));
+  if (out === null) return null;
+  return parseProcessTable(out);
+}
+
+/**
+ * Run a probe without blocking the event loop. Stdout, or null on any failure, non-zero exit,
+ * or timeout. A missing binary (the sync probe's `{ status: null, error: ENOENT }`) is null.
+ */
+export function runProbeAsync(
+  cmd: string,
+  args: string[],
+  opts: { input?: string; timeoutMs?: number } = {},
+): Promise<string | null> {
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(cmd, args, {
+        windowsHide: true,
+        stdio: [opts.input !== undefined ? "pipe" : "ignore", "pipe", "ignore"],
+        env: probeEnv(),
+      });
+    } catch {
+      finish(null);
+      return;
+    }
+    timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      finish(null);
+    }, timeoutMs);
+    let out = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      out += chunk;
+    });
+    child.on("error", () => finish(null));
+    child.on("close", (code) => finish(code === 0 ? out : null));
+    if (opts.input !== undefined) {
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(opts.input);
+    }
+  });
 }
 
 /**
@@ -369,15 +510,36 @@ const KILL_SCRIPT =
  * pid is not an integer or whose time is not the fixed UTC form is refused before anything runs.
  * Returns false when nothing could be run.
  */
-export function killVerified(list: VerifiedProcess[], d: IdentityDeps = {}): boolean {
-  const { run } = resolveDeps(d);
-  if (list.length === 0) return true;
+function verifiedKillInvocation(list: VerifiedProcess[]): { args: string[]; input: string } | null {
+  if (list.length === 0) return { args: [], input: "" };
   for (const t of list) {
-    if (!validPid(t.pid) || !ISO_O.test(t.created)) return false;
+    if (!validPid(t.pid) || !ISO_O.test(t.created)) return null;
   }
-  return (
-    run("powershell", ["-NoProfile", "-NonInteractive", "-Command", KILL_SCRIPT], {
-      input: JSON.stringify(list.map((t) => ({ pid: t.pid, ticks: ticksOf(t.created) }))),
-    }) !== null
-  );
+  return {
+    args: powershellArgs(KILL_SCRIPT),
+    input: JSON.stringify(list.map((t) => ({ pid: t.pid, ticks: ticksOf(t.created) }))),
+  };
+}
+
+export function killVerified(list: VerifiedProcess[], d: IdentityDeps = {}): boolean {
+  const prepared = verifiedKillInvocation(list);
+  if (!prepared) return false;
+  if (list.length === 0) return true;
+  const { run } = resolveDeps(d);
+  return run("powershell", prepared.args, { input: prepared.input }) !== null;
+}
+
+/** {@link killVerified} without a synchronous wait. False when the script cannot be run. */
+export async function killVerifiedAsync(
+  list: VerifiedProcess[],
+  run: (
+    cmd: string,
+    args: string[],
+    opts?: { input?: string; timeoutMs?: number },
+  ) => Promise<string | null> = runProbeAsync,
+): Promise<boolean> {
+  const prepared = verifiedKillInvocation(list);
+  if (!prepared) return false;
+  if (list.length === 0) return true;
+  return (await run("powershell", prepared.args, { input: prepared.input })) !== null;
 }

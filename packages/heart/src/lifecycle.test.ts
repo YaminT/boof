@@ -10,6 +10,7 @@ describe("state machine", () => {
   it("allows the documented transitions", () => {
     expect(canTransition("draft", "pending")).toBe(true);
     expect(canTransition("pending", "running")).toBe(true);
+    expect(canTransition("pending", "failed")).toBe(true);
     expect(canTransition("running", "action")).toBe(true);
     expect(canTransition("running", "done")).toBe(true);
     expect(canTransition("running", "failed")).toBe(true);

@@ -82,6 +82,30 @@ describe("agentEnv", () => {
     expect(env).not.toHaveProperty("NOT_SET");
     expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
   });
+
+  it("drops boof credentials and adds only the explicit marker", () => {
+    const marker = "0123456789abcdef0123456789abcdef";
+    const env = agentEnv(
+      { ...server, BOOF_RUNNER_AGENT_OF: "inherited" },
+      ["BOOF_RUNNER_AGENT_OF"],
+      marker,
+    );
+    expect(env).not.toHaveProperty("BOOF_KEY");
+    expect(env).not.toHaveProperty("BOOF_URL");
+    expect(env).not.toHaveProperty("BOOF_RUNNER_DATA_ROOT");
+    expect(env.BOOF_RUNNER_AGENT_OF).toBe(marker);
+    expect(Object.keys(env).filter((name) => name.startsWith("BOOF_"))).toEqual([
+      "BOOF_RUNNER_AGENT_OF",
+    ]);
+  });
+
+  it("ignores BOOF_RUNNER_AGENT_OF in extra and parent env unless marker is passed", () => {
+    const input = { BOOF_RUNNER_AGENT_OF: "parent" } as NodeJS.ProcessEnv;
+    expect(agentEnv(input, ["BOOF_RUNNER_AGENT_OF"])).not.toHaveProperty("BOOF_RUNNER_AGENT_OF");
+    expect(agentEnv(input, ["BOOF_RUNNER_AGENT_OF"], "explicit").BOOF_RUNNER_AGENT_OF).toBe(
+      "explicit",
+    );
+  });
 });
 
 describe("what each adapter really hands its child", () => {
@@ -108,6 +132,7 @@ describe("what each adapter really hands its child", () => {
     set(binVar, bin);
     set("BOOF_KEY", "boof_secret");
     set("BOOF_URL", "http://127.0.0.1:4319");
+    set("BS_TEST_TOKEN", "bs_server_secret");
     set("AWS_SECRET_ACCESS_KEY", "aws-secret");
     set("EXTRA_PASS", "yes");
     set("ANTHROPIC_BASE_URL", "http://gateway.test");
@@ -129,8 +154,9 @@ describe("what each adapter really hands its child", () => {
     "%s: no BOOF_ or unrelated secret, the gateway variable and agentEnv names do",
     async (name, binVar, make) => {
       const dir = await envOf(binVar, name);
+      const marker = "0123456789abcdef0123456789abcdef";
       try {
-        await make().run({ ...base, cwd: dir, agentEnv: ["EXTRA_PASS"] });
+        await make().run({ ...base, cwd: dir, agentEnv: ["EXTRA_PASS"], agentMarker: marker });
       } catch {
         /* an empty answer may be refused; the child has run */
       }
@@ -141,6 +167,8 @@ describe("what each adapter really hands its child", () => {
       expect(env).toContain("ANTHROPIC_BASE_URL=http://gateway.test");
       expect(env).toContain("EXTRA_PASS=yes");
       expect(env).toContain("PATH=");
+      expect(env).toContain(`BOOF_RUNNER_AGENT_OF=${marker}`);
+      expect(env).not.toMatch(/=(?:boof_|bs_)/);
     },
   );
 });

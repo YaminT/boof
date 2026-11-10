@@ -22,6 +22,7 @@ import {
   ProjectResolutionError,
   resolveProject,
 } from "@boof/heart";
+import { auditProjectRefusal, beginCliAudit } from "./cli-audit.js";
 
 export const PLAN_HELP = `boof-runner plan — import, sync and export a project's plans
 
@@ -113,77 +114,106 @@ export async function planCommand(
 
   try {
     await scaffoldDataRoot(root);
-    const project = await resolveProject(
-      root,
-      values.project ? { project: values.project } : {},
-      (c) => out(c.replace(/\n$/, "")),
-    );
+    let project;
+    try {
+      project = await resolveProject(root, values.project ? { project: values.project } : {}, (c) =>
+        out(c.replace(/\n$/, "")),
+      );
+    } catch (e) {
+      // A dry run writes nothing, including when --project does not resolve.
+      if (sub === "import" || (sub === "sync" && !values["dry-run"])) {
+        await auditProjectRefusal(
+          root,
+          sub === "import" ? "cli:plan.import" : "cli:plan.sync",
+          values.project,
+          e,
+        );
+      }
+      throw e;
+    }
     const projectDir = projectPaths(root, project.id).dir;
     const store = new PlanStore(projectDir);
 
     if (sub === "import") {
-      const planId = values.plan ?? DEFAULT_PLAN;
-      const imported = await importFromRepo(project.workingDirectory);
-      if (imported.goals.length === 0) {
-        err(`plan import: no goal.boof.xml files found under ${project.workingDirectory}`);
-        return 1;
+      const audit = beginCliAudit(root, "cli:plan.import", project.id);
+      try {
+        const planId = values.plan ?? DEFAULT_PLAN;
+        const imported = await importFromRepo(project.workingDirectory);
+        if (imported.goals.length === 0) {
+          err(`plan import: no goal.boof.xml files found under ${project.workingDirectory}`);
+          await audit.failCode("no_goals");
+          return 1;
+        }
+        for (const w of imported.warnings) err(`warning: ${w}`);
+        const existing = await store.get(planId);
+        let plan: Plan;
+        let summary: { added: string[]; updated: string[]; unchanged: string[] };
+        if (!existing) {
+          plan = await store.create({
+            id: planId,
+            title: `Imported from ${project.name}`,
+            status: "active",
+            // The CLI runs as the local owner, so the plan it activates is approved at once.
+            approvedBy: { principalId: "local", at: new Date().toISOString(), version: 1 },
+            source: { kind: "repo-import", importedFrom: project.workingDirectory },
+            goals: imported.goals,
+          });
+          summary = { added: plan.goals.map((g) => g.id), updated: [], unchanged: [] };
+        } else {
+          const merged = mergeImportedGoals(existing.goals, imported.goals);
+          summary = merged;
+          plan = await store.modify(planId, (p) => ({ ...p, goals: merged.goals }));
+        }
+        out(
+          `Plan '${plan.id}' in project '${project.id}' (version ${plan.version}): ${summary.added.length} added, ${summary.updated.length} updated, ${summary.unchanged.length} unchanged`,
+        );
+        await audit.ok();
+        return 0;
+      } catch (e) {
+        await audit.fail(e);
+        throw e;
       }
-      for (const w of imported.warnings) err(`warning: ${w}`);
-      const existing = await store.get(planId);
-      let plan: Plan;
-      let summary: { added: string[]; updated: string[]; unchanged: string[] };
-      if (!existing) {
-        plan = await store.create({
-          id: planId,
-          title: `Imported from ${project.name}`,
-          status: "active",
-          // The CLI runs as the local owner, so the plan it activates is approved at once.
-          approvedBy: { principalId: "local", at: new Date().toISOString(), version: 1 },
-          source: { kind: "repo-import", importedFrom: project.workingDirectory },
-          goals: imported.goals,
-        });
-        summary = { added: plan.goals.map((g) => g.id), updated: [], unchanged: [] };
-      } else {
-        const merged = mergeImportedGoals(existing.goals, imported.goals);
-        summary = merged;
-        plan = await store.modify(planId, (p) => ({ ...p, goals: merged.goals }));
+    }
+
+    // export only reads the plan. sync --dry-run reports and writes nothing, so it is not a write.
+    if (sub === "export") {
+      const plan = await store.require(values.plan!);
+      const outDir = resolve(process.cwd(), values.out!);
+      const files = exportPlanXml(plan);
+      for (const [name, content] of Object.entries(files)) {
+        const target = resolve(outDir, name);
+        const rel = relative(outDir, target);
+        if (rel.startsWith("..") || isAbsolute(rel)) {
+          err(`plan export: refusing to write outside ${outDir}: ${name}`);
+          return 1;
+        }
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, content, "utf8");
       }
-      out(
-        `Plan '${plan.id}' in project '${project.id}' (version ${plan.version}): ${summary.added.length} added, ${summary.updated.length} updated, ${summary.unchanged.length} unchanged`,
-      );
+      out(`Exported ${Object.keys(files).length} file(s) of plan '${plan.id}' to ${outDir}`);
       return 0;
     }
 
-    const plan = await store.require(values.plan!);
-    if (sub === "sync") {
+    const dryRun = Boolean(values["dry-run"]);
+    const audit = dryRun ? undefined : beginCliAudit(root, "cli:plan.sync", project.id);
+    try {
+      const plan = await store.require(values.plan!);
       const settings = await new SettingsStore(root).load();
       const res = await syncPlan({
         projectDir,
         project,
         planId: plan.id,
-        dryRun: values["dry-run"],
+        dryRun,
         stopRunning: values["stop-running"],
         createStatus: await taskStatusForPlan(root, plan, settings),
       });
       describeSync(res, out);
+      await audit?.ok();
       return 0;
+    } catch (e) {
+      await audit?.fail(e);
+      throw e;
     }
-
-    // export
-    const outDir = resolve(process.cwd(), values.out!);
-    const files = exportPlanXml(plan);
-    for (const [name, content] of Object.entries(files)) {
-      const target = resolve(outDir, name);
-      const rel = relative(outDir, target);
-      if (rel.startsWith("..") || isAbsolute(rel)) {
-        err(`plan export: refusing to write outside ${outDir}: ${name}`);
-        return 1;
-      }
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, content, "utf8");
-    }
-    out(`Exported ${Object.keys(files).length} file(s) of plan '${plan.id}' to ${outDir}`);
-    return 0;
   } catch (e) {
     if (
       e instanceof ProjectResolutionError ||

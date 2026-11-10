@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { Project } from "@boof/heart/schema";
 import { api } from "../api.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
@@ -41,7 +42,10 @@ export function TaskDetailPage({
   data,
   navigate,
   previous,
+  project = null,
 }: {
+  /** The selected project (its own role choices decide which tool runs a step). */
+  project?: Project | null;
   pid: string;
   taskId: string;
   view: RouteView;
@@ -105,6 +109,7 @@ export function TaskDetailPage({
       navigate={navigate}
       backHref={backHref}
       backLabel={back.label}
+      project={project}
     />
   );
 }
@@ -117,6 +122,7 @@ function ExistingTask({
   navigate,
   backHref,
   backLabel,
+  project,
 }: {
   pid: string;
   taskId: string;
@@ -125,6 +131,7 @@ function ExistingTask({
   navigate: Navigate;
   backHref: string;
   backLabel: string;
+  project: Project | null;
 }) {
   const row = data.tasks.find((t) => t.frontmatter.id === taskId);
   const listKey = row
@@ -158,6 +165,7 @@ function ExistingTask({
       backHref={backHref}
       backLabel={backLabel}
       reload={reload}
+      project={project}
     />
   );
 }
@@ -171,7 +179,9 @@ function Loaded({
   backHref,
   backLabel,
   reload,
+  project,
 }: {
+  project: Project | null;
   pid: string;
   task: NonNullable<ReturnType<typeof useTask>["task"]>;
   view: RouteView;
@@ -289,7 +299,15 @@ function Loaded({
               </a>
             ))}
           </nav>
-          {view === "edit" && <RunTab pid={pid} task={task} reload={reload} />}
+          {view === "edit" && (
+            <RunTab
+              pid={pid}
+              task={task}
+              reload={reload}
+              settings={data.settings}
+              project={project}
+            />
+          )}
           {view === "changes" && (
             <Suspense fallback={null}>
               <ChangesTab pid={pid} task={task} />

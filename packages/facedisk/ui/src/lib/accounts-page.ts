@@ -1,5 +1,14 @@
 import type { Scope } from "@boof/heart/schema";
-import type { PoolState, Thresholds } from "../api-types.js";
+import type { AccountSummary, AgentSdkEligibility, PoolState, Thresholds } from "../api-types.js";
+import { agentSdkBadge } from "./claude-agent.js";
+
+/** The "Agent SDK: allowed / not allowed (why)" badge of each account, from the eligibility's `blocking`. */
+export function accountAgentBadges(
+  accounts: AccountSummary[],
+  eligibility: AgentSdkEligibility | null,
+): Record<string, { allowed: boolean; text: string } | null> {
+  return Object.fromEntries(accounts.map((a) => [a.id, agentSdkBadge(a.id, eligibility)]));
+}
 
 export function accountActionAccess(
   held: ReadonlySet<Scope> | "all",

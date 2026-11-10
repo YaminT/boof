@@ -1,10 +1,14 @@
 import { Button } from "@/ui/button";
-import type { Settings } from "@boof/heart/schema";
+import type { Project, Settings } from "@boof/heart/schema";
+import { claudeAgentRefusal } from "../lib/claude-agent.js";
+import { AgentRefusal } from "./AgentRefusal.js";
+import { useAgentAuth } from "./useAgentAuth.js";
 import type { Route } from "../lib/route.js";
 import type { TaskGroups } from "../lib/task-groups.js";
 import { toggleRunner } from "../shell/RunnerSwitch.js";
 import { NeedsYouList } from "./NeedsYouList.js";
 import { RunningCard } from "./RunningCard.js";
+import { idleQueueNote } from "./idle-note.js";
 import { UpNext } from "./UpNext.js";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -22,10 +26,12 @@ export function NowLane({
   projectPaused,
   groups,
   settings,
+  project = null,
   navigate,
   onChange,
 }: {
   pid: string;
+  project?: Project | null;
   projectPaused: boolean;
   groups: TaskGroups;
   settings: Settings | null;
@@ -34,15 +40,25 @@ export function NowLane({
 }) {
   const paused = settings ? !settings.runner.enabled : false;
   const queueEmpty = groups.queued.length === 0;
+  const queueNote = idleQueueNote(groups.queued.length, paused, projectPaused);
+  const agentAuth = useAgentAuth(
+    pid,
+    !queueEmpty,
+    groups.queued.map((t) => t.frontmatter.id).join(","),
+  );
+  const refusal = claudeAgentRefusal(agentAuth, groups.queued);
   return (
     <div className="grid gap-4 lg:grid-cols-3">
       <div className="flex min-w-0 flex-col gap-4 lg:col-span-2">
+        <AgentRefusal reason={refusal} />
         {groups.running.length > 0 ? (
           groups.running.map((t) => (
             <RunningCard
               key={t.frontmatter.id}
               pid={pid}
               task={t}
+              settings={settings}
+              project={project}
               onChange={() => void onChange()}
             />
           ))
@@ -73,6 +89,8 @@ export function NowLane({
                   Turn runner on
                 </Button>
               </>
+            ) : queueNote ? (
+              <p className="mt-1 mb-0 text-[length:var(--text-row)] text-ink-muted">{queueNote}</p>
             ) : null}
           </section>
         )}

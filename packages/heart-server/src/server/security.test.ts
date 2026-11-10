@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
@@ -12,9 +13,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AuthStore,
+  BrowserSessionStore,
   defaultSettings,
   SecuritySettingsSchema,
   SettingsStore,
@@ -51,6 +53,7 @@ async function setSecurity(patch: Partial<SecuritySettings>): Promise<void> {
 
 function build(extra: Partial<Parameters<typeof createApp>[0]> = {}) {
   return createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
     service,
     authStore: store,
     peerAddress: () => peer,
@@ -97,7 +100,55 @@ beforeEach(async () => {
   store = new AuthStore(root, () => clock);
   peer = LOOPBACK;
 });
+
+it.skipIf(process.platform === "win32")("auth store refusals return a clean 503", async () => {
+  const key = await mint("security test", ["projects:read"]);
+  await import("node:fs/promises").then(({ chmod }) => chmod(join(root, "auth"), 0o770));
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  const response = await call(build(), "/api/v1/projects", {}, key);
+  expect(response.status).toBe(503);
+  const body = await response.json();
+  expect(body).toEqual({
+    error: {
+      code: "auth_store_unavailable",
+      message: "the server's data folder has unsafe permissions; see the server log",
+    },
+  });
+  expect(JSON.stringify(body)).not.toContain(root);
+  // The path and the fix go to the server log, on one line.
+  const line = logged.mock.calls
+    .map((c) => String(c[0]))
+    .find((m) => m.includes(join(root, "auth")));
+  expect(line).toContain(`chmod 700 ${join(root, "auth")}`);
+  expect(line).not.toContain("\n");
+});
+it.skipIf(process.platform === "win32")(
+  "a warm cache does not flip 503 to 200 once the store turns unsafe",
+  async () => {
+    const key = await mint("security test", ["projects:read"]);
+    const app = build();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await call(app, "/api/v1/projects", {}, key)).status).toBe(200);
+    await import("node:fs/promises").then(({ chmod }) => chmod(join(root, "auth"), 0o770));
+    clock += 6_000;
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++)
+      statuses.push((await call(app, "/api/v1/projects", {}, key)).status);
+    expect(statuses).toEqual([503, 503, 503, 503]);
+  },
+);
+
+it("a failed lastUsedAt update logs one line without a stack", async () => {
+  const key = await mint("security test", ["projects:read"]);
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(store, "touch").mockRejectedValue(new Error("disk\nfull"));
+  expect((await call(build(), "/api/v1/projects", {}, key)).status).toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(logged.mock.calls).toEqual([["lastUsedAt update failed: disk full"]]);
+});
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   await rm(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
@@ -112,9 +163,11 @@ async function waitUntil(check: () => Promise<boolean>, timeoutMs = 5000): Promi
 }
 
 describe("authenticate", () => {
-  it("local-trust: loopback peer without Authorization is the local principal", async () => {
-    const res = await call(build(), "/api/tasks");
-    expect(res.status).toBe(200);
+  it("local-trust: loopback peer without a browser session is refused", async () => {
+    const app = build({ browserSessions: new BrowserSessionStore(root) });
+    const res = await call(app, "/api/tasks");
+    expect(res.status).toBe(401);
+    expect((await res.json()).error.details.reason).toBe("browser_session_required");
   });
 
   it("401 for a non-loopback peer without a key", async () => {
@@ -603,16 +656,15 @@ describe("rate limit", () => {
     expect(limited.status).toBe(429);
     expect(Number(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
     expect((await limited.json()).error.code).toBe("rate_limited");
-    // /mcp shares the bucket; a request with no key at all counts as well.
-    expect(
-      (
-        await call(app, "/mcp", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        })
-      ).status,
-    ).toBe(429);
+    // A keyless loopback refusal has no credential to guess and does not spend this bucket.
+    peer = LOOPBACK;
+    const keylessMcp = await call(app, "/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(keylessMcp.status).toBe(401);
+    expect((await keylessMcp.json()).error.details.reason).toBe("mcp_key_required");
     // Another address has its own bucket.
     peer = "10.9.9.9";
     expect((await guess()).status).toBe(401);
@@ -670,9 +722,11 @@ describe("rate limit", () => {
   it("X-Forwarded-For splits buckets only when the peer is a trusted proxy", async () => {
     const limits = { perMinute: 600, attachmentsPerMinute: 30, unauthenticatedPerMinute: 2 };
     await setSecurity({ rateLimit: limits, trustedProxies: [] });
-    peer = LOOPBACK; // nginx on the same host; no key and a proxy header: never local, 401
+    peer = LOOPBACK; // nginx on the same host; the presented bad key spends the address bucket.
     const via = (app: ReturnType<typeof build>, xff: string) =>
-      call(app, "/api/v1/whoami", { headers: { "x-forwarded-for": xff } });
+      call(app, "/api/v1/whoami", {
+        headers: { "x-forwarded-for": xff, authorization: "Bearer bad" },
+      });
     const untrusted = build();
     expect((await via(untrusted, "198.51.100.1")).status).toBe(401);
     expect((await via(untrusted, "198.51.100.2")).status).toBe(401);
@@ -830,9 +884,12 @@ describe("CSRF (Origin and Content-Type)", () => {
     const cross = await get("cross-site");
     expect(cross.status).toBe(403);
     expect((await cross.json()).error.code).toBe("origin_not_allowed");
-    for (const ok of ["same-origin", "same-site", "none", undefined]) {
+    for (const ok of ["same-origin", "none", undefined]) {
       expect((await get(ok)).status).toBe(200);
     }
+    const sameSite = await get("same-site");
+    expect(sameSite.status).toBe(401);
+    expect((await sameSite.json()).error.details.reason).toBe("browser_session_required");
     const mcp = await call(app, "/mcp", {
       method: "POST",
       headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
@@ -1545,7 +1602,7 @@ describe("server binding", () => {
     }
   });
 
-  it("startServer warns when a client holds the reserved id local-mcp", async () => {
+  it("startServer warns once about a legacy client with the reserved local-mcp id, naming the fix", async () => {
     await store.create({ name: "old", scopes: ["tasks:read"] });
     const { readFile, writeFile } = await import("node:fs/promises");
     const file = join(root, "auth", "clients.json");
@@ -1560,15 +1617,13 @@ describe("server binding", () => {
       warn: (m) => warnings.push(m),
     });
     try {
-      expect(warnings.join("\n")).toMatch(/local-mcp/);
-      // It names both keyless surfaces: stdio refuses to start, keyless /mcp answers 403.
-      expect(warnings.join("\n")).toMatch(/\/mcp/);
+      expect(warnings.filter((w) => w.includes("auth revoke local-mcp"))).toHaveLength(1);
     } finally {
       await running.stop();
     }
   });
 
-  it("local-trust over a real socket: loopback peer without a key is allowed", async () => {
+  it("local-trust over a real socket: loopback peer without a browser session is refused", async () => {
     const running = await startServer({
       catalog: new ToolRegistry([new MockTool()]),
       root,
@@ -1577,7 +1632,7 @@ describe("server binding", () => {
     });
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/api/tasks`);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     } finally {
       await running.stop();
     }
@@ -1604,7 +1659,7 @@ describe("server binding", () => {
             "-subj",
             "/CN=localhost",
           ],
-          { stdio: "ignore" },
+          { stdio: "ignore", env: { PATH: "/usr/bin:/bin", HOME: dir } },
         );
       } catch {
         return ctx.skip();
@@ -1622,7 +1677,7 @@ describe("server binding", () => {
         process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
         try {
           const res = await fetch(`https://127.0.0.1:${running.port}/api/tasks`);
-          expect(res.status).toBe(200);
+          expect(res.status).toBe(401);
         } finally {
           if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
           else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;

@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import {
   defaultSettings,
   ProjectStore,
   SecuritySettingsSchema,
+  SETTINGS_SCHEMA_VERSION,
   SettingsStore,
   type Scope,
   execCommand,
@@ -74,7 +76,13 @@ beforeEach(async () => {
   authStore = new AuthStore(root);
   peer = LOOPBACK;
   watcher = new DataWatcher(root, 20);
-  app = createApp({ service, watcher, authStore, peerAddress: () => peer });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    watcher,
+    authStore,
+    peerAddress: () => peer,
+  });
 });
 afterEach(async () => {
   await watcher.stop();
@@ -424,7 +432,7 @@ describe("settings with projects", () => {
     expect(res.status).toBe(400);
     const settings = await (await call("/api/settings")).json();
     expect(settings).not.toHaveProperty("workingDirectory");
-    expect(settings.schemaVersion).toBe(2);
+    expect(settings.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
     expect(settings.defaultProject).toBeNull();
   });
 
@@ -1081,6 +1089,7 @@ describe("the desktop operator key", () => {
   let op: Awaited<ReturnType<AuthStore["create"]>>;
   const asOperator = (id: string) => {
     app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
       service,
       watcher,
       authStore,

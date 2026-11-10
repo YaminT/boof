@@ -29,6 +29,7 @@ export class ClaudeCodeTool implements Tool {
     const res = await execCommand(this.bin, ["--version"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
@@ -67,6 +68,7 @@ export class ClaudeCodeTool implements Tool {
     const res = await execCommand(this.bin, ["--help"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) return [...this.defaultModels];
     return unique([...this.defaultModels, ...parseClaudeModelsFromHelp(res.stdout + res.stderr)]);
@@ -104,7 +106,7 @@ export class ClaudeCodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
-    const childEnv = agentEnv(process.env, opts.agentEnv);
+    const childEnv = agentEnv(process.env, opts.agentEnv, opts.agentMarker);
     if (opts.gateway) {
       delete childEnv.ANTHROPIC_API_KEY;
       delete childEnv.ANTHROPIC_AUTH_TOKEN;
@@ -130,6 +132,23 @@ export class ClaudeCodeTool implements Tool {
       onData: (chunk) => render.push(chunk),
     });
     render.flush();
+    // A login failure (and similar) is often only the result event's text, with an empty stderr.
+    // Surface it when this exit is the failure itself and that text was not already emitted —
+    // including when some other assistant prose came first. Stop, timeout, steer and stall keep
+    // their own messages. `surface` also appends it to the transcript, which is the step log.
+    const detail = render.resultDetail.trim();
+    const bareFailure =
+      typeof res.code === "number" &&
+      res.code !== 0 &&
+      !res.timedOut &&
+      !res.stopped &&
+      !res.steered &&
+      !res.stalled &&
+      detail &&
+      !alreadyEmitted(render.transcript, detail)
+        ? detail
+        : "";
+    if (bareFailure) render.surface(bareFailure);
 
     const header = `$ ${this.bin} --print --output-format stream-json --model ${opts.model}\n[exit ${res.code}]`;
     const output = `${header}\n${render.transcript}`;
@@ -143,7 +162,12 @@ export class ClaudeCodeTool implements Tool {
         res.stderr,
         res.stalled,
         opts.idleTimeoutMs,
-        { steered: res.steered, sessionId: render.sessionId, usage: render.usage },
+        {
+          steered: res.steered,
+          sessionId: render.sessionId,
+          usage: render.usage,
+          reason: bareFailure || undefined,
+        },
       );
     }
     return withQuestions({
@@ -192,6 +216,10 @@ export class StreamRenderer {
   transcript = "";
   report = "";
   usage?: TokenUsage;
+  /** True once a text delta carried non-whitespace assistant prose. */
+  hasAssistantText = false;
+  /** `result` and `errors` text from the latest result event, trimmed and de-duplicated. */
+  resultDetail = "";
   /** `session_id` of the `system`/`init` and `result` events: what `--resume` takes. */
   sessionId?: string;
   /** Per-message usage from `assistant` events, keyed by message id (fallback when no `result`). */
@@ -223,6 +251,14 @@ export class StreamRenderer {
     this.onText(text);
   }
 
+  /** Append result/error text that never arrived as its own line. Also forwarded live. */
+  surface(text: string): void {
+    const body = text.trim();
+    // A line that merely contains this text (a tool result quoting it) is not a copy of it.
+    if (!body || alreadyEmitted(this.transcript, body)) return;
+    this.emit((this.transcript && !this.transcript.endsWith("\n") ? "\n" : "") + body + "\n");
+  }
+
   private handleLine(line: string): void {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -242,6 +278,7 @@ export class StreamRenderer {
         break;
       case "result":
         if (typeof obj.result === "string") this.report = obj.result;
+        this.resultDetail = resultDetail(obj);
         {
           const u = usageFromResult(obj);
           if (u) {
@@ -277,8 +314,11 @@ export class StreamRenderer {
       if (cb.type === "tool_use") this.emit(`\n⏺ ${cb.name as string}`);
     } else if (ev.type === "content_block_delta") {
       const d = (ev.delta as Record<string, unknown>) ?? {};
-      if (d.type === "text_delta") this.emit(d.text as string);
-      else if (d.type === "input_json_delta") {
+      if (d.type === "text_delta") {
+        const text = typeof d.text === "string" ? d.text : "";
+        if (text.trim()) this.hasAssistantText = true;
+        this.emit(text);
+      } else if (d.type === "input_json_delta") {
         const b = this.blocks.get(ev.index as number);
         if (b) b.json += (d.partial_json as string) ?? "";
       }
@@ -357,6 +397,37 @@ function sumClaudeUsages(
     costUsd,
     known,
   };
+}
+
+/**
+ * True when `body` is already its own line (or its own block of lines) in the transcript.
+ * A longer line that merely contains the text does not count.
+ */
+function alreadyEmitted(transcript: string, body: string): boolean {
+  const trimmed = body.trim();
+  if (!trimmed) return true;
+  return `\n${transcript}\n`.includes(`\n${trimmed}\n`);
+}
+
+/** Result-event explanation: the `result` string plus any `errors` entries not already in it. */
+function resultDetail(obj: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const add = (value: unknown) => {
+    const text = errorText(value);
+    if (text && !parts.includes(text)) parts.push(text);
+  };
+  add(obj.result);
+  if (Array.isArray(obj.errors)) for (const item of obj.errors) add(item);
+  return parts.join("\n");
+}
+
+function errorText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && "message" in value) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string") return message.trim();
+  }
+  return "";
 }
 
 function usageFromResult(obj: Record<string, unknown>): TokenUsage | undefined {

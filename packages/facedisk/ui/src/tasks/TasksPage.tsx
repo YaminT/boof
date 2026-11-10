@@ -3,7 +3,14 @@ import { api, type TaskView } from "../api.js";
 import { Button } from "@/ui/button";
 import { act } from "../lib/act.js";
 import type { Route } from "../lib/route.js";
-import { failedTasksVisible, groupTasks, runOrder } from "../lib/task-groups.js";
+import {
+  compareFinished,
+  failedTasksVisible,
+  finishedSectionTasks,
+  finishedStatusCounts,
+  groupTasks,
+  runOrder,
+} from "../lib/task-groups.js";
 import {
   allLabels,
   filterTasks,
@@ -36,6 +43,7 @@ import { useEpics } from "./useEpics.js";
 import { TaskSection } from "./TaskSection.js";
 import { TasksToolbar } from "./TasksToolbar.js";
 import { useTaskActions } from "./useTaskActions.js";
+import { clearStopPending, isStopPending, markStopPending } from "../lib/stop-request.js";
 
 const NO_FILTER: TaskFilter = { query: "", state: "all", label: null, epic: null };
 const FINISHED = new Set(["done", "failed", "stopped", "archived"]);
@@ -109,11 +117,16 @@ export function TasksPage({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showFinished, setShowFinished] = useState(false);
   const [stopId, setStopId] = useState<string | null>(null);
+  const { tasks, plans } = data;
+  // Drop a stop latch once that task is no longer running (the request outlives the HTTP call).
+  useEffect(() => {
+    for (const t of tasks)
+      if (t.frontmatter.status !== "running") clearStopPending(pid, t.frontmatter.id);
+  }, [tasks, pid]);
   // The queue order while a reorder is in flight; null shows the server's order.
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
   const inFlight = useRef(0);
 
-  const { tasks, plans } = data;
   const filtered = useMemo(() => filterTasks(tasks, filter), [tasks, filter]);
   const groups = useMemo(() => groupTasks(filtered), [filtered]);
   const labels = useMemo(() => allLabels(tasks), [tasks]);
@@ -145,13 +158,14 @@ export function TasksPage({
         : [];
     const task = (kind: Task["kind"], t: TaskView): Task =>
       ({ key: `task:${t.frontmatter.id}`, kind, task: t }) as Task;
+    // Same items as Overview's "Needs you"; proposed drafts have their own section.
     const needs: RowEntry[] = [
-      ...groups.needsYou.flatMap((i) => (i.kind === "question" ? [task("question", i.task)] : [])),
+      ...groups.needsYou.flatMap((i) => {
+        if (i.kind === "question") return [task("question", i.task)];
+        return [];
+      }),
       ...plansShown.map((p): RowEntry => ({ key: `plan:${p.id}`, kind: "plan", plan: p })),
     ];
-    const proposed = groups.needsYou.flatMap((i) =>
-      i.kind === "proposed" ? [task("proposed", i.task)] : [],
-    );
     const byId = new Map(shownPending.map((t) => [t.frontmatter.id, t]));
     let n = 0;
     const queued = queuedOrder.map((id): Extract<RowEntry, { kind: "queued" }> => {
@@ -165,7 +179,7 @@ export function TasksPage({
     });
     const finished = filtered
       .filter((t) => FINISHED.has(t.frontmatter.status))
-      .sort((a, b) => (a.frontmatter.updated < b.frontmatter.updated ? 1 : -1));
+      .sort(compareFinished);
     // Subtasks follow their parent inside a section; the queue keeps its order (it is draggable)
     // and only names the parent.
     const withHierarchy = (entries: RowEntry[], nest = true): RowEntry[] => {
@@ -217,7 +231,7 @@ export function TasksPage({
     const count = <E,>(gs: EpicGroup<E>[]) => gs.reduce((n, g) => n + g.entries.length, 0);
     return {
       needs: withHierarchy(needs),
-      proposed: withHierarchy(proposed),
+      proposed: withHierarchy(groups.proposed.map((t) => task("proposed", t))),
       running: withHierarchy(groups.running.map((t) => task("running", t))),
       queued: shownRows(queuedGroups) as RowEntry[],
       queuedGroups,
@@ -272,11 +286,16 @@ export function TasksPage({
   const failedRows = focus.expanded
     ? []
     : rows.finished.filter((r) => failedIds.has(r.task.frontmatter.id));
-  const finishedHistory = rows.finished.filter((r) => !failedIds.has(r.task.frontmatter.id));
+  const sectionIds = new Set(
+    finishedSectionTasks(
+      rows.finished.map((r) => r.task),
+      focus.expanded,
+    ).map((t) => t.frontmatter.id),
+  );
+  const finishedHistory = rows.finished.filter((r) => sectionIds.has(r.task.frontmatter.id));
   const finishedOpen = showFinished || filtering || focus.expanded;
   const visible: RowEntry[] = [
     ...rows.needs,
-    ...rows.proposed,
     ...rows.running,
     ...rows.queued,
     ...rows.drafts,
@@ -326,7 +345,8 @@ export function TasksPage({
     if (action === "open") return actions.open(id);
     if (action === "queue" && (selected.kind === "draft" || selected.kind === "proposed"))
       return actions.queue(id);
-    if (action === "stop" && selected.kind === "running") return setStopId(id);
+    if (action === "stop" && selected.kind === "running" && !isStopPending(pid, id))
+      return setStopId(id);
     if (
       (action === "move-up" || action === "move-down") &&
       selected.kind === "queued" &&
@@ -367,8 +387,7 @@ export function TasksPage({
     </ul>
   );
   const newTask = () => navigate({ name: "task", pid, taskId: "__new__", view: "edit" });
-  const counts = { done: 0, failed: 0, stopped: 0, archived: 0 };
-  for (const r of rows.finished) counts[r.task.frontmatter.status as keyof typeof counts]++;
+  const counts = finishedStatusCounts(finishedHistory.map((r) => r.task));
 
   return (
     <div>
@@ -385,15 +404,38 @@ export function TasksPage({
         focusMode={focus.mode}
         onFocusToggle={focus.toggle}
       />
-      {data.tasksLoaded && tasks.length === 0 && plans.every((p) => p.status !== "draft") && (
+      {data.tasksError && tasks.length === 0 && (
         <div className="py-8">
-          <p className="mt-0 mb-3 text-ink-muted">
-            No tasks yet. Add one, or let a harness submit a plan.
-          </p>
-          <Button onClick={newTask}>New task</Button>
+          <p className="mt-0 mb-3 text-ink-muted">Could not load tasks.</p>
+          <Button variant="outline" onClick={() => void data.refresh()}>
+            Try again
+          </Button>
         </div>
       )}
-      {data.tasksLoaded && total === 0 && tasks.length > 0 && (
+      {data.tasksError && tasks.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <p className="m-0 text-[length:var(--text-row)] text-ink-muted">Could not load tasks.</p>
+          <Button variant="outline" size="sm" onClick={() => void data.refresh()}>
+            Try again
+          </Button>
+        </div>
+      )}
+      {!data.tasksError && !data.tasksLoaded && (
+        <p className="m-0 py-8 text-ink-muted">Loading tasks…</p>
+      )}
+      {data.tasksLoaded &&
+        !data.tasksError &&
+        tasks.length === 0 &&
+        !filtering &&
+        plans.every((p) => p.status !== "draft") && (
+          <div className="py-8">
+            <p className="mt-0 mb-3 text-ink-muted">
+              No tasks yet. Add one, or let a harness submit a plan.
+            </p>
+            <Button onClick={newTask}>New task</Button>
+          </div>
+        )}
+      {data.tasksLoaded && !data.tasksError && total === 0 && (filtering || tasks.length > 0) && (
         <div className="py-8">
           <p className="mt-0 mb-3 text-ink-muted">
             No tasks match. Clear the search or the filters.
@@ -499,8 +541,14 @@ export function TasksPage({
         open={stopId !== null}
         onOpenChange={(open) => !open && setStopId(null)}
         onConfirm={() => {
-          if (stopId) actions.stop(stopId);
+          const id = stopId;
           setStopId(null);
+          if (!id) return;
+          markStopPending(pid, id);
+          void Promise.resolve(actions.stop(id)).then((ok) => {
+            if (ok) return;
+            clearStopPending(pid, id);
+          });
         }}
       />
     </div>

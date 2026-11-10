@@ -13,6 +13,19 @@ export async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Leading arguments for every git call the server makes in a repository an agent can write to.
+ * The agent can set `core.fsmonitor` or install hooks in the shared `.git`; without this the
+ * server's next `git status` would run them with the server's environment. Command-line `-c`
+ * overrides repository config.
+ */
+export const GIT_HARDENING_ARGS: readonly string[] = [
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.hooksPath=/dev/null",
+];
+
 /** Timeout for ordinary git calls. */
 export const GIT_TIMEOUT_MS = 30_000;
 export async function git(
@@ -21,7 +34,7 @@ export async function git(
   env?: NodeJS.ProcessEnv,
   timeoutMs: number = GIT_TIMEOUT_MS,
 ): Promise<{ code: number | null; out: string; err: string; timedOut: boolean }> {
-  const res = await execCommand("git", args, {
+  const res = await execCommand("git", [...GIT_HARDENING_ARGS, ...args], {
     cwd,
     timeoutMs,
     env: env ? { ...process.env, ...env } : undefined,

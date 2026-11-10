@@ -11,7 +11,7 @@ export async function appendAuditLine(
   line: { ts: string; [key: string]: unknown },
 ): Promise<void> {
   const dir = dataRootPaths(root).audit;
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   await appendFile(join(dir, `${line.ts.slice(0, 10)}.jsonl`), JSON.stringify(line) + "\n", "utf8");
 }
 
@@ -19,8 +19,8 @@ export interface AuditedOperation {
   principal: { id: string; kind: string };
   /** `mcp:<tool>` for MCP, `cli:<operation>` for the generated CLI. */
   action: string;
-  /** The surface that is not the web server: `stdio-mcp` or `cli`. */
-  via: "stdio-mcp" | "cli";
+  /** The surface that is not the web server: `stdio-mcp`, `cli`, `concierge`, or `runner`/`server` for an outbound call. */
+  via: "stdio-mcp" | "cli" | "concierge" | "runner" | "server";
   project?: string;
   ok: boolean;
   /** The error code when `ok` is false. */
@@ -28,12 +28,26 @@ export interface AuditedOperation {
   ms: number;
   /** Start time in ms since the epoch (default now). */
   at?: number;
+  /** Extra scalar fields (e.g. `host`, `httpStatus`), written after the core keys; never overriding them. */
+  extra?: Record<string, string | number | boolean>;
 }
+
+const CORE_KEYS = new Set([
+  "ts",
+  "principal",
+  "kind",
+  "action",
+  "via",
+  "project",
+  "outcome",
+  "error",
+  "ms",
+]);
 
 /**
  * One audit line for an operation that did not come through the web server (stdio MCP, the
- * generated CLI), subject to the same `security.audit` settings as the web middleware. It carries
- * who (principal id and kind), what (`action`), where (`project`), the outcome and the timing:
+ * generated CLI, the concierge), subject to the same `security.audit` settings as the web middleware.
+ * It carries who (principal id and kind), what (`action`), where (`project`), the outcome and the timing:
  * never arguments, prompts, bodies or keys. Never throws, so auditing cannot fail the operation.
  */
 export async function auditOperation(root: string, op: AuditedOperation): Promise<void> {
@@ -50,6 +64,7 @@ export async function auditOperation(root: string, op: AuditedOperation): Promis
       outcome: op.ok ? "ok" : "error",
       ...(op.ok || !op.code ? {} : { error: op.code }),
       ms: op.ms,
+      ...Object.fromEntries(Object.entries(op.extra ?? {}).filter(([k]) => !CORE_KEYS.has(k))),
     });
   } catch (err) {
     console.error("audit write failed", err);

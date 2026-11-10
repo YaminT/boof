@@ -130,6 +130,69 @@ export function correctedRoute(
   return routeForProject(route, selectedId);
 }
 
+/** Stable identity for a route, so a fresh parse of the same URL is not a new route. */
+export function routeKey(route: Route | null): string {
+  if (!route) return "";
+  switch (route.name) {
+    case "inbox":
+      return "inbox";
+    case "overview":
+      return `overview:${route.pid}`;
+    case "tasks":
+      return `tasks:${route.pid}`;
+    case "task":
+      return `task:${route.pid}:${route.taskId}:${route.view}`;
+    case "plans":
+      return `plans:${route.pid}:${route.planId ?? ""}:${route.goalId ?? ""}`;
+    case "settings":
+      return `settings:${route.pid}:${route.page}`;
+  }
+}
+
+export function sameRoute(a: Route | null, b: Route | null): boolean {
+  return routeKey(a) === routeKey(b);
+}
+
+/**
+ * The route object to store after a location change. A fresh parse of the same path is the same
+ * route, so callers keep `prev` and skip a render. The query string is part of that identity:
+ * `?epic=` and `?manage=` are not on the route, and a change that only touches them must render.
+ */
+export function routeAfterNavigation(
+  prev: Route | null,
+  next: Route | null,
+  prevSearch: string,
+  search: string,
+): Route | null {
+  return sameRoute(prev, next) && prevSearch === search ? prev : next;
+}
+
+/**
+ * The route to remember as "where the user came from" when `current` becomes `next`.
+ * Switching tabs of one task keeps the origin. Saving a new task (the id replaces `__new__`)
+ * keeps it too, so Back still returns to the list the user left.
+ */
+export function nextPrevious(
+  previous: Route | null,
+  current: Route | null,
+  next: Route | null,
+): Route | null {
+  if (sameRoute(current, next)) return previous;
+  const sameTask =
+    current?.name === "task" &&
+    next?.name === "task" &&
+    current.pid === next.pid &&
+    current.taskId === next.taskId;
+  const created =
+    current?.name === "task" &&
+    current.taskId === "__new__" &&
+    next?.name === "task" &&
+    next.pid === current.pid &&
+    next.taskId !== "__new__";
+  if (sameTask || created) return previous;
+  return current;
+}
+
 /** Where a task's "← …" link goes, and what it says, given the route the user came from. */
 export function backFor(previous: Route | null, pid: string): { route: Route; label: string } {
   if (previous && previous.name !== "inbox" && previous.pid === pid) {

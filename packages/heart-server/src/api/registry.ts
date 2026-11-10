@@ -6,7 +6,9 @@ import { projectOps } from "./ops/projects.js";
 import { epicOps } from "./ops/epics.js";
 import { taskOps } from "./ops/tasks.js";
 import { webhookOps } from "./ops/webhooks.js";
+import { n8nOps } from "./ops/n8n.js";
 import { whoamiOps } from "./ops/whoami.js";
+import { conciergeOps } from "./ops/concierge.js";
 
 /** Every operation, in the order the docs and the OpenAPI document list them. */
 export const registry: readonly AnyOperation[] = [
@@ -18,6 +20,8 @@ export const registry: readonly AnyOperation[] = [
   ...adminOps,
   ...accountOps,
   ...webhookOps,
+  ...n8nOps,
+  ...conciergeOps,
 ];
 
 const byName = new Map(registry.map((op) => [op.name, op]));

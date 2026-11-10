@@ -118,6 +118,114 @@ describe("parseOpArgs", () => {
     );
   });
 
+  it("refuses write-only secrets as flags and inline in --input; a file or stdin carries them", async () => {
+    expect(() =>
+      parseOpArgs(
+        op("projects.update"),
+        ["--project-id", "p", "--anthropic-api-key", "secret"],
+        dir,
+      ),
+    ).toThrow(/write-only.*--input @file\.json or --input @- to read stdin/);
+    for (const [name, field] of [
+      ["projects.update", "anthropicApiKey"],
+      ["settings.update", "owlishApiKey"],
+      ["settings.update", "owlishAgentKey"],
+    ] as const) {
+      for (const args of [
+        ["--input", `{"${field}":"SECRET-VALUE-1"}`],
+        [`--input={"${field}":"SECRET-VALUE-1"}`],
+      ]) {
+        const err = (() => {
+          try {
+            parseOpArgs(op(name), args, dir);
+          } catch (e) {
+            return e as Error;
+          }
+        })();
+        expect(err?.message, `${name} ${field}`).toMatch(/write-only.*--input @file\.json/);
+        expect(err?.message).not.toContain("SECRET-VALUE-1");
+      }
+    }
+    await writeFile(join(dir, "secret.json"), '{"projectId":"p","anthropicApiKey":"secret"}');
+    expect(
+      parseOpArgs(op("projects.update"), ["--input", "@secret.json"], dir).input.anthropicApiKey,
+    ).toBe("secret");
+    // Non-secret inline JSON still works.
+    expect(
+      parseOpArgs(op("projects.update"), ["--input", '{"projectId":"p","name":"n"}'], dir).input,
+    ).toMatchObject({ projectId: "p", name: "n" });
+    expect(() => parseOpArgs(op("settings.update"), ["--owlish-api-key", "secret"], dir)).toThrow(
+      /write-only/,
+    );
+  });
+
+  it("O15 n8n update --api-key and inline --input apiKey are refused without echoing; file input works", async () => {
+    expect(() => parseOpArgs(op("n8n.update"), ["--api-key", "SECRET-VALUE-1"], dir)).toThrow(
+      /write-only.*--input @file\.json or --input @- to read stdin/,
+    );
+    for (const args of [
+      ["--input", '{"apiKey":"SECRET-VALUE-1"}'],
+      ['--input={"apiKey":"SECRET-VALUE-1"}'],
+    ]) {
+      const err = (() => {
+        try {
+          parseOpArgs(op("n8n.update"), args, dir);
+        } catch (e) {
+          return e as Error;
+        }
+      })();
+      expect(err?.message).toMatch(/write-only.*--input @file\.json/);
+      expect(err?.message).not.toContain("SECRET-VALUE-1");
+    }
+    await writeFile(join(dir, "n8n.json"), '{"apiKey":"SECRET-VALUE-1"}');
+    expect(parseOpArgs(op("n8n.update"), ["--input", "@n8n.json"], dir).input.apiKey).toBe(
+      "SECRET-VALUE-1",
+    );
+    expect(
+      parseOpArgs(op("n8n.update"), ["--default-timeout-ms", "60000"], dir).input,
+    ).toMatchObject({ defaultTimeoutMs: 60000 });
+  });
+
+  it("refuses secret-bearing webhook URLs inline and accepts file or stdin input", async () => {
+    const cases = [
+      ["Slack-style", "https://hooks.slack.com/services/T12345678/B12345678/AbCdEf1234567890"],
+      ["Discord-style", "https://discord.com/api/webhooks/123456789012345678/AbCdEf1234567890"],
+      ["query token", "https://example.com/hooks/boof?token=query-secret-123"],
+      ["userinfo", "https://user:password-secret@example.com/hooks/boof"],
+    ] as const;
+    for (const [label, url] of cases) {
+      for (const args of [
+        ["--url", url],
+        ["--input", JSON.stringify({ url })],
+      ]) {
+        let error: Error | undefined;
+        try {
+          parseOpArgs(op("webhooks.create"), args, dir);
+        } catch (caught) {
+          error = caught as Error;
+        }
+        expect(error, `${label} ${args[0]}`).toBeInstanceOf(Error);
+        expect(error?.message).toMatch(/url.*--input @file\.json or --input @-/i);
+        expect(error?.message).not.toContain(url);
+        expect(error?.message).not.toContain("query-secret-123");
+        expect(error?.message).not.toContain("password-secret");
+      }
+      await writeFile(join(dir, "webhook.json"), JSON.stringify({ url }));
+      expect(parseOpArgs(op("webhooks.create"), ["--input", "@webhook.json"], dir).input.url).toBe(
+        url,
+      );
+    }
+    expect(
+      parseOpArgs(op("webhooks.create"), ["--input", "@-"], dir, () =>
+        JSON.stringify({ url: cases[0]![1] }),
+      ).input.url,
+    ).toBe(cases[0]![1]);
+    expect(
+      parseOpArgs(op("webhooks.create"), ["--url", "https://example.com/hooks/boof"], dir).input
+        .url,
+    ).toBe("https://example.com/hooks/boof");
+  });
+
   it("--input gives the whole object and flags override its keys", () => {
     const r = parseOpArgs(
       op("tasks.create"),

@@ -25,6 +25,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, ["--version"], {
       cwd: process.cwd(),
       timeoutMs: 8000,
+      env: agentEnv(),
     });
     if (res.code !== 0) {
       return { status: "unavailable", message: `\`${this.bin} --version\` exited ${res.code}` };
@@ -54,6 +55,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, ["models"], {
       cwd: process.cwd(),
       timeoutMs: 20000,
+      env: agentEnv(),
     });
     if (res.code !== 0) return [...this.defaultModels];
     // `opencode models` prints one `provider/model` id per line.
@@ -69,10 +71,11 @@ export class OpencodeTool implements Tool {
 
   /** Argument vector for `opencode run`; exported through the class for tests. */
   buildArgs(opts: RunOptions): string[] {
-    // Anchor the project to opts.cwd explicitly: without --dir, opencode
-    // canonicalizes a git worktree cwd back to the main repository and its
-    // file tools (Read/Write/Edit) would bypass the runner's isolation.
-    const args = ["run", "--format", "json", "--dir", opts.cwd, "-m", opts.model];
+    // OpenCode 2.2.6 rejects `--dir` ("Unrecognized flag: --dir in command
+    // opencode run"). The worktree is the child cwd, as with claude-code and
+    // codex. A positional directory is taken as part of the message, so the
+    // prompt stays on stdin and `--format json` stays on the command.
+    const args = ["run", "--format", "json", "-m", opts.model];
     // Continue an earlier session (a steered step): the prompt is then only the new message.
     if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
     if (opts.autoApprove) {
@@ -90,7 +93,7 @@ export class OpencodeTool implements Tool {
 
   async run(opts: RunOptions): Promise<RunResult> {
     const args = this.buildArgs(opts);
-    const childEnv = agentEnv(process.env, opts.agentEnv);
+    const childEnv = agentEnv(process.env, opts.agentEnv, opts.agentMarker);
     if (opts.gateway) {
       delete childEnv.ANTHROPIC_API_KEY;
       delete childEnv.ANTHROPIC_AUTH_TOKEN;
@@ -103,9 +106,12 @@ export class OpencodeTool implements Tool {
       }
     }
     const live = new JsonlRenderer(renderOpencodeEvent, opts.onChunk);
+    // OpenCode 2.2 roots the session at `$PWD` when that variable is set (`options.root ??
+    // process.env.PWD ?? process.cwd()`), and v2 has no `--dir`. The worktree has to win over a
+    // `PWD` inherited from the server (`runner.agentEnv` can name it).
     const res = await execCommand(this.bin, args, {
       cwd: opts.cwd,
-      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway) },
+      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway), PWD: opts.cwd },
       input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

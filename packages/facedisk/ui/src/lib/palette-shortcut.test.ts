@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPaletteShortcut, type KeyLike } from "./palette-shortcut.js";
+import { isMacUserAgent, isPaletteShortcut, type KeyLike } from "./palette-shortcut.js";
 
 const key = (over: Partial<KeyLike> = {}): KeyLike => ({
   key: "k",
@@ -8,6 +8,14 @@ const key = (over: Partial<KeyLike> = {}): KeyLike => ({
   altKey: false,
   shiftKey: false,
   ...over,
+});
+
+describe("isMacUserAgent", () => {
+  it("matches Mac and iOS user agents", () => {
+    expect(isMacUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")).toBe(true);
+    expect(isMacUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")).toBe(true);
+    expect(isMacUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(false);
+  });
 });
 
 describe("isPaletteShortcut", () => {

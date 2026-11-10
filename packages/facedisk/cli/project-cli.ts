@@ -14,6 +14,7 @@ import {
   pruneStaleWorktrees,
   repoCommonDir,
 } from "@boof/heart";
+import { beginCliAudit } from "./cli-audit.js";
 
 export const PROJECT_HELP = `boof-runner project — manage the projects (git repositories) one data root serves
 
@@ -125,32 +126,41 @@ export async function projectCommand(
           err("project add: --brief or --brief-file is required with --new and --auto");
           return 1;
         }
-        const project = await projects.create({
-          ...(values.auto
-            ? {
-                path: {
-                  mode: "auto" as const,
-                  projectsRoot: resolveProjectsRoot(await settings.load()),
-                },
-              }
-            : {
-                workingDirectory: isAbsolute(dir!) ? dir! : resolve(process.cwd(), dir!),
-                ...(values.new ? { path: { mode: "new" as const, confirm: values.confirm } } : {}),
-              }),
-          ...(brief ? { brief } : {}),
-          ...(values.id ? { id: values.id } : {}),
-          ...(values.name ? { name: values.name } : {}),
-          origin: { kind: "cli" },
-        });
-        await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
-          console.error(`could not prune worktrees of project ${project.id}:`, err),
-        );
-        if (values.default) await settings.update({ defaultProject: project.id });
-        out(
-          `${creating ? "Created" : "Added"} project '${project.id}' (${project.workingDirectory})`,
-        );
-        if (values.default) out(`'${project.id}' is now the default project`);
-        return 0;
+        const audit = beginCliAudit(root, "cli:project.add");
+        try {
+          const project = await projects.create({
+            ...(values.auto
+              ? {
+                  path: {
+                    mode: "auto" as const,
+                    projectsRoot: resolveProjectsRoot(await settings.load()),
+                  },
+                }
+              : {
+                  workingDirectory: isAbsolute(dir!) ? dir! : resolve(process.cwd(), dir!),
+                  ...(values.new
+                    ? { path: { mode: "new" as const, confirm: values.confirm } }
+                    : {}),
+                }),
+            ...(brief ? { brief } : {}),
+            ...(values.id ? { id: values.id } : {}),
+            ...(values.name ? { name: values.name } : {}),
+            origin: { kind: "cli" },
+          });
+          await pruneStaleWorktrees(project.workingDirectory).catch((err) =>
+            console.error(`could not prune worktrees of project ${project.id}:`, err),
+          );
+          if (values.default) await settings.update({ defaultProject: project.id });
+          out(
+            `${creating ? "Created" : "Added"} project '${project.id}' (${project.workingDirectory})`,
+          );
+          if (values.default) out(`'${project.id}' is now the default project`);
+          await audit.ok(project.id);
+          return 0;
+        } catch (e) {
+          await audit.fail(e);
+          throw e;
+        }
       }
       case "list": {
         const all = await projects.list({ includeArchived: true });
@@ -169,12 +179,19 @@ export async function projectCommand(
           err("project remove: a project id is required");
           return 1;
         }
-        await projects.remove(id, { purge: values.purge });
-        if (values.purge && (await settings.load()).defaultProject === id) {
-          await settings.update({ defaultProject: null });
+        const audit = beginCliAudit(root, "cli:project.remove");
+        try {
+          await projects.remove(id, { purge: values.purge });
+          if (values.purge && (await settings.load()).defaultProject === id) {
+            await settings.update({ defaultProject: null });
+          }
+          out(values.purge ? `Purged project '${id}'` : `Archived project '${id}'`);
+          await audit.ok(id);
+          return 0;
+        } catch (e) {
+          await audit.fail(e);
+          throw e;
         }
-        out(values.purge ? `Purged project '${id}'` : `Archived project '${id}'`);
-        return 0;
       }
       default:
         err(`project: unknown subcommand "${sub}"\n`);

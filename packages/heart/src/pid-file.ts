@@ -11,6 +11,7 @@ import {
   sharesRunnerGroup,
   verifiedDescendants,
   killVerified,
+  windowsTimeKind,
   type IdentityDeps,
 } from "./process-identity.js";
 
@@ -174,32 +175,52 @@ export interface ReapResult {
  *
  * The table is a second look, a moment later. If it is readable and does not show the agent with
  * the recorded creation time, the agent has gone (its pid may already belong to someone else):
- * nothing is killed (`"gone"`). Only an unreadable table falls back to stopping the verified agent
- * alone with `taskkill /F /PID`. Otherwise the agent and its children are stopped deepest first
- * by {@link killVerified}: one PowerShell process that opens each process and compares its start
- * time before it kills, so the pid cannot be reused between the check and the kill. A Job Object
- * (kill on close) at spawn is the long-term fix; see goals/desktop-orphan-reaping-macos-windows.
+ * nothing is killed (`"gone"`). That is not the case when the two times are different spellings
+ * (`wmic` against ISO): they cannot be compared, so the result is `"unverifiable"` and the record
+ * stays. The same when the listing dropped rows or returned lines that were not `pid|ppid|time` —
+ * the agent's own row may be one of those. A truly empty listing (nothing dropped, nothing
+ * unparsed) is `"gone"`. Only an unreadable table (the query failed) falls back to stopping the
+ * verified agent alone with `taskkill /F /PID`. Otherwise the agent and its children are stopped
+ * deepest first by {@link killVerified}: one PowerShell process that opens each process and
+ * compares its start time before it kills, so the pid cannot be reused between the check and the
+ * kill. After the kill, `"unknown"` (a probe that can no longer be compared) is `"unverifiable"`,
+ * not `"killed"`. A Job Object (kill on close) at spawn is the long-term fix; see
+ * goals/desktop-orphan-reaping-macos-windows.
  */
 async function killTree(
   record: PidRecord,
   identity: IdentityDeps,
-): Promise<"exited" | "killed" | "survived" | "gone"> {
+): Promise<"exited" | "killed" | "survived" | "gone" | "unverifiable"> {
   const run = identity.run ?? runProbe;
-  const rows = processTable(identity);
-  if (rows === null) {
+  const table = processTable(identity);
+  if (table === null) {
     run("taskkill", ["/F", "/PID", String(record.pgid)]);
   } else {
-    const root = rows.find((r) => r.pid === record.pgid);
-    if (!root || root.created !== record.startTime) return "gone";
-    const byPid = new Map(rows.map((r) => [r.pid, r]));
-    const list = [...verifiedDescendants(record.pgid, rows), record.pgid].map((pid) => ({
+    const root = table.rows.find((r) => r.pid === record.pgid);
+    if (!root) {
+      if (table.droppedNonIso > 0 || table.unparsed > 0) return "unverifiable";
+      return "gone";
+    }
+    // A wmic stamp and an ISO stamp are not two processes. Deleting the record here would let
+    // Retry start a second agent in the worktree the first one is still using.
+    if (
+      typeof record.startTime !== "string" ||
+      windowsTimeKind(root.created) !== windowsTimeKind(record.startTime)
+    ) {
+      return "unverifiable";
+    }
+    if (root.created !== record.startTime) return "gone";
+    const byPid = new Map(table.rows.map((r) => [r.pid, r]));
+    const list = [...verifiedDescendants(record.pgid, table.rows), record.pgid].map((pid) => ({
       pid,
       created: byPid.get(pid)!.created,
     }));
     killVerified(list, identity);
   }
   for (let i = 0; i < 20; i += 1) {
-    if (agentStatus(record, identity) !== "running") return "killed";
+    const status = agentStatus(record, identity);
+    if (status === "unknown") return "unverifiable";
+    if (status !== "running") return "killed";
     await sleep(100);
   }
   return "survived";
@@ -299,6 +320,13 @@ async function reapOffLinux(
     : platform === "win32"
       ? await killTree(record, identity)
       : await killGroup(record.pgid);
+  if (result === "unverifiable") {
+    if (!alive(record.pgid)) return finish("dead");
+    log(
+      `agent process ${record.pgid} (${record.command}) may still be running, but its identity cannot be verified on ${platform}; not killing`,
+    );
+    return { outcome: "skipped", record, maybeRunning: true };
+  }
   if (result === "gone") {
     log(
       `agent ${record.pgid} (${record.command}) is gone: its pid shows another process; not killing`,

@@ -1,3 +1,4 @@
+import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -15,6 +16,7 @@ import {
 } from "@boof/heart";
 import { MockTool, ToolRegistry, type HealthResult, type Tool } from "@boof/runner";
 import { registry, TaskService } from "../api/index.js";
+import { fakeWorkflow, startFakeN8n } from "../../test-support/fake-n8n.js";
 import { createApp } from "./app.js";
 
 /** A tool that counts every probe: a GET must never reach it. */
@@ -94,7 +96,11 @@ beforeEach(async () => {
     source: { kind: "api" },
     goals: [],
   });
-  app = createApp({ service, peerAddress: () => "127.0.0.1" });
+  app = createApp({
+    browserSessions: TEST_LOOPBACK_IS_UI,
+    service,
+    peerAddress: () => "127.0.0.1",
+  });
   spy.probes = 0;
 });
 afterEach(async () => {
@@ -145,7 +151,12 @@ describe("POST /health/check and /models/refresh", () => {
     const store = new AuthStore(root);
     const reader = (await store.create({ name: "reader", scopes: ["settings:read"] })).key;
     const writer = (await store.create({ name: "writer", scopes: ["settings:write"] })).key;
-    app = createApp({ service, authStore: store, peerAddress: () => "10.1.2.3" });
+    app = createApp({
+      browserSessions: TEST_LOOPBACK_IS_UI,
+      service,
+      authStore: store,
+      peerAddress: () => "10.1.2.3",
+    });
     expect((await post("/health/check", reader)).status).toBe(403);
     expect(spy.probes).toBe(0);
     expect((await post("/models/refresh", reader)).status).toBe(200);
@@ -170,6 +181,27 @@ describe("GET operations", () => {
     }
     expect(await snapshot(root)).toEqual(before);
     expect(spy.probes).toBe(0);
+  });
+
+  it("GET /n8n and /n8n/workflows make no outbound call (O14)", async () => {
+    const fake = await startFakeN8n({
+      apiKey: "k",
+      workflows: [fakeWorkflow({ id: "w1", name: "CI", webhook: { path: "ci" } })],
+    });
+    try {
+      await service.settingsStore.mutate(
+        (s) => ({ ...s, n8n: { baseUrl: fake.url, callbackBaseUrl: "https://b.x" } }) as typeof s,
+      );
+      const before = await snapshot(root);
+      for (const path of ["/api/v1/n8n", "/api/v1/n8n/workflows"]) {
+        const res = await app.request(`http://localhost${path}`);
+        expect(res.status, path).toBe(200);
+      }
+      expect(fake.calls).toHaveLength(0);
+      expect(await snapshot(root)).toEqual(before);
+    } finally {
+      await fake.close();
+    }
   });
 
   it("do not create settings.json when it is missing", async () => {

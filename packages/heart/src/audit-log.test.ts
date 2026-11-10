@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, stat, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -31,6 +31,19 @@ describe("audit log", () => {
     expect((await lines()).map((l) => l.principal)).toEqual(["a", "b"]);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "creates the audit folder private even under umask 0",
+    async () => {
+      const old = process.umask(0);
+      try {
+        await appendAuditLine(root, { ts: "2026-03-01T10:00:00.000Z", principal: "a" });
+      } finally {
+        process.umask(old);
+      }
+      expect((await stat(join(root, "audit"))).mode & 0o777).toBe(0o700);
+    },
+  );
+
   it("auditOperation records who, what, where and outcome, with the surface, and no values", async () => {
     await new SettingsStore(root).save(defaultSettings());
     await auditOperation(root, {
@@ -54,6 +67,31 @@ describe("audit log", () => {
         outcome: "error",
         error: "forbidden_trust",
         ms: 12,
+      },
+    ]);
+  });
+
+  it("auditOperation accepts via concierge", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    await auditOperation(root, {
+      principal: { id: "local", kind: "local" },
+      action: "concierge.ask",
+      via: "concierge",
+      project: "demo",
+      ok: true,
+      ms: 4,
+      at: Date.parse("2026-03-01T10:00:00Z"),
+    });
+    expect(await lines()).toEqual([
+      {
+        ts: "2026-03-01T10:00:00.000Z",
+        principal: "local",
+        kind: "local",
+        action: "concierge.ask",
+        via: "concierge",
+        project: "demo",
+        outcome: "ok",
+        ms: 4,
       },
     ]);
   });
@@ -95,5 +133,35 @@ describe("audit log", () => {
       "2025-01-01.jsonl",
     ]);
     expect((await readdir(join(root, "audit"))).sort()).toEqual(["2026-02-27.jsonl", "notes.txt"]);
+  });
+
+  it("auditOperation writes extra fields after the core keys and never overrides them", async () => {
+    await new SettingsStore(root).save(defaultSettings());
+    await auditOperation(root, {
+      principal: { id: "runner", kind: "runner" },
+      action: "n8n:trigger",
+      via: "runner",
+      ok: true,
+      ms: 3,
+      at: Date.parse("2026-03-01T10:00:00Z"),
+      extra: {
+        host: "n8n.local:5678",
+        httpStatus: 200,
+        ts: "evil",
+        outcome: "evil",
+        action: "evil",
+      },
+    });
+    const [line] = await lines();
+    expect(line).toMatchObject({
+      ts: "2026-03-01T10:00:00.000Z",
+      principal: "runner",
+      action: "n8n:trigger",
+      via: "runner",
+      outcome: "ok",
+      host: "n8n.local:5678",
+      httpStatus: 200,
+    });
+    expect(Object.keys(line!).slice(-2)).toEqual(["host", "httpStatus"]);
   });
 });
