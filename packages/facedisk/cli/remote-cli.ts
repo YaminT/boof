@@ -315,20 +315,28 @@ async function setup(
       );
     }
 
-    if (tightenedRoot.changed) {
+    if (tightenedRoot.changed && "before" in tightenedRoot) {
       out(
         `Data root ${root} was accessible to other users (mode ${tightenedRoot.before.toString(8)}); ran chmod 700.`,
       );
+    } else if (tightenedRoot.changed && tightenedRoot.via === "acl") {
+      out(
+        `Data root ${root} was accessible to other accounts; the access list is now the current user only.`,
+      );
     } else if (
+      !tightenedRoot.changed &&
       !tightenedRoot.unsafeParent &&
       (tightenedRoot.reason === "not-owner" ||
         tightenedRoot.reason === "home-or-root" ||
-        tightenedRoot.reason === "chmod-failed")
+        tightenedRoot.reason === "chmod-failed" ||
+        tightenedRoot.reason === "acl-failed")
     ) {
       const fix =
         tightenedRoot.reason === "home-or-root"
           ? "choose a data root below your home directory"
-          : `make this data root private with: chmod 700 "${root}"`;
+          : tightenedRoot.reason === "acl-failed"
+            ? tightenedRoot.message
+            : `make this data root private with: chmod 700 "${root}"`;
       err(
         `WARNING: remote setup could not secure data root ${root} (${tightenedRoot.reason}); ${fix}. Remote clients may be able to read local data.`,
       );
