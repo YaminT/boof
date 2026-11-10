@@ -11,6 +11,8 @@ import {
   isKebabId,
   MAX_ATTACHMENT_BYTES,
   ExternalRunStore,
+  instanceProof,
+  randomInstanceId,
   type BrowserSessionVerifier,
   type Principal,
 } from "@boof/heart";
@@ -87,6 +89,11 @@ export interface AppDeps {
   externalRuns?: ExternalRunStore;
   /** True when this process terminates TLS itself (--tls-cert): the only case boof sends Strict-Transport-Security. */
   tls?: boolean;
+  /**
+   * Id of this process. Authenticated responses send it as `X-Boof-Instance`. `/healthz` never
+   * sends the id; with `?nonce=` it sends `instanceProof` (HMAC). Tests pin the id.
+   */
+  instanceId?: string;
 }
 
 /** The public documents an agent or another origin may read; they get CORP cross-origin. */
@@ -130,6 +137,10 @@ const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
  */
 export function createApp(deps: AppDeps): Hono {
   const { service } = deps;
+  const instanceId =
+    deps.instanceId && /^[0-9a-f]{64}$/.test(deps.instanceId)
+      ? deps.instanceId
+      : randomInstanceId();
   const app = new Hono();
 
   const security = securityConfigReader(service);
@@ -158,6 +169,8 @@ export function createApp(deps: AppDeps): Hono {
     // A client that sends X-Forwarded-Proto itself can only suppress HSTS for its own response; accepted.
     if (deps.tls && c.req.header("x-forwarded-proto") === undefined)
       c.res.headers.set("Strict-Transport-Security", HSTS);
+    // Only a request that already authenticated may learn the id. A public probe gets a proof.
+    if (c.get("principal")) c.res.headers.set("X-Boof-Instance", instanceId);
   });
   // Public liveness probe for systemd, load balancers and uptime monitors. Carries no
   // project or task data; it sits behind the Host guard like the docs below.
@@ -176,12 +189,15 @@ export function createApp(deps: AppDeps): Hono {
       health = { at: now(), enabled };
     }
     const { enabled } = health;
+    const nonce = c.req.query("nonce") ?? "";
+    const proof = nonce ? await instanceProof(instanceId, nonce) : undefined;
     return c.json(
       {
         ok: true,
         version: deps.version ?? "unknown",
         uptimeSeconds: Math.max(0, Math.floor(((deps.now ?? Date.now)() - startedAt) / 1000)),
         runner: { enabled, running: deps.runnerRunning?.() ?? false },
+        ...(proof ? { instanceProof: proof } : {}),
       },
       200,
       { "Cache-Control": "no-store" },

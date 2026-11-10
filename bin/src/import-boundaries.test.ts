@@ -358,6 +358,7 @@ describe("import boundaries", () => {
       return isAllowedImport("facedisk", to, ui, spec, imp.typeOnly);
     };
     expect(check("@boof/heart/ids")).toBe(true);
+    expect(check("@boof/heart/instance-proof")).toBe(true);
     expect(check("@boof/heart/schema")).toBe(false);
     expect(check("@boof/heart")).toBe(false);
   });

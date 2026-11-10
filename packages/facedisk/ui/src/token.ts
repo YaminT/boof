@@ -5,6 +5,12 @@
 import { createUnauthorizedGate, type UnauthorizedVerdict } from "./lib/unauthorized-gate.js";
 
 const KEY = "boofToken";
+/** Instance id the saved API key was bound to. Absent until an authenticated response names one. */
+const INSTANCE_KEY = "boofInstance";
+/** A mismatch or a reload of an unbound saved key: do not attach the key again until the user enters one. */
+let authBlocked = false;
+/** True after `setToken` on this page, so that one request may bind a key the user just typed. */
+let keyEnteredThisPage = false;
 
 function store(): Storage | undefined {
   try {
@@ -29,8 +35,13 @@ export function getToken(): string | undefined {
 
 export function setToken(token: string): void {
   gateOpen = false; // a new key may be refused again: that 401 reopens the gate
+  authBlocked = false;
+  keyEnteredThisPage = true;
   try {
-    store()?.setItem(KEY, token.trim());
+    const s = store();
+    // The new key is not bound yet. The next successful response binds it to that server.
+    s?.removeItem(INSTANCE_KEY);
+    s?.setItem(KEY, token.trim());
   } catch {
     /* sessionStorage unavailable: the key lasts until reload via callers' state */
   }
@@ -46,15 +57,79 @@ export function onTokenChange(fn: () => void): () => void {
 }
 
 export function clearToken(): void {
+  authBlocked = false;
+  keyEnteredThisPage = false;
   try {
-    store()?.removeItem(KEY);
+    const s = store();
+    s?.removeItem(KEY);
+    s?.removeItem(INSTANCE_KEY);
   } catch {
     /* ignore */
   }
 }
 
-/** Headers carrying the key, or an empty object when none is set. */
+/** The instance id this page's saved key is bound to, if it has been learned. */
+export function getBoundInstance(): string | undefined {
+  try {
+    return store()?.getItem(INSTANCE_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Remember the server instance a successful authenticated response named. */
+export function bindInstance(id: string): void {
+  try {
+    store()?.setItem(INSTANCE_KEY, id);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function authIsBlocked(): boolean {
+  return authBlocked;
+}
+
+export function keyWasEnteredThisPage(): boolean {
+  return keyEnteredThisPage;
+}
+
+/**
+ * Forget the saved key and its instance. Further requests on this page omit the key, including a
+ * desktop key, until the user enters one or reloads.
+ */
+export function blockSavedKey(): void {
+  authBlocked = true;
+  keyEnteredThisPage = false;
+  try {
+    const s = store();
+    s?.removeItem(KEY);
+    s?.removeItem(INSTANCE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * A key restored from sessionStorage with no instance binding would be sent to whoever now
+ * listens. Drop it. A key typed on this page, and the desktop bridge key, are left in place.
+ * Returns true when a saved key was removed.
+ */
+export function discardUnboundSavedKey(): boolean {
+  if (keyEnteredThisPage || authBlocked || getBoundInstance()) return false;
+  try {
+    const s = store();
+    if (!s?.getItem(KEY)) return false;
+    s.removeItem(KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Headers carrying the key, or an empty object when none is set or the key was dropped. */
 export function authHeaders(): Record<string, string> {
+  if (authBlocked) return {};
   const t = getToken();
   return t ? { authorization: `Bearer ${t}` } : {};
 }

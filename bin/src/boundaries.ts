@@ -17,6 +17,8 @@ export const ALLOWED: Record<Package, Package[]> = {
 /** Heart imports from Facedisk UI source must be type-only or browser-safe. */
 export const BROWSER_SAFE: Record<string, string> = {
   "@boof/heart/ids": "packages/heart/src/ids.ts",
+  // HMAC of the per-start instance id. Web Crypto only, so the UI bundle does not pull Node.
+  "@boof/heart/instance-proof": "packages/heart/src/instance-proof.ts",
 };
 
 /** Known debts; empty since M1. */

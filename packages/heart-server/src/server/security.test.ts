@@ -18,6 +18,7 @@ import {
   AuthStore,
   BrowserSessionStore,
   defaultSettings,
+  instanceProof,
   SecuritySettingsSchema,
   SettingsStore,
   taskStopRequestPath,
@@ -251,6 +252,43 @@ describe("authenticate", () => {
     expect(body).toMatchObject({ ok: true, runner: { enabled: false, running: false } });
     expect(Object.keys(body).sort()).toEqual(["ok", "runner", "uptimeSeconds", "version"]);
     expect((await call(app, "/healthz", { headers: { host: "evil.example" } })).status).toBe(421);
+  });
+
+  it("authenticated responses carry the instance id; healthz proves it and does not reveal it", async () => {
+    const id = "ab".repeat(32);
+    const app = build({ instanceId: id });
+    const authed = await call(app, "/api/tasks");
+    expect(authed.status).toBe(200);
+    expect(authed.headers.get("x-boof-instance")).toBe(id);
+
+    peer = REMOTE;
+    const denied = await call(app, "/api/tasks");
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get("x-boof-instance")).toBeNull();
+
+    const nonce = "cd".repeat(32);
+    const proved = await call(app, `/healthz?nonce=${nonce}`);
+    expect(proved.status).toBe(200);
+    expect(proved.headers.get("x-boof-instance")).toBeNull();
+    const provedBody = await proved.json();
+    expect(JSON.stringify(provedBody)).not.toContain(id);
+    expect(provedBody.instanceProof).toBe(await instanceProof(id, nonce));
+
+    const plain = await call(app, "/healthz");
+    expect(Object.keys(await plain.json()).sort()).toEqual([
+      "ok",
+      "runner",
+      "uptimeSeconds",
+      "version",
+    ]);
+    const badNonce = await call(app, "/healthz?nonce=nope");
+    expect((await badNonce.json()).instanceProof).toBeUndefined();
+
+    peer = LOOPBACK;
+    const other = build();
+    const otherId = (await call(other, "/api/tasks")).headers.get("x-boof-instance");
+    expect(otherId).toMatch(/^[0-9a-f]{64}$/);
+    expect(otherId).not.toBe(id);
   });
 
   it("security.allowedHosts extends the host guard", async () => {
