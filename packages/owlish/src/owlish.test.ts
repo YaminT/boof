@@ -427,6 +427,26 @@ describe("OwlishClient accounts", () => {
     expect(String((down as Error).message)).not.toContain("btr-secret");
   });
 
+  it("probeAdminRoute treats 401 and 403 as rejected, 2xx as accepted, and the rest as unknown", async () => {
+    const probe = (status: number) => {
+      reply = () => [status, "{}"];
+      return new OwlishClient({ url, apiKey: "btr-agent" }).probeAdminRoute();
+    };
+    expect(await probe(401)).toBe("rejected");
+    expect(await probe(403)).toBe("rejected");
+    expect(await probe(200)).toBe("accepted");
+    expect(await probe(204)).toBe("accepted");
+    expect(await probe(500)).toBe("unknown");
+    expect(await probe(307)).toBe("unknown");
+    expect(
+      await new OwlishClient({
+        url: "http://127.0.0.1:1",
+        apiKey: "btr-agent",
+        timeoutMs: 200,
+      }).probeAdminRoute(),
+    ).toBe("unknown");
+  });
+
   it("a mutation clears the cached health", async () => {
     let t = 1;
     reply = (r) => [200, r.url === "/health" ? JSON.stringify(HEALTH_OK) : "{}"];

@@ -11,6 +11,7 @@ let root: string;
 let server: Server;
 let url: string;
 let hits: number;
+let accountHits: number;
 let health: { status: number; body: object };
 let clock: number;
 let sleeps: number[];
@@ -63,6 +64,7 @@ const gate = (over: Partial<ConstructorParameters<typeof PoolGate>[0]> = {}) =>
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-poolgate-"));
   hits = 0;
+  accountHits = 0;
   clock = Date.parse("2026-11-03T10:00:00Z");
   sleeps = [];
   health = { status: 200, body: POOL_OK };
@@ -72,7 +74,17 @@ beforeEach(async () => {
       res
         .writeHead(health.status, { "content-type": "application/json" })
         .end(JSON.stringify(health.body));
-    } else res.writeHead(404).end();
+      return;
+    }
+    if (req.url === "/api/accounts") {
+      accountHits += 1;
+      const key = String(req.headers["x-api-key"] ?? "");
+      // An api-only key is refused. Any other key can read this admin route.
+      const agentOnly = /agent/i.test(key) && !/admin/i.test(key);
+      res.writeHead(agentOnly ? 401 : 200).end(agentOnly ? "" : "[]");
+      return;
+    }
+    res.writeHead(404).end();
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -121,6 +133,39 @@ describe("policy and gateway", () => {
     expect(await none.gateway()).toEqual({ url });
     expect(await none.agentCredentialBlock()).toBeNull();
     expect(JSON.stringify(await none.gateway())).not.toContain("btr-admin");
+  });
+
+  it("does not hand out the agent key when the admin key cannot be read", async () => {
+    const unreadable = gate({
+      readKey: async () => {
+        throw new Error("secret-file-unreadable");
+      },
+    });
+    expect(await unreadable.gateway()).toBeUndefined();
+    expect(await unreadable.agentCredentialBlock()).toMatch(/owlishAgentKey/);
+    expect(accountHits).toBe(0);
+    expect(JSON.stringify(await unreadable.agentCredentialBlock())).not.toContain("secret-file");
+  });
+
+  it("refuses an agent key that the gateway accepts on the admin route", async () => {
+    const second = gate({
+      readKey: async () => "btr-admin",
+      readAgentKey: async () => "btr-second-admin",
+    });
+    expect(await second.gateway()).toBeUndefined();
+    const block = await second.agentCredentialBlock();
+    expect(block).toMatch(/not given to task agents/);
+    expect(block).not.toContain("btr-second-admin");
+    expect(accountHits).toBeGreaterThan(0);
+  });
+
+  it("refuses the agent key when the admin-route probe gets no answer", async () => {
+    settings = { ...settings, owlish: { url: "http://127.0.0.1:1", healthGate: "pause" } };
+    const g = gate();
+    expect(await g.gateway()).toBeUndefined();
+    const block = await g.agentCredentialBlock();
+    expect(block).toMatch(/owlishAgentKey/);
+    expect(block).not.toContain("btr-agent");
   });
 
   it("pause blocks routed work when degraded, unhealthy or unreachable, not when ok", async () => {

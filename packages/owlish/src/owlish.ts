@@ -54,6 +54,9 @@ export interface AccountSummary {
 /** Usage-pause thresholds, in percent of a window; passed to the gateway as given. */
 export type Thresholds = Record<string, number | null>;
 
+/** What the admin-only account list says about the key this client sent. */
+export type AdminRouteProbe = "rejected" | "accepted" | "unknown";
+
 /** A failed gateway call. `status` is the HTTP status, or null when no answer came. */
 export class OwlishError extends Error {
   constructor(
@@ -212,6 +215,24 @@ export class OwlishClient {
       throw new OwlishError("better-ccflare returned a malformed account list", null, "malformed");
     }
     return body as AccountSummary[];
+  }
+
+  /**
+   * GET /api/accounts with this client's key. That route is admin-only: an api-only key is
+   * answered 401 or 403. A 2xx means this key can read it. A redirect, a network error, or any
+   * other status is unknown, and the caller must not treat the key as safe to hand out.
+   */
+  async probeAdminRoute(): Promise<AdminRouteProbe> {
+    let res: Response;
+    try {
+      res = await this.request("GET", "/api/accounts", undefined, true);
+    } catch {
+      return "unknown";
+    }
+    await res.body?.cancel().catch(() => undefined);
+    if (res.status === 401 || res.status === 403) return "rejected";
+    if (res.ok) return "accepted";
+    return "unknown";
   }
 
   /** Account-type compliance for Claude Agent SDK. Failures are represented as a closed gate. */

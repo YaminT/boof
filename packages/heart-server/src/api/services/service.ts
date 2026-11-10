@@ -4,6 +4,7 @@ import {
   OwlishClient,
   OwlishError,
   OwlishSecretStore,
+  type AdminRouteProbe,
   ProjectKeyStore,
   decideAgentAuth,
   withAgentKey,
@@ -967,6 +968,8 @@ export class TaskService {
     const settings = await this.loadSettings();
     const result = [];
     let gatewayEligibility: AgentSdkEligibility | null | undefined;
+    // One admin-route probe for the whole status. A key the gateway accepts is not separate.
+    let agentProbe: AdminRouteProbe | undefined;
     for (const project of await this.listProjects()) {
       if (!authorized(project.id) || project.archived) continue;
       const effective = effectiveSettings(settings, project);
@@ -1023,7 +1026,14 @@ export class TaskService {
         continue;
       }
       const hasAgentKey = Boolean(agentKey);
-      const keysAreSeparate = agentKeyIsSeparate(adminKey, agentKey);
+      let keysAreSeparate = agentKeyIsSeparate(adminKey, agentKey);
+      if (gateway && useGateway && agentKey && keysAreSeparate) {
+        agentProbe ??= await new OwlishClient({
+          url: gateway.url,
+          apiKey: agentKey,
+        }).probeAdminRoute();
+        if (agentProbe !== "rejected") keysAreSeparate = false;
+      }
       if (
         gateway &&
         useGateway &&

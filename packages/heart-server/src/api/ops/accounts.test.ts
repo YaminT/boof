@@ -85,6 +85,9 @@ beforeEach(async () => {
         return;
       }
       if (req.url === "/api/accounts") {
+        const key = String(req.headers["x-api-key"] ?? "");
+        // An api-only agent key is refused even while eligibility is forced into an outage.
+        if (/agent/i.test(key) && !/admin/i.test(key)) return void res.writeHead(401).end("{}");
         return void res.writeHead(accountStatus).end(
           JSON.stringify(
             accountsBody ?? [
@@ -230,7 +233,11 @@ describe("runner status gateway eligibility", () => {
     seen = [];
     const status = await run("runner.status", LOCAL_PRINCIPAL);
     expect(status.agentAuth).toHaveLength(4);
-    expect(seen.filter((request) => request.url === "/api/accounts")).toHaveLength(1);
+    const accounts = seen.filter((request) => request.url === "/api/accounts");
+    expect(accounts.filter((request) => request.key === KEY)).toHaveLength(1);
+    expect(accounts.filter((request) => request.key === "btr-status-agent-key-0001")).toHaveLength(
+      1,
+    );
   });
 
   it("reports eligibility outages as waiting for the gateway", async () => {
@@ -791,6 +798,26 @@ describe("the separate agent key (owlishAgentKey)", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
+  it("settings.update refuses an agent key that can read the admin account list", async () => {
+    await configure();
+    await expect(
+      run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: "btr-second-admin-key" }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("separate api-only"),
+    });
+    expect(await service.owlishSecrets.getAgent()).toBeNull();
+  });
+
+  it("stores an agent key when the admin-route probe cannot reach the gateway", async () => {
+    await configure();
+    await run("settings.update", LOCAL_PRINCIPAL, {
+      owlish: { url: "http://127.0.0.1:1", healthGate: "off" },
+    });
+    await run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: AGENT });
+    expect(await service.owlishSecrets.getAgent()).toBe(AGENT);
+  });
+
   it("settings.update refuses equal admin and agent keys", async () => {
     await configure();
     await expect(
@@ -847,10 +874,11 @@ describe("the separate agent key (owlishAgentKey)", () => {
     expect(await run("accounts.agentSdk", admin, { refresh: true })).toMatchObject({
       allowed: true,
     });
-    // The eligibility check used the admin key, never the agent key.
-    const keys = seen.filter((r) => r.url === "/api/accounts").map((r) => r.key);
-    expect(keys.length).toBeGreaterThan(0);
-    expect(new Set(keys)).toEqual(new Set([KEY]));
+    // Eligibility uses the admin key. The agent key is sent only to prove it cannot read that route.
+    const accountCalls = seen.filter((r) => r.url === "/api/accounts");
+    expect(accountCalls.filter((r) => r.key === KEY).length).toBeGreaterThan(0);
+    expect(accountCalls.some((r) => r.key === AGENT)).toBe(true);
+    expect(new Set(accountCalls.map((r) => r.key))).toEqual(new Set([KEY, AGENT]));
   });
 
   it("accounts.agentSdk honours refresh, and a key read error is a key-free closed gate", async () => {

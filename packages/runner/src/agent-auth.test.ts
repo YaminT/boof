@@ -14,7 +14,13 @@ const settings = (url?: string) =>
   ({ owlish: url ? { url, healthGate: "pause" } : undefined }) as Settings;
 const listen = async (body: string, status = 200) => {
   const server = createServer((req, res) => {
-    expect(req.headers["x-api-key"]).toBeTruthy();
+    const key = String(req.headers["x-api-key"] ?? "");
+    expect(key).toBeTruthy();
+    // The admin account list refuses an api-only key. The admin key still gets `status`.
+    if (/agent/i.test(key) && !/admin/i.test(key)) {
+      res.writeHead(401, { "content-type": "application/json" }).end("{}");
+      return;
+    }
     res.writeHead(status, { "content-type": "application/json" }).end(body);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -169,7 +175,8 @@ describe("AgentAuthResolver", () => {
       ok: true,
       via: "gateway",
     });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    // One admin-route probe plus one eligibility check, both cached for the second decide.
+    expect(fetcher).toHaveBeenCalledTimes(2);
     server.close();
   });
   it("gateway mode gives the child the agent key and never the admin key", async () => {
@@ -331,6 +338,73 @@ describe("AgentAuthResolver", () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
+  it("refuses an agent key the gateway accepts on the admin route, without an eligibility check", async () => {
+    const fetcher = vi.fn(async () => new Response("[]", { status: 200 }));
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings("http://127.0.0.1:9"),
+      readGatewayKey: async () => "ADMIN-KEY-1",
+      readAgentKey: async () => "SECOND-ADMIN-KEY",
+      projectKeys: { has: async () => false } as never,
+      fetch: fetcher,
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        "the agent key must be a separate api-only better-ccflare key, not the admin client key",
+      ),
+    });
+    expect("unreachable" in decision).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const init = fetcher.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(new Headers(init?.headers).get("x-api-key")).toBe("SECOND-ADMIN-KEY");
+    expect(JSON.stringify(decision)).not.toContain("SECOND-ADMIN-KEY");
+  });
+  it("waits instead of handing out the agent key when the admin-route probe gets no answer", async () => {
+    const fetcher = vi.fn(async () => {
+      throw new Error("gateway-down");
+    });
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings("http://127.0.0.1:9"),
+      readGatewayKey: async () => "ADMIN-KEY-1",
+      readAgentKey: async () => "agent-key",
+      projectKeys: { has: async () => true } as never,
+      fetch: fetcher,
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({ ok: false, unreachable: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(decision)).not.toContain("agent-key");
+    expect(JSON.stringify(decision)).not.toContain("gateway-down");
+  });
+  it("credentials asks again and refuses when the agent key is no longer rejected", async () => {
+    let agentStatus = 401;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const key = new Headers(init?.headers).get("x-api-key") ?? "";
+      const agent = /agent/i.test(key) && !/admin/i.test(key);
+      return new Response(
+        JSON.stringify([
+          { id: "a", name: "console", provider: "claude-console-api", hasRefreshToken: false },
+        ]),
+        { status: agent ? agentStatus : 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const resolver = new AgentAuthResolver({
+      root: "/tmp/unused",
+      loadSettings: async () => settings("http://gateway.test"),
+      readGatewayKey: async () => "ADMIN-KEY-1",
+      readAgentKey: async () => "AGENT-KEY-1",
+      fetch: fetcher,
+    });
+    const decision = await resolver.decide(makeProject());
+    expect(decision).toMatchObject({ ok: true, via: "gateway" });
+    agentStatus = 200;
+    await expect(resolver.credentials(makeProject(), decision as never)).rejects.toBeInstanceOf(
+      AgentAuthRefusedError,
+    );
+  });
   it("refuses the gateway decision when the agent key equals the admin key", async () => {
     const resolver = new AgentAuthResolver({
       root: "/tmp/unused",
@@ -491,10 +565,12 @@ describe("AgentAuthResolver", () => {
       fetch: fetcher,
     });
     await Promise.all(Array.from({ length: 5 }, () => resolver.decide(makeProject())));
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    // The five checks share one probe and one eligibility request.
+    expect(fetcher).toHaveBeenCalledTimes(2);
     key = "other-key";
     await resolver.decide(makeProject());
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    // The agent key did not change, so only eligibility is asked again.
+    expect(fetcher).toHaveBeenCalledTimes(3);
     server.close();
   });
   it("turns settings and key-store failures into safe refusals", async () => {

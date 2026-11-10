@@ -77,9 +77,10 @@ export class PoolGate {
   }
 
   /**
-   * `agent` when `owlishAgentKey` is set and distinct from the admin key.
-   * `open` when neither key is set (the URL is enough). `blocked` when the admin key
-   * is set and there is no separate agent key: that key must not reach a child.
+   * `agent` when `owlishAgentKey` is set, distinct from the admin key, and refused by the
+   * admin-only account list. `open` when neither key is set (the URL is enough). `blocked`
+   * when the admin key cannot be read, when the agent key is missing or the same string, or
+   * when that key is not refused by the admin route: the admin key must not reach a child.
    */
   private async childCredential(): Promise<{
     kind: "agent" | "open" | "blocked";
@@ -90,14 +91,26 @@ export class PoolGate {
     try {
       admin = await this.opts.readKey();
     } catch {
-      admin = null;
+      // An unreadable admin key is not "no admin key". There is nothing to compare, so the
+      // agent key stays here.
+      return { kind: "blocked" };
     }
     try {
       agent = await this.opts.readAgentKey();
     } catch {
       agent = null;
     }
-    if (agent && agentKeyIsSeparate(admin, agent)) return { kind: "agent", apiKey: agent };
+    if (agent && agentKeyIsSeparate(admin, agent)) {
+      const owlish = (await this.opts.loadSettings()).owlish;
+      if (!owlish) return { kind: "blocked" };
+      const probe = await new OwlishClient({
+        url: owlish.url,
+        apiKey: agent,
+        now: this.now,
+      }).probeAdminRoute();
+      if (probe !== "rejected") return { kind: "blocked" };
+      return { kind: "agent", apiKey: agent };
+    }
     if (admin) return { kind: "blocked" };
     return { kind: "open" };
   }

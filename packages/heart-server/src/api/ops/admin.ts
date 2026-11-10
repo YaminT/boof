@@ -7,6 +7,7 @@ import {
   settingsVersion,
   TokenUsageSchema,
 } from "@boof/heart";
+import { AGENT_KEY_MUST_BE_SEPARATE, OwlishClient } from "@boof/owlish";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { buildModelDetails } from "../services/model-details.js";
@@ -120,6 +121,16 @@ export const settingsUpdate = defineOp({
     } else if (owlishApiKey === null) await ctx.services.owlishSecrets.delete();
     if (typeof owlishAgentKey === "string") {
       try {
+        // A second admin key is a different string. Ask the admin-only account list before
+        // storing it. No gateway URL yet, or no answer, still stores: the next use probes again.
+        const gatewayUrl = saved.owlish?.url;
+        if (gatewayUrl) {
+          const probe = await new OwlishClient({
+            url: gatewayUrl,
+            apiKey: owlishAgentKey,
+          }).probeAdminRoute();
+          if (probe === "accepted") throw new Error(AGENT_KEY_MUST_BE_SEPARATE);
+        }
         await ctx.services.owlishSecrets.setAgent(owlishAgentKey);
       } catch (error) {
         if (

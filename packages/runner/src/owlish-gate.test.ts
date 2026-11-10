@@ -180,6 +180,10 @@ beforeEach(async () => {
   seenGateways = [];
   server = createServer((req, res) => {
     if (req.url === "/api/accounts") {
+      const key = String(req.headers["x-api-key"] ?? "");
+      // The agent-key probe is not an eligibility check. An api-only key is refused here.
+      if ((/agent/i.test(key) && !/admin/i.test(key)) || key === "btr-key")
+        return void res.writeHead(401).end();
       accountRequests += 1;
       if (accountRequests >= accountOutageFrom && accountRequests <= accountOutageThrough)
         return void res

@@ -47,6 +47,9 @@ export class AgentAuthResolver {
   private readonly now: () => number;
   private readonly cache = new Map<string, { at: number; eligibility: AgentSdkEligibility }>();
   private readonly inFlight = new Map<string, Promise<AgentSdkEligibility>>();
+  /** Rejected admin-route probes, keyed by gateway URL and the agent key. Accepted and unknown are not cached. */
+  private readonly probeCache = new Map<string, { at: number }>();
+  private readonly probeInFlight = new Map<string, Promise<"rejected" | "accepted" | "unknown">>();
   private readonly checked = new WeakMap<object, { url: string; key: string; agentKey: string }>();
 
   constructor(private readonly options: AgentAuthResolverOptions) {
@@ -122,6 +125,37 @@ export class AgentAuthResolver {
         });
       }
 
+      // A different string is not enough: the agent key must be refused by the admin-only
+      // account list. Equal strings already returned above and never touch the network.
+      // No admin key means the gateway route stays closed without a probe.
+      if (choice === "gateway" && gateway && agentKey && gatewayKey) {
+        const probe = await this.probeAgentKey(gateway.url, agentKey, fresh);
+        if (probe === "accepted") {
+          return decideAgentAuth({
+            projectName: project.name,
+            choice,
+            gatewayConfigured: true,
+            eligibility: {
+              gateway: "checked",
+              allowed: true,
+              reason: "",
+              blocking: [],
+              checkedAt: new Date(this.now()).toISOString(),
+            },
+            hasProjectKey,
+            hasAgentKey: false,
+            keysAreSeparate: false,
+          });
+        }
+        if (probe !== "rejected") {
+          return {
+            ok: false,
+            unreachable: true,
+            reason: refusal(project, "the better-ccflare gateway is unreachable"),
+          };
+        }
+      }
+
       let eligibility: AgentSdkEligibility | null = null;
       let checkedKey = "";
       if (gateway) {
@@ -194,6 +228,39 @@ export class AgentAuthResolver {
     }
   }
 
+  /**
+   * GET /api/accounts with the agent key. A rejection is cached for 30 s and simultaneous
+   * checks share one request. `fresh` always asks again and is what `credentials` uses.
+   */
+  private async probeAgentKey(
+    url: string,
+    agentKey: string,
+    fresh: boolean,
+  ): Promise<"rejected" | "accepted" | "unknown"> {
+    const cacheKey = `${url}:${createHash("sha256").update(agentKey).digest("hex")}`;
+    const cached = this.probeCache.get(cacheKey);
+    if (!fresh && cached && this.now() - cached.at < CACHE_MS) return "rejected";
+    let request = !fresh ? this.probeInFlight.get(cacheKey) : undefined;
+    if (!request) {
+      const client = new OwlishClient({
+        url,
+        apiKey: agentKey,
+        fetch: this.fetcher,
+        now: this.now,
+      });
+      request = client.probeAdminRoute();
+      if (!fresh) this.probeInFlight.set(cacheKey, request);
+    }
+    try {
+      const result = await request;
+      if (result === "rejected") this.probeCache.set(cacheKey, { at: this.now() });
+      else this.probeCache.delete(cacheKey);
+      return result;
+    } finally {
+      if (this.probeInFlight.get(cacheKey) === request) this.probeInFlight.delete(cacheKey);
+    }
+  }
+
   async credentials(
     project: Project,
     decision: AgentAuthDecision & { ok: true },
@@ -227,6 +294,17 @@ export class AgentAuthResolver {
       )
         throw new AgentAuthRefusedError(
           refusal(project, "gateway settings changed after eligibility was checked"),
+        );
+      // Ask again. A key that was api-only at decide time may have been replaced by an admin key.
+      const probe = await this.probeAgentKey(checked.url, agentKey, true);
+      if (probe !== "rejected")
+        throw new AgentAuthRefusedError(
+          refusal(
+            project,
+            probe === "accepted"
+              ? "the agent key must be a separate api-only better-ccflare key, not the admin client key"
+              : "the better-ccflare gateway is unreachable",
+          ),
         );
       // The admin key stays here; the child gets only the api-only agent key.
       return { kind: "gateway", url: checked.url, apiKey: checked.agentKey };
