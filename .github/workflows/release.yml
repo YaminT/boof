@@ -10,16 +10,49 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and upload assets to (e.g. v0.2.0-beta)"
+        description: "Release tag to build and upload assets to (e.g. v0.4.0-beta.1)"
         required: true
-        default: "v0.2.0-beta"
 
 permissions:
   contents: write
 
 jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout ${{ env.TAG }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
   build:
     name: ${{ matrix.name }}
+    needs: verify
     strategy:
       fail-fast: false
       matrix:
@@ -53,7 +86,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
