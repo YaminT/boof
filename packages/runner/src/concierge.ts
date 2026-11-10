@@ -137,6 +137,7 @@ export class ClaudeConcierge implements ConciergeAgent {
         root: options.root,
         loadSettings: () => settings!.load(),
         readKey: () => new OwlishSecretStore(options.root).get(),
+        readAgentKey: () => new OwlishSecretStore(options.root).getAgent(),
       });
   }
 

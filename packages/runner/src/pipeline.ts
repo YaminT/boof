@@ -38,6 +38,7 @@ import {
   sumUsage,
   UsageStore,
 } from "@boof/heart";
+import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
 import type { Gateway } from "./gateway-env.js";
@@ -447,6 +448,8 @@ export class Pipeline {
               ),
             };
           }
+          if (tool.acceptsPool && this.deps.settings.owlish && !this.deps.gateway)
+            throw new Error(POOL_AGENT_KEY_REQUIRED);
           const result = await tool.run({
             ...opts,
             model: stepModel,

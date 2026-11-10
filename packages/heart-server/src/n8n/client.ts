@@ -1,10 +1,12 @@
 import net from "node:net";
 import {
   joinUrl,
+  n8nSendRefusal,
   N8nSecretStore,
   securitySettings,
   SettingsStore,
   auditOperation,
+  type ListenerLookupDeps,
   type N8nSettings,
 } from "@boof/heart";
 import { OpError } from "../api/errors.js";
@@ -33,6 +35,8 @@ export interface N8nClientOptions {
   isSelfUrl: (u: URL) => boolean;
   /** Test seam; receives the checked addresses. */
   request?: typeof pinnedRequest;
+  /** Linux listener-uid check. Tests inject a fake `/proc`; other platforms skip. */
+  listener?: ListenerLookupDeps;
   /** Audit `via`, default "server". */
   via?: "server" | "runner";
   /** For BOOF_N8N_API_KEY. */
@@ -232,6 +236,8 @@ export class N8nClient {
       this.opts,
     );
     if (!target.ok) throw new Upstream(`blocked: ${target.reason}`);
+    const refusal = n8nSendRefusal(target.url, target.addresses, this.opts.listener);
+    if (refusal) throw new Upstream(refusal.reason);
     let res: { status: number; body: string };
     try {
       res = await (this.opts.request ?? pinnedRequest)(target.url.href, target.addresses, {

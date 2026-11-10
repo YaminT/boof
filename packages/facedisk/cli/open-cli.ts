@@ -2,7 +2,12 @@ import { existsSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { BrowserSessionStore, SettingsStore, securitySettings } from "@boof/heart";
+import {
+  BrowserSessionStore,
+  openLoopbackRefusal,
+  SettingsStore,
+  securitySettings,
+} from "@boof/heart";
 import { beginCliAudit } from "./cli-audit.js";
 import { migrateOldRoot } from "./migrate-old-root.js";
 
@@ -43,6 +48,8 @@ export async function openCommand(
   out: (line: string) => void = console.log,
   err: (line: string) => void = console.error,
   portProbe: (host: string, port: number) => Promise<boolean> = defaultPortProbe,
+  /** Linux: one-line refusal when another uid holds the port. Other platforms return null. */
+  listenerRefusal: (host: string, port: number) => string | null = openLoopbackRefusal,
 ): Promise<number> {
   let parsed;
   try {
@@ -102,6 +109,12 @@ export async function openCommand(
       err(
         'open: security.auth.mode is "required": the web UI uses an API key (paste one created with "boof-runner auth add").',
       );
+      return 1;
+    }
+    const held = listenerRefusal(host, port);
+    if (held) {
+      await audit.failCode("listener_not_owner");
+      err(`open: ${held}`);
       return 1;
     }
     const { code } = await store.createLink({ port });

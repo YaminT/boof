@@ -1,6 +1,10 @@
 import { appendEvent, type Settings } from "@boof/heart";
-import { ABSENT_POOL, OwlishClient, type PoolStatus } from "@boof/owlish";
+import { ABSENT_POOL, agentKeyIsSeparate, OwlishClient, type PoolStatus } from "@boof/owlish";
 import type { Gateway } from "./gateway-env.js";
+
+/** Shown when a pool-routed tool would otherwise receive the admin key. */
+export const POOL_AGENT_KEY_REQUIRED =
+  "pool routing needs a separate owlishAgentKey; the admin key is not given to task agents";
 
 /** Ask the gateway at most this often (a known `nextAvailableAt` may bring the next check forward). */
 export const POOL_POLL_MS = 30_000;
@@ -19,8 +23,13 @@ export interface PoolGateOptions {
   /** The data root, for the `runner.pool_exhausted` event. */
   root: string;
   loadSettings: () => Promise<Settings>;
-  /** boof's ccflare client key (the secret store); null when none. */
+  /**
+   * boof's admin ccflare key. Compared in-process so it is never handed to a child, and not
+   * sent on the health request. Null when none.
+   */
   readKey: () => Promise<string | null>;
+  /** The api-only agent key. The only gateway credential a pool-routed child receives. */
+  readAgentKey: () => Promise<string | null>;
   now?: () => number;
   /** Tests inject a fake clock: waiting advances it. */
   sleep?: (ms: number) => Promise<void>;
@@ -44,12 +53,53 @@ export class PoolGate {
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  /** Where routed tools send their requests, or undefined without `settings.owlish`. */
+  /**
+   * Where routed tools send their requests, or undefined without `settings.owlish`
+   * or when the only credential is the admin key. The api key is `owlishAgentKey`
+   * only. A gateway with no keys is returned without one. The admin key is never returned.
+   */
   async gateway(): Promise<Gateway | undefined> {
     const owlish = (await this.opts.loadSettings()).owlish;
     if (!owlish) return undefined;
-    const apiKey = await this.opts.readKey().catch(() => null);
-    return { url: owlish.url, apiKey: apiKey ?? undefined };
+    const cred = await this.childCredential();
+    if (cred.kind === "blocked") return undefined;
+    return { url: owlish.url, ...(cred.apiKey ? { apiKey: cred.apiKey } : {}) };
+  }
+
+  /**
+   * Why a tool that would receive the pool gateway must not start, or null when it may.
+   * Null when no pool is configured, and when the gateway has no client key at all.
+   */
+  async agentCredentialBlock(): Promise<string | null> {
+    const owlish = (await this.opts.loadSettings()).owlish;
+    if (!owlish) return null;
+    return (await this.childCredential()).kind === "blocked" ? POOL_AGENT_KEY_REQUIRED : null;
+  }
+
+  /**
+   * `agent` when `owlishAgentKey` is set and distinct from the admin key.
+   * `open` when neither key is set (the URL is enough). `blocked` when the admin key
+   * is set and there is no separate agent key: that key must not reach a child.
+   */
+  private async childCredential(): Promise<{
+    kind: "agent" | "open" | "blocked";
+    apiKey?: string;
+  }> {
+    let admin: string | null = null;
+    let agent: string | null = null;
+    try {
+      admin = await this.opts.readKey();
+    } catch {
+      admin = null;
+    }
+    try {
+      agent = await this.opts.readAgentKey();
+    } catch {
+      agent = null;
+    }
+    if (agent && agentKeyIsSeparate(admin, agent)) return { kind: "agent", apiKey: agent };
+    if (admin) return { kind: "blocked" };
+    return { kind: "open" };
   }
 
   /** The pool and whether routed work is blocked. Never throws on a gateway failure. */
@@ -78,13 +128,8 @@ export class PoolGate {
       const due = age >= POOL_POLL_MS || (Number.isFinite(next) && t >= next && age >= 5_000);
       if (!due) return last.pool;
     }
-    let apiKey: string | undefined;
-    try {
-      apiKey = (await this.opts.readKey()) ?? undefined;
-    } catch {
-      /* /health needs no key */
-    }
-    const pool = await new OwlishClient({ url, apiKey, now: this.now }).health();
+    // /health needs no key. The admin key stays out of this request.
+    const pool = await new OwlishClient({ url, now: this.now }).health();
     this.last = { at: this.now(), key: url, pool };
     return pool;
   }

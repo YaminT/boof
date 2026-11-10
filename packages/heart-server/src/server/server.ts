@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import {
   AuthStore,
+  BrowserSessionStore,
   browserSessionCookieName,
   dataRootPaths,
+  UnsafeBrowserSessionPathError,
   ExternalRunStore,
   migrateDataRoot,
   securitySettings,
@@ -155,6 +157,16 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const pruneTimer = setInterval(() => void externalRuns.prune().catch(() => 0), 3600_000);
   pruneTimer.unref();
 
+  // A new epoch on every start. Cookies minted by the previous process no longer verify.
+  // An unsafe data root already refuses session checks; do not fail startup over it.
+  const browserSessions = new BrowserSessionStore(opts.root);
+  try {
+    await browserSessions.beginEpoch();
+  } catch (error) {
+    if (!(error instanceof UnsafeBrowserSessionPathError)) throw error;
+    warn(`warning: could not rotate browser sessions (${error.message})`);
+  }
+
   const app = createApp({
     service,
     externalRuns,
@@ -162,6 +174,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     uiDir: opts.uiDir,
     allowedHosts,
     authStore,
+    browserSessions,
     sessionCookieName: () => browserSessionCookieName(boundPort),
     linkPort: () => boundPort,
     operatorClients: opts.operatorClients,

@@ -76,6 +76,8 @@ interface SessionRecord {
   createdAt: string;
   lastUsedAt: string;
   expiresAt: string;
+  /** Server start that minted this session. Absent on rows written before epochs. */
+  epoch?: string;
 }
 
 const LinkFile = z.object({
@@ -85,6 +87,8 @@ const LinkFile = z.object({
 });
 
 const SessionFile = z.object({
+  /** Current server start. Sessions minted under another value are refused. */
+  epoch: z.string().min(1).optional(),
   sessions: z.array(
     z.object({
       id: z.string(),
@@ -92,6 +96,7 @@ const SessionFile = z.object({
       createdAt: z.string(),
       lastUsedAt: z.string(),
       expiresAt: z.string(),
+      epoch: z.string().min(1).optional(),
     }),
   ),
 });
@@ -101,8 +106,23 @@ interface SessionCache {
   size: number;
   readAtMs: number;
   sessions: SessionRecord[];
+  epoch: string | null;
   /** The file was unreadable or corrupt at this mtime and size. Verify fails closed. */
   failed: boolean;
+}
+
+interface SessionState {
+  epoch: string | null;
+  sessions: SessionRecord[];
+}
+
+function newEpoch(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+/** A session is live only for the server start recorded in the file. */
+function sameEpoch(current: string | null, minted: string | undefined): boolean {
+  return current !== null && minted !== undefined && current === minted;
 }
 
 function sha256Hex(value: string): string {
@@ -196,6 +216,20 @@ function cleanSession(row: SessionRecord): SessionRecord {
     createdAt: row.createdAt,
     lastUsedAt: row.lastUsedAt,
     expiresAt: row.expiresAt,
+    ...(row.epoch ? { epoch: row.epoch } : {}),
+  };
+}
+
+function sessionDocument(
+  epoch: string | null,
+  rows: readonly SessionRecord[],
+): {
+  epoch?: string;
+  sessions: SessionRecord[];
+} {
+  return {
+    ...(epoch ? { epoch } : {}),
+    sessions: rows.map(cleanSession),
   };
 }
 
@@ -218,6 +252,11 @@ function parseStored<T>(text: string, schema: z.ZodType<{ [key: string]: T[] }>,
  * are 0600. Link and session mutations read and write under one cross-process lock, so a link
  * minted by another process cannot race a redemption or revoke. `verify` stats the sessions file
  * on every call and reloads it when the mtime or size changed.
+ *
+ * `beginEpoch` runs once per server start and stores a new random epoch under that lock.
+ * `verify` accepts only a session minted in the epoch currently in the file, so a cookie
+ * harvested while the server was down is dead when it comes back. The desktop app mints a
+ * session per window after the server has started, so that window stays signed in.
  */
 export class BrowserSessionStore implements BrowserSessionVerifier {
   private readonly linksPath: string;
@@ -267,7 +306,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   async createLink(opts: { port?: number } = {}): Promise<{ code: string; expiresAt: string }> {
-    return this.mutate(async ({ links, sessions }) => {
+    return this.mutate(async ({ links, sessions, epoch }) => {
       const nowMs = this.now();
       const code = `bl_${randomBytes(32).toString("base64url")}`;
       const expiresAt = new Date(nowMs + BROWSER_LINK_TTL_MS).toISOString();
@@ -277,7 +316,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         expiresAt,
         ...(opts.port !== undefined ? { port: opts.port } : {}),
       });
-      await this.commit(nextLinks, pruneSessions(sessions, nowMs), { links, sessions });
+      await this.commit(nextLinks, pruneSessions(sessions, nowMs), { links, sessions, epoch });
       return { code, expiresAt };
     });
   }
@@ -290,45 +329,71 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     code: string,
     opts: { port?: number } = {},
   ): Promise<{ token: string; session: BrowserSession } | null> {
-    return this.mutate(async ({ links, sessions }) => {
+    return this.mutate(async ({ links, sessions, epoch }) => {
       const nowMs = this.now();
       const liveLinks = pruneLinks(links, nowMs);
       const liveSessions = pruneSessions(sessions, nowMs);
       const match =
         typeof code === "string" && code.length > 0 ? findByHash(liveLinks, code) : null;
       if (!match) {
-        await this.commit(liveLinks, liveSessions, { links, sessions });
+        await this.commit(liveLinks, liveSessions, { links, sessions, epoch });
         return null;
       }
       // Drop the link before the session is added, so a crash cannot leave it redeemable twice.
       const keptLinks = liveLinks.filter((link) => link !== match);
       if (match.port !== undefined && opts.port !== undefined && match.port !== opts.port) {
-        await this.commit(keptLinks, liveSessions, { links, sessions });
+        await this.commit(keptLinks, liveSessions, { links, sessions, epoch });
         return null;
       }
-      const minted = this.mint(liveSessions, nowMs);
-      await this.commit(keptLinks, minted.sessions, { links, sessions });
+      const current = epoch ?? newEpoch();
+      const minted = this.mint(liveSessions, nowMs, current);
+      await this.commit(keptLinks, minted.sessions, { links, sessions, epoch }, undefined, current);
       return { token: minted.token, session: minted.session };
     });
   }
 
   async createSession(): Promise<{ token: string; session: BrowserSession }> {
-    return this.mutate(async ({ links, sessions }) => {
+    return this.mutate(async ({ links, sessions, epoch }) => {
       const nowMs = this.now();
-      const minted = this.mint(pruneSessions(sessions, nowMs), nowMs);
-      await this.commit(pruneLinks(links, nowMs), minted.sessions, { links, sessions });
+      const current = epoch ?? newEpoch();
+      const minted = this.mint(pruneSessions(sessions, nowMs), nowMs, current);
+      await this.commit(
+        pruneLinks(links, nowMs),
+        minted.sessions,
+        { links, sessions, epoch },
+        undefined,
+        current,
+      );
       return { token: minted.token, session: minted.session };
     });
+  }
+
+  /**
+   * New server start. Under the session lock, replace the stored epoch and drop every session.
+   * Pending sign-in links stay: they are single-use and are not cookies. A corrupt session file
+   * is replaced so startup can still mint a fresh epoch.
+   */
+  async beginEpoch(): Promise<void> {
+    await this.mutate(async ({ links, sessions, epoch }) => {
+      const nowMs = this.now();
+      await this.commit(
+        pruneLinks(links, nowMs),
+        [],
+        { links, sessions, epoch },
+        { links: false, sessions: true },
+        newEpoch(),
+      );
+    }, true);
   }
 
   async verify(token: string | undefined): Promise<BrowserSession | null> {
     try {
       if (typeof token !== "string" || token.length === 0) return null;
       await this.assertTrustedDirectories();
-      const sessions = await this.cachedSessions();
-      if (!sessions) return null;
-      const match = findByHash(sessions, token);
-      if (!match) return null;
+      const loaded = await this.cachedSessions();
+      if (!loaded) return null;
+      const match = findByHash(loaded.sessions, token);
+      if (!match || !sameEpoch(loaded.epoch, match.epoch)) return null;
       const nowMs = this.now();
       if (sessionExpired(match, nowMs)) return null;
       if (nowMs - at(match.lastUsedAt) < TOUCH_MIN_MS) return toPublic(match);
@@ -366,20 +431,20 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
 
   /** Delete one session by id; true when a live session was removed. Other sessions are untouched. */
   async revokeSession(id: string): Promise<boolean> {
-    return this.mutate(async ({ links, sessions }) => {
+    return this.mutate(async ({ links, sessions, epoch }) => {
       const nowMs = this.now();
       const live = pruneSessions(sessions, nowMs);
       const next = live.filter((row) => row.id !== id);
-      await this.commit(pruneLinks(links, nowMs), next, { links, sessions });
+      await this.commit(pruneLinks(links, nowMs), next, { links, sessions, epoch });
       return next.length !== live.length;
     });
   }
 
   /** Delete every session and pending sign-in link; return the number of live sessions removed. */
   async revokeAll(): Promise<number> {
-    return this.mutate(async ({ links, sessions, corrupt }) => {
+    return this.mutate(async ({ links, sessions, epoch, corrupt }) => {
       const liveCount = pruneSessions(sessions, this.now()).length;
-      await this.commit([], [], { links, sessions }, corrupt);
+      await this.commit([], [], { links, sessions, epoch }, corrupt);
       return liveCount;
     }, true);
   }
@@ -387,6 +452,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private mint(
     sessions: SessionRecord[],
     nowMs: number,
+    epoch: string,
   ): { token: string; session: BrowserSession; sessions: SessionRecord[] } {
     const next = roomForOne(sessions, MAX_SESSIONS);
     const token = `bs_${randomBytes(32).toString("base64url")}`;
@@ -397,6 +463,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       createdAt,
       lastUsedAt: createdAt,
       expiresAt: new Date(nowMs + BROWSER_SESSION_MAX_MS).toISOString(),
+      epoch,
     };
     next.push(record);
     return { token, session: toPublic(record), sessions: next };
@@ -404,17 +471,17 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
 
   /** Re-read under the lock and persist `lastUsedAt` when the session is still live. */
   private touch(token: string, nowMs: number): Promise<SessionRecord | null> {
-    return this.mutate(async ({ links, sessions }) => {
+    return this.mutate(async ({ links, sessions, epoch }) => {
       const liveLinks = pruneLinks(links, nowMs);
       const liveSessions = pruneSessions(sessions, nowMs);
       const match = findByHash(liveSessions, token);
-      if (!match || nowMs - at(match.lastUsedAt) < TOUCH_MIN_MS) {
-        await this.commit(liveLinks, liveSessions, { links, sessions });
-        return match ?? null;
+      if (!match || !sameEpoch(epoch, match.epoch) || nowMs - at(match.lastUsedAt) < TOUCH_MIN_MS) {
+        await this.commit(liveLinks, liveSessions, { links, sessions, epoch });
+        return match && sameEpoch(epoch, match.epoch) ? match : null;
       }
       const updated: SessionRecord = { ...match, lastUsedAt: new Date(nowMs).toISOString() };
       const next = liveSessions.map((row) => (row === match ? updated : row));
-      await this.commit(liveLinks, next, { links, sessions });
+      await this.commit(liveLinks, next, { links, sessions, epoch });
       return updated;
     });
   }
@@ -423,6 +490,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     fn: (state: {
       links: LinkRecord[];
       sessions: SessionRecord[];
+      epoch: string | null;
       corrupt: { links: boolean; sessions: boolean };
     }) => Promise<T>,
     resetCorrupt = false,
@@ -439,6 +507,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         async () => {
           let links: LinkRecord[];
           let sessions: SessionRecord[];
+          let epoch: string | null = null;
           let linksCorrupt = false;
           let sessionsCorrupt = false;
           try {
@@ -454,7 +523,9 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             linksCorrupt = true;
           }
           try {
-            sessions = await this.readSessions();
+            const state = await this.readSessionState();
+            sessions = state.sessions;
+            epoch = state.epoch;
           } catch (error) {
             if (!this.isCorrupt(error)) throw error;
             this.logCorruptOnce(
@@ -463,11 +534,13 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
             );
             if (!resetCorrupt) throw error;
             sessions = [];
+            epoch = null;
             sessionsCorrupt = true;
           }
           return fn({
             links,
             sessions,
+            epoch,
             corrupt: { links: linksCorrupt, sessions: sessionsCorrupt },
           });
         },
@@ -490,11 +563,25 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     return rows.map(cleanLink);
   }
 
-  private async readSessions(): Promise<SessionRecord[]> {
-    const rows = await this.readRecords(this.sessionsPath, (text) =>
-      parseStored(text, SessionFile, "sessions"),
-    );
-    return rows.map(cleanSession);
+  private async readSessionState(): Promise<SessionState> {
+    const parsed = await this.readRecords(this.sessionsPath, (text) => {
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error("corrupt");
+      }
+      const result = SessionFile.safeParse(json);
+      if (!result.success) throw new Error("corrupt");
+      const epoch = result.data.epoch;
+      return [
+        {
+          epoch: typeof epoch === "string" && epoch.length > 0 ? epoch : null,
+          sessions: result.data.sessions.map(cleanSession),
+        },
+      ];
+    });
+    return parsed[0] ?? { epoch: null, sessions: [] };
   }
 
   /** Missing file is an empty list. Anything else throws, without the file body in the message. */
@@ -535,8 +622,9 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   private async commit(
     links: LinkRecord[],
     sessions: SessionRecord[],
-    prev: { links: LinkRecord[]; sessions: SessionRecord[] },
+    prev: { links: LinkRecord[]; sessions: SessionRecord[]; epoch: string | null },
     force: { links: boolean; sessions: boolean } = { links: false, sessions: false },
+    epoch: string | null = prev.epoch,
   ): Promise<void> {
     if (
       force.links ||
@@ -544,11 +632,10 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     ) {
       await this.persist(this.linksPath, { links: links.map(cleanLink) });
     }
-    if (
-      force.sessions ||
-      JSON.stringify(sessions.map(cleanSession)) !== JSON.stringify(prev.sessions.map(cleanSession))
-    ) {
-      await this.persist(this.sessionsPath, { sessions: sessions.map(cleanSession) });
+    const nextSessions = sessionDocument(epoch, sessions);
+    const prevSessions = sessionDocument(prev.epoch, prev.sessions);
+    if (force.sessions || JSON.stringify(nextSessions) !== JSON.stringify(prevSessions)) {
+      await this.persist(this.sessionsPath, nextSessions);
     }
   }
 
@@ -570,7 +657,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
    * Stat on every call. Re-read files with a recent mtime to cover coarse timestamp resolution.
    * A failure is cached with that stat so a still-corrupt file logs once.
    */
-  private async cachedSessions(): Promise<SessionRecord[] | null> {
+  private async cachedSessions(): Promise<SessionState | null> {
     let fileStat: { mtimeMs: number; size: number };
     try {
       const st = await lstat(this.sessionsPath);
@@ -589,7 +676,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       if (code === "ENOENT") {
         this.unsafeMessage = undefined;
         this.cache = null;
-        return [];
+        return { epoch: null, sessions: [] };
       }
       if (!this.loggedStatError) {
         this.loggedStatError = true;
@@ -605,13 +692,19 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       Math.abs(fileStat.mtimeMs - this.cache.readAtMs) > RACY_MTIME_MS &&
       Math.abs(Date.now() - fileStat.mtimeMs) > RACY_MTIME_MS
     ) {
-      return this.cache.failed ? null : this.cache.sessions;
+      return this.cache.failed ? null : { epoch: this.cache.epoch, sessions: this.cache.sessions };
     }
 
     try {
-      const sessions = await this.readSessions();
-      this.cache = { ...fileStat, readAtMs: Date.now(), sessions, failed: false };
-      return sessions;
+      const state = await this.readSessionState();
+      this.cache = {
+        ...fileStat,
+        readAtMs: Date.now(),
+        sessions: state.sessions,
+        epoch: state.epoch,
+        failed: false,
+      };
+      return state;
     } catch (error) {
       if (error instanceof UnsafeBrowserSessionPathError) {
         this.logUnsafeOnce(error);
@@ -619,7 +712,13 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
         return null;
       }
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      this.cache = { ...fileStat, readAtMs: Date.now(), sessions: [], failed: true };
+      this.cache = {
+        ...fileStat,
+        readAtMs: Date.now(),
+        sessions: [],
+        epoch: null,
+        failed: true,
+      };
       this.logCorruptOnce(
         this.sessionsPath,
         error instanceof CorruptBrowserSessionFileError ? error.code : undefined,

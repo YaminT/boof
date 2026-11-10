@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthStore,
   BrowserSessionStore,
+  browserSessionCookieName,
   UnsafeBrowserSessionPathError,
   type BrowserSessionVerifier,
   dataRootPaths,
@@ -440,6 +441,29 @@ describe("browser session authentication", () => {
       headers: { cookie: `boof_ui_4319=${token}`, host: "127.0.0.1:5319" },
     });
     expect(res.status).toBe(200);
+  });
+
+  it("startServer rejects a session minted before this process and accepts one minted after", async () => {
+    const prior = await new BrowserSessionStore(root).createSession();
+    const running = await startServer({
+      catalog: new ToolRegistry([new MockTool()]),
+      root,
+      port: 0,
+      warn: () => {},
+    });
+    try {
+      const name = browserSessionCookieName(running.port);
+      const who = (cookie: string) =>
+        fetch(`http://127.0.0.1:${running.port}/api/v1/whoami`, {
+          headers: { cookie },
+        });
+      expect(await new BrowserSessionStore(root).verify(prior.token)).toBeNull();
+      expect((await who(`${name}=${prior.token}`)).status).toBe(401);
+      const minted = await new BrowserSessionStore(root).createSession();
+      expect((await who(`${name}=${minted.token}`)).status).toBe(200);
+    } finally {
+      await running.stop();
+    }
   });
 
   it("startServer names the cookie for its bound port, regardless of Host port", async () => {

@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultSettings,
   N8nSecretStore,
@@ -120,6 +120,48 @@ describe("n8n transport", () => {
     expect(call.body).toMatchObject({ run: { token: "bxs_t" }, step: { id: "ci" } });
   });
 
+  it("does not send the webhook secret or run token when another uid holds the loopback port", async () => {
+    const request = vi.fn();
+    await configure({ baseUrl: "http://127.0.0.1:5678" });
+    const portHex = (5678).toString(16).toUpperCase().padStart(4, "0");
+    const head =
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    const row = `   0: 0100007F:${portHex} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1001 0 1 1 0000000000000000 100 0 0 10 0\n`;
+    const result = await make({
+      request: request as never,
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        readFile: (path) => (path === "/proc/net/tcp" ? head + row : head),
+      },
+    }).trigger(req());
+    expect(result).toMatchObject({ ok: false, retryable: false });
+    expect(result.reason).toMatch(/listener_not_owner/);
+    expect(result.reason).toContain("uid 1001");
+    expect(result.reason).not.toContain("bxs_t");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("nothing listening is retryable and sends nothing", async () => {
+    const request = vi.fn();
+    await configure({ baseUrl: "http://[::1]:5678" });
+    const head =
+      "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    const result = await make({
+      request: request as never,
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        readFile: () => head,
+      },
+    }).trigger(req());
+    expect(result).toMatchObject({ ok: false, retryable: true });
+    expect(result.reason).toMatch(/listener_not_owner/);
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("no webhook secret → no X-Boof-Token header", async () => {
     const f = await fake();
     await configure({ baseUrl: f.url });
@@ -139,7 +181,11 @@ describe("n8n transport", () => {
     expect(await t.trigger(req())).toEqual({ ok: false, retryable: false, reason: "redirected" });
     expect(f.calls).toHaveLength(3);
     await f.close();
-    expect(await t.trigger(req())).toEqual({ ok: false, retryable: true, reason: "unreachable" });
+    const closed = await t.trigger(req());
+    expect(closed).toMatchObject({ ok: false, retryable: true });
+    // Linux refuses before connecting when nobody owns the port. Other platforms try and fail.
+    if (process.platform === "linux") expect(closed.reason).toMatch(/listener_not_owner/);
+    else expect(closed.reason).toBe("unreachable");
   });
 
   it("404 explains an inactive workflow", async () => {

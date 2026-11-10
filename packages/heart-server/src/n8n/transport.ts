@@ -2,6 +2,7 @@ import { join } from "node:path";
 import {
   dataRootPaths,
   inspectProcessLock,
+  n8nSendRefusal,
   n8nWebhookUrl,
   N8nSecretStore,
   securitySettings,
@@ -78,6 +79,9 @@ export function createN8nTransport(
       };
       if (!target.ok)
         return finish({ ok: false, retryable: false, reason: `blocked: ${target.reason}` });
+      const refusal = n8nSendRefusal(target.url, target.addresses, opts.listener);
+      if (refusal)
+        return finish({ ok: false, retryable: refusal.retryable, reason: refusal.reason });
 
       const secret = await new N8nSecretStore(
         opts.root,

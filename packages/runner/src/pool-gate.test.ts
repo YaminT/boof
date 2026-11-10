@@ -50,7 +50,8 @@ const gate = (over: Partial<ConstructorParameters<typeof PoolGate>[0]> = {}) =>
   new PoolGate({
     root,
     loadSettings: async () => settings,
-    readKey: async () => "btr-key",
+    readKey: async () => "btr-admin",
+    readAgentKey: async () => "btr-agent",
     now: () => clock,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -91,16 +92,35 @@ describe("policy and gateway", () => {
     expect(hits).toBe(0);
   });
 
-  it("the gateway carries the url and the key; the key is read each time", async () => {
-    expect(await gate().gateway()).toEqual({ url, apiKey: "btr-key" });
-    expect(await gate({ readKey: async () => null }).gateway()).toEqual({ url, apiKey: undefined });
-    expect(
-      await gate({
-        readKey: async () => {
-          throw new Error("damaged");
-        },
-      }).gateway(),
-    ).toEqual({ url, apiKey: undefined });
+  it("the child gateway is the agent key, never the admin key", async () => {
+    expect(await gate().gateway()).toEqual({ url, apiKey: "btr-agent" });
+    expect(await gate({ readKey: async () => null }).gateway()).toEqual({
+      url,
+      apiKey: "btr-agent",
+    });
+    const damaged = gate({
+      readAgentKey: async () => {
+        throw new Error("damaged");
+      },
+    });
+    expect(await damaged.gateway()).toBeUndefined();
+    expect(await damaged.agentCredentialBlock()).toMatch(/owlishAgentKey/);
+    const onlyAdmin = gate({ readAgentKey: async () => null });
+    expect(await onlyAdmin.gateway()).toBeUndefined();
+    expect(await onlyAdmin.agentCredentialBlock()).toBe(
+      "pool routing needs a separate owlishAgentKey; the admin key is not given to task agents",
+    );
+    const same = gate({
+      readKey: async () => "same-secret",
+      readAgentKey: async () => "same-secret",
+    });
+    expect(await same.gateway()).toBeUndefined();
+    expect(await same.agentCredentialBlock()).toMatch(/not given to task agents/);
+    expect(await same.agentCredentialBlock()).not.toContain("same-secret");
+    const none = gate({ readKey: async () => null, readAgentKey: async () => null });
+    expect(await none.gateway()).toEqual({ url });
+    expect(await none.agentCredentialBlock()).toBeNull();
+    expect(JSON.stringify(await none.gateway())).not.toContain("btr-admin");
   });
 
   it("pause blocks routed work when degraded, unhealthy or unreachable, not when ok", async () => {
@@ -183,7 +203,9 @@ describe("episodes", () => {
     health = POOL_DOWN();
     const g = gate();
     await g.announceIfBlocked(await g.check());
-    expect(JSON.stringify(await readEvents(root, null))).not.toContain("btr-key");
+    const text = JSON.stringify(await readEvents(root, null));
+    expect(text).not.toContain("btr-admin");
+    expect(text).not.toContain("btr-agent");
   });
 });
 

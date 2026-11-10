@@ -127,6 +127,7 @@ export class RunnerEngine {
         root: opts.root,
         loadSettings: () => this.settingsStore.load(),
         readKey: () => new OwlishSecretStore(opts.root).get(),
+        readAgentKey: () => new OwlishSecretStore(opts.root).getAgent(),
       });
   }
 
@@ -253,7 +254,20 @@ export class RunnerEngine {
         }
         // The pool gate: a task that needs a pool-routed tool waits; the others run as usual.
         const gatewayRouted = agentDecision?.ok && agentDecision.via === "gateway";
-        const poolRouted = tools.some((t) => this.registry.get(t)?.acceptsPool) || gatewayRouted;
+        const handsGateway = tools.some((t) => this.registry.get(t)?.acceptsPool);
+        if (handsGateway) {
+          const reason = await this.pool.agentCredentialBlock();
+          if (reason) {
+            try {
+              await this.refuseBeforeStart(project, task, reason);
+              await this.noteGoalTaskStatus(project, task, "failed");
+            } catch (error) {
+              console.error(`could not refuse task ${task.frontmatter.id}:`, error);
+            }
+            continue;
+          }
+        }
+        const poolRouted = handsGateway || gatewayRouted;
         if (poolRouted) poolCheck ??= await this.pool.check();
         if (poolCheck?.blocked && poolRouted) {
           poolSkipped = true;

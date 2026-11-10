@@ -23,6 +23,7 @@ export * from "./project-path.js";
 export * from "./migrate.js";
 export * from "./process-lock.js";
 export * from "./process-identity.js";
+export * from "./loopback-listener.js";
 export * from "./process.js";
 export * from "./pid-file.js";
 export * from "./webhook-secrets.js";

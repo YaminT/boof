@@ -396,8 +396,12 @@ describe("outbound target rules (owner answer 2)", () => {
   it("O4: a 302 from n8n → redirected, Location not requested", async () => {
     const request = vi.fn(async () => ({ status: 302, body: "" }));
     await configure({ baseUrl: "http://127.0.0.1:5678" });
+    // The request is stubbed and nothing is listening. Skip the Linux uid check.
     const err = await failure(
-      client({ request: request as unknown as typeof pinnedRequest }).listWorkflows(),
+      client({
+        request: request as unknown as typeof pinnedRequest,
+        listener: { platform: "darwin" },
+      }).listWorkflows(),
     );
     expect(err.details).toEqual({ reason: "redirected" });
     expect(request).toHaveBeenCalledTimes(1);
@@ -538,9 +542,11 @@ describe("outbound target rules (owner answer 2)", () => {
 
   it("a non-JSON or wrongly shaped 200 → bad_response; other statuses → HTTP <n>", async () => {
     await configure({ baseUrl: "http://127.0.0.1:5678" });
+    // The request is stubbed and nothing is listening. Skip the Linux uid check.
     const answer = (status: number, body: string) =>
       client({
         request: (async () => ({ status, body })) as unknown as typeof pinnedRequest,
+        listener: { platform: "darwin" },
       }).listWorkflows();
     expect((await failure(answer(200, "<html>"))).details).toEqual({ reason: "bad_response" });
     expect((await failure(answer(200, '{"data":"x"}'))).details).toEqual({
@@ -548,6 +554,62 @@ describe("outbound target rules (owner answer 2)", () => {
     });
     expect((await failure(answer(500, "{}"))).details).toEqual({ reason: "HTTP 500" });
     expect((await failure(answer(403, "{}"))).details).toEqual({ reason: "unauthorized" });
+  });
+
+  it("does not send the API key when another uid holds the loopback port", async () => {
+    const request = vi.fn(async () => ({ status: 200, body: '{"data":[]}' }));
+    await configure({ baseUrl: "http://127.0.0.1:5678" });
+    const portHex = (5678).toString(16).toUpperCase().padStart(4, "0");
+    const head =
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    const row = `   0: 0100007F:${portHex} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1001 0 1 1 0000000000000000 100 0 0 10 0\n`;
+    const err = await failure(
+      client({
+        request: request as unknown as typeof pinnedRequest,
+        listener: {
+          platform: "linux",
+          endian: "LE",
+          uid: 1000,
+          readFile: (path) => (path === "/proc/net/tcp" ? head + row : head),
+        },
+      }).listWorkflows(),
+    );
+    expect(err.details).toMatchObject({
+      reason: expect.stringMatching(/listener_not_owner:.*uid 1001/),
+    });
+    expect(JSON.stringify(err)).not.toContain(KEY);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("sends when the listener is root, and does not consult proc off Linux", async () => {
+    const request = vi.fn(async () => ({
+      status: 200,
+      body: JSON.stringify({ data: [], nextCursor: null }),
+    }));
+    await configure({ baseUrl: "http://127.0.0.1:5678" });
+    const portHex = (5678).toString(16).toUpperCase().padStart(4, "0");
+    const head =
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    const row = `   0: 00000000:${portHex} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 1 1 0000000000000000 100 0 0 10 0\n`;
+    await client({
+      request: request as unknown as typeof pinnedRequest,
+      listener: {
+        platform: "linux",
+        endian: "LE",
+        uid: 1000,
+        readFile: (path) => (path === "/proc/net/tcp" ? head + row : head),
+      },
+    }).listWorkflows();
+    expect(request).toHaveBeenCalledTimes(1);
+    const readFile = (): string => {
+      throw new Error("proc");
+    };
+    await client({
+      request: request as unknown as typeof pinnedRequest,
+      listener: { platform: "win32", readFile },
+    }).listWorkflows();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(request.mock.calls)).toContain(KEY);
   });
 
   it("writes one audit line per list with the host, outcome and no path or key", async () => {

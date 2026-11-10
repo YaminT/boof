@@ -96,7 +96,8 @@ const gate = () =>
   new PoolGate({
     root: dataRoot,
     loadSettings: () => settingsStore.load(),
-    readKey: async () => "btr-key",
+    readKey: async () => "btr-admin",
+    readAgentKey: async () => "btr-key",
     now: () => clock,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -321,6 +322,7 @@ describe("selection", () => {
       root: dataRoot,
       loadSettings: () => settingsStore.load(),
       readKey: async () => "client-key",
+      readAgentKey: async () => "agent-key",
       now: () => clock,
       sleep: async (ms) => {
         clock += ms;
@@ -484,6 +486,55 @@ describe("selection", () => {
     expect(seenGateways.every((g) => g === undefined)).toBe(true);
     expect(seenGateways.length).toBeGreaterThan(0);
     expect(hits).toBe(0);
+  });
+
+  it("a pool-routed task is refused when only the admin key is set, and that key is not handed over", async () => {
+    await configure();
+    await addTask("t1", "pooled");
+    engine = new RunnerEngine({
+      root: dataRoot,
+      pollIntervalMs: 10,
+      registry: registry(),
+      pool: new PoolGate({
+        root: dataRoot,
+        loadSettings: () => settingsStore.load(),
+        readKey: async () => "btr-admin",
+        readAgentKey: async () => null,
+        now: () => clock,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+          clock += ms;
+        },
+      }),
+    });
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("failed");
+    expect(seenGateways).toEqual([]);
+    const log = (await tasks(main).get("t1"))?.body.log ?? "";
+    expect(log).toMatch(/owlishAgentKey/);
+    expect(log).not.toContain("btr-admin");
+  });
+
+  it("the same string as admin and agent key is not given to a pool-routed tool", async () => {
+    await configure();
+    await addTask("t1", "pooled");
+    engine = new RunnerEngine({
+      root: dataRoot,
+      pollIntervalMs: 10,
+      registry: registry(),
+      pool: new PoolGate({
+        root: dataRoot,
+        loadSettings: () => settingsStore.load(),
+        readKey: async () => "same-secret",
+        readAgentKey: async () => "same-secret",
+        now: () => clock,
+        sleep: async () => {},
+      }),
+    });
+    await engine.runUntilIdle();
+    expect(await status("t1")).toBe("failed");
+    expect(seenGateways).toEqual([]);
+    expect((await tasks(main).get("t1"))?.body.log ?? "").not.toContain("same-secret");
   });
 
   it("a healthy pool: the pooled task runs and is handed the gateway; the mock role gets none", async () => {

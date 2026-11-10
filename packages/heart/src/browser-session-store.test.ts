@@ -904,6 +904,62 @@ describe("BrowserSessionStore", () => {
     },
   );
 
+  it("a session dies when the server starts a new epoch, and one minted after is accepted", async () => {
+    const first = await store.createSession();
+    expect(await store.verify(first.token)).not.toBeNull();
+    const file = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8")) as {
+      epoch?: string;
+      sessions: { epoch?: string }[];
+    };
+    expect(file.epoch).toBeTruthy();
+    expect(file.sessions[0]?.epoch).toBe(file.epoch);
+
+    await store.beginEpoch();
+    expect(await store.verify(first.token)).toBeNull();
+    const restarted = new BrowserSessionStore(root, () => clock);
+    expect(await restarted.verify(first.token)).toBeNull();
+
+    const next = await restarted.createSession();
+    expect((await store.verify(next.token))?.id).toBe(next.session.id);
+    expect((await restarted.verify(next.token))?.id).toBe(next.session.id);
+    const after = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8")) as {
+      epoch?: string;
+    };
+    expect(after.epoch).toBeTruthy();
+    expect(after.epoch).not.toBe(file.epoch);
+  });
+
+  it("a session file from before epochs is refused", async () => {
+    const { token } = await store.createSession();
+    const path = dataRootPaths(root).browserSessions;
+    const file = JSON.parse(await readFile(path, "utf8")) as {
+      epoch?: string;
+      sessions: { epoch?: string }[];
+    };
+    delete file.epoch;
+    delete file.sessions[0]?.epoch;
+    await writeFile(path, JSON.stringify(file));
+    expect(await store.verify(token)).toBeNull();
+    expect(await new BrowserSessionStore(root, () => clock).verify(token)).toBeNull();
+  });
+
+  it("revokeAll keeps the current epoch so a later sign-in still belongs to this start", async () => {
+    const created = await store.createSession();
+    const before = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8")) as {
+      epoch: string;
+    };
+    expect(await store.revokeAll()).toBe(1);
+    expect(await store.verify(created.token)).toBeNull();
+    const cleared = JSON.parse(await readFile(dataRootPaths(root).browserSessions, "utf8")) as {
+      epoch?: string;
+      sessions: unknown[];
+    };
+    expect(cleared.epoch).toBe(before.epoch);
+    expect(cleared.sessions).toEqual([]);
+    const again = await store.createSession();
+    expect(await store.verify(again.token)).not.toBeNull();
+  });
+
   it("browserSessionCookieName(4319) is boof_ui_4319", () => {
     expect(browserSessionCookieName(4319)).toBe("boof_ui_4319");
     expect(browserSessionCookieName(80)).toBe("boof_ui_80");

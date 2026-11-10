@@ -157,6 +157,41 @@ describe("boof-runner open", () => {
     expect(await store.revokeAll()).toBe(0);
   });
 
+  it("does not print a link when another uid holds the port", async () => {
+    const refusal = "port 4319 is held by uid 1001, not by your boof";
+    expect(
+      await openCommand(
+        ["-d", root],
+        () => root,
+        (l) => out.push(l),
+        (l) => errs.push(l),
+        async () => true,
+        () => refusal,
+      ),
+    ).toBe(1);
+    expect(out).toEqual([]);
+    expect(errs).toEqual([`open: ${refusal}`]);
+    await expect(readFile(dataRootPaths(root).browserLinks, "utf8")).rejects.toThrow();
+    const text = await auditText();
+    expect(text).toContain("listener_not_owner");
+    expect(text).not.toContain("bl_");
+  });
+
+  it("prints a link when this user holds the port, including off Linux where the check is skipped", async () => {
+    expect(
+      await openCommand(
+        ["-d", root, "--port", "6002"],
+        () => root,
+        (l) => out.push(l),
+        (l) => errs.push(l),
+        async () => true,
+        () => null,
+      ),
+    ).toBe(0);
+    expect(out[1]).toContain(":6002/");
+    expect(errs).toEqual([]);
+  });
+
   it("writes cli:open and cli:open.revoke-all audit lines without the code", async () => {
     await run("-d", root);
     const code = codeOf(out);
