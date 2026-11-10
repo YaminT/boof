@@ -6,6 +6,7 @@ import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { toKebabId, uniqueKebabId } from "./ids.js";
 import { assertKebabId, dataRootPaths, projectPaths, statusDir } from "./paths.js";
 import { isInsidePath, resolveUnbornPath } from "./project-path.js";
+import { isFilesystemRoot } from "./windows-acl.js";
 import { nowIso } from "./runtime.js";
 import { ProjectSchema, type Project, type ProjectOrigin, type ProjectPatch } from "./schema.js";
 import { TaskStore } from "./store.js";
@@ -245,6 +246,14 @@ export class ProjectStore {
     }
     const { real, exists } = await resolveUnbornPath(target);
     await opts.assertTarget?.(real);
+    // `path.win32.resolve("/")` is `\` and that is not a parent of `C:\...`, so the
+    // "contains home" check below does not see a Windows drive root. Refuse it by name.
+    if (isFilesystemRoot(target) || isFilesystemRoot(real)) {
+      throw new ProjectError(
+        "directory_not_allowed",
+        "boof never initialises the filesystem root, the home directory, the data root or a directory containing them as a project",
+      );
+    }
     const dataRoot = await realpath(this.root).catch(() => this.root);
     if (isInsidePath(dataRoot, real)) {
       throw new ProjectError("inside_data_root", `Directory is inside the data root: ${real}`);
@@ -333,8 +342,18 @@ export class ProjectStore {
       }
     };
     if (!exists) {
+      // Recursive mkdir does not return the first directory it created on Windows,
+      // so remember that path before creating. Only those parents are removed later.
+      const createdParents: string[] = [];
+      for (let cursor = dirname(real); !(await isDirectory(cursor));) {
+        createdParents.unshift(cursor);
+        const parent = dirname(cursor);
+        if (parent === cursor) break;
+        cursor = parent;
+      }
+      if (createdParents.length > 0) firstParent = createdParents[0];
       try {
-        firstParent = await mkdir(dirname(real), { recursive: true });
+        await mkdir(dirname(real), { recursive: true });
         await this.beforeCreateDir?.(real);
         await mkdir(real);
         created = true;

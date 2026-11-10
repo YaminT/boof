@@ -236,9 +236,11 @@ describe("ExternalRunStore", () => {
     const r = await store.open(INPUT);
     const done = await store.open(INPUT);
     await store.complete(done.runId, RESULT);
-    expect((await stat(dir)).mode & 0o777).toBe(0o700);
-    expect((await stat(join(dir, `${r.runId}.json`))).mode & 0o777).toBe(0o600);
-    expect((await stat(join(dir, `${done.runId}.result.json`))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32")
+      expect((await stat(join(dir, `${r.runId}.json`))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(dir, `${done.runId}.result.json`))).mode & 0o777).toBe(0o600);
   });
 
   it("verify with a '../x' id never reads outside the folder, even when a valid record is there", async () => {
@@ -351,7 +353,7 @@ describe("ExternalRunStore", () => {
         expect(await store.verify(r.runId, r.token)).not.toBeNull();
         expect(await store.complete(r.runId, RESULT)).toBe(true);
         expect(await store.prune()).toBe(0);
-        expect((await stat(dir)).mode & 0o777).toBe(0o700);
+        if (process.platform !== "win32") expect((await stat(dir)).mode & 0o777).toBe(0o700);
       } finally {
         process.umask(prev);
       }

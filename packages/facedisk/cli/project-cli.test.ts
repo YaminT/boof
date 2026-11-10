@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProjectStore, SettingsStore, execCommand, scaffoldDataRoot } from "@boof/heart";
 import { projectCommand } from "./project-cli.js";
@@ -12,6 +12,28 @@ let base: string;
 let root: string;
 let out: string[];
 let errs: string[];
+
+/** Git prints long names with `/`. A deleted worktree is compared through its parent. */
+async function listsWorktree(stdout: string, path: string): Promise<boolean> {
+  const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  const canon = async (p: string) => {
+    try {
+      return await realpath(p);
+    } catch {
+      try {
+        return join(await realpath(dirname(p)), basename(p));
+      } catch {
+        return p;
+      }
+    }
+  };
+  const want = norm(await canon(path));
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.startsWith("worktree ")) continue;
+    if (norm(await canon(line.slice("worktree ".length))) === want) return true;
+  }
+  return false;
+}
 
 const run = (...argv: string[]) =>
   projectCommand(
@@ -120,9 +142,13 @@ describe("boof-runner project", () => {
     const wt = join(dir, ".boof-runner-worktrees", "gone");
     await g(["worktree", "add", "-q", wt, "-b", "boof-runner/gone"]);
     await rm(wt, { recursive: true, force: true });
-    expect((await g(["worktree", "list", "--porcelain"])).stdout).toContain(wt);
+    expect(await listsWorktree((await g(["worktree", "list", "--porcelain"])).stdout, wt)).toBe(
+      true,
+    );
     expect(await run("add", dir, "-d", root)).toBe(0);
-    expect((await g(["worktree", "list", "--porcelain"])).stdout).not.toContain(wt);
+    expect(await listsWorktree((await g(["worktree", "list", "--porcelain"])).stdout, wt)).toBe(
+      false,
+    );
   });
 
   it("add refuses a subdirectory of a registered repository", async () => {

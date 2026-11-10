@@ -655,7 +655,7 @@ describe("AgentAuthResolver", () => {
     });
     const folder = await resolver.configDir(makeProject());
     expect(folder).toBe(join(root, "claude-agent-config", "p"));
-    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(folder)).mode & 0o777).toBe(0o700);
     const env = claudeAgentEnv(
       {},
       { kind: "project-key", apiKey: "sk-ant-api03-abcdefghijklmnop" },

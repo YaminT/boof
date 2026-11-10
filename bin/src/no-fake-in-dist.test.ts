@@ -19,7 +19,12 @@ describe("the production CLI bundle", () => {
     // Build into a scratch dir so the test does not touch bin/dist.
     const out = mkOut();
     try {
-      execFileSync("npx", ["tsup", "--out-dir", out, "--silent"], { cwd: bin, stdio: "pipe" });
+      execFileSync("npx", ["tsup", "--out-dir", out, "--silent"], {
+        cwd: bin,
+        stdio: "pipe",
+        // Windows resolves npx.cmd only through a shell.
+        shell: process.platform === "win32",
+      });
       const files = readdirSync(out).filter((f) => f.endsWith(".js"));
       expect(files.length).toBeGreaterThan(0);
       for (const file of files) {

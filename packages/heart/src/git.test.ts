@@ -1,6 +1,6 @@
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   driverOverridesFromConfig,
@@ -18,6 +18,30 @@ import { taskDiff } from "./task-diff.js";
 import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 
 let repo: string;
+
+/** Git prints long names with `/`. Temp dirs may be 8.3 names with `\`. */
+async function canon(p: string): Promise<string> {
+  try {
+    return await realpath(p);
+  } catch {
+    try {
+      return join(await realpath(dirname(p)), basename(p));
+    } catch {
+      return p;
+    }
+  }
+}
+function slash(p: string): string {
+  return p.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+}
+async function listsWorktree(stdout: string, path: string): Promise<boolean> {
+  const want = slash(await canon(path));
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.startsWith("worktree ")) continue;
+    if (slash(await canon(line.slice("worktree ".length))) === want) return true;
+  }
+  return false;
+}
 let nonRepo: string;
 
 const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
@@ -66,30 +90,33 @@ describe("git queries", () => {
     await rm(gone.path, { recursive: true, force: true });
     await pruneStaleWorktrees(repo);
     const list = (await g(["worktree", "list", "--porcelain"])).stdout;
-    expect(list).toContain(live.path);
-    expect(list).not.toContain(gone.path);
+    expect(await listsWorktree(list, live.path)).toBe(true);
+    expect(await listsWorktree(list, gone.path)).toBe(false);
     expect(await exists(live.path)).toBe(true);
     await expect(pruneStaleWorktrees(nonRepo)).resolves.toBeUndefined();
   });
 
-  it("pruneStaleWorktrees rejects when git exits non-zero", async () => {
-    // A git shim on PATH that fails `worktree prune` and forwards everything else.
-    const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
-    await writeFile(
-      join(shim, "git"),
-      `#!/bin/sh\ncase " $* " in *" worktree prune "*) echo boom >&2; exit 3;; esac\nexec ${real} "$@"\n`,
-      { mode: 0o755 },
-    );
-    const oldPath = process.env.PATH;
-    process.env.PATH = `${shim}:${oldPath}`;
-    try {
-      await expect(pruneStaleWorktrees(repo)).rejects.toThrow(/prune failed.*exit 3.*boom/);
-    } finally {
-      process.env.PATH = oldPath;
-      await rm(shim, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(process.platform === "win32")(
+    "pruneStaleWorktrees rejects when git exits non-zero",
+    async () => {
+      // A git shim on PATH that fails `worktree prune` and forwards everything else.
+      const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
+      const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+      await writeFile(
+        join(shim, "git"),
+        `#!/bin/sh\ncase " $* " in *" worktree prune "*) echo boom >&2; exit 3;; esac\nexec ${real} "$@"\n`,
+        { mode: 0o755 },
+      );
+      const oldPath = process.env.PATH;
+      process.env.PATH = `${shim}:${oldPath}`;
+      try {
+        await expect(pruneStaleWorktrees(repo)).rejects.toThrow(/prune failed.*exit 3.*boom/);
+      } finally {
+        process.env.PATH = oldPath;
+        await rm(shim, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("repoCommonDir is shared by a checkout, its subdirectory and linked worktrees only", async () => {
     const other = await mkdtemp(join(tmpdir(), "boof-other-"));
@@ -231,241 +258,251 @@ describe("initGitRepo", () => {
     expect(await author(owned)).toBe("Owner <owner@example.com>");
   });
 
-  it("kills a hung git on timeout and fails with a clear error", async () => {
-    const bin = join(base, "bin");
-    await mkdir(bin);
-    await writeFile(join(bin, "git"), "#!/bin/sh\nexec sleep 30\n");
-    await chmod(join(bin, "git"), 0o755);
-    const dir = join(base, "hung");
-    await mkdir(dir, { recursive: true });
-    const started = Date.now();
-    await expect(
-      initGitRepo(dir, { timeoutMs: 300, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }),
-    ).rejects.toThrow(/timed out after 300 ms/);
-    // The fake git sleeps 30s. Killing it at 300ms must win; 20s is timer slack under load.
-    expect(Date.now() - started).toBeLessThan(20_000);
-  }, 45_000);
-});
-
-describe("agent-planted git config does not run server-side", () => {
-  /** An agent sets core.fsmonitor (and a hook) in the shared .git/config; each would drop a file. */
-  async function plant(): Promise<{ fsmonitor: string; hook: string }> {
-    const fsmonitor = join(nonRepo, "fsmonitor-ran");
-    const hook = join(nonRepo, "hook-ran");
-    const script = join(nonRepo, "fsmonitor.sh");
-    await writeFile(script, `#!/bin/sh\ntouch '${fsmonitor}'\nprintf '/\\0'\n`, { mode: 0o755 });
-    await g(["config", "core.fsmonitor", script]);
-    const hooks = join(repo, ".git", "hooks");
-    await mkdir(hooks, { recursive: true });
-    await writeFile(join(hooks, "post-checkout"), `#!/bin/sh\ntouch '${hook}'\n`, {
-      mode: 0o755,
-    });
-    return { fsmonitor, hook };
-  }
-
-  it("sanity: plain git status runs the planted fsmonitor", async () => {
-    const { fsmonitor } = await plant();
-    await g(["status", "--porcelain"]);
-    expect(await exists(fsmonitor)).toBe(true);
-  });
-
-  it("the shared git helper never runs fsmonitor or hooks", async () => {
-    const { fsmonitor, hook } = await plant();
-    const st = await git(repo, ["status", "--porcelain"]);
-    expect(st.code).toBe(0);
-    await git(repo, ["worktree", "add", "-q", "-b", "x", join(repo, ".wts", "x")]);
-    expect(await exists(fsmonitor)).toBe(false);
-    expect(await exists(hook)).toBe(false);
-  });
-
-  it("task diff and the untracked listing never run it", async () => {
-    await g(["branch", "boof-runner/t1"]);
-    const wt = join(repo, ".wts", "t1");
-    await g(["worktree", "add", "-q", wt, "boof-runner/t1"]);
-    await writeFile(join(wt, "new.txt"), "x\n");
-    const { fsmonitor } = await plant();
-    await rm(fsmonitor, { force: true });
-    const diff = await taskDiff({ workingDir: repo, taskId: "t1", worktreePath: wt });
-    expect(diff.includesUncommitted).toBe(true);
-    expect(await untrackedFiles(wt)).toContain("new.txt");
-    expect(await exists(fsmonitor)).toBe(false);
-  });
-  it("never runs a planted diff.external or textconv in task diffs", async () => {
-    const ran = join(nonRepo, "extdiff-ran");
-    const script = join(nonRepo, "extdiff.sh");
-    await writeFile(script, `#!/bin/sh\ntouch '${ran}'\n`, { mode: 0o755 });
-    await g(["branch", "boof-runner/t2"]);
-    const wt = join(repo, ".wts", "t2");
-    await g(["worktree", "add", "-q", wt, "boof-runner/t2"]);
-    await writeFile(join(wt, "a.txt"), "one\n");
-    await g(["config", "diff.external", script]);
-    await g(["config", "diff.evil.textconv", script]);
-    await writeFile(join(wt, ".gitattributes"), "*.txt diff=evil\n");
-    // Sanity: plain git diff runs the external driver.
-    await g(["-C", wt, "add", "-N", "a.txt"]);
-    await g(["-C", wt, "diff", "HEAD"]);
-    expect(await exists(ran)).toBe(true);
-    await rm(ran, { force: true });
-    const diff = await taskDiff({ workingDir: repo, taskId: "t2", worktreePath: wt });
-    expect(diff.includesUncommitted).toBe(true);
-    await git(wt, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--stat"]);
-    expect(await exists(ran)).toBe(false);
-  });
-
-  it("blanks every filter key and merge driver, including names that contain '='", () => {
-    const listed = [
-      "filter.lfs.clean\ngit-lfs clean -- %f\0",
-      "filter.evil.clean\n/tmp/filt.sh\0",
-      "filter.evil.smudge\n/tmp/filt.sh\0",
-      "filter.evil.required\ntrue\0",
-      "filter.bad name.clean\ntouch /tmp/x\0",
-      "filter.x=y.clean\n/tmp/filt.sh\0",
-      "filter.x=y.required\ntrue\0",
-      "merge.ours.name\nbuilt-in label\0",
-      "merge.x=y.driver\n/tmp/merge.sh %O %A %B\0",
-    ].join("");
-    expect(driverOverridesFromConfig(listed)).toEqual([
-      { key: "filter.bad name.clean", value: "" },
-      { key: "filter.evil.clean", value: "" },
-      { key: "filter.evil.required", value: "false" },
-      { key: "filter.evil.smudge", value: "" },
-      { key: "filter.lfs.clean", value: "" },
-      { key: "filter.x=y.clean", value: "" },
-      { key: "filter.x=y.required", value: "false" },
-      { key: "merge.x=y.driver", value: "" },
-    ]);
-  });
-
-  it("server git does not run a planted clean or smudge filter", async () => {
-    const ran = join(nonRepo, "filter-ran");
-    const script = join(nonRepo, "filter.sh");
-    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
-    await g(["config", "filter.evil.clean", script]);
-    await g(["config", "filter.evil.smudge", script]);
-    await g(["config", "filter.evil.required", "true"]);
-    await writeFile(join(repo, ".gitattributes"), "* filter=evil\n");
-    await writeFile(join(repo, "a.txt"), "one\n");
-    await g(["add", "a.txt"]);
-    expect(await exists(ran)).toBe(true);
-    await rm(ran, { force: true });
-
-    await writeFile(join(repo, "a.txt"), "two\n");
-    const diff = await git(repo, ["diff", "--", "a.txt"]);
-    expect(diff.code).not.toBeNull();
-    expect(diff.out).toContain("two");
-    const added = await git(repo, ["add", "--", "a.txt"]);
-    expect(added.code).toBe(0);
-    expect(await exists(ran)).toBe(false);
-
-    await g(["branch", "boof-runner/t3"]);
-    const wt = join(repo, ".wts", "t3");
-    await g(["worktree", "add", "-q", wt, "boof-runner/t3"]);
-    await writeFile(join(wt, ".gitattributes"), "* filter=evil\n");
-    await writeFile(join(wt, "a.txt"), "three\n");
-    await rm(ran, { force: true });
-    const task = await taskDiff({ workingDir: repo, taskId: "t3", worktreePath: wt });
-    expect(task.includesUncommitted).toBe(true);
-    await writeFile(join(wt, "new.txt"), "x\n");
-    expect(await untrackedFiles(wt)).toContain("new.txt");
-    expect(await untrackedPatch(wt, "new.txt")).toContain("x");
-    expect(await exists(ran)).toBe(false);
-  });
-
-  it("server git does not run a planted filter whose name contains '='", async () => {
-    const ran = join(nonRepo, "equals-filter-ran");
-    const script = join(nonRepo, "equals-filter.sh");
-    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
-    await g(["config", "filter.x=y.clean", script]);
-    await g(["config", "filter.x=y.smudge", script]);
-    await g(["config", "filter.x=y.required", "true"]);
-    await writeFile(join(repo, ".gitattributes"), "* filter=x=y\n");
-    await writeFile(join(repo, "a.txt"), "one\n");
-    await g(["add", "a.txt"]);
-    expect(await exists(ran)).toBe(true);
-    await rm(ran, { force: true });
-
-    await writeFile(join(repo, "a.txt"), "two\n");
-    const diff = await git(repo, ["diff", "--", "a.txt"]);
-    expect(diff.code).not.toBeNull();
-    expect(diff.out).toContain("two");
-    const added = await git(repo, ["add", "--", "a.txt"]);
-    expect(added.code).toBe(0);
-    expect(await exists(ran)).toBe(false);
-  });
-
-  it("an integration merge does not run a planted merge driver whose name contains '='", async () => {
-    const ran = join(nonRepo, "merge-ran");
-    const script = join(nonRepo, "merge.sh");
-    await writeFile(script, `#!/bin/sh\necho MERGE >> '${ran}'\nexit 0\n`, { mode: 0o755 });
-    await writeFile(join(repo, ".gitattributes"), "* merge=x=y\n");
-    await g(["add", ".gitattributes"]);
-    await g(["commit", "-q", "-m", "attr"]);
-    await g(["checkout", "-q", "-b", "left"]);
-    await writeFile(join(repo, "m.txt"), "left\n");
-    await g(["add", "m.txt"]);
-    await g(["commit", "-q", "-m", "left"]);
-    await g(["checkout", "-q", "main"]);
-    await g(["checkout", "-q", "-b", "right"]);
-    await writeFile(join(repo, "m.txt"), "right\n");
-    await g(["add", "m.txt"]);
-    await g(["commit", "-q", "-m", "right"]);
-    await g(["config", "merge.x=y.driver", script]);
-    const left = (await g(["rev-parse", "left"])).stdout.trim();
-    await g(["checkout", "-q", "left"]);
-    await g(["merge", "--no-ff", "--no-edit", "-m", "plain", "right"]);
-    expect(await exists(ran)).toBe(true);
-    await g(["reset", "--hard", left]);
-    await rm(ran, { force: true });
-
-    const integrated = await createIntegrationBranch(repo, "int-base", ["left", "right"]);
-    expect(integrated.ok).toBe(false);
-    expect(await exists(ran)).toBe(false);
-  });
-
-  /** `git` on PATH fails or hangs the driver listing and records any later git command. */
-  async function withListingShim(body: string, fn: (ran: string) => Promise<void>): Promise<void> {
-    const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
-    const ran = join(shim, "ran");
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
-    await writeFile(
-      join(shim, "git"),
-      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
-      { mode: 0o755 },
-    );
-    const oldPath = process.env.PATH;
-    process.env.PATH = `${shim}:${oldPath ?? ""}`;
-    try {
-      await fn(ran);
-    } finally {
-      process.env.PATH = oldPath;
-      await rm(shim, { recursive: true, force: true });
-    }
-  }
-
-  it("refuses the git command when the driver list cannot be read", async () => {
-    await withListingShim("    echo 'config unreadable' >&2\n    exit 3", async (ran) => {
-      await expect(git(repo, ["status", "--porcelain"])).rejects.toThrow(
-        /could not list filter and merge drivers \(config unreadable\)/,
-      );
-      expect(await exists(ran)).toBe(false);
-      const merged = await createIntegrationBranch(repo, "int-base", ["main", "missing"]);
-      expect(merged.ok).toBe(false);
-      if (merged.ok) return;
-      expect(merged.reason).toMatch(
-        /could not list filter and merge drivers \(config unreadable\)/,
-      );
-      expect(await exists(ran)).toBe(false);
-    });
-  });
-
-  it("refuses the git command when the driver list times out", async () => {
-    await withListingShim("    exec sleep 30", async (ran) => {
+  it.skipIf(process.platform === "win32")(
+    "kills a hung git on timeout and fails with a clear error",
+    async () => {
+      const bin = join(base, "bin");
+      await mkdir(bin);
+      await writeFile(join(bin, "git"), "#!/bin/sh\nexec sleep 30\n");
+      await chmod(join(bin, "git"), 0o755);
+      const dir = join(base, "hung");
+      await mkdir(dir, { recursive: true });
       const started = Date.now();
-      await expect(git(repo, ["status", "--porcelain"], undefined, 400)).rejects.toThrow(
-        /could not list filter and merge drivers \(timed out after 400 ms\)/,
-      );
-      expect(Date.now() - started).toBeLessThan(10_000);
+      await expect(
+        initGitRepo(dir, { timeoutMs: 300, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }),
+      ).rejects.toThrow(/timed out after 300 ms/);
+      // The fake git sleeps 30s. Killing it at 300ms must win; 20s is timer slack under load.
+      expect(Date.now() - started).toBeLessThan(20_000);
+    },
+    45_000,
+  );
+});
+
+describe.skipIf(process.platform === "win32")(
+  "agent-planted git config does not run server-side",
+  () => {
+    /** An agent sets core.fsmonitor (and a hook) in the shared .git/config; each would drop a file. */
+    async function plant(): Promise<{ fsmonitor: string; hook: string }> {
+      const fsmonitor = join(nonRepo, "fsmonitor-ran");
+      const hook = join(nonRepo, "hook-ran");
+      const script = join(nonRepo, "fsmonitor.sh");
+      await writeFile(script, `#!/bin/sh\ntouch '${fsmonitor}'\nprintf '/\\0'\n`, { mode: 0o755 });
+      await g(["config", "core.fsmonitor", script]);
+      const hooks = join(repo, ".git", "hooks");
+      await mkdir(hooks, { recursive: true });
+      await writeFile(join(hooks, "post-checkout"), `#!/bin/sh\ntouch '${hook}'\n`, {
+        mode: 0o755,
+      });
+      return { fsmonitor, hook };
+    }
+
+    it("sanity: plain git status runs the planted fsmonitor", async () => {
+      const { fsmonitor } = await plant();
+      await g(["status", "--porcelain"]);
+      expect(await exists(fsmonitor)).toBe(true);
+    });
+
+    it("the shared git helper never runs fsmonitor or hooks", async () => {
+      const { fsmonitor, hook } = await plant();
+      const st = await git(repo, ["status", "--porcelain"]);
+      expect(st.code).toBe(0);
+      await git(repo, ["worktree", "add", "-q", "-b", "x", join(repo, ".wts", "x")]);
+      expect(await exists(fsmonitor)).toBe(false);
+      expect(await exists(hook)).toBe(false);
+    });
+
+    it("task diff and the untracked listing never run it", async () => {
+      await g(["branch", "boof-runner/t1"]);
+      const wt = join(repo, ".wts", "t1");
+      await g(["worktree", "add", "-q", wt, "boof-runner/t1"]);
+      await writeFile(join(wt, "new.txt"), "x\n");
+      const { fsmonitor } = await plant();
+      await rm(fsmonitor, { force: true });
+      const diff = await taskDiff({ workingDir: repo, taskId: "t1", worktreePath: wt });
+      expect(diff.includesUncommitted).toBe(true);
+      expect(await untrackedFiles(wt)).toContain("new.txt");
+      expect(await exists(fsmonitor)).toBe(false);
+    });
+    it("never runs a planted diff.external or textconv in task diffs", async () => {
+      const ran = join(nonRepo, "extdiff-ran");
+      const script = join(nonRepo, "extdiff.sh");
+      await writeFile(script, `#!/bin/sh\ntouch '${ran}'\n`, { mode: 0o755 });
+      await g(["branch", "boof-runner/t2"]);
+      const wt = join(repo, ".wts", "t2");
+      await g(["worktree", "add", "-q", wt, "boof-runner/t2"]);
+      await writeFile(join(wt, "a.txt"), "one\n");
+      await g(["config", "diff.external", script]);
+      await g(["config", "diff.evil.textconv", script]);
+      await writeFile(join(wt, ".gitattributes"), "*.txt diff=evil\n");
+      // Sanity: plain git diff runs the external driver.
+      await g(["-C", wt, "add", "-N", "a.txt"]);
+      await g(["-C", wt, "diff", "HEAD"]);
+      expect(await exists(ran)).toBe(true);
+      await rm(ran, { force: true });
+      const diff = await taskDiff({ workingDir: repo, taskId: "t2", worktreePath: wt });
+      expect(diff.includesUncommitted).toBe(true);
+      await git(wt, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--stat"]);
       expect(await exists(ran)).toBe(false);
     });
-  });
-});
+
+    it("blanks every filter key and merge driver, including names that contain '='", () => {
+      const listed = [
+        "filter.lfs.clean\ngit-lfs clean -- %f\0",
+        "filter.evil.clean\n/tmp/filt.sh\0",
+        "filter.evil.smudge\n/tmp/filt.sh\0",
+        "filter.evil.required\ntrue\0",
+        "filter.bad name.clean\ntouch /tmp/x\0",
+        "filter.x=y.clean\n/tmp/filt.sh\0",
+        "filter.x=y.required\ntrue\0",
+        "merge.ours.name\nbuilt-in label\0",
+        "merge.x=y.driver\n/tmp/merge.sh %O %A %B\0",
+      ].join("");
+      expect(driverOverridesFromConfig(listed)).toEqual([
+        { key: "filter.bad name.clean", value: "" },
+        { key: "filter.evil.clean", value: "" },
+        { key: "filter.evil.required", value: "false" },
+        { key: "filter.evil.smudge", value: "" },
+        { key: "filter.lfs.clean", value: "" },
+        { key: "filter.x=y.clean", value: "" },
+        { key: "filter.x=y.required", value: "false" },
+        { key: "merge.x=y.driver", value: "" },
+      ]);
+    });
+
+    it("server git does not run a planted clean or smudge filter", async () => {
+      const ran = join(nonRepo, "filter-ran");
+      const script = join(nonRepo, "filter.sh");
+      await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+      await g(["config", "filter.evil.clean", script]);
+      await g(["config", "filter.evil.smudge", script]);
+      await g(["config", "filter.evil.required", "true"]);
+      await writeFile(join(repo, ".gitattributes"), "* filter=evil\n");
+      await writeFile(join(repo, "a.txt"), "one\n");
+      await g(["add", "a.txt"]);
+      expect(await exists(ran)).toBe(true);
+      await rm(ran, { force: true });
+
+      await writeFile(join(repo, "a.txt"), "two\n");
+      const diff = await git(repo, ["diff", "--", "a.txt"]);
+      expect(diff.code).not.toBeNull();
+      expect(diff.out).toContain("two");
+      const added = await git(repo, ["add", "--", "a.txt"]);
+      expect(added.code).toBe(0);
+      expect(await exists(ran)).toBe(false);
+
+      await g(["branch", "boof-runner/t3"]);
+      const wt = join(repo, ".wts", "t3");
+      await g(["worktree", "add", "-q", wt, "boof-runner/t3"]);
+      await writeFile(join(wt, ".gitattributes"), "* filter=evil\n");
+      await writeFile(join(wt, "a.txt"), "three\n");
+      await rm(ran, { force: true });
+      const task = await taskDiff({ workingDir: repo, taskId: "t3", worktreePath: wt });
+      expect(task.includesUncommitted).toBe(true);
+      await writeFile(join(wt, "new.txt"), "x\n");
+      expect(await untrackedFiles(wt)).toContain("new.txt");
+      expect(await untrackedPatch(wt, "new.txt")).toContain("x");
+      expect(await exists(ran)).toBe(false);
+    });
+
+    it("server git does not run a planted filter whose name contains '='", async () => {
+      const ran = join(nonRepo, "equals-filter-ran");
+      const script = join(nonRepo, "equals-filter.sh");
+      await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+      await g(["config", "filter.x=y.clean", script]);
+      await g(["config", "filter.x=y.smudge", script]);
+      await g(["config", "filter.x=y.required", "true"]);
+      await writeFile(join(repo, ".gitattributes"), "* filter=x=y\n");
+      await writeFile(join(repo, "a.txt"), "one\n");
+      await g(["add", "a.txt"]);
+      expect(await exists(ran)).toBe(true);
+      await rm(ran, { force: true });
+
+      await writeFile(join(repo, "a.txt"), "two\n");
+      const diff = await git(repo, ["diff", "--", "a.txt"]);
+      expect(diff.code).not.toBeNull();
+      expect(diff.out).toContain("two");
+      const added = await git(repo, ["add", "--", "a.txt"]);
+      expect(added.code).toBe(0);
+      expect(await exists(ran)).toBe(false);
+    });
+
+    it("an integration merge does not run a planted merge driver whose name contains '='", async () => {
+      const ran = join(nonRepo, "merge-ran");
+      const script = join(nonRepo, "merge.sh");
+      await writeFile(script, `#!/bin/sh\necho MERGE >> '${ran}'\nexit 0\n`, { mode: 0o755 });
+      await writeFile(join(repo, ".gitattributes"), "* merge=x=y\n");
+      await g(["add", ".gitattributes"]);
+      await g(["commit", "-q", "-m", "attr"]);
+      await g(["checkout", "-q", "-b", "left"]);
+      await writeFile(join(repo, "m.txt"), "left\n");
+      await g(["add", "m.txt"]);
+      await g(["commit", "-q", "-m", "left"]);
+      await g(["checkout", "-q", "main"]);
+      await g(["checkout", "-q", "-b", "right"]);
+      await writeFile(join(repo, "m.txt"), "right\n");
+      await g(["add", "m.txt"]);
+      await g(["commit", "-q", "-m", "right"]);
+      await g(["config", "merge.x=y.driver", script]);
+      const left = (await g(["rev-parse", "left"])).stdout.trim();
+      await g(["checkout", "-q", "left"]);
+      await g(["merge", "--no-ff", "--no-edit", "-m", "plain", "right"]);
+      expect(await exists(ran)).toBe(true);
+      await g(["reset", "--hard", left]);
+      await rm(ran, { force: true });
+
+      const integrated = await createIntegrationBranch(repo, "int-base", ["left", "right"]);
+      expect(integrated.ok).toBe(false);
+      expect(await exists(ran)).toBe(false);
+    });
+
+    /** `git` on PATH fails or hangs the driver listing and records any later git command. */
+    async function withListingShim(
+      body: string,
+      fn: (ran: string) => Promise<void>,
+    ): Promise<void> {
+      const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
+      const ran = join(shim, "ran");
+      const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+      await writeFile(
+        join(shim, "git"),
+        `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
+        { mode: 0o755 },
+      );
+      const oldPath = process.env.PATH;
+      process.env.PATH = `${shim}:${oldPath ?? ""}`;
+      try {
+        await fn(ran);
+      } finally {
+        process.env.PATH = oldPath;
+        await rm(shim, { recursive: true, force: true });
+      }
+    }
+
+    it("refuses the git command when the driver list cannot be read", async () => {
+      await withListingShim("    echo 'config unreadable' >&2\n    exit 3", async (ran) => {
+        await expect(git(repo, ["status", "--porcelain"])).rejects.toThrow(
+          /could not list filter and merge drivers \(config unreadable\)/,
+        );
+        expect(await exists(ran)).toBe(false);
+        const merged = await createIntegrationBranch(repo, "int-base", ["main", "missing"]);
+        expect(merged.ok).toBe(false);
+        if (merged.ok) return;
+        expect(merged.reason).toMatch(
+          /could not list filter and merge drivers \(config unreadable\)/,
+        );
+        expect(await exists(ran)).toBe(false);
+      });
+    });
+
+    it("refuses the git command when the driver list times out", async () => {
+      await withListingShim("    exec sleep 30", async (ran) => {
+        const started = Date.now();
+        await expect(git(repo, ["status", "--porcelain"], undefined, 400)).rejects.toThrow(
+          /could not list filter and merge drivers \(timed out after 400 ms\)/,
+        );
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(await exists(ran)).toBe(false);
+      });
+    });
+  },
+);

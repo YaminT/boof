@@ -16,7 +16,8 @@ import type { Tool } from "./types.js";
 
 afterEach(() => resetMock());
 
-describe("probe environment filtering", () => {
+// Stand-in agents are POSIX shell scripts; Windows cannot exec them.
+describe.skipIf(process.platform === "win32")("probe environment filtering", () => {
   const dirs: string[] = [];
   const envKeys = ["BOOF_RUNNER_CLAUDE_BIN", "BOOF_RUNNER_CODEX_BIN", "BOOF_RUNNER_OPENCODE_BIN"];
   const saved = new Map(envKeys.map((key) => [key, process.env[key]]));
@@ -375,7 +376,8 @@ describe("health detection", () => {
   });
 });
 
-describe("CodexTool report", () => {
+// Stand-in agents are POSIX shell scripts; Windows cannot exec them.
+describe.skipIf(process.platform === "win32")("CodexTool report", () => {
   let dir: string;
   let prevBin: string | undefined;
 
@@ -618,7 +620,8 @@ describe("execCommand idle watchdog", () => {
   });
 });
 
-describe("OpencodeTool", () => {
+// Stand-in agents are POSIX shell scripts; Windows cannot exec them.
+describe.skipIf(process.platform === "win32")("OpencodeTool", () => {
   let dir: string;
   let prevBin: string | undefined;
 
@@ -865,23 +868,27 @@ describe("session resume", () => {
   };
   const opts = { ...baseOpts, role: "developer", model: "m" } as const;
 
-  it("claude-code captures session_id and resumes with --resume", async () => {
-    const dir = await fake("BOOF_RUNNER_CLAUDE_BIN", "claude", "claude-stream-json.jsonl");
-    const tool = new ClaudeCodeTool();
-    expect(tool.supportsResume).toBe(true);
-    const fresh = tool.buildArgs(opts);
-    expect(fresh).not.toContain("--resume");
-    const resumed = tool.buildArgs({ ...opts, resumeSessionId: "abc-123" });
-    expect(resumed).toContain("--print");
-    expect(resumed.slice(resumed.indexOf("--resume"), resumed.indexOf("--resume") + 2)).toEqual([
-      "--resume",
-      "abc-123",
-    ]);
-    expect(resumed).toContain("stream-json");
-    const res = await tool.run({ ...opts, cwd: dir });
-    expect(res.sessionId).toBe("6f1c2a52-9d0e-4b43-8a6e-0c1f6a7d9b11");
-    expect(res.report).toBe("hi");
-  });
+  // Stand-in agent is a POSIX shell script; Windows cannot exec it.
+  it.skipIf(process.platform === "win32")(
+    "claude-code captures session_id and resumes with --resume",
+    async () => {
+      const dir = await fake("BOOF_RUNNER_CLAUDE_BIN", "claude", "claude-stream-json.jsonl");
+      const tool = new ClaudeCodeTool();
+      expect(tool.supportsResume).toBe(true);
+      const fresh = tool.buildArgs(opts);
+      expect(fresh).not.toContain("--resume");
+      const resumed = tool.buildArgs({ ...opts, resumeSessionId: "abc-123" });
+      expect(resumed).toContain("--print");
+      expect(resumed.slice(resumed.indexOf("--resume"), resumed.indexOf("--resume") + 2)).toEqual([
+        "--resume",
+        "abc-123",
+      ]);
+      expect(resumed).toContain("stream-json");
+      const res = await tool.run({ ...opts, cwd: dir });
+      expect(res.sessionId).toBe("6f1c2a52-9d0e-4b43-8a6e-0c1f6a7d9b11");
+      expect(res.report).toBe("hi");
+    },
+  );
 
   it("claude-code StreamRenderer takes the session id from the init event alone", () => {
     const r = new StreamRenderer(() => {});
@@ -889,31 +896,35 @@ describe("session resume", () => {
     expect(r.sessionId).toBe("s-1");
   });
 
-  it("codex captures thread_id and resumes with `exec resume <id>` and only the new prompt", async () => {
-    const dir = await fake("BOOF_RUNNER_CODEX_BIN", "codex", "codex-json-stdout.jsonl");
-    const tool = new CodexTool();
-    expect(tool.supportsResume).toBe(true);
-    expect(tool.buildArgs(opts, "/tmp/last").slice(0, 2)).toEqual(["exec", "--json"]);
-    const resumed = tool.buildArgs(
-      { ...opts, resumeSessionId: "thread-9", prompt: "NEW" },
-      "/tmp/l",
-    );
-    expect(resumed).toEqual([
-      "exec",
-      "resume",
-      "thread-9",
-      "--json",
-      "--model",
-      "m",
-      "--ignore-user-config",
-      "--dangerously-bypass-approvals-and-sandbox",
-      "-o",
-      "/tmp/l",
-      "-",
-    ]);
-    const res = await tool.run({ ...opts, cwd: dir });
-    expect(res.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
-  });
+  // Stand-in agent is a POSIX shell script; Windows cannot exec it.
+  it.skipIf(process.platform === "win32")(
+    "codex captures thread_id and resumes with `exec resume <id>` and only the new prompt",
+    async () => {
+      const dir = await fake("BOOF_RUNNER_CODEX_BIN", "codex", "codex-json-stdout.jsonl");
+      const tool = new CodexTool();
+      expect(tool.supportsResume).toBe(true);
+      expect(tool.buildArgs(opts, "/tmp/last").slice(0, 2)).toEqual(["exec", "--json"]);
+      const resumed = tool.buildArgs(
+        { ...opts, resumeSessionId: "thread-9", prompt: "NEW" },
+        "/tmp/l",
+      );
+      expect(resumed).toEqual([
+        "exec",
+        "resume",
+        "thread-9",
+        "--json",
+        "--model",
+        "m",
+        "--ignore-user-config",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-o",
+        "/tmp/l",
+        "-",
+      ]);
+      const res = await tool.run({ ...opts, cwd: dir });
+      expect(res.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
+    },
+  );
 
   it("codex omits the model option for the CLI default on new and resumed runs", () => {
     const tool = new CodexTool();
@@ -934,63 +945,71 @@ describe("session resume", () => {
     ]);
   });
 
-  it("opencode captures sessionID and resumes with --session and only the new prompt", async () => {
-    const dir = await fake("BOOF_RUNNER_OPENCODE_BIN", "opencode", "opencode-json.jsonl");
-    const tool = new OpencodeTool();
-    expect(tool.supportsResume).toBe(true);
-    const resumed = tool.buildArgs({
-      ...opts,
-      cwd: "/tmp/wt",
-      model: "p/m",
-      resumeSessionId: "ses_1",
-      prompt: "NEW",
-    });
-    expect(resumed).toEqual([
-      "run",
-      "--format",
-      "json",
-      "-m",
-      "p/m",
-      "--session",
-      "ses_1",
-      "--auto",
-    ]);
-    const res = await tool.run({ ...opts, cwd: dir });
-    expect(res.sessionId).toBe("ses_e883d9495ffeYJX7kHzp41UH09");
-  });
+  // Stand-in agent is a POSIX shell script; Windows cannot exec it.
+  it.skipIf(process.platform === "win32")(
+    "opencode captures sessionID and resumes with --session and only the new prompt",
+    async () => {
+      const dir = await fake("BOOF_RUNNER_OPENCODE_BIN", "opencode", "opencode-json.jsonl");
+      const tool = new OpencodeTool();
+      expect(tool.supportsResume).toBe(true);
+      const resumed = tool.buildArgs({
+        ...opts,
+        cwd: "/tmp/wt",
+        model: "p/m",
+        resumeSessionId: "ses_1",
+        prompt: "NEW",
+      });
+      expect(resumed).toEqual([
+        "run",
+        "--format",
+        "json",
+        "-m",
+        "p/m",
+        "--session",
+        "ses_1",
+        "--auto",
+      ]);
+      const res = await tool.run({ ...opts, cwd: dir });
+      expect(res.sessionId).toBe("ses_e883d9495ffeYJX7kHzp41UH09");
+    },
+  );
 
-  it("a steered run fails with steered, the session id and the usage so far", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "boof-resume-test-"));
-    dirs.push(dir);
-    const bin = join(dir, "codex");
-    await writeFile(
-      bin,
-      `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\necho ready\nsleep 30\n`,
-    );
-    await chmod(bin, 0o755);
-    process.env.BOOF_RUNNER_CODEX_BIN = bin;
-    const steer = join(dir, "steer");
-    let onChunk!: () => void;
-    const sawOutput = new Promise<void>((resolve) => (onChunk = resolve));
-    const running = new CodexTool().run({
-      ...opts,
-      cwd: dir,
-      steerSignalPath: steer,
-      onChunk: () => onChunk(),
-    });
-    await sawOutput;
-    await writeFile(steer, "x\n");
-    const err = await running.then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(ToolRunError);
-    const e = err as ToolRunError;
-    expect(e.steered).toBe(true);
-    expect(e.stopped).toBe(false);
-    expect(e.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
-    expect(isTransientToolError(e)).toBe(false);
-  });
+  // Stand-in agent is a POSIX shell script; Windows cannot exec it.
+  it.skipIf(process.platform === "win32")(
+    "a steered run fails with steered, the session id and the usage so far",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "boof-resume-test-"));
+      dirs.push(dir);
+      const bin = join(dir, "codex");
+      await writeFile(
+        bin,
+        `#!/bin/sh\nhead -n 1 "${fixture("codex-json-stdout.jsonl")}"\necho ready\nsleep 30\n`,
+      );
+      await chmod(bin, 0o755);
+      process.env.BOOF_RUNNER_CODEX_BIN = bin;
+      const steer = join(dir, "steer");
+      let onChunk!: () => void;
+      const sawOutput = new Promise<void>((resolve) => (onChunk = resolve));
+      const running = new CodexTool().run({
+        ...opts,
+        cwd: dir,
+        steerSignalPath: steer,
+        onChunk: () => onChunk(),
+      });
+      await sawOutput;
+      await writeFile(steer, "x\n");
+      const err = await running.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(ToolRunError);
+      const e = err as ToolRunError;
+      expect(e.steered).toBe(true);
+      expect(e.stopped).toBe(false);
+      expect(e.sessionId).toBe("01a177c2-43a8-7562-80f8-f8962f3d3215");
+      expect(isTransientToolError(e)).toBe(false);
+    },
+  );
 
   it("the mock tool reports a session id and makes a resume observable", async () => {
     const tool = new MockTool();
@@ -1056,7 +1075,8 @@ describe("question protocol position", () => {
   });
 });
 
-describe("ClaudeCodeTool questions", () => {
+// Stand-in agents are POSIX shell scripts; Windows cannot exec them.
+describe.skipIf(process.platform === "win32")("ClaudeCodeTool questions", () => {
   let dir: string;
   let prevBin: string | undefined;
 
@@ -1231,31 +1251,42 @@ describe("user MCP servers", () => {
     );
   });
 
-  it("the health probes ignore the user's MCP servers too, unless asked not to", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "boof-probe-"));
-    try {
-      const mk = async (name: string, varName: string) => {
-        const bin = join(dir, name);
-        await writeFile(bin, `#!/bin/sh\nprintf '%s\\n' "$@" >> "${dir}/${name}.argv"\necho hi\n`);
-        await chmod(bin, 0o755);
-        process.env[varName] = bin;
-      };
-      await mk("claude", "BOOF_RUNNER_CLAUDE_BIN");
-      await mk("codex", "BOOF_RUNNER_CODEX_BIN");
-      await new ClaudeCodeTool().detect();
-      await new CodexTool().detect();
-      expect(await readFile(join(dir, "claude.argv"), "utf8")).toContain("--strict-mcp-config");
-      expect(await readFile(join(dir, "codex.argv"), "utf8")).toContain("--ignore-user-config");
-      await rm(join(dir, "claude.argv"));
-      await rm(join(dir, "codex.argv"));
-      await new ClaudeCodeTool().detect({ inheritMcpServers: true });
-      await new CodexTool().detect({ inheritMcpServers: true });
-      expect(await readFile(join(dir, "claude.argv"), "utf8")).not.toContain("--strict-mcp-config");
-      expect(await readFile(join(dir, "codex.argv"), "utf8")).not.toContain("--ignore-user-config");
-    } finally {
-      delete process.env.BOOF_RUNNER_CLAUDE_BIN;
-      delete process.env.BOOF_RUNNER_CODEX_BIN;
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+  // Stand-in agent is a POSIX shell script; Windows cannot exec it.
+  it.skipIf(process.platform === "win32")(
+    "the health probes ignore the user's MCP servers too, unless asked not to",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "boof-probe-"));
+      try {
+        const mk = async (name: string, varName: string) => {
+          const bin = join(dir, name);
+          await writeFile(
+            bin,
+            `#!/bin/sh\nprintf '%s\\n' "$@" >> "${dir}/${name}.argv"\necho hi\n`,
+          );
+          await chmod(bin, 0o755);
+          process.env[varName] = bin;
+        };
+        await mk("claude", "BOOF_RUNNER_CLAUDE_BIN");
+        await mk("codex", "BOOF_RUNNER_CODEX_BIN");
+        await new ClaudeCodeTool().detect();
+        await new CodexTool().detect();
+        expect(await readFile(join(dir, "claude.argv"), "utf8")).toContain("--strict-mcp-config");
+        expect(await readFile(join(dir, "codex.argv"), "utf8")).toContain("--ignore-user-config");
+        await rm(join(dir, "claude.argv"));
+        await rm(join(dir, "codex.argv"));
+        await new ClaudeCodeTool().detect({ inheritMcpServers: true });
+        await new CodexTool().detect({ inheritMcpServers: true });
+        expect(await readFile(join(dir, "claude.argv"), "utf8")).not.toContain(
+          "--strict-mcp-config",
+        );
+        expect(await readFile(join(dir, "codex.argv"), "utf8")).not.toContain(
+          "--ignore-user-config",
+        );
+      } finally {
+        delete process.env.BOOF_RUNNER_CLAUDE_BIN;
+        delete process.env.BOOF_RUNNER_CODEX_BIN;
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

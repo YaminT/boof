@@ -2625,45 +2625,49 @@ describe("stopped status and durable injected prompts (mock tool)", () => {
 });
 
 describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
-  it("stops the running task, kills the agent process group and leaves the task stopped (retryable)", async () => {
-    await store.create(newTask(fm(), "Long job."));
-    const pidFile = join(dataRoot, "agent.pid");
-    let started!: () => void;
-    const up = new Promise<void>((r) => (started = r));
-    mockState.onRun = async (opts) => {
-      // A stand-in agent: a shell that spawns a grandchild and waits for it.
-      const watch = setInterval(() => {
-        if (existsSync(pidFile)) {
-          clearInterval(watch);
-          started();
-        }
-      }, 20);
-      const res = await execCommand("sh", ["-c", `sleep 300 & echo $! > "${pidFile}"; wait`], {
-        cwd: opts.cwd,
-        stopSignalPath: opts.stopSignalPath,
-        stopPollMs: 25,
-      });
-      clearInterval(watch);
-      throw new ToolRunError("mock", res.code, res.timedOut, res.stopped, "stopped", res.stderr);
-    };
-    const loop = engine.loop();
-    await up;
-    const grandchild = Number((await readFile(pidFile, "utf8")).trim());
-    expect(() => process.kill(grandchild, 0)).not.toThrow();
+  // Stand-in agent is a POSIX shell script; Windows cannot exec it.
+  it.skipIf(process.platform === "win32")(
+    "stops the running task, kills the agent process group and leaves the task stopped (retryable)",
+    async () => {
+      await store.create(newTask(fm(), "Long job."));
+      const pidFile = join(dataRoot, "agent.pid");
+      let started!: () => void;
+      const up = new Promise<void>((r) => (started = r));
+      mockState.onRun = async (opts) => {
+        // A stand-in agent: a shell that spawns a grandchild and waits for it.
+        const watch = setInterval(() => {
+          if (existsSync(pidFile)) {
+            clearInterval(watch);
+            started();
+          }
+        }, 20);
+        const res = await execCommand("sh", ["-c", `sleep 300 & echo $! > "${pidFile}"; wait`], {
+          cwd: opts.cwd,
+          stopSignalPath: opts.stopSignalPath,
+          stopPollMs: 25,
+        });
+        clearInterval(watch);
+        throw new ToolRunError("mock", res.code, res.timedOut, res.stopped, "stopped", res.stderr);
+      };
+      const loop = engine.loop();
+      await up;
+      const grandchild = Number((await readFile(pidFile, "utf8")).trim());
+      expect(() => process.kill(grandchild, 0)).not.toThrow();
 
-    const result = await engine.shutdown(15000);
-    expect(result).toEqual({ stopped: ["t1"], timedOut: false });
-    await loop;
+      const result = await engine.shutdown(15000);
+      expect(result).toEqual({ stopped: ["t1"], timedOut: false });
+      await loop;
 
-    const after = await store.get("t1");
-    expect(after?.frontmatter.status).toBe("stopped");
-    expect(after?.body.log).toContain("stopped by server shutdown");
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
-    // stopped -> pending is a legal transition, so the task can be retried after a restart.
-    await store.transition("t1", "pending");
-    expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
-  });
+      const after = await store.get("t1");
+      expect(after?.frontmatter.status).toBe("stopped");
+      expect(after?.body.log).toContain("stopped by server shutdown");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
+      // stopped -> pending is a legal transition, so the task can be retried after a restart.
+      await store.transition("t1", "pending");
+      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+    },
+  );
 
   it("returns at once when nothing is running", async () => {
     expect(await engine.shutdown(1000)).toEqual({ stopped: [], timedOut: false });
@@ -2910,7 +2914,11 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
             command: "node",
             bootId: currentBootIdentity(),
           });
-          expect(t?.frontmatter.agentProcess?.startTicks).toEqual(expect.any(Number));
+          // Linux records start ticks. macOS and Windows record the start-time string.
+          const recorded = t?.frontmatter.agentProcess;
+          expect(recorded?.startTicks != null || typeof recorded?.startTime === "string").toBe(
+            true,
+          );
         } finally {
           try {
             process.kill(-live.pid!, "SIGKILL");
@@ -2929,37 +2937,46 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(t?.frontmatter.agentProcess).toBeUndefined();
     });
 
-    it("off Linux, warns in the Interrupted block that a live agent process may still be running", async () => {
-      await crash();
-      const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
-        detached: true,
-        stdio: "ignore",
-      });
-      const original = Object.getOwnPropertyDescriptor(process, "platform")!;
-      try {
-        await writePidFile(taskPidPath(projectDir, "t1"), {
-          pgid: orphan.pid!,
-          command: "node",
-          ownerPid: null,
+    // Forcing darwin uses process-group liveness. Windows reports that as dead, so the live
+    // process looks gone. A null identity stays unverified, which is the warning this test checks;
+    // a real macOS start time would let the reaper kill the orphan instead.
+    it.skipIf(process.platform === "win32")(
+      "off Linux, warns in the Interrupted block that a live agent process may still be running",
+      async () => {
+        await crash();
+        const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+          detached: true,
+          stdio: "ignore",
         });
-        Object.defineProperty(process, "platform", { ...original, value: "darwin" });
-        expect(await engine.recoverInterrupted()).toEqual(["t1"]);
-        const t = await store.get("t1");
-        expect(t?.frontmatter.status).toBe("failed");
-        expect(t?.body.log).toContain(
-          `agent process (pid ${orphan.pid}, node) may still be running`,
-        );
-        expect(t?.body.log).toContain("Stop it before you Retry");
-        expect(isAlive(orphan.pid!)).toBe(true);
-      } finally {
-        Object.defineProperty(process, "platform", original);
+        const original = Object.getOwnPropertyDescriptor(process, "platform")!;
         try {
-          process.kill(-orphan.pid!, "SIGKILL");
-        } catch {
-          /* gone */
+          await writePidFile(taskPidPath(projectDir, "t1"), {
+            pgid: orphan.pid!,
+            command: "node",
+            ownerPid: null,
+            bootId: null,
+            startTime: null,
+            startTicks: null,
+          });
+          Object.defineProperty(process, "platform", { ...original, value: "darwin" });
+          expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+          const t = await store.get("t1");
+          expect(t?.frontmatter.status).toBe("failed");
+          expect(t?.body.log).toContain(
+            `agent process (pid ${orphan.pid}, node) may still be running`,
+          );
+          expect(t?.body.log).toContain("Stop it before you Retry");
+          expect(isAlive(orphan.pid!)).toBe(true);
+        } finally {
+          Object.defineProperty(process, "platform", original);
+          try {
+            process.kill(-orphan.pid!, "SIGKILL");
+          } catch {
+            /* gone */
+          }
         }
-      }
-    });
+      },
+    );
 
     it("a pid file whose process already ended changes nothing", async () => {
       await crash();

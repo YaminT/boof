@@ -84,8 +84,9 @@ describe("N8nSecretStore", () => {
   it.skipIf(process.platform === "win32")("modes: folder 0700, file 0600", async () => {
     const store = new N8nSecretStore(root, {});
     await store.setApiKey("k");
-    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(root, "n8n"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(root, "n8n"))).mode & 0o777).toBe(0o700);
   });
 
   it("deleteAll removes the file", async () => {
@@ -132,8 +133,10 @@ describe("N8nSecretStore", () => {
       const store = new N8nSecretStore(root, {});
       await store.setApiKey("k");
       await store.rotateWebhookSecret();
-      expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
-      expect((await stat(join(root, "n8n"))).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32")
+        expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32")
+        expect((await stat(join(root, "n8n"))).mode & 0o777).toBe(0o700);
       expect(await store.getApiKey()).toBe("k");
     } finally {
       process.umask(old);

@@ -47,13 +47,7 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
-  for (const pid of live.splice(0)) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      /* gone */
-    }
-  }
+  for (const pid of live.splice(0)) stop(pid);
   for (const d of [root, repo]) await rm(d, { recursive: true, force: true, maxRetries: 10 });
 });
 
@@ -74,18 +68,35 @@ async function failedTaskWithAgent(identity: "live" | "reused" | "gone") {
       pgid: child.pid!,
       command: "node",
       bootId: bootIdentity(),
-      // A reused pid shows up as another start time.
+      // A reused pid shows up as another start time. Linux compares start ticks;
+      // macOS and Windows compare the start-time string, so both must change.
       startTicks: identity === "reused" ? (probe.startTicks ?? 0) + 5 : (probe.startTicks ?? null),
-      startTime: probe.startTime,
+      startTime: identity === "reused" ? bumpStart(probe.startTime) : probe.startTime,
       recordedAt: new Date().toISOString(),
     };
   });
   await store.transition(id, "failed");
   if (identity === "gone") {
-    process.kill(-child.pid!, "SIGKILL");
+    stop(child.pid!);
     await new Promise((r) => child.on("exit", r));
   }
   return { id, child };
+}
+
+/** Last digit + 1, so the string stays the same format and is not equal. */
+function bumpStart(start: string | null): string | null {
+  if (!start) return start;
+  return start.replace(/\d(?!.*\d)/, (digit) => String((Number(digit) + 1) % 10));
+}
+
+/** POSIX: the process group. Windows has no groups; the process itself is enough. */
+function stop(pid: number) {
+  try {
+    if (process.platform === "win32") process.kill(pid, "SIGKILL");
+    else process.kill(-pid, "SIGKILL");
+  } catch {
+    /* gone */
+  }
 }
 
 describe.skipIf(!bootIdentity())("Retry and a recorded agent that is still alive", () => {
@@ -115,7 +126,7 @@ describe.skipIf(!bootIdentity())("Retry and a recorded agent that is still alive
     expect(res.status).toBe(409);
     expect((await res.json()).error.message).toMatch(/still running/);
     expect(await store.get(id)).toBeTruthy();
-    process.kill(-child.pid!, "SIGKILL");
+    stop(child.pid!);
     await new Promise((r) => child.on("exit", r));
     expect((await call(`${V1}/projects/demo/tasks/${id}`, { method: "DELETE" })).status).toBe(200);
   });
@@ -123,7 +134,7 @@ describe.skipIf(!bootIdentity())("Retry and a recorded agent that is still alive
   it("retries once the agent is gone, and clears the stored identity", async () => {
     const { id, child } = await failedTaskWithAgent("live");
     expect((await post(`${V1}/projects/demo/tasks/${id}/retry`)).status).toBe(409);
-    process.kill(-child.pid!, "SIGKILL");
+    stop(child.pid!);
     await new Promise((r) => child.on("exit", r));
     const res = await post(`${V1}/projects/demo/tasks/${id}/retry`);
     expect(res.status).toBe(200);

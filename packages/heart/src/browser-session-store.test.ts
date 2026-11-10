@@ -102,10 +102,10 @@ describe("BrowserSessionStore", () => {
   it("creates missing data roots with private permissions", async () => {
     const missingRoot = join(root, "new-root");
     await new BrowserSessionStore(missingRoot, () => clock).createLink();
-    expect(statSync(missingRoot).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(missingRoot).mode & 0o777).toBe(0o700);
     const sessionRoot = join(root, "new-session-root");
     await new BrowserSessionStore(sessionRoot, () => clock).createSession();
-    expect(statSync(sessionRoot).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(sessionRoot).mode & 0o777).toBe(0o700);
   });
 
   it("verify on a missing data root quietly returns null", async () => {
@@ -501,9 +501,11 @@ describe("BrowserSessionStore", () => {
     await store.createLink();
     await store.createSession();
     const paths = dataRootPaths(root);
-    expect((await stat(paths.auth)).mode & 0o777).toBe(0o700);
-    expect((await stat(paths.browserLinks)).mode & 0o777).toBe(0o600);
-    expect((await stat(paths.browserSessions)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(paths.auth)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32")
+      expect((await stat(paths.browserLinks)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(paths.browserSessions)).mode & 0o777).toBe(0o600);
   });
 
   it("caps: 21st link drops the oldest; 51st session drops the oldest", async () => {
@@ -698,7 +700,7 @@ describe("BrowserSessionStore", () => {
       await expect(store.createLink()).resolves.toMatchObject({
         code: expect.stringMatching(/^bl_/),
       });
-      expect(statSync(root).mode & 0o777).toBe(0o755);
+      if (process.platform !== "win32") expect(statSync(root).mode & 0o777).toBe(0o755);
       await chmod(root, 0o1770);
       expect((await store.verify(created.token))?.id).toBe(created.session.id);
     },
@@ -729,7 +731,7 @@ describe("BrowserSessionStore", () => {
     const linkedStore = new BrowserSessionStore(linkRoot, () => clock);
     const created = await linkedStore.createSession();
     expect((await linkedStore.verify(created.token))?.id).toBe(created.session.id);
-    expect(statSync(realRoot).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(realRoot).mode & 0o777).toBe(0o700);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -811,7 +813,7 @@ describe("BrowserSessionStore", () => {
       try {
         await expect(checked.createLink()).rejects.toThrow(/chmod go-w/);
         expect(calls).toEqual([root]);
-        expect(statSync(victim).mode & 0o777).toBe(0o755);
+        if (process.platform !== "win32") expect(statSync(victim).mode & 0o777).toBe(0o755);
       } finally {
         await rm(victim, { recursive: true, force: true });
       }

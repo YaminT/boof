@@ -450,20 +450,20 @@ export function verifiedDescendants(rootPid: number, rows: ProcessRow[]): number
 }
 
 /**
- * macOS: does this process group (or its session) belong to the runner itself? True when the pgid
- * is the runner's own process group, or the group leader sits in the runner's session; undefined
- * when `ps` cannot say (a caller must then not kill). Other platforms: false (Linux checks /proc,
- * Windows has no groups).
+ * macOS: is this process group the runner's own? True when the pgid equals the runner's
+ * process group; undefined when `ps` cannot say (a caller must then not kill). Other
+ * platforms: false (Linux checks /proc, Windows has no groups).
+ *
+ * `ps -o sess=` prints 0 for every process on macOS, so a session compare treats every
+ * process as the runner's own and never kills an orphan. A different process group is
+ * not the runner's group; signalling it does not signal the runner.
  */
 export function sharesRunnerGroup(pgid: number, d: IdentityDeps = {}): boolean | undefined {
   const { platform, run } = resolveDeps(d);
   if (platform !== "darwin") return false;
-  const self = /^\s*(\d+)\s+(\S+)\s*$/m.exec(
-    run("ps", ["-o", "pgid=,sess=", "-p", String(process.pid)]) ?? "",
-  );
-  const target = /^\s*(\S+)\s*$/m.exec(run("ps", ["-o", "sess=", "-p", String(pgid)]) ?? "");
-  if (!self || !target) return undefined;
-  return Number(self[1]) === pgid || self[2] === target[1];
+  const self = /^\s*(\d+)\s*$/m.exec(run("ps", ["-o", "pgid=", "-p", String(process.pid)]) ?? "");
+  if (!self) return undefined;
+  return Number(self[1]) === pgid;
 }
 
 /** One process to stop: its pid and the creation time it was verified to have (`ISO_O`). */

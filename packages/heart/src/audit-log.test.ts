@@ -40,7 +40,8 @@ describe("audit log", () => {
       } finally {
         process.umask(old);
       }
-      expect((await stat(join(root, "audit"))).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32")
+        expect((await stat(join(root, "audit"))).mode & 0o777).toBe(0o700);
     },
   );
 

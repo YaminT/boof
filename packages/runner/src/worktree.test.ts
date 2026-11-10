@@ -462,7 +462,8 @@ describe("worktree root exclusion", () => {
   });
 });
 
-describe("worktree add timeout and cleanup", () => {
+// The git shim is a POSIX shell script prepended to PATH. Windows cannot exec it.
+describe.skipIf(process.platform === "win32")("worktree add timeout and cleanup", () => {
   let shimDir: string;
   const savedPath = process.env.PATH;
   /** A `git` that runs the real `worktree add`, deletes README.md from the new tree, then hangs or fails. */

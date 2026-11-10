@@ -174,8 +174,9 @@ describe("storage", () => {
     await store.touch("a");
     const file = join(root, "auth", "clients.json");
     if (process.platform !== "win32") {
-      expect((await stat(file)).mode & 0o777).toBe(0o600);
-      expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32") expect((await stat(file)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32")
+        expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
     }
   });
 
@@ -198,8 +199,8 @@ describe("storage", () => {
     async () => {
       await store.create({ name: "a", scopes: ["tasks:read"] });
       await chmod(join(root, "auth"), 0o770);
-      await expect(store.list()).rejects.toThrow(/chmod 700/);
-      await expect(store.verify("anything")).rejects.toThrow(/chmod 700/);
+      await expect(store.list()).rejects.toThrow(/chmod (?:700|g-w)/);
+      await expect(store.verify("anything")).rejects.toThrow(/chmod (?:700|g-w)/);
     },
   );
 
@@ -265,7 +266,8 @@ describe("client ids", () => {
     await mkdir(join(root, "auth"), { recursive: true, mode: 0o755 });
     await chmod(join(root, "auth"), 0o755);
     await tightenAuthDir(root);
-    expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32")
+      expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
     await rm(join(root, "auth"), { recursive: true });
     await tightenAuthDir(root); // nothing to do, no error
   });

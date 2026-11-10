@@ -73,7 +73,7 @@ describe("boof-runner remote setup", () => {
     const key = out.map((l) => l.trim()).find((l) => l.startsWith("boof_harness_"))!;
     expect(key).toBeTruthy();
     expect((await new AuthStore(root).verify(key)).ok).toBe(true);
-    expect((await stat(root)).mode & 0o077).toBe(0);
+    if (process.platform !== "win32") expect((await stat(root)).mode & 0o077).toBe(0);
     expect(text).not.toContain("is already private");
     expect(text).toContain("--host 0.0.0.0 -p 4400 --tls-cert");
     expect(text).toContain("reverse_proxy 127.0.0.1:4400");

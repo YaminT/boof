@@ -195,17 +195,34 @@ export function execCommand(
     const spawnFn = deps.spawn ?? spawn;
     // stdio is always three pipes, so stdout, stderr and stdin are present. The injected
     // spawn's return type says so; Node's own overloads only see that on an object literal.
-    const child = spawnFn(command, safeArgs, {
-      cwd: opts.cwd,
-      env: opts.env ?? process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      // POSIX: own process group, so a stop kills the agent and everything it spawned.
-      // Windows has no groups. A stop kills verified children, then the root through this
-      // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
-      // (the desktop app) from opening a console for git or an agent.
-      detached: platform !== "win32",
-      windowsHide: true,
-    }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    // Windows rejects a command line near 32 KiB with a synchronous ENAMETOOLONG, below the
+    // POSIX MAX_ARG_STRLEN guard above. Spawn must not reject the promise: callers inspect `code`.
+    let child: ChildProcessByStdio<Writable, Readable, Readable>;
+    try {
+      child = spawnFn(command, safeArgs, {
+        cwd: opts.cwd,
+        env: opts.env ?? process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        // POSIX: own process group, so a stop kills the agent and everything it spawned.
+        // Windows has no groups. A stop kills verified children, then the root through this
+        // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
+        // (the desktop app) from opening a console for git or an agent.
+        detached: platform !== "win32",
+        windowsHide: true,
+      }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      resolve({
+        code: null,
+        stdout: "",
+        stderr: err.message || String(error),
+        timedOut: false,
+        stopped: false,
+        steered: false,
+        stalled: false,
+      });
+      return;
+    }
     const pidWritten =
       opts.pidFilePath && child.pid
         ? writePidFile(opts.pidFilePath, { pgid: child.pid, command: basename(command) }).catch(

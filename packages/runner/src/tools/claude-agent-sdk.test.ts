@@ -29,7 +29,7 @@ describe("Claude Agent SDK loading", () => {
   it("falls back to PATH after the SDK binary cannot be resolved", async () => {
     const dir = await mkdtemp(join(tmpdir(), "claude-agent-path-"));
     tempDirs.push(dir);
-    const executable = join(dir, "claude");
+    const executable = join(dir, process.platform === "win32" ? "claude.exe" : "claude");
     await writeFile(executable, "#!/bin/sh\nexit 0\n");
     await chmod(executable, 0o755);
     await expect(
@@ -66,7 +66,7 @@ describe("Claude Agent SDK loading", () => {
   it("resolves a configured relative path with a separator from cwd", async () => {
     const dir = await mkdtemp(join(tmpdir(), "claude-agent-relative-"));
     tempDirs.push(dir);
-    const executable = join(dir, "claude");
+    const executable = join(dir, process.platform === "win32" ? "claude.exe" : "claude");
     await writeFile(executable, "#!/bin/sh\nexit 0\n");
     await chmod(executable, 0o755);
     const relativePath = relative(process.cwd(), executable);

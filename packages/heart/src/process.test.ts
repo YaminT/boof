@@ -8,16 +8,29 @@ import { execCommand, killWindowsProcessTree, MAX_ARG_STRLEN } from "./process.j
 
 describe("execCommand", () => {
   it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {
-    const res = await execCommand("true", ["ok", "x".repeat(MAX_ARG_STRLEN)], {
-      cwd: process.cwd(),
-      timeoutMs: 5000,
-    });
+    const res = await execCommand(
+      process.execPath,
+      ["-e", "process.exit(0)", "x".repeat(MAX_ARG_STRLEN)],
+      {
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+      },
+    );
     expect(res.code).toBeNull();
     expect(res.stderr).toBe(
-      `argument 2 is ${MAX_ARG_STRLEN} bytes, over the ${MAX_ARG_STRLEN}-byte limit of one argument (E2BIG)`,
+      `argument 3 is ${MAX_ARG_STRLEN} bytes, over the ${MAX_ARG_STRLEN}-byte limit of one argument (E2BIG)`,
     );
+    // One under the POSIX limit. Windows CreateProcess rejects it (about 32 KiB) before
+    // the child starts; that must be a result, not a thrown ENAMETOOLONG.
+    const huge = await execCommand(
+      process.execPath,
+      ["-e", "process.exit(0)", "x".repeat(MAX_ARG_STRLEN - 1)],
+      { cwd: process.cwd(), timeoutMs: 15000 },
+    );
+    if (process.platform === "win32") expect(huge.code).toBeNull();
+    else expect(huge.code).toBe(0);
     expect(
-      (await execCommand("true", ["x".repeat(MAX_ARG_STRLEN - 1)], { cwd: process.cwd() })).code,
+      (await execCommand(process.execPath, ["-e", "process.exit(0)"], { cwd: process.cwd() })).code,
     ).toBe(0);
   });
 
@@ -28,7 +41,7 @@ describe("execCommand", () => {
     try {
       // 8 MB is far more than a pipe buffer, so the write is still pending when
       // `true` exits; before the fix this raised an uncaught EPIPE.
-      const res = await execCommand("true", [], {
+      const res = await execCommand(process.execPath, ["-e", "process.exit(0)"], {
         cwd: process.cwd(),
         input: "x".repeat(8 * 1024 * 1024),
         timeoutMs: 10000,
@@ -50,33 +63,37 @@ describe("execCommand", () => {
     }
   };
 
-  it("a steer signal kills the whole process group and reports steered, not stopped", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "boof-exec-steer-"));
-    try {
-      const steer = join(dir, "steer");
-      // The shell prints the pid of a background grandchild, then waits on it.
-      let out = "";
-      const running = execCommand("sh", ["-c", "sleep 60 & echo $!; wait"], {
-        cwd: dir,
-        steerSignalPath: steer,
-        stopPollMs: 20,
-        onData: (c) => (out += c),
-      });
-      await new Promise((r) => setTimeout(r, 300));
-      await writeFile(steer, "x\n");
-      const res = await running;
-      expect(res.steered).toBe(true);
-      expect(res.stopped).toBe(false);
-      expect(res.timedOut).toBe(false);
-      const grandchild = Number(out.trim());
-      expect(grandchild).toBeGreaterThan(1);
-      // The grandchild dies with the group (allow the SIGKILL grace).
-      for (let i = 0; i < 40 && alive(grandchild); i++) await new Promise((r) => setTimeout(r, 50));
-      expect(alive(grandchild)).toBe(false);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(process.platform === "win32")(
+    "a steer signal kills the whole process group and reports steered, not stopped",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "boof-exec-steer-"));
+      try {
+        const steer = join(dir, "steer");
+        // The shell prints the pid of a background grandchild, then waits on it.
+        let out = "";
+        const running = execCommand("sh", ["-c", "sleep 60 & echo $!; wait"], {
+          cwd: dir,
+          steerSignalPath: steer,
+          stopPollMs: 20,
+          onData: (c) => (out += c),
+        });
+        await new Promise((r) => setTimeout(r, 300));
+        await writeFile(steer, "x\n");
+        const res = await running;
+        expect(res.steered).toBe(true);
+        expect(res.stopped).toBe(false);
+        expect(res.timedOut).toBe(false);
+        const grandchild = Number(out.trim());
+        expect(grandchild).toBeGreaterThan(1);
+        // The grandchild dies with the group (allow the SIGKILL grace).
+        for (let i = 0; i < 40 && alive(grandchild); i++)
+          await new Promise((r) => setTimeout(r, 50));
+        expect(alive(grandchild)).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("a stop signal wins over a steer signal, and neither is set when none appears", async () => {
     const dir = await mkdtemp(join(tmpdir(), "boof-exec-steer-"));
@@ -85,7 +102,7 @@ describe("execCommand", () => {
       const steer = join(dir, "steer");
       await writeFile(stop, "x\n");
       await writeFile(steer, "x\n");
-      const both = await execCommand("sleep", ["60"], {
+      const both = await execCommand(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
         cwd: dir,
         stopSignalPath: stop,
         steerSignalPath: steer,
@@ -93,7 +110,10 @@ describe("execCommand", () => {
       });
       expect(both.stopped).toBe(true);
       expect(both.steered).toBe(false);
-      const none = await execCommand("true", [], { cwd: dir, steerSignalPath: steer + "-x" });
+      const none = await execCommand(process.execPath, ["-e", "process.exit(0)"], {
+        cwd: dir,
+        steerSignalPath: steer + "-x",
+      });
       expect(none.steered).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -122,7 +142,7 @@ describe("execCommand", () => {
       expect(res.stopped).toBe(true);
       expect(existsSync(pidFilePath)).toBe(false);
       // A child that finishes on its own leaves no file either.
-      await execCommand("true", [], { cwd: dir, pidFilePath });
+      await execCommand(process.execPath, ["-e", "process.exit(0)"], { cwd: dir, pidFilePath });
       expect(existsSync(pidFilePath)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
