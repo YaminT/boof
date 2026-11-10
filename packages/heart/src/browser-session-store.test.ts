@@ -657,11 +657,13 @@ describe("BrowserSessionStore", () => {
       await portable.createLink();
       await portable.createLink();
       expect(await readFile(paths.browserLinks, "utf8")).toContain("links");
-      expect(warning).toHaveBeenCalledTimes(2);
+      // The epoch is stored in the sessions file, so that path is warned once too.
+      expect(warning).toHaveBeenCalledTimes(3);
       expect(warning.mock.calls.map((call) => String(call[0]))).toEqual(
         expect.arrayContaining([
           expect.stringContaining(paths.auth),
           expect.stringContaining(paths.browserLinks),
+          expect.stringContaining(paths.browserSessions),
         ]),
       );
     } finally {
@@ -903,6 +905,61 @@ describe("BrowserSessionStore", () => {
       expect(await checked.verify(created.token)).toBeNull();
     },
   );
+
+  it("beginEpoch does not create the auth directory when nothing is stored", async () => {
+    const paths = dataRootPaths(root);
+    await store.beginEpoch();
+    await expect(stat(paths.auth)).rejects.toThrow();
+    await expect(stat(paths.browserLinks)).rejects.toThrow();
+    await expect(stat(paths.browserSessions)).rejects.toThrow();
+  });
+
+  it("stamps a sign-in link with the epoch and drops it when the server starts", async () => {
+    const link = await store.createLink();
+    const paths = dataRootPaths(root);
+    const before = JSON.parse(await readFile(paths.browserLinks, "utf8")) as {
+      links: { epoch?: string }[];
+    };
+    const sessions = JSON.parse(await readFile(paths.browserSessions, "utf8")) as {
+      epoch?: string;
+    };
+    expect(before.links[0]?.epoch).toBeTruthy();
+    expect(before.links[0]?.epoch).toBe(sessions.epoch);
+    expect((await store.redeemLink(link.code))?.token).toMatch(/^bs_/);
+
+    const again = await store.createLink();
+    await store.beginEpoch();
+    expect(await store.redeemLink(again.code)).toBeNull();
+    const links = JSON.parse(await readFile(paths.browserLinks, "utf8")) as { links: unknown[] };
+    expect(links.links).toEqual([]);
+    const after = JSON.parse(await readFile(paths.browserSessions, "utf8")) as { epoch?: string };
+    expect(after.epoch).toBeTruthy();
+    expect(after.epoch).not.toBe(before.links[0]?.epoch);
+
+    const next = await store.createLink();
+    expect(await store.redeemLink(next.code)).not.toBeNull();
+  });
+
+  it("refuses a sign-in link stamped with another epoch, and one with no epoch", async () => {
+    const stale = await store.createLink();
+    const paths = dataRootPaths(root);
+    const saved = await readFile(paths.browserLinks, "utf8");
+    const stamped = JSON.parse(saved) as { links: { epoch?: string }[] };
+    const oldEpoch = stamped.links[0]?.epoch;
+    await store.beginEpoch();
+    await writeFile(paths.browserLinks, saved);
+    expect(await store.redeemLink(stale.code)).toBeNull();
+    const now = JSON.parse(await readFile(paths.browserSessions, "utf8")) as { epoch?: string };
+    expect(now.epoch).not.toBe(oldEpoch);
+
+    const legacy = await store.createLink();
+    const file = JSON.parse(await readFile(paths.browserLinks, "utf8")) as {
+      links: { epoch?: string }[];
+    };
+    delete file.links[0]?.epoch;
+    await writeFile(paths.browserLinks, JSON.stringify(file));
+    expect(await store.redeemLink(legacy.code)).toBeNull();
+  });
 
   it("a session dies when the server starts a new epoch, and one minted after is accepted", async () => {
     const first = await store.createSession();

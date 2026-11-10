@@ -69,6 +69,8 @@ interface LinkRecord {
   expiresAt: string;
   /** Port the link was minted for. Absent on links written before ports were bound. */
   port?: number;
+  /** Server start that minted this link. Absent on links written before link epochs. */
+  epoch?: string;
 }
 
 interface SessionRecord {
@@ -83,7 +85,12 @@ interface SessionRecord {
 
 const LinkFile = z.object({
   links: z.array(
-    z.object({ hash: z.string(), expiresAt: z.string(), port: z.number().int().optional() }),
+    z.object({
+      hash: z.string(),
+      expiresAt: z.string(),
+      port: z.number().int().optional(),
+      epoch: z.string().min(1).optional(),
+    }),
   ),
 });
 
@@ -205,9 +212,12 @@ function toPublic(record: SessionRecord): BrowserSession {
 }
 
 function cleanLink(row: LinkRecord): LinkRecord {
-  return row.port === undefined
-    ? { hash: row.hash, expiresAt: row.expiresAt }
-    : { hash: row.hash, expiresAt: row.expiresAt, port: row.port };
+  return {
+    hash: row.hash,
+    expiresAt: row.expiresAt,
+    ...(row.port === undefined ? {} : { port: row.port }),
+    ...(row.epoch ? { epoch: row.epoch } : {}),
+  };
 }
 
 function cleanSession(row: SessionRecord): SessionRecord {
@@ -255,9 +265,11 @@ function parseStored<T>(text: string, schema: z.ZodType<{ [key: string]: T[] }>,
  * on every call and reloads it when the mtime or size changed.
  *
  * `beginEpoch` runs once per server start and stores a new random epoch under that lock.
- * `verify` accepts only a session minted in the epoch currently in the file, so a cookie
- * harvested while the server was down is dead when it comes back. The desktop app mints a
- * session per window after the server has started, so that window stays signed in.
+ * It also drops pending sign-in links. `verify` accepts only a session minted in the epoch
+ * currently in the file, and `redeemLink` accepts only a link stamped with that same epoch,
+ * so a cookie or a link harvested while the server was down is dead when it comes back.
+ * The desktop app mints a session per window after the server has started, so that window
+ * stays signed in.
  */
 export class BrowserSessionStore implements BrowserSessionVerifier {
   private readonly linksPath: string;
@@ -311,13 +323,21 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       const nowMs = this.now();
       const code = `bl_${randomBytes(32).toString("base64url")}`;
       const expiresAt = new Date(nowMs + BROWSER_LINK_TTL_MS).toISOString();
+      const current = epoch ?? newEpoch();
       const nextLinks = roomForOne(pruneLinks(links, nowMs), MAX_LINKS);
       nextLinks.push({
         hash: sha256Hex(code),
         expiresAt,
+        epoch: current,
         ...(opts.port !== undefined ? { port: opts.port } : {}),
       });
-      await this.commit(nextLinks, pruneSessions(sessions, nowMs), { links, sessions, epoch });
+      await this.commit(
+        nextLinks,
+        pruneSessions(sessions, nowMs),
+        { links, sessions, epoch },
+        undefined,
+        current,
+      );
       return { code, expiresAt };
     });
   }
@@ -342,6 +362,11 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       }
       // Drop the link before the session is added, so a crash cannot leave it redeemable twice.
       const keptLinks = liveLinks.filter((link) => link !== match);
+      // A link from another server start is dead, even if this start kept the file.
+      if (!sameEpoch(epoch, match.epoch)) {
+        await this.commit(keptLinks, liveSessions, { links, sessions, epoch });
+        return null;
+      }
       if (match.port !== undefined && opts.port !== undefined && match.port !== opts.port) {
         await this.commit(keptLinks, liveSessions, { links, sessions, epoch });
         return null;
@@ -370,21 +395,20 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
   }
 
   /**
-   * New server start. Under the session lock, replace the stored epoch and drop every session.
-   * Pending sign-in links stay: they are single-use and are not cookies. A corrupt session file
-   * is replaced so startup can still mint a fresh epoch.
+   * New server start. Under the session lock, replace the stored epoch and drop every session
+   * and every pending sign-in link. A link minted before this start belongs to the old epoch.
+   * A corrupt session file is replaced so startup can still mint a fresh epoch.
    */
   async beginEpoch(): Promise<void> {
     // No session or link file yet: there is nothing to invalidate, and a mint creates its own
     // epoch. Do not create the auth directory just by starting the server.
     if (!existsSync(this.sessionsPath) && !existsSync(this.linksPath)) return;
-    await this.mutate(async ({ links, sessions, epoch }) => {
-      const nowMs = this.now();
+    await this.mutate(async ({ links, sessions, epoch, corrupt }) => {
       await this.commit(
-        pruneLinks(links, nowMs),
+        [],
         [],
         { links, sessions, epoch },
-        { links: false, sessions: true },
+        { links: links.length > 0 || corrupt.links, sessions: true },
         newEpoch(),
       );
     }, true);
