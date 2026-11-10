@@ -33,7 +33,14 @@ describe("SDDL access lists", () => {
     const line = "O:SYG:SYD:P(A;OICI;FA;;;S-1-5-21-1)S:(AU;SA;FA;;;WD)";
     expect(extractDacl(line)).toBe("P(A;OICI;FA;;;S-1-5-21-1)");
     expect(parseIcaclsSave(`data\n${line}\n`).aces).toEqual([
-      { sid: me, allow: true, inherited: false, inheritOnly: false, rights: "FA" },
+      {
+        sid: me,
+        allow: true,
+        inherited: false,
+        inheritOnly: false,
+        rights: "FA",
+        conditional: false,
+      },
     ]);
   });
 
@@ -54,7 +61,12 @@ describe("SDDL access lists", () => {
     expect(canonicalSid(me)).toBe(me);
     expect(rightsIncludeWrite("FA")).toBe(true);
     expect(rightsIncludeWrite("FR")).toBe(false);
+    expect(rightsIncludeWrite("LC")).toBe(false);
+    expect(rightsIncludeWrite("DT")).toBe(true);
+    expect(rightsIncludeWrite("CR")).toBe(true);
+    expect(rightsIncludeWrite("LCDT")).toBe(true);
     expect(rightsIncludeWrite("0x1200a9")).toBe(false);
+    expect(rightsIncludeWrite("0x40")).toBe(true);
     expect(rightsIncludeWrite("0x1F01FF")).toBe(true);
   });
 
@@ -67,6 +79,54 @@ describe("SDDL access lists", () => {
       aclNeedsTighten([userAce({ allow: false, rights: "FW" }), userAce({ rights: "FR" })], me),
     ).toBe(true);
     expect(aclNeedsTighten([], me)).toBe(true);
+  });
+
+  it("accepts an inherited full-control ACE for the current user on a child, and nothing else", () => {
+    const folder = parseIcaclsSave("child\nD:AI(A;OICIID;FA;;;S-1-5-21-1)\n");
+    const file = parseIcaclsSave("child\nD:AI(A;ID;FA;;;S-1-5-21-1)\n");
+    expect(folder.ok && file.ok).toBe(true);
+    if (!folder.ok || !file.ok) return;
+    expect(folder.aces).toEqual([
+      {
+        sid: me,
+        allow: true,
+        inherited: true,
+        inheritOnly: false,
+        rights: "FA",
+        conditional: false,
+      },
+    ]);
+    for (const aces of [folder.aces, file.aces]) {
+      expect(aclNeedsTighten(aces, me)).toBe(true);
+      expect(aclNeedsTighten(aces, me, { acceptInheritedUser: true })).toBe(false);
+    }
+    const wider = parseIcaclsSave("child\nD:AI(A;OICIID;FA;;;S-1-5-21-1)(A;OICIID;FR;;;WD)\n");
+    expect(wider.ok).toBe(true);
+    if (!wider.ok) return;
+    expect(aclNeedsTighten(wider.aces, me, { acceptInheritedUser: true })).toBe(true);
+    const readOnly = parseIcaclsSave("child\nD:AI(A;OICIID;FR;;;S-1-5-21-1)\n");
+    expect(readOnly.ok).toBe(true);
+    if (!readOnly.ok) return;
+    expect(aclNeedsTighten(readOnly.aces, me, { acceptInheritedUser: true })).toBe(true);
+  });
+
+  it("treats conditional ACEs as unsafe without evaluating them", () => {
+    const simple = parseIcaclsSave(
+      'data\nD:(XA;;FA;;;WD;(@User.Title=="PM"))(A;;FA;;;S-1-5-21-1)\n',
+    );
+    expect(simple.ok).toBe(true);
+    if (!simple.ok) return;
+    expect(simple.aces.some((ace) => ace.conditional)).toBe(true);
+    expect(aclNeedsTighten(simple.aces, me)).toBe(true);
+    expect(aclNeedsTighten(simple.aces, me, { acceptInheritedUser: true })).toBe(true);
+    expect(parentLetsOthersWrite(simple.aces, me)).toBe("conditional");
+
+    const nested = parseIcaclsSave("data\nD:(ZA;;0x40;;;S-1-5-21-1;(Member_of {SID(S-1-5-21)}))\n");
+    expect(nested.ok).toBe(true);
+    if (!nested.ok) return;
+    expect(nested.aces.some((ace) => ace.conditional)).toBe(true);
+    expect(aclNeedsTighten(nested.aces, me, { acceptInheritedUser: true })).toBe(true);
+    expect(parentLetsOthersWrite(nested.aces, me)).toBe("conditional");
   });
 
   it("flags a shared parent and ignores SYSTEM and Administrators", () => {

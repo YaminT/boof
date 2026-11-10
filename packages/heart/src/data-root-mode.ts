@@ -684,7 +684,8 @@ async function requireUserOnly(
 ): Promise<void> {
   let view = await acl.readAcl(path);
   if (!view.ok) fail(path, `access list could not be read (${view.error})`);
-  if (!aclNeedsTighten(view.aces, user.sid)) return;
+  // A root (tighten) drops inherited entries. A child may keep this user's inherited allow.
+  if (!aclNeedsTighten(view.aces, user.sid, { acceptInheritedUser: !tighten })) return;
   if (tighten) {
     await acl.tightenToUser(path, user);
     view = await acl.readAcl(path);

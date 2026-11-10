@@ -27,6 +27,11 @@ export interface AclAce {
   inheritOnly: boolean;
   /** SDDL rights, either two-letter codes (`FA`) or a hex mask. */
   rights: string;
+  /**
+   * Conditional ACE (`XA` or `ZA`). The condition is not evaluated; the entry is unsafe.
+   * Absent on ACEs this parser built from an allow or deny.
+   */
+  conditional?: boolean;
 }
 
 export type AclView = { ok: true; aces: AclAce[] } | { ok: false; error: string };
@@ -50,6 +55,7 @@ const WRITE_BITS =
   0x2 | // FILE_WRITE_DATA
   0x4 | // FILE_APPEND_DATA
   0x10 | // FILE_WRITE_EA
+  0x40 | // FILE_DELETE_CHILD
   0x100 | // FILE_WRITE_ATTRIBUTES
   0x10000 | // DELETE
   0x40000 | // WRITE_DAC
@@ -57,7 +63,8 @@ const WRITE_BITS =
   0x10000000 | // GENERIC_ALL
   0x40000000; // GENERIC_WRITE
 
-const WRITE_CODES = new Set(["FA", "FW", "GA", "GW", "WD", "WO", "SD", "DC"]);
+/** `DT` is delete-tree, `CR` is control access, `DC` is delete-child. `LC` (list children) is not. */
+const WRITE_CODES = new Set(["FA", "FW", "GA", "GW", "WD", "WO", "SD", "DC", "DT", "CR"]);
 
 /** Two-letter SDDL account aliases. Compared as full SIDs. */
 const ALIAS_SID: Record<string, string> = {
@@ -135,15 +142,29 @@ export function parseDacl(dacl: string): AclAce[] {
   const aces: AclAce[] = [];
   const re = /\(([A-Z]+);([^;]*);([^;]*);([^;]*);([^;]*);([^)]*)\)/g;
   for (const match of dacl.matchAll(re)) {
-    const sid = match[6]?.trim();
-    if (!sid) continue;
+    const type = match[1] ?? "";
+    const conditional = type === "XA" || type === "ZA";
+    const sid = match[6]?.trim() ?? "";
+    if (!sid && !conditional) continue;
     const flags = flagSet(match[2] ?? "");
     aces.push({
       sid,
-      allow: match[1] === "A",
+      allow: type === "A",
       inherited: flags.has("ID"),
       inheritOnly: flags.has("IO"),
       rights: (match[3] ?? "").trim(),
+      conditional,
+    });
+  }
+  // A conditional ACE can carry a nested `)` in its condition, which the field split skips.
+  if (/\((XA|ZA);/i.test(dacl) && !aces.some((ace) => ace.conditional)) {
+    aces.push({
+      sid: "",
+      allow: false,
+      inherited: false,
+      inheritOnly: false,
+      rights: "",
+      conditional: true,
     });
   }
   return aces;
@@ -167,16 +188,32 @@ export function decodeIcaclsText(buf: Buffer): string {
   return buf.toString("utf8");
 }
 
+export interface AclTightenOptions {
+  /**
+   * A child of a tightened root may keep an inherited allow for this user
+   * (`(A;OICIID;FA;;;<user>)`). The root itself must not: disabling inheritance is what
+   * stops a parent from adding accounts later.
+   */
+  acceptInheritedUser?: boolean;
+}
+
 /**
- * True when the list is not an explicit full-control allow for this user and nobody else.
- * An inherited entry still needs a rewrite: disabling inheritance is what stops a parent
- * from adding accounts later.
+ * True when the list is not a full-control allow for this user and nobody else.
+ * An inherited entry on a root still needs a rewrite. With `acceptInheritedUser`, an inherited
+ * allow for this user is the tightened root propagating and is safe; another principal, a
+ * missing user write, or a conditional ACE (`XA`/`ZA`, whose condition is not evaluated) is not.
  */
-export function aclNeedsTighten(aces: AclAce[], userSid: string): boolean {
+export function aclNeedsTighten(
+  aces: AclAce[],
+  userSid: string,
+  opts?: AclTightenOptions,
+): boolean {
   const me = canonicalSid(userSid);
+  const acceptInherited = opts?.acceptInheritedUser === true;
   let userWrite = false;
   for (const ace of aces) {
-    if (ace.inherited) return true;
+    if (ace.conditional) return true;
+    if (ace.inherited && !acceptInherited) return true;
     const sid = canonicalSid(ace.sid);
     if (sid === me) {
       if (!ace.allow && rightsIncludeWrite(ace.rights)) return true;
@@ -195,6 +232,7 @@ export function aclNeedsTighten(aces: AclAce[], userSid: string): boolean {
 export function parentLetsOthersWrite(aces: AclAce[], userSid: string): string | null {
   const me = canonicalSid(userSid);
   for (const ace of aces) {
+    if (ace.conditional) return "conditional";
     if (!ace.allow || ace.inheritOnly || !rightsIncludeWrite(ace.rights)) continue;
     const sid = canonicalSid(ace.sid);
     if (sid === me || BENIGN_PARENT.has(sid)) continue;
