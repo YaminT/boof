@@ -6,7 +6,7 @@
       "name": "boof-runner",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.318",
-        "@hono/node-server": "^2.0.0",
+        "@hono/node-server": "^2.1.6",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
         "hono": "^4.13.17",
@@ -32,7 +32,7 @@
         "@boof/heart": "*",
         "@boof/heart-server": "*",
         "@boof/runner": "*",
-        "@hono/node-server": "^2.0.0",
+        "@hono/node-server": "^2.1.6",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
         "hono": "^4.13.17",
@@ -50,7 +50,7 @@
         "@boof/heart": "*",
         "@boof/heart-server": "*",
         "@boof/runner": "*",
-        "@hono/node-server": "^2.0.0",
+        "@hono/node-server": "^2.1.6",
         "chokidar": "^6.0.0",
         "gray-matter": "^4.0.3",
         "hono": "^4.13.17",
@@ -109,7 +109,7 @@
       "dependencies": {
         "@boof/heart": "*",
         "@boof/owlish": "*",
-        "@hono/node-server": "^2.0.0",
+        "@hono/node-server": "^2.1.6",
         "@modelcontextprotocol/sdk": "~1.32.2",
         "chokidar": "^6.0.0",
         "hono": "^4.13.17",
@@ -274,7 +274,7 @@
 
     "@fontsource/ibm-plex-sans": ["@fontsource/ibm-plex-sans@5.3.0", "", {}, "sha512-CbE4CbbEEZJX860XyUiRpsksXIQR8Rp2XDva2VO53NJox9tVNtusrysd2x5YkUEY3ErQ66W1IiiQL8/wihhw5w=="],
 
-    "@hono/node-server": ["@hono/node-server@2.1.5", "", { "peerDependencies": { "hono": "^4 || ^5.0.0-0" } }, "sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q=="],
+    "@hono/node-server": ["@hono/node-server@2.1.6", "", { "peerDependencies": { "hono": "^4 || ^5.0.0-0" } }, "sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ=="],
 
     "@isaacs/fs-minipass": ["@isaacs/fs-minipass@4.0.1", "", { "dependencies": { "minipass": "^7.0.4" } }, "sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w=="],
 
