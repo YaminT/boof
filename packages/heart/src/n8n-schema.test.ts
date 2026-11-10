@@ -7,6 +7,7 @@ import {
   ProjectSchema,
   SettingsPatchSchema,
   SettingsSchema,
+  SETTINGS_SCHEMA_VERSION,
   TaskFrontmatterSchema,
   WEBHOOK_PATH_PATTERN,
 } from "./schema.js";
@@ -178,7 +179,7 @@ describe("n8n schemas", () => {
 
   it("settings without n8n parse; SettingsPatchSchema refuses an n8n key", () => {
     const base = {
-      schemaVersion: 2,
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
       runner: { enabled: false, concurrency: 1 },
       roles: {
         planner: { tool: "codex", model: "" },

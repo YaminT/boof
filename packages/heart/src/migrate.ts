@@ -25,7 +25,10 @@ export class MigrationError extends Error {
 }
 
 export interface MigrationResult {
-  /** `fresh`: new v2 root; `migrated`: v1 -> v2 ran (or finished a crashed run); `current`: nothing to do. */
+  /**
+   * `fresh`: new root at the current schema; `migrated`: v1 -> v2 ran (or finished a crashed
+   * run), or schema 2 was stamped to 3; `current`: nothing to do.
+   */
   kind: "fresh" | "migrated" | "current";
   /** Lines describing what moved (also written to migration-v2.log). */
   log: string[];
@@ -48,6 +51,9 @@ export interface MigrateOptions {
 
 /** `<root>/.migration.lock`: holds the pid of the process migrating the root. */
 export const MIGRATION_LOCK_FILE = ".migration.lock";
+
+/** settings.json schema written by 0.3.0. The step to the current schema changes no other field. */
+const SETTINGS_SCHEMA_V2 = 2;
 
 export const DEFAULT_PROJECT_ID = "default";
 
@@ -93,13 +99,17 @@ async function mergeInto(src: string, dst: string): Promise<string[]> {
 }
 
 /**
- * Bring a data root to layout v2 (multi-project spec section 7). Safe to call on every start:
- *  - no settings.json: scaffold v2 settings (no projects);
+ * Bring a data root up to date. Safe to call on every start:
+ *  - no settings.json: scaffold the current schema (no projects);
  *  - settings.json without `schemaVersion` (v1): move tasks/ and usage.json into
- *    projects/default/, then rewrite settings.json last, so a crash leaves a v1 file and the
- *    next run finishes the remaining steps (each step checks its own precondition);
- *  - `schemaVersion: 2`: nothing.
- * Throws MigrationError when a task is running under a live runner, or the root is newer.
+ *    projects/default/, then rewrite settings.json last at the current schema, so a crash
+ *    leaves a v1 file and the next run finishes the remaining steps (each step checks its
+ *    own precondition);
+ *  - `schemaVersion: 2` (a 0.3.0 root): stamp it to 3 with no other field changes;
+ *  - the current schema: nothing, apart from webhook-secret and plan-approval backfills.
+ * Throws MigrationError when a task is running under a live runner, the root is newer than
+ * this release, or a schema 2 file cannot be loaded. 0.3.0 refuses any schemaVersion other
+ * than 2, so a root stamped to 3 cannot be opened by going back.
  */
 export async function migrateDataRoot(
   root: string,
@@ -264,6 +274,26 @@ export function withMigrationLock<T>(
   );
 }
 
+/**
+ * Empty schema step. Rewrites `schemaVersion` 2 as the current schema and keeps every other
+ * field as stored. A file this release cannot load is left untouched.
+ */
+async function stampSettingsSchema2(settingsPath: string): Promise<string[]> {
+  const raw = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
+  if (raw.schemaVersion !== SETTINGS_SCHEMA_V2) return [];
+  const next = { ...raw, schemaVersion: SETTINGS_SCHEMA_VERSION };
+  const parsed = SettingsSchema.safeParse(next);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    throw new MigrationError(`cannot migrate ${settingsPath} from schema 2 to 3: ${detail}`);
+  }
+  // Write `next`, not the parsed value: parsing strips unknown keys and fills defaults.
+  await lockedAtomicWrite(settingsPath, JSON.stringify(next, null, 2) + "\n");
+  return [`${nowIso()} stamped settings schemaVersion from 2 to 3`];
+}
+
 async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<MigrationResult> {
   const paths = dataRootPaths(root);
   const legacyTasks = join(root, "tasks");
@@ -279,15 +309,20 @@ async function migrateUnlocked(root: string, opts: MigrateOptions): Promise<Migr
   }
 
   if (raw && "schemaVersion" in raw) {
-    if (raw.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
+    if (raw.schemaVersion !== SETTINGS_SCHEMA_VERSION && raw.schemaVersion !== SETTINGS_SCHEMA_V2) {
       throw new MigrationError(
         `${paths.settings} has schemaVersion ${String(raw.schemaVersion)}, newer than this boof-runner supports (${SETTINGS_SCHEMA_VERSION}); upgrade boof-runner`,
       );
     }
-    const log = [...(await moveWebhookSecrets(root)), ...(await backfillPlanApprovals(root))];
+    const stamped = await stampSettingsSchema2(paths.settings);
+    const log = [
+      ...stamped,
+      ...(await moveWebhookSecrets(root)),
+      ...(await backfillPlanApprovals(root)),
+    ];
     if (log.length > 0)
       await appendFile(join(root, "migration-v2.log"), log.join("\n") + "\n", "utf8");
-    return { kind: "current", log };
+    return { kind: stamped.length > 0 ? "migrated" : "current", log };
   }
 
   if (!raw && !(await exists(legacyTasks))) {

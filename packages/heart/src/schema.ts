@@ -591,10 +591,14 @@ export const RunnerSettingsSchema = z.object({
 });
 export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
 
-/** The `schemaVersion` written by this release. Absent in settings.json means v1. */
-export const SETTINGS_SCHEMA_VERSION = 2 as const;
+/**
+ * The `schemaVersion` written by this release. Absent in settings.json means v1.
+ * 2 is a 0.3.0 file: the first start stamps it to 3 and changes nothing else.
+ * 0.3.0 refuses any other version, so a stamped root cannot be opened by 0.3.0.
+ */
+export const SETTINGS_SCHEMA_VERSION = 3 as const;
 
-/** settings.json schema, v2 (global settings; per-project directories live in projects/). */
+/** settings.json (directory layout v2). `schemaVersion` is {@link SETTINGS_SCHEMA_VERSION}. */
 export const SettingsSchema = z.object({
   schemaVersion: z.literal(SETTINGS_SCHEMA_VERSION),
   runner: RunnerSettingsSchema,

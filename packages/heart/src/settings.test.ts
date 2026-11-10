@@ -20,6 +20,7 @@ import { newTask, parseTask, serializeTask } from "./task-file.js";
 import {
   ConciergeSettingsSchema,
   RoleAssignmentSchema,
+  SETTINGS_SCHEMA_VERSION,
   SettingsPatchSchema,
   type Project,
   type Settings,
@@ -103,7 +104,7 @@ describe("settings compatibility", () => {
   });
   it("loads an old settings.json without observer or review", async () => {
     const old = {
-      schemaVersion: 2,
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
       runner: { enabled: false },
       roles: {
         planner: { tool: "mock", model: "m" },
@@ -237,9 +238,9 @@ describe("v2 settings store", () => {
     expect((await store.update({ projectsRoot: null })).projectsRoot).toBeUndefined();
   });
 
-  it("scaffolds v2 defaults: schemaVersion 2, no default project, concurrency 1, no workingDirectory", async () => {
+  it("scaffolds defaults at this release's schema, no default project, concurrency 1, no workingDirectory", async () => {
     const s = await new SettingsStore(root).load();
-    expect(s.schemaVersion).toBe(2);
+    expect(s.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
     expect(s.defaultProject).toBeNull();
     expect(s.runner).toEqual({ enabled: false, concurrency: 1, inheritMcpServers: false });
     expect(Object.keys(s)).not.toContain("workingDirectory");

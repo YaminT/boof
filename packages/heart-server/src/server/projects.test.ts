@@ -10,6 +10,7 @@ import {
   defaultSettings,
   ProjectStore,
   SecuritySettingsSchema,
+  SETTINGS_SCHEMA_VERSION,
   SettingsStore,
   type Scope,
   execCommand,
@@ -431,7 +432,7 @@ describe("settings with projects", () => {
     expect(res.status).toBe(400);
     const settings = await (await call("/api/settings")).json();
     expect(settings).not.toHaveProperty("workingDirectory");
-    expect(settings.schemaVersion).toBe(2);
+    expect(settings.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
     expect(settings.defaultProject).toBeNull();
   });
 
