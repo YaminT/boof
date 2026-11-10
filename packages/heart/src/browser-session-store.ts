@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmod, lstat, mkdir, open, stat } from "node:fs/promises";
 import { constants, type Stats } from "node:fs";
@@ -374,6 +375,9 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
    * is replaced so startup can still mint a fresh epoch.
    */
   async beginEpoch(): Promise<void> {
+    // No session or link file yet: there is nothing to invalidate, and a mint creates its own
+    // epoch. Do not create the auth directory just by starting the server.
+    if (!existsSync(this.sessionsPath) && !existsSync(this.linksPath)) return;
     await this.mutate(async ({ links, sessions, epoch }) => {
       const nowMs = this.now();
       await this.commit(
