@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
 import { execCommand } from "./process.js";
-import { GIT_HARDENING_ARGS, leftoversBranch, registeredWorktreeBranch } from "./git.js";
+import { hardenedGitArgs, leftoversBranch, registeredWorktreeBranch } from "./git.js";
 import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";
@@ -89,15 +89,14 @@ async function git(cwd: string, args: string[]) {
   // is committing in (that takes index.lock and can fail the agent's own git add or commit).
   const res = await execCommand(
     "git",
-    [
-      ...GIT_HARDENING_ARGS,
+    await hardenedGitArgs(cwd, [
       "--no-pager",
       "--no-optional-locks",
       "--literal-pathspecs",
       "-c",
       "core.quotepath=off",
       ...args,
-    ],
+    ]),
     { cwd, timeoutMs: 30000 },
   );
   return { code: res.code, out: res.stdout, err: res.stderr.trim() };

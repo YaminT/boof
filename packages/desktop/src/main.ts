@@ -18,6 +18,7 @@ import {
   BrowserSessionStore,
   dataRootPaths,
   migrateDataRoot,
+  dataRootAccessNotice,
   securitySettings,
   SettingsStore,
   tightenDataRoot,
@@ -118,6 +119,10 @@ async function ensureDataRoot(): Promise<string> {
   await mkdir(root, { recursive: true });
   const tightened = await tightenDataRoot(root);
   if (tightened.unsafeParent) console.warn(`warning: ${tightened.unsafeParent.message}`);
+  if (!tightened.changed || ("via" in tightened && tightened.via === "acl")) {
+    const notice = dataRootAccessNotice(root, tightened);
+    if (notice) console.warn(notice);
+  }
   await migrateDataRoot(root);
   await mkdir(dataRootPaths(root).projects, { recursive: true });
   return root;
