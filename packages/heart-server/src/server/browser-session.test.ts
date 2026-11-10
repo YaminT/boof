@@ -116,6 +116,11 @@ describe("browser session authentication", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Strict");
     expect(cookie).toContain("Max-Age=2592000");
+    // Host-only: no Domain attribute, so the cookie is not shared with other host names.
+    // The path is `/` because the UI and the API are not under one prefix; port is not part of
+    // cookie scope, so a link to another service on this host must use a different host name.
+    expect(cookie).toContain("Path=/");
+    expect(cookie).not.toMatch(/Domain=/i);
     const token = cookie.match(/^boof_ui_4319=([^;]+)/)![1];
     const who = await request(app, "/api/v1/whoami", {
       headers: { cookie: `boof_ui_4319=${token}` },
