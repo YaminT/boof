@@ -18,7 +18,7 @@ import { pinnedRequest } from "../server/pinned-post.js";
 import { startServer } from "../server/server.js";
 import { N8nClient } from "./client.js";
 import { writeWorkflowCache } from "./workflows.js";
-import { MAX_CHECK_TASKS_PER_PASS, N8nWatcher } from "./watcher.js";
+import { MAX_CHECK_TASKS_PER_PASS, N8nWatcher, STOP_WAIT_MS } from "./watcher.js";
 
 const KEY = "n8n_api_KEY_secret_value";
 let root: string;
@@ -433,7 +433,9 @@ describe("N8nWatcher", () => {
     await setup({ workflows: [wf("a", "2026-11-09T10:00:00.000Z")] });
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
+    let entered = false;
     const slow = (async (url: string, addrs: readonly string[], init: unknown) => {
+      entered = true;
       await gate; // ignores the abort signal on purpose
       return pinnedRequest(url, addrs, { ...(init as object), signal: undefined } as never);
     }) as typeof pinnedRequest;
@@ -443,10 +445,16 @@ describe("N8nWatcher", () => {
       client: new N8nClient({ root, env: {}, isSelfUrl: notSelf, request: slow }),
     });
     const pass = w.tick();
-    await new Promise((r) => setTimeout(r, 50));
+    // A fixed sleep races the pass: under load stop() can run before the request is
+    // gated, find nothing to wait for, and return. Wait until the gate is held.
+    await vi.waitFor(() => expect(entered).toBe(true), { timeout: 15_000 });
     let stopped = false;
-    const stopping = w.stop().then(() => (stopped = true));
-    await new Promise((r) => setTimeout(r, 100));
+    const stopping = w.stop().then(() => {
+      stopped = true;
+    });
+    // The request ignores abort, so stop() stays pending until the gate opens
+    // (or STOP_WAIT_MS). Flush promise reactions so an early return is visible.
+    await new Promise((r) => setImmediate(r));
     expect(stopped).toBe(false);
     release();
     await stopping;
@@ -454,27 +462,35 @@ describe("N8nWatcher", () => {
     expect(JSON.parse(await readFile(dataRootPaths(root).n8nSeen, "utf8")).seen.a).toBe(
       "2026-11-09T10:00:00.000Z",
     );
-  });
+  }, 45_000);
 
   it("stop() aborts a hung request and returns within the bound", async () => {
     await setup({ workflows: [wf("a", "2026-11-09T10:00:00.000Z")] });
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const hung = ((_u: string, _a: readonly string[], init: { signal?: AbortSignal }) =>
+    let hung = false;
+    const hungRequest = ((_u: string, _a: readonly string[], init: { signal?: AbortSignal }) =>
       new Promise((_res, rej) => {
-        init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        hung = true;
+        const abort = () => rej(new Error("aborted"));
+        if (init.signal?.aborted) {
+          abort();
+          return;
+        }
+        init.signal?.addEventListener("abort", abort, { once: true });
       })) as unknown as typeof pinnedRequest;
     const w = new N8nWatcher({
       root,
       service,
-      client: new N8nClient({ root, env: {}, isSelfUrl: notSelf, request: hung }),
+      client: new N8nClient({ root, env: {}, isSelfUrl: notSelf, request: hungRequest }),
     });
     const pass = w.tick();
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => expect(hung).toBe(true), { timeout: 15_000 });
     const t0 = Date.now();
     await w.stop();
-    expect(Date.now() - t0).toBeLessThan(2000);
+    // Abort must beat the STOP_WAIT_MS race. That constant is the hang path.
+    expect(Date.now() - t0).toBeLessThan(STOP_WAIT_MS);
     expect(await pass).toEqual({ created: [], updated: [] });
-  });
+  }, 30_000);
 
   it("start() twice runs one timer chain; stop() then start() runs one", async () => {
     const f = await setup({

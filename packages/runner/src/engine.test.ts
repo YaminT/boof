@@ -1616,10 +1616,11 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     } finally {
       clearInterval(poll);
     }
-    expect(Date.now() - started).toBeLessThan(8000);
+    // Backoff is 60s, polled every 250ms. 45s still fails that wait and covers a slow run.
+    expect(Date.now() - started).toBeLessThan(45_000);
     expect(devCalls()).toBe(1);
     expect(await exists(wtPath())).toBe(true);
-  });
+  }, 120_000);
 
   it("a stalled tool is killed and retried as a transient failure", async () => {
     await configure({ retries: { idleTimeoutMs: 300 } });

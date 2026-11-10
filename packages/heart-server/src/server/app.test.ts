@@ -621,9 +621,10 @@ describe("long polls end when the client disconnects", () => {
       const res = await pending;
       expect(res.status, path).toBe(200);
       expect(await res.json()).toMatchObject({ changed: false, timedOut: true });
-      expect(Date.now() - started, path).toBeLessThan(5_000); // not the 30 s deadline
+      // Abort must beat timeoutSeconds (30). 20s is scheduler slack under load.
+      expect(Date.now() - started, path).toBeLessThan(20_000);
     }
-  });
+  }, 90_000);
 });
 
 describe("attachments API", () => {

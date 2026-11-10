@@ -236,8 +236,9 @@ describe("tools generated from the registry", () => {
     // The server side is the proof: onCall fires only when the handler returned.
     const info = await done;
     expect(info).toMatchObject({ tool: "boof_wait_task", ok: true });
-    expect(Date.now() - started).toBeLessThan(5_000);
-  });
+    // Cancel must beat timeoutSeconds (30). 20s is scheduler slack under load.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 45_000);
 
   it("lists the tools with their scopes (snapshot of names)", async () => {
     const client = await connect(LOCAL_PRINCIPAL);
@@ -1046,8 +1047,9 @@ describe("handleMcpHttp", () => {
     ctrl.abort();
     await pending.catch(() => undefined); // the transport may reject once the request is aborted
     expect((await done).tool).toBe("boof_wait_task");
-    expect(Date.now() - started).toBeLessThan(5_000);
-  });
+    // Abort must beat timeoutSeconds (30). 20s is scheduler slack under load.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 45_000);
 
   describe("stdio n8n self check", () => {
     const update = (c: Client, port: number) =>

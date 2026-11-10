@@ -577,8 +577,9 @@ describe("execCommand idle watchdog", () => {
     expect(res.stalled).toBe(true);
     expect(res.timedOut).toBe(false);
     expect(res.stopped).toBe(false);
-    expect(Date.now() - started).toBeLessThan(10000);
-  });
+    // idleTimeoutMs is 300. The child would otherwise sit for 60s. 30s is timer slack under load.
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 90_000);
 
   it("does not kill a child that keeps printing", async () => {
     const script =

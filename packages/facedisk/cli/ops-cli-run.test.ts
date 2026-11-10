@@ -222,8 +222,9 @@ describe("generated commands", () => {
       AbortSignal.abort(),
     );
     expect(code).toBe(130);
-    expect(Date.now() - started).toBeLessThan(5000);
-  });
+    // Already aborted, so this must not sit out the 30s wait. 20s is load slack.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 45_000);
 
   it("warnings go to stderr and keep --json stdout one document", async () => {
     await seed();

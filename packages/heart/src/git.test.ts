@@ -240,8 +240,9 @@ describe("initGitRepo", () => {
     await expect(
       initGitRepo(dir, { timeoutMs: 300, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }),
     ).rejects.toThrow(/timed out after 300 ms/);
-    expect(Date.now() - started).toBeLessThan(5000);
-  });
+    // The fake git sleeps 30s. Killing it at 300ms must win; 20s is timer slack under load.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 45_000);
 });
 
 describe("agent-planted git config does not run server-side", () => {

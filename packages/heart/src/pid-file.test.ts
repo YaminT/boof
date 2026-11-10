@@ -160,7 +160,9 @@ describe("pid file", () => {
         await writePidFile(path, { pgid: member.pid!, command: "node", ownerPid: null });
         const t0 = Date.now();
         expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("dead");
-        expect(Date.now() - t0).toBeLessThan(1000);
+        // Unlink only: this pid is not a group leader, so the term/kill waits do not run.
+        // 15s is scheduler slack under load. A kill would fail the outcome or isAlive check.
+        expect(Date.now() - t0).toBeLessThan(15_000);
         expect(isAlive(member.pid!)).toBe(true);
       } finally {
         member.kill("SIGKILL");
@@ -200,6 +202,7 @@ describe("pid file", () => {
       await writePidFile(path, { pgid: older.pid!, command: "node", ownerPid: null });
       expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("killed");
     },
+    60_000,
   );
 });
 

@@ -396,6 +396,8 @@ describe("createWindowAuth", () => {
     await expect(auth.release()).resolves.toBeUndefined();
   });
 
+  // Sixty create/revoke rounds rewrite the session file. The default 20s test
+  // timeout already failed this on a loaded 4-core host (the file reached 21s).
   it("60 launches leave at most one desktop session and never evict a boof-runner open session", async () => {
     const root = await mkdtemp(join(tmpdir(), "boof-desktop-churn-"));
     try {
@@ -428,7 +430,7 @@ describe("createWindowAuth", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 
   it("quit runs cleanup after the drain and before the server stops", async () => {
     const order: string[] = [];
