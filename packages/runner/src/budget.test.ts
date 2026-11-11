@@ -33,7 +33,8 @@ let settings: SettingsStore;
 async function repo(): Promise<string> {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "boof-budget-work-")));
   dirs.push(dir);
-  const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);

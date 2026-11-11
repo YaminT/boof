@@ -31,7 +31,8 @@ beforeEach(async () => {
   transportArgs.length = 0;
   dataRoot = await mkdtemp(join(tmpdir(), "boof-self-data-"));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-self-repo-")));
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);

@@ -1,9 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer as createNetServer } from "node:net";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createConnection, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultSettings, SettingsStore } from "@boof/heart";
+import { dataRootPaths, defaultSettings, SettingsStore } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import { startServer, type RunningServer } from "./server.js";
 
@@ -41,6 +41,74 @@ const start = (port: number): Promise<RunningServer> =>
   });
 
 describe("startServer's external-step prune timer", () => {
+  it("records its live port and reserves IPv6 when that address is available", async () => {
+    const srv = await start(0);
+    try {
+      const record = JSON.parse(await readFile(dataRootPaths(root).serverPort, "utf8")) as {
+        pid: number;
+        port: number;
+      };
+      expect(record).toEqual({ pid: process.pid, port: srv.port });
+      for (const host of ["127.0.0.1", "::1"]) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const socket = createConnection({ host, port: srv.port });
+            socket.once("connect", () => {
+              socket.destroy();
+              resolve();
+            });
+            socket.once("error", reject);
+          });
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (
+            host === "127.0.0.1" ||
+            !["EAFNOSUPPORT", "EADDRNOTAVAIL", "EADDRINUSE"].includes(code ?? "")
+          ) {
+            throw err;
+          }
+        }
+      }
+      await srv.stop();
+      await expect(readFile(dataRootPaths(root).serverPort, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      if (srv.server.listening) await srv.stop();
+    }
+  });
+
+  it("keeps the IPv4 server running when the optional IPv6 reservation is busy", async () => {
+    const portPicker = createNetServer();
+    await new Promise<void>((resolve) => portPicker.listen(0, "127.0.0.1", resolve));
+    const address = portPicker.address();
+    if (!address || typeof address === "string") throw new Error("expected TCP address");
+    await new Promise<void>((resolve) => portPicker.close(() => resolve()));
+
+    const holder6 = createNetServer();
+    await new Promise<void>((resolve, reject) => {
+      holder6.once("error", reject);
+      holder6.listen({ host: "::1", port: address.port, ipv6Only: true }, resolve);
+    });
+    let srv: RunningServer | undefined;
+    try {
+      srv = await start(address.port);
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const socket = createConnection({ host: "127.0.0.1", port: srv!.port });
+          socket.once("connect", () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.once("error", reject);
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      if (srv?.server.listening) await srv.stop();
+      await new Promise<void>((resolve) => holder6.close(() => resolve()));
+    }
+  });
+
   it("stop() clears the hourly prune interval", async () => {
     const setSpy = vi.spyOn(globalThis, "setInterval");
     const clearSpy = vi.spyOn(globalThis, "clearInterval");

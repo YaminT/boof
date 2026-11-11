@@ -84,7 +84,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build the Linux sandbox helper
+        run: node packages/sandbox-linux/build.mjs && test -x packages/sandbox-linux/dist/boof-sandbox
+
       - name: Test
+        env:
+          BOOF_REQUIRE_SANDBOX: "1"
         run: npm test
 
       - name: Lint
@@ -145,3 +150,28 @@ jobs:
           if node bin/dist/boof-runner.js status; then echo "an unknown command must exit 1"; exit 1; fi
           npm install -g --prefix "$RUNNER_TEMP/prefix" . --no-audit --no-fund
           "$RUNNER_TEMP/prefix/bin/boof-runner" --version
+
+  sandbox-macos:
+    name: sandbox acceptance on macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Sandbox acceptance
+        env:
+          BOOF_REQUIRE_SANDBOX: "1"
+        run: npx vitest run packages/runner/src/sandbox/accept-files.test.ts packages/runner/src/sandbox/accept-net.test.ts packages/runner/src/sandbox/accept-proc.test.ts packages/runner/src/sandbox/accept.test.ts packages/runner/src/sandbox/accept-gate.test.ts packages/runner/src/sandbox/accept-task.test.ts

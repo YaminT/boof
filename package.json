@@ -38,6 +38,7 @@
     "desktop:dist": "npm run desktop:build && npm run dist -w @boof/desktop",
     "desktop:dist:mac": "npm run desktop:build && npm run dist:mac -w @boof/desktop",
     "desktop:dist:win": "npm run desktop:build && npm run dist:win -w @boof/desktop",
+    "desktop:dist:linux": "npm run desktop:build && npm run dist:linux -w @boof/desktop",
     "docs:gen": "tsx scripts/gen-harness-reference.ts",
     "lint": "prettier --check .",
     "format": "prettier --write ."

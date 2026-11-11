@@ -1,4 +1,15 @@
-import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  stat,
+  mkdir,
+  readFile,
+  chmod,
+  rename,
+  symlink,
+  unlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +27,8 @@ import {
   discardWorktree,
   ensureWorktree as ensure,
   finalizeWorktree,
+  checkedWorktreeGit,
+  verifyWorktreeRecord,
   NotAGitRepoError,
   UnknownBaseRefError,
   type WorktreeOptions,
@@ -24,7 +37,8 @@ import {
 let repo: string;
 let nonRepo: string;
 
-const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+const g = (args: string[]) =>
+  execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
 
 const rootOf = () => join(repo, ".boof-runner-worktrees");
 const createWorktree = async (dir: string, id: string, opts?: Partial<WorktreeOptions>) =>
@@ -70,8 +84,16 @@ describe("worktree isolation", () => {
 
     // Make a change inside the worktree.
     await writeFile(join(wt.path, "feature.txt"), "new feature\n");
-    await execCommand("git", ["add", "."], { cwd: wt.path, timeoutMs: 10000 });
-    await execCommand("git", ["commit", "-m", "feat"], { cwd: wt.path, timeoutMs: 10000 });
+    await execCommand("git", ["add", "."], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    await execCommand("git", ["commit", "-m", "feat"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
 
     const diff = (await diffAgainstBase(wt)).text;
     expect(diff).toContain("feature.txt");
@@ -106,6 +128,142 @@ describe("worktree isolation", () => {
     expect(res.bytes).toBeGreaterThan(0);
     expect(res.capped).toBe(false);
     await finalizeWorktree(repo, wt, "t");
+  });
+
+  it("does not run a clean filter from an agent-controlled submodule", async () => {
+    const source = await mkdtemp(join(tmpdir(), "boof-submodule-source-"));
+    const marker = join(nonRepo, "filter-ran");
+    const sh = (cwd: string, args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 15000 });
+    try {
+      await sh(source, ["init", "-b", "main"]);
+      await sh(source, ["config", "user.email", "test@example.com"]);
+      await sh(source, ["config", "user.name", "Test"]);
+      await writeFile(join(source, "g"), "same-size\n");
+      await sh(source, ["add", "."]);
+      await sh(source, ["commit", "-m", "submodule base"]);
+      await sh(repo, ["-c", "protocol.file.allow=always", "submodule", "add", source, "sub"]);
+      await g(["add", "."]);
+      await g(["commit", "-m", "with submodule"]);
+
+      const wt = await createWorktree(repo, "submodule-filter");
+      const nested = join(wt.path, "sub");
+      await sh(wt.path, ["-c", "protocol.file.allow=always", "submodule", "update", "--init"]);
+      const nestedGitDir = (await sh(nested, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      await writeFile(join(nestedGitDir, "info", "attributes"), "* filter=pwn\n");
+      await sh(nested, ["config", "filter.pwn.clean", `touch ${marker}; cat`]);
+      await writeFile(join(nested, "g"), "changed!!\n");
+
+      await writeFile(
+        join(wt.path, ".gitmodules"),
+        '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
+      );
+      await expect(diffAgainstBase(wt)).rejects.toThrow(
+        /refusing task worktree git command with gitlinks or \.gitmodules/,
+      );
+      await expect(commitLeftovers(repo, wt, "submodule filter")).rejects.toThrow(
+        /refusing to snapshot gitlink entries/,
+      );
+      expect(await exists(marker)).toBe(false);
+      await finalizeWorktree(repo, wt, "submodule filter");
+    } finally {
+      await rm(source, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an agent-staged gitlink before leftovers can rewrite the index", async () => {
+    const wt = await createWorktree(repo, "staged-gitlink");
+    const commit = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    const staged = await execCommand(
+      "git",
+      ["update-index", "--add", "--cacheinfo", `160000,${commit},agent-link`],
+      { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 10000 },
+    );
+    expect(staged.code, staged.stderr).toBe(0);
+    await expect(commitLeftovers(repo, wt, "staged gitlink")).rejects.toThrow(
+      "refusing to snapshot gitlink entries",
+    );
+  });
+
+  it("refuses a gitlink present only in HEAD after the agent removed it from the index", async () => {
+    const wt = await createWorktree(repo, "head-gitlink");
+    const commit = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    const add = await execCommand(
+      "git",
+      ["update-index", "--add", "--cacheinfo", `160000,${commit},agent-link`],
+      { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 10000 },
+    );
+    expect(add.code, add.stderr).toBe(0);
+    const commitGitlink = await execCommand("git", ["commit", "-m", "agent gitlink"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    expect(commitGitlink.code, commitGitlink.stderr).toBe(0);
+    const remove = await execCommand("git", ["rm", "--cached", "agent-link"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    expect(remove.code, remove.stderr).toBe(0);
+    await expect(commitLeftovers(repo, wt, "HEAD gitlink")).rejects.toThrow(
+      "gitlink entries present in HEAD",
+    );
+  });
+
+  it("refuses a symlink in the common reflog path before runner git calls", async () => {
+    const wt = await createWorktree(repo, "reflog-symlink");
+    const common = (await repoCommonDir(repo))!;
+    const logs = join(common, "logs");
+    const savedLogs = join(common, "logs-saved-for-test");
+    const victim = join(nonRepo, "victim");
+    await writeFile(victim, "preserve this file\n");
+    await rename(logs, savedLogs);
+    await symlink(victim, logs);
+    try {
+      await expect(commitLeftovers(repo, wt, "reflog symlink")).rejects.toThrow(
+        "git reflog path contains a symlink",
+      );
+      expect(await readFile(victim, "utf8")).toBe("preserve this file\n");
+    } finally {
+      await unlink(logs);
+      await rename(savedLogs, logs);
+    }
+  });
+
+  it("refuses a symlink in the per-worktree HEAD reflog", async () => {
+    const wt = await createWorktree(repo, "worktree-reflog-link");
+    const admin = join(wt.commonDir!, "worktrees", wt.worktreeName!);
+    const victim = join(nonRepo, "worktree-reflog-victim");
+    const logs = join(admin, "logs");
+    await writeFile(victim, "preserve\n");
+    await mkdir(logs, { recursive: true });
+    await symlink(victim, join(logs, "HEAD"));
+    await expect(verifyWorktreeRecord(wt)).rejects.toThrow("git reflog path contains a symlink");
+    expect(await readFile(victim, "utf8")).toBe("preserve\n");
+  });
+
+  it("verifies and pins checked worktree git calls, refusing config.worktree", async () => {
+    const wt = await createWorktree(repo, "trusted-record");
+    await expect(verifyWorktreeRecord(wt)).resolves.toBeUndefined();
+    const pinned = await checkedWorktreeGit(wt, ["rev-parse", "--show-toplevel"], {
+      GIT_DIR: "/tmp/attacker.git",
+      GIT_WORK_TREE: "/tmp/attacker-tree",
+    });
+    expect(pinned.code).toBe(0);
+    expect(pinned.out).toBe(wt.path);
+    const admin = join(wt.commonDir!, "worktrees", wt.worktreeName!);
+    await writeFile(join(admin, "config.worktree"), "[core]\\n\tfsmonitor = true\\n");
+    await expect(checkedWorktreeGit(wt, ["status", "--porcelain"])).rejects.toThrow(
+      "task worktree config.worktree is not allowed",
+    );
+  });
+
+  it("clearly refuses a legacy worktree record without trusted git fields", async () => {
+    const wt = await createWorktree(repo, "legacy-record");
+    await expect(
+      verifyWorktreeRecord({ path: wt.path, branch: wt.branch, base: wt.base }),
+    ).rejects.toThrow("task worktree is missing its trusted git record");
   });
 
   it("untracked content counts toward the inline cap", async () => {
@@ -151,8 +309,16 @@ describe("worktree isolation", () => {
   it("re-creating a task whose branch exists reuses it and keeps its commits", async () => {
     const first = await createWorktree(repo, "t4");
     await writeFile(join(first.path, "prior.txt"), "prior\n");
-    await execCommand("git", ["add", "."], { cwd: first.path, timeoutMs: 10000 });
-    await execCommand("git", ["commit", "-m", "prior"], { cwd: first.path, timeoutMs: 10000 });
+    await execCommand("git", ["add", "."], {
+      launch: { kind: "direct" },
+      cwd: first.path,
+      timeoutMs: 10000,
+    });
+    await execCommand("git", ["commit", "-m", "prior"], {
+      launch: { kind: "direct" },
+      cwd: first.path,
+      timeoutMs: 10000,
+    });
     await finalizeWorktree(repo, first, "prior work");
     const sha = (await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim();
     expect(await exists(first.path)).toBe(false);
@@ -192,7 +358,8 @@ describe("worktree isolation", () => {
   it("finalize keeps a worktree whose HEAD left the task branch", async () => {
     const wt = await createWorktree(repo, "t7");
     const sha = (await g(["rev-parse", "refs/heads/boof-runner/t7"])).stdout.trim();
-    const w = (args: string[]) => execCommand("git", args, { cwd: wt.path, timeoutMs: 15000 });
+    const w = (args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 15000 });
     await w(["checkout", "--detach"]);
     await writeFile(join(wt.path, "detached.txt"), "x\n");
     await w(["add", "-A"]);
@@ -225,7 +392,12 @@ describe("worktree isolation", () => {
 
     const bySha = await createWorktree(repo, "b2", { base: relSha });
     expect(bySha.base).toBe(relSha);
-    const headOf = (await execCommand("git", ["rev-parse", "HEAD"], { cwd: bySha.path })).stdout;
+    const headOf = (
+      await execCommand("git", ["rev-parse", "HEAD"], {
+        launch: { kind: "direct" },
+        cwd: bySha.path,
+      })
+    ).stdout;
     expect(headOf.trim()).toBe(relSha);
 
     const byDefault = await createWorktree(repo, "b3");
@@ -275,7 +447,7 @@ describe("worktree isolation", () => {
 
   describe("leftovers", () => {
     const w = (wt: { path: string }, args: string[]) =>
-      execCommand("git", args, { cwd: wt.path, timeoutMs: 15000 });
+      execCommand("git", args, { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 15000 });
 
     it("commitLeftovers leaves the task branch and worktree untouched", async () => {
       const wt = await createWorktree(repo, "l1");
@@ -286,19 +458,6 @@ describe("worktree isolation", () => {
       await writeFile(join(wt.path, "README.md"), "# edited\n");
       await mkdir(join(wt.path, "scratch"), { recursive: true });
       await writeFile(join(wt.path, "scratch", "n.txt"), "n\n");
-      await mkdir(join(wt.path, "nested-repo"), { recursive: true });
-      await w({ path: join(wt.path, "nested-repo") }, ["init", "-b", "main"]);
-      await writeFile(join(wt.path, "nested-repo", "f"), "f\n");
-      await w({ path: join(wt.path, "nested-repo") }, ["add", "."]);
-      await w({ path: join(wt.path, "nested-repo") }, [
-        "-c",
-        "user.name=x",
-        "-c",
-        "user.email=x@y",
-        "commit",
-        "-m",
-        "n",
-      ]);
       const statusBefore = (await w(wt, ["status", "--porcelain"])).stdout;
 
       const left = await commitLeftovers(repo, wt, "title");
@@ -345,7 +504,8 @@ describe("worktree isolation", () => {
     const nested = async (wt: { path: string }, name: string, commit: boolean) => {
       const dir = join(wt.path, name);
       await mkdir(dir, { recursive: true });
-      const run = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+      const run = (args: string[]) =>
+        execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
       await run(["init", "-b", "main"]);
       await writeFile(join(dir, "f.txt"), "f\n");
       if (commit) {
@@ -370,16 +530,24 @@ describe("worktree isolation", () => {
       await nested(wt, "withcommit", true);
       const lines = (await finalizeWorktree(repo, wt, "t")).join("\n");
       expect(await exists(join(wt.path, "withcommit", "uncommitted.txt"))).toBe(true);
-      expect(lines).toContain("nested git repositories");
+      expect(lines).toContain("refusing to snapshot gitlink entries");
       expect(lines).toContain("withcommit");
     });
 
-    it("commitLeftovers reports the unsaved paths", async () => {
+    it("refuses untracked nested repositories that become gitlinks", async () => {
       const wt = await createWorktree(repo, "n3");
       await nested(wt, "fresh", false);
       await nested(wt, "withcommit", true);
-      const left = await commitLeftovers(repo, wt, "t");
-      expect([...left!.unsaved].sort()).toEqual(["fresh", "withcommit"]);
+      const wtGit = (args: string[]) =>
+        execCommand("git", args, { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 15000 });
+      const indexBefore = (await wtGit(["ls-files", "--stage", "-z"])).stdout;
+      await expect(commitLeftovers(repo, wt, "t")).rejects.toThrow(
+        "refusing to snapshot gitlink entries: withcommit",
+      );
+      expect((await wtGit(["ls-files", "--stage", "-z"])).stdout).toBe(indexBefore);
+      expect((await g(["rev-parse", "--verify", "--quiet", "refs/heads/n3--leftovers"])).code).toBe(
+        1,
+      );
     });
   });
 
@@ -469,7 +637,9 @@ describe.skipIf(process.platform === "win32")("worktree add timeout and cleanup"
   /** A `git` that runs the real `worktree add`, deletes README.md from the new tree, then hangs or fails. */
   const shim = async (mode: "hang" | "fail") => {
     shimDir = await mkdtemp(join(tmpdir(), "boof-git-shim-"));
-    const real = (await execCommand("sh", ["-c", "command -v git"], { cwd: repo })).stdout.trim();
+    const real = (
+      await execCommand("sh", ["-c", "command -v git"], { launch: { kind: "direct" }, cwd: repo })
+    ).stdout.trim();
     await writeFile(
       join(shimDir, "git"),
       [

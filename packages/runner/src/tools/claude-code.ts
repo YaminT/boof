@@ -27,6 +27,7 @@ export class ClaudeCodeTool implements Tool {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
     const res = await execCommand(this.bin, ["--version"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       timeoutMs: 8000,
       env: agentEnv(),
@@ -47,7 +48,7 @@ export class ClaudeCodeTool implements Tool {
         ...(detect.inheritMcpServers ? [] : ["--strict-mcp-config"]),
         "Reply with exactly: hi",
       ],
-      { cwd: process.cwd(), timeoutMs: 45000, env: agentEnv() },
+      { cwd: process.cwd(), timeoutMs: 45000, env: agentEnv(), launch: { kind: "direct" } },
     );
     if (probe.code !== 0 || probe.timedOut || !probe.stdout.trim()) {
       return {
@@ -69,6 +70,7 @@ export class ClaudeCodeTool implements Tool {
       cwd: process.cwd(),
       timeoutMs: 8000,
       env: agentEnv(),
+      launch: { kind: "direct" },
     });
     if (res.code !== 0) return [...this.defaultModels];
     return unique([...this.defaultModels, ...parseClaudeModelsFromHelp(res.stdout + res.stderr)]);
@@ -123,6 +125,7 @@ export class ClaudeCodeTool implements Tool {
 
     const render = new StreamRenderer((text) => opts.onChunk?.(text));
     const res = await execCommand(this.bin, args, {
+      launch: opts.launch ?? { kind: "direct" },
       cwd: opts.cwd,
       env: { ...childEnv, ...gatewayEnv("anthropic", opts.gateway) },
       input: opts.prompt,

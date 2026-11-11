@@ -112,7 +112,8 @@ const stepLabels = async (id = "t1") =>
 beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-pipe-ext-data-"));
   workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-pipe-ext-work-")));
-  const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -139,8 +140,16 @@ beforeEach(async () => {
     asked.push({ role: o.role, prompt: o.prompt });
     if (o.role === "developer") {
       await writeFile(join(o.cwd, "feature.txt"), "feature\n");
-      await execCommand("git", ["add", "feature.txt"], { cwd: o.cwd, timeoutMs: 15000 });
-      await execCommand("git", ["commit", "-m", "dev"], { cwd: o.cwd, timeoutMs: 15000 });
+      await execCommand("git", ["add", "feature.txt"], {
+        launch: { kind: "direct" },
+        cwd: o.cwd,
+        timeoutMs: 15000,
+      });
+      await execCommand("git", ["commit", "-m", "dev"], {
+        launch: { kind: "direct" },
+        cwd: o.cwd,
+        timeoutMs: 15000,
+      });
     }
   };
 });
@@ -351,6 +360,7 @@ describe("external steps in the pipeline", () => {
     expect(call.payload.task.branch).toBeUndefined();
     expect(call.payload.task.base).toBeUndefined();
     const { stdout } = await execCommand("git", ["branch", "--list", "boof-runner/*"], {
+      launch: { kind: "direct" },
       cwd: workDir,
       timeoutMs: 15000,
     });

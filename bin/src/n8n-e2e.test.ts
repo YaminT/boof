@@ -168,7 +168,8 @@ interface WorldOptions {
 async function world(opts: WorldOptions = {}): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "boof-n8n-e2e-data-"));
   const repo = await realpath(await mkdtemp(join(tmpdir(), "boof-n8n-e2e-repo-")));
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -192,7 +193,12 @@ async function world(opts: WorldOptions = {}): Promise<World> {
 
   const base: Settings = {
     ...defaultSettings(),
-    runner: { enabled: true, concurrency: 1, inheritMcpServers: false },
+    runner: {
+      ...defaultSettings().runner,
+      enabled: true,
+      concurrency: 1,
+      inheritMcpServers: false,
+    },
     defaultProject: "default",
     roles: {
       planner: { tool: "mock", model: "mock-default" },
@@ -301,8 +307,16 @@ beforeEach(() => {
     asked.push({ role: o.role, prompt: o.prompt });
     if (o.role === "developer") {
       await writeFile(join(o.cwd, "feature.txt"), "feature\n");
-      await execCommand("git", ["add", "feature.txt"], { cwd: o.cwd, timeoutMs: 15000 });
-      await execCommand("git", ["commit", "-m", "dev"], { cwd: o.cwd, timeoutMs: 15000 });
+      await execCommand("git", ["add", "feature.txt"], {
+        launch: { kind: "direct" },
+        cwd: o.cwd,
+        timeoutMs: 15000,
+      });
+      await execCommand("git", ["commit", "-m", "dev"], {
+        launch: { kind: "direct" },
+        cwd: o.cwd,
+        timeoutMs: 15000,
+      });
     }
   };
   // Record (and still pass through) everything the process prints.

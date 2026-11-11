@@ -6,7 +6,12 @@ export const MAX_UNTRACKED = 200;
 
 const GIT_TIMEOUT_MS = 30_000;
 
-async function git(cwd: string, args: string[]) {
+export type UntrackedGitRunner = (
+  args: string[],
+) => Promise<{ code: number | null; stdout: string; stderr: string }>;
+
+async function git(cwd: string, args: string[], runner?: UntrackedGitRunner) {
+  if (runner) return runner(args);
   // --literal-pathspecs keeps file names from acting as pathspec magic.
   const prepared = await hardenedGitCommand(
     cwd,
@@ -15,6 +20,7 @@ async function git(cwd: string, args: string[]) {
     GIT_TIMEOUT_MS,
   );
   return execCommand("git", prepared.args, {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs: GIT_TIMEOUT_MS,
     env: prepared.env,
@@ -22,8 +28,8 @@ async function git(cwd: string, args: string[]) {
 }
 
 /** Untracked, not-ignored files of the worktree at `cwd` (at most MAX_UNTRACKED). */
-export async function untrackedFiles(cwd: string): Promise<string[]> {
-  const res = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]);
+export async function untrackedFiles(cwd: string, runner?: UntrackedGitRunner): Promise<string[]> {
+  const res = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], runner);
   if (res.code !== 0) {
     console.error(`could not list untracked files in ${cwd}: ${res.stderr.trim() || res.code}`);
     return [];
@@ -36,16 +42,25 @@ export async function untrackedFiles(cwd: string): Promise<string[]> {
  * Binary files give git's one-line "Binary files … differ"; a symlink is shown as a link,
  * never followed. Exit 1 only means "differs".
  */
-export async function untrackedPatch(cwd: string, path: string, context = 3): Promise<string> {
-  const res = await git(cwd, [
-    "diff",
-    `-U${context}`,
-    "--no-index",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--",
-    "/dev/null",
-    path,
-  ]);
+export async function untrackedPatch(
+  cwd: string,
+  path: string,
+  context = 3,
+  runner?: UntrackedGitRunner,
+): Promise<string> {
+  const res = await git(
+    cwd,
+    [
+      "diff",
+      `-U${context}`,
+      "--no-index",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--",
+      "/dev/null",
+      path,
+    ],
+    runner,
+  );
   return res.stdout;
 }

@@ -44,6 +44,7 @@ import {
 import { OwlishSecretStore } from "@boof/owlish";
 import { ProjectKeyStore } from "@boof/owlish";
 import { AgentAuthResolver } from "./agent-auth.js";
+import { refreshSandbox, sandboxBlockReason } from "./sandbox/index.js";
 
 export interface EngineOptions {
   root: string;
@@ -59,6 +60,8 @@ export interface EngineOptions {
   agentAuth?: AgentAuthResolver;
   /** Triggers n8n workflows for external steps and check tasks; absent: they fail. */
   external?: ExternalStepTransport;
+  /** Bound port of the server in this process. The sandbox denies it. Omit when nothing is listening. */
+  serverPort?: number;
 }
 
 const INTERRUPTED_HEAD =
@@ -111,6 +114,7 @@ export class RunnerEngine {
   private readonly onlyProject?: string;
   private readonly runWhenDisabled: boolean;
   private readonly external?: ExternalStepTransport;
+  private readonly serverPort?: number;
   /** In-flight pipelines by project id (the at-most-one-per-project invariant). */
   private readonly inflight = new Map<string, Promise<TickResult>>();
   /** Task id in flight per project id (so a shutdown can ask each one to stop). */
@@ -146,6 +150,7 @@ export class RunnerEngine {
     this.onlyProject = opts.onlyProject;
     this.runWhenDisabled = opts.runWhenDisabled ?? false;
     this.external = opts.external;
+    this.serverPort = opts.serverPort;
     this.pool =
       opts.pool ??
       new PoolGate({
@@ -204,6 +209,7 @@ export class RunnerEngine {
     let poolSkipped = false;
     let credentialUnreachable = false;
     const settings = await this.settingsStore.load();
+    await refreshSandbox(settings);
     const projects = await this.runnableProjects();
     const limited = settings.budget !== undefined || projects.some((p) => p.budget !== undefined);
     const status = limited ? await evaluateBudget(this.root, settings, projects) : null;
@@ -234,6 +240,16 @@ export class RunnerEngine {
         // A check task runs no agent and spends nothing: no tool, auth, pool or budget gate.
         if (task.frontmatter.n8nCheck) {
           if (!best || compareSelection({ project, task }, best) < 0) best = { project, task };
+          continue;
+        }
+        const sandboxReason = sandboxBlockReason(settings);
+        if (sandboxReason) {
+          try {
+            await this.failSandboxBeforeStart(project, task, sandboxReason);
+            await this.noteGoalTaskStatus(project, task, "failed");
+          } catch (error) {
+            console.error(`could not stop task ${task.frontmatter.id} for the sandbox:`, error);
+          }
           continue;
         }
         const eff = effectiveSettings(settings, project);
@@ -351,6 +367,25 @@ export class RunnerEngine {
     return { selection: best, blocked: [...blocked.values()] };
   }
 
+  /** Fail one task before it starts. No auth event: this is not an account refusal. */
+  private async failSandboxBeforeStart(
+    project: Project,
+    task: Task,
+    reason: string,
+  ): Promise<void> {
+    const store = this.storeFor(project);
+    const id = task.frontmatter.id;
+    const line = `sandbox_unavailable: ${reason}`;
+    await store.transition(
+      id,
+      "failed",
+      (t) => {
+        t.body.log += `${t.body.log ? "\n" : ""}### Not started\n${line}`;
+      },
+      { by: "runner", reason: line },
+    );
+  }
+
   private async refuseBeforeStart(project: Project, task: Task, reason: string): Promise<void> {
     const store = this.storeFor(project);
     const id = task.frontmatter.id;
@@ -446,7 +481,7 @@ export class RunnerEngine {
         id,
         "failed",
         undefined,
-        outcome.budget || outcome.pool || outcome.authRefused
+        outcome.budget || outcome.pool || outcome.authRefused || outcome.sandbox
           ? { reason: outcome.error }
           : undefined,
       );
@@ -636,6 +671,7 @@ export class RunnerEngine {
         gateway: await this.pool.gateway(),
         agentAuth: this.agentAuth,
         ...(this.external ? { external: this.external } : {}),
+        ...(this.serverPort !== undefined ? { serverPort: this.serverPort } : {}),
       });
       const outcome = await pipeline.run(running!);
       await this.finalize(project, store, outcome);
@@ -652,6 +688,7 @@ export class RunnerEngine {
   /** Process at most one task. Returns what happened. */
   async tick(): Promise<TickResult> {
     const settings = await this.settingsStore.load();
+    await refreshSandbox(settings);
     if (!settings.runner.enabled && !this.runWhenDisabled) return { kind: "disabled" };
 
     await this.syncAutoPlans();
@@ -850,6 +887,7 @@ export class RunnerEngine {
       while (!this.stopRequested) {
         try {
           const settings = await this.settingsStore.load();
+          await refreshSandbox(settings);
           if (settings.runner.enabled) await this.fill(settings.runner.concurrency);
           const waits: Promise<unknown>[] = [this.sleep(this.pollIntervalMs)];
           if (this.inflight.size > 0)

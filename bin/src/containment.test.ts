@@ -309,6 +309,15 @@ describe("agent containment", () => {
     expect(result.stdout).toContain("No projects");
   });
 
+  it("refuses sandbox check for a task agent", async () => {
+    const dataRoot = await root();
+    const home = await root();
+    const result = runCli(["sandbox", "check", "-d", dataRoot], dataRoot, home);
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain(refusal);
+    expect(await readdir(dataRoot)).toEqual([]);
+  });
+
   it("checks the BOOF_RUNNER_DATA_ROOT environment root", async () => {
     const dataRoot = await root();
     const home = await root();

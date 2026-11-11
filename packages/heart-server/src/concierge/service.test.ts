@@ -52,7 +52,7 @@ async function setup(steps: Parameters<typeof scriptedAgent>[0] = []) {
   root = join(base, "data");
   repo = join(base, "repo");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   services = new TaskService(root, new ToolRegistry([new MockTool()]));
   settings = new SettingsStore(root);
   await settings.save(defaultSettings());

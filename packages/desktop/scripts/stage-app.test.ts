@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { assertStagedNative } from "./staged-native.mjs";
 
 const app = resolve(__dirname, "../build/app");
 
@@ -37,5 +38,6 @@ describe("staged desktop app", () => {
       expect(contents).not.toContain("ProcessTransport");
       expect(contents).not.toContain("Anthropic PBC");
     }
+    assertStagedNative(app);
   });
 });

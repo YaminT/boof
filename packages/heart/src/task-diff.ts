@@ -2,7 +2,11 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
 import { execCommand } from "./process.js";
 import { hardenedGitCommand, leftoversBranch, registeredWorktreeBranch } from "./git.js";
-import { untrackedFiles as listUntracked, untrackedPatch } from "./untracked-diff.js";
+import {
+  untrackedFiles as listUntracked,
+  untrackedPatch,
+  type UntrackedGitRunner,
+} from "./untracked-diff.js";
 
 const BRANCH_PREFIX = "boof-runner/";
 const MAX_COMMITS = 200;
@@ -46,6 +50,8 @@ export interface TaskDiffOptions {
   baseRef?: string;
   /** Directory where this task's worktree would live (`<root>/<taskId>`). */
   worktreePath?: string;
+  /** Runner-pinned Git for a live task worktree; the worktree's .git metadata is agent-controlled. */
+  worktreeGit?: UntrackedGitRunner;
   /** Repo-relative file: only that file's patch is returned. */
   path?: string;
   context?: number;
@@ -101,6 +107,7 @@ async function git(cwd: string, args: string[]) {
     30000,
   );
   const res = await execCommand("git", prepared.args, {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs: 30000,
     env: prepared.env,
@@ -219,17 +226,34 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
       liveWt = opts.worktreePath;
     }
   }
+  if (liveWt && !opts.worktreeGit) {
+    throw new Error("live task diff requires the runner's trusted worktree Git callback");
+  }
   let includesUncommitted = false;
+  let runLiveGit: UntrackedGitRunner | undefined;
   if (liveWt) {
-    const st = await git(liveWt, ["status", "--porcelain"]);
-    includesUncommitted = st.code === 0 && st.out.trim() !== "";
+    runLiveGit =
+      opts.worktreeGit ??
+      (async (args) => {
+        const res = await git(liveWt!, args);
+        return { code: res.code, stdout: res.out, stderr: res.err };
+      });
+    const st = await runLiveGit(["status", "--porcelain"]);
+    includesUncommitted = st.code === 0 && st.stdout.trim() !== "";
   }
 
   const cwd = includesUncommitted ? liveWt! : workingDir;
   const range = includesUncommitted ? [baseSha] : [baseSha, headSha];
+  const runCurrentGit = async (args: string[]) => {
+    if (cwd === liveWt && runLiveGit) {
+      const res = await runLiveGit(args);
+      return { code: res.code, out: res.stdout, err: res.stderr };
+    }
+    return git(cwd, args);
+  };
   const names = parseNameStatus(
     (
-      await git(cwd, [
+      await runCurrentGit([
         "diff",
         "--no-ext-diff",
         "--no-textconv",
@@ -241,19 +265,28 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
     ).out,
   );
   const nums = parseNumstat(
-    (await git(cwd, ["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", ...range]))
-      .out,
+    (
+      await runCurrentGit([
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--numstat",
+        "-M",
+        "-z",
+        ...range,
+      ])
+    ).out,
   );
   const files = mergeFiles(names, nums);
 
   // Untracked files of the live worktree, diffed against nothing (no objects are written).
   const untrackedFiles: DiffFile[] = [];
   if (includesUncommitted) {
-    const un = await listUntracked(liveWt!);
+    const un = await listUntracked(liveWt!, runLiveGit);
     const known = new Set(files.map((f) => f.path));
     for (const p of un) {
       if (known.has(p)) continue;
-      const ns = await git(liveWt!, [
+      const ns = await runLiveGit!([
         "diff",
         "--no-index",
         "--no-ext-diff",
@@ -264,7 +297,7 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
         "/dev/null",
         p,
       ]);
-      const n = [...parseNumstat(ns.out).values()][0];
+      const n = [...parseNumstat(ns.stdout).values()][0];
       untrackedFiles.push({
         path: p,
         status: n === null ? "binary" : "added",
@@ -289,10 +322,10 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
       if (tracked) {
         args.push("--", ...tracked.flatMap((f) => (f.oldPath ? [f.oldPath, f.path] : [f.path])));
       }
-      text = (await git(cwd, args)).out;
+      text = (await runCurrentGit(args)).out;
     }
     for (const f of untr) {
-      const d = await untrackedPatch(liveWt!, f.path, context);
+      const d = await untrackedPatch(liveWt!, f.path, context, runLiveGit);
       text += (text && !text.endsWith("\n") ? "\n" : "") + d;
     }
     return text;

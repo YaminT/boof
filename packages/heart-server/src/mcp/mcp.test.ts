@@ -167,7 +167,8 @@ beforeEach(async () => {
   root = join(base, "data");
   repo = join(base, "repos", "shop");
   await mkdir(repo, { recursive: true });
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -492,7 +493,7 @@ describe("tools generated from the registry", () => {
     await services.createProject({ workingDirectory: repo, id: "shop" }, LOCAL_PRINCIPAL);
     const other = join(repo, "..", "boof-mcp-other");
     await mkdir(other, { recursive: true });
-    await execCommand("git", ["init", "-q"], { cwd: other });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: other });
     await services.createProject({ workingDirectory: other, id: "other" }, LOCAL_PRINCIPAL);
     try {
       const pinned = await connect(LOCAL_PRINCIPAL, "shop");

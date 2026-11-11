@@ -83,7 +83,7 @@ beforeEach(async () => {
   await mkdir(root, { recursive: true });
   const repo = join(base, "repo");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await new SettingsStore(root).save(defaultSettings());
   await service.projects.create({ workingDirectory: await realpath(repo), id: "demo" });

@@ -14,6 +14,7 @@ const {
   engineShutdown,
   constructConcierge,
   createN8nTransport,
+  reapCrashedRunTemps,
 } = vi.hoisted(() => ({
   createN8nTransport: vi.fn(() => ({})),
   startServer: vi.fn(),
@@ -21,10 +22,12 @@ const {
   engineLoop: vi.fn(),
   engineShutdown: vi.fn(),
   constructConcierge: vi.fn(),
+  reapCrashedRunTemps: vi.fn(async () => {}),
 }));
 vi.mock("@boof/heart-server", () => ({ startServer, createN8nTransport }));
 vi.mock("@boof/runner", () => ({
   DESKTOP_CLAUDE_AGENT_REASON: "desktop unavailable",
+  reapCrashedRunTemps,
   ClaudeConcierge: class {
     constructor(options: unknown) {
       constructConcierge(options);
@@ -39,6 +42,8 @@ vi.mock("@boof/runner", () => ({
       return this.tools.find((t) => (t as { id: string }).id === id);
     }
   },
+  assessSandbox: vi.fn(async () => ({ ok: false, reason: "test" })),
+  refreshSandbox: vi.fn(async () => ({})),
   RunnerEngine: class {
     loop = engineLoop;
     shutdown = engineShutdown;
@@ -68,6 +73,9 @@ describe("bin boot", () => {
 
   it("composes server, registry, runner loop, drain, guard release, and server stop", async () => {
     const order: string[] = [];
+    reapCrashedRunTemps.mockImplementation(async () => {
+      order.push("reap");
+    });
     const server = { stop: vi.fn(async () => void order.push("server.stop")) };
     engineLoop.mockImplementation(() => order.push("engine.loop"));
     engineShutdown.mockImplementation(async (graceMs: number) => {
@@ -78,7 +86,8 @@ describe("bin boot", () => {
       order.push("server.start");
       expect(options.catalog).toBeTruthy();
       expect(options.runnerRunning?.()).toBe(false);
-      return server;
+      expect(reapCrashedRunTemps).toHaveBeenCalledWith("/tmp/boot-test");
+      return { ...server, port: 4319 };
     });
     constructEngine.mockImplementation(() => order.push("engine.create"));
     const guard = {
@@ -101,6 +110,7 @@ describe("bin boot", () => {
       });
       await result.stop(5000);
       expect(order).toEqual([
+        "reap",
         "server.start",
         "server.ready",
         "guard.acquire",

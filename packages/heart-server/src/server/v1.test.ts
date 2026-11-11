@@ -27,7 +27,7 @@ const send = (
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-v1-"));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-v1-repo-")));
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await new SettingsStore(root).save(defaultSettings());
   const service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "demo" });

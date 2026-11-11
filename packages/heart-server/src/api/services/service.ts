@@ -95,6 +95,7 @@ import {
   type HealthResult,
   type ToolCatalog,
 } from "@boof/heart";
+import { checkedWorktreeGit, loadWorktreeRecord } from "@boof/runner";
 import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
@@ -659,13 +660,42 @@ export class ProjectService {
     const info = taskReviewInfo(task);
     const settings = effectiveSettings(await this.parent.loadSettings(), project);
     const worktreeRoot = resolveWorktreeRoot(worktreeSettings(settings), project.workingDirectory);
+    const worktreePath = join(worktreeRoot, id);
+    const liveWorktree = await stat(worktreePath).then(
+      (s) => s.isDirectory(),
+      () => false,
+    );
+    let worktreeGit:
+      | ((args: string[]) => Promise<{ code: number | null; stdout: string; stderr: string }>)
+      | undefined;
+    if (liveWorktree) {
+      const record = await loadWorktreeRecord(worktreeRoot, id);
+      if (!record) {
+        throw new OpError(
+          409,
+          "task worktree has no trusted runner record; recreate or upgrade the worktree",
+        );
+      }
+      worktreeGit = async (args) => {
+        const result = await checkedWorktreeGit(record, [
+          "--no-pager",
+          "--no-optional-locks",
+          "--literal-pathspecs",
+          "-c",
+          "core.quotepath=off",
+          ...args,
+        ]);
+        return { code: result.code, stdout: result.out, stderr: result.err };
+      };
+    }
     try {
       return await taskDiff({
         workingDir: project.workingDirectory,
         taskId: id,
         baseSha: info.baseSha,
         baseRef: info.baseRef,
-        worktreePath: join(worktreeRoot, id),
+        worktreePath,
+        ...(worktreeGit ? { worktreeGit } : {}),
         ...opts,
       });
     } catch (err) {
@@ -873,10 +903,18 @@ export class TaskService {
     { signature: string; roles: Set<string> }
   >();
 
+  private readonly refreshSandboxHook?: (settings: Settings) => Promise<void>;
+  private readonly assessSandboxHook?: () => Promise<{ ok: boolean; reason: string }>;
+
   constructor(
     readonly root: string,
     catalog: ToolCatalog,
-    opts: { conciergeAgent?: ConciergeAgent | null; authStore?: AuthStore } = {},
+    opts: {
+      conciergeAgent?: ConciergeAgent | null;
+      authStore?: AuthStore;
+      refreshSandbox?: (settings: Settings) => Promise<void>;
+      assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
+    } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
@@ -891,6 +929,8 @@ export class TaskService {
     this.catalog = catalog;
     this.conciergeAgent = opts.conciergeAgent ?? null;
     this.authStore = opts.authStore ?? new AuthStore(root);
+    this.refreshSandboxHook = opts.refreshSandbox;
+    this.assessSandboxHook = opts.assessSandbox;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1752,8 +1792,30 @@ export class TaskService {
       await this.assertWorktreeRootAllowed(actor, patch.worktree?.root, undefined);
     }
     if (patch.defaultProject) await this.getProject(patch.defaultProject);
-    const before =
-      patch.runner?.enabled !== undefined ? (await this.loadSettings()).runner.enabled : undefined;
+    const turningOn = patch.runner?.sandbox?.mode === "enforce";
+    const enabledChanging = patch.runner?.enabled !== undefined;
+    const current = turningOn || enabledChanging ? await this.loadSettings() : undefined;
+    if (
+      turningOn &&
+      current &&
+      current.runner.sandbox.mode !== "enforce" &&
+      this.assessSandboxHook
+    ) {
+      let report: { ok: boolean; reason: string };
+      try {
+        report = await this.assessSandboxHook();
+      } catch (err) {
+        if (err instanceof OpError) throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        throw new OpError(
+          409,
+          message.replace(/^sandbox_unavailable:\s*/, ""),
+          "sandbox_unavailable",
+        );
+      }
+      if (!report.ok) throw new OpError(409, report.reason, "sandbox_unavailable");
+    }
+    const before = enabledChanging ? current!.runner.enabled : undefined;
     const next = await this.settingsStore.update(patch, (current) => {
       if (expectedVersion !== undefined && expectedVersion !== settingsVersion(current)) {
         throw new OpError(
@@ -1768,6 +1830,11 @@ export class TaskService {
         type: "runner.enabled",
         value: next.runner.enabled,
         by: actor?.id ?? "local",
+      });
+    }
+    if (patch.runner?.sandbox) {
+      await this.refreshSandboxHook?.(next).catch((err) => {
+        console.error("sandbox self-test failed:", err);
       });
     }
     return next;

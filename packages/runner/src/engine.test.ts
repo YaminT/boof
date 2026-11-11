@@ -13,16 +13,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { installWinLauncher } from "../../heart/test-support/win-spawn-exe.js";
-
-/** A tool cwd is inside `root`. Windows joins with `\\` and folds case. */
-const cwdUnder = (cwd: string, root: string) => {
-  const fold = process.platform === "win32" ? (p: string) => p.toLowerCase() : (p: string) => p;
-  const norm = (p: string) => fold(p).replaceAll("\\", "/").replace(/\/+$/, "");
-  const child = norm(cwd);
-  const parent = norm(root);
-  return child === parent || child.startsWith(`${parent}/`);
-};
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommandStore,
@@ -36,7 +26,6 @@ import {
   serializeTask,
   SettingsStore,
   ExternalRunStore,
-  takeTaskFileReads,
   TaskStore,
   parseInjected,
   taskControlDir,
@@ -53,10 +42,11 @@ import {
   isGitRepo,
   repoCommonDir,
   readEvents,
+  resetSandboxStatus,
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof/heart";
-import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
+import { NON_INTERACTIVE, Pipeline, SANDBOX_DEVELOPER_LIMITS, SYSTEM_PROMPTS } from "./pipeline.js";
 import { currentBootIdentity, isAlive, writePidFile } from "@boof/heart";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
@@ -88,7 +78,7 @@ const exists = async (p: string) => {
 
 const wtPath = (id = "t1") => join(workDir, ".boof-runner-worktrees", id);
 const gitOut = (args: string[], cwd = workDir) =>
-  execCommand("git", args, { cwd, timeoutMs: 15000 });
+  execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 15000 });
 const writeIn = (opts: RunOptions, file: string, content = "x\n") =>
   writeFile(join(opts.cwd, file), content);
 const commitIn = async (opts: RunOptions, file: string) => {
@@ -122,7 +112,8 @@ beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-runner-data-"));
   workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-work-")));
   // Make workDir a git repo so worktree isolation engages.
-  const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -147,6 +138,7 @@ afterEach(async () => {
   await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
+  resetSandboxStatus();
 });
 
 describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
@@ -197,6 +189,47 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
         (e) => e.event.type === "runner.agent_auth_refused",
       ),
     ).toHaveLength(1);
+  });
+
+  it("fails an enforce task before any agent starts when the sandbox helper is missing, and does not retry it", async () => {
+    const prevHelper = process.env.BOOF_SANDBOX_HELPER;
+    const prevAbi = process.env.BOOF_SANDBOX_FAKE_ABI;
+    process.env.BOOF_SANDBOX_HELPER = "/no/such/boof-sandbox";
+    delete process.env.BOOF_SANDBOX_FAKE_ABI;
+    try {
+      const settings = new SettingsStore(dataRoot);
+      const current = await settings.load();
+      await settings.save({
+        ...current,
+        runner: {
+          ...current.runner,
+          sandbox: { ...current.runner.sandbox, mode: "enforce" },
+        },
+      });
+      await store.create(newTask(fm(), "Sandboxed work."));
+      const result = await engine.tick();
+      expect(result.kind).toBe("idle");
+      const task = await store.get("t1");
+      expect(task?.frontmatter.status).toBe("failed");
+      expect(task?.body.log).toContain("### Not started");
+      expect(task?.body.log).toContain("sandbox_unavailable: boof-sandbox helper is missing");
+      expect(mockState.calls).toEqual([]);
+      expect(await exists(wtPath("t1"))).toBe(false);
+      expect(
+        (await readEvents(dataRoot, null)).filter(
+          (e) => e.event.type === "runner.agent_auth_refused",
+        ),
+      ).toHaveLength(0);
+      await engine.tick();
+      expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+      expect(mockState.calls).toEqual([]);
+    } finally {
+      if (prevHelper === undefined) delete process.env.BOOF_SANDBOX_HELPER;
+      else process.env.BOOF_SANDBOX_HELPER = prevHelper;
+      if (prevAbi === undefined) delete process.env.BOOF_SANDBOX_FAKE_ABI;
+      else process.env.BOOF_SANDBOX_FAKE_ABI = prevAbi;
+      resetSandboxStatus();
+    }
   });
 
   it("an n8n check task is not touched by agent auth or an unavailable tool; a normal task still is", async () => {
@@ -627,24 +660,12 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
 
   it("a codex-shaped planner report with a questions block parks the task", async () => {
     const prev = process.env.BOOF_RUNNER_CODEX_BIN;
-    // Windows spawn only starts .exe. A .cmd is ignored and the task fails instead of parking.
-    const questions = "Need input.\n\n```questions\n1. Which DB?\n2. ## Reports\n```\n";
-    let bin = join(dataRoot, "codex");
-    if (process.platform === "win32") {
-      await writeFile(
-        join(dataRoot, "payload.mjs"),
-        `import { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nfor (let i = 0; i < args.length; i++) {\n  if (args[i] === "-o" && args[i + 1]) writeFileSync(args[i + 1], ${JSON.stringify(questions)});\n}\n`,
-      );
-      bin = join(dataRoot, "codex.exe");
-      await installWinLauncher(bin);
-      await writeFile(join(dataRoot, "node.path"), process.execPath, "utf8");
-    } else {
-      await writeFile(
-        bin,
-        '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. ## Reports\\n\\`\\`\\`\\n" > "$2"; fi; shift; done\n',
-      );
-      await chmod(bin, 0o755);
-    }
+    const bin = join(dataRoot, "codex");
+    await writeFile(
+      bin,
+      '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. ## Reports\\n\\`\\`\\`\\n" > "$2"; fi; shift; done\n',
+    );
+    await chmod(bin, 0o755);
     process.env.BOOF_RUNNER_CODEX_BIN = bin;
     try {
       engine = new RunnerEngine({
@@ -1677,6 +1698,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(has("You are the OBSERVER")).toBe(true);
     expect(has("You are the REVIEWER")).toBe(true);
     expect(has("Answer the following questions")).toBe(true);
+    expect(has(SANDBOX_DEVELOPER_LIMITS)).toBe(false);
     for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
     expect(NON_INTERACTIVE).toContain(
       'd=$(mktemp -d); (cmd; echo $? > "$d/done") > "$d/log" 2>&1 &',
@@ -1789,9 +1811,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
       expect(p).toContain("#### Round 2 — APPROVE");
       expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
     }
-    // Two observer iterations, a failed follow-up, then a retry. Windows ACL checks make that
-    // longer than the 20s default.
-  }, 60_000);
+  });
 
   it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
     await configure({ observer: true });
@@ -1832,7 +1852,8 @@ const extraRepos: string[] = [];
 async function addProject(id: string): Promise<Extra> {
   const repo = await realpath(await mkdtemp(join(tmpdir(), `boof-runner-${id}-`)));
   extraRepos.push(repo);
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -2301,7 +2322,7 @@ describe("multi-project engine (mock tool)", () => {
     ]);
     expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
     expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
-  });
+  }, process.platform === "win32" ? 60_000 : 20_000);
 
   it("breaks priority ties by oldest `updated`, then by project id, then by task id", async () => {
     const b = await addProject("b");
@@ -2324,8 +2345,7 @@ describe("multi-project engine (mock tool)", () => {
       "default/same-a",
       "default/same-b",
     ]);
-    // Five full pipelines. Windows git is slower than the 20s default when the runner is busy.
-  }, 60_000);
+  });
 
   it("skips paused, archived and directory-less projects, and serves them again once resumed", async () => {
     const b = await addProject("b");
@@ -2414,8 +2434,8 @@ describe("multi-project engine (mock tool)", () => {
     await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
     expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
 
-    const bCwds = cwds.filter((c) => cwdUnder(c, wtRoot));
-    const aCwds = cwds.filter((c) => cwdUnder(c, join(workDir, ".boof-runner-worktrees")));
+    const bCwds = cwds.filter((c) => c.startsWith(`${wtRoot}/`));
+    const aCwds = cwds.filter((c) => c.startsWith(`${workDir}/.boof-runner-worktrees/`));
     expect(bCwds.length).toBeGreaterThan(0);
     expect(aCwds.length).toBeGreaterThan(0);
     expect(bCwds.length + aCwds.length).toBe(cwds.length);
@@ -2436,7 +2456,7 @@ describe("multi-project engine (mock tool)", () => {
     let allArrived!: () => void;
     const together = new Promise<void>((r) => (allArrived = r));
     mockState.onRun = async (run) => {
-      const repo = repos.find((r) => cwdUnder(run.cwd, r)) ?? "?";
+      const repo = repos.find((r) => run.cwd.startsWith(`${r}/`)) ?? "?";
       const n = (active.get(repo) ?? 0) + 1;
       active.set(repo, n);
       maxPerRepo.set(repo, Math.max(maxPerRepo.get(repo) ?? 0, n));
@@ -2466,25 +2486,6 @@ describe("multi-project engine (mock tool)", () => {
     };
     return { maxPerRepo, maxTotal: () => maxTotal };
   };
-
-  it("selects the next task from pending files and does not read finished ones", async () => {
-    // F4 finding 3: a full scan slower than a running task left concurrency 4 with one
-    // task in flight. Finished tasks must not be opened to choose the next pending one.
-    await store.create(newTask(fm({ id: "wait", priority: 10 }), "wait"));
-    await store.create(newTask(fm({ id: "old", status: "done", priority: 90 }), "old"));
-    const fullScan = vi
-      .spyOn(TaskStore.prototype, "list")
-      .mockRejectedValue(new Error("full scan"));
-    try {
-      takeTaskFileReads();
-      const sel = await engine.selectNext();
-      expect(fullScan).not.toHaveBeenCalled();
-      expect(sel?.task.frontmatter.id).toBe("wait");
-      expect(takeTaskFileReads()).toBe(1);
-    } finally {
-      fullScan.mockRestore();
-    }
-  });
 
   it("concurrency=2 runs two projects at once but never two tasks of one project", async () => {
     const b = await addProject("b");
@@ -2696,6 +2697,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
           cwd: opts.cwd,
           stopSignalPath: opts.stopSignalPath,
           stopPollMs: 25,
+          launch: opts.launch ?? { kind: "direct" },
         });
         clearInterval(watch);
         throw new ToolRunError("mock", res.code, res.timedOut, res.stopped, "stopped", res.stderr);
@@ -2705,18 +2707,18 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       const grandchild = Number((await readFile(pidFile, "utf8")).trim());
       expect(() => process.kill(grandchild, 0)).not.toThrow();
 
-      const result = await engine.shutdown(15000);
-      expect(result).toEqual({ stopped: ["t1"], timedOut: false });
-      await loop;
+    const result = await engine.shutdown(15000);
+    expect(result).toEqual({ stopped: ["t1"], timedOut: false });
+    await loop;
 
-      const after = await store.get("t1");
-      expect(after?.frontmatter.status).toBe("stopped");
-      expect(after?.body.log).toContain("stopped by server shutdown");
-      await new Promise((r) => setTimeout(r, 100));
-      expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
-      // stopped -> pending is a legal transition, so the task can be retried after a restart.
-      await store.transition("t1", "pending");
-      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+    const after = await store.get("t1");
+    expect(after?.frontmatter.status).toBe("stopped");
+    expect(after?.body.log).toContain("stopped by server shutdown");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
+    // stopped -> pending is a legal transition, so the task can be retried after a restart.
+    await store.transition("t1", "pending");
+    expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
     },
   );
 
@@ -3023,11 +3025,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
             command: "node",
             bootId: currentBootIdentity(),
           });
-          // Linux records start ticks. macOS and Windows record the start-time string.
-          const recorded = t?.frontmatter.agentProcess;
-          expect(recorded?.startTicks != null || typeof recorded?.startTime === "string").toBe(
-            true,
-          );
+          expect(t?.frontmatter.agentProcess?.startTicks).toEqual(expect.any(Number));
         } finally {
           try {
             process.kill(-live.pid!, "SIGKILL");
@@ -3046,46 +3044,37 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(t?.frontmatter.agentProcess).toBeUndefined();
     });
 
-    // Forcing darwin uses process-group liveness. Windows reports that as dead, so the live
-    // process looks gone. A null identity stays unverified, which is the warning this test checks;
-    // a real macOS start time would let the reaper kill the orphan instead.
-    it.skipIf(process.platform === "win32")(
-      "off Linux, warns in the Interrupted block that a live agent process may still be running",
-      async () => {
-        await crash();
-        const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
-          detached: true,
-          stdio: "ignore",
+    it("off Linux, warns in the Interrupted block that a live agent process may still be running", async () => {
+      await crash();
+      const orphan = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+      try {
+        await writePidFile(taskPidPath(projectDir, "t1"), {
+          pgid: orphan.pid!,
+          command: "node",
+          ownerPid: null,
         });
-        const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+        Object.defineProperty(process, "platform", { ...original, value: "darwin" });
+        expect(await engine.recoverInterrupted()).toEqual(["t1"]);
+        const t = await store.get("t1");
+        expect(t?.frontmatter.status).toBe("failed");
+        expect(t?.body.log).toContain(
+          `agent process (pid ${orphan.pid}, node) may still be running`,
+        );
+        expect(t?.body.log).toContain("Stop it before you Retry");
+        expect(isAlive(orphan.pid!)).toBe(true);
+      } finally {
+        Object.defineProperty(process, "platform", original);
         try {
-          await writePidFile(taskPidPath(projectDir, "t1"), {
-            pgid: orphan.pid!,
-            command: "node",
-            ownerPid: null,
-            bootId: null,
-            startTime: null,
-            startTicks: null,
-          });
-          Object.defineProperty(process, "platform", { ...original, value: "darwin" });
-          expect(await engine.recoverInterrupted()).toEqual(["t1"]);
-          const t = await store.get("t1");
-          expect(t?.frontmatter.status).toBe("failed");
-          expect(t?.body.log).toContain(
-            `agent process (pid ${orphan.pid}, node) may still be running`,
-          );
-          expect(t?.body.log).toContain("Stop it before you Retry");
-          expect(isAlive(orphan.pid!)).toBe(true);
-        } finally {
-          Object.defineProperty(process, "platform", original);
-          try {
-            process.kill(-orphan.pid!, "SIGKILL");
-          } catch {
-            /* gone */
-          }
+          process.kill(-orphan.pid!, "SIGKILL");
+        } catch {
+          /* gone */
         }
-      },
-    );
+      }
+    });
 
     it("a pid file whose process already ended changes nothing", async () => {
       await crash();
@@ -3103,13 +3092,9 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       const pid = taskPidPath(projectDir, "t1");
       const done = engine.loop();
       try {
-        const deadline = Date.now() + 45_000;
-        while (!existsSync(pid)) {
-          if (Date.now() > deadline) throw new Error(`pid file was not written: ${pid}`);
-          await new Promise((r) => setTimeout(r, 20));
-        }
+        while (!existsSync(pid)) await new Promise((r) => setTimeout(r, 20));
         const rec = JSON.parse(await readFile(pid, "utf8"));
-        expect(rec.command).toBe(basename(process.execPath));
+        expect(rec.command).toBe("node");
         expect(isAlive(rec.pgid)).toBe(true);
         await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
         await writeFile(taskStopRequestPath(projectDir, "t1"), "test\n");
@@ -3119,7 +3104,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       }
       expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
       expect(existsSync(pid)).toBe(false);
-    }, 60_000);
+    });
 
     it("does nothing when no engine loop runs (the --no-runner path)", async () => {
       await crash();

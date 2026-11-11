@@ -47,6 +47,7 @@ export interface DataRootPaths {
   root: string;
   settings: string;
   runnerPid: string;
+  serverPort: string;
   commands: string;
   projects: string;
   auth: string;
@@ -82,6 +83,7 @@ export function dataRootPaths(root: string): DataRootPaths {
     root,
     settings: join(root, "settings.json"),
     runnerPid: join(root, ".runner.pid"),
+    serverPort: join(root, ".server-port"),
     commands: join(root, "commands"),
     projects: join(root, "projects"),
     auth: join(root, "auth"),

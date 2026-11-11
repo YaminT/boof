@@ -24,7 +24,7 @@ beforeEach(async () => {
   root = join(base, "data");
   const repo = join(base, "repo");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await projectCommand(
     ["add", repo, "--id", "demo", "--default", "-d", root],
     () => root,

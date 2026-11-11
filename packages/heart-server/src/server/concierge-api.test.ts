@@ -40,7 +40,7 @@ beforeEach(async () => {
   root = join(base, "data");
   repo = join(base, "shop");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  await execCommand("git", ["init", "-q", "-b", "main"], { launch: { kind: "direct" }, cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "shop" });
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "shop" });

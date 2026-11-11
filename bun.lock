@@ -108,6 +108,7 @@
       "version": "0.4.1",
       "dependencies": {
         "@boof/heart": "*",
+        "@boof/runner": "*",
         "@boof/owlish": "*",
         "@hono/node-server": "^2.1.6",
         "@modelcontextprotocol/sdk": "~1.32.2",

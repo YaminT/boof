@@ -51,7 +51,8 @@ function goalXml(goal: string, status: string): string {
 }
 
 async function initGitRepo(dir: string): Promise<void> {
-  const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -181,7 +182,8 @@ describe("run --parent and --epic", () => {
 });
 
 describe("run --base and --title", () => {
-  const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const git = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
 
   it("firstPositional skips the values of --base and --title", () => {
     expect(firstPositional(["--base", "main", "--title", "A title", "the prompt"])).toBe(

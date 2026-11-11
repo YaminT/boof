@@ -21,6 +21,7 @@ import { RunTab } from "./RunTab.js";
 import { StepStrip } from "./StepStrip.js";
 import { TaskHierarchy } from "./TaskHierarchy.js";
 import { TaskForm, type FormHandle } from "./TaskForm.js";
+import { SandboxFailure } from "./SandboxFailure.js";
 import { TaskHeader } from "./TaskHeader.js";
 import { useTask } from "./useTask.js";
 
@@ -246,6 +247,7 @@ function Loaded({
         subtasks={childTasks(data.tasks, id).items.length}
         onDelete={remove}
       />
+      <SandboxFailure pid={pid} status={task.frontmatter.status} log={task.body.log} />
       <TaskHierarchy pid={pid} task={task} tasks={data.tasks} actions={actions} />
       <StepStrip task={task} now={Date.now()} logHeaders={stepHeaders(task.body.log)} />
       <div className="flex flex-wrap items-center gap-3">
