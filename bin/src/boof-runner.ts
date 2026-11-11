@@ -9,7 +9,7 @@ import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
 import { remoteCommand } from "@boof/facedisk/cli/remote-cli.js";
 import { serviceCommand } from "@boof/facedisk/cli/service-cli.js";
-import { TaskService } from "@boof/heart-server";
+import { attachConcierge, TaskService } from "@boof/heart-server";
 import { epicCommand } from "@boof/facedisk/cli/epic-cli.js";
 import {
   HAND_WRITTEN_COMMANDS,
@@ -746,9 +746,8 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
             new ClaudeConcierge({ root }),
           authStore: new AuthStore(root),
           ...sandboxServerHooks(),
-          cliRateLimits: true,
-          now: cliRateNow,
         });
+        attachConcierge(service, undefined, { persistLimits: true, now: cliRateNow });
         return service;
       },
     });

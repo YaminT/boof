@@ -2307,22 +2307,26 @@ describe("multi-project engine (mock tool)", () => {
     expect(mockState.prompts.some((p) => p.includes("## Project\nFresh project."))).toBe(true);
   });
 
-  it("serves projects in global priority order, interleaved", async () => {
-    const b = await addProject("b");
-    await store.create(newTask(fm({ id: "a-low", priority: 10 }), "a low"));
-    await store.create(newTask(fm({ id: "a-mid", priority: 50 }), "a mid"));
-    await b.store.create(newTask(fm({ id: "b-high", priority: 90 }), "b high"));
-    await b.store.create(newTask(fm({ id: "b-mid", priority: 30 }), "b mid"));
+  it(
+    "serves projects in global priority order, interleaved",
+    async () => {
+      const b = await addProject("b");
+      await store.create(newTask(fm({ id: "a-low", priority: 10 }), "a low"));
+      await store.create(newTask(fm({ id: "a-mid", priority: 50 }), "a mid"));
+      await b.store.create(newTask(fm({ id: "b-high", priority: 90 }), "b high"));
+      await b.store.create(newTask(fm({ id: "b-mid", priority: 30 }), "b mid"));
 
-    expect(order(await engine.runUntilIdle())).toEqual([
-      "b/b-high",
-      "default/a-mid",
-      "b/b-mid",
-      "default/a-low",
-    ]);
-    expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
-    expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
-  }, process.platform === "win32" ? 60_000 : 20_000);
+      expect(order(await engine.runUntilIdle())).toEqual([
+        "b/b-high",
+        "default/a-mid",
+        "b/b-mid",
+        "default/a-low",
+      ]);
+      expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
+      expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it("breaks priority ties by oldest `updated`, then by project id, then by task id", async () => {
     const b = await addProject("b");
@@ -2707,18 +2711,18 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       const grandchild = Number((await readFile(pidFile, "utf8")).trim());
       expect(() => process.kill(grandchild, 0)).not.toThrow();
 
-    const result = await engine.shutdown(15000);
-    expect(result).toEqual({ stopped: ["t1"], timedOut: false });
-    await loop;
+      const result = await engine.shutdown(15000);
+      expect(result).toEqual({ stopped: ["t1"], timedOut: false });
+      await loop;
 
-    const after = await store.get("t1");
-    expect(after?.frontmatter.status).toBe("stopped");
-    expect(after?.body.log).toContain("stopped by server shutdown");
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
-    // stopped -> pending is a legal transition, so the task can be retried after a restart.
-    await store.transition("t1", "pending");
-    expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
+      const after = await store.get("t1");
+      expect(after?.frontmatter.status).toBe("stopped");
+      expect(after?.body.log).toContain("stopped by server shutdown");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(() => process.kill(grandchild, 0)).toThrow(); // not orphaned
+      // stopped -> pending is a legal transition, so the task can be retried after a restart.
+      await store.transition("t1", "pending");
+      expect((await store.get("t1"))?.frontmatter.status).toBe("pending");
     },
   );
 

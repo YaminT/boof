@@ -33,7 +33,7 @@ async function scaffold(limit: number): Promise<{ base: string; root: string }> 
   const root = join(base, "data");
   const repo = join(base, "repo");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { cwd: repo, launch: { kind: "direct" } });
   const services = new TaskService(root, new ToolRegistry([new MockTool()]));
   await services.projects.create({ workingDirectory: repo, id: "demo" });
   const store = new SettingsStore(root);

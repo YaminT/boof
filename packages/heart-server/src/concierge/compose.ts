@@ -12,6 +12,7 @@ import { ConciergeService } from "./service.js";
 export function attachConcierge(
   service: TaskService,
   agent: ConciergeAgent | null = service.conciergeAgent,
+  options: { persistLimits?: boolean; now?: () => number } = {},
 ): ConciergeService {
   const concierge = new ConciergeService({
     root: service.root,
@@ -21,6 +22,7 @@ export function attachConcierge(
     registry,
     getOp,
     createMcpServer: createConciergeMcpServer,
+    ...options,
   });
   service.useConcierge(concierge);
   return concierge;
