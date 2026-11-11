@@ -220,6 +220,12 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
     "(allow system-socket (socket-domain AF_INET6))",
     "(allow system-socket (socket-domain AF_UNIX))",
     "(allow file-read-metadata (vnode-type DIRECTORY))",
+    // These roots are symlinks on macOS, so the DIRECTORY vnode rule above does not match
+    // them. Allow metadata only so traversal can reach the explicitly granted subpaths.
+    '(allow file-read-metadata (literal "/var"))',
+    '(allow file-read-metadata (literal "/tmp"))',
+    '(allow file-read-metadata (literal "/etc"))',
+    '(allow file-read-metadata (literal "/private/var/select/sh"))',
     '(allow file-read-data (literal "/"))',
     '(allow file-ioctl (literal "/dev/dtracehelper"))',
   ];
