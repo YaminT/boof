@@ -468,6 +468,31 @@ export async function buildRunPolicy(
   }
 }
 
+async function refuseUnsafeOpenCodePortZero(policy: SandboxPolicy, tool: string): Promise<void> {
+  if (process.platform !== "linux" || tool !== "opencode") return;
+  let range: string;
+  try {
+    range = await readFile("/proc/sys/net/ipv4/ip_local_port_range", "utf8");
+  } catch {
+    throw new SandboxUnavailableError("a denied port is in the ephemeral range");
+  }
+  const match = /^(\d+)\s+(\d+)\s*$/.exec(range);
+  const first = match ? Number(match[1]) : NaN;
+  const last = match ? Number(match[2]) : NaN;
+  if (
+    !Number.isInteger(first) ||
+    !Number.isInteger(last) ||
+    first < 1 ||
+    last < first ||
+    last > 65535
+  ) {
+    throw new SandboxUnavailableError("a denied port is in the ephemeral range");
+  }
+  if (policy.denyTcpPorts.some((port) => port >= first && port <= last)) {
+    throw new SandboxUnavailableError("a denied port is in the ephemeral range");
+  }
+}
+
 /** Sandbox launch for one step, or `direct` when the caller asked for direct. */
 export async function sandboxLaunchFor(
   settings: { runner: { sandbox: SandboxSettingsInput } },
@@ -475,6 +500,7 @@ export async function sandboxLaunchFor(
 ): Promise<Extract<CommandLaunch, { kind: "sandbox" }>> {
   const env = ctx.env ?? process.env;
   const policy = await buildRunPolicy(settings, ctx);
+  await refuseUnsafeOpenCodePortZero(policy, ctx.tool);
   return {
     kind: "sandbox",
     policy,

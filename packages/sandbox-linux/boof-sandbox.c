@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/audit.h>
@@ -24,8 +25,9 @@
  * The policy on --policy-fd is exactly:
  *   {"version":1,"readExec":["/abs"...],"readWrite":["/abs"...],"denyTcpPorts":[n...]}
  * The launcher adds environment variables itself. Any other field is rejected.
- * Ports 1..65535 not listed in denyTcpPorts get TCP bind and connect.
- * Port 0 is not listed: connect's implicit ephemeral bind is not a port-0 bind.
+ * Ports 1..65535 not listed in denyTcpPorts get TCP bind and connect. Port 0
+ * gets bind only when no denied port is in the kernel ephemeral range; port 0
+ * never gets connect permission.
  * socket() allows only AF_INET, AF_INET6 and AF_NETLINK with NETLINK_ROUTE,
  * and only IPPROTO_IP, TCP, UDP, ICMP and ICMPv6. AF_UNIX stays EPERM.
  * MSG_FASTOPEN is EPERM. socketpair() allows only SOCK_STREAM and SOCK_SEQPACKET.
@@ -102,6 +104,44 @@ static size_t path_off[MAX_PATHS];
 static unsigned char path_write[MAX_PATHS];
 static int npaths;
 static unsigned char deny_port[65536];
+
+static int ephemeral_range(unsigned *first, unsigned *last) {
+  const char *path = "/proc/sys/net/ipv4/ip_local_port_range";
+#ifdef BOOF_SANDBOX_TEST
+  const char *test_path = getenv("BOOF_SANDBOX_PORT_RANGE_FILE");
+  if (test_path != NULL && test_path[0] != '\0') path = test_path;
+#endif
+  FILE *file = fopen(path, "r");
+  if (file == NULL) return 0;
+  char line[128];
+  int ok = 0;
+  if (fgets(line, sizeof line, file) != NULL) {
+    unsigned low, high;
+    char extra;
+    if (sscanf(line, " %u %u %c", &low, &high, &extra) == 2 && low >= 1 &&
+        low <= high && high <= 65535) {
+      *first = low;
+      *last = high;
+      ok = 1;
+    }
+  }
+  int ch;
+  while (ok && (ch = fgetc(file)) != EOF) {
+    if (!isspace((unsigned char)ch)) ok = 0;
+  }
+  if (ferror(file)) ok = 0;
+  if (fclose(file) != 0) return 0;
+  return ok;
+}
+
+static int port_zero_bind_allowed(void) {
+  unsigned first, last;
+  if (!ephemeral_range(&first, &last)) return 0;
+  for (unsigned port = first; port <= last; port++) {
+    if (deny_port[port]) return 0;
+  }
+  return 1;
+}
 
 static void fail(const char *msg) {
   free(policy_buf);
@@ -495,6 +535,12 @@ static void apply_landlock(int abi) {
   for (unsigned port = 1; port <= 65535u; port++) {
     if (deny_port[port]) continue;
     net.port = port;
+    if (syscall(SYS_landlock_add_rule, ruleset, LANDLOCK_RULE_NET_PORT, &net, 0) != 0)
+      failf("landlock: %s", strerror(errno));
+  }
+  if (port_zero_bind_allowed()) {
+    net.allowed_access = LANDLOCK_ACCESS_NET_BIND_TCP;
+    net.port = 0;
     if (syscall(SYS_landlock_add_rule, ruleset, LANDLOCK_RULE_NET_PORT, &net, 0) != 0)
       failf("landlock: %s", strerror(errno));
   }

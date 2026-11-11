@@ -56,7 +56,7 @@ static const char *errname(int err) {
 static int port_arg(const char *text) {
   char *end = NULL;
   long value = strtol(text, &end, 10);
-  if (end == text || *end != '\0' || value < 1 || value > 65535) return -1;
+  if (end == text || *end != '\0' || value < 0 || value > 65535) return -1;
   return (int)value;
 }
 
@@ -350,6 +350,37 @@ static void op_bind(int family, int port, const char *label) {
   close(fd);
 }
 
+static void op_bind_zero(int family, const char *label) {
+  int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  struct sockaddr_storage ss;
+  socklen_t len = 0;
+  fill_loopback(family, 0, &ss, &len);
+  if (bind(fd, (struct sockaddr *)&ss, len) != 0) {
+    printf("%s %s\n", label, errname(errno));
+    close(fd);
+    return;
+  }
+  if (listen(fd, 1) != 0) {
+    printf("%s listen-%s\n", label, errname(errno));
+    close(fd);
+    return;
+  }
+  if (getsockname(fd, (struct sockaddr *)&ss, &len) != 0) {
+    printf("%s getsockname-%s\n", label, errname(errno));
+    close(fd);
+    return;
+  }
+  unsigned port = family == AF_INET
+                      ? ntohs(((struct sockaddr_in *)&ss)->sin_port)
+                      : ntohs(((struct sockaddr_in6 *)&ss)->sin6_port);
+  printf("%s ok %u listen ok\n", label, port);
+  close(fd);
+}
+
 static void op_exchange(int port) {
   int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
@@ -594,6 +625,10 @@ int main(int argc, char **argv) {
     int port = port_arg(argv[2]);
     if (port < 0) usage();
     op_bind(AF_INET6, port, "bind");
+  } else if (strcmp(cmd, "bind0v4") == 0 && argc == 2) {
+    op_bind_zero(AF_INET, "bind0v4");
+  } else if (strcmp(cmd, "bind0v6") == 0 && argc == 2) {
+    op_bind_zero(AF_INET6, "bind0v6");
   } else if (strcmp(cmd, "exchange4") == 0 && argc == 3) {
     int port = port_arg(argv[2]);
     if (port < 0) usage();

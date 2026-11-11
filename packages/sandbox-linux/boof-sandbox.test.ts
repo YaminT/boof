@@ -18,15 +18,20 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const here = dirname(new URL(import.meta.url).pathname);
 const dist = join(here, "dist");
 const helper = join(dist, "boof-sandbox");
+const testHelper = join(dist, "boof-sandbox-test");
 const probe = join(dist, "probe");
 const filterCheck = join(dist, "filter-check");
 
 const roots: string[] = [];
 
-function compile(source: string, out: string): void {
-  const result = spawnSync("cc", ["-O2", "-Wall", "-Wextra", "-Werror", "-o", out, source], {
-    encoding: "utf8",
-  });
+function compile(source: string, out: string, flags: string[] = []): void {
+  const result = spawnSync(
+    "cc",
+    ["-O2", "-Wall", "-Wextra", "-Werror", ...flags, "-o", out, source],
+    {
+      encoding: "utf8",
+    },
+  );
   if (result.status !== 0) {
     throw new Error(result.stderr || result.stdout || `cc ${source} failed`);
   }
@@ -44,14 +49,21 @@ interface RunResult {
   ms: number;
 }
 
-function run(policy: string, args: string[], timeoutMs = 8000): Promise<RunResult> {
+function run(
+  policy: string,
+  args: string[],
+  timeoutMs = 8000,
+  env: NodeJS.ProcessEnv = process.env,
+  executable = helper,
+): Promise<RunResult> {
   const dir = join(tmpdir(), `boof-sandbox-pol-${process.pid}-${Date.now()}-${Math.random()}`);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "policy.json");
   writeFileSync(path, policy);
   const fd = openSync(path, "r");
   const started = performance.now();
-  const child = spawn(helper, ["--policy-fd", "3", "--", ...args], {
+  const child = spawn(executable, ["--policy-fd", "3", "--", ...args], {
+    env,
     stdio: ["ignore", "pipe", "pipe", fd],
   });
   closeSync(fd);
@@ -121,8 +133,14 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
       throw new Error(built.stderr || built.stdout || "build.mjs failed");
     }
     if (!existsSync(helper)) throw new Error("build.mjs produced no helper on Linux");
+    const asanFlags =
+      process.env.BOOF_SANDBOX_ASAN === "1"
+        ? ["-fsanitize=address", "-fno-omit-frame-pointer"]
+        : [];
+    if (asanFlags.length > 0) compile(join(here, "boof-sandbox.c"), helper, asanFlags);
     compile(join(here, "probe.c"), probe);
     compile(join(here, "filter-check.c"), filterCheck);
+    compile(join(here, "boof-sandbox.c"), testHelper, ["-DBOOF_SANDBOX_TEST", ...asanFlags]);
     const abiRun = spawnSync(helper, ["--abi"], { encoding: "utf8" });
     expect(abiRun.status).toBe(0);
     expect(abiRun.stderr).toBe("");
@@ -256,6 +274,40 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     expect(bound.stdout).toBe("bind EACCES\n");
     const bound6 = await run(text, [probe, "bind6", String(port)]);
     expect(bound6.stdout).toBe("bind EACCES\n");
+  });
+
+  it("A19 allows bind(:0) and listen on IPv4 and IPv6 without granting connect(:0)", async () => {
+    await tree();
+    const text = basePolicy([1]);
+    for (const mode of ["bind0v4", "bind0v6"]) {
+      const bound = await run(text, [probe, mode]);
+      expect(bound.code).toBe(0);
+      expect(bound.stdout).toMatch(new RegExp(`^${mode} ok ([1-9][0-9]*) listen ok\\n$`));
+      const port = Number(bound.stdout.match(/ ok ([1-9][0-9]*) listen/)?.[1]);
+      expect(port).not.toBe(1);
+    }
+    const connected4 = await run(basePolicy([]), [probe, "connect4", "0"]);
+    const connected6 = await run(basePolicy([]), [probe, "connect6", "0"]);
+    expect(connected4.stdout).toBe("connect EACCES\n");
+    expect(connected6.stdout).toBe("connect EACCES\n");
+  });
+
+  it("A20 fails closed when a denied port is inside the configured ephemeral range", async () => {
+    await tree();
+    const [firstText, lastText] = readFileSync("/proc/sys/net/ipv4/ip_local_port_range", "utf8")
+      .trim()
+      .split(/\s+/);
+    const first = Number(firstText);
+    const last = Number(lastText);
+    expect(first).toBeGreaterThan(0);
+    expect(last).toBeGreaterThanOrEqual(first);
+    const denied = first;
+    const rangeFile = join(work, "ephemeral-range");
+    writeFileSync(rangeFile, `${denied} ${last}\n`);
+    const env = { ...process.env, BOOF_SANDBOX_PORT_RANGE_FILE: rangeFile };
+    const result = await run(basePolicy([denied]), [probe, "bind0v4"], 8000, env, testHelper);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("bind0v4 EACCES\n");
   });
 
   it("A3 denies MPTCP, TCP Fast Open and AF_SMC reaches of the boof port", async () => {

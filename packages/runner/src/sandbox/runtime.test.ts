@@ -27,6 +27,7 @@ import {
   readGitIdentity,
   reapCrashedRunTemps,
   removeRunTemp,
+  sandboxLaunchFor,
   type AgentLaunchContext,
 } from "./runtime.js";
 
@@ -359,5 +360,24 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
         fx.ctx,
       ),
     ).rejects.toThrow("read path does not exist: /no/such-boof-i1e-path");
+  });
+
+  it("refuses OpenCode when a denied port is inside the ephemeral range", async () => {
+    if (!linux) return;
+    const fx = await fixture(true);
+    const [firstText] = (await readFile("/proc/sys/net/ipv4/ip_local_port_range", "utf8"))
+      .trim()
+      .split(/\s+/);
+    const first = Number(firstText);
+    await expect(
+      sandboxLaunchFor(
+        {
+          runner: {
+            sandbox: { ...sandboxSettings, denyTcpPorts: [first] },
+          },
+        },
+        { ...fx.ctx, tool: "opencode", helper: "/test/boof-sandbox" },
+      ),
+    ).rejects.toThrow("a denied port is in the ephemeral range");
   });
 });
