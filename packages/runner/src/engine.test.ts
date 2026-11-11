@@ -2582,7 +2582,8 @@ describe("multi-project engine (mock tool)", () => {
     await store.create(newTask(fm({ id: "a1" }), "a1"));
     await b.store.create(newTask(fm({ id: "b1" }), "b1"));
     const done = engine.loop();
-    for (let i = 0; i < 400; i += 1) {
+    // Two mock tasks take over ten seconds on a Windows runner; give the poll as long as the test.
+    for (let i = 0; i < (process.platform === "win32" ? 4000 : 400); i += 1) {
       const a = await store.get("a1");
       const c = await b.store.get("b1");
       if (a?.frontmatter.status === "done" && c?.frontmatter.status === "done") break;
