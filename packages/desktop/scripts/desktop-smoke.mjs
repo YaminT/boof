@@ -170,13 +170,7 @@ try {
       }
       console.log(`--- processes ---\n${(await listProcesses()).join("\n")}`);
       child.kill("SIGKILL");
-      // On macOS the Electron main process does not act on SIGTERM when launched this way (the
-      // handler never runs; users quit through before-quit, which has unit tests). Everywhere
-      // else a missing exit is a real failure.
-      if (process.platform !== "darwin")
-        throw new Error("desktop did not exit within 10 seconds after quit signal");
-      console.log("warning: macOS desktop ignored SIGTERM; killed it");
-      await exit;
+      throw new Error("desktop did not exit within 10 seconds after quit signal");
     }
   }
   const deadline = Date.now() + 10_000;
