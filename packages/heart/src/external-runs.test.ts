@@ -148,13 +148,17 @@ describe("ExternalRunStore", () => {
     "Windows stress: complete and cancel have exactly one winner over 300 races",
     async () => {
       const store = new ExternalRunStore(root);
-      for (let i = 0; i < 300; i++) {
-        const r = await store.open(INPUT);
-        const [complete, cancel] = await Promise.all([
-          store.complete(r.runId, RESULT),
-          store.cancel(r.runId),
-        ]);
-        expect(Number(complete) + Number(cancel)).toBe(1);
+      for (let batch = 0; batch < 30; batch++) {
+        const runs = await Promise.all(Array.from({ length: 10 }, () => store.open(INPUT)));
+        await Promise.all(
+          runs.map(async (r) => {
+            const [complete, cancel] = await Promise.all([
+              store.complete(r.runId, RESULT),
+              store.cancel(r.runId),
+            ]);
+            expect(Number(complete) + Number(cancel)).toBe(1);
+          }),
+        );
       }
       expect((await files()).some((f) => f.endsWith(".closed"))).toBe(false);
     },
