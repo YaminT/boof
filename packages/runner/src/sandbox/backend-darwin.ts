@@ -244,7 +244,11 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
     }
   }
   lines.push(
-    '(allow network-outbound (remote ip "*:*"))',
+    // Not `(remote ip "*:*")`: with that allow in place Seatbelt let about one Node connect in
+    // ten through the port deny below (non-blocking connect on loopback). Matching by protocol
+    // keeps the deny effective and still leaves unix sockets denied.
+    "(allow network-outbound (remote tcp))",
+    "(allow network-outbound (remote udp))",
     '(allow network-bind (local ip "*:*"))',
     '(allow network-inbound (local ip "*:*"))',
   );

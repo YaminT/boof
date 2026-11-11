@@ -39,7 +39,7 @@ describe("renderSeatbeltProfile", () => {
 
   it("allows every TCP port and then denies the listed protected ports", () => {
     const text = profile();
-    const allowAt = text.indexOf('(allow network-outbound (remote ip "*:*"))');
+    const allowAt = text.indexOf("(allow network-outbound (remote tcp))");
     const bindAllow = text.indexOf('(allow network-bind (local ip "*:*"))');
     const denyOut = text.indexOf('(deny network-outbound (remote ip "*:9"))');
     const denyBind = text.indexOf('(deny network-bind (local ip "*:9"))');
