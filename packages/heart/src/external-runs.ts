@@ -163,16 +163,28 @@ export class ExternalRunStore {
 
   /** The one arbiter: true when this caller closed the open record. */
   private async close(runId: string): Promise<boolean> {
-    try {
-      await rename(this.p(runId, ".json"), this.p(runId, ".closed"));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw err;
+    const from = this.p(runId, ".json");
+    const to = this.p(runId, ".closed");
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        await rename(from, to);
+        // rename keeps the open time; prune ages `.closed` from the close time.
+        const t = new Date(this.now());
+        await utimes(to, t, t).catch(() => {});
+        return true;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return false;
+        // Windows antivirus and a concurrent rename return EPERM/EBUSY for a moment.
+        // Retry the same arbiter. A later ENOENT means the other caller already closed it.
+        if ((code === "EPERM" || code === "EBUSY") && attempt < 7) {
+          await new Promise((r) => setTimeout(r, 15));
+          continue;
+        }
+        throw err;
+      }
     }
-    // rename keeps the open time; prune ages `.closed` from the close time.
-    const t = new Date(this.now());
-    await utimes(this.p(runId, ".closed"), t, t).catch(() => {});
-    return true;
+    return false;
   }
 
   /**

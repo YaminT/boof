@@ -82,7 +82,7 @@ describe("workspace manifests", () => {
 
   it("package-lock.json is ignored: bun.lock is the lockfile", async () => {
     const ignore = await readFile(join(repo, ".gitignore"), "utf8");
-    expect(ignore.split("\n")).toContain("package-lock.json");
+    expect(ignore.split(/\r?\n/)).toContain("package-lock.json");
   });
 
   it("keeps the Claude Agent SDK in CLI/server installs and outside desktop bundles", async () => {

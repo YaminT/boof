@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { rename, open, rm, mkdir, readFile, link, unlink } from "node:fs/promises";
+import { rename, open, rm, mkdir, readFile, link, unlink, copyFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /**
@@ -117,7 +117,9 @@ export async function atomicWrite(
       // The file is published; a stray temp file must not turn that into a failure.
       await unlink(tmp).catch(() => {});
     } else {
-      await rename(tmp, path);
+      // Windows antivirus and an open reader return EPERM/EBUSY for a moment on replace.
+      // The temp file is still the only copy until rename succeeds, so retry the same publish.
+      await renameReplacing(tmp, path);
     }
   } catch (err) {
     await rm(tmp, { force: true });
@@ -141,6 +143,50 @@ export async function syncDir(dir: string, opener: typeof open = open): Promise<
   } finally {
     await dh?.close();
   }
+}
+
+const REPLACE_DENIED = new Set(["EPERM", "EBUSY", "EACCES"]);
+
+function replaceDenied(err: unknown): boolean {
+  return REPLACE_DENIED.has((err as NodeJS.ErrnoException).code ?? "");
+}
+
+/**
+ * Publish `from` as `to`. A Windows scanner or directory watcher can refuse the rename for a
+ * moment, or keep the destination's directory entry open. The temp file is already complete.
+ * After a few denied renames, copy it onto the destination instead of failing the write.
+ */
+async function renameReplacing(from: string, to: string): Promise<void> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      last = err;
+      if (replaceDenied(err) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 25));
+        continue;
+      }
+      break;
+    }
+  }
+  if (process.platform === "win32" && replaceDenied(last)) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await copyFile(from, to);
+        await unlink(from).catch(() => {});
+        return;
+      } catch (err) {
+        if (replaceDenied(err) && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 25));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+  throw last;
 }
 
 /** Atomic write guarded by the per-path lock. */

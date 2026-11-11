@@ -155,8 +155,9 @@ describe("ConciergeStore", () => {
     const store = new ConciergeStore(root, () => Date.parse("2026-11-06T12:00:00.000Z"));
     const conv = await store.current(PID, OWNER, IDLE);
     const file = join(conciergeDir(root, PID), "conversations", `${conv.id}.json`);
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(conciergeDir(root, PID), "conversations"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(conciergeDir(root, PID), "conversations"))).mode & 0o777).toBe(0o700);
   });
 
   it("keeps both edits when two updates run together", async () => {

@@ -232,6 +232,23 @@ function fail(path: string, message: string): never {
   throw new UnsafeSecretPathError(path, `${path} ${message}`);
 }
 
+/**
+ * Path of `absolutePath` relative to the data root, or null when it is outside.
+ * `resolve` does not follow symlinks, so a root under `/var` (a symlink to
+ * `/private/var` on macOS) is not equal to `realpath(root)`. The root itself is
+ * inside when either spelling matches. A link whose target leaves the root is
+ * still refused by the link-owner walk.
+ */
+function relativeInside(absolutePath: string, root: string, resolvedRoot: string): string | null {
+  const lexical = resolve(root);
+  if (absolutePath === lexical || absolutePath === resolvedRoot) return "";
+  for (const base of [lexical, resolvedRoot]) {
+    const prefix = `${base}${sep}`;
+    if (absolutePath.startsWith(prefix)) return absolutePath.slice(prefix.length);
+  }
+  return null;
+}
+
 async function checkLinkOwners(path: string, check: Check, depth = 0): Promise<void> {
   const { uid, lstatFn } = check;
   if (depth > 40) fail(path, "has too many symbolic links; use a real data root");
@@ -395,14 +412,7 @@ export async function assertSafeForSecrets(
   }
 
   const absolutePath = resolve(path);
-  const relative =
-    absolutePath === resolvedRoot
-      ? ""
-      : absolutePath.startsWith(`${resolve(root)}${sep}`)
-        ? absolutePath.slice(resolve(root).length + 1)
-        : absolutePath.startsWith(`${resolvedRoot}${sep}`)
-          ? absolutePath.slice(resolvedRoot.length + 1)
-          : null;
+  const relative = relativeInside(absolutePath, root, resolvedRoot);
   if (relative === null)
     fail(path, "is outside the data root; keep secret files inside the data root");
   const resolvedPath = join(resolvedRoot, relative);
@@ -650,16 +660,7 @@ async function assertSafeWindows(
     current = next;
   }
   const absolutePath = resolve(path);
-  const rootPrefix = `${resolve(root)}${sep}`;
-  const realPrefix = `${resolvedRoot}${sep}`;
-  const relative =
-    absolutePath === resolvedRoot
-      ? ""
-      : absolutePath.startsWith(rootPrefix)
-        ? absolutePath.slice(rootPrefix.length)
-        : absolutePath.startsWith(realPrefix)
-          ? absolutePath.slice(realPrefix.length)
-          : null;
+  const relative = relativeInside(absolutePath, root, resolvedRoot);
   if (relative === null)
     fail(path, "is outside the data root; keep secret files inside the data root");
   const target = relative === "" ? resolvedRoot : join(resolvedRoot, relative);

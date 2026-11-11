@@ -557,7 +557,7 @@ describe("webhook delivery", () => {
       await dispatcher.stop();
       const lines = errorLog.mock.calls.map((call) => String(call[0]));
       expect(lines.filter((line) => line.startsWith("webhooks: "))).toHaveLength(1);
-      expect(lines.join("\n")).not.toMatch(/UnsafeSecretPathError|at /);
+      expect(lines.join("\n")).not.toMatch(/UnsafeSecretPathError|(^|\n)\s*at /);
     } finally {
       await dispatcher.stop();
       errorLog.mockRestore();

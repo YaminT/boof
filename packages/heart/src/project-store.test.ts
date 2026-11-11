@@ -14,7 +14,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { atomicWrite } from "./atomic.js";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvalidIdError, projectPaths } from "./paths.js";
 import { isAnthropicApiKey, ProjectPatchSchema, ProjectSchema } from "./schema.js";
@@ -376,6 +376,7 @@ describe("create with path modes", () => {
     const fakeHome = join(base, "fakehome");
     await mkdir(join(fakeHome, "sub"), { recursive: true });
     vi.stubEnv("HOME", fakeHome);
+    vi.stubEnv("USERPROFILE", fakeHome);
     try {
       for (const dir of ["/", fakeHome, base]) {
         await expect(
@@ -438,7 +439,8 @@ describe("create with path modes", () => {
     const guard = async (real: string) => {
       const { realpath } = await import("node:fs/promises");
       const root = await realpath(allowed());
-      if (!real.startsWith(root + "/")) throw new Error(`refused ${real}`);
+      const prefix = root.endsWith(sep) ? root : root + sep;
+      if (!real.startsWith(prefix)) throw new Error(`refused ${real}`);
     };
     beforeEach(async () => {
       await mkdir(allowed(), { recursive: true });
@@ -697,20 +699,24 @@ describe("create with path modes", () => {
     expect(existsSync(kept)).toBe(true);
   });
 
-  it("new: a directory it could not create leaves nothing behind", async () => {
-    if (process.getuid?.() === 0) return; // root ignores modes
-    const ro = join(base, "ro");
-    await mkdir(ro);
-    await chmod(ro, 0o500);
-    try {
-      await expect(
-        pstore.create({ workingDirectory: join(ro, "p"), path: { mode: "new" } }),
-      ).rejects.toMatchObject({ code: "directory_create_failed" });
-      expect(existsSync(join(ro, "p"))).toBe(false);
-    } finally {
-      await chmod(ro, 0o700);
-    }
-  });
+  // Unix mode bits do not deny create on Windows.
+  it.skipIf(process.platform === "win32")(
+    "new: a directory it could not create leaves nothing behind",
+    async () => {
+      if (process.getuid?.() === 0) return; // root ignores modes
+      const ro = join(base, "ro");
+      await mkdir(ro);
+      await chmod(ro, 0o500);
+      try {
+        await expect(
+          pstore.create({ workingDirectory: join(ro, "p"), path: { mode: "new" } }),
+        ).rejects.toMatchObject({ code: "directory_create_failed" });
+        expect(existsSync(join(ro, "p"))).toBe(false);
+      } finally {
+        await chmod(ro, 0o700);
+      }
+    },
+  );
 
   it("new: a failing initGitRepo rolls the created directory back", async () => {
     const s = new ProjectStore(root, {
@@ -758,25 +764,29 @@ describe("create with path modes", () => {
     expect(inits).toEqual([]);
   });
 
-  it("new: an entry access() cannot see (no search permission on the parent) fails cleanly", async () => {
-    if (process.getuid?.() === 0) return;
-    const closed = join(base, "closed");
-    await mkdir(join(closed, "p"), { recursive: true });
-    await writeFile(join(closed, "p", "keep.txt"), "x");
-    await chmod(closed, 0o000);
-    try {
-      await expect(
-        pstore.create({
-          workingDirectory: join(closed, "p"),
-          path: { mode: "new", confirm: true },
-        }),
-      ).rejects.toMatchObject({ code: "directory_create_failed" });
-    } finally {
-      await chmod(closed, 0o700);
-    }
-    expect(existsSync(join(closed, "p", "keep.txt"))).toBe(true);
-    expect(inits).toEqual([]);
-  });
+  // Unix mode bits do not remove search permission on Windows.
+  it.skipIf(process.platform === "win32")(
+    "new: an entry access() cannot see (no search permission on the parent) fails cleanly",
+    async () => {
+      if (process.getuid?.() === 0) return;
+      const closed = join(base, "closed");
+      await mkdir(join(closed, "p"), { recursive: true });
+      await writeFile(join(closed, "p", "keep.txt"), "x");
+      await chmod(closed, 0o000);
+      try {
+        await expect(
+          pstore.create({
+            workingDirectory: join(closed, "p"),
+            path: { mode: "new", confirm: true },
+          }),
+        ).rejects.toMatchObject({ code: "directory_create_failed" });
+      } finally {
+        await chmod(closed, 0o700);
+      }
+      expect(existsSync(join(closed, "p", "keep.txt"))).toBe(true);
+      expect(inits).toEqual([]);
+    },
+  );
 
   it("auto: creates <projectsRoot>/<id> with the id from the name, skipping taken ids and occupied directories", async () => {
     const projectsRoot = join(base, "auto-root");

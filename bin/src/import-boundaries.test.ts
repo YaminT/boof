@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -39,15 +39,18 @@ describe("tracked source git hygiene", () => {
         .toString()
         .split("\0")
         .filter(Boolean);
-      const ignored = tracked.filter((file) => {
-        try {
-          execFileSync("git", ["check-ignore", "--no-index", "-q", "--", file], { cwd: repo });
-          return true;
-        } catch (error) {
-          if ((error as { status?: number }).status === 1) return false;
-          throw error;
-        }
-      });
+      // One stdin invocation. A process per file exceeds the test timeout on Windows.
+      let ignored: string[] = [];
+      try {
+        const out = execFileSync("git", ["check-ignore", "--no-index", "-z", "--stdin"], {
+          cwd: repo,
+          input: tracked.join("\0"),
+        });
+        ignored = out.toString().split("\0").filter(Boolean);
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status !== 1) throw error;
+      }
       expect(ignored, `tracked source files ignored by git:\n${ignored.join("\n")}`).toEqual([]);
     },
   );
@@ -62,7 +65,7 @@ async function workspaceDirs(): Promise<string[]> {
     if (pattern.endsWith("/*")) {
       const base = pattern.slice(0, -2);
       for (const entry of readdirSync(join(repo, base), { withFileTypes: true })) {
-        const rel = join(base, entry.name);
+        const rel = join(base, entry.name).split(sep).join("/");
         if (entry.isDirectory()) {
           try {
             readFileSync(join(repo, rel, "package.json"));

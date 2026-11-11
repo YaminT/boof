@@ -125,7 +125,7 @@ describe("atomicWrite", () => {
     expect(sync).toHaveBeenCalledTimes(2);
     expect(destExistedAtSync).toEqual([false, true]);
     expect(await readFile(dest, "utf8")).toBe("{}\n");
-    expect((await stat(dest)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(dest)).mode & 0o777).toBe(0o600);
   });
 
   it("skips the directory sync when the directory cannot be opened (Windows)", async () => {

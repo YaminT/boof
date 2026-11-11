@@ -857,7 +857,7 @@ describe("the separate agent key (owlishAgentKey)", () => {
     expect(await readFile(join(root, "settings.json"), "utf8")).not.toContain(AGENT);
     if (process.platform !== "win32") {
       const { stat } = await import("node:fs/promises");
-      expect((await stat(file)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect((await stat(file)).mode & 0o777).toBe(0o600);
     }
     await run("settings.update", LOCAL_PRINCIPAL, { owlishAgentKey: null });
     expect(await service.owlishSecrets.getAgent()).toBeNull();

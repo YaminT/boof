@@ -18,7 +18,8 @@ import {
 } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_LINK_TTL_MS,
@@ -36,6 +37,34 @@ const DAY_MS = 86_400_000;
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+/** A child env that does not inherit the parent's secrets. Windows still needs SystemRoot. */
+function isolatedChildEnv(home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    PATH:
+      process.platform === "win32"
+        ? [
+            dirname(process.execPath),
+            join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+          ].join(";")
+        : "/usr/bin:/bin",
+    HOME: home,
+    TMPDIR: tmpdir(),
+    TZ: "UTC",
+  };
+  if (process.platform === "win32") {
+    env.USERPROFILE = home;
+    env.SystemRoot = process.env.SystemRoot;
+    env.SYSTEMROOT = process.env.SYSTEMROOT ?? process.env.SystemRoot;
+    env.windir = process.env.windir ?? process.env.SystemRoot;
+    env.PATHEXT = process.env.PATHEXT;
+    env.ComSpec = process.env.ComSpec ?? process.env.COMSPEC;
+    env.COMSPEC = process.env.COMSPEC ?? process.env.ComSpec;
+    env.TEMP = process.env.TEMP ?? tmpdir();
+    env.TMP = process.env.TMP ?? tmpdir();
+  }
+  return env;
 }
 
 function simulatedProcess(pid: number) {
@@ -102,10 +131,10 @@ describe("BrowserSessionStore", () => {
   it("creates missing data roots with private permissions", async () => {
     const missingRoot = join(root, "new-root");
     await new BrowserSessionStore(missingRoot, () => clock).createLink();
-    expect(statSync(missingRoot).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(missingRoot).mode & 0o777).toBe(0o700);
     const sessionRoot = join(root, "new-session-root");
     await new BrowserSessionStore(sessionRoot, () => clock).createSession();
-    expect(statSync(sessionRoot).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(sessionRoot).mode & 0o777).toBe(0o700);
   });
 
   it("verify on a missing data root quietly returns null", async () => {
@@ -175,8 +204,11 @@ describe("BrowserSessionStore", () => {
         process.execPath,
         ["--import", "tsx", childPath, root, code, String(clock), readyPath, releasePath],
         {
-          cwd: new URL(".", import.meta.url).pathname,
-          env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: tmpdir(), TZ: "UTC" },
+          // `pathname` is `/C:/...` on Windows, which is not a directory, and CreateProcess
+          // then reports ENOENT for node.exe. fileURLToPath is the real cwd. A custom env
+          // without SystemRoot fails the same way.
+          cwd: fileURLToPath(new URL(".", import.meta.url)),
+          env: isolatedChildEnv(root),
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
@@ -501,9 +533,11 @@ describe("BrowserSessionStore", () => {
     await store.createLink();
     await store.createSession();
     const paths = dataRootPaths(root);
-    expect((await stat(paths.auth)).mode & 0o777).toBe(0o700);
-    expect((await stat(paths.browserLinks)).mode & 0o777).toBe(0o600);
-    expect((await stat(paths.browserSessions)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(paths.auth)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32")
+      expect((await stat(paths.browserLinks)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(paths.browserSessions)).mode & 0o777).toBe(0o600);
   });
 
   it("caps: 21st link drops the oldest; 51st session drops the oldest", async () => {
@@ -698,7 +732,7 @@ describe("BrowserSessionStore", () => {
       await expect(store.createLink()).resolves.toMatchObject({
         code: expect.stringMatching(/^bl_/),
       });
-      expect(statSync(root).mode & 0o777).toBe(0o755);
+      if (process.platform !== "win32") expect(statSync(root).mode & 0o777).toBe(0o755);
       await chmod(root, 0o1770);
       expect((await store.verify(created.token))?.id).toBe(created.session.id);
     },
@@ -729,7 +763,7 @@ describe("BrowserSessionStore", () => {
     const linkedStore = new BrowserSessionStore(linkRoot, () => clock);
     const created = await linkedStore.createSession();
     expect((await linkedStore.verify(created.token))?.id).toBe(created.session.id);
-    expect(statSync(realRoot).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(realRoot).mode & 0o777).toBe(0o700);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -811,7 +845,7 @@ describe("BrowserSessionStore", () => {
       try {
         await expect(checked.createLink()).rejects.toThrow(/chmod go-w/);
         expect(calls).toEqual([root]);
-        expect(statSync(victim).mode & 0o777).toBe(0o755);
+        if (process.platform !== "win32") expect(statSync(victim).mode & 0o777).toBe(0o755);
       } finally {
         await rm(victim, { recursive: true, force: true });
       }

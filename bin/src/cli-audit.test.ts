@@ -171,113 +171,118 @@ describe("run and scan audit", () => {
     expect(await auditLines(root)).toHaveLength(4);
   }, 60_000);
 
-  it("SIGINT during the first agent call dies by signal and leaves the task running", async () => {
-    const root = await scratch();
-    const parent = await scratch();
-    const home = await scratch();
-    const repo = await gitRepo(parent, "shop", true);
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
-    for (const key of [
-      "ANTHROPIC_BASE_URL",
-      "ANTHROPIC_AUTH_TOKEN",
-      "ANTHROPIC_API_KEY",
-      "BOOF_RUNNER_DATA_ROOT",
-    ]) {
-      delete env[key];
-    }
-    const child = spawn(
-      process.execPath,
-      [
-        "--import",
-        "tsx/esm",
-        "bin/src/boof-runner.ts",
-        "run",
-        "--data",
-        root,
-        "--repo",
-        repo,
-        "--tool",
-        "mock",
-        "[[mock-stall planner=1]] Build it",
-      ],
-      { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let output = "";
-    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-      output += chunk;
-    });
-    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-      output += chunk;
-    });
-    let pgid: number | undefined;
-    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve) => {
-        child.once("exit", (code, signal) => resolve({ code, signal }));
-      },
-    );
-    let pidFile: string;
-    try {
-      pidFile = await new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          child.kill("SIGKILL");
-          reject(new Error(`agent did not start; output:\n${output}`));
-        }, 25_000);
-        const poll = setInterval(() => {
-          const found = findNamed(join(root, "projects"), "pid");
-          if (found[0]) {
-            clearInterval(poll);
-            clearTimeout(timer);
-            resolve(found[0]);
-          }
-        }, 30);
-      });
-      pgid = (JSON.parse(readFileSync(pidFile, "utf8")) as { pgid: number }).pgid;
-      child.kill("SIGINT");
-      const exit = await Promise.race([
-        exitPromise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            child.kill("SIGKILL");
-            reject(new Error(`run did not die; output:\n${output}`));
-          }, 10_000);
-        }),
-      ]);
-      let groupAlive = true;
-      try {
-        process.kill(pgid, 0);
-      } catch {
-        groupAlive = false;
+  // POSIX process group. child.kill("SIGINT") does not leave the agent group alive on Windows.
+  it.skipIf(process.platform === "win32")(
+    "SIGINT during the first agent call dies by signal and leaves the task running",
+    async () => {
+      const root = await scratch();
+      const parent = await scratch();
+      const home = await scratch();
+      const repo = await gitRepo(parent, "shop", true);
+      const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+      for (const key of [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "BOOF_RUNNER_DATA_ROOT",
+      ]) {
+        delete env[key];
       }
-      expect(exit, output).toEqual({ code: null, signal: "SIGINT" });
-      expect(groupAlive, "agent group survives parent death, as a default SIGINT left it").toBe(
-        true,
+      const child = spawn(
+        process.execPath,
+        [
+          "--import",
+          "tsx/esm",
+          "bin/src/boof-runner.ts",
+          "run",
+          "--data",
+          root,
+          "--repo",
+          repo,
+          "--tool",
+          "mock",
+          "[[mock-stall planner=1]] Build it",
+        ],
+        { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] },
       );
-      const area = dirname(dirname(pidFile));
-      const log = await readFile(join(area, "log.txt"), "utf8");
-      expect(log).toContain("### Planner");
-      expect(log).not.toContain("### Developer");
-      expect(area).toContain(join("tasks", "ongoing"));
-      const task = await readFile(join(area, "task.md"), "utf8");
-      expect(task).toMatch(/^status: running$/m);
-      const lines = await auditLines(root);
-      expect(lines).toHaveLength(1);
-      assertLine(lines[0]!, {
-        action: "cli:run",
-        outcome: "error",
-        project: "shop",
-        error: "interrupted",
+      let output = "";
+      child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+        output += chunk;
       });
-    } finally {
-      if (pgid !== undefined) {
+      child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+        output += chunk;
+      });
+      let pgid: number | undefined;
+      const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve) => {
+          child.once("exit", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      let pidFile: string;
+      try {
+        pidFile = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(new Error(`agent did not start; output:\n${output}`));
+          }, 25_000);
+          const poll = setInterval(() => {
+            const found = findNamed(join(root, "projects"), "pid");
+            if (found[0]) {
+              clearInterval(poll);
+              clearTimeout(timer);
+              resolve(found[0]);
+            }
+          }, 30);
+        });
+        pgid = (JSON.parse(readFileSync(pidFile, "utf8")) as { pgid: number }).pgid;
+        child.kill("SIGINT");
+        const exit = await Promise.race([
+          exitPromise,
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              child.kill("SIGKILL");
+              reject(new Error(`run did not die; output:\n${output}`));
+            }, 10_000);
+          }),
+        ]);
+        let groupAlive = true;
         try {
-          process.kill(-pgid, "SIGKILL");
+          process.kill(pgid, 0);
         } catch {
-          /* already gone */
+          groupAlive = false;
         }
+        expect(exit, output).toEqual({ code: null, signal: "SIGINT" });
+        expect(groupAlive, "agent group survives parent death, as a default SIGINT left it").toBe(
+          true,
+        );
+        const area = dirname(dirname(pidFile));
+        const log = await readFile(join(area, "log.txt"), "utf8");
+        expect(log).toContain("### Planner");
+        expect(log).not.toContain("### Developer");
+        expect(area).toContain(join("tasks", "ongoing"));
+        const task = await readFile(join(area, "task.md"), "utf8");
+        expect(task).toMatch(/^status: running$/m);
+        const lines = await auditLines(root);
+        expect(lines).toHaveLength(1);
+        assertLine(lines[0]!, {
+          action: "cli:run",
+          outcome: "error",
+          project: "shop",
+          error: "interrupted",
+        });
+      } finally {
+        if (pgid !== undefined) {
+          try {
+            process.kill(-pgid, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        }
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }
-  }, 45_000);
+    },
+    45_000,
+  );
 
   it("an abort signal after the task is created still writes a line", async () => {
     const root = await scratch();

@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,7 +30,7 @@ const run = (opts: ProcessLockOptions = fast) =>
   withProcessLock(lock, opts, async () => "ran", timeoutError);
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "boof-runner-plock-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-plock-")));
   lock = join(dir, "x.lock");
 });
 

@@ -5,9 +5,12 @@ import { execCommand } from "./process.js";
 
 /**
  * Windows stand-in for a mode 0700 data root. icacls speaks in names that change with the
- * locale, so the check reads the DACL as SDDL (SIDs) via `icacls /save`. A root is private when
- * its only allow entry is the current user. Parents may also grant SYSTEM and Administrators;
- * a write grant to anyone else (Everyone, Users, another account) is a shared folder.
+ * locale, so the check reads the DACL as SDDL (SIDs) via `icacls /save`. A directory the
+ * current user created is private when its allow entries are that user, SYSTEM and
+ * Administrators, including the `LA` alias icacls uses for the built-in Administrator
+ * (RID 500). Users, Everyone, Authenticated Users and any other account are a shared folder.
+ * The list is not rewritten in the private case: stripping those entries removes the owner's
+ * own access.
  */
 
 export interface AclPrincipal {
@@ -82,13 +85,27 @@ const ALIAS_SID: Record<string, string> = {
   BG: "S-1-5-32-546",
 };
 
-/** Parent write grants that are normal on a Windows profile and are not a shared folder. */
-const BENIGN_PARENT = new Set(["S-1-5-18", "S-1-5-32-544"]);
+/** SYSTEM and Administrators. Normal on a profile and on a directory the user just created. */
+const BENIGN_OWNER = new Set(["S-1-5-18", "S-1-5-32-544"]);
+
+/**
+ * Built-in Administrator. `icacls /save` writes the alias `LA`, while `whoami` writes
+ * `S-1-5-21-<machine>-500`. `LA` is that account only, so it is not a fixed SID.
+ */
+const LOCAL_ADMIN_RID = /^S-1-5-21-\d+-\d+-\d+-500$/i;
 
 export function canonicalSid(sid: string): string {
   const trimmed = sid.trim();
   const key = trimmed.toUpperCase();
   return ALIAS_SID[key] ?? key;
+}
+
+/** True when `aceSid` is this user. `LA` matches only a user whose SID is the RID-500 account. */
+export function sameAccount(aceSid: string, userSid: string): boolean {
+  const ace = canonicalSid(aceSid);
+  const user = canonicalSid(userSid);
+  if (ace === user) return true;
+  return ace === "LA" && LOCAL_ADMIN_RID.test(user);
 }
 
 export function isFilesystemRoot(path: string): boolean {
@@ -203,51 +220,57 @@ export function decodeIcaclsText(buf: Buffer): string {
 export interface AclTightenOptions {
   /**
    * A child of a tightened root may keep an inherited allow for this user
-   * (`(A;OICIID;FA;;;<user>)`). The root itself must not: disabling inheritance is what
-   * stops a parent from adding accounts later.
+   * (`(A;OICIID;FA;;;<user>)`). Inherited SYSTEM, Administrators and the owner are
+   * private either way. An inherited allow for any other account is not.
    */
   acceptInheritedUser?: boolean;
 }
 
 /**
- * True when the list is not a full-control allow for this user and nobody else.
- * An inherited entry on a root still needs a rewrite. With `acceptInheritedUser`, an inherited
- * allow for this user is the tightened root propagating and is safe; another principal, a
- * missing user write, or a conditional ACE (`XA`/`ZA`, whose condition is not evaluated) is not.
+ * True when the list is not private to this user.
+ * SYSTEM, Administrators and the user (including inherited allows, and `LA` for the RID-500
+ * account) are the access a new directory gets from its parent. They are left alone.
+ * An allow for anyone else, a missing user write, or a conditional ACE (`XA`/`ZA`, whose
+ * condition is not evaluated) is not private. `acceptInheritedUser` still accepts an inherited
+ * allow for this user; that case is already private either way.
  */
 export function aclNeedsTighten(
   aces: AclAce[],
   userSid: string,
   opts?: AclTightenOptions,
 ): boolean {
-  const me = canonicalSid(userSid);
   const acceptInherited = opts?.acceptInheritedUser === true;
   let userWrite = false;
   for (const ace of aces) {
     if (ace.conditional) return true;
-    if (ace.inherited && !acceptInherited) return true;
     const sid = canonicalSid(ace.sid);
-    if (sid === me) {
+    const mine = sameAccount(ace.sid, userSid);
+    const benign = BENIGN_OWNER.has(sid);
+    // An inherited allow for some other account is a parent sharing the folder.
+    if (ace.inherited && !acceptInherited && !mine && !benign) return true;
+    if (mine) {
       if (!ace.allow && rightsIncludeWrite(ace.rights)) return true;
       if (ace.allow && !ace.inheritOnly && rightsIncludeWrite(ace.rights)) userWrite = true;
       continue;
     }
-    if (ace.allow) return true;
+    if (benign) continue;
+    // Inherit-only does not grant access to this folder.
+    if (ace.allow && !ace.inheritOnly) return true;
   }
   return !userWrite;
 }
 
 /**
- * SID of a non-benign account that can write this parent, or null. SYSTEM and Administrators
- * are normal on a profile; Everyone, Users and any other account are a shared folder.
+ * SID of an account other than the user, SYSTEM or Administrators that can write this
+ * directory, or null. Everyone, Users, Authenticated Users and any other account are a
+ * shared folder. `LA` is the user when that user is the built-in Administrator.
  */
 export function parentLetsOthersWrite(aces: AclAce[], userSid: string): string | null {
-  const me = canonicalSid(userSid);
   for (const ace of aces) {
     if (ace.conditional) return "conditional";
     if (!ace.allow || ace.inheritOnly || !rightsIncludeWrite(ace.rights)) continue;
     const sid = canonicalSid(ace.sid);
-    if (sid === me || BENIGN_PARENT.has(sid)) continue;
+    if (sameAccount(ace.sid, userSid) || BENIGN_OWNER.has(sid)) continue;
     return sid;
   }
   return null;

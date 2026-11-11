@@ -15,8 +15,9 @@ describe("WebhookSecretStore", () => {
     expect(await store.get("wh-1")).toBeNull();
     await store.set("wh-1", "whsec_" + "a".repeat(48));
     expect(store.filePath).toBe(join(root, "webhooks", "secrets.json"));
-    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(root, "webhooks"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(root, "webhooks"))).mode & 0o777).toBe(0o700);
     expect(await store.get("wh-1")).toBe("whsec_" + "a".repeat(48));
     await store.delete("wh-1");
     expect(await readFile(store.filePath, "utf8")).toBe("{}\n");

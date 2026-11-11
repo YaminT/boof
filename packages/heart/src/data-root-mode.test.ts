@@ -1,4 +1,15 @@
-import { chmod, lstat, mkdir, mkdtemp, open, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,7 +49,8 @@ function privateAccounts(): AccountFiles {
 
 const roots: string[] = [];
 async function temp(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "boof-data-mode-"));
+  // realpath so /var and /private/var (and Windows 8.3 names) match the path the checker uses.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "boof-data-mode-")));
   roots.push(root);
   return root;
 }
@@ -88,7 +100,7 @@ describe("tightenDataRoot", () => {
     const root = await temp();
     await chmod(root, 0o755);
     expect(await tightenDataRoot(root)).toEqual({ changed: true, before: 0o755 });
-    expect((await stat(root)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o700);
   });
 
   it.skipIf(process.platform === "win32")("an already-private root is unchanged", async () => {
@@ -105,7 +117,8 @@ describe("tightenDataRoot", () => {
       await mkdir(join(root, "auth"), { mode: 0o777 });
       await chmod(join(root, "auth"), 0o777);
       expect(await tightenDataRoot(root)).toEqual({ changed: false, reason: "already-private" });
-      expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32")
+        expect((await stat(join(root, "auth"))).mode & 0o777).toBe(0o700);
       await expect(lstat(join(root, "owlish"))).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
@@ -132,7 +145,7 @@ describe("tightenDataRoot", () => {
       changed: false,
       reason: "home-or-root",
     });
-    expect((await stat(root)).mode & 0o777).toBe(0o755);
+    if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o755);
   });
 
   it.skipIf(process.platform === "win32")("reports missing roots without throwing", async () => {
@@ -161,7 +174,7 @@ describe("tightenDataRoot", () => {
         changed: false,
         reason: "not-owner",
       });
-      expect((await stat(root)).mode & 0o777).toBe(0o755);
+      if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o755);
     },
   );
 
@@ -207,7 +220,7 @@ describe("tightenDataRoot", () => {
       });
       expect(result).toEqual({ changed: false, reason: "chmod-failed", mode: 0o755 });
       expect(tightenedPrivateDirs).toContain(auth);
-      expect((await stat(auth)).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32") expect((await stat(auth)).mode & 0o777).toBe(0o700);
     },
   );
 
@@ -227,7 +240,7 @@ describe("tightenDataRoot", () => {
         path: parent,
         message: expect.stringContaining(`chmod o-w ${parent}`),
       });
-      expect((await stat(root)).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o700);
     },
   );
 
@@ -296,11 +309,12 @@ describe("windows access list", () => {
   it("restricts a wider root to the current user and leaves the Unix mode alone", async () => {
     const root = await temp();
     await chmod(root, 0o755);
+    const before = (await stat(root)).mode & 0o777;
     const acl = scriptedAcl((path) => path === root);
     const result = await tightenDataRoot(root, { platform: "win32", windowsAcl: acl });
     expect(result).toEqual({ changed: true, via: "acl" });
     expect(acl.tightened).toEqual([root]);
-    expect((await stat(root)).mode & 0o777).toBe(0o755);
+    expect((await stat(root)).mode & 0o777).toBe(before);
     expect(dataRootAccessNotice(root, result)).toBe(
       `tightened data root ${root}: removed other accounts from the access list (current user only)`,
     );
@@ -451,6 +465,58 @@ describe("windows access list", () => {
     ).rejects.toThrow(/symbolic link/);
   });
 
+  it("accepts SYSTEM, Administrators and the local Administrator on a temp directory", async () => {
+    const admin: AclPrincipal = {
+      account: "RUNNER\\runneradmin",
+      sid: "S-1-5-21-3289802278-1561746829-1498425070-500",
+    };
+    const normal = acesOf("D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)");
+    const inherited = acesOf("D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LA)");
+    const tightened: string[] = [];
+    const root = await temp();
+    const auth = join(root, "auth");
+    await mkdir(auth);
+    const acl: WindowsAclOps = {
+      currentUser: async () => admin,
+      readAcl: async (path) => ({ ok: true, aces: path === auth ? inherited : normal }),
+      tightenToUser: async (path) => {
+        tightened.push(path);
+        return true;
+      },
+    };
+    expect(await tightenDataRoot(root, { platform: "win32", windowsAcl: acl })).toEqual({
+      changed: false,
+      reason: "already-private",
+    });
+    expect(tightened).toEqual([]);
+    await expect(
+      assertSafeForSecrets(root, auth, "directory", { platform: "win32", windowsAcl: acl }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refuses Users, Everyone and Authenticated Users on a temp directory", async () => {
+    const admin: AclPrincipal = {
+      account: "RUNNER\\runneradmin",
+      sid: "S-1-5-21-3289802278-1561746829-1498425070-500",
+    };
+    for (const foreign of ["BU", "WD", "AU"]) {
+      const acl: WindowsAclOps = {
+        currentUser: async () => admin,
+        readAcl: async () => ({
+          ok: true,
+          aces: acesOf(
+            `D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)(A;OICI;FA;;;${foreign})`,
+          ),
+        }),
+        tightenToUser: async () => false,
+      };
+      const root = await temp();
+      await expect(
+        assertSafeForSecrets(root, root, "directory", { platform: "win32", windowsAcl: acl }),
+      ).rejects.toThrow(/other accounts/);
+    }
+  });
+
   it("accepts an inherited full-control ACE for the current user on a child file and folder", async () => {
     const root = await temp();
     const folder = join(root, "auth");
@@ -536,6 +602,23 @@ describe("windows access list", () => {
 });
 
 describe("assertSafeForSecrets", () => {
+  it.skipIf(process.platform === "win32")(
+    "accepts the data root when an ancestor directory is a symlink",
+    async () => {
+      const base = await temp();
+      const real = join(base, "real");
+      const link = join(base, "link");
+      await mkdir(real, { mode: 0o755 });
+      await symlink(real, link);
+      const root = join(link, "data");
+      await mkdir(root, { mode: 0o700 });
+      await mkdir(join(root, "auth"), { mode: 0o700 });
+      await expect(
+        assertSafeForSecrets(root, root, "directory", { accounts: privateAccounts() }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
   it.skipIf(process.platform === "win32")("accepts a primary-group 0775 parent", async () => {
     const base = await temp();
     const parent = join(base, "boof-runner");
@@ -776,7 +859,7 @@ describe("assertSafeForSecrets", () => {
     vi.stubEnv("HOME", undefined);
     try {
       expect(await tightenDataRoot(fakeHome)).toEqual({ changed: false, reason: "home-or-root" });
-      expect((await stat(fakeHome)).mode & 0o777).toBe(0o755);
+      if (process.platform !== "win32") expect((await stat(fakeHome)).mode & 0o777).toBe(0o755);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -792,7 +875,7 @@ describe("assertSafeForSecrets", () => {
         accounts: privateAccounts(),
       }),
     ).rejects.toThrow(`chmod go-w ${home}`);
-    expect((await stat(home)).mode & 0o777).toBe(0o775);
+    if (process.platform !== "win32") expect((await stat(home)).mode & 0o777).toBe(0o775);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -834,7 +917,7 @@ describe("assertSafeForSecrets", () => {
       await expect(
         assertSafeForSecrets(root, join(root, "auth"), "directory"),
       ).resolves.toBeUndefined();
-      expect((await stat(root)).mode & 0o777).toBe(0o755);
+      if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o755);
     },
   );
 
@@ -917,7 +1000,7 @@ describe("assertSafeForSecrets", () => {
         warn: (message) => warnings.push(message),
       });
       try {
-        expect((await stat(root)).mode & 0o777).toBe(0o700);
+        if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o700);
         expect(warnings.filter((message) => message.includes("tightened data root"))).toEqual([
           `tightened data root ${root} from 755 to 700 (other local users could read it)`,
         ]);
@@ -946,7 +1029,7 @@ describe("assertSafeForSecrets", () => {
         warn: (message) => warnings.push(message),
       });
       try {
-        expect((await stat(root)).mode & 0o777).toBe(0o700);
+        if (process.platform !== "win32") expect((await stat(root)).mode & 0o777).toBe(0o700);
         expect(warnings.some((m) => m.includes(`chmod o-w ${parent}`))).toBe(true);
         expect(warnings.some((m) => m.includes("chmod 700"))).toBe(false);
       } finally {
