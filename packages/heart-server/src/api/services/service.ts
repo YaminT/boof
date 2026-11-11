@@ -99,7 +99,7 @@ import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
-import { ConciergeService } from "../../concierge/service.js";
+import type { ConciergeService } from "../../concierge/service.js";
 import type { ConciergeAgent } from "@boof/heart";
 import { cleanN8nName } from "../../n8n/text.js";
 
@@ -1714,15 +1714,21 @@ export class TaskService {
 
   // --- Settings / health ---
 
+  /**
+   * The assistant, built by the composition root (`attachConcierge`). TaskService does not
+   * construct it: that would import the operation registry and the concierge MCP server, which
+   * import TaskService.
+   */
+  useConcierge(concierge: ConciergeService): void {
+    this.conciergeService = concierge;
+  }
+
+  hasConcierge(): boolean {
+    return this.conciergeService !== undefined;
+  }
+
   concierge(): ConciergeService {
-    if (!this.conciergeService) {
-      this.conciergeService = new ConciergeService({
-        root: this.root,
-        services: this,
-        authStore: this.authStore,
-        agent: this.conciergeAgent,
-      });
-    }
+    if (!this.conciergeService) throw new Error("ConciergeService was not provided");
     return this.conciergeService;
   }
 

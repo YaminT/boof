@@ -1,13 +1,10 @@
 import { z } from "zod";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   AuthStore,
   CHANGE_TTL_MS,
   isInterruptedApply,
   CONCIERGE_TOOL_ID,
   ConciergeStore,
-  conciergeDir,
   ConciergeTurnError,
   MAX_PENDING_PER_CONVERSATION,
   auditOperation,
@@ -27,6 +24,7 @@ import {
   type Project,
   type TokenUsage,
 } from "@boof/heart";
+import type { AnyOperation } from "../api/define-op.js";
 import { OpError } from "../api/errors.js";
 import { promptFingerprint } from "../api/audit.js";
 import type { TaskService } from "../api/services/service.js";
@@ -49,6 +47,8 @@ import {
   type ResolvedContext,
 } from "./prompt.js";
 import { previewChange } from "./preview.js";
+
+type CreateConciergeMcpServer = typeof import("../mcp/server.js").createConciergeMcpServer;
 
 const kebab = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 export const ConciergeContextSchema = z.strictObject({
@@ -121,6 +121,10 @@ export class ConciergeService {
       services: TaskService;
       authStore: AuthStore;
       agent: ConciergeAgent | null;
+      /** The operation registry, supplied by the composition root (it must not be imported here). */
+      registry: readonly AnyOperation[];
+      getOp: (name: string) => AnyOperation | undefined;
+      createMcpServer: CreateConciergeMcpServer;
       now?: () => number;
     },
   ) {
@@ -168,30 +172,11 @@ export class ConciergeService {
 
   /** Read the live conversation without creating, expiring, or otherwise changing it. */
   private async readStatusConversation(projectId: string, owner: string, idleMs: number) {
-    const dir = conciergeDir(this.opts.root, projectId);
     try {
-      const live = JSON.parse(await readFile(join(dir, "live.json"), "utf8")) as {
-        owners?: Record<string, string>;
-      };
-      const id = live.owners?.[owner];
-      if (!id || !/^cnv-[0-9a-f]{8}$/.test(id)) return null;
-      const conversation = await (
-        this.store as unknown as {
-          readConversation(
-            projectId: string,
-            id: string,
-          ): Promise<ConciergeConversation | null | "corrupt">;
-        }
-      ).readConversation(projectId, id);
-      if (!conversation || conversation === "corrupt") return null;
-      if (
-        conversation.id !== id ||
-        conversation.projectId !== projectId ||
-        conversation.owner !== owner ||
-        this.now() - Date.parse(conversation.updatedAt) >= idleMs ||
-        this.now() < Date.parse(conversation.updatedAt)
-      )
-        return null;
+      const conversation = await this.store.readLive(projectId, owner);
+      if (!conversation) return null;
+      const updated = Date.parse(conversation.updatedAt);
+      if (this.now() - updated >= idleMs || this.now() < updated) return null;
       return {
         ...conversation,
         changes: conversation.changes.map((change) =>
@@ -313,7 +298,7 @@ export class ConciergeService {
       let toolCount = 0;
       const changes: ConciergeAnswer["changes"] = [];
       const gate = {
-        before: async (op: (typeof registry)[number], raw: Record<string, unknown>) => {
+        before: async (op: AnyOperation, raw: Record<string, unknown>) => {
           if (CONCIERGE_TOOLS[op.name] !== "confirm") return undefined;
           const parsed = op.input.safeParse(raw);
           if (!parsed.success)
@@ -388,11 +373,7 @@ export class ConciergeService {
             throw err;
           }
         },
-        refused: async (
-          op: (typeof registry)[number],
-          raw: Record<string, unknown>,
-          err: OpError,
-        ) => {
+        refused: async (op: AnyOperation, raw: Record<string, unknown>, err: OpError) => {
           if (CONCIERGE_TOOLS[op.name] !== "write" || err.code !== "forbidden_trust")
             return undefined;
           const parsed = op.input.safeParse(raw);
@@ -459,11 +440,7 @@ export class ConciergeService {
             throw err;
           }
         },
-        after: async (
-          op: (typeof registry)[number],
-          _raw: Record<string, unknown>,
-          result: unknown,
-        ) => {
+        after: async (op: AnyOperation, _raw: Record<string, unknown>, result: unknown) => {
           const mode = CONCIERGE_TOOLS[op.name];
           if (mode === "write") {
             const target = targetOf(op.name, result);
@@ -479,11 +456,9 @@ export class ConciergeService {
           return result;
         },
       };
-      const { registry } = await import("../api/registry.js");
-      const ops = conciergeOps(registry);
+      const ops = conciergeOps(this.opts.registry);
       const allowedTools = conciergeAllowedTools(ops, principal, user, projectId);
-      const { createConciergeMcpServer } = await import("../mcp/server.js");
-      const mcpServer = createConciergeMcpServer({
+      const mcpServer = this.opts.createMcpServer({
         root: this.opts.root,
         principal,
         project: projectId,
@@ -651,8 +626,7 @@ export class ConciergeService {
       throw new OpError(409, "Pending change expired", "change_expired");
     if (change.status !== "pending")
       throw new OpError(404, "Pending change not found", "change_not_found");
-    const { getOp } = await import("../api/registry.js");
-    const op = getOp(change.op);
+    const op = this.opts.getOp(change.op);
     if (!op || !CONCIERGE_TOOLS[change.op])
       throw new OpError(404, "Pending change not found", "change_not_found");
     assertConfirmInput(change.op, change.input, projectId);

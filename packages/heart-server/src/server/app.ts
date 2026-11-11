@@ -57,6 +57,7 @@ import { externalCallbackRoutes } from "./external-callback.js";
 import { HARNESS_MD } from "./generated/harness.js";
 import { ConciergeAskInputSchema } from "../api/ops/concierge.js";
 import { ConciergeEventSchema } from "../api/schemas.js";
+import { attachConcierge } from "../concierge/compose.js";
 
 export interface AppDeps {
   service: TaskService;
@@ -128,6 +129,14 @@ function publicPrefix(c: Context): string {
 const JSON_BODY_LIMIT = 1_000_000;
 /** Open event streams one principal may hold; the next one answers 429 rate_limited. */
 const MAX_EVENT_STREAMS_PER_PRINCIPAL = 16;
+/**
+ * How often a running assistant stream re-checks the key or browser session. Shorter than the
+ * events stream's 2s poll so a revoke ends the body inside 2s even when it lands just after a tick.
+ */
+const CONCIERGE_AUTH_POLL_MS = 500;
+const SIGNED_OUT_MESSAGE =
+  'Signed out: this browser session ended. Run "boof-runner open" for a new sign-in link.';
+const UNAUTHORIZED_MESSAGE = "API key revoked, expired or no longer authorized";
 const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
 
 /**
@@ -137,6 +146,8 @@ const ATTACHMENT_BODY_LIMIT = MAX_ATTACHMENT_BYTES + 64 * 1024;
  */
 export function createApp(deps: AppDeps): Hono {
   const { service } = deps;
+  // HTTP tests build a TaskService and pass it here. The server and the CLI attach explicitly.
+  if (!service.hasConcierge()) attachConcierge(service);
   const instanceId =
     deps.instanceId && /^[0-9a-f]{64}$/.test(deps.instanceId)
       ? deps.instanceId
@@ -349,10 +360,18 @@ export function createApp(deps: AppDeps): Hono {
     let wake: (() => void) | undefined;
     let complete = false;
     let failure: unknown;
+    let lost = false;
     const notify = () => {
       wake?.();
       wake = undefined;
     };
+    // Linked before ask() so a client that leaves during preflight still aborts the turn.
+    // The auth poll starts only once the SSE body is open (see below).
+    const abort = new AbortController();
+    const onClientGone = () => abort.abort();
+    const detachClient = () => c.req.raw.signal.removeEventListener("abort", onClientGone);
+    if (c.req.raw.signal.aborted) onClientGone();
+    else c.req.raw.signal.addEventListener("abort", onClientGone);
     const run = service
       .concierge()
       .ask(
@@ -368,7 +387,7 @@ export function createApp(deps: AppDeps): Hono {
           queued.push({ type: validated.type, data: validated });
           notify();
         },
-        c.req.raw.signal,
+        abort.signal,
       )
       .then(
         () => {
@@ -384,38 +403,82 @@ export function createApp(deps: AppDeps): Hono {
 
     // ConciergeService emits `conversation` only after all pre-model checks. Wait for that
     // boundary so validation, authorization, budget and availability refusals remain JSON.
-    while (queued.length === 0 && !complete)
-      await new Promise<void>((resolve) => {
-        wake = resolve;
-      });
-    if (queued.length === 0) {
-      await run;
-      const error = toOpError(failure);
-      if (error.status === 499) return c.body(null, 499 as 400);
-      return c.json(error.toBody(), error.status as 400);
-    }
-
-    c.header("X-Accel-Buffering", "no");
-    return streamSSE(c, async (stream) => {
-      let errorEventSent = false;
-      while (queued.length > 0 || !complete) {
-        while (queued.length > 0) {
-          const event = queued.shift()!;
-          if (event.type === "error") errorEventSent = true;
-          await stream.writeSSE({ event: event.type, data: JSON.stringify(event.data) });
-        }
-        if (!complete)
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-          });
-      }
-      if (failure) {
+    let opened = false;
+    try {
+      while (queued.length === 0 && !complete)
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      if (queued.length === 0) {
+        await run;
         const error = toOpError(failure);
-        if (error.status !== 499 && !errorEventSent)
-          await stream.writeSSE({ event: "error", data: JSON.stringify(error.toBody().error) });
+        if (error.status === 499) return c.body(null, 499 as 400);
+        return c.json(error.toBody(), error.status as 400);
       }
-      await run;
-    });
+
+      c.header("X-Accel-Buffering", "no");
+      const response = streamSSE(c, async (stream) => {
+        let errorEventSent = false;
+        let stopPoll = () => {};
+        // Same words as the events stream. `type` is required: the console parses `data`, not the
+        // SSE event name, and drops a payload that has no `type`.
+        const writeUnauthorized = () =>
+          Promise.race([
+            stream
+              .writeSSE({
+                event: "unauthorized",
+                data: JSON.stringify({
+                  type: "error",
+                  code: "unauthenticated",
+                  message: principal.kind === "local" ? SIGNED_OUT_MESSAGE : UNAUTHORIZED_MESSAGE,
+                }),
+              })
+              .catch(() => {}),
+            new Promise<void>((r) => setTimeout(r, 1000).unref()),
+          ]);
+        const endLost = async () => {
+          await writeUnauthorized();
+          await run;
+        };
+        try {
+          stopPoll = pollConciergeAuth(c, principal, () => {
+            lost = true;
+            onClientGone();
+            notify();
+          });
+          while (queued.length > 0 || !complete) {
+            if (lost) return endLost();
+            while (queued.length > 0) {
+              if (lost) break;
+              const event = queued.shift()!;
+              if (event.type === "error") errorEventSent = true;
+              await stream.writeSSE({ event: event.type, data: JSON.stringify(event.data) });
+            }
+            if (lost) return endLost();
+            if (!complete)
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+              });
+          }
+          if (lost) return endLost();
+          if (failure) {
+            const error = toOpError(failure);
+            if (error.status !== 499 && !errorEventSent)
+              await stream.writeSSE({ event: "error", data: JSON.stringify(error.toBody().error) });
+          }
+          await run;
+        } finally {
+          stopPoll();
+          detachClient();
+        }
+      });
+      opened = true;
+      return response;
+    } finally {
+      // streamSSE returns the Response before its callback finishes. Detach only when the body
+      // never opened, or the request-abort listener dies while the turn is still running.
+      if (!opened) detachClient();
+    }
   };
   api.post(
     "/v1/projects/:projectId/concierge/messages/stream",
@@ -472,13 +535,35 @@ export function createApp(deps: AppDeps): Hono {
       new Promise<void>((r) => setTimeout(r, 1000).unref()),
     ]);
   // A browser session is the local principal; a key is a client principal.
-  const SIGNED_OUT = JSON.stringify({
-    message:
-      'Signed out: this browser session ended. Run "boof-runner open" for a new sign-in link.',
-  });
-  const UNAUTHORIZED = JSON.stringify({
-    message: "API key revoked, expired or no longer authorized",
-  });
+  // Re-check a running assistant stream until the SSE callback returns.
+  function pollConciergeAuth(c: Context, current: Principal, onLost: () => void): () => void {
+    let stopped = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const stop = () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+    const tick = () => {
+      if (stopped) return;
+      void resolveSame(c, current)
+        .then((fresh) => {
+          if (stopped || fresh) return;
+          stop();
+          onLost();
+        })
+        .catch(() => {
+          if (stopped) return;
+          stop();
+          onLost();
+        });
+    };
+    tick();
+    timer = setInterval(tick, CONCIERGE_AUTH_POLL_MS);
+    timer.unref();
+    return stop;
+  }
+  const SIGNED_OUT = JSON.stringify({ message: SIGNED_OUT_MESSAGE });
+  const UNAUTHORIZED = JSON.stringify({ message: UNAUTHORIZED_MESSAGE });
 
   // --- SSE ---
   // v1: typed events from the events files, replayable by cursor (see events.ts).
