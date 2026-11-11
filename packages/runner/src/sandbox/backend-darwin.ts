@@ -191,7 +191,9 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
   const checked = checkedPolicy(policy);
   const lines = [
     "(version 1)",
-    "(deny default)",
+    process.env.BOOF_DEBUG_SEATBELT_PROFILE === "1"
+      ? "(deny default (with report))"
+      : "(deny default)",
     // `process-exec*` covers interpreter execution on some Seatbelt versions, but the
     // base operation is needed for ordinary execve/execvp on current macOS runners.
     "(allow process-exec)",
