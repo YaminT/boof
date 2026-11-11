@@ -867,6 +867,9 @@ export class TaskService {
   private readonly cache = new Map<string, ProjectService>();
   readonly conciergeAgent: ConciergeAgent | null;
   readonly authStore: AuthStore;
+  /** CLI composition sets this. The server does not, and its limiter stays in memory. */
+  private readonly cliRateLimits: boolean;
+  private readonly cliNow?: () => number;
   private conciergeService?: ConciergeService;
   private readonly pendingAgentRoleCache = new Map<
     string,
@@ -876,7 +879,14 @@ export class TaskService {
   constructor(
     readonly root: string,
     catalog: ToolCatalog,
-    opts: { conciergeAgent?: ConciergeAgent | null; authStore?: AuthStore } = {},
+    opts: {
+      conciergeAgent?: ConciergeAgent | null;
+      authStore?: AuthStore;
+      /** Persist the assistant's per-minute window and busy flag across processes. */
+      cliRateLimits?: boolean;
+      /** Clock for that file. Ignored unless `cliRateLimits` is set. */
+      now?: () => number;
+    } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
@@ -891,6 +901,8 @@ export class TaskService {
     this.catalog = catalog;
     this.conciergeAgent = opts.conciergeAgent ?? null;
     this.authStore = opts.authStore ?? new AuthStore(root);
+    this.cliRateLimits = opts.cliRateLimits === true;
+    this.cliNow = opts.now;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1721,6 +1733,7 @@ export class TaskService {
         services: this,
         authStore: this.authStore,
         agent: this.conciergeAgent,
+        ...(this.cliRateLimits ? { persistLimits: true, now: this.cliNow } : {}),
       });
     }
     return this.conciergeService;

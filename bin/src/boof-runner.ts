@@ -33,6 +33,7 @@ import {
   SettingsStore,
   securitySettings,
   UnsafeSecretPathError,
+  cliRateNow,
 } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
@@ -707,8 +708,14 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
     return opsCommand([cmd, ...rest], defaultDataRoot, {
       services: (root) =>
         new TaskService(root, new ToolRegistry(), {
-          conciergeAgent: new ClaudeConcierge({ root }),
+          // The server builds its own TaskService and keeps the in-memory limiter.
+          // A normal CLI process leaves the in-process stand-in unset.
+          conciergeAgent:
+            (globalThis as { __boofDevConcierge?: ConciergeAgent }).__boofDevConcierge ??
+            new ClaudeConcierge({ root }),
           authStore: new AuthStore(root),
+          cliRateLimits: true,
+          now: cliRateNow,
         }),
     });
   }
