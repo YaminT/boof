@@ -717,11 +717,13 @@ export class RunnerEngine {
    * Recover tasks a dead runner left in `running` (crash, SIGKILL, OOM, reboot). Call it only
    * from the process that holds the runner guard, before selecting work: nothing else is
    * driving those tasks. Each one gets an Interrupted block (live log mirrored into the body
-   * first). When the agent is gone (no pid file, or the process is dead or was just killed)
-   * the task goes back to `pending`, so the loop runs it again; its worktree and branch are
-   * kept. When the agent might still be running, the task moves to `failed` and keeps the
-   * agent identity, and a retry is refused until that process is gone. Entries with no
-   * readable task.md are skipped with a warning. Returns the recovered ids.
+   * first). The task goes back to `pending` only when the agent is confirmed gone (the recorded
+   * process is dead, or this recovery just killed it), no external run is open, and it has not
+   * already been requeued; the loop then runs it again, and its worktree and branch are kept.
+   * A task with no pid file goes to `failed`: that agent is not confirmed dead. When the agent
+   * might still be running, the task also moves to `failed` and keeps the agent identity, and a
+   * retry is refused until that process is gone. Entries with no readable task.md are skipped
+   * with a warning. Returns the recovered ids.
    */
   async recoverInterrupted(): Promise<string[]> {
     const recovered: string[] = [];
