@@ -4,16 +4,21 @@
 #include <fcntl.h>
 #include <linux/elf.h>
 #include <linux/filter.h>
+#include <linux/netlink.h>
 #include <linux/seccomp.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ptrace.h>
+#include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#define BOOF_FILTER_MAX 128
 
 /*
  * Stops boof-sandbox at seccomp(SECCOMP_SET_MODE_FILTER) and checks the
@@ -60,19 +65,31 @@ static int read_remote(pid_t pid, unsigned long long addr, void *buf, size_t len
 
 #if defined(__aarch64__)
 static const __u32 k_socket = 198;
+static const __u32 k_socketpair = 199;
+static const __u32 k_sendto = 206;
+static const __u32 k_sendmsg = 211;
+static const __u32 k_sendmmsg = 269;
 static const __u32 k_deny[] = {425, 426, 427, 117, 270, 271, 40, 39, 41, 51, 268,
                                219, 217, 218, 280, 241, 282};
 #elif defined(__x86_64__)
 static const __u32 k_socket = 41;
+static const __u32 k_socketpair = 53;
+static const __u32 k_sendto = 44;
+static const __u32 k_sendmsg = 46;
+static const __u32 k_sendmmsg = 307;
 static const __u32 k_deny[] = {425, 426, 427, 101, 310, 311, 165, 166, 155, 161, 308,
                                250, 248, 249, 321, 298, 323};
 #endif
 
-static int has_jeq(const struct sock_filter *filter, unsigned len, __u32 k) {
+static int has_k(const struct sock_filter *filter, unsigned len, __u16 code, __u32 k) {
   for (unsigned i = 0; i < len; i++) {
-    if (filter[i].code == (BPF_JMP | BPF_JEQ | BPF_K) && filter[i].k == k) return 1;
+    if (filter[i].code == code && filter[i].k == k) return 1;
   }
   return 0;
+}
+
+static int has_jeq(const struct sock_filter *filter, unsigned len, __u32 k) {
+  return has_k(filter, len, BPF_JMP | BPF_JEQ | BPF_K, k);
 }
 
 static int filter_ok(const struct sock_filter *filter, unsigned len) {
@@ -91,7 +108,20 @@ static int filter_ok(const struct sock_filter *filter, unsigned len) {
     if (insn->code == (BPF_RET | BPF_K) && insn->k == (SECCOMP_RET_ERRNO | EPERM)) saw_eperm = 1;
   }
   if (!saw_arch_load || !saw_native || !saw_kill || !saw_eperm) return 0;
-  if (!has_jeq(filter, len, k_socket) || !has_jeq(filter, len, 1)) return 0;
+  if (!has_jeq(filter, len, k_socket) || !has_jeq(filter, len, k_socketpair) ||
+      !has_jeq(filter, len, k_sendto) || !has_jeq(filter, len, k_sendmsg) ||
+      !has_jeq(filter, len, k_sendmmsg))
+    return 0;
+  if (!has_jeq(filter, len, AF_INET) || !has_jeq(filter, len, AF_INET6) ||
+      !has_jeq(filter, len, AF_NETLINK))
+    return 0;
+  if (!has_jeq(filter, len, IPPROTO_TCP) || !has_jeq(filter, len, IPPROTO_UDP) ||
+      !has_jeq(filter, len, IPPROTO_ICMPV6) || !has_jeq(filter, len, NETLINK_ROUTE))
+    return 0;
+  if (!has_jeq(filter, len, SOCK_STREAM) || !has_jeq(filter, len, SOCK_SEQPACKET)) return 0;
+  if (!has_k(filter, len, BPF_JMP | BPF_JSET | BPF_K, MSG_FASTOPEN)) return 0;
+  if (!has_k(filter, len, BPF_ALU | BPF_AND | BPF_K, ~(__u32)(SOCK_NONBLOCK | SOCK_CLOEXEC)))
+    return 0;
   for (unsigned i = 0; i < sizeof k_deny / sizeof k_deny[0]; i++) {
     if (!has_jeq(filter, len, k_deny[i])) return 0;
   }
@@ -131,8 +161,9 @@ static void check_child(pid_t pid) {
         unsigned long long nr = 0, a0 = 0, a2 = 0;
         if (read_syscall(pid, &nr, &a0, &a2) == 0 && nr == BOOF_SYS_seccomp && a0 == SECCOMP_SET_MODE_FILTER) {
           struct sock_fprog prog;
-          struct sock_filter filter[64];
-          if (read_remote(pid, a2, &prog, sizeof prog) == 0 && prog.len > 0 && prog.len <= 64 &&
+          struct sock_filter filter[BOOF_FILTER_MAX];
+          if (read_remote(pid, a2, &prog, sizeof prog) == 0 && prog.len > 0 &&
+              prog.len <= BOOF_FILTER_MAX &&
               read_remote(pid, (unsigned long long)(uintptr_t)prog.filter, filter,
                           prog.len * sizeof filter[0]) == 0 &&
               filter_ok(filter, prog.len)) {

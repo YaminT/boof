@@ -5,7 +5,9 @@
 #include <linux/audit.h>
 #include <linux/filter.h>
 #include <linux/landlock.h>
+#include <linux/netlink.h>
 #include <linux/seccomp.h>
+#include <netinet/in.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -24,6 +26,9 @@
  * The launcher adds environment variables itself. Any other field is rejected.
  * Ports 1..65535 not listed in denyTcpPorts get TCP bind and connect.
  * Port 0 is not listed: connect's implicit ephemeral bind is not a port-0 bind.
+ * socket() allows only AF_INET, AF_INET6 and AF_NETLINK with NETLINK_ROUTE,
+ * and only IPPROTO_IP, TCP, UDP, ICMP and ICMPv6. AF_UNIX stays EPERM.
+ * MSG_FASTOPEN is EPERM. socketpair() allows only SOCK_STREAM and SOCK_SEQPACKET.
  */
 
 #ifndef LANDLOCK_ACCESS_FS_IOCTL_DEV
@@ -69,17 +74,25 @@ struct syscall_table {
   __u32 audit_arch;
   __u32 x32_bit; /* non-zero: kill syscall numbers with this bit (x32 ABI) */
   __u32 socket_nr;
+  __u32 socketpair_nr;
+  __u32 sendto_nr;
+  __u32 sendmsg_nr;
+  __u32 sendmmsg_nr;
   __u32 deny[17];
 };
 
-/* Numbers from arch/x86/entry/syscalls/syscall_64.tbl and asm-generic/unistd.h. */
+/* Numbers from arch/x86/entry/syscalls/syscall_64.tbl and asm-generic/unistd.h.
+ * x32 sendmsg/sendmmsg use different numbers, and the x32 bit kills them first.
+ */
 static const struct syscall_table k_tables[] = {
-    {AUDIT_ARCH_X86_64, 0x40000000u, 41,
+    {AUDIT_ARCH_X86_64, 0x40000000u, 41, 53, 44, 46, 307,
      {425, 426, 427, 101, 310, 311, 165, 166, 155, 161, 308, 250, 248, 249, 321, 298,
       323}},
-    {AUDIT_ARCH_AARCH64, 0, 198,
+    {AUDIT_ARCH_AARCH64, 0, 198, 199, 206, 211, 269,
      {425, 426, 427, 117, 270, 271, 40, 39, 41, 51, 268, 219, 217, 218, 280, 241, 282}},
 };
+
+#define BOOF_FILTER_MAX 128
 
 static char *policy_buf;
 static char *arena;
@@ -198,6 +211,8 @@ static int hex4(struct parser *p, unsigned *out) {
 static int append_cp(char *out, size_t *n, size_t cap, unsigned cp) {
   unsigned char tmp[4];
   int len;
+  /* U+0000 would truncate the C string add_path and strcmp later see. */
+  if (cp == 0) return 0;
   if (cp <= 0x7F) {
     tmp[0] = (unsigned char)cp;
     len = 1;
@@ -255,6 +270,7 @@ static int parse_string(struct parser *p, char *out, size_t cap) {
         } else {
           cp = u;
         }
+        if (cp == 0) fail("policy string contains NUL");
         if (!append_cp(out, &n, cap, cp)) return 0;
         continue;
       }
@@ -490,15 +506,20 @@ static void apply_landlock(int abi) {
 }
 
 static void emit(struct sock_filter *f, unsigned *n, __u16 code, __u8 jt, __u8 jf, __u32 k) {
-  if (*n >= 64) fail("seccomp: filter too large");
+  if (*n >= BOOF_FILTER_MAX) fail("seccomp: filter too large");
   f[*n] = (struct sock_filter){code, jt, jf, k};
   (*n)++;
 }
 
 static void apply_seccomp(void) {
   const struct syscall_table *table = native_table();
-  struct sock_filter filter[64];
+  struct sock_filter filter[BOOF_FILTER_MAX];
   unsigned n = 0;
+  const __u32 arg0 = offsetof(struct seccomp_data, args[0]);
+  const __u32 arg1 = offsetof(struct seccomp_data, args[1]);
+  const __u32 arg2 = offsetof(struct seccomp_data, args[2]);
+  const __u32 arg3 = offsetof(struct seccomp_data, args[3]);
+  /* Keep the syscall number in A. Each special case returns; it does not fall through. */
   /* Foreign audit architectures die. x32 shares AUDIT_ARCH_X86_64, so its bit dies too. */
   emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, offsetof(struct seccomp_data, arch));
   emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, table->audit_arch);
@@ -508,10 +529,64 @@ static void apply_seccomp(void) {
     emit(filter, &n, BPF_JMP | BPF_JGE | BPF_K, 0, 1, table->x32_bit);
     emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS);
   }
-  /* socket(AF_UNIX) is EPERM. Any other domain is allowed. A miss skips these four. */
-  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 4, table->socket_nr);
-  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, offsetof(struct seccomp_data, args[0]));
-  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 1, AF_UNIX);
+  /* socket: 17 instructions. A miss skips the 16 after the compare.
+   *   ld domain
+   *   jeq AF_INET, +6
+   *   jeq AF_INET6, +5
+   *   jeq AF_NETLINK, +1
+   *   ret EPERM
+   *   ld protocol          (netlink: only NETLINK_ROUTE)
+   *   jeq NETLINK_ROUTE, +8
+   *   ret EPERM
+   *   ld protocol          (inet: IP, ICMP, TCP, UDP, ICMPv6)
+   *   jeq IP, +5 / ICMP, +4 / TCP, +3 / UDP, +2 / ICMPV6, +1
+   *   ret EPERM
+   *   ret ALLOW
+   */
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 16, table->socket_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg0);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 6, 0, AF_INET);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 5, 0, AF_INET6);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, AF_NETLINK);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg2);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 8, 0, NETLINK_ROUTE);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg2);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 5, 0, IPPROTO_IP);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 4, 0, IPPROTO_ICMP);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 3, 0, IPPROTO_TCP);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 2, 0, IPPROTO_UDP);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, IPPROTO_ICMPV6);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  /* socketpair: 7 instructions. A miss skips the 6 after the compare. */
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 6, table->socketpair_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg1);
+  emit(filter, &n, BPF_ALU | BPF_AND | BPF_K, 0, 0, ~(__u32)(SOCK_NONBLOCK | SOCK_CLOEXEC));
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 2, 0, SOCK_STREAM);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, SOCK_SEQPACKET);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  /* MSG_FASTOPEN on sendto (arg3), sendmmsg (arg3) or sendmsg (arg2): 9 instructions.
+   * A miss of all three skips the 6 after the sendmsg compare.
+   *   jeq sendto, +4
+   *   jeq sendmmsg, +3
+   *   jeq sendmsg, 0, +6
+   *   ld arg2
+   *   ja +1
+   *   ld arg3
+   *   jset MSG_FASTOPEN, 0, +1
+   *   ret EPERM
+   *   ret ALLOW
+   */
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 4, 0, table->sendto_nr);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 3, 0, table->sendmmsg_nr);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 6, table->sendmsg_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg2);
+  emit(filter, &n, BPF_JMP | BPF_JA | BPF_K, 0, 0, 1);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg3);
+  emit(filter, &n, BPF_JMP | BPF_JSET | BPF_K, 0, 1, MSG_FASTOPEN);
   emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
   emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
   for (unsigned i = 0; i < sizeof table->deny / sizeof table->deny[0]; i++) {

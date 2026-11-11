@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/netlink.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stddef.h>
@@ -13,6 +14,19 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#ifndef IPPROTO_MPTCP
+#define IPPROTO_MPTCP 262
+#endif
+#ifndef IPPROTO_SCTP
+#define IPPROTO_SCTP 132
+#endif
+#ifndef AF_SMC
+#define AF_SMC 43
+#endif
+#ifndef AF_ALG
+#define AF_ALG 38
+#endif
 
 /* Prints one result line. The sandbox tests decide what is allowed. */
 
@@ -32,6 +46,8 @@ static const char *errname(int err) {
       return "EINVAL";
     case EAGAIN:
       return "EAGAIN";
+    case EISCONN:
+      return "EISCONN";
     default:
       return "ERR";
   }
@@ -80,6 +96,204 @@ static void op_overwrite(const char *path) {
     if (n == 1) printf("overwrite ok\n");
     else printf("overwrite %s\n", errname(errno));
   }
+}
+
+static int fill_loopback(int family, int port, struct sockaddr_storage *ss, socklen_t *len) {
+  memset(ss, 0, sizeof *ss);
+  if (family == AF_INET) {
+    struct sockaddr_in *addr = (struct sockaddr_in *)ss;
+    addr->sin_family = AF_INET;
+    addr->sin_port = htons((unsigned short)port);
+    addr->sin_addr.s_addr = htonl(0x7f000001);
+    *len = sizeof *addr;
+    return 0;
+  }
+  if (family == AF_INET6) {
+    struct sockaddr_in6 *addr = (struct sockaddr_in6 *)ss;
+    addr->sin6_family = AF_INET6;
+    addr->sin6_port = htons((unsigned short)port);
+    addr->sin6_addr = in6addr_loopback;
+    *len = sizeof *addr;
+    return 0;
+  }
+  return -1;
+}
+
+static void op_connect_proto(int family, int port, int proto, const char *label) {
+  int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, proto);
+  if (fd < 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  struct sockaddr_storage ss;
+  socklen_t len = 0;
+  if (fill_loopback(family, port, &ss, &len) != 0) {
+    printf("%s EINVAL\n", label);
+    close(fd);
+    return;
+  }
+  int rc = connect(fd, (struct sockaddr *)&ss, len);
+  printf("%s %s\n", label, rc == 0 ? "ok" : errname(errno));
+  close(fd);
+}
+
+static void op_bind_proto(int family, int port, int proto, const char *label) {
+  int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, proto);
+  if (fd < 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  struct sockaddr_storage ss;
+  socklen_t len = 0;
+  if (fill_loopback(family, port, &ss, &len) != 0) {
+    printf("%s EINVAL\n", label);
+    close(fd);
+    return;
+  }
+  int rc = bind(fd, (struct sockaddr *)&ss, len);
+  printf("%s %s\n", label, rc == 0 ? "ok" : errname(errno));
+  close(fd);
+}
+
+/* MSG_FASTOPEN connects without the connect syscall, so Landlock never sees it. */
+static void op_tfo(int family, int port, int how, int flags, const char *label) {
+  int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+  struct sockaddr_storage ss;
+  socklen_t slen = 0;
+  if (fill_loopback(family, port, &ss, &slen) != 0) {
+    printf("%s EINVAL\n", label);
+    close(fd);
+    return;
+  }
+  char payload[] = "GET / HTTP/1.0\r\n\r\n";
+  struct iovec iov = {.iov_base = payload, .iov_len = sizeof payload - 1};
+  ssize_t n = -1;
+  if (how == 0) {
+    n = sendto(fd, payload, sizeof payload - 1, flags, (struct sockaddr *)&ss, slen);
+  } else if (how == 1) {
+    struct msghdr msg;
+    memset(&msg, 0, sizeof msg);
+    msg.msg_name = &ss;
+    msg.msg_namelen = slen;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    n = sendmsg(fd, &msg, flags);
+  } else {
+    struct mmsghdr msg;
+    memset(&msg, 0, sizeof msg);
+    msg.msg_hdr.msg_name = &ss;
+    msg.msg_hdr.msg_namelen = slen;
+    msg.msg_hdr.msg_iov = &iov;
+    msg.msg_hdr.msg_iovlen = 1;
+    int rc = sendmmsg(fd, &msg, 1, flags);
+    n = rc < 0 ? -1 : (ssize_t)msg.msg_len;
+  }
+  if (n < 0) printf("%s %s\n", label, errname(errno));
+  else printf("%s ok\n", label);
+  close(fd);
+}
+
+static void op_socket_line(const char *label, int domain, int type, int proto) {
+  int fd = socket(domain, type, proto);
+  if (fd < 0) printf("%s %s\n", label, errname(errno));
+  else {
+    close(fd);
+    printf("%s ok\n", label);
+  }
+}
+
+static void op_udp(int proto, int port, const char *label) {
+  int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, proto);
+  if (fd < 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  struct sockaddr_storage ss;
+  socklen_t slen = 0;
+  fill_loopback(AF_INET, port, &ss, &slen);
+  char byte = 'u';
+  ssize_t n = sendto(fd, &byte, 1, 0, (struct sockaddr *)&ss, slen);
+  printf("%s %s\n", label, n == 1 ? "ok" : errname(errno));
+  close(fd);
+}
+
+static int fill_unix(struct sockaddr_un *addr, const char *path) {
+  memset(addr, 0, sizeof *addr);
+  addr->sun_family = AF_UNIX;
+  if (strlen(path) >= sizeof addr->sun_path) return -1;
+  memcpy(addr->sun_path, path, strlen(path) + 1);
+  return 0;
+}
+
+/* A datagram socketpair can connect or sendto a pathname socket. Stream cannot. */
+static void op_pair_dgram(const char *path, int type, const char *label) {
+  int sv[2];
+  if (socketpair(AF_UNIX, type, 0, sv) != 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  struct sockaddr_un addr;
+  if (path == NULL || fill_unix(&addr, path) != 0) {
+    printf("%s ok\n", label);
+    close(sv[0]);
+    close(sv[1]);
+    return;
+  }
+  ssize_t n = sendto(sv[0], "PWNED", 5, 0, (struct sockaddr *)&addr, sizeof addr);
+  printf("%s %s\n", label, n < 0 ? errname(errno) : "sent");
+  close(sv[0]);
+  close(sv[1]);
+}
+
+static void op_pair_copy(int type, const char *label) {
+  int sv[2];
+  if (socketpair(AF_UNIX, type, 0, sv) != 0) {
+    printf("%s %s\n", label, errname(errno));
+    return;
+  }
+  int fl = fcntl(sv[0], F_GETFD);
+  if ((type & SOCK_CLOEXEC) != 0 && (fl < 0 || (fl & FD_CLOEXEC) == 0)) {
+    printf("%s noclose\n", label);
+    close(sv[0]);
+    close(sv[1]);
+    return;
+  }
+  if (write(sv[0], "Z", 1) != 1) {
+    printf("%s %s\n", label, errname(errno));
+    close(sv[0]);
+    close(sv[1]);
+    return;
+  }
+  char byte = 0;
+  ssize_t n = read(sv[1], &byte, 1);
+  printf("%s %s\n", label, n == 1 && byte == 'Z' ? "ok" : errname(n < 0 ? errno : EIO));
+  close(sv[0]);
+  close(sv[1]);
+}
+
+static void op_pair_stream_connect(const char *path) {
+  int sv[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+    printf("pair-stream-connect %s\n", errname(errno));
+    return;
+  }
+  struct sockaddr_un addr;
+  if (fill_unix(&addr, path) != 0) {
+    printf("pair-stream-connect EINVAL\n");
+    close(sv[0]);
+    close(sv[1]);
+    return;
+  }
+  int rc = connect(sv[0], (struct sockaddr *)&addr, sizeof addr);
+  printf("pair-stream-connect %s\n", rc == 0 ? "ok" : errname(errno));
+  close(sv[0]);
+  close(sv[1]);
 }
 
 static void op_connect(int family, int port, const char *label) {
@@ -300,6 +514,58 @@ static void op_double(const char *mode, const char *arg) {
   fputs(buf, stdout);
 }
 
+static void op_dgram_listen(const char *path) {
+  int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    printf("listen %s\n", errname(errno));
+    return;
+  }
+  struct sockaddr_un addr;
+  if (fill_unix(&addr, path) != 0) {
+    printf("listen EINVAL\n");
+    close(fd);
+    return;
+  }
+  unlink(path);
+  if (bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+    printf("listen %s\n", errname(errno));
+    close(fd);
+    return;
+  }
+  printf("bound\n");
+  fflush(stdout);
+  struct timeval tv = {.tv_sec = 2, .tv_usec = 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+  char buf[64];
+  ssize_t n = recv(fd, buf, sizeof buf - 1, 0);
+  if (n < 0) printf("none\n");
+  else {
+    buf[n] = '\0';
+    printf("got %s\n", buf);
+  }
+  fflush(stdout);
+  close(fd);
+  unlink(path);
+}
+
+static void op_smc(int port) {
+  int fd = socket(AF_SMC, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    printf("smc %s\n", errname(errno));
+    return;
+  }
+  struct sockaddr_storage ss;
+  socklen_t len = 0;
+  if (fill_loopback(AF_INET, port, &ss, &len) != 0) {
+    printf("smc EINVAL\n");
+    close(fd);
+    return;
+  }
+  int rc = connect(fd, (struct sockaddr *)&ss, len);
+  printf("smc %s\n", rc == 0 ? "ok" : errname(errno));
+  close(fd);
+}
+
 static void usage(void) {
   fprintf(stderr, "probe: bad arguments\n");
   exit(2);
@@ -346,6 +612,41 @@ int main(int argc, char **argv) {
     if (denied < 0 || allowed < 0) usage();
     op_connect(AF_INET, denied, "denied");
     op_connect(AF_INET, allowed, "allowed");
+  } else if (strcmp(cmd, "a3-bypass") == 0 && argc == 3) {
+    int port = port_arg(argv[2]);
+    if (port < 0) usage();
+    op_connect_proto(AF_INET, port, IPPROTO_TCP, "tcp4");
+    op_connect_proto(AF_INET, port, IPPROTO_MPTCP, "mptcp4");
+    op_connect_proto(AF_INET6, port, IPPROTO_MPTCP, "mptcp6");
+    op_tfo(AF_INET, port, 0, MSG_FASTOPEN, "tfo4");
+    op_tfo(AF_INET6, port, 0, MSG_FASTOPEN, "tfo6");
+    op_tfo(AF_INET, port, 1, MSG_FASTOPEN | MSG_NOSIGNAL, "tfomsg");
+    op_tfo(AF_INET, port, 2, MSG_FASTOPEN | MSG_NOSIGNAL, "tfommsg");
+    op_smc(port);
+    op_socket_line("sctp", AF_INET, SOCK_STREAM, IPPROTO_SCTP);
+    op_socket_line("alg", AF_ALG, SOCK_SEQPACKET, 0);
+  } else if (strcmp(cmd, "a4-mptcp") == 0 && argc == 3) {
+    int port = port_arg(argv[2]);
+    if (port < 0) usage();
+    op_bind_proto(AF_INET, port, IPPROTO_MPTCP, "mptcp-bind4");
+    op_bind_proto(AF_INET6, port, IPPROTO_MPTCP, "mptcp-bind6");
+  } else if (strcmp(cmd, "sock-allow") == 0 && argc == 3) {
+    int port = port_arg(argv[2]);
+    if (port < 0) usage();
+    op_udp(0, port, "udp");
+    op_udp(IPPROTO_UDP, port, "udp17");
+    op_connect_proto(AF_INET, port, IPPROTO_TCP, "tcp");
+    op_socket_line("icmp", AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+    op_socket_line("icmp6", AF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6);
+    op_socket_line("netlink", AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    op_socket_line("netlink-diag", AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_SOCK_DIAG);
+  } else if (strcmp(cmd, "dgram-listen") == 0 && argc == 3) op_dgram_listen(argv[2]);
+  else if (strcmp(cmd, "pairs") == 0 && argc == 4) {
+    op_pair_dgram(argv[2], SOCK_DGRAM, "pair-dgram");
+    op_pair_dgram(NULL, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, "pair-dgram-flags");
+    op_pair_copy(SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, "pair-stream");
+    op_pair_copy(SOCK_SEQPACKET | SOCK_CLOEXEC, "pair-seq");
+    op_pair_stream_connect(argv[3]);
   } else usage();
   if (fflush(stdout) != 0) return 1;
   return 0;
