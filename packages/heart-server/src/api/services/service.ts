@@ -874,6 +874,7 @@ export class TaskService {
   >();
 
   private readonly refreshSandboxHook?: (settings: Settings) => Promise<void>;
+  private readonly assessSandboxHook?: () => Promise<{ ok: boolean; reason: string }>;
 
   constructor(
     readonly root: string,
@@ -882,6 +883,7 @@ export class TaskService {
       conciergeAgent?: ConciergeAgent | null;
       authStore?: AuthStore;
       refreshSandbox?: (settings: Settings) => Promise<void>;
+      assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
     } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
@@ -898,6 +900,7 @@ export class TaskService {
     this.conciergeAgent = opts.conciergeAgent ?? null;
     this.authStore = opts.authStore ?? new AuthStore(root);
     this.refreshSandboxHook = opts.refreshSandbox;
+    this.assessSandboxHook = opts.assessSandbox;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1747,8 +1750,30 @@ export class TaskService {
       await this.assertWorktreeRootAllowed(actor, patch.worktree?.root, undefined);
     }
     if (patch.defaultProject) await this.getProject(patch.defaultProject);
-    const before =
-      patch.runner?.enabled !== undefined ? (await this.loadSettings()).runner.enabled : undefined;
+    const turningOn = patch.runner?.sandbox?.mode === "enforce";
+    const enabledChanging = patch.runner?.enabled !== undefined;
+    const current = turningOn || enabledChanging ? await this.loadSettings() : undefined;
+    if (
+      turningOn &&
+      current &&
+      current.runner.sandbox.mode !== "enforce" &&
+      this.assessSandboxHook
+    ) {
+      let report: { ok: boolean; reason: string };
+      try {
+        report = await this.assessSandboxHook();
+      } catch (err) {
+        if (err instanceof OpError) throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        throw new OpError(
+          409,
+          message.replace(/^sandbox_unavailable:\s*/, ""),
+          "sandbox_unavailable",
+        );
+      }
+      if (!report.ok) throw new OpError(409, report.reason, "sandbox_unavailable");
+    }
+    const before = enabledChanging ? current!.runner.enabled : undefined;
     const next = await this.settingsStore.update(patch, (current) => {
       if (expectedVersion !== undefined && expectedVersion !== settingsVersion(current)) {
         throw new OpError(

@@ -3,6 +3,7 @@ import {
   authorizeProject,
   hasScope,
   parseDuration,
+  sandboxOffer,
   sandboxStatusFor,
   SettingsPatchSchema,
   settingsVersion,
@@ -327,6 +328,8 @@ export const runnerStatus = defineOp({
       backend: z.enum(["none", "linux", "darwin"]),
       state: z.enum(["off", "ok", "unavailable"]),
       reason: z.string(),
+      /** True when the last capability check said enforce would work. A GET does not run one. */
+      offer: z.boolean(),
     }),
   }),
   rest: { method: "GET", path: "/runner" },
@@ -343,7 +346,7 @@ export const runnerStatus = defineOp({
       agentAuth: await ctx.services.agentAuthStatus((pid: string) =>
         authorizeProject(ctx.principal, pid),
       ),
-      sandbox: sandboxStatusFor(runner.sandbox, process.platform),
+      sandbox: { ...sandboxStatusFor(runner.sandbox, process.platform), offer: sandboxOffer() },
     };
   },
 });

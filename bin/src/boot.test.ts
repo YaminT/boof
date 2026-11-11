@@ -42,6 +42,8 @@ vi.mock("@boof/runner", () => ({
       return this.tools.find((t) => (t as { id: string }).id === id);
     }
   },
+  assessSandbox: vi.fn(async () => ({ ok: false, reason: "test" })),
+  refreshSandbox: vi.fn(async () => ({})),
   RunnerEngine: class {
     loop = engineLoop;
     shutdown = engineShutdown;

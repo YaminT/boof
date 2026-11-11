@@ -3,8 +3,8 @@ import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
-import { boot, isRunnerStartFailure } from "@boof/boof/boot";
+import { assessSandbox, ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
+import { boot, isRunnerStartFailure, sandboxServerHooks } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
 import { remoteCommand } from "@boof/facedisk/cli/remote-cli.js";
@@ -22,6 +22,7 @@ import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { openCommand } from "@boof/facedisk/cli/open-cli.js";
+import { sandboxCommand } from "./sandbox-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
 import {
@@ -86,6 +87,7 @@ Usage:
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
+  boof-runner sandbox check            Print whether enforce would work (see: sandbox --help)
   boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
   boof-runner ops                      List the operation commands (every REST/MCP operation)
   boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
@@ -709,6 +711,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
         new TaskService(root, new ToolRegistry(), {
           conciergeAgent: new ClaudeConcierge({ root }),
           authStore: new AuthStore(root),
+          ...sandboxServerHooks(),
         }),
     });
   }
@@ -747,7 +750,17 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       code = await openCommand(rest, defaultDataRoot);
       break;
     case "mcp":
-      code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());
+      code = await mcpCommand(
+        rest,
+        defaultDataRoot,
+        new ToolRegistry(),
+        console.error,
+        console.log,
+        sandboxServerHooks(),
+      );
+      break;
+    case "sandbox":
+      code = await sandboxCommand(rest, () => assessSandbox());
       break;
     case "--version":
     case "-v":

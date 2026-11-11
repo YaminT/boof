@@ -60,6 +60,11 @@ export interface StartServerOptions {
    * A failure must not stop the server: the gate reports `unavailable` and refuses agent starts.
    */
   refreshSandbox?: (settings: Settings) => Promise<void>;
+  /**
+   * Whether `enforce` would work. When set, an off-to-enforce settings write runs it first and
+   * keeps `off` if it does not pass. Absent in unit tests, which do not spawn a helper.
+   */
+  assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
 }
 
 export interface RunningServer {
@@ -125,6 +130,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     conciergeAgent: opts.conciergeAgent,
     authStore,
     refreshSandbox: opts.refreshSandbox,
+    assessSandbox: opts.assessSandbox,
   });
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
   await opts.refreshSandbox?.(settings).catch((err) => {

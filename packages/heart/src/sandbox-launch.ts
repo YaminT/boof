@@ -125,6 +125,20 @@ let stored: StoredSandbox = {
   fingerprint: "",
 };
 
+/**
+ * Whether the last capability check said `enforce` would work. Separate from the status: `mode:
+ * off` does not store a self-test, and a GET must not run one. Unset until a check runs.
+ */
+let offer = false;
+
+export function sandboxOffer(): boolean {
+  return offer;
+}
+
+export function setSandboxOffer(value: boolean): void {
+  offer = value;
+}
+
 /** The last self-test result kept in this process. */
 export function sandboxStatus(): SandboxStatus {
   return stored.status;
@@ -140,6 +154,7 @@ export function setSandboxStatus(status: SandboxStatus, fingerprint: string): vo
 
 export function resetSandboxStatus(): void {
   stored = { status: sandboxOffStatus("linux"), fingerprint: "" };
+  offer = false;
 }
 
 /**

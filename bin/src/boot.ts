@@ -3,11 +3,12 @@ import {
   ClaudeConcierge,
   RunnerEngine,
   ToolRegistry,
+  assessSandbox,
   defaultTools,
   reapCrashedRunTemps,
   refreshSandbox,
 } from "@boof/runner";
-import type { ConciergeAgent, Settings } from "@boof/heart";
+import { sandboxStatus, setSandboxOffer, type ConciergeAgent, type Settings } from "@boof/heart";
 import {
   createN8nTransport,
   createSelfUrlCheck,
@@ -42,6 +43,31 @@ export function isRunnerStartFailure(error: unknown): boolean {
 }
 
 const DEFAULT_SERVER_PORT = 4319;
+
+/**
+ * Recompute the stored self-test, then the offer flag. `enforce` reuses the refresh that just
+ * ran. `off` runs one separate check and does not store it: the status stays "agents are not
+ * sandboxed", and the notice can still say the check would pass.
+ */
+async function refreshAndOffer(settings: Settings): Promise<void> {
+  await refreshSandbox(settings, {}, { force: true });
+  if (settings.runner.sandbox.mode === "enforce") {
+    setSandboxOffer(sandboxStatus().state === "ok");
+    return;
+  }
+  setSandboxOffer((await assessSandbox()).ok);
+}
+
+/** Hooks the server, the operation CLI and standalone MCP share. Heart never imports the runner. */
+export function sandboxServerHooks(): {
+  assessSandbox: () => ReturnType<typeof assessSandbox>;
+  refreshSandbox: (settings: Settings) => Promise<void>;
+} {
+  return {
+    assessSandbox: () => assessSandbox(),
+    refreshSandbox: (settings) => refreshAndOffer(settings),
+  };
+}
 
 /**
  * The self check for a process without the server: the one in heart-server, with
@@ -89,7 +115,7 @@ export async function boot(opts: BootOptions): Promise<Booted> {
     catalog: registry,
     conciergeAgent,
     runnerRunning: () => engine !== null,
-    refreshSandbox: (settings) => refreshSandbox(settings, {}, { force: true }).then(() => {}),
+    ...sandboxServerHooks(),
   });
   await onServer?.(server);
   try {

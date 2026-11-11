@@ -90,7 +90,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "settings.get": { where: "getSettings \u2014 useAppData (global settings)" },
   "settings.update": {
     where:
-      "updateSettings \u2014 useSettingsPage, Projects, RunnerSwitch, useCommandActions (change settings)",
+      "updateSettings \u2014 useSettingsPage, Projects, RunnerSwitch, useCommandActions, SandboxSection, SandboxNotice (change settings)",
   },
   "settings.health": {
     none: "the UI runs the check itself (settings.checkHealth) and shows its result",
@@ -109,7 +109,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   },
   "runner.status": {
     where:
-      "runnerStatus \u2014 AgentsPage, useAgentAuth (the claude-agent ready or refused line; the shell still reads the runner state from settings.get)",
+      "runnerStatus \u2014 AgentsPage, useAgentAuth, SandboxSection, SandboxNotice (claude-agent line, sandbox state, and the off-mode notice)",
   },
   "runner.overview": {
     none: "the shell reads the runner state from settings.get and usage.budget",
