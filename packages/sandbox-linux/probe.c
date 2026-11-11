@@ -110,8 +110,7 @@ static void op_overwrite(const char *path) {
   }
 }
 
-#if defined(__linux__)
-/* Netlink, MPTCP, sendmmsg and SMC exist only on Linux. The shared ops below stay portable. */
+/* Shared loopback address setup for the portable bind/connect probes. */
 static int fill_loopback(int family, int port, struct sockaddr_storage *ss, socklen_t *len) {
   memset(ss, 0, sizeof *ss);
   if (family == AF_INET) {
@@ -133,6 +132,8 @@ static int fill_loopback(int family, int port, struct sockaddr_storage *ss, sock
   return -1;
 }
 
+#if defined(__linux__)
+/* Netlink, MPTCP, sendmmsg and SMC exist only on Linux. */
 static void op_connect_proto(int family, int port, int proto, const char *label) {
   int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, proto);
   if (fd < 0) {
