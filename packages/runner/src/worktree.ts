@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
@@ -328,6 +328,11 @@ export async function commitLeftovers(
   wt: Worktree,
   title: string,
 ): Promise<LeftoversResult | null> {
+  // Inspect before status because status intentionally ignores submodule contents.
+  const nestedRepos = await nestedGitRepositories(wt.path);
+  if (nestedRepos.length > 0) {
+    throw new Error(`refusing to snapshot nested git repositories: ${nestedRepos.join(", ")}`);
+  }
   const status = await checkedWorktreeGit(wt, ["status", "--porcelain"]);
   if (status.code !== 0) throw new Error(`git status failed: ${status.err || status.out}`);
   if (!status.out) return null;
@@ -343,7 +348,18 @@ export async function commitLeftovers(
     };
     const head = await run(["rev-parse", "HEAD"]);
     await run(["read-tree", "HEAD"]);
-    // A nested git repository without a commit makes `git add` fail; leave those out.
+    // `git add -A` can run clean filters from a nested repository's private config and
+    // info/attributes. Refuse those entries before invoking it; gitlinks are never imported.
+    const staged = await run(["ls-files", "--stage", "-z"]);
+    const stagedGitlinks = staged
+      .split("\0")
+      .filter((entry) => /^160000 /.test(entry))
+      .map((entry) => entry.slice(entry.indexOf("\t") + 1))
+      .filter(Boolean);
+    if (stagedGitlinks.length > 0) {
+      throw new Error(`refusing to snapshot gitlink entries: ${stagedGitlinks.join(", ")}`);
+    }
+    // A nested repository without a commit makes `git add` fail; leave those out.
     const skipped: string[] = [];
     for (;;) {
       const add = await git(
@@ -397,6 +413,23 @@ export async function commitLeftovers(
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+}
+
+async function nestedGitRepositories(root: string): Promise<string[]> {
+  const found: string[] = [];
+  const walk = async (dir: string, prefix: string): Promise<void> => {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".git") {
+        if (prefix) found.push(prefix);
+        continue;
+      }
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      await walk(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
+    }
+  };
+  await walk(root, "");
+  return found.sort();
 }
 
 /** Remove the worktree directory (leftovers included) and delete the task branches. */

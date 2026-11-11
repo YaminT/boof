@@ -117,6 +117,41 @@ describe("worktree isolation", () => {
     await finalizeWorktree(repo, wt, "t");
   });
 
+  it("does not run a clean filter from an agent-controlled submodule", async () => {
+    const source = await mkdtemp(join(tmpdir(), "boof-submodule-source-"));
+    const marker = join(nonRepo, "filter-ran");
+    const sh = (cwd: string, args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 15000 });
+    try {
+      await sh(source, ["init", "-b", "main"]);
+      await sh(source, ["config", "user.email", "test@example.com"]);
+      await sh(source, ["config", "user.name", "Test"]);
+      await writeFile(join(source, "g"), "same-size\n");
+      await sh(source, ["add", "."]);
+      await sh(source, ["commit", "-m", "submodule base"]);
+      await sh(repo, ["-c", "protocol.file.allow=always", "submodule", "add", source, "sub"]);
+      await g(["add", "."]);
+      await g(["commit", "-m", "with submodule"]);
+
+      const wt = await createWorktree(repo, "submodule-filter");
+      const nested = join(wt.path, "sub");
+      await sh(wt.path, ["-c", "protocol.file.allow=always", "submodule", "update", "--init"]);
+      const nestedGitDir = (await sh(nested, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      await writeFile(join(nestedGitDir, "info", "attributes"), "* filter=pwn\n");
+      await sh(nested, ["config", "filter.pwn.clean", `touch ${marker}; cat`]);
+      await writeFile(join(nested, "g"), "changed!!\n");
+
+      await diffAgainstBase(wt);
+      await expect(commitLeftovers(repo, wt, "submodule filter")).rejects.toThrow(
+        "refusing to snapshot nested git repositories",
+      );
+      expect(await exists(marker)).toBe(false);
+      await finalizeWorktree(repo, wt, "submodule filter");
+    } finally {
+      await rm(source, { recursive: true, force: true });
+    }
+  });
+
   it("untracked content counts toward the inline cap", async () => {
     const wt = await createWorktree(repo, "cap-untracked");
     await writeFile(join(wt.path, "big.txt"), "x".repeat(2000) + "\n");
