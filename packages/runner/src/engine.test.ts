@@ -1788,7 +1788,9 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
       expect(p).toContain("#### Round 2 — APPROVE");
       expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
     }
-  });
+    // Two observer iterations, a failed follow-up, then a retry. Windows ACL checks make that
+    // longer than the 20s default.
+  }, 60_000);
 
   it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
     await configure({ observer: true });

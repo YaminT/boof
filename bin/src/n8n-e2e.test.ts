@@ -501,7 +501,8 @@ describe("n8n external steps end to end", () => {
     const reviewer = asked.find((a) => a.role === "reviewer")!;
     expect(reviewer.prompt).toContain("### CI (failed)");
     expect(reviewer.prompt).toContain("tests broke");
-  });
+    // Two full server and pipeline runs. Windows re-reads directory ACLs around each one.
+  }, 90_000);
 
   it("a replayed callback and a second concurrent callback are refused with 401", async () => {
     const w = await world({ steps: [step()] });
