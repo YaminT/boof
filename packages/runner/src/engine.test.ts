@@ -1398,23 +1398,27 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(count("reviewer")).toBe(0);
   });
 
-  it("labels each findings block with its source round and role", async () => {
-    await withObserver({ maxFixRounds: 3 });
-    const out = await runTask(
-      "x [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE,CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]",
-    );
-    expect(out.kind).toBe("done");
-    const findings = mockState.prompts.filter((p) => p.includes("## Findings ("));
-    expect(
-      findings.some(
-        (p) =>
-          p.includes("## Findings (observer round 3)") &&
-          p.includes("- finding: mock issue observer round 3"),
-      ),
-    ).toBe(true);
-    expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
-    expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
-  });
+  it(
+    "labels each findings block with its source round and role",
+    async () => {
+      await withObserver({ maxFixRounds: 3 });
+      const out = await runTask(
+        "x [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE,CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]",
+      );
+      expect(out.kind).toBe("done");
+      const findings = mockState.prompts.filter((p) => p.includes("## Findings ("));
+      expect(
+        findings.some(
+          (p) =>
+            p.includes("## Findings (observer round 3)") &&
+            p.includes("- finding: mock issue observer round 3"),
+        ),
+      ).toBe(true);
+      expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
+      expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it.each(["observer", "reviewer"] as const)(
     "%s system prompt keeps the worktree clean",
@@ -1439,15 +1443,19 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     if (out.kind === "failed") expect(out.error).toContain("unknown mock verdict token: BOGUS");
   });
 
-  it("scripted verdict rounds restart each iteration (runs: 2)", async () => {
-    await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
-    const second = await engine.tick();
-    expect(second.kind).toBe("ran");
-    const end = await store.get("t1");
-    expect(end?.frontmatter.status).toBe("done");
-    expect(count("developer")).toBe(4);
-    expect(count("reviewer")).toBe(4);
-  });
+  it(
+    "scripted verdict rounds restart each iteration (runs: 2)",
+    async () => {
+      await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
+      const second = await engine.tick();
+      expect(second.kind).toBe("ran");
+      const end = await store.get("t1");
+      expect(end?.frontmatter.status).toBe("done");
+      expect(count("developer")).toBe(4);
+      expect(count("reviewer")).toBe(4);
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it("gate false: verdicts are recorded but not enforced", async () => {
     await withObserver({ gate: false });

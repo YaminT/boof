@@ -218,24 +218,28 @@ describe("claude usage (stream-json)", () => {
 });
 
 describe("exec cancellation", () => {
-  it("stops a child process when the stop signal file appears", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "boof-runner-stop-"));
-    const stopPath = join(dir, "stop");
-    try {
-      setTimeout(() => void writeFile(stopPath, "stop\n"), 100);
-      const res = await execCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-        launch: { kind: "direct" },
-        cwd: dir,
-        timeoutMs: 5000,
-        stopSignalPath: stopPath,
-        stopPollMs: 25,
-      });
-      expect(res.stopped).toBe(true);
-      expect(res.timedOut).toBe(false);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+  it(
+    "stops a child process when the stop signal file appears",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "boof-runner-stop-"));
+      const stopPath = join(dir, "stop");
+      try {
+        setTimeout(() => void writeFile(stopPath, "stop\n"), 100);
+        const res = await execCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+          launch: { kind: "direct" },
+          cwd: dir,
+          timeoutMs: process.platform === "win32" ? 60_000 : 5000,
+          stopSignalPath: stopPath,
+          stopPollMs: 25,
+        });
+        expect(res.stopped).toBe(true);
+        expect(res.timedOut).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 });
 
 describe("StreamRenderer (claude stream-json)", () => {

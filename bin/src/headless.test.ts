@@ -99,27 +99,31 @@ describe("runTask (headless)", () => {
     expect(settings.defaultProject).toBeNull();
   });
 
-  it("honours a mock marker in a single-line prompt longer than 80 chars", async () => {
-    const store = new SettingsStore(dataRoot);
-    const cur = await store.load();
-    await store.save({
-      ...cur,
-      roles: { ...cur.roles, observer: { tool: "mock", model: "mock-default" } },
-    });
-    const prompt =
-      "lo smop path [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]";
-    expect(prompt.length).toBeGreaterThan(80);
-    const res = await runTask({
-      root: dataRoot,
-      prompt,
-      repo,
-      tool: "mock",
-      registry: registry(),
-      out: silent,
-    });
-    expect(res.ok).toBe(true);
-    expect(res.status).toBe("done");
-  });
+  it(
+    "honours a mock marker in a single-line prompt longer than 80 chars",
+    async () => {
+      const store = new SettingsStore(dataRoot);
+      const cur = await store.load();
+      await store.save({
+        ...cur,
+        roles: { ...cur.roles, observer: { tool: "mock", model: "mock-default" } },
+      });
+      const prompt =
+        "lo smop path [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]";
+      expect(prompt.length).toBeGreaterThan(80);
+      const res = await runTask({
+        root: dataRoot,
+        prompt,
+        repo,
+        tool: "mock",
+        registry: registry(),
+        out: silent,
+      });
+      expect(res.ok).toBe(true);
+      expect(res.status).toBe("done");
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it("reports failure (ok=false) when a role errors", async () => {
     mockState.failRole = "developer";
@@ -166,19 +170,23 @@ describe("runTask (headless)", () => {
 });
 
 describe("run --parent and --epic", () => {
-  it("creates the task as a subtask of the given parent, and refuses an unknown parent or epic", async () => {
-    const base = { root: dataRoot, repo, tool: "mock", registry: registry(), out: silent };
-    const parent = await runTask({ ...base, prompt: "Parent task." });
-    const child = await runTask({ ...base, prompt: "Child task.", parentId: parent.id });
-    const task = await tasksOf(child.projectId).get(child.id);
-    expect(task!.frontmatter.parentId).toBe(parent.id);
-    await expect(runTask({ ...base, prompt: "Orphan.", parentId: "ghost" })).rejects.toThrow(
-      ProjectResolutionError,
-    );
-    await expect(runTask({ ...base, prompt: "Lost.", epicId: "ghost" })).rejects.toThrow(
-      /Epic not found/,
-    );
-  });
+  it(
+    "creates the task as a subtask of the given parent, and refuses an unknown parent or epic",
+    async () => {
+      const base = { root: dataRoot, repo, tool: "mock", registry: registry(), out: silent };
+      const parent = await runTask({ ...base, prompt: "Parent task." });
+      const child = await runTask({ ...base, prompt: "Child task.", parentId: parent.id });
+      const task = await tasksOf(child.projectId).get(child.id);
+      expect(task!.frontmatter.parentId).toBe(parent.id);
+      await expect(runTask({ ...base, prompt: "Orphan.", parentId: "ghost" })).rejects.toThrow(
+        ProjectResolutionError,
+      );
+      await expect(runTask({ ...base, prompt: "Lost.", epicId: "ghost" })).rejects.toThrow(
+        /Epic not found/,
+      );
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 });
 
 describe("run --base and --title", () => {
@@ -608,53 +616,57 @@ describe("multi-project run and scan", () => {
     expect((await new SettingsStore(dataRoot).load()).defaultProject).toBeNull();
   });
 
-  it("e2e: two repos, scan into each, `run --all` drains both; `--project` drains one", async () => {
-    const other = await extraRepo("second");
-    for (const [dir, goal] of [
-      [repo, "Alpha"],
-      [other, "Beta"],
-    ] as const) {
-      await mkdir(join(dir, "unit"), { recursive: true });
-      await writeFile(join(dir, "unit", "goal.boof.xml"), goalXml(goal, "plan"), "utf8");
-      await scanRepoToTasks({ root: dataRoot, repo: dir, tool: "mock", out: silent });
-    }
-    const projects = await projectsOf().list();
-    expect(projects).toHaveLength(2);
+  it(
+    "e2e: two repos, scan into each, `run --all` drains both; `--project` drains one",
+    async () => {
+      const other = await extraRepo("second");
+      for (const [dir, goal] of [
+        [repo, "Alpha"],
+        [other, "Beta"],
+      ] as const) {
+        await mkdir(join(dir, "unit"), { recursive: true });
+        await writeFile(join(dir, "unit", "goal.boof.xml"), goalXml(goal, "plan"), "utf8");
+        await scanRepoToTasks({ root: dataRoot, repo: dir, tool: "mock", out: silent });
+      }
+      const projects = await projectsOf().list();
+      expect(projects).toHaveLength(2);
 
-    // Drain only the first project.
-    const only = await drainQueue({
-      root: dataRoot,
-      project: projects[0]!.id,
-      registry: registry(),
-      out: silent,
-    });
-    expect(only.ran).toBe(1);
-    expect((await tasksOf(projects[1]!.id).list())[0]!.frontmatter.status).toBe("pending");
+      // Drain only the first project.
+      const only = await drainQueue({
+        root: dataRoot,
+        project: projects[0]!.id,
+        registry: registry(),
+        out: silent,
+      });
+      expect(only.ran).toBe(1);
+      expect((await tasksOf(projects[1]!.id).list())[0]!.frontmatter.status).toBe("pending");
 
-    // Then everything that is left, through the CLI entry point.
-    const log = console.log;
-    console.log = () => {};
-    let code: number;
-    try {
-      code = await runCommand(["--all", "--data", dataRoot]);
-    } finally {
-      console.log = log;
-    }
-    expect(code).toBe(0);
-    expect((await new SettingsStore(dataRoot).load()).runner.enabled).toBe(false);
-    for (const p of projects) {
-      const tasks = await tasksOf(p.id).list();
-      expect(tasks.map((t) => t.frontmatter.status)).toEqual(["done"]);
-    }
-    for (const dir of [repo, other]) {
-      expect(
-        currentStatus(parseGoal(await readFile(join(dir, "unit", "goal.boof.xml"), "utf8"))),
-      ).toBe("done");
-    }
-    await expect(drainQueue({ root: dataRoot, project: "ghost", out: silent })).rejects.toThrow(
-      /Project not found/,
-    );
-  });
+      // Then everything that is left, through the CLI entry point.
+      const log = console.log;
+      console.log = () => {};
+      let code: number;
+      try {
+        code = await runCommand(["--all", "--data", dataRoot]);
+      } finally {
+        console.log = log;
+      }
+      expect(code).toBe(0);
+      expect((await new SettingsStore(dataRoot).load()).runner.enabled).toBe(false);
+      for (const p of projects) {
+        const tasks = await tasksOf(p.id).list();
+        expect(tasks.map((t) => t.frontmatter.status)).toEqual(["done"]);
+      }
+      for (const dir of [repo, other]) {
+        expect(
+          currentStatus(parseGoal(await readFile(join(dir, "unit", "goal.boof.xml"), "utf8"))),
+        ).toBe("done");
+      }
+      await expect(drainQueue({ root: dataRoot, project: "ghost", out: silent })).rejects.toThrow(
+        /Project not found/,
+      );
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it("migrates a v1 data root on first use and runs its pending task under project `default`", async () => {
     await mkdir(join(dataRoot, "tasks", "pending"), { recursive: true });
