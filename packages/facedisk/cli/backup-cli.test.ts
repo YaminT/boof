@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm, stat, writeFile, mkdir } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { scaffoldDataRoot } from "@boof/heart";
+import { AuthStore, scaffoldDataRoot } from "@boof/heart";
 import { backupCommand, restoreCommand } from "./backup-cli.js";
 
 const dirs: string[] = [];
@@ -87,6 +87,7 @@ describe("backup and restore commands", () => {
     const root = join(base, "data");
     await scaffoldDataRoot(root);
     await writeFile(join(root, "notes.txt"), "hello");
+    await new AuthStore(root).create({ name: "ci", scopes: ["tasks:read"] });
     const archive = join(base, "root.tar.gz");
     const logs: string[] = [];
     const warnings: string[] = [];
@@ -116,8 +117,9 @@ describe("backup and restore commands", () => {
     );
     expect(restoreCode).toBe(0);
     expect(restored.join("\n")).toContain(`Restored ${dest}`);
-    expect(restored.join("\n")).toContain("revoked API clients and browser sessions");
-    expect(restored.join("\n")).toContain("auth/clients.json");
+    expect(restored.join("\n")).toContain("revoked after this backup come back");
+    expect(restored.join("\n")).toContain("boof-runner auth revoke");
+    expect(restored.join("\n")).toContain("boof-runner open --revoke-all");
     expect(restoreWarnings.join("\n")).toContain("archives you created and trust");
     expect(await readFile(join(dest, "notes.txt"), "utf8")).toBe("hello");
     expect(await auditText(dest)).toContain("cli:restore");
@@ -188,6 +190,101 @@ describe("backup and restore commands", () => {
     ).toBe(1);
     expect(errors.join("\n")).toContain("not empty");
     expect(existsSync(auditDir) ? await auditText(live) : "").toBe(before);
+  });
+
+  it("lists only active clients, escapes control characters and names the real commands", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    const store = new AuthStore(root);
+    const active = await store.create({
+      name: "\u001b]0;pwned\u0007\u001b[2JFAKE OK",
+      scopes: ["tasks:read"],
+    });
+    const gone = await store.create({ name: "old-client", scopes: ["tasks:read"] });
+    await store.revoke(gone.client.id);
+    const archive = join(base, "a.tar.gz");
+    expect(
+      await backupCommand(
+        ["-d", root, "--out", archive],
+        () => root,
+        () => undefined,
+        () => undefined,
+      ),
+    ).toBe(0);
+    const logs: string[] = [];
+    expect(
+      await restoreCommand(
+        ["--from", archive, "-d", join(base, "dest")],
+        () => root,
+        (l) => logs.push(l),
+        () => undefined,
+      ),
+    ).toBe(0);
+    const text = logs.join("\n");
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    expect(text).toContain("\\x1b]0;pwned\\x07");
+    expect(text).toContain(active.client.id);
+    expect(text).not.toContain("old-client");
+    expect(text).toContain("boof-runner auth revoke");
+    expect(text).toContain("boof-runner open --revoke-all");
+  });
+
+  it("prints no revocation notice when the archive has no auth data", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    const archive = join(base, "n.tar.gz");
+    expect(
+      await backupCommand(
+        ["--no-secrets", "-d", root, "--out", archive],
+        () => root,
+        () => undefined,
+        () => undefined,
+      ),
+    ).toBe(0);
+    const logs: string[] = [];
+    expect(
+      await restoreCommand(
+        ["--from", archive, "-d", join(base, "dest")],
+        () => root,
+        (l) => logs.push(l),
+        () => undefined,
+      ),
+    ).toBe(0);
+    expect(logs.join("\n")).not.toContain("revoke");
+  });
+
+  it("exits 1 and publishes nothing when auth/clients.json in the archive is broken", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    await mkdir(join(root, "auth"), { recursive: true, mode: 0o700 });
+    await writeFile(join(root, "auth", "clients.json"), '{"clients":[{"id":"x"}]}', {
+      mode: 0o600,
+    });
+    const archive = join(base, "b.tar.gz");
+    expect(
+      await backupCommand(
+        ["-d", root, "--out", archive],
+        () => root,
+        () => undefined,
+        () => undefined,
+      ),
+    ).toBe(0);
+    const dest = join(base, "dest");
+    const errs: string[] = [];
+    expect(
+      await restoreCommand(
+        ["--from", archive, "-d", dest],
+        () => root,
+        () => undefined,
+        (l) => errs.push(l),
+      ),
+    ).toBe(1);
+    expect(errs.join("\n")).toContain("auth/clients.json");
+    expect(existsSync(dest)).toBe(false);
+    expect((await readdir(base)).filter((n) => n.startsWith(".boof-restore-"))).toEqual([]);
   });
 });
 
