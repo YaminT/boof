@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
 import {
   SandboxUnavailableError,
-  backendFor,
   sandboxOffStatus,
   sandboxSettingsFingerprint,
   sandboxStatus,
@@ -9,19 +7,13 @@ import {
   setSandboxApplier,
   setSandboxStatus,
   sandboxStatusFor,
+  backendFor,
   type CommandLaunch,
   type SandboxMode,
   type SandboxStatus,
 } from "@boof/heart";
-import { darwinSandboxStatus } from "./backend-darwin.js";
-import { boofSandboxHelperPath, planLinuxSandbox } from "./backend-linux.js";
-import {
-  judgeSelfTest,
-  readFakeAbi,
-  readHelperAbi,
-  runRealProbes,
-  type SelfTestProbeResult,
-} from "./selftest.js";
+import { planLinuxSandbox } from "./backend-linux.js";
+import { assessSandbox, type SandboxCheckDeps } from "./check.js";
 
 if (process.platform === "linux") setSandboxApplier(planLinuxSandbox);
 
@@ -32,15 +24,7 @@ export interface SandboxSettingsView {
   denyTcpPorts: readonly number[];
 }
 
-export interface RefreshSandboxDeps {
-  platform?: NodeJS.Platform;
-  /** When set, fake ABI and the helper override are read from here and not from `process.env`. */
-  env?: NodeJS.ProcessEnv;
-  helperExists?: (path: string) => boolean;
-  helperPath?: (env: NodeJS.ProcessEnv) => string;
-  spawn?: Parameters<typeof readHelperAbi>[1];
-  probes?: (req: { helper: string; abi: number }) => Promise<readonly SelfTestProbeResult[]>;
-}
+export type RefreshSandboxDeps = SandboxCheckDeps;
 
 function reasonOf(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
@@ -95,32 +79,9 @@ async function enforceStatus(
   platform: NodeJS.Platform,
   deps: RefreshSandboxDeps,
 ): Promise<SandboxStatus> {
-  if (platform === "darwin") return darwinSandboxStatus();
-  if (platform === "win32") {
-    return unavailable(platform, "Windows has no sandbox backend; enforce cannot run agents");
-  }
-  if (platform !== "linux") {
-    return unavailable(platform, `unsupported sandbox platform "${platform}"`);
-  }
-  const env = deps.env ?? process.env;
-  const fake = readFakeAbi(env);
-  if (fake.kind === "bad") {
-    return unavailable(platform, "BOOF_SANDBOX_FAKE_ABI is not an integer");
-  }
-  if (fake.kind === "n" && fake.n < 4) {
-    return unavailable(platform, `landlock abi ${fake.n} is below 4`);
-  }
-  const helper = (deps.helperPath ?? boofSandboxHelperPath)(env);
-  const exists = (deps.helperExists ?? existsSync)(helper);
-  if (!exists) return unavailable(platform, "boof-sandbox helper is missing");
-  const abi = fake.kind === "n" ? fake.n : await readHelperAbi(helper, deps.spawn);
-  if (abi < 4) return unavailable(platform, `landlock abi ${abi} is below 4`);
-  const probes = deps.probes
-    ? await deps.probes({ helper, abi })
-    : await runRealProbes({ helper, env });
-  const judged = judgeSelfTest(probes, abi);
-  if (!judged.ok) return unavailable(platform, judged.reason);
-  return { mode: "enforce", backend: "linux", state: "ok", reason: judged.reason };
+  const report = await assessSandbox({ ...deps, platform });
+  if (!report.ok) return unavailable(platform, report.reason);
+  return { mode: "enforce", backend: "linux", state: "ok", reason: report.reason };
 }
 
 /**
@@ -147,4 +108,7 @@ export function prepareAgentLaunch(settings: {
   return { kind: "direct" };
 }
 
-export { judgeSelfTest, planLinuxSandbox, boofSandboxHelperPath, darwinSandboxStatus };
+export { assessSandbox, type SandboxCheckReport } from "./check.js";
+export { judgeSelfTest } from "./selftest.js";
+export { planLinuxSandbox, boofSandboxHelperPath } from "./backend-linux.js";
+export { darwinSandboxStatus } from "./backend-darwin.js";

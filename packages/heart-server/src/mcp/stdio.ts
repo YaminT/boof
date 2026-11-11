@@ -13,6 +13,7 @@ import {
   mcpSettings,
   securitySettings,
   type Principal,
+  type Settings,
   type ToolCatalog,
 } from "@boof/heart";
 import { createSelfUrlCheck } from "../server/self-url.js";
@@ -83,6 +84,9 @@ export interface StdioOptions {
   catalog: ToolCatalog;
   /** Serve one project only and hide the `projectId` argument. */
   project?: string;
+  /** Off-to-enforce writes run this first. The composition root supplies it. */
+  assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
+  refreshSandbox?: (settings: Settings) => Promise<void>;
 }
 
 /**
@@ -174,7 +178,10 @@ export function closeWhenDrained(
 export async function runStdio(opts: StdioOptions): Promise<void> {
   // stdout carries the protocol: nothing else may write to it.
   console.log = (...args: unknown[]) => console.error(...args);
-  const services = new TaskService(opts.root, opts.catalog);
+  const services = new TaskService(opts.root, opts.catalog, {
+    assessSandbox: opts.assessSandbox,
+    refreshSandbox: opts.refreshSandbox,
+  });
   const authStore = new AuthStore(opts.root);
   const principal = await stdioPrincipal(services, authStore, opts);
   if (opts.project !== undefined) await services.requireProject(opts.project);

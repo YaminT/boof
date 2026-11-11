@@ -173,12 +173,13 @@ export interface RunnerStatus {
   enabled: boolean;
   concurrency: number;
   agentAuth: AgentAuthEntry[];
-  /** OS sandbox gate. The notice itself is drawn by a later task. */
+  /** OS sandbox gate. `offer` is the last capability check; a missing value means it has not passed. */
   sandbox?: {
     mode: "off" | "enforce";
     backend: "none" | "linux" | "darwin";
     state: "off" | "ok" | "unavailable";
     reason: string;
+    offer?: boolean;
   };
 }
 

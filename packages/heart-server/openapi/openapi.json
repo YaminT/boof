@@ -138,6 +138,7 @@
                   "concierge_busy",
                   "concierge_limit",
                   "budget_exceeded",
+                  "sandbox_unavailable",
                   "change_not_found",
                   "change_stale",
                   "change_expired",
@@ -13937,6 +13938,9 @@
                           ],
                           "type": "string"
                         },
+                        "offer": {
+                          "type": "boolean"
+                        },
                         "reason": {
                           "type": "string"
                         },
@@ -13953,7 +13957,8 @@
                         "mode",
                         "backend",
                         "state",
-                        "reason"
+                        "reason",
+                        "offer"
                       ],
                       "type": "object"
                     }
@@ -15885,6 +15890,10 @@
     "rate_limited": {
       "description": "Too many requests; retry after the Retry-After header.",
       "status": 429
+    },
+    "sandbox_unavailable": {
+      "description": "The sandbox self-test failed, so enforce was not saved. The message is the reason.",
+      "status": 409
     },
     "settings_modified": {
       "description": "The settings changed since the ETag in If-Match.",
