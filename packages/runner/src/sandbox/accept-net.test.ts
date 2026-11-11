@@ -3,9 +3,17 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { closeListen, listen, linuxSandboxSuite, makeFixture, runProbe } from "./accept-support.js";
+import {
+  closeListen,
+  darwin,
+  listen,
+  makeFixture,
+  runProbe,
+  sandboxErrno,
+  sandboxSuite,
+} from "./accept-support.js";
 
-linuxSandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
+sandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
   it("A3 denies connect to the boof port on 127.0.0.1 and ::1", async () => {
     const fx = await makeFixture();
     const v4 = await listen("127.0.0.1");
@@ -21,8 +29,8 @@ linuxSandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
       const four = await runProbe(fx, ["connect4", String(v4.port)]);
       const six = await runProbe(fx, ["connect6", String(v4.port)]);
       expect(four.code, four.stderr).toBe(0);
-      expect(four.stdout).toBe("connect EACCES\n");
-      expect(six.stdout).toBe("connect EACCES\n");
+      expect(four.stdout).toBe(`connect ${sandboxErrno()}\n`);
+      expect(six.stdout).toBe(`connect ${sandboxErrno()}\n`);
       expect(hits).toBe(0);
     } finally {
       await closeListen(v4);
@@ -39,8 +47,8 @@ linuxSandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
     const bound = await runProbe(fx, ["bind4", String(port)]);
     const bound6 = await runProbe(fx, ["bind6", String(port)]);
     expect(bound.code, bound.stderr).toBe(0);
-    expect(bound.stdout).toBe("bind EACCES\n");
-    expect(bound6.stdout).toBe("bind EACCES\n");
+    expect(bound.stdout).toBe(`bind ${sandboxErrno()}\n`);
+    expect(bound6.stdout).toBe(`bind ${sandboxErrno()}\n`);
   }, 60_000);
 
   it("A5 connects to another loopback port and reads the reply", async () => {
@@ -86,15 +94,25 @@ linuxSandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
         pathServer.once("error", reject);
         pathServer.listen(sockPath, () => resolve());
       });
-      await new Promise<void>((resolve, reject) => {
-        abstractServer.once("error", reject);
-        abstractServer.listen(`\0${name}`, () => resolve());
-      });
+      // macOS has no abstract namespace. The probe's connect is still denied, and there is
+      // no listener that a successful connect could reach.
+      if (!darwin) {
+        await new Promise<void>((resolve, reject) => {
+          abstractServer.once("error", reject);
+          abstractServer.listen(`\0${name}`, () => resolve());
+        });
+      }
       const pathResult = await runProbe(fx, ["unix", sockPath]);
       const abstractResult = await runProbe(fx, ["abstract", name]);
       expect(pathResult.code, pathResult.stderr).toBe(0);
       expect(pathResult.stdout).toBe("unix EPERM\n");
-      expect(abstractResult.stdout).toBe("abstract EPERM\n");
+      if (darwin) {
+        // macOS has no abstract namespace, so the kernel rejects the address
+        // before a connect can succeed. Seatbelt may also return EPERM.
+        expect(abstractResult.stdout).toMatch(/^abstract (?!ok\b)\S+\n$/);
+      } else {
+        expect(abstractResult.stdout).toBe("abstract EPERM\n");
+      }
       expect(accepted).toBe(0);
     } finally {
       pathServer.close();

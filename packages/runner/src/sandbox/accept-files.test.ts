@@ -3,9 +3,9 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { linuxSandboxSuite, makeFixture, runProbe } from "./accept-support.js";
+import { sandboxErrno, sandboxSuite, makeFixture, runProbe } from "./accept-support.js";
 
-linuxSandboxSuite("sandbox acceptance: data root and host files", () => {
+sandboxSuite("sandbox acceptance: data root and host files", () => {
   it("A1 denies reads of settings.json, auth/ and n8n/secrets.json", async () => {
     const fx = await makeFixture();
     const visible = await runProbe(fx, ["read", join(fx.wt.path, "visible.txt")]);
@@ -13,11 +13,11 @@ linuxSandboxSuite("sandbox acceptance: data root and host files", () => {
     expect(visible.stdout).toBe("read ok\n");
     const settings = await runProbe(fx, ["read", join(fx.data, "settings.json")]);
     expect(settings.code, settings.stderr).toBe(0);
-    expect(settings.stdout).toBe("read EACCES\n");
+    expect(settings.stdout).toBe(`read ${sandboxErrno()}\n`);
     const auth = await runProbe(fx, ["readdir", join(fx.data, "auth")]);
-    expect(auth.stdout).toBe("readdir EACCES\n");
+    expect(auth.stdout).toBe(`readdir ${sandboxErrno()}\n`);
     const secrets = await runProbe(fx, ["read", join(fx.data, "n8n", "secrets.json")]);
-    expect(secrets.stdout).toBe("read EACCES\n");
+    expect(secrets.stdout).toBe(`read ${sandboxErrno()}\n`);
     expect(settings.stdout).not.toContain("secret");
   }, 60_000);
 
@@ -28,10 +28,10 @@ linuxSandboxSuite("sandbox acceptance: data root and host files", () => {
     expect(allowed.stdout).toBe("write ok\n");
     expect(existsSync(join(fx.wt.path, "created.txt"))).toBe(true);
     const created = await runProbe(fx, ["write", join(fx.data, "pwned")]);
-    expect(created.stdout).toBe("write EACCES\n");
+    expect(created.stdout).toBe(`write ${sandboxErrno()}\n`);
     expect(existsSync(join(fx.data, "pwned"))).toBe(false);
     const overwritten = await runProbe(fx, ["overwrite", join(fx.data, "settings.json")]);
-    expect(overwritten.stdout).toBe("overwrite EACCES\n");
+    expect(overwritten.stdout).toBe(`overwrite ${sandboxErrno()}\n`);
     expect(await readFile(join(fx.data, "settings.json"), "utf8")).toBe('{"secret":true}\n');
   }, 60_000);
 
@@ -52,7 +52,7 @@ linuxSandboxSuite("sandbox acceptance: data root and host files", () => {
       deniedOrAbsent(ssh.stdout, existsSync(sshFile), "read");
       deniedOrAbsent(sshTree.stdout, existsSync(sshDir), "readdir");
       deniedOrAbsent(claude.stdout, existsSync(claudeFile), "read");
-      expect(temp.stdout).toBe("read EACCES\n");
+      expect(temp.stdout).toBe(`read ${sandboxErrno()}\n`);
       expect(ssh.stdout).not.toContain("BEGIN ");
       expect(claude.stdout).not.toContain("{");
       expect(temp.stdout).not.toContain("tmp-secret");
@@ -63,6 +63,7 @@ linuxSandboxSuite("sandbox acceptance: data root and host files", () => {
 });
 
 function deniedOrAbsent(stdout: string, present: boolean, label: string): void {
-  if (present) expect(stdout).toBe(`${label} EACCES\n`);
-  else expect([`${label} EACCES\n`, `${label} ENOENT\n`]).toContain(stdout);
+  const denied = `${label} ${sandboxErrno()}\n`;
+  if (present) expect(stdout).toBe(denied);
+  else expect([denied, `${label} ENOENT\n`]).toContain(stdout);
 }

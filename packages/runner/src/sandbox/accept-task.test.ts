@@ -17,13 +17,13 @@ import {
 import { agentMarkerFor } from "../agent-marker.js";
 import { RunnerEngine } from "../engine.js";
 import { mockState, resetMock } from "../tools/mock.js";
-import { linuxSandboxSuite, makeFixture, sandboxed } from "./accept-support.js";
+import { darwin, sandboxSuite, makeFixture, sandboxed } from "./accept-support.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const refusal =
   "boof-runner: refused. This process was started by a task agent of this boof data root, and task agents get no access to boof. Run boof-runner yourself, outside the agent.";
 
-linuxSandboxSuite("sandbox acceptance: mock task and layer 1", () => {
+sandboxSuite("sandbox acceptance: mock task and layer 1", () => {
   it("A17 finishes plan, develop and review under enforce, with the diff and leftovers commit", async () => {
     const saved = new Map<string, string | undefined>();
     const remember = (key: string) => {
@@ -95,7 +95,10 @@ linuxSandboxSuite("sandbox acceptance: mock task and layer 1", () => {
       };
       await store.create(newTask(fm(), "Build the feature."));
       const result = await engine.tick();
-      expect(result.kind).toBe("ran");
+      if (result.kind !== "ran") {
+        const failed = await store.get("t1");
+        expect(result.kind, failed?.body.log ?? JSON.stringify(result)).toBe("ran");
+      }
       if (result.kind === "ran") expect(result.outcome.kind).toBe("done");
       const done = await store.get("t1");
       expect(done?.frontmatter.status).toBe("done");
@@ -127,105 +130,113 @@ linuxSandboxSuite("sandbox acceptance: mock task and layer 1", () => {
     }
   }, 180_000);
 
-  it("A18 keeps the layer-1 port denial and the marker refusal under enforce", async () => {
-    const curl = existsSync("/usr/bin/curl") ? "/usr/bin/curl" : "";
-    expect(curl, "curl is required for the layer-1 port check").not.toBe("");
-    const base = await mkdtemp(join(tmpdir(), "boof-i1f-a18-"));
-    const dataRoot = join(base, "data");
-    const home = join(base, "home");
-    await mkdir(dataRoot);
-    await mkdir(home);
-    const child = spawn(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        join(repoRoot, "bin/src/boof-runner.ts"),
-        "serve",
-        "-d",
-        dataRoot,
-        "-p",
-        "0",
-        "--no-runner",
-      ],
-      {
-        env: {
-          PATH: process.env.PATH,
-          HOME: home,
-        },
-      },
-    );
-    let text = "";
-    try {
-      const port = await new Promise<number>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`serve did not start:\n${text}`)), 45_000);
-        child.stdout.on("data", (chunk: Buffer) => {
-          text += chunk.toString();
-          const match = /API:\s+http:\/\/[^:\s]+:(\d+)\/api/.exec(text);
-          if (match?.[1]) {
-            clearTimeout(timer);
-            resolve(Number(match[1]));
-          }
-        });
-        child.on("exit", () => reject(new Error(`serve exited early:\n${text}`)));
-      });
-      child.removeAllListeners("exit");
-      const fx = await makeFixture({ readPaths: [repoRoot] });
-      fx.ctx.serverPort = port;
-      const curlRun = await sandboxed(
-        fx,
-        curl,
-        [
-          "-sS",
-          "-m",
-          "2",
-          "-o",
-          `${fx.temp}/body`,
-          "-w",
-          "%{http_code}",
-          `http://127.0.0.1:${port}/api/v1/projects`,
-        ],
-        { timeoutMs: 15_000 },
-      );
-      expect(curlRun.code, `${curlRun.stderr}\n${curlRun.stdout}`).not.toBe(0);
-      expect(curlRun.stdout).not.toContain("200");
-      const body = await readFile(join(fx.temp, "body"), "utf8").catch(() => "");
-      expect(body).not.toContain("browser_session_required");
-      expect(body).not.toContain('"projects"');
-      const marker = await sandboxed(
-        fx,
+  // Design section 7: the macOS rows stop at A17. A18 stays on Linux.
+  it.skipIf(darwin)(
+    "A18 keeps the layer-1 port denial and the marker refusal under enforce",
+    async () => {
+      const curl = existsSync("/usr/bin/curl") ? "/usr/bin/curl" : "";
+      expect(curl, "curl is required for the layer-1 port check").not.toBe("");
+      const base = await mkdtemp(join(tmpdir(), "boof-i1f-a18-"));
+      const dataRoot = join(base, "data");
+      const home = join(base, "home");
+      await mkdir(dataRoot);
+      await mkdir(home);
+      const child = spawn(
         process.execPath,
         [
           "--import",
           "tsx",
           join(repoRoot, "bin/src/boof-runner.ts"),
-          "auth",
-          "clients",
-          "create",
-          "--name",
-          "pwn",
-          "--scopes",
-          "admin",
+          "serve",
           "-d",
           dataRoot,
+          "-p",
+          "0",
+          "--no-runner",
         ],
         {
-          cwd: repoRoot,
-          timeoutMs: 30_000,
           env: {
-            PATH: process.env.PATH ?? "/usr/bin:/bin",
-            BOOF_RUNNER_AGENT_OF: agentMarkerFor(dataRoot),
+            PATH: process.env.PATH,
+            HOME: home,
           },
         },
       );
-      expect(marker.code, `${marker.stderr}\n${marker.stdout}`).toBe(3);
-      expect(marker.stderr).toContain(refusal);
-      expect(marker.stdout).not.toContain("client");
-    } finally {
-      child.kill("SIGTERM");
-      await rm(base, { recursive: true, force: true });
-    }
-  }, 120_000);
+      let text = "";
+      try {
+        const port = await new Promise<number>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`serve did not start:\n${text}`)),
+            45_000,
+          );
+          child.stdout.on("data", (chunk: Buffer) => {
+            text += chunk.toString();
+            const match = /API:\s+http:\/\/[^:\s]+:(\d+)\/api/.exec(text);
+            if (match?.[1]) {
+              clearTimeout(timer);
+              resolve(Number(match[1]));
+            }
+          });
+          child.on("exit", () => reject(new Error(`serve exited early:\n${text}`)));
+        });
+        child.removeAllListeners("exit");
+        const fx = await makeFixture({ readPaths: [repoRoot] });
+        fx.ctx.serverPort = port;
+        const curlRun = await sandboxed(
+          fx,
+          curl,
+          [
+            "-sS",
+            "-m",
+            "2",
+            "-o",
+            `${fx.temp}/body`,
+            "-w",
+            "%{http_code}",
+            `http://127.0.0.1:${port}/api/v1/projects`,
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(curlRun.code, `${curlRun.stderr}\n${curlRun.stdout}`).not.toBe(0);
+        expect(curlRun.stdout).not.toContain("200");
+        const body = await readFile(join(fx.temp, "body"), "utf8").catch(() => "");
+        expect(body).not.toContain("browser_session_required");
+        expect(body).not.toContain('"projects"');
+        const marker = await sandboxed(
+          fx,
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            join(repoRoot, "bin/src/boof-runner.ts"),
+            "auth",
+            "clients",
+            "create",
+            "--name",
+            "pwn",
+            "--scopes",
+            "admin",
+            "-d",
+            dataRoot,
+          ],
+          {
+            cwd: repoRoot,
+            timeoutMs: 30_000,
+            env: {
+              PATH: process.env.PATH ?? "/usr/bin:/bin",
+              BOOF_RUNNER_AGENT_OF: agentMarkerFor(dataRoot),
+            },
+          },
+        );
+        expect(marker.code, `${marker.stderr}\n${marker.stdout}`).toBe(3);
+        expect(marker.stderr).toContain(refusal);
+        expect(marker.stdout).not.toContain("client");
+      } finally {
+        child.kill("SIGTERM");
+        await rm(base, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
 });
 
 function fm(): TaskFrontmatter {

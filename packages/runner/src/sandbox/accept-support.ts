@@ -18,7 +18,13 @@ import { prepareAgentLaunch, type SandboxSettingsView } from "./index.js";
 import { createRunTemp, type AgentLaunchContext } from "./runtime.js";
 
 export const linux = process.platform === "linux";
+export const darwin = process.platform === "darwin";
 export const sandboxRequired = process.env.BOOF_REQUIRE_SANDBOX === "1";
+
+/** Landlock denies file and TCP access with EACCES. Seatbelt denies them with EPERM. */
+export function sandboxErrno(): "EACCES" | "EPERM" {
+  return darwin ? "EPERM" : "EACCES";
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sandboxDir = join(here, "../../../sandbox-linux");
@@ -49,14 +55,16 @@ export interface ListenHandle {
 }
 
 /**
- * One file per group of design rows A1–A18. On a non-Linux host the group is skipped, unless
- * `BOOF_REQUIRE_SANDBOX=1`, which fails the run instead of skipping it.
+ * One file per group of design rows A1–A18. Linux runs every row. macOS runs the rows from
+ * design section 7 (A1–A9 and A12–A17); A10, A11 and A18 stay Linux-only at the call site.
+ * Any other host skips the group, unless `BOOF_REQUIRE_SANDBOX=1`, which fails the run.
  */
-export function linuxSandboxSuite(title: string, body: () => void): void {
-  describe.skipIf(!linux && !sandboxRequired)(title, () => {
-    if (!linux) {
-      it("fails closed when the Linux sandbox is required", () => {
-        throw new Error("BOOF_REQUIRE_SANDBOX=1 but the Linux sandbox backend is absent");
+export function sandboxSuite(title: string, body: () => void): void {
+  const host = linux || darwin;
+  describe.skipIf(!host && !sandboxRequired)(title, () => {
+    if (!host) {
+      it("fails closed when the sandbox is required", () => {
+        throw new Error("BOOF_REQUIRE_SANDBOX=1 but this platform has no sandbox backend");
       });
       return;
     }
@@ -204,7 +212,12 @@ export async function sandboxed(
   opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv; cwd?: string } = {},
 ): Promise<ExecResult> {
   setSandboxStatus(
-    { mode: "enforce", backend: "linux", state: "ok", reason: "" },
+    {
+      mode: "enforce",
+      backend: darwin ? "darwin" : "linux",
+      state: "ok",
+      reason: "",
+    },
     sandboxSettingsFingerprint(fx.settings),
   );
   const launch = await prepareAgentLaunch({ runner: { sandbox: fx.settings } }, fx.ctx);
@@ -231,8 +244,27 @@ async function git(cwd: string, args: string[], env: NodeJS.ProcessEnv): Promise
   if (res.code !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr || res.stdout}`);
 }
 
+function compileProbe(): void {
+  const probeStale =
+    !existsSync(probeBuilt) || statSync(probeBuilt).mtimeMs < statSync(probeSource).mtimeMs;
+  if (!probeStale) return;
+  const cc = process.env.CC || "cc";
+  const compiled = spawnSync(
+    cc,
+    ["-O2", "-Wall", "-Wextra", "-Werror", "-o", probeBuilt, probeSource],
+    { encoding: "utf8" },
+  );
+  if (compiled.status !== 0) {
+    throw new Error(compiled.stderr || compiled.stdout || `cc ${probeSource} failed`);
+  }
+}
+
 function ensureSandboxBuilt(): void {
   withBuildLock(() => {
+    if (darwin) {
+      compileProbe();
+      return;
+    }
     const helperStale = !existsSync(helper) || statSync(helper).mtimeMs < statSync(source).mtimeMs;
     if (helperStale) {
       const built = spawnSync(process.execPath, [join(sandboxDir, "build.mjs")], {
@@ -245,19 +277,7 @@ function ensureSandboxBuilt(): void {
     if (!existsSync(helper)) {
       throw new Error("boof-sandbox helper was not built");
     }
-    const probeStale =
-      !existsSync(probeBuilt) || statSync(probeBuilt).mtimeMs < statSync(probeSource).mtimeMs;
-    if (probeStale) {
-      const cc = process.env.CC || "cc";
-      const compiled = spawnSync(
-        cc,
-        ["-O2", "-Wall", "-Wextra", "-Werror", "-o", probeBuilt, probeSource],
-        { encoding: "utf8" },
-      );
-      if (compiled.status !== 0) {
-        throw new Error(compiled.stderr || compiled.stdout || `cc ${probeSource} failed`);
-      }
-    }
+    compileProbe();
     const abiRun = spawnSync(helper, ["--abi"], { encoding: "utf8" });
     if (abiRun.status !== 0) {
       throw new Error(abiRun.stderr || "boof-sandbox --abi failed");

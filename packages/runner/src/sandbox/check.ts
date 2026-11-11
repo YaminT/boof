@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { backendFor, type SandboxBackendName } from "@boof/heart";
-import { darwinSandboxStatus } from "./backend-darwin.js";
+import { darwinSandboxExecPath } from "./backend-darwin.js";
 import { boofSandboxHelperPath } from "./backend-linux.js";
 import {
   judgeSelfTest,
   readFakeAbi,
   readHelperAbi,
+  runDarwinProbes,
   runRealProbes,
   type SelfTestProbeResult,
 } from "./selftest.js";
@@ -25,6 +26,9 @@ export interface SandboxCheckDeps {
   env?: NodeJS.ProcessEnv;
   helperExists?: (path: string) => boolean;
   helperPath?: (env: NodeJS.ProcessEnv) => string;
+  /** Test double for `/usr/bin/sandbox-exec`. Defaults to {@link darwinSandboxExecPath}. */
+  sandboxExecPath?: (env: NodeJS.ProcessEnv) => string;
+  sandboxExecExists?: (path: string) => boolean;
   spawn?: Parameters<typeof readHelperAbi>[1];
   probes?: (req: { helper: string; abi: number }) => Promise<readonly SelfTestProbeResult[]>;
 }
@@ -48,7 +52,20 @@ export async function assessSandbox(deps: SandboxCheckDeps = {}): Promise<Sandbo
     probes: readonly SelfTestProbeResult[] = [],
   ): SandboxCheckReport => ({ ok: false, backend, abi, reason, probes });
   try {
-    if (platform === "darwin") return fail(darwinSandboxStatus().reason);
+    if (platform === "darwin") {
+      const env = deps.env ?? process.env;
+      const sandboxExec = (deps.sandboxExecPath ?? darwinSandboxExecPath)(env);
+      if (!(deps.sandboxExecExists ?? existsSync)(sandboxExec)) {
+        return fail("sandbox-exec is missing");
+      }
+      // There is no Landlock ABI. abi 6 tells the judge to require the signal probe:
+      // Seatbelt always scopes signals. The report keeps abi null.
+      const probes = deps.probes
+        ? await deps.probes({ helper: sandboxExec, abi: 6 })
+        : await runDarwinProbes({ env, sandboxExec });
+      const judged = judgeSelfTest(probes, 6);
+      return { ok: judged.ok, backend: "darwin", abi: null, reason: judged.reason, probes };
+    }
     if (platform === "win32") {
       return fail("Windows has no sandbox backend; enforce cannot run agents");
     }

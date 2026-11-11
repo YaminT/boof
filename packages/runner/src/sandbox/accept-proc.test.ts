@@ -2,16 +2,18 @@ import { expect, it } from "vitest";
 import { join } from "node:path";
 import {
   closeListen,
+  darwin,
   landlockAbi,
-  linuxSandboxSuite,
   listen,
   makeFixture,
   runProbe,
+  sandboxErrno,
+  sandboxSuite,
   sandboxed,
   shQuote,
 } from "./accept-support.js";
 
-linuxSandboxSuite("sandbox acceptance: proc, signals and descendants", () => {
+sandboxSuite("sandbox acceptance: proc, signals and descendants", () => {
   it("A8 denies /proc/<pid>/environ and, on ABI 6+, a signal to that pid", async () => {
     const fx = await makeFixture();
     let signals = 0;
@@ -23,10 +25,18 @@ linuxSandboxSuite("sandbox acceptance: proc, signals and descendants", () => {
       const env = await runProbe(fx, ["environ", String(process.pid)]);
       const signal = await runProbe(fx, ["signal", String(process.pid)]);
       expect(env.code, env.stderr).toBe(0);
-      expect(env.stdout).toBe("environ EACCES\n");
-      if (landlockAbi() >= 6) {
+      if (darwin) {
+        // There is no /proc. Seatbelt denies the path (EPERM). A lookup that
+        // reaches a missing vnode is ENOENT. Either way the bytes are not read.
+        expect(["environ EPERM\n", "environ ENOENT\n"]).toContain(env.stdout);
         expect(signal.stdout).toBe("signal EPERM\n");
         expect(signals).toBe(0);
+      } else {
+        expect(env.stdout).toBe("environ EACCES\n");
+        if (landlockAbi() >= 6) {
+          expect(signal.stdout).toBe("signal EPERM\n");
+          expect(signals).toBe(0);
+        }
       }
     } finally {
       process.off("SIGUSR1", onSignal);
@@ -50,15 +60,17 @@ linuxSandboxSuite("sandbox acceptance: proc, signals and descendants", () => {
       const sidConnect = await runProbe(fx, ["setsid-connect4", port]);
       const doubleRead = await runProbe(fx, ["double-read", secret]);
       const doubleConnect = await runProbe(fx, ["double-connect4", port]);
+      const deniedRead = `read ${sandboxErrno()}\n`;
+      const deniedConnect = `connect ${sandboxErrno()}\n`;
       expect(shellRead.code, shellRead.stderr).toBe(0);
-      expect(shellRead.stdout).toBe("read EACCES\n");
-      expect(shellConnect.stdout).toBe("connect EACCES\n");
-      expect(grandRead.stdout).toBe("read EACCES\n");
-      expect(grandConnect.stdout).toBe("connect EACCES\n");
-      expect(sidRead.stdout).toBe("read EACCES\n");
-      expect(sidConnect.stdout).toBe("connect EACCES\n");
-      expect(doubleRead.stdout).toBe("read EACCES\n");
-      expect(doubleConnect.stdout).toBe("connect EACCES\n");
+      expect(shellRead.stdout).toBe(deniedRead);
+      expect(shellConnect.stdout).toBe(deniedConnect);
+      expect(grandRead.stdout).toBe(deniedRead);
+      expect(grandConnect.stdout).toBe(deniedConnect);
+      expect(sidRead.stdout).toBe(deniedRead);
+      expect(sidConnect.stdout).toBe(deniedConnect);
+      expect(doubleRead.stdout).toBe(deniedRead);
+      expect(doubleConnect.stdout).toBe(deniedConnect);
       for (const result of [shellRead, grandRead, sidRead, doubleRead]) {
         expect(result.stdout).not.toContain("secret");
       }

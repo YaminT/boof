@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { execCommand, SandboxUnavailableError, type SandboxLaunchPolicy } from "@boof/heart";
-import { LINUX_LIB_PATHS, LINUX_SYSTEM_ROOTS, SANDBOX_DEVICES } from "./policy.js";
+import {
+  DARWIN_SYSTEM_ROOTS,
+  LINUX_LIB_PATHS,
+  LINUX_SYSTEM_ROOTS,
+  SANDBOX_DEVICES,
+} from "./policy.js";
 
 /** Fixed order. `signal` is judged only when the Landlock ABI is 6 or newer. */
 export const SELF_TEST_PROBES = [
@@ -192,15 +197,23 @@ function listen(
   });
 }
 
-/**
- * Run the five denials and the one allowed write inside the helper. Only used when the
- * self-test is real (server start, a settings change). Tests inject a probe list instead.
- */
-export async function runRealProbes(opts: {
+interface CanarySpec {
   helper: string;
-  env: NodeJS.ProcessEnv;
-}): Promise<SelfTestProbeResult[]> {
-  const scratch = await mkdtemp(join(tmpdir(), "boof-sandbox-canary-"));
+  readRoots: readonly string[];
+  pathEnv: string;
+  /** Linux: exit 126 or a `boof-sandbox:` line means the helper refused to exec. */
+  linuxHelper: boolean;
+}
+
+/**
+ * Five denials and one allowed write, through whichever backend is registered.
+ * Tests inject a probe list instead of calling this.
+ */
+async function runCanary(opts: CanarySpec): Promise<SelfTestProbeResult[]> {
+  // realpath so the canary's paths match the grant. On macOS tmpdir() is
+  // /var/folders, whose real path is /private/var/folders; Seatbelt matches
+  // the spelling the syscall presents, and the profile allows both.
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "boof-sandbox-canary-")));
   const insideDir = join(scratch, "inside");
   const outsideDir = join(scratch, "outside");
   const dataDir = join(scratch, "data");
@@ -219,8 +232,7 @@ export async function runRealProbes(opts: {
     await listen(tcp, 0);
     const port = (tcp.address() as AddressInfo).port;
     await listen(unix, sockPath);
-    const nodeDir = dirname(await realpath(process.execPath));
-    const readExec = await existingPaths([...LINUX_SYSTEM_ROOTS, ...LINUX_LIB_PATHS, nodeDir]);
+    const readExec = await existingPaths(opts.readRoots);
     const readWrite = await existingPaths([...SANDBOX_DEVICES, insideDir]);
     const policy: SandboxLaunchPolicy = {
       version: 1,
@@ -228,7 +240,7 @@ export async function runRealProbes(opts: {
       readWrite,
       denyTcpPorts: [port],
       env: {
-        PATH: opts.env.PATH ?? "/usr/bin:/bin",
+        PATH: opts.pathEnv,
         HOME: insideDir,
         TMPDIR: insideDir,
         UV_USE_IO_URING: "0",
@@ -257,7 +269,7 @@ export async function runRealProbes(opts: {
         launch: { kind: "sandbox", policy, helper: opts.helper },
       },
     );
-    if (res.code === 126 || res.stderr.includes("boof-sandbox:")) {
+    if (opts.linuxHelper && (res.code === 126 || res.stderr.includes("boof-sandbox:"))) {
       const reason =
         res.stderr.replace(/boof-sandbox:\s*/g, "").trim() ||
         "self-test: helper refused the canary";
@@ -286,4 +298,44 @@ export async function runRealProbes(opts: {
     await rm(scratch, { recursive: true, force: true }).catch(() => {});
     await rm(sockPath, { force: true }).catch(() => {});
   }
+}
+
+/** Linux canary. The helper is `boof-sandbox`. */
+export async function runRealProbes(opts: {
+  helper: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<SelfTestProbeResult[]> {
+  const nodeDir = dirname(await realpath(process.execPath));
+  return runCanary({
+    helper: opts.helper,
+    readRoots: [...LINUX_SYSTEM_ROOTS, ...LINUX_LIB_PATHS, nodeDir],
+    pathEnv: opts.env.PATH ?? "/usr/bin:/bin",
+    linuxHelper: true,
+  });
+}
+
+/**
+ * macOS canary. The registered applier runs `sandbox-exec`. `sandboxExec` is recorded on the
+ * launch for the same shape as Linux; the darwin applier uses its own binary path.
+ * The Node install prefix is granted so the canary can map its own libraries.
+ */
+export async function runDarwinProbes(opts: {
+  env: NodeJS.ProcessEnv;
+  sandboxExec: string;
+}): Promise<SelfTestProbeResult[]> {
+  const realNode = await realpath(process.execPath);
+  const nodeDirs = [dirname(process.execPath), dirname(realNode)];
+  const roots: string[] = [...DARWIN_SYSTEM_ROOTS];
+  for (const dir of nodeDirs) {
+    if (!roots.includes(dir)) roots.push(dir);
+    const prefix = dirname(dir);
+    // The Node prefix holds the binary's sibling libraries. Never grant `/`.
+    if (prefix !== "/" && prefix !== dir && !roots.includes(prefix)) roots.push(prefix);
+  }
+  return runCanary({
+    helper: opts.sandboxExec,
+    readRoots: roots,
+    pathEnv: opts.env.PATH ?? "/usr/bin:/bin",
+    linuxHelper: false,
+  });
 }
