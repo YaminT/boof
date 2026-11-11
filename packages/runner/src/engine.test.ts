@@ -26,6 +26,7 @@ import {
   serializeTask,
   SettingsStore,
   ExternalRunStore,
+  takeTaskFileReads,
   TaskStore,
   parseInjected,
   taskControlDir,
@@ -2434,6 +2435,25 @@ describe("multi-project engine (mock tool)", () => {
     };
     return { maxPerRepo, maxTotal: () => maxTotal };
   };
+
+  it("selects the next task from pending files and does not read finished ones", async () => {
+    // F4 finding 3: a full scan slower than a running task left concurrency 4 with one
+    // task in flight. Finished tasks must not be opened to choose the next pending one.
+    await store.create(newTask(fm({ id: "wait", priority: 10 }), "wait"));
+    await store.create(newTask(fm({ id: "old", status: "done", priority: 90 }), "old"));
+    const fullScan = vi
+      .spyOn(TaskStore.prototype, "list")
+      .mockRejectedValue(new Error("full scan"));
+    try {
+      takeTaskFileReads();
+      const sel = await engine.selectNext();
+      expect(fullScan).not.toHaveBeenCalled();
+      expect(sel?.task.frontmatter.id).toBe("wait");
+      expect(takeTaskFileReads()).toBe(1);
+    } finally {
+      fullScan.mockRestore();
+    }
+  });
 
   it("concurrency=2 runs two projects at once but never two tasks of one project", async () => {
     const b = await addProject("b");

@@ -10,6 +10,27 @@ import { join } from "node:path";
 import { z } from "zod";
 import { withFileLock } from "./atomic.js";
 
+const sharedReads = new Map<string, Promise<unknown>>();
+
+/**
+ * Callers that ask for the same thing at the same time share one read. Each event stream
+ * wakes on the same change and would otherwise readdir and stat every project at once.
+ * The result is not kept after the read finishes, so the next change is seen.
+ */
+function share<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const existing = sharedReads.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const flight = fn().finally(() => {
+    if (sharedReads.get(key) === flight) sharedReads.delete(key);
+  });
+  sharedReads.set(key, flight);
+  return flight;
+}
+
+function sharedFileSize(path: string): Promise<number> {
+  return share(`size:${path}`, async () => (await stat(path)).size);
+}
+
 const by = z.string().min(1);
 const project = z.string().min(1);
 
@@ -239,22 +260,24 @@ interface EventFile {
   path: string;
 }
 
-async function eventFiles(dir: string): Promise<EventFile[]> {
-  let names: string[] = [];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const out: EventFile[] = [];
-  for (const name of names) {
-    const m = ROTATED.exec(name);
-    if (m) out.push({ month: m[1], path: join(dir, name) });
-  }
-  out.sort((a, b) => a.month.localeCompare(b.month));
-  const month = await activeMonth(dir);
-  if (month) out.push({ month, path: join(dir, ACTIVE) });
-  return out;
+function eventFiles(dir: string): Promise<EventFile[]> {
+  return share(`event-files:${dir}`, async () => {
+    let names: string[] = [];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return [];
+    }
+    const out: EventFile[] = [];
+    for (const name of names) {
+      const m = ROTATED.exec(name);
+      if (m) out.push({ month: m[1], path: join(dir, name) });
+    }
+    out.sort((a, b) => a.month.localeCompare(b.month));
+    const month = await activeMonth(dir);
+    if (month) out.push({ month, path: join(dir, ACTIVE) });
+    return out;
+  });
 }
 
 export interface StoredEvent {
@@ -268,7 +291,7 @@ export async function eventsEnd(dir: string): Promise<EventPos | null> {
   const files = await eventFiles(dir);
   const last = files[files.length - 1];
   if (!last) return null;
-  return { month: last.month, offset: (await stat(last.path)).size };
+  return { month: last.month, offset: await sharedFileSize(last.path) };
 }
 
 /**
@@ -284,7 +307,12 @@ export async function readEvents(
   for (const file of await eventFiles(dir)) {
     if (from && file.month < from.month) continue;
     let offset = from && file.month === from.month ? from.offset : 0;
-    const size = (await stat(file.path).catch(() => null))?.size ?? 0;
+    let size = 0;
+    try {
+      size = await sharedFileSize(file.path);
+    } catch {
+      size = 0;
+    }
     if (offset > size) offset = 0; // the file shrank (trimmed by hand): start over in it
     while (offset < size && out.length < limit) {
       const fh = await open(file.path, "r");

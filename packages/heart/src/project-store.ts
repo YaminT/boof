@@ -115,6 +115,8 @@ export class ProjectStore {
   private readonly initGitRepo?: (dir: string) => Promise<void>;
   private readonly beforeCreateDir?: (dir: string) => Promise<void>;
   private readonly lockOpts: ProcessLockOptions;
+  /** Overlapping `list` calls share one directory read. Event streams list projects together. */
+  private listFlight: Promise<(Project | null)[]> | null = null;
 
   constructor(
     private readonly root: string,
@@ -134,24 +136,38 @@ export class ProjectStore {
 
   /** Projects sorted by id; archived ones only with `includeArchived`. Unreadable entries are skipped. */
   async list(opts: { includeArchived?: boolean } = {}): Promise<Project[]> {
-    let names: string[] = [];
-    try {
-      const entries = await readdir(dataRootPaths(this.root).projects, { withFileTypes: true });
-      names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-    } catch {
-      return [];
-    }
-    const out: Project[] = [];
-    for (const name of names.sort()) {
-      let project: Project | null = null;
+    const loaded = await this.loadProjects();
+    return loaded.filter(
+      (project): project is Project =>
+        project !== null && (opts.includeArchived || !project.archived),
+    );
+  }
+
+  private loadProjects(): Promise<(Project | null)[]> {
+    if (this.listFlight) return this.listFlight;
+    const flight = (async () => {
+      let names: string[] = [];
       try {
-        project = await this.get(name);
+        const entries = await readdir(dataRootPaths(this.root).projects, { withFileTypes: true });
+        names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
       } catch {
-        project = null;
+        return [];
       }
-      if (project && (opts.includeArchived || !project.archived)) out.push(project);
-    }
-    return out;
+      return Promise.all(
+        names.sort().map(async (name) => {
+          try {
+            return await this.get(name);
+          } catch {
+            return null;
+          }
+        }),
+      );
+    })();
+    this.listFlight = flight;
+    void flight.finally(() => {
+      if (this.listFlight === flight) this.listFlight = null;
+    });
+    return flight;
   }
 
   /** The project, or null when it does not exist. Throws InvalidIdError for a non-kebab id. */
