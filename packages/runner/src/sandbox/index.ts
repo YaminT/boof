@@ -12,17 +12,9 @@ import {
   type SandboxMode,
   type SandboxStatus,
 } from "@boof/heart";
-import { darwinSandboxStatus } from "./backend-darwin.js";
-import { boofSandboxHelperPath, planLinuxSandbox } from "./backend-linux.js";
-import { sandboxLaunchFor, type AgentLaunchContext } from "./runtime.js";
-import {
-  judgeSelfTest,
-  readFakeAbi,
-  readHelperAbi,
-  runRealProbes,
-  type SelfTestProbeResult,
-} from "./selftest.js";
+import { planLinuxSandbox } from "./backend-linux.js";
 import { assessSandbox, type SandboxCheckDeps } from "./check.js";
+import { sandboxLaunchFor, type AgentLaunchContext } from "./runtime.js";
 
 if (process.platform === "linux") setSandboxApplier(planLinuxSandbox);
 
@@ -124,7 +116,10 @@ export async function prepareAgentLaunch(
   return sandboxLaunchFor(settings, ctx);
 }
 
-export { judgeSelfTest, planLinuxSandbox, boofSandboxHelperPath, darwinSandboxStatus };
+export { assessSandbox, type SandboxCheckReport } from "./check.js";
+export { judgeSelfTest } from "./selftest.js";
+export { planLinuxSandbox, boofSandboxHelperPath } from "./backend-linux.js";
+export { darwinSandboxStatus } from "./backend-darwin.js";
 export {
   boofStateHome,
   buildRunPolicy,
@@ -136,4 +131,3 @@ export {
   removeRunTemp,
 } from "./runtime.js";
 export type { AgentLaunchContext } from "./runtime.js";
-export { assessSandbox, type SandboxCheckReport } from "./check.js";
