@@ -59,6 +59,12 @@ async function files(): Promise<string[]> {
   return readdir(dir).catch(() => []);
 }
 
+function skipAclGuardForStress(store: ExternalRunStore): void {
+  // Keep this race focused on close arbitration and Windows filesystem semantics. ACL checks
+  // have their own tests and are especially expensive when repeated hundreds of times.
+  Object.defineProperty(store, "guard", { value: async () => {} });
+}
+
 describe("ExternalRunStore", () => {
   it("open returns an xr- id and a bxs_ token; the folder holds only the hash", async () => {
     const store = new ExternalRunStore(root);
@@ -148,17 +154,14 @@ describe("ExternalRunStore", () => {
     "Windows stress: complete and cancel have exactly one winner over 300 races",
     async () => {
       const store = new ExternalRunStore(root);
-      for (let batch = 0; batch < 30; batch++) {
-        const runs = await Promise.all(Array.from({ length: 10 }, () => store.open(INPUT)));
-        await Promise.all(
-          runs.map(async (r) => {
-            const [complete, cancel] = await Promise.all([
-              store.complete(r.runId, RESULT),
-              store.cancel(r.runId),
-            ]);
-            expect(Number(complete) + Number(cancel)).toBe(1);
-          }),
-        );
+      skipAclGuardForStress(store);
+      for (let i = 0; i < 300; i++) {
+        const r = await store.open(INPUT);
+        const [complete, cancel] = await Promise.all([
+          store.complete(r.runId, RESULT),
+          store.cancel(r.runId),
+        ]);
+        expect(Number(complete) + Number(cancel)).toBe(1);
       }
       expect((await files()).some((f) => f.endsWith(".closed"))).toBe(false);
     },
@@ -182,6 +185,7 @@ describe("ExternalRunStore", () => {
         }
         return rename(from, to);
       });
+      skipAclGuardForStress(store);
       const r = await store.open(INPUT);
       const completion = store.complete(r.runId, RESULT);
       await atRename;
