@@ -224,9 +224,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   boundPort = port;
   let ipv6Server: ServerType | undefined;
   if (host === "127.0.0.1") {
-    // Bind ::1 immediately after IPv4 so a V6ONLY agent socket cannot squat this port. The
-    // brief startup/restart interval before this second bind remains; the sandbox helper caps
-    // each agent's descriptors at 4096 to bound blind listen/connect port guessing there.
+    // Reserve ::1 when available so a V6ONLY socket cannot squat localhost while the server
+    // runs. RLIMIT_NOFILE is per process and fork bypasses it; sandbox policies permanently
+    // deny this port to both bind and connect, including during startup and restart.
     ipv6Server = await new Promise<ServerType>((resolve, reject) => {
       const base = { fetch: app.fetch, hostname: "::1", port };
       const listening = () => resolve(s);
@@ -241,12 +241,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
           )
         : serve(base, listening);
       s.once("error", reject);
-    }).catch(async (err: unknown) => {
-      clearInterval(pruneTimer);
-      await watcher.stop().catch(() => {});
-      (server as { closeAllConnections?: () => void }).closeAllConnections?.();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      throw err;
+    }).catch((err: unknown) => {
+      warn(`warning: could not reserve [::1]:${port}; continuing on 127.0.0.1 (${err instanceof Error ? err.message : String(err)})`);
+      return undefined;
     });
   }
   const serverPortRecord = dataRootPaths(opts.root).serverPort;

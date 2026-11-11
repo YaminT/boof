@@ -279,7 +279,7 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     expect(readFileSync(join(objects, "existing-object"), "utf8")).toBe("owner object\n");
   });
 
-  it("bounds listen-without-bind port guessing by the helper fd limit", async () => {
+  it("limits descriptors in one sandbox process without claiming a port-guessing bound", async () => {
     await tree();
     const result = await run(basePolicy([]), [probe, "listen-loop"], 12000);
     expect(result.code).toBe(0);
