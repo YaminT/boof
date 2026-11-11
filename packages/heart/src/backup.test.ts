@@ -428,14 +428,20 @@ describe("backup and restore", () => {
     const base = await scratch();
     const archive = join(base, "modes.tar.gz");
     const content = Buffer.from(JSON.stringify(defaultSettings()) + "\n");
+    const clients = Buffer.from('{"clients":[]}\n');
     const manifest = Buffer.from(
       JSON.stringify({
         format: 1,
         boofVersion: BOOF_VERSION,
         schemaVersion: defaultSettings().schemaVersion,
-        files: ["Auth/clients.json", "settings.json"].map((path) => ({
+        files: [
+          ["Auth/clients.json", clients],
+          ["settings.json", content],
+        ].map(([path, body]) => ({
           path,
-          sha256: createHash("sha256").update(content).digest("hex"),
+          sha256: createHash("sha256")
+            .update(body as Buffer)
+            .digest("hex"),
           mode: 0o777,
         })),
       }),
@@ -444,7 +450,7 @@ describe("backup and restore", () => {
       { path: "manifest.json", kind: "file", mode: 0o600, body: manifest },
       { path: "root", kind: "dir", mode: 0o700 },
       { path: "root/Auth", kind: "dir", mode: 0o777 },
-      { path: "root/Auth/clients.json", kind: "file", mode: 0o777, body: content },
+      { path: "root/Auth/clients.json", kind: "file", mode: 0o777, body: clients },
       { path: "root/settings.json", kind: "file", mode: 0o777, body: content },
     ]);
     const dest = join(base, "restored");
