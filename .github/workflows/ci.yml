@@ -129,6 +129,7 @@ jobs:
       - name: Sandbox acceptance
         env:
           BOOF_REQUIRE_SANDBOX: "1"
+          BOOF_DEBUG_SEATBELT_PROFILE: "1"
         run: npx vitest run packages/runner/src/sandbox/accept-files.test.ts packages/runner/src/sandbox/accept-net.test.ts packages/runner/src/sandbox/accept-proc.test.ts packages/runner/src/sandbox/accept.test.ts packages/runner/src/sandbox/accept-gate.test.ts packages/runner/src/sandbox/accept-task.test.ts
 
       - name: Diagnose Seatbelt denials
