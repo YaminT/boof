@@ -220,6 +220,145 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     expect(bound6.stdout).toBe("bind EACCES\n");
   });
 
+  it("A3 denies MPTCP, TCP Fast Open and AF_SMC reaches of the boof port", async () => {
+    await tree();
+    const port = await boofPort();
+    let hits = 0;
+    const onConnection = () => {
+      hits += 1;
+    };
+    boofV4?.server.on("connection", onConnection);
+    boofV6?.server.on("connection", onConnection);
+    try {
+      const result = await run(basePolicy([port]), [probe, "a3-bypass", String(port)]);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe(
+        [
+          "tcp4 EACCES",
+          "mptcp4 EPERM",
+          "mptcp6 EPERM",
+          "tfo4 EPERM",
+          "tfo6 EPERM",
+          "tfomsg EPERM",
+          "tfommsg EPERM",
+          "smc EPERM",
+          "sctp EPERM",
+          "alg EPERM",
+          "",
+        ].join("\n"),
+      );
+      expect(hits).toBe(0);
+    } finally {
+      boofV4?.server.off("connection", onConnection);
+      boofV6?.server.off("connection", onConnection);
+    }
+  });
+
+  it("A4 denies an MPTCP bind of the boof port after the listener closed", async () => {
+    await tree();
+    const held4 = await listen("127.0.0.1");
+    const held6 = await listen("::1", held4.port);
+    const port = held4.port;
+    await new Promise<void>((resolve, reject) =>
+      held4.server.close((err) => (err ? reject(err) : resolve())),
+    );
+    await new Promise<void>((resolve, reject) =>
+      held6.server.close((err) => (err ? reject(err) : resolve())),
+    );
+    const result = await run(basePolicy([port]), [probe, "a4-mptcp", String(port)]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("mptcp-bind4 EPERM\nmptcp-bind6 EPERM\n");
+  });
+
+  it("allows TCP, UDP, ICMP and route netlink, and denies other protocols and families", async () => {
+    await tree();
+    const gateway = await listen("127.0.0.1");
+    gateway.server.on("connection", (socket) => {
+      socket.end();
+    });
+    const boof = await boofPort();
+    expect(gateway.port).not.toBe(boof);
+    const result = await run(basePolicy([boof]), [probe, "sock-allow", String(gateway.port)]);
+    gateway.server.close();
+    expect(result.code).toBe(0);
+    const lines = result.stdout.split("\n");
+    expect(lines).toEqual([
+      "udp ok",
+      "udp17 ok",
+      "tcp ok",
+      expect.stringMatching(/^icmp (ok|EACCES)$/),
+      expect.stringMatching(/^icmp6 (ok|EACCES)$/),
+      "netlink ok",
+      "netlink-diag EPERM",
+      "",
+    ]);
+  });
+
+  it("allows stream and seqpacket socketpairs and denies datagram ones", async () => {
+    await tree();
+    const dir = await mkdtemp(join(tmpdir(), "boof-sandbox-pair-"));
+    roots.push(dir);
+    const dgramPath = join(dir, "dg.sock");
+    const streamPath = join(dir, "stream.sock");
+    const listener = spawn(probe, ["dgram-listen", dgramPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const listenerDone = new Promise<void>((resolve) => listener.once("close", () => resolve()));
+    let heard = "";
+    listener.stdout?.setEncoding("utf8");
+    listener.stdout?.on("data", (chunk: string) => {
+      heard += chunk;
+    });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`dgram listener did not bind: ${heard}`)),
+        3000,
+      );
+      const onData = () => {
+        if (!heard.includes("bound\n")) return;
+        clearTimeout(timer);
+        listener.stdout?.off("data", onData);
+        resolve();
+      };
+      listener.stdout?.on("data", onData);
+      onData();
+    });
+    const stream = createServer();
+    let accepted = 0;
+    stream.on("connection", (socket) => {
+      accepted += 1;
+      socket.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      stream.once("error", reject);
+      stream.listen(streamPath, () => resolve());
+    });
+    try {
+      const result = await run(basePolicy([]), [probe, "pairs", dgramPath, streamPath]);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe(
+        [
+          "pair-dgram EPERM",
+          "pair-dgram-flags EPERM",
+          "pair-stream ok",
+          "pair-seq ok",
+          "pair-stream-connect EISCONN",
+          "",
+        ].join("\n"),
+      );
+      expect(heard).not.toContain("PWNED");
+      expect(accepted).toBe(0);
+    } finally {
+      if (listener.exitCode === null && listener.signalCode === null) listener.kill("SIGTERM");
+      await listenerDone;
+      await new Promise<void>((resolve, reject) =>
+        stream.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
   it("A5 connects to another loopback port and reads the reply", async () => {
     await tree();
     const gateway = await listen("127.0.0.1");
@@ -349,6 +488,32 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     }).slice(0, -1)},"extra":1}`;
     const result = await run(text, ["/bin/true"]);
     expectHelperError(result, "unknown policy field");
+  });
+
+  it("rejects a NUL code point in a policy string", async () => {
+    await tree();
+    const secret = join(data, "settings.json");
+    const marker = join(work, "ran");
+    const text = JSON.stringify({
+      version: 1,
+      readExec: [...existing(["/bin", "/usr", "/lib"]), `${secret}\u0000/../nothing`],
+      readWrite: [work],
+      denyTcpPorts: [],
+    });
+    expect(text).toContain("\\u0000");
+    const result = await run(text, ["/bin/touch", marker]);
+    expectHelperError(result, "policy string contains NUL");
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(secret)).toBe(true);
+  });
+
+  it("rejects a NUL code point in a policy key", async () => {
+    const marker = join(tmpdir(), `boof-sandbox-nul-key-${process.pid}`);
+    rmSync(marker, { force: true });
+    const text = `{"version":1,"readExec\\u0000":${JSON.stringify(existing(["/bin", "/usr", "/lib"]))},"readWrite":["/tmp"],"denyTcpPorts":[]}`;
+    const result = await run(text, ["/bin/touch", marker]);
+    expectHelperError(result, "policy string contains NUL");
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("exits 126 on an unknown policy version", async () => {
