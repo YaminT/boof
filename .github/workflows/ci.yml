@@ -58,6 +58,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Diagnose Windows temp ACL
+        run: bun packages/heart/src/windows-acl-diag.ts
+
       - name: Test
         run: npx vitest run
 
