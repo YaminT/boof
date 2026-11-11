@@ -6,12 +6,50 @@ import type { CommandLaunch, SandboxLaunchPolicy } from "@boof/heart";
 
 const POLICY_KEYS = ["version", "readExec", "readWrite", "denyTcpPorts", "env"] as const;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const HELPER_NAME = "boof-sandbox";
 
-/** Helper binary. `BOOF_SANDBOX_HELPER` overrides the path built next to this package. */
-export function boofSandboxHelperPath(env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * This file after bundling. The desktop CJS bundle rewrites the body to `__filename`
+ * (import.meta.url is empty there). ESM keeps this: vitest and the CLI bundle.
+ */
+function sandboxModuleFile(): string {
+  // cjs-bundle-filename
+  return typeof __filename === "string" && __filename.length > 0
+    ? __filename
+    : fileURLToPath(import.meta.url);
+}
+
+/**
+ * `packages/sandbox-linux/dist/boof-sandbox` when `start` is inside a checkout that has built it.
+ * Stops after a few parents so a packaged app does not walk out to another install.
+ */
+function sandboxDistFromCheckout(start: string): string | null {
+  let dir = start;
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = join(dir, "packages", "sandbox-linux", "dist", HELPER_NAME);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Helper binary. An explicit `BOOF_SANDBOX_HELPER` path wins. Otherwise the file beside the
+ * bundle wins, then the checkout's `packages/sandbox-linux/dist`. Never `PATH`.
+ */
+export function resolveBoofSandboxHelper(moduleFile: string, env: NodeJS.ProcessEnv): string {
   const override = env.BOOF_SANDBOX_HELPER;
-  if (override && override.length > 0) return override;
-  return join(dirname(fileURLToPath(import.meta.url)), "../../../sandbox-linux/dist/boof-sandbox");
+  if (typeof override === "string" && override.length > 0) return override;
+  const beside = join(dirname(moduleFile), HELPER_NAME);
+  if (existsSync(beside)) return beside;
+  return sandboxDistFromCheckout(dirname(moduleFile)) ?? beside;
+}
+
+/** Helper for this process. See {@link resolveBoofSandboxHelper}. */
+export function boofSandboxHelperPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveBoofSandboxHelper(sandboxModuleFile(), env);
 }
 
 function corrupt(): SandboxUnavailableError {

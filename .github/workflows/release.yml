@@ -64,6 +64,7 @@ jobs:
             name: Windows
             assets: packages/desktop/build/release/*.exe
           # Six assets: macOS dmg+zip × arm64+x64 (4), Windows nsis x64 (1), Linux AppImage x64 (1).
+          # No Linux arm64 leg (that needs a native arm runner). boof-sandbox is static x64 only.
           - os: ubuntu-latest
             name: Linux
             assets: packages/desktop/build/release/*.AppImage
@@ -94,6 +95,17 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install musl-gcc
+        if: matrix.name == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build static boof-sandbox
+        if: matrix.name == 'Linux'
+        run: |
+          CC=musl-gcc BOOF_SANDBOX_STATIC=1 node packages/sandbox-linux/build.mjs
+          test -x packages/sandbox-linux/dist/boof-sandbox
+          file packages/sandbox-linux/dist/boof-sandbox | grep -q 'statically linked'
 
       - name: Build and stage desktop (${{ matrix.name }})
         run: npm run desktop:build && npm run stage -w @boof/desktop

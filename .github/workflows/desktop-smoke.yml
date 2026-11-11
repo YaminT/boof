@@ -60,6 +60,18 @@ jobs:
       - name: Version from the tag
         run: bash scripts/release-version.sh "$TAG" >> "$GITHUB_ENV"
 
+      # ubuntu-latest is x64. There is no Linux arm64 leg, so the helper is static x64 only.
+      - name: Install musl-gcc
+        if: matrix.launch == 'appimage'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build static boof-sandbox
+        if: matrix.launch == 'appimage'
+        run: |
+          CC=musl-gcc BOOF_SANDBOX_STATIC=1 node packages/sandbox-linux/build.mjs
+          test -x packages/sandbox-linux/dist/boof-sandbox
+          file packages/sandbox-linux/dist/boof-sandbox | grep -q 'statically linked'
+
       - name: Build and stage desktop
         run: |
           npm run desktop:build
@@ -104,6 +116,24 @@ jobs:
             "$(pick libatspi2.0-0t64 libatspi2.0-0)" \
             "$(pick libasound2t64 libasound2)" \
             "$(pick libcups2t64 libcups2)"
+
+      - name: Run boof-runner sandbox check from the AppImage
+        if: matrix.launch == 'appimage'
+        env:
+          HOME: ${{ runner.temp }}/boof-sandbox-check-home
+          USERPROFILE: ${{ runner.temp }}/boof-sandbox-check-home
+        run: |
+          mkdir -p "$HOME"
+          shopt -s nullglob
+          images=(packages/desktop/build/release/*.AppImage)
+          if [[ ${#images[@]} -ne 1 ]]; then
+            printf 'expected one AppImage, found %s\n' "${#images[@]}"
+            exit 1
+          fi
+          chmod +x "${images[0]}"
+          xvfb-run -a "${images[0]}" --appimage-extract-and-run \
+            --no-sandbox --disable-gpu --in-process-gpu --no-zygote \
+            sandbox check
 
       - name: Start desktop and check health
         env:

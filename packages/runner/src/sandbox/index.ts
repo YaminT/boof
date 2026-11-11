@@ -116,7 +116,7 @@ export async function prepareAgentLaunch(
   return sandboxLaunchFor(settings, ctx);
 }
 
-export { assessSandbox, type SandboxCheckReport } from "./check.js";
+export { assessSandbox, formatSandboxCheck, type SandboxCheckReport } from "./check.js";
 export { judgeSelfTest } from "./selftest.js";
 export { planLinuxSandbox, boofSandboxHelperPath } from "./backend-linux.js";
 export { darwinSandboxStatus } from "./backend-darwin.js";

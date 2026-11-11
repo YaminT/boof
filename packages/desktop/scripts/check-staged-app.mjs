@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertStagedNative } from "./staged-native.mjs";
 
 const desktop = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const app = join(desktop, "build", "app");
@@ -24,6 +25,7 @@ for (const path of walk(app)) {
     throw new Error(`unexpected Claude Agent SDK path in staged app: ${path}`);
   }
 }
+assertStagedNative(app);
 for (const path of [main, join(desktop, "dist", "main.js")]) {
   const contents = readFileSync(path, "utf8");
   for (const marker of ["ProcessTransport", "Native CLI binary for", "Anthropic PBC"]) {

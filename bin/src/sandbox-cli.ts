@@ -1,6 +1,8 @@
-import type { SandboxCheckReport } from "@boof/runner";
+import { formatSandboxCheck, type SandboxCheckReport } from "@boof/runner";
 
 const VALUE_FLAGS = new Set(["-d", "--data", "-p", "--port", "--host", "--tls-cert", "--tls-key"]);
+
+export { formatSandboxCheck };
 
 export const SANDBOX_HELP = `boof-runner sandbox — see whether enforce would work
 
@@ -9,23 +11,6 @@ Usage:
 
 Prints the backend, the Landlock ABI, and each self-test probe.
 Exit 0 only when enforce would work. A task agent is refused like any other command.`;
-
-/** Text and exit code for one check. Exit 0 only when `enforce` would work. */
-export function formatSandboxCheck(report: SandboxCheckReport): {
-  stdout: string;
-  stderr: string;
-  code: number;
-} {
-  const lines = [
-    `backend: ${report.backend}`,
-    `abi: ${report.abi === null ? "-" : String(report.abi)}`,
-    ...report.probes.map((probe) => `${probe.id}: ${probe.outcome}`),
-  ];
-  if (report.ok && report.reason) lines.push(`reason: ${report.reason}`);
-  const stdout = `${lines.join("\n")}\n`;
-  if (report.ok) return { stdout, stderr: "", code: 0 };
-  return { stdout, stderr: report.reason ? `${report.reason}\n` : "", code: 1 };
-}
 
 /**
  * `boof-runner sandbox`. `--help` and a bare `sandbox` print help and do not run the check.

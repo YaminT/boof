@@ -1,5 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -554,8 +563,33 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(
-      "boof-sandbox: compiler not found (/no/such/boof-sandbox-cc); not building the helper\n",
+      "boof-sandbox: compiler not found (/no/such/boof-sandbox-cc); the sandbox is unavailable\n",
     );
     expect(existsSync(out)).toBe(before);
+  });
+
+  it("links statically for musl-gcc and for BOOF_SANDBOX_STATIC", () => {
+    const log = join(dist, "cc-args.txt");
+    const bin = join(dist, "fake-cc");
+    mkdirSync(bin, { recursive: true });
+    const script = join(bin, "musl-gcc");
+    writeFileSync(script, '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$BOOF_CC_LOG"\nexit 0\n');
+    chmodSync(script, 0o755);
+    const plain = join(bin, "cc");
+    writeFileSync(plain, '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$BOOF_CC_LOG"\nexit 0\n');
+    chmodSync(plain, 0o755);
+    const runBuild = (cc: string, extra: Record<string, string> = {}) =>
+      spawnSync(process.execPath, [join(here, "build.mjs")], {
+        encoding: "utf8",
+        env: { ...process.env, CC: cc, BOOF_CC_LOG: log, ...extra },
+      });
+    expect(runBuild(script).status).toBe(0);
+    const muslArgs = readFileSync(log, "utf8");
+    expect(muslArgs).toContain("-static");
+    expect(muslArgs).toContain("-idirafter /usr/include");
+    expect(runBuild(plain, { BOOF_SANDBOX_STATIC: "1" }).status).toBe(0);
+    expect(readFileSync(log, "utf8")).toContain("-static");
+    expect(runBuild(plain, { BOOF_SANDBOX_STATIC: "" }).status).toBe(0);
+    expect(readFileSync(log, "utf8")).not.toContain("-static");
   });
 });

@@ -233,6 +233,9 @@ export async function runRealProbes(opts: {
         TMPDIR: insideDir,
         UV_USE_IO_URING: "0",
         LANG: "C",
+        // The canary is a `node -e` script. In the desktop app, process.execPath is Electron,
+        // which runs that script only when this is set. Node ignores the variable.
+        ELECTRON_RUN_AS_NODE: "1",
       },
     };
     const res = await execCommand(

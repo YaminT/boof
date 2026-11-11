@@ -96,6 +96,8 @@ describe("linux AppImage release config", () => {
     expect(yml).toContain("packages/desktop/build/release/*.AppImage");
     expect(yml).toContain("export APPIMAGE_EXTRACT_AND_RUN=1");
     expect(yml).toContain("electron-builder --linux --publish never");
+    expect(yml).toContain("CC=musl-gcc BOOF_SANDBOX_STATIC=1");
+    expect(yml).toContain("statically linked");
     const names = [...yml.matchAll(/name: (macOS|Windows|Linux)/g)].map((match) => match[1]);
     expect(names).toEqual(["macOS", "Windows", "Linux"]);
   });
@@ -109,12 +111,16 @@ describe("linux AppImage release config", () => {
     const fallback =
       "safeStorage unavailable: the desktop UI uses a browser session set by the app";
     expect(workflow).toContain("xvfb-run -a node packages/desktop/scripts/desktop-smoke.mjs");
+    expect(workflow).toContain("CC=musl-gcc BOOF_SANDBOX_STATIC=1");
+    expect(workflow).toContain('xvfb-run -a "${images[0]}" --appimage-extract-and-run');
+    expect(workflow).toContain("sandbox check");
     expect(workflow).toContain("launch: appimage");
     expect(workflow).toContain("BOOF_SMOKE_EXPECT_KEYRING_FALLBACK=1");
     expect(launcher).toContain("--appimage-extract-and-run");
     expect(script).toContain(fallback);
     expect(lifecycle).toContain(fallback);
     expect(main).toContain("desktopKeyringAvailable");
+    expect(main).toContain("isSandboxCheckArgv");
     expect(main).not.toContain("password-store");
     expect(main).not.toContain("setUsePlainTextEncryption");
   });

@@ -72,3 +72,20 @@ export async function assessSandbox(deps: SandboxCheckDeps = {}): Promise<Sandbo
     return fail(stripped(err));
   }
 }
+
+/** Text and exit code for `boof-runner sandbox check`. Exit 0 only when `enforce` would work. */
+export function formatSandboxCheck(report: SandboxCheckReport): {
+  stdout: string;
+  stderr: string;
+  code: number;
+} {
+  const lines = [
+    `backend: ${report.backend}`,
+    `abi: ${report.abi === null ? "-" : String(report.abi)}`,
+    ...report.probes.map((probe) => `${probe.id}: ${probe.outcome}`),
+  ];
+  if (report.ok && report.reason) lines.push(`reason: ${report.reason}`);
+  const stdout = `${lines.join("\n")}\n`;
+  if (report.ok) return { stdout, stderr: "", code: 0 };
+  return { stdout, stderr: report.reason ? `${report.reason}\n` : "", code: 1 };
+}

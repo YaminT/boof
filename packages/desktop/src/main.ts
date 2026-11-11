@@ -11,7 +11,7 @@ import {
   session,
   shell,
 } from "electron";
-import { RunnerEngine } from "@boof/runner";
+import { assessSandbox, formatSandboxCheck, RunnerEngine } from "@boof/runner";
 import { boot } from "@boof/boof/boot";
 import {
   AuthStore,
@@ -34,6 +34,7 @@ import {
   operatorClientId,
   shutdownGraceMs,
 } from "./lifecycle.js";
+import { isSandboxCheckArgv } from "./sandbox-argv.js";
 
 // Names the userData folder (~/Library/Application Support/Boof Runner, etc.) and the
 // window/menu. Must run before any getPath("userData") call.
@@ -258,9 +259,29 @@ async function startComposition(): Promise<void> {
   await createWindow();
 }
 
-// Single-instance: a second launch focuses the existing window instead of
-// fighting over the server port.
-if (!app.requestSingleInstanceLock()) {
+async function runSandboxCheckAndExit(): Promise<void> {
+  try {
+    const text = formatSandboxCheck(await assessSandbox());
+    if (text.stderr) process.stderr.write(text.stderr);
+    process.stdout.write(text.stdout, () => app.exit(text.code));
+  } catch (err) {
+    console.error(err);
+    app.exit(1);
+  }
+}
+
+// `boof-runner sandbox check` on the packaged executable. It must not take the
+// single-instance lock or open a window. The AppImage's binary is that executable.
+if (isSandboxCheckArgv(process.argv)) {
+  app
+    .whenReady()
+    .then(() => runSandboxCheckAndExit())
+    .catch((err) => {
+      console.error(err);
+      app.exit(1);
+    });
+} else if (!app.requestSingleInstanceLock()) {
+  // A second launch focuses the existing window instead of fighting over the server port.
   app.quit();
 } else {
   app.on("second-instance", () => {

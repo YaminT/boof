@@ -88,5 +88,13 @@ describe("install script", () => {
     const text = await readFile(script, "utf8");
     expect(text).not.toMatch(/-ge 20/);
     expect(text).toContain('DEFAULT_REPO="https://github.com/YaminT/boof.git"');
+    expect(text).toContain("node packages/sandbox-linux/build.mjs");
+  });
+
+  it("continues when the sandbox compiler is missing", async () => {
+    const r = await run("bash", ["-c", 'source "$BOOF_SCRIPT"; build_sandbox "$1"', "fn", repo], {
+      env: { ...process.env, BOOF_SCRIPT: script, CC: "/no/such/boof-sandbox-cc" },
+    });
+    expect(r.stdout).toContain("the sandbox is unavailable");
   });
 });
