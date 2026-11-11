@@ -45,6 +45,7 @@ writeFileSync(
     {
       name: "boof-runner",
       productName: "Boof Runner",
+      desktopName: "com.boofrunner.desktop",
       version: appVersion,
       description: "Boof Runner — local-first Agent Task Runner",
       main: "main.js",

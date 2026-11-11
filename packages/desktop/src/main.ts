@@ -25,8 +25,10 @@ import {
 } from "@boof/heart";
 import type { RunningServer } from "@boof/heart-server";
 import {
+  SAFE_STORAGE_FALLBACK_WARNING,
   createQuitHandler,
   createWindowAuth,
+  desktopKeyringAvailable,
   isAppUrl,
   isExternalUrl,
   operatorClientId,
@@ -52,14 +54,37 @@ let desktopToken: string | undefined;
 const DESKTOP_CLIENT_NAME = "desktop-ui";
 
 /**
+ * Encryption availability and, on Linux, the secret-store backend. A probe that throws
+ * (no D-Bus, no keyring daemon) is treated as "no keyring" so startup continues.
+ */
+function readSafeStorage(): { encryptionAvailable: boolean; backend: string | null } {
+  try {
+    const encryptionAvailable = safeStorage.isEncryptionAvailable();
+    if (process.platform !== "linux") return { encryptionAvailable, backend: null };
+    return { encryptionAvailable, backend: safeStorage.getSelectedStorageBackend() };
+  } catch (err) {
+    console.warn("safeStorage probe failed:", err);
+    return { encryptionAvailable: false, backend: null };
+  }
+}
+
+/**
  * Make sure a `desktop-ui` admin client exists and return its key. The secret is
  * kept encrypted with Electron safeStorage (OS keychain) in a file under
- * userData. Without safeStorage there is nowhere safe to keep it, so the app
- * signs its own window in with a browser session instead (see startComposition).
+ * userData. Without a keyring there is nowhere safe to keep it. On Linux that
+ * includes Chromium's `basic_text` backend, so the app signs its own window in
+ * with a browser session instead (see startComposition).
  */
 async function ensureDesktopToken(root: string): Promise<string | undefined> {
-  if (!safeStorage.isEncryptionAvailable()) {
-    console.warn("safeStorage unavailable: the desktop UI uses a browser session set by the app");
+  const probe = readSafeStorage();
+  if (
+    !desktopKeyringAvailable({
+      platform: process.platform,
+      encryptionAvailable: probe.encryptionAvailable,
+      backend: probe.backend,
+    })
+  ) {
+    console.warn(SAFE_STORAGE_FALLBACK_WARNING);
     return undefined;
   }
   const store = new AuthStore(root);

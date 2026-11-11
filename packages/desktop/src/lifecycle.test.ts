@@ -8,6 +8,7 @@ import { MockTool, ToolRegistry } from "@boof/runner";
 import {
   createQuitHandler,
   createWindowAuth,
+  desktopKeyringAvailable,
   desktopSessionCookie,
   isAppUrl,
   isExternalUrl,
@@ -20,6 +21,43 @@ describe("desktop lifecycle", () => {
     expect(shutdownGraceMs({})).toBe(30_000);
     expect(shutdownGraceMs({ BOOF_RUNNER_SHUTDOWN_GRACE_MS: "5000" })).toBe(5_000);
     expect(shutdownGraceMs({ BOOF_RUNNER_SHUTDOWN_GRACE_MS: "soon" })).toBe(30_000);
+  });
+});
+
+describe("desktop keyring", () => {
+  it("uses safeStorage on macOS and Windows when encryption is available", () => {
+    expect(desktopKeyringAvailable({ platform: "darwin", encryptionAvailable: true })).toBe(true);
+    expect(
+      desktopKeyringAvailable({
+        platform: "win32",
+        encryptionAvailable: true,
+        backend: "basic_text",
+      }),
+    ).toBe(true);
+  });
+
+  it("uses the fallback when encryption is unavailable", () => {
+    expect(
+      desktopKeyringAvailable({
+        platform: "linux",
+        encryptionAvailable: false,
+        backend: "gnome_libsecret",
+      }),
+    ).toBe(false);
+    expect(desktopKeyringAvailable({ platform: "darwin", encryptionAvailable: false })).toBe(false);
+  });
+
+  it("on Linux, only a real keyring counts; basic_text is the fallback", () => {
+    for (const backend of ["gnome_libsecret", "kwallet", "kwallet5", "kwallet6"]) {
+      expect(
+        desktopKeyringAvailable({ platform: "linux", encryptionAvailable: true, backend }),
+      ).toBe(true);
+    }
+    for (const backend of ["basic_text", "unknown", "", null, undefined]) {
+      expect(
+        desktopKeyringAvailable({ platform: "linux", encryptionAvailable: true, backend }),
+      ).toBe(false);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 name: Release Desktop
 
-# Build the Boof Runner desktop installers (macOS .dmg/.zip + Windows .exe) and attach
-# them to the GitHub release for the tag. Runs automatically when a v* tag is
+# Build the Boof Runner desktop installers (macOS .dmg/.zip, Windows .exe, Linux
+# AppImage) and attach them to the GitHub release for the tag. Runs automatically when a v* tag is
 # pushed, or on demand for an existing tag via the Actions tab / `gh workflow run`.
 on:
   push:
@@ -63,6 +63,10 @@ jobs:
           - os: windows-latest
             name: Windows
             assets: packages/desktop/build/release/*.exe
+          # Six assets: macOS dmg+zip × arm64+x64 (4), Windows nsis x64 (1), Linux AppImage x64 (1).
+          - os: ubuntu-latest
+            name: Linux
+            assets: packages/desktop/build/release/*.AppImage
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -101,6 +105,10 @@ jobs:
         run: |
           if [[ "${{ matrix.name }}" == "macOS" ]]; then
             npm exec --workspace @boof/desktop -- electron-builder --mac --publish never
+          elif [[ "${{ matrix.name }}" == "Linux" ]]; then
+            # appimagetool is itself an AppImage. GitHub runners have no FUSE device.
+            export APPIMAGE_EXTRACT_AND_RUN=1
+            npm exec --workspace @boof/desktop -- electron-builder --linux --publish never
           else
             npm exec --workspace @boof/desktop -- electron-builder --win --publish never
           fi
