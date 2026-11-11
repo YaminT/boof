@@ -275,4 +275,10 @@ if (!app.requestSingleInstanceLock()) {
     },
   });
   app.on("before-quit", (event) => void quit(event));
+  // Electron does not consistently translate SIGTERM into `before-quit` across operating
+  // systems. Forward it explicitly so shutdown drains the engine and stops the server first.
+  process.on("SIGTERM", () => {
+    console.log("SIGTERM received; quitting");
+    app.quit();
+  });
 }

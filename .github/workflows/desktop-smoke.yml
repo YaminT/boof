@@ -10,6 +10,10 @@ on:
         description: "Tag to smoke (for example v0.4.0-beta.1)"
         required: true
         type: string
+      ref:
+        description: "Optional branch or commit to build instead of the tag (the tag still sets the version)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
       - name: Check out tag
         uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ github.event.inputs.ref || env.TAG }}
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -60,9 +64,23 @@ jobs:
         env:
           BOOF_SMOKE_EXPECTED_VERSION: ${{ github.event.inputs.tag && github.event.inputs.tag || github.ref_name }}
           BOOF_SMOKE_USER_DATA: ${{ runner.temp }}/boof-desktop-smoke
+          BOOF_SMOKE_NO_SANDBOX: ${{ runner.os == 'Linux' && '1' || '' }}
           HOME: ${{ runner.temp }}/boof-desktop-smoke-home
           USERPROFILE: ${{ runner.temp }}/boof-desktop-smoke-home
         run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # The smoke runs with a scratch HOME, which has no login keychain. Electron's
+            # safeStorage then waits for a keychain prompt nobody can answer. Give it an
+            # unlocked one, as a real user's login keychain would be.
+            mkdir -p "$HOME/Library/Preferences" "$HOME/Library/Keychains"
+            kc="$RUNNER_TEMP/smoke.keychain-db"
+            security create-keychain -p smoke "$kc"
+            security set-keychain-settings -lut 21600 "$kc"
+            security unlock-keychain -p smoke "$kc"
+            security default-keychain -s "$kc"
+            security list-keychains -s "$kc"
+            security show-keychain-info "$kc"
+          fi
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             xvfb-run -a node packages/desktop/scripts/desktop-smoke.mjs
           else

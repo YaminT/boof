@@ -21,7 +21,12 @@ await mkdir(userData, { recursive: true });
 await mkdir(process.env.HOME ?? userData, { recursive: true });
 await mkdir(process.env.USERPROFILE ?? userData, { recursive: true });
 const electron = (await import("electron")).default;
-const child = spawn(electron, [marker, stagedApp], {
+const electronArgs = [
+  ...(process.env.BOOF_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : []),
+  marker,
+  stagedApp,
+];
+const child = spawn(electron, electronArgs, {
   cwd: repo,
   env: {
     ...process.env,
@@ -156,6 +161,14 @@ try {
   if (child.exitCode === null && child.signalCode === null) {
     const result = await Promise.race([exit, delay(10_000).then(() => "timeout")]);
     if (result === "timeout") {
+      for (const [name, path] of [
+        ["stdout", stdoutPath],
+        ["stderr", stderrPath],
+      ]) {
+        const text = await readFile(path, "utf8").catch(() => "");
+        console.log(`--- desktop ${name} (last 4000 chars) ---\n${text.slice(-4000)}`);
+      }
+      console.log(`--- processes ---\n${(await listProcesses()).join("\n")}`);
       child.kill("SIGKILL");
       throw new Error("desktop did not exit within 10 seconds after quit signal");
     }

@@ -59,8 +59,11 @@ export function createQuitHandler(deps: QuitDeps): (event: QuitEvent) => Promise
           if (stopped.length > 0) deps.log(`Stopped running task(s): ${stopped.join(", ")}`);
           if (timedOut) deps.log(`Grace period of ${deps.graceMs} ms elapsed; quitting anyway`);
         }
+        deps.log("quit: engine drained");
         await deps.cleanup?.();
+        deps.log("quit: cleanup done");
         await deps.server()?.stop();
+        deps.log("quit: server stopped");
       } catch (err) {
         deps.log(`Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
