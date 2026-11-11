@@ -120,7 +120,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Diagnose sandbox-exec baseline
-        run: /usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/sh -c true
+        run: |
+          /usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/sh -c true
+          cc -O2 -Wall -Wextra -Werror -o "$RUNNER_TEMP/seatbelt-probe" packages/sandbox-linux/probe.c
+          /usr/bin/sandbox-exec -p '(version 1)(allow default)' "$RUNNER_TEMP/seatbelt-probe" read /etc/hostname
+          /usr/bin/sandbox-exec -p '(version 1)(deny default)(allow process-exec*)(allow file-read*)' "$RUNNER_TEMP/seatbelt-probe" read /etc/hostname
 
       - name: Sandbox acceptance
         env:
@@ -129,4 +133,4 @@ jobs:
 
       - name: Diagnose Seatbelt denials
         if: always()
-        run: log show --last 5m --style compact --predicate 'process == "sandboxd"' 2>&1 | tail -300
+        run: log show --last 5m --style compact --predicate 'eventMessage CONTAINS[c] "deny"' 2>&1 | tail -300
