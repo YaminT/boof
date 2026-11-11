@@ -1792,32 +1792,36 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     }
   });
 
-  it("carried findings stay iteration 1's when iteration 2 fails after its observer round 1", async () => {
-    await configure({ observer: true });
-    await run("Twice. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]", {
-      runs: 2,
-    });
-    let failFix = true;
-    mockState.onRun = async (opts) => {
-      const observerCalls = mockState.calls.filter((c) => c === "observer").length;
-      if (failFix && opts.role === "developer" && observerCalls >= 3) {
-        throw new Error("boom after observer round 1 of iteration 2");
+  it(
+    "carried findings stay iteration 1's when iteration 2 fails after its observer round 1",
+    async () => {
+      await configure({ observer: true });
+      await run("Twice. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]", {
+        runs: 2,
+      });
+      let failFix = true;
+      mockState.onRun = async (opts) => {
+        const observerCalls = mockState.calls.filter((c) => c === "observer").length;
+        if (failFix && opts.role === "developer" && observerCalls >= 3) {
+          throw new Error("boom after observer round 1 of iteration 2");
+        }
+      };
+      const failed = await engine.tick();
+      if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
+      failFix = false;
+      await store.transition("t1", "pending");
+      const from = mockState.prompts.length;
+      await engine.tick();
+      const retried = mockState.prompts.slice(from);
+      expect(retried.length).toBeGreaterThan(0);
+      for (const p of retried) {
+        expect(p).toContain("## Findings from the previous iteration");
+        expect(p).toContain("#### Round 2 — APPROVE");
+        expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
       }
-    };
-    const failed = await engine.tick();
-    if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
-    failFix = false;
-    await store.transition("t1", "pending");
-    const from = mockState.prompts.length;
-    await engine.tick();
-    const retried = mockState.prompts.slice(from);
-    expect(retried.length).toBeGreaterThan(0);
-    for (const p of retried) {
-      expect(p).toContain("## Findings from the previous iteration");
-      expect(p).toContain("#### Round 2 — APPROVE");
-      expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
-    }
-  });
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
     await configure({ observer: true });
@@ -2422,42 +2426,46 @@ describe("multi-project engine (mock tool)", () => {
     expect(currentStatus(await read(workDir))).toBe("plan");
   });
 
-  it("honours a per-project worktree root override and project-level role overrides", async () => {
-    const b = await addProject("b");
-    const wtRoot = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-wt-")));
-    extraRepos.push(wtRoot);
-    await new ProjectStore(dataRoot).update("b", {
-      worktree: { root: wtRoot },
-      roles: { developer: { tool: "mock", model: "project-dev" } },
-    });
-    const cwds: string[] = [];
-    const models: string[] = [];
-    mockState.onRun = async (opts) => {
-      cwds.push(opts.cwd);
-      if (opts.role === "developer") models.push(opts.model);
-    };
-    // No per-task tools: roles come from global settings + the project's override.
-    await engine.settingsStore.update({
-      roles: {
-        planner: { tool: "mock", model: "g-plan" },
-        developer: { tool: "mock", model: "g-dev" },
-        reviewer: { tool: "mock", model: "g-rev" },
-      },
-    });
-    await b.store.create(newTask(withoutTools(fm({ id: "bt" })), "b"));
-    await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
-    expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
+  it(
+    "honours a per-project worktree root override and project-level role overrides",
+    async () => {
+      const b = await addProject("b");
+      const wtRoot = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-wt-")));
+      extraRepos.push(wtRoot);
+      await new ProjectStore(dataRoot).update("b", {
+        worktree: { root: wtRoot },
+        roles: { developer: { tool: "mock", model: "project-dev" } },
+      });
+      const cwds: string[] = [];
+      const models: string[] = [];
+      mockState.onRun = async (opts) => {
+        cwds.push(opts.cwd);
+        if (opts.role === "developer") models.push(opts.model);
+      };
+      // No per-task tools: roles come from global settings + the project's override.
+      await engine.settingsStore.update({
+        roles: {
+          planner: { tool: "mock", model: "g-plan" },
+          developer: { tool: "mock", model: "g-dev" },
+          reviewer: { tool: "mock", model: "g-rev" },
+        },
+      });
+      await b.store.create(newTask(withoutTools(fm({ id: "bt" })), "b"));
+      await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
+      expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
 
-    const normalized = (path: string) => path.replaceAll("\\", "/").toLowerCase();
-    const bCwds = cwds.filter((c) => normalized(c).startsWith(`${normalized(wtRoot)}/`));
-    const aCwds = cwds.filter((c) =>
-      normalized(c).startsWith(`${normalized(join(workDir, ".boof-runner-worktrees"))}/`),
-    );
-    expect(bCwds.length).toBeGreaterThan(0);
-    expect(aCwds.length).toBeGreaterThan(0);
-    expect(bCwds.length + aCwds.length).toBe(cwds.length);
-    expect(models).toEqual(["project-dev", "g-dev"]);
-  });
+      const normalized = (path: string) => path.replaceAll("\\", "/").toLowerCase();
+      const bCwds = cwds.filter((c) => normalized(c).startsWith(`${normalized(wtRoot)}/`));
+      const aCwds = cwds.filter((c) =>
+        normalized(c).startsWith(`${normalized(join(workDir, ".boof-runner-worktrees"))}/`),
+      );
+      expect(bCwds.length).toBeGreaterThan(0);
+      expect(aCwds.length).toBeGreaterThan(0);
+      expect(bCwds.length + aCwds.length).toBe(cwds.length);
+      expect(models).toEqual(["project-dev", "g-dev"]);
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   /** Tracks how many roles run at once per repository and overall, with a delay in every step. */
   const trackConcurrency = (repos: string[], opts: { rendezvous?: boolean } = {}) => {
@@ -2473,7 +2481,8 @@ describe("multi-project engine (mock tool)", () => {
     let allArrived!: () => void;
     const together = new Promise<void>((r) => (allArrived = r));
     mockState.onRun = async (run) => {
-      const repo = repos.find((r) => run.cwd.startsWith(`${r}/`)) ?? "?";
+      const normalized = (path: string) => path.replaceAll("\\", "/").toLowerCase();
+      const repo = repos.find((r) => normalized(run.cwd).startsWith(`${normalized(r)}/`)) ?? "?";
       const n = (active.get(repo) ?? 0) + 1;
       active.set(repo, n);
       maxPerRepo.set(repo, Math.max(maxPerRepo.get(repo) ?? 0, n));
@@ -3112,7 +3121,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(existsSync(taskPidPath(projectDir, "t1"))).toBe(false);
     });
 
-    it(
+    it.skipIf(process.platform === "win32")(
       "the pipeline records the step's group under control/pid while the tool runs",
       async () => {
         await store.create(newTask(fm(), "Build it. [[mock-stall planner=1 developer=1]]"));

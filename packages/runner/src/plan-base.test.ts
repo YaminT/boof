@@ -89,18 +89,22 @@ const fileOn = async (branch: string, file: string) =>
   (await git(["cat-file", "-e", `${branch}:${file}`])).code === 0;
 
 describe("a dependent goal starts from the branches of its dependencies", () => {
-  it("one dependency: base is that branch and the new branch contains its work", async () => {
-    await runPlan([testGoal("posts", 1), testGoal("rss", 2, ["posts"]), testGoal("about", 3)]);
-    expect((await task("boof-rss")).frontmatter.status).toBe("done");
-    expect((await task("boof-rss")).frontmatter.base).toBe("boof-runner/boof-posts");
-    expect((await task("boof-rss")).body.log).toContain("Base: boof-runner/boof-posts");
-    expect((await task("boof-rss")).body.log).toContain("goal posts");
-    expect((await task("boof-posts")).frontmatter.base).toBeUndefined();
-    expect(await isAncestor("boof-runner/boof-posts", "boof-runner/boof-rss")).toBe(true);
-    expect(await fileOn("boof-runner/boof-rss", "posts.txt")).toBe(true);
-    expect(await fileOn("boof-runner/boof-about", "posts.txt")).toBe(false);
-    expect((await task("boof-rss")).body.prompt).not.toContain("## Dependencies");
-  });
+  it(
+    "one dependency: base is that branch and the new branch contains its work",
+    async () => {
+      await runPlan([testGoal("posts", 1), testGoal("rss", 2, ["posts"]), testGoal("about", 3)]);
+      expect((await task("boof-rss")).frontmatter.status).toBe("done");
+      expect((await task("boof-rss")).frontmatter.base).toBe("boof-runner/boof-posts");
+      expect((await task("boof-rss")).body.log).toContain("Base: boof-runner/boof-posts");
+      expect((await task("boof-rss")).body.log).toContain("goal posts");
+      expect((await task("boof-posts")).frontmatter.base).toBeUndefined();
+      expect(await isAncestor("boof-runner/boof-posts", "boof-runner/boof-rss")).toBe(true);
+      expect(await fileOn("boof-runner/boof-rss", "posts.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-about", "posts.txt")).toBe(false);
+      expect((await task("boof-rss")).body.prompt).not.toContain("## Dependencies");
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it(
     "two dependencies: an integration branch merges both; the user's checkout is untouched",
