@@ -48,15 +48,19 @@ export async function untrackedPatch(
   context = 3,
   runner?: UntrackedGitRunner,
 ): Promise<string> {
-  const res = await git(cwd, [
-    "diff",
-    `-U${context}`,
-    "--no-index",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--",
-    "/dev/null",
-    path,
-  ], runner);
+  const res = await git(
+    cwd,
+    [
+      "diff",
+      `-U${context}`,
+      "--no-index",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--",
+      "/dev/null",
+      path,
+    ],
+    runner,
+  );
   return res.stdout;
 }

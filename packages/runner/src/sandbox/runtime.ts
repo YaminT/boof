@@ -520,7 +520,9 @@ export async function buildRunPolicy(
   const livePort = ctx.serverPort ?? (await liveServerPort(dataRoot, env));
   const configuredPort = Number(env.BOOF_RUNNER_PORT ?? "4319");
   if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65535) {
-    throw new SandboxUnavailableError("configured boof server port is invalid; refusing sandbox launch");
+    throw new SandboxUnavailableError(
+      "configured boof server port is invalid; refusing sandbox launch",
+    );
   }
   const protectedPorts = [...new Set([4319, configuredPort, ...(livePort ? [livePort] : [])])];
   const home = await realDir(userHome(env));
@@ -709,11 +711,14 @@ export async function importPrivateGitObjects(opts: {
 }): Promise<void> {
   const wt = opts.worktree;
   if (wt.path !== opts.writableRoot) {
-    throw new SandboxUnavailableError("private git import worktree does not match its runner record");
+    throw new SandboxUnavailableError(
+      "private git import worktree does not match its runner record",
+    );
   }
   await verifyWorktreeRecord(wt);
   const commonDir = wt.commonDir;
-  if (!commonDir) throw new SandboxUnavailableError("private git import needs a trusted worktree record");
+  if (!commonDir)
+    throw new SandboxUnavailableError("private git import needs a trusted worktree record");
   const source = join(opts.runTempDir, "git-objects");
   const sourceInfo = await lstat(source).catch(() => null);
   if (!sourceInfo) return;
@@ -738,7 +743,9 @@ export async function importPrivateGitObjects(opts: {
     const formatRun = await checkedWorktreeGit(wt, ["rev-parse", "--show-object-format"]);
     const objectFormat = formatRun.out.trim();
     if (formatRun.code !== 0 || (objectFormat !== "sha1" && objectFormat !== "sha256")) {
-      throw new Error(`could not determine repository object format: ${formatRun.err || formatRun.out}`);
+      throw new Error(
+        `could not determine repository object format: ${formatRun.err || formatRun.out}`,
+      );
     }
     const objectHash = objectFormat;
     const objectHexLength = objectHash === "sha256" ? 64 : 40;
@@ -748,7 +755,9 @@ export async function importPrivateGitObjects(opts: {
       const fromDir = join(detached, prefix);
       const info = await lstat(fromDir);
       if (info.isSymbolicLink() || !info.isDirectory()) {
-        throw new SandboxUnavailableError(`private git object path is not a real directory: ${prefix}`);
+        throw new SandboxUnavailableError(
+          `private git object path is not a real directory: ${prefix}`,
+        );
       }
       if (prefix === "info") continue;
       const toDir = join(snapshot, prefix);
@@ -757,7 +766,9 @@ export async function importPrivateGitObjects(opts: {
         const file = join(fromDir, name);
         const item = await lstat(file);
         if (item.isSymbolicLink() || !item.isFile()) {
-          throw new SandboxUnavailableError(`private git object file is not regular: ${prefix}/${name}`);
+          throw new SandboxUnavailableError(
+            `private git object file is not regular: ${prefix}/${name}`,
+          );
         }
         if (prefix === "pack") {
           if (!/^pack-[0-9a-f]{40,64}\.pack$/.test(name)) continue;

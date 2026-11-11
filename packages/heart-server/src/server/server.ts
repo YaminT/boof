@@ -244,7 +244,9 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     }).catch((err: unknown) => {
       // Residual: without IPv6 the host cannot reserve this address against unrelated local
       // processes. Sandboxed agents still cannot claim the port because policy denies it always.
-      warn(`warning: could not reserve [::1]:${port}; continuing on 127.0.0.1 (${err instanceof Error ? err.message : String(err)})`);
+      warn(
+        `warning: could not reserve [::1]:${port}; continuing on 127.0.0.1 (${err instanceof Error ? err.message : String(err)})`,
+      );
       return undefined;
     });
   }

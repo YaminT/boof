@@ -1160,14 +1160,20 @@ export class Pipeline {
 
       // --- Step 1: Planner ---
       const planner = this.tool(task, "planner");
-      const planResult = await this.runStep(id, "Planner", planner.tool, {
-        role: "planner",
-        model: planner.model,
-        systemPrompt: SYSTEM_PROMPTS.planner,
-        prompt: await this.buildPrompt(task, ""),
-        cwd: stepCwd,
-        autoApprove: true,
-      }, worktree ?? undefined);
+      const planResult = await this.runStep(
+        id,
+        "Planner",
+        planner.tool,
+        {
+          role: "planner",
+          model: planner.model,
+          systemPrompt: SYSTEM_PROMPTS.planner,
+          prompt: await this.buildPrompt(task, ""),
+          cwd: stepCwd,
+          autoApprove: true,
+        },
+        worktree ?? undefined,
+      );
       record(planResult);
       recordBody(`### Planner\n${planResult.output}`);
 
@@ -1181,14 +1187,20 @@ export class Pipeline {
       await this.writeReport(task, "planner", planResult.report);
 
       // --- Step 2: Planner refinement pass (always run) ---
-      const refineResult = await this.runStep(id, "Planner (refinement)", planner.tool, {
-        role: "planner",
-        model: planner.model,
-        systemPrompt: SYSTEM_PROMPTS.refine,
-        prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
-        cwd: stepCwd,
-        autoApprove: true,
-      }, worktree ?? undefined);
+      const refineResult = await this.runStep(
+        id,
+        "Planner (refinement)",
+        planner.tool,
+        {
+          role: "planner",
+          model: planner.model,
+          systemPrompt: SYSTEM_PROMPTS.refine,
+          prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
+          cwd: stepCwd,
+          autoApprove: true,
+        },
+        worktree ?? undefined,
+      );
       record(refineResult);
       recordBody(`### Planner (refinement)\n${refineResult.output}`);
       if (refineResult.questions && refineResult.questions.length > 0) {
@@ -1218,7 +1230,13 @@ export class Pipeline {
         cwd: stepCwd,
         autoApprove: true,
       };
-      let devResult = await this.runStep(id, "Developer", developer.tool, devOpts, worktree ?? undefined);
+      let devResult = await this.runStep(
+        id,
+        "Developer",
+        developer.tool,
+        devOpts,
+        worktree ?? undefined,
+      );
       record(devResult);
       recordBody(`### Developer\n${devResult.output}`);
 
@@ -1233,13 +1251,19 @@ export class Pipeline {
           finalPlan,
           usages,
           async (answers) => {
-            const again = await this.runStep(id, "Developer (with answers)", developer.tool, {
-              ...devOpts,
-              prompt: await this.buildPrompt(
-                task,
-                withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
-              ),
-            }, worktree ?? undefined);
+            const again = await this.runStep(
+              id,
+              "Developer (with answers)",
+              developer.tool,
+              {
+                ...devOpts,
+                prompt: await this.buildPrompt(
+                  task,
+                  withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
+                ),
+              },
+              worktree ?? undefined,
+            );
             record(again);
             recordBody(`### Developer (with answers)\n${again.output}`);
             return again;
@@ -1275,7 +1299,13 @@ export class Pipeline {
           cwd: stepCwd,
           autoApprove: true,
         };
-        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, checkOpts, worktree ?? undefined);
+        let result = await this.runStep(
+          id,
+          `${label} (round ${round})`,
+          who.tool,
+          checkOpts,
+          worktree ?? undefined,
+        );
         record(result);
         recordBody(`### ${label} (round ${round})\n${result.output}`);
         // Parse before the planner dialogue is appended, so only the agent's own
@@ -1553,20 +1583,26 @@ export class Pipeline {
   ): Promise<RunResult & { ownReport?: string }> {
     const id = task.frontmatter.id;
     const questions = result.questions ?? [];
-    const answer = await this.runStep(id, `Planner (answering ${fromRole})`, planner.tool, {
-      role: "planner",
-      model: planner.model,
-      systemPrompt:
-        "You are the PLANNER. Answer the following questions from the " +
-        `${fromRole} using the plan and task context. Do not escalate to the user.\n\n` +
-        NON_INTERACTIVE,
-      prompt: await this.buildPrompt(
-        task,
-        `## Plan\n${plan}\n\n## ${fromRole} questions\n${questions.join("\n")}`,
-      ),
-      cwd,
-      autoApprove: true,
-    }, worktree);
+    const answer = await this.runStep(
+      id,
+      `Planner (answering ${fromRole})`,
+      planner.tool,
+      {
+        role: "planner",
+        model: planner.model,
+        systemPrompt:
+          "You are the PLANNER. Answer the following questions from the " +
+          `${fromRole} using the plan and task context. Do not escalate to the user.\n\n` +
+          NON_INTERACTIVE,
+        prompt: await this.buildPrompt(
+          task,
+          `## Plan\n${plan}\n\n## ${fromRole} questions\n${questions.join("\n")}`,
+        ),
+        cwd,
+        autoApprove: true,
+      },
+      worktree,
+    );
     if (answer.usage) usages.push(answer.usage);
     if (answer.questions && answer.questions.length > 0) {
       // The planner cannot answer: the owner must. Say which role asked what.

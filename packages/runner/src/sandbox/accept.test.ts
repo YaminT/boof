@@ -70,8 +70,13 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
       throw new Error(built.stderr || built.stdout || "build.mjs failed");
     }
     if (!existsSync(helper)) throw new Error("build.mjs produced no helper on Linux");
-    const compiledProbe = spawnSync("cc", ["-O2", "-Wall", "-Wextra", "-Werror", "-o", probe, join(sandboxDir, "probe.c")], { encoding: "utf8" });
-    if (compiledProbe.status !== 0) throw new Error(compiledProbe.stderr || "could not build sandbox probe");
+    const compiledProbe = spawnSync(
+      "cc",
+      ["-O2", "-Wall", "-Wextra", "-Werror", "-o", probe, join(sandboxDir, "probe.c")],
+      { encoding: "utf8" },
+    );
+    if (compiledProbe.status !== 0)
+      throw new Error(compiledProbe.stderr || "could not build sandbox probe");
   }, 60_000);
 
   afterEach(async () => {
@@ -335,25 +340,29 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
     expect(await readFile(target, "utf8")).toBe("safe\n");
   }, 45_000);
 
-  it.skipIf(!linux)("denies the default server port even when no server is running", async () => {
-    const fx = await fixture();
-    const localProbe = join(fx.wt.path, "probe");
-    await copyFile(probe, localProbe);
-    await chmod(localProbe, 0o755);
-    setSandboxStatus(
-      { mode: "enforce", backend: "linux", state: "ok", reason: "" },
-      sandboxSettingsFingerprint(sandboxSettings),
-    );
-    const launch = await prepareAgentLaunch({ runner: { sandbox: sandboxSettings } }, fx.ctx);
-    if (launch.kind !== "sandbox") throw new Error("expected a sandbox launch");
-    expect(launch.policy.denyTcpPorts).toContain(4319);
-    const result = await execCommand(localProbe, ["bind4", "4319"], {
-      cwd: fx.wt.path,
-      launch,
-      env: { PATH: "/usr/bin:/bin", LANG: "C" },
-      timeoutMs: 20_000,
-    });
-    expect(result.code, result.stderr).toBe(0);
-    expect(result.stdout).toBe("bind EACCES\n");
-  }, 45_000);
+  it.skipIf(!linux)(
+    "denies the default server port even when no server is running",
+    async () => {
+      const fx = await fixture();
+      const localProbe = join(fx.wt.path, "probe");
+      await copyFile(probe, localProbe);
+      await chmod(localProbe, 0o755);
+      setSandboxStatus(
+        { mode: "enforce", backend: "linux", state: "ok", reason: "" },
+        sandboxSettingsFingerprint(sandboxSettings),
+      );
+      const launch = await prepareAgentLaunch({ runner: { sandbox: sandboxSettings } }, fx.ctx);
+      if (launch.kind !== "sandbox") throw new Error("expected a sandbox launch");
+      expect(launch.policy.denyTcpPorts).toContain(4319);
+      const result = await execCommand(localProbe, ["bind4", "4319"], {
+        cwd: fx.wt.path,
+        launch,
+        env: { PATH: "/usr/bin:/bin", LANG: "C" },
+        timeoutMs: 20_000,
+      });
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stdout).toBe("bind EACCES\n");
+    },
+    45_000,
+  );
 });

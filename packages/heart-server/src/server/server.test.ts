@@ -52,16 +52,19 @@ describe("startServer's external-step prune timer", () => {
       for (const host of ["127.0.0.1", "::1"]) {
         try {
           await new Promise<void>((resolve, reject) => {
-          const socket = createConnection({ host, port: srv.port });
-          socket.once("connect", () => {
-            socket.destroy();
-            resolve();
-          });
-          socket.once("error", reject);
+            const socket = createConnection({ host, port: srv.port });
+            socket.once("connect", () => {
+              socket.destroy();
+              resolve();
+            });
+            socket.once("error", reject);
           });
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
-          if (host === "127.0.0.1" || !["EAFNOSUPPORT", "EADDRNOTAVAIL", "EADDRINUSE"].includes(code ?? "")) {
+          if (
+            host === "127.0.0.1" ||
+            !["EAFNOSUPPORT", "EADDRNOTAVAIL", "EADDRINUSE"].includes(code ?? "")
+          ) {
             throw err;
           }
         }
@@ -90,14 +93,16 @@ describe("startServer's external-step prune timer", () => {
     let srv: RunningServer | undefined;
     try {
       srv = await start(address.port);
-      await expect(new Promise<void>((resolve, reject) => {
-        const socket = createConnection({ host: "127.0.0.1", port: srv!.port });
-        socket.once("connect", () => {
-          socket.destroy();
-          resolve();
-        });
-        socket.once("error", reject);
-      })).resolves.toBeUndefined();
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const socket = createConnection({ host: "127.0.0.1", port: srv!.port });
+          socket.once("connect", () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.once("error", reject);
+        }),
+      ).resolves.toBeUndefined();
     } finally {
       if (srv?.server.listening) await srv.stop();
       await new Promise<void>((resolve) => holder6.close(() => resolve()));

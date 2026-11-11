@@ -232,10 +232,12 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
   let includesUncommitted = false;
   let runLiveGit: UntrackedGitRunner | undefined;
   if (liveWt) {
-    runLiveGit = opts.worktreeGit ?? (async (args) => {
-      const res = await git(liveWt!, args);
-      return { code: res.code, stdout: res.out, stderr: res.err };
-    });
+    runLiveGit =
+      opts.worktreeGit ??
+      (async (args) => {
+        const res = await git(liveWt!, args);
+        return { code: res.code, stdout: res.out, stderr: res.err };
+      });
     const st = await runLiveGit(["status", "--porcelain"]);
     includesUncommitted = st.code === 0 && st.stdout.trim() !== "";
   }
@@ -250,7 +252,8 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
     return git(cwd, args);
   };
   const names = parseNameStatus(
-    (await runCurrentGit([
+    (
+      await runCurrentGit([
         "diff",
         "--no-ext-diff",
         "--no-textconv",
@@ -258,7 +261,8 @@ export async function taskDiff(opts: TaskDiffOptions): Promise<TaskDiff> {
         "-M",
         "-z",
         ...range,
-      ])).out,
+      ])
+    ).out,
   );
   const nums = parseNumstat(
     (

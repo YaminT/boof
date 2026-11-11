@@ -1,4 +1,15 @@
-import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod, rename, symlink, unlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  stat,
+  mkdir,
+  readFile,
+  chmod,
+  rename,
+  symlink,
+  unlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -490,7 +501,9 @@ describe("worktree isolation", () => {
         "refusing to snapshot gitlink entries: withcommit",
       );
       expect((await wtGit(["ls-files", "--stage", "-z"])).stdout).toBe(indexBefore);
-      expect((await g(["rev-parse", "--verify", "--quiet", "refs/heads/n3--leftovers"])).code).toBe(1);
+      expect((await g(["rev-parse", "--verify", "--quiet", "refs/heads/n3--leftovers"])).code).toBe(
+        1,
+      );
     });
   });
 
