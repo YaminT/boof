@@ -11,6 +11,7 @@ import {
   ReviewSettingsSchema,
   SecuritySettingsSchema,
   SettingsSchema,
+  UpdatesSettingsSchema,
   SETTINGS_SCHEMA_VERSION,
   WorktreeSettingsSchema,
   type ConciergeSettings,
@@ -21,6 +22,7 @@ import {
   type RoleAssignment,
   type SecuritySettings,
   type Settings,
+  type UpdatesSettings,
   type WorktreeSettings,
 } from "./schema.js";
 import type { Role } from "./schema.js";
@@ -219,6 +221,11 @@ export function conciergeSettings(s: Settings): ConciergeSettings {
 /** Security settings with defaults applied. */
 export function securitySettings(settings: Settings): SecuritySettings {
   return SecuritySettingsSchema.parse(settings.security ?? {});
+}
+
+/** Release-check settings. Absent means on: the server may ask GitHub at most once a day. */
+export function updatesSettings(settings: Settings): UpdatesSettings {
+  return UpdatesSettingsSchema.parse(settings.updates ?? {});
 }
 
 /** Settings of one project: the global settings with the project's overrides and working directory. */

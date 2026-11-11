@@ -166,6 +166,25 @@ export interface ImportReport {
 
 const PL = (pid: string, planId: string) => `${P(pid)}/plans/${encodeURIComponent(planId)}`;
 const ifMatch = (version: number) => ({ "If-Match": `"${version}"` });
+/** A newer release the UI may show. Dismissal is per version and does not download anything. */
+export interface UpdateNotice {
+  version: string;
+  url: string;
+}
+
+/** The cached release notice. This does not ask GitHub. */
+export function getUpdateNotice(): Promise<UpdateNotice | null> {
+  return http<{ update: UpdateNotice | null }>(`${V1}/updates`).then((r) => r.update);
+}
+
+/** Hide this version until a newer one is cached. */
+export function dismissUpdateNotice(version: string): Promise<UpdateNotice | null> {
+  return http<{ update: UpdateNotice | null }>(`${V1}/updates/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  }).then((r) => r.update);
+}
+
 const json = (method: string, body: unknown, version?: number): RequestInit => ({
   method,
   body: JSON.stringify(body),

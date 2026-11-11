@@ -8,7 +8,9 @@ import {
   NEEDS_SETTINGS_READ,
   settingsPageAccess,
 } from "../lib/settings-access.js";
+import { api } from "../api.js";
 import { isDesktop } from "../desktop.js";
+import { act } from "../lib/act.js";
 import { makeProjectPage } from "../lib/settings-project.js";
 import { makeAgentsPage } from "../lib/settings-agents.js";
 import { budgetsPage } from "../lib/settings-budgets.js";
@@ -133,6 +135,16 @@ function SettingsForms({
             onProjectAdded={onProjectAdded}
             reloadProjects={reloadProjects}
             advancedOpen={focus.expanded || proj.dirty}
+            updatesCheck={settings.updates?.check !== false}
+            onUpdatesCheck={(check) => {
+              void act(
+                async () => {
+                  await api.updateSettings({ updates: { check } });
+                  await data.refresh();
+                },
+                { failure: "Could not save the update check" },
+              );
+            }}
           />
           <SettingsFooter
             dirty={proj.dirty}

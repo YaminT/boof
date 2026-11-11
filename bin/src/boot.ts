@@ -8,7 +8,15 @@ import {
   reapCrashedRunTemps,
   refreshSandbox,
 } from "@boof/runner";
-import { sandboxStatus, setSandboxOffer, type ConciergeAgent, type Settings } from "@boof/heart";
+import {
+  BOOF_VERSION,
+  checkForUpdate,
+  sandboxStatus,
+  setSandboxOffer,
+  type ConciergeAgent,
+  type Settings,
+  type UpdateFetch,
+} from "@boof/heart";
 import {
   createN8nTransport,
   createSelfUrlCheck,
@@ -26,6 +34,11 @@ export interface BootOptions extends Omit<StartServerOptions, "catalog" | "runne
   guard?: RunnerGuard;
   /** Root-specific server settings such as desktop operator clients. */
   serverOptions?: Partial<StartServerOptions>;
+  /**
+   * When set, ask GitHub once after the server is listening. Omit it in tests: the default
+   * fetch is the real network. A failure never stops startup, and the check does not delay listen.
+   */
+  updates?: { fetchImpl?: UpdateFetch; now?: () => Date; env?: NodeJS.ProcessEnv };
   onServer?: (server: RunningServer | null) => void | Promise<void>;
   onRunner?: (engine: RunnerEngine | null) => void;
 }
@@ -92,6 +105,7 @@ export async function boot(opts: BootOptions): Promise<Booted> {
     onRunner,
     claudeAgent,
     conciergeAgent: conciergeOverride,
+    updates,
     ...commonServerOptions
   } = opts;
   const registry = new ToolRegistry(
@@ -118,6 +132,15 @@ export async function boot(opts: BootOptions): Promise<Booted> {
     ...sandboxServerHooks(),
   });
   await onServer?.(server);
+  if (updates) {
+    void checkForUpdate({
+      root: opts.root,
+      version: opts.version ?? BOOF_VERSION,
+      ...(updates.fetchImpl ? { fetchImpl: updates.fetchImpl } : {}),
+      ...(updates.now ? { now: updates.now } : {}),
+      env: updates.env ?? process.env,
+    }).catch(() => {});
+  }
   try {
     if (runner !== false && (!guard || (await guard.acquire()))) {
       engine = new RunnerEngine({

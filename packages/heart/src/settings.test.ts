@@ -13,6 +13,7 @@ import {
   reviewSettings,
   SettingsStore,
   securitySettings,
+  updatesSettings,
   worktreeSettings,
 } from "./settings.js";
 import { defaultSettings } from "./settings.js";
@@ -388,6 +389,22 @@ describe("effectiveSettings", () => {
     expect(resolveRole(e, newTask(fm()), "reviewer").model).toBe("p-rev");
     const task = newTask(fm({ tools: { reviewer: { tool: "mock", model: "t-rev" } } }));
     expect(resolveRole(e, task, "reviewer").model).toBe("t-rev");
+  });
+});
+
+describe("updates.check", () => {
+  it("is on when the block is absent, and a patch can turn it off", async () => {
+    expect(defaultSettings().updates).toBeUndefined();
+    expect(updatesSettings(defaultSettings()).check).toBe(true);
+    expect(SettingsPatchSchema.parse({ updates: { check: false } })).toEqual({
+      updates: { check: false },
+    });
+    expect(SettingsPatchSchema.safeParse({ updates: { check: "yes" } }).success).toBe(false);
+    expect(SettingsPatchSchema.safeParse({ updates: {} }).success).toBe(false);
+    const store = new SettingsStore(root);
+    await store.save(defaultSettings());
+    await store.update({ updates: { check: false } });
+    expect(updatesSettings(await store.load()).check).toBe(false);
   });
 });
 

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -105,6 +105,30 @@ describe("boof-runner top level", () => {
     expect(logs).toHaveLength(2);
     expect(logs[0]).toMatch(/^\d+\.\d+\.\d+/);
     expect(await readdir(dataRoot)).toEqual([]);
+  });
+
+  it("--version prints a newer cached release and never calls the network", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no network"));
+    await writeFile(
+      join(dataRoot, "updates.json"),
+      JSON.stringify({
+        checkedAt: "2026-11-10T00:00:00.000Z",
+        latest: {
+          version: "9.9.9",
+          url: "https://github.com/YaminT/boof/releases/tag/v9.9.9",
+          prerelease: false,
+        },
+        dismissed: "9.9.9",
+      }),
+      { mode: 0o600 },
+    );
+    await main(["--version"]);
+    expect(logs[0]).toMatch(/^\d+\.\d+\.\d+/);
+    expect(logs[1]).toBe(
+      "New version available: 9.9.9 https://github.com/YaminT/boof/releases/tag/v9.9.9",
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await readdir(dataRoot)).toEqual(["updates.json"]);
   });
 
   it("an unknown command with --help is still unknown", async () => {

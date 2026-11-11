@@ -174,10 +174,12 @@ describe("GET operations", () => {
       const res = await app.request(`http://localhost/api/v1${path}`);
       expect(res.status, `${op.name} ${path}`).toBeLessThan(500);
     }
-    // Not registry operations: the public liveness check and the contract document.
-    for (const path of ["/healthz", "/api/v1/openapi.json"]) {
+    // Not registry operations: the public liveness check, the contract, and the release notice.
+    // The notice route only reads updates.json. It must not create it or call GitHub.
+    for (const path of ["/healthz", "/api/v1/openapi.json", "/api/v1/updates"]) {
       const res = await app.request(`http://localhost${path}`);
       expect(res.status, path).toBeLessThan(500);
+      if (path === "/api/v1/updates") expect(res.status, path).toBe(200);
     }
     expect(await snapshot(root)).toEqual(before);
     expect(spy.probes).toBe(0);
@@ -206,7 +208,7 @@ describe("GET operations", () => {
 
   it("do not create settings.json when it is missing", async () => {
     await rm(join(root, "settings.json"));
-    for (const path of ["/api/v1/settings", "/healthz", "/api/v1/runner"]) {
+    for (const path of ["/api/v1/settings", "/healthz", "/api/v1/runner", "/api/v1/updates"]) {
       expect((await app.request(`http://localhost${path}`)).status, path).toBe(200);
     }
     await expect(stat(join(root, "settings.json"))).rejects.toThrow();

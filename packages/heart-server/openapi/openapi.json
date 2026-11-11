@@ -2100,6 +2100,19 @@
             ],
             "type": "object"
           },
+          "updates": {
+            "additionalProperties": false,
+            "properties": {
+              "check": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "check"
+            ],
+            "type": "object"
+          },
           "worktree": {
             "additionalProperties": false,
             "properties": {
@@ -14748,6 +14761,18 @@
                         "type": "object"
                       }
                     },
+                    "type": "object"
+                  },
+                  "updates": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "check": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "check"
+                    ],
                     "type": "object"
                   },
                   "worktree": {
