@@ -124,10 +124,10 @@ interface RootCache {
   };
   /**
    * Parsed files of one flat status directory (not `running`). A repeat call reuses them while
-   * the directory mtime is unchanged. When the mtime changes, names already parsed are reused
-   * and only a new name, or an id this process has written, is read again. The same set of
-   * names with a new mtime is read in full: an outside replace of an existing file looks like
-   * that, and a filename cannot say which file was replaced.
+   * the directory mtime is unchanged and was already older than the filesystem timestamp tick
+   * when scanned. When the mtime changes, names already parsed are reused and only a new name,
+   * or an id this process has written, is read again. File fingerprints detect outside edits
+   * to existing names.
    */
   statusLists?: Map<Status, StatusListCache>;
 }
@@ -146,13 +146,18 @@ interface FileFingerprint {
   size: bigint;
 }
 
+interface CachedTask {
+  task: Task;
+  fingerprint?: FileFingerprint;
+}
+
 interface StatusListCache {
   /**
-   * Directory mtime this list was scanned at, or `-1n` when a write in this process has to be
-   * picked up before the mtime can be trusted.
+   * Directory mtime this list was scanned at, or `-1n` when the scan overlapped a change, a
+   * recent coarse timestamp, or a write in this process.
    */
   mtimeNs: bigint;
-  /** Wall clock when the directory scan completed; fresh mtimes are unsafe on coarse clocks. */
+  /** Wall clock when the directory scan completed. */
   scanTimeNs: bigint;
   byName: Map<string, StatusListEntry>;
 }
@@ -512,7 +517,7 @@ export class TaskStore {
     if (
       hit &&
       hit.mtimeNs === before &&
-      this.statusMtimeSettled(before, hit.scanTimeNs) &&
+      this.statusMtimeSettled(hit.mtimeNs) &&
       this.statusListCurrent(cache, hit) &&
       validCachedNames.size === hit.byName.size
     ) {
@@ -538,16 +543,12 @@ export class TaskStore {
     const after = await this.statusDirMtime(status);
     cache.statusLists ??= new Map();
     const scanTimeNs = BigInt(Date.now()) * 1_000_000n;
-    for (const [name, entry] of ordered) {
-      const key = `${status}/${name}`;
-      const file = cache.files.get(key);
-      if (file) entry.fingerprint = file;
-    }
     cache.statusLists.set(status, {
       // A create or replace during the read would be missing from `names`. The next call
       // lists the directory again; the files already parsed stay in `ordered`.
       mtimeNs:
         after === before &&
+        scanTimeNs - after > STATUS_MTIME_TICK_NS &&
         this.statusListCurrent(cache, { mtimeNs: after, scanTimeNs, byName: ordered })
           ? after
           : -1n,
@@ -574,20 +575,21 @@ export class TaskStore {
       const again: string[] = [];
       for (let i = 0; i < pending.length; i++) {
         const name = pending[i]!;
-        const task = read[i];
+        const result = read[i];
         const id = name.slice(0, -3);
-        if (!task) {
+        if (!result) {
           byName.delete(name);
           continue;
         }
+        const { task, fingerprint } = result;
         const afterGen = cache.idGen.get(id) ?? 0;
         // `wrote` bumped the generation during the read. The bytes may be the old file.
         if (afterGen !== beforeGen[i]) {
           if (pass === 0) again.push(name);
-          else byName.set(name, { idGen: beforeGen[i]!, task });
+          else byName.set(name, { idGen: beforeGen[i]!, task, fingerprint });
           continue;
         }
-        byName.set(name, { idGen: afterGen, task });
+        byName.set(name, { idGen: afterGen, task, fingerprint });
       }
       pending = again;
     }
@@ -601,9 +603,8 @@ export class TaskStore {
     return true;
   }
 
-  private statusMtimeSettled(mtimeNs: bigint, scanTimeNs: bigint): boolean {
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
-    return nowNs - mtimeNs > STATUS_MTIME_TICK_NS && nowNs - scanTimeNs > STATUS_MTIME_TICK_NS;
+  private statusMtimeSettled(mtimeNs: bigint): boolean {
+    return mtimeNs !== -1n;
   }
 
   private async statusListValidNames(status: Status, hit: StatusListCache): Promise<Set<string>> {
@@ -653,11 +654,11 @@ export class TaskStore {
         status === "running" ? join(dir, name, "task.md") : join(dir, name),
       ),
     );
-    return tasks.filter((task): task is Task => task !== null);
+    return tasks.filter((result): result is CachedTask => result !== null).map(({ task }) => task);
   }
 
   /** The parsed file at `path`, from the cache when its filesystem identity and timestamps match. */
-  private async cachedTask(status: Status, name: string, path: string): Promise<Task | null> {
+  private async cachedTask(status: Status, name: string, path: string): Promise<CachedTask | null> {
     const cache = cacheFor(this.root);
     const key = `${status}/${name}`;
     const id = status === "running" ? name : name.slice(0, -3);
@@ -682,7 +683,7 @@ export class TaskStore {
     ) {
       cache.files.delete(key);
       cache.files.set(key, hit);
-      return cloneTask(hit.task);
+      return { task: cloneTask(hit.task), fingerprint: hit };
     }
     const gen = cache.idGen.get(id) ?? 0;
     const task = await readTaskIfExists(path, status);
@@ -694,9 +695,10 @@ export class TaskStore {
     try {
       after = await stat(path, { bigint: true });
     } catch (err) {
-      if (isNotFound(err)) return cloneTask(task);
+      if (isNotFound(err)) return { task: cloneTask(task) };
       throw err;
     }
+    let fingerprint: FileFingerprint | undefined;
     if (
       after.mtimeNs === before.mtimeNs &&
       after.ctimeNs === before.ctimeNs &&
@@ -705,11 +707,14 @@ export class TaskStore {
       (cache.idGen.get(id) ?? 0) === gen
     ) {
       cache.files.delete(key);
-      cache.files.set(key, {
+      fingerprint = {
         mtimeNs: before.mtimeNs,
         ctimeNs: before.ctimeNs,
         ino: before.ino,
         size: before.size,
+      };
+      cache.files.set(key, {
+        ...fingerprint,
         task,
       });
       while (cache.files.size > MAX_CACHED_TASK_FILES) {
@@ -718,7 +723,7 @@ export class TaskStore {
         cache.files.delete(oldest);
       }
     }
-    return cloneTask(task);
+    return { task: cloneTask(task), fingerprint };
   }
 
   /** Drop cached files that the settled scan did not see. */
