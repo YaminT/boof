@@ -32,7 +32,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build the Linux sandbox helper
+        run: node packages/sandbox-linux/build.mjs && test -x packages/sandbox-linux/dist/boof-sandbox
+
       - name: Test
+        env:
+          BOOF_REQUIRE_SANDBOX: "1"
         run: npm test
 
       - name: Lint
