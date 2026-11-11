@@ -661,12 +661,20 @@ export class ProjectService {
     const settings = effectiveSettings(await this.parent.loadSettings(), project);
     const worktreeRoot = resolveWorktreeRoot(worktreeSettings(settings), project.workingDirectory);
     const worktreePath = join(worktreeRoot, id);
-    const liveWorktree = await stat(worktreePath).then((s) => s.isDirectory(), () => false);
-    let worktreeGit: ((args: string[]) => Promise<{ code: number | null; stdout: string; stderr: string }>) | undefined;
+    const liveWorktree = await stat(worktreePath).then(
+      (s) => s.isDirectory(),
+      () => false,
+    );
+    let worktreeGit:
+      | ((args: string[]) => Promise<{ code: number | null; stdout: string; stderr: string }>)
+      | undefined;
     if (liveWorktree) {
       const record = await loadWorktreeRecord(worktreeRoot, id);
       if (!record) {
-        throw new OpError(409, "task worktree has no trusted runner record; recreate or upgrade the worktree");
+        throw new OpError(
+          409,
+          "task worktree has no trusted runner record; recreate or upgrade the worktree",
+        );
       }
       worktreeGit = async (args) => {
         const result = await checkedWorktreeGit(record, [
