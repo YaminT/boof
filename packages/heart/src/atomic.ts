@@ -117,7 +117,9 @@ export async function atomicWrite(
       // The file is published; a stray temp file must not turn that into a failure.
       await unlink(tmp).catch(() => {});
     } else {
-      await rename(tmp, path);
+      // Windows antivirus and an open reader return EPERM/EBUSY for a moment on replace.
+      // The temp file is still the only copy until rename succeeds, so retry the same publish.
+      await renameReplacing(tmp, path);
     }
   } catch (err) {
     await rm(tmp, { force: true });
@@ -140,6 +142,23 @@ export async function syncDir(dir: string, opener: typeof open = open): Promise<
     if (!code || !IGNORED_DIR_SYNC_CODES.has(code)) throw err;
   } finally {
     await dh?.close();
+  }
+}
+
+/** Publish `from` as `to`. A brief Windows sharing violation is not a lost write. */
+async function renameReplacing(from: string, to: string): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if ((code === "EPERM" || code === "EBUSY") && attempt < 7) {
+        await new Promise((r) => setTimeout(r, 40));
+        continue;
+      }
+      throw err;
+    }
   }
 }
 
