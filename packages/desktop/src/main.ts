@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
@@ -277,8 +277,13 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => void quit(event));
   // Electron does not consistently translate SIGTERM into `before-quit` across operating
   // systems. Forward it explicitly so shutdown drains the engine and stops the server first.
-  process.on("SIGTERM", () => {
-    console.log("SIGTERM received; quitting");
-    app.quit();
-  });
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      console.log(`${sig} received; quitting`);
+      try {
+        appendFileSync(join(app.getPath("userData"), "signals.log"), `${sig} ${Date.now()}\n`);
+      } catch {}
+      app.quit();
+    });
+  }
 }

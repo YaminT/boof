@@ -161,7 +161,11 @@ try {
   if (child.exitCode === null && child.signalCode === null) {
     const result = await Promise.race([exit, delay(10_000).then(() => "timeout")]);
     if (result === "timeout") {
-      for (const [name, path] of [["stdout", stdoutPath], ["stderr", stderrPath]]) {
+      for (const [name, path] of [
+        ["stdout", stdoutPath],
+        ["stderr", stderrPath],
+        ["signals", join(userData, "signals.log")],
+      ]) {
         const text = await readFile(path, "utf8").catch(() => "");
         console.log(`--- desktop ${name} (last 4000 chars) ---\n${text.slice(-4000)}`);
       }
