@@ -9,6 +9,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
 } from "node:fs/promises";
@@ -697,11 +698,22 @@ export async function importPrivateGitObjects(opts: {
   if (sourceInfo.isSymbolicLink() || !sourceInfo.isDirectory()) {
     throw new SandboxUnavailableError("private git object directory was altered");
   }
+  // Detach the private store from the sandbox policy before reading it. A surviving agent
+  // process cannot swap object directories while the import walks them.
+  const detached = join(
+    dirname(opts.runTempDir),
+    `.${basename(opts.runTempDir)}-git-import-${randomBytes(RUN_ID_BYTES).toString("hex")}`,
+  );
+  await rename(source, detached);
   const snapshot = await mkdtemp(join(tmpdir(), "boof-git-objects-"));
   try {
-    for (const prefix of await readdir(source)) {
+    const detachedInfo = await lstat(detached);
+    if (detachedInfo.isSymbolicLink() || !detachedInfo.isDirectory()) {
+      throw new SandboxUnavailableError("detached private git object directory was altered");
+    }
+    for (const prefix of await readdir(detached)) {
       if (!/^[0-9a-f]{2}$/.test(prefix) && prefix !== "pack" && prefix !== "info") continue;
-      const fromDir = join(source, prefix);
+      const fromDir = join(detached, prefix);
       const info = await lstat(fromDir);
       if (info.isSymbolicLink() || !info.isDirectory()) continue;
       const toDir = join(snapshot, prefix);
@@ -747,5 +759,6 @@ export async function importPrivateGitObjects(opts: {
     }
   } finally {
     await rm(snapshot, { recursive: true, force: true });
+    await rm(detached, { recursive: true, force: true });
   }
 }

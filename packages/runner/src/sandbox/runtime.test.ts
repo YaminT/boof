@@ -411,6 +411,7 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
       writableRoot: fx.wtPath,
       mainCheckout: fx.repo,
     });
+    expect(existsSync(join(fx.temp, "git-objects"))).toBe(false);
     await expect(git(fx.repo, ["cat-file", "-e", hash], fx.env)).resolves.toBe("");
     await expect(git(fx.repo, ["rev-parse", "HEAD"], fx.env)).resolves.toBe(existing);
   });
