@@ -44,6 +44,7 @@ export * from "./task-reviews.js";
 export * from "./budget.js";
 export * from "./scaffold.js";
 export * from "./data-root-mode.js";
+export * from "./backup.js";
 export * from "./git.js";
 export * from "./usage-math.js";
 export * from "./usage-store.js";

@@ -22,11 +22,13 @@ import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { openCommand } from "@boof/facedisk/cli/open-cli.js";
+import { backupCommand, restoreCommand } from "@boof/facedisk/cli/backup-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
 import {
   AuthStore,
   BrowserSessionStore,
+  BackupError,
   MigrationError,
   scaffoldDataRoot,
   ProjectResolutionError,
@@ -87,6 +89,8 @@ Usage:
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
   boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
+  boof-runner backup --out <file.tar.gz> [-d <root>]  Copy a data root to an archive (see: backup --help)
+  boof-runner restore --from <file.tar.gz> -d <root>  Restore an archive into an empty directory (see: restore --help)
   boof-runner ops                      List the operation commands (every REST/MCP operation)
   boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
   boof-runner --help                   Show this help
@@ -207,8 +211,18 @@ const GLOBAL_VALUE_FLAGS = new Set([
   "--host",
   "--tls-cert",
   "--tls-key",
+  "--from",
 ]);
-const GLOBAL_BOOLEAN_FLAGS = new Set(["--json", "--no-runner", "--help", "-h", "--version", "-v"]);
+const GLOBAL_BOOLEAN_FLAGS = new Set([
+  "--json",
+  "--no-runner",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+  "--live",
+  "--no-secrets",
+]);
 
 /**
  * Global flags may come before the command words (`boof-runner -d ./data tasks list`,
@@ -617,7 +631,8 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
     if (
       err instanceof ProjectResolutionError ||
       err instanceof MigrationError ||
-      err instanceof UnsafeSecretPathError
+      err instanceof UnsafeSecretPathError ||
+      err instanceof BackupError
     ) {
       console.error(err.message.replace(/[\r\n]+/g, " "));
       code = 1;
@@ -748,6 +763,12 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "open":
       code = await openCommand(rest, defaultDataRoot);
+      break;
+    case "backup":
+      code = await backupCommand(rest, defaultDataRoot);
+      break;
+    case "restore":
+      code = await restoreCommand(rest, defaultDataRoot);
       break;
     case "mcp":
       code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());

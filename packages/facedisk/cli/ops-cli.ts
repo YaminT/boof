@@ -71,6 +71,8 @@ export const HAND_WRITTEN_COMMANDS: Record<string, readonly string[]> = {
   remote: ["setup", "status", "disable"],
   service: ["install", "uninstall", "status", "logs"],
   mcp: [],
+  backup: [],
+  restore: [],
 };
 
 /** Flags the CLI owns; no input field may kebab-case to one of them. */
