@@ -122,7 +122,47 @@ interface RootCache {
     counts: Record<string, number>;
     running: string[];
   };
+  /**
+   * Parsed files of one flat status directory (not `running`). A repeat call reuses them while
+   * the directory mtime is unchanged and was already older than the filesystem timestamp tick
+   * when scanned. When the mtime changes, names already parsed are reused and only a new name,
+   * or an id this process has written, is read again. File fingerprints detect outside edits
+   * to existing names.
+   */
+  statusLists?: Map<Status, StatusListCache>;
 }
+
+interface StatusListEntry {
+  /** `idGen` for this id when `task` was read. A later {@link TaskStore} write does not match. */
+  idGen: number;
+  task: Task;
+  fingerprint?: FileFingerprint;
+}
+
+interface FileFingerprint {
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  ino: bigint;
+  size: bigint;
+}
+
+interface CachedTask {
+  task: Task;
+  fingerprint?: FileFingerprint;
+}
+
+interface StatusListCache {
+  /**
+   * Directory mtime this list was scanned at, or `-1n` when the scan overlapped a change, a
+   * recent coarse timestamp, or a write in this process.
+   */
+  mtimeNs: bigint;
+  /** Wall clock when the directory scan completed. */
+  scanTimeNs: bigint;
+  byName: Map<string, StatusListEntry>;
+}
+
+const STATUS_MTIME_TICK_NS = 2_000_000_000n;
 
 const rootCaches = new Map<string, RootCache>();
 const MAX_CACHED_TASK_FILES = 4096;
@@ -202,6 +242,14 @@ let taskFileReads = 0;
 export function takeTaskFileReads(): number {
   const n = taskFileReads;
   taskFileReads = 0;
+  return n;
+}
+
+/** `stat` calls made while reading a task file (not a status-directory mtime check). */
+let taskStatCalls = 0;
+export function takeTaskStatCalls(): number {
+  const n = taskStatCalls;
+  taskStatCalls = 0;
   return n;
 }
 
@@ -338,7 +386,9 @@ export class TaskStore {
 
   /** `status/name` of every task entry, without reading the files. */
   private async listNames(into: Set<string> = new Set()): Promise<Set<string>> {
-    for (const status of ALL_STATUSES) await this.listStatusNames(status, into);
+    // One directory read per status, at the same time. A status poll used to wait for each
+    // read in turn, and under the soak that wait was the whole request.
+    await Promise.all(ALL_STATUSES.map((status) => this.listStatusNames(status, into)));
     return into;
   }
 
@@ -372,17 +422,17 @@ export class TaskStore {
     return copySummary(fresh);
   }
 
-  private async statusDirMtimes(): Promise<bigint[]> {
-    const out: bigint[] = [];
-    for (const status of ALL_STATUSES) {
-      try {
-        out.push((await stat(statusDir(this.root, status), { bigint: true })).mtimeNs);
-      } catch (err) {
-        if (!isNotFound(err)) throw err;
-        out.push(0n);
-      }
-    }
-    return out;
+  private statusDirMtimes(): Promise<bigint[]> {
+    return Promise.all(
+      ALL_STATUSES.map(async (status) => {
+        try {
+          return (await stat(statusDir(this.root, status), { bigint: true })).mtimeNs;
+        } catch (err) {
+          if (!isNotFound(err)) throw err;
+          return 0n;
+        }
+      }),
+    );
   }
 
   /** Name scan behind {@link statusSummary}. Repeats when a move overlaps it, like {@link list}. */
@@ -392,15 +442,21 @@ export class TaskStore {
       const names = new Set<string>();
       const byId = new Map<string, Status>();
       const dups = new Map<string, Status[]>();
-      for (const status of ALL_STATUSES) {
-        for (const name of await this.listStatusNames(status, names)) {
-          const id = status === "running" ? name : name.slice(0, -3);
-          if (
-            status === "running" &&
-            !(await exists(join(statusDir(this.root, status), id, "task.md")))
-          ) {
-            continue;
-          }
+      const listed = await Promise.all(
+        ALL_STATUSES.map(async (status) => {
+          const found = await this.listStatusNames(status, names);
+          if (status !== "running") return { status, ids: found.map((name) => name.slice(0, -3)) };
+          const dir = statusDir(this.root, status);
+          const ids = (
+            await Promise.all(
+              found.map(async (id) => ((await exists(join(dir, id, "task.md"))) ? id : null)),
+            )
+          ).filter((id): id is string => id !== null);
+          return { status, ids };
+        }),
+      );
+      for (const { status, ids } of listed) {
+        for (const id of ids) {
           const prev = byId.get(id);
           if (prev === undefined) {
             byId.set(id, status);
@@ -441,6 +497,152 @@ export class TaskStore {
     }
   }
 
+  /**
+   * Tasks in one status directory. The directory is the status, so a finished task is not
+   * opened to answer "what is pending". For every status except `running` (whose task file
+   * lives in a subdirectory), a repeat call stats each cached file before reusing its parse.
+   * Fresh directory mtimes are re-scanned for two seconds to cover coarse timestamp ticks. A
+   * task mid-move can still appear in its old directory until that copy is removed; {@link list}
+   * is the scan that collapses the two copies.
+   */
+  async listByStatus(status: Status): Promise<Task[]> {
+    if (status === "running") return this.listStatus(status);
+    const cache = cacheFor(this.root);
+    const before = await this.statusDirMtime(status);
+    const hit = cache.statusLists?.get(status);
+    const validCachedNames =
+      hit && this.statusListCurrent(cache, hit)
+        ? await this.statusListValidNames(status, hit)
+        : new Set<string>();
+    if (
+      hit &&
+      hit.mtimeNs === before &&
+      this.statusMtimeSettled(hit.mtimeNs) &&
+      this.statusListCurrent(cache, hit) &&
+      validCachedNames.size === hit.byName.size
+    ) {
+      return this.cloneStatusList(hit);
+    }
+    const dir = statusDir(this.root, status);
+    const names = await listMdFiles(dir);
+    const byName = new Map<string, StatusListEntry>();
+    const toRead: string[] = [];
+    for (const name of names) {
+      const prev = hit?.byName.get(name);
+      const id = name.slice(0, -3);
+      if (prev && validCachedNames.has(name) && prev.idGen === (cache.idGen.get(id) ?? 0)) {
+        byName.set(name, prev);
+      } else toRead.push(name);
+    }
+    await this.readStatusNames(status, dir, toRead, cache, byName);
+    const ordered = new Map<string, StatusListEntry>();
+    for (const name of names) {
+      const entry = byName.get(name);
+      if (entry) ordered.set(name, entry);
+    }
+    const after = await this.statusDirMtime(status);
+    cache.statusLists ??= new Map();
+    const scanTimeNs = BigInt(Date.now()) * 1_000_000n;
+    cache.statusLists.set(status, {
+      // A create or replace during the read would be missing from `names`. The next call
+      // lists the directory again; the files already parsed stay in `ordered`.
+      mtimeNs:
+        after === before &&
+        scanTimeNs - after > STATUS_MTIME_TICK_NS &&
+        this.statusListCurrent(cache, { mtimeNs: after, scanTimeNs, byName: ordered })
+          ? after
+          : -1n,
+      scanTimeNs,
+      byName: ordered,
+    });
+    return this.cloneStatusList({ mtimeNs: after, scanTimeNs, byName: ordered });
+  }
+
+  /** Parsed `names` into `byName`. A write that lands during the read is read once more. */
+  private async readStatusNames(
+    status: Status,
+    dir: string,
+    names: readonly string[],
+    cache: RootCache,
+    byName: Map<string, StatusListEntry>,
+  ): Promise<void> {
+    let pending = names;
+    for (let pass = 0; pass < 2 && pending.length > 0; pass++) {
+      const beforeGen = pending.map((name) => cache.idGen.get(name.slice(0, -3)) ?? 0);
+      const read = await mapPool(pending, READ_CONCURRENCY, (name) =>
+        this.cachedTask(status, name, join(dir, name)),
+      );
+      const again: string[] = [];
+      for (let i = 0; i < pending.length; i++) {
+        const name = pending[i]!;
+        const result = read[i];
+        const id = name.slice(0, -3);
+        if (!result) {
+          byName.delete(name);
+          continue;
+        }
+        const { task, fingerprint } = result;
+        const afterGen = cache.idGen.get(id) ?? 0;
+        // `wrote` bumped the generation during the read. The bytes may be the old file.
+        if (afterGen !== beforeGen[i]) {
+          if (pass === 0) again.push(name);
+          else byName.set(name, { idGen: beforeGen[i]!, task, fingerprint });
+          continue;
+        }
+        byName.set(name, { idGen: afterGen, task, fingerprint });
+      }
+      pending = again;
+    }
+  }
+
+  /** False when this process wrote an id after the cached parse. */
+  private statusListCurrent(cache: RootCache, hit: StatusListCache): boolean {
+    for (const [name, entry] of hit.byName) {
+      if ((cache.idGen.get(name.slice(0, -3)) ?? 0) !== entry.idGen) return false;
+    }
+    return true;
+  }
+
+  private statusMtimeSettled(mtimeNs: bigint): boolean {
+    return mtimeNs !== -1n;
+  }
+
+  private async statusListValidNames(status: Status, hit: StatusListCache): Promise<Set<string>> {
+    const dir = statusDir(this.root, status);
+    const results = await mapPool([...hit.byName], READ_CONCURRENCY, async ([name, entry]) => {
+      if (!entry.fingerprint) return [name, false] as const;
+      try {
+        taskStatCalls += 1;
+        const current = await stat(join(dir, name), { bigint: true });
+        const old = entry.fingerprint;
+        return [
+          name,
+          current.mtimeNs === old.mtimeNs &&
+            current.ctimeNs === old.ctimeNs &&
+            current.ino === old.ino &&
+            current.size === old.size,
+        ] as const;
+      } catch (err) {
+        if (isNotFound(err)) return [name, false] as const;
+        throw err;
+      }
+    });
+    return new Set(results.filter(([, valid]) => valid).map(([name]) => name));
+  }
+
+  private cloneStatusList(hit: StatusListCache): Task[] {
+    return [...hit.byName.values()].map((entry) => cloneTask(entry.task));
+  }
+
+  private async statusDirMtime(status: Status): Promise<bigint> {
+    try {
+      return (await stat(statusDir(this.root, status), { bigint: true })).mtimeNs;
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+      return 0n;
+    }
+  }
+
   /** Read every task file in one status directory, skipping files that vanish. Unchanged files are served from the process cache. */
   private async listStatus(status: Status, names?: Set<string>): Promise<Task[]> {
     const dir = statusDir(this.root, status);
@@ -452,16 +654,17 @@ export class TaskStore {
         status === "running" ? join(dir, name, "task.md") : join(dir, name),
       ),
     );
-    return tasks.filter((task): task is Task => task !== null);
+    return tasks.filter((result): result is CachedTask => result !== null).map(({ task }) => task);
   }
 
   /** The parsed file at `path`, from the cache when its filesystem identity and timestamps match. */
-  private async cachedTask(status: Status, name: string, path: string): Promise<Task | null> {
+  private async cachedTask(status: Status, name: string, path: string): Promise<CachedTask | null> {
     const cache = cacheFor(this.root);
     const key = `${status}/${name}`;
     const id = status === "running" ? name : name.slice(0, -3);
     let before;
     try {
+      taskStatCalls += 1;
       before = await stat(path, { bigint: true });
     } catch (err) {
       if (isNotFound(err)) {
@@ -480,7 +683,7 @@ export class TaskStore {
     ) {
       cache.files.delete(key);
       cache.files.set(key, hit);
-      return cloneTask(hit.task);
+      return { task: cloneTask(hit.task), fingerprint: hit };
     }
     const gen = cache.idGen.get(id) ?? 0;
     const task = await readTaskIfExists(path, status);
@@ -492,9 +695,10 @@ export class TaskStore {
     try {
       after = await stat(path, { bigint: true });
     } catch (err) {
-      if (isNotFound(err)) return cloneTask(task);
+      if (isNotFound(err)) return { task: cloneTask(task) };
       throw err;
     }
+    let fingerprint: FileFingerprint | undefined;
     if (
       after.mtimeNs === before.mtimeNs &&
       after.ctimeNs === before.ctimeNs &&
@@ -503,11 +707,14 @@ export class TaskStore {
       (cache.idGen.get(id) ?? 0) === gen
     ) {
       cache.files.delete(key);
-      cache.files.set(key, {
+      fingerprint = {
         mtimeNs: before.mtimeNs,
         ctimeNs: before.ctimeNs,
         ino: before.ino,
         size: before.size,
+      };
+      cache.files.set(key, {
+        ...fingerprint,
         task,
       });
       while (cache.files.size > MAX_CACHED_TASK_FILES) {
@@ -516,7 +723,7 @@ export class TaskStore {
         cache.files.delete(oldest);
       }
     }
-    return cloneTask(task);
+    return { task: cloneTask(task), fingerprint };
   }
 
   /** Drop cached files that the settled scan did not see. */
@@ -535,6 +742,14 @@ export class TaskStore {
     cache.files.delete(`running/${id}`);
     for (const status of ALL_STATUSES) {
       if (status !== "running") cache.files.delete(`${status}/${id}.md`);
+    }
+    // The flat listing must not keep serving this id. Dropping it also forces the next
+    // listByStatus to look at the directory again when a rewrite left the mtime unchanged.
+    if (cache.statusLists) {
+      const name = `${id}.md`;
+      for (const list of cache.statusLists.values()) {
+        if (list.byName.delete(name)) list.mtimeNs = -1n;
+      }
     }
     if (structure) {
       cache.structureGen += 1;

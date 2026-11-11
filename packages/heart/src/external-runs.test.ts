@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -56,6 +57,12 @@ afterEach(async () => {
 
 async function files(): Promise<string[]> {
   return readdir(dir).catch(() => []);
+}
+
+function skipAclGuardForStress(store: ExternalRunStore): void {
+  // Keep this race focused on close arbitration and Windows filesystem semantics. ACL checks
+  // have their own tests and are especially expensive when repeated hundreds of times.
+  Object.defineProperty(store, "guard", { value: async () => {} });
 }
 
 describe("ExternalRunStore", () => {
@@ -140,7 +147,56 @@ describe("ExternalRunStore", () => {
       expect(await store.result(r.runId)).toEqual(c ? expect.objectContaining(RESULT) : null);
     }
     expect((await files()).filter((f) => f.endsWith(".closed"))).toEqual([]);
-  });
+    // Each open, complete and cancel re-reads the Windows ACL.
+  }, 90_000);
+
+  it.skipIf(process.platform !== "win32")(
+    "Windows stress: complete and cancel have exactly one winner over 300 races",
+    async () => {
+      const store = new ExternalRunStore(root);
+      skipAclGuardForStress(store);
+      for (let i = 0; i < 300; i++) {
+        const r = await store.open(INPUT);
+        const [complete, cancel] = await Promise.all([
+          store.complete(r.runId, RESULT),
+          store.cancel(r.runId),
+        ]);
+        expect(Number(complete) + Number(cancel)).toBe(1);
+      }
+      expect((await files()).some((f) => f.endsWith(".closed"))).toBe(false);
+    },
+    180_000,
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "Windows stress: a one-shot EPERM during result rename cannot create a second winner",
+    async () => {
+      let enteredRename!: () => void;
+      let releaseRename!: () => void;
+      const atRename = new Promise<void>((resolve) => (enteredRename = resolve));
+      const blockedRename = new Promise<void>((resolve) => (releaseRename = resolve));
+      let inject = true;
+      const store = new ExternalRunStore(root, Date.now, async (from, to) => {
+        if (inject && to.endsWith(".result.json")) {
+          inject = false;
+          enteredRename();
+          await blockedRename;
+          throw Object.assign(new Error("injected rename failure"), { code: "EPERM" });
+        }
+        return rename(from, to);
+      });
+      skipAclGuardForStress(store);
+      const r = await store.open(INPUT);
+      const completion = store.complete(r.runId, RESULT);
+      await atRename;
+      expect(await store.cancel(r.runId)).toBe(false);
+      releaseRename();
+      await expect(completion).rejects.toMatchObject({ code: "EPERM" });
+      expect(await store.complete(r.runId, RESULT)).toBe(true);
+      expect(await store.cancel(r.runId)).toBe(false);
+    },
+    30_000,
+  );
 
   it("cancel then complete → false and no result", async () => {
     const store = new ExternalRunStore(root);
@@ -236,9 +292,11 @@ describe("ExternalRunStore", () => {
     const r = await store.open(INPUT);
     const done = await store.open(INPUT);
     await store.complete(done.runId, RESULT);
-    expect((await stat(dir)).mode & 0o777).toBe(0o700);
-    expect((await stat(join(dir, `${r.runId}.json`))).mode & 0o777).toBe(0o600);
-    expect((await stat(join(dir, `${done.runId}.result.json`))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32")
+      expect((await stat(join(dir, `${r.runId}.json`))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(dir, `${done.runId}.result.json`))).mode & 0o777).toBe(0o600);
   });
 
   it("verify with a '../x' id never reads outside the folder, even when a valid record is there", async () => {
@@ -351,7 +409,7 @@ describe("ExternalRunStore", () => {
         expect(await store.verify(r.runId, r.token)).not.toBeNull();
         expect(await store.complete(r.runId, RESULT)).toBe(true);
         expect(await store.prune()).toBe(0);
-        expect((await stat(dir)).mode & 0o777).toBe(0o700);
+        if (process.platform !== "win32") expect((await stat(dir)).mode & 0o777).toBe(0o700);
       } finally {
         process.umask(prev);
       }

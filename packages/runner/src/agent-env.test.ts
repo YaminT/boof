@@ -163,7 +163,8 @@ describe("agentEnv", () => {
   });
 });
 
-describe("what each adapter really hands its child", () => {
+// Stand-in agents are POSIX shell scripts; Windows cannot exec them.
+describe.skipIf(process.platform === "win32")("what each adapter really hands its child", () => {
   const dirs: string[] = [];
   const saved: Record<string, string | undefined> = {};
   afterEach(async () => {
@@ -300,7 +301,8 @@ describe("routing through the account pool gateway", () => {
     expect((new MockTool() as { acceptsPool?: boolean }).acceptsPool).toBeFalsy();
   });
 
-  describe("what each adapter really hands its child", () => {
+  // Stand-in agents are POSIX shell scripts; Windows cannot exec them.
+  describe.skipIf(process.platform === "win32")("what each adapter really hands its child", () => {
     const dirs: string[] = [];
     const saved: Record<string, string | undefined> = {};
     afterEach(async () => {

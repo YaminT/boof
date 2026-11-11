@@ -204,13 +204,13 @@ describe("service install", () => {
         "",
         "[Service]",
         "Type=simple",
-        `ExecStart=/home/yamin/.nvm/versions/node/v22.22.0/bin/node ${script} serve -d ${data} -p 4319 --host 127.0.0.1`,
+        `ExecStart=${["/home/yamin/.nvm/versions/node/v22.22.0/bin/node", script, "serve", "-d", data, "-p", "4319", "--host", "127.0.0.1"].map(execWord).join(" ")}`,
         `WorkingDirectory=${data}`,
         "Restart=on-failure",
         "RestartSec=5",
         "TimeoutStopSec=60",
         "Environment=PATH=/home/yamin/.nvm/versions/node/v22.22.0/bin:/usr/bin",
-        `Environment=HOME=${home}`,
+        envLine("HOME", home),
         'Environment="FOO=bar baz"',
         "NoNewPrivileges=yes",
         "UMask=0077",
@@ -243,6 +243,8 @@ describe("service install", () => {
   it("--env-file refuses a missing or group/world-readable file and writes nothing", async () => {
     expect(await run(["install", "--data", data, "--env-file", join(home, "nope.env")])).toBe(1);
     expect(errs.join("\n")).toContain("does not exist");
+    // Windows stat mode is synthetic, so chmod 644 is not visible and the product skips the check.
+    if (process.platform === "win32") return;
     const loose = join(home, "loose.env");
     await writeFile(loose, "A=1\n", { mode: 0o644 });
     expect(await run(["install", "--data", data, "--env-file", loose])).toBe(1);
@@ -324,7 +326,7 @@ describe("service install", () => {
       "Environment=PATH=/usr/local/bin:/usr/bin:/home/yamin/.nvm/versions/node/v22.22.0/bin\n",
     );
     expect(text).toContain(
-      `ExecStart=/home/yamin/.nvm/versions/node/v22.23.0/bin/node ${script} serve -d ${data} -p 4400 --host 127.0.0.1\n`,
+      `ExecStart=${["/home/yamin/.nvm/versions/node/v22.23.0/bin/node", script, "serve", "-d", data, "-p", "4400", "--host", "127.0.0.1"].map(execWord).join(" ")}\n`,
     );
     expect(text).not.toContain("secret-token");
     const printed = out.join("\n");
@@ -393,25 +395,30 @@ describe("service install", () => {
     );
   });
 
-  it("a kept --env-file is re-checked: a file that became world-readable refuses the install", async () => {
-    const envFile = join(home, "boof.env");
-    await writeFile(envFile, "X=1\n", { mode: 0o600 });
-    expect(await run(["install", "--data", data, "--env-file", envFile])).toBe(0);
-    await chmod(envFile, 0o644);
-    const before = await readFile(unitFile(), "utf8");
-    expect(await run(["install", "--data", data])).toBe(1);
-    expect(errs.join("\n")).toContain("is readable by other users");
-    expect(await readFile(unitFile(), "utf8")).toBe(before); // nothing written
-  });
+  // Unix mode bits. On Windows, chmod 644 does not change the mode Node reports, and the
+  // install check is skipped because a systemd unit is not installed there.
+  it.skipIf(process.platform === "win32")(
+    "a kept --env-file is re-checked: a file that became world-readable refuses the install",
+    async () => {
+      const envFile = join(home, "boof.env");
+      await writeFile(envFile, "X=1\n", { mode: 0o600 });
+      expect(await run(["install", "--data", data, "--env-file", envFile])).toBe(0);
+      await chmod(envFile, 0o644);
+      const before = await readFile(unitFile(), "utf8");
+      expect(await run(["install", "--data", data])).toBe(1);
+      expect(errs.join("\n")).toContain("is readable by other users");
+      expect(await readFile(unitFile(), "utf8")).toBe(before); // nothing written
+    },
+  );
 
   it("the unit is private (0600) because it records --env values, and the report never prints them", async () => {
     expect(await run(["install", "--data", data, "--env", "API_KEY=sk-very-secret"])).toBe(0);
-    expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
     out = [];
     expect(await run(["install", "--data", data, "--env", "API_KEY=sk-other-secret"])).toBe(0);
     expect(out.join("\n")).toContain("env: API_KEY (changed)");
     expect(out.join("\n")).not.toContain("secret");
-    expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
   });
   it("rejects control characters in --env, --data and --env-file and never splits a unit line", async () => {
     expect(await run(["install", "--data", data, "--env", "K=a\nExecStartPre=/bin/evil"])).toBe(1);
@@ -457,7 +464,7 @@ describe("service install", () => {
     expect(await run(["install", "--data", data])).toBe(0);
     await chmod(unitFile(), 0o644);
     expect(await run(["install", "--data", data])).toBe(0);
-    expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(unitFile())).mode & 0o777).toBe(0o600);
     expect(await readdir(join(home, ".config/systemd/user"))).toEqual(["boof-runner.service"]);
   });
 
@@ -514,10 +521,10 @@ describe("service install", () => {
         "",
         "[Service]",
         "Type=simple",
-        `ExecStart=/old/node ${script} serve -d ${data} -p 4400 --host 127.0.0.1`,
+        `ExecStart=${["/old/node", script, "serve", "-d", data, "-p", "4400", "--host", "127.0.0.1"].map(execWord).join(" ")}`,
         `WorkingDirectory=${data}`,
         "Environment=PATH=/home/u/.nvm/v22/bin:/usr/bin",
-        `Environment=HOME=${home}`,
+        envLine("HOME", home),
         'Environment="FOO=keep me 5%%"',
         `EnvironmentFile=${envFile}`,
         "",
@@ -528,7 +535,7 @@ describe("service install", () => {
     );
     expect(await run(["install", "--data", data])).toBe(0);
     const text = await readFile(unitFile(), "utf8");
-    expect(text).toContain(` serve -d ${data} -p 4400 --host 127.0.0.1\n`);
+    expect(text).toContain(` serve -d ${execWord(data)} -p 4400 --host 127.0.0.1\n`);
     expect(text).toContain(`EnvironmentFile=${envFile}\n`);
     expect(text).toContain('Environment="FOO=keep me 5%%"\n');
     expect(text).toContain("/home/u/.nvm/v22/bin");
@@ -554,7 +561,7 @@ describe("service install", () => {
       unitFile(),
       [
         "[Service]",
-        `ExecStart=/old/node ${script} serve -d "${odd.replace(/\$/g, "$$$$").replace(/%/g, "%%")}" -p 4400 --host 127.0.0.1`,
+        `ExecStart=${["/old/node", script, "serve", "-d", odd, "-p", "4400", "--host", "127.0.0.1"].map(execWord).join(" ")}`,
         'Environment="COST=$5 a"',
         `EnvironmentFile=-${envFile}`,
         "",

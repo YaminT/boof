@@ -99,7 +99,9 @@ describe("proposed changes", () => {
       expect(html).not.toContain("Discard");
     }
     expect(rows({ state: "applied" })).toContain("Applied");
-    expect(rows({ state: "failed", detail: "interrupted" })).toContain("interrupted");
+    expect(rows({ state: "failed", detail: "interrupted" })).toContain(
+      "interrupted, check the task",
+    );
     expect(rows({ state: "expired" })).toContain("Expired");
   });
 
@@ -130,8 +132,14 @@ describe("row accessibility and restored rows", () => {
       render([{ kind: "pending", text: c.title, changeId: c.id }], [c]);
     expect(rows(pending({ status: "applying" }))).toContain("Applying…");
     const failed = rows(pending({ status: "failed", error: "interrupted" }));
-    expect(failed).toContain("interrupted");
+    expect(failed).toContain("Failed: interrupted, check the task");
     expect(failed).not.toContain("Review: ");
+    const stale = rows(pending({ status: "failed", error: "change_stale" }));
+    expect(stale).toContain("Failed: the target changed");
+    expect(stale).not.toContain("change_stale");
+    const blocked = rows(pending({ status: "failed", error: "has_children" }));
+    expect(blocked).toContain("Failed");
+    expect(blocked).not.toContain("has_children");
   });
 
   it("keeps restored failed rows when an answer arrives", () => {

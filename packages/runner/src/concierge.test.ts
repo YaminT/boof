@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConciergeAgentEvent, ConciergeTurnInput, Project, TokenUsage } from "@boof/heart";
 import { ConciergeTurnError, conciergeConfigDir, conciergeScratchDir } from "@boof/heart";
@@ -174,11 +174,12 @@ describe("ClaudeConcierge", () => {
     expect(options.systemPrompt).toBe("Be brief.");
     expect(options).not.toHaveProperty("model");
     expect(fake.calls.options[1].model).toBe("sonnet");
-    expect(cwd.endsWith("/concierge/app/cwd")).toBe(true);
+    expect(cwd.endsWith(`${sep}concierge${sep}app${sep}cwd`)).toBe(true);
     expect(cwd).toBe(conciergeScratchDir(root, "app"));
     expect(await readdir(cwd)).toEqual([]);
-    expect((await stat(cwd)).mode & 0o777).toBe(0o700);
-    expect((await stat(conciergeConfigDir(root, "app"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(cwd)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32")
+      expect((await stat(conciergeConfigDir(root, "app"))).mode & 0o777).toBe(0o700);
     expect(options.env.CLAUDE_CONFIG_DIR).toBe(conciergeConfigDir(root, "app"));
     expect(options.env.ANTHROPIC_API_KEY).toBe(KEY);
     expect(options.pathToClaudeCodeExecutable).toBe("/fake-claude");

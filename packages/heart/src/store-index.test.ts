@@ -1,11 +1,11 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusDir, taskFilePath, workingAreaDir } from "./paths.js";
 import type { Status, TaskFrontmatter } from "./schema.js";
-import { takeTaskFileReads, TaskStore } from "./store.js";
+import { takeTaskFileReads, takeTaskStatCalls, TaskStore } from "./store.js";
 import { newTask, serializeTask } from "./task-file.js";
 
 let root: string;
@@ -122,6 +122,176 @@ describe("TaskStore list cache", () => {
     outside.frontmatter.title = "outside title with more bytes";
     await writeFile(taskFilePath(root, "pending", "t1"), serializeTask(outside));
     expect((await store.list())[0]?.frontmatter.title).toBe("outside title with more bytes");
+  });
+
+  it("reuses a pending listing while that directory is unchanged", async () => {
+    await store.create(newTask(fm()));
+    await store.create(newTask(fm({ id: "t2", priority: 10 })));
+    expect((await store.listByStatus("pending")).map((t) => t.frontmatter.id).sort()).toEqual([
+      "t1",
+      "t2",
+    ]);
+
+    takeTaskFileReads();
+    takeTaskStatCalls();
+    const again = await store.listByStatus("pending");
+    expect(again.map((t) => t.frontmatter.id).sort()).toEqual(["t1", "t2"]);
+    expect(takeTaskFileReads()).toBe(0);
+    expect(takeTaskStatCalls()).toBe(2);
+    again[0]!.frontmatter.priority = 1;
+
+    const saved = (await store.get("t2"))!;
+    saved.frontmatter.title = "renamed";
+    await store.save(saved);
+    expect(
+      (await store.listByStatus("pending")).find((t) => t.frontmatter.id === "t2")?.frontmatter
+        .title,
+    ).toBe("renamed");
+    expect(
+      (await store.listByStatus("pending")).find((t) => t.frontmatter.id === "t1")?.frontmatter
+        .priority,
+    ).not.toBe(1);
+
+    await writeFile(taskFilePath(root, "pending", "t3"), serializeTask(newTask(fm({ id: "t3" }))));
+    expect((await store.listByStatus("pending")).map((t) => t.frontmatter.id).sort()).toEqual([
+      "t1",
+      "t2",
+      "t3",
+    ]);
+  });
+
+  it("reads only the new pending file when the directory gains one", async () => {
+    for (let i = 0; i < 30; i++) await store.create(newTask(fm({ id: `p${i}` })));
+    expect(await store.listByStatus("pending")).toHaveLength(30);
+
+    takeTaskFileReads();
+    takeTaskStatCalls();
+    await store.create(newTask(fm({ id: "extra" })));
+    takeTaskFileReads();
+    takeTaskStatCalls();
+    const ids = (await store.listByStatus("pending")).map((t) => t.frontmatter.id);
+    expect(ids).toHaveLength(31);
+    expect(ids).toContain("extra");
+    expect(takeTaskFileReads()).toBe(1);
+    expect(takeTaskStatCalls()).toBe(31);
+  });
+
+  it("reads only the pending file this process saved", async () => {
+    for (let i = 0; i < 30; i++) await store.create(newTask(fm({ id: `p${i}` })));
+    await store.listByStatus("pending");
+    const saved = (await store.get("p3"))!;
+    saved.frontmatter.title = "changed";
+    await store.save(saved);
+
+    takeTaskFileReads();
+    takeTaskStatCalls();
+    const again = await store.listByStatus("pending");
+    expect(again.find((t) => t.frontmatter.id === "p3")?.frontmatter.title).toBe("changed");
+    expect(again.find((t) => t.frontmatter.id === "p0")?.frontmatter.title).toBe("T1");
+    expect(takeTaskFileReads()).toBe(1);
+    expect(takeTaskStatCalls()).toBe(30);
+  });
+
+  it("sees an outside rename over an existing pending file", async () => {
+    await store.create(newTask(fm()));
+    await store.create(newTask(fm({ id: "t2" })));
+    await store.listByStatus("pending");
+    const path = taskFilePath(root, "pending", "t1");
+    const outside = (await store.get("t1"))!;
+    outside.frontmatter.title = "replaced from outside";
+    const tmp = `${path}.replacing`;
+    await writeFile(tmp, serializeTask(outside));
+    await rename(tmp, path);
+    expect(
+      (await store.listByStatus("pending")).find((t) => t.frontmatter.id === "t1")?.frontmatter
+        .title,
+    ).toBe("replaced from outside");
+  });
+
+  it("sees an in-place edit even when the status directory mtime is unchanged", async () => {
+    await store.create(newTask(fm()));
+    await store.listByStatus("pending");
+    const file = taskFilePath(root, "pending", "t1");
+    const dir = statusDir(root, "pending");
+    const originalDirStat = await stat(dir);
+    const task = (await store.get("t1"))!;
+    task.frontmatter.title = "edited in place";
+    await writeFile(file, serializeTask(task));
+    await utimes(dir, originalDirStat.atime, originalDirStat.mtime);
+
+    expect((await store.listByStatus("pending"))[0]?.frontmatter.title).toBe("edited in place");
+  });
+
+  it("rescans a directory whose mtime is in the current timestamp tick", async () => {
+    await store.create(newTask(fm()));
+    const dir = statusDir(root, "pending");
+    const recent = new Date();
+    await utimes(dir, recent, recent);
+    await store.listByStatus("pending");
+    await writeFile(taskFilePath(root, "pending", "t2"), serializeTask(newTask(fm({ id: "t2" }))));
+    // Simulate a coarse clock retaining the directory mtime from the prior scan.
+    await utimes(dir, recent, recent);
+
+    expect((await store.listByStatus("pending")).map((task) => task.frontmatter.id).sort()).toEqual(
+      ["t1", "t2"],
+    );
+  });
+
+  it("reuses an unchanged directory after its mtime was already old at scan time", async () => {
+    await store.create(newTask(fm()));
+    const dir = statusDir(root, "pending");
+    const old = new Date(Date.now() - 10_000);
+    await utimes(dir, old, old);
+    await store.listByStatus("pending");
+
+    takeTaskFileReads();
+    takeTaskStatCalls();
+    expect((await store.listByStatus("pending")).map((task) => task.frontmatter.id)).toEqual([
+      "t1",
+    ]);
+    expect(takeTaskFileReads()).toBe(0);
+    expect(takeTaskStatCalls()).toBe(1);
+  });
+
+  it("keeps a reused entry's validated fingerprint if another list caches a newer edit", async () => {
+    await store.create(newTask(fm()));
+    await store.listByStatus("pending");
+    await writeFile(taskFilePath(root, "pending", "t2"), serializeTask(newTask(fm({ id: "t2" }))));
+
+    const internals = store as unknown as {
+      statusListValidNames: (status: Status, hit: unknown) => Promise<Set<string>>;
+    };
+    const validate = internals.statusListValidNames.bind(store);
+    let releaseValidation!: () => void;
+    let validationReached!: () => void;
+    const reached = new Promise<void>((resolve) => (validationReached = resolve));
+    const released = new Promise<void>((resolve) => (releaseValidation = resolve));
+    internals.statusListValidNames = async (status, hit) => {
+      const names = await validate(status, hit as never);
+      validationReached();
+      await released;
+      return names;
+    };
+
+    try {
+      const staleScan = store.listByStatus("pending");
+      await reached;
+      const edited = (await store.get("t1"))!;
+      edited.frontmatter.title = "edited after validation";
+      await writeFile(taskFilePath(root, "pending", "t1"), serializeTask(edited));
+      await store.list();
+      releaseValidation();
+      expect(
+        (await staleScan).find((task) => task.frontmatter.id === "t1")?.frontmatter.title,
+      ).toBe("T1");
+      expect(
+        (await store.listByStatus("pending")).find((task) => task.frontmatter.id === "t1")
+          ?.frontmatter.title,
+      ).toBe("edited after validation");
+    } finally {
+      releaseValidation();
+      internals.statusListValidNames = validate;
+    }
   });
 
   it("agrees with the status index", async () => {

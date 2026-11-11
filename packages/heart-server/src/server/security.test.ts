@@ -117,10 +117,11 @@ it.skipIf(process.platform === "win32")("auth store refusals return a clean 503"
   });
   expect(JSON.stringify(body)).not.toContain(root);
   // The path and the fix go to the server log, on one line.
-  const line = logged.mock.calls
-    .map((c) => String(c[0]))
-    .find((m) => m.includes(join(root, "auth")));
-  expect(line).toContain(`chmod 700 ${join(root, "auth")}`);
+  const authDir = await realpath(join(root, "auth"));
+  const line = logged.mock.calls.map((c) => String(c[0])).find((m) => m.includes(authDir));
+  expect(line).toMatch(
+    new RegExp(`chmod (?:700|g-w) ${authDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+  );
   expect(line).not.toContain("\n");
 });
 it.skipIf(process.platform === "win32")(

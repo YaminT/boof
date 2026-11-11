@@ -267,7 +267,12 @@ async function attemptLock(lock: string, pid: number, opts: ProcessLockOptions):
     try {
       text = (await readFile(lock, "utf8")).trim();
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue; // just released
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") continue; // just released
+      // Windows denies the read while another handle still has the new lock open
+      // (ERROR_SHARING_VIOLATION → EPERM/EBUSY). That holder is live. Do not take the file
+      // over and do not throw: the caller polls until the read succeeds or the wait expires.
+      if (code === "EPERM" || code === "EBUSY") return { acquired: false, holder: "unknown" };
       throw err;
     }
     const seen = await stat(lock).catch(() => null);

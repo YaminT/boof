@@ -133,18 +133,20 @@ describe("pending row state", () => {
       EARLIER_HEADER,
     );
   });
-  it("uses words for known failures and preserves unknown failure codes", () => {
+  it("uses words for known failures and never shows a raw error code", () => {
     for (const [code, label] of [
-      ["change_stale", "the item changed since this was proposed"],
-      ["change_expired", "expired"],
-      ["interrupted", "interrupted"],
-      ["change_not_found", "no longer exists"],
-      ["other_code", "failed: other_code"],
+      ["change_stale", "Failed: the target changed"],
+      ["change_expired", "Failed: expired"],
+      ["interrupted", "Failed: interrupted, check the task"],
+      ["change_not_found", "Failed: no longer exists"],
+      ["other_code", "Failed"],
+      ["has_children", "Failed"],
     ]) {
       expect(changeRowView({ ...line, state: "failed", detail: code }, [], now)).toEqual({
         kind: "done",
         label,
       });
+      if (code.includes("_")) expect(label).not.toContain(code);
     }
   });
   const now = Date.parse("2026-11-06T12:00:00.000Z");
@@ -176,7 +178,7 @@ describe("pending row state", () => {
     });
     expect(changeRowView({ ...line, state: "failed", detail: "interrupted" }, [], now)).toEqual({
       kind: "done",
-      label: "interrupted",
+      label: "Failed: interrupted, check the task",
     });
     expect(changeRowView(line, [change({ status: "failed" })], now)).toEqual({
       kind: "done",
@@ -184,8 +186,20 @@ describe("pending row state", () => {
     });
     expect(changeRowView(line, [change({ status: "failed", error: "interrupted" })], now)).toEqual({
       kind: "done",
-      label: "interrupted",
+      label: "Failed: interrupted, check the task",
     });
+    expect(changeRowView(line, [change({ status: "failed", error: "change_stale" })], now)).toEqual(
+      {
+        kind: "done",
+        label: "Failed: the target changed",
+      },
+    );
+    expect(changeRowView(line, [change({ status: "failed", error: "has_children" })], now)).toEqual(
+      {
+        kind: "done",
+        label: "Failed",
+      },
+    );
   });
 
   it("shows applying instead of a Review button, and a row the server dropped as settled", () => {

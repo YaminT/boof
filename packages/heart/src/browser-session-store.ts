@@ -621,7 +621,8 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       handle = await this.openFn(path, flags);
       const fileStat = await handle.stat();
       this.assertSafeStat(path, fileStat, "file");
-      if (this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
+      // Windows reports group/world read bits on a private file, and there is no uid.
+      if (this.uid !== undefined && this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
       text = await handle.readFile("utf8");
     } catch (err) {
       if (err instanceof UnsafeBrowserSessionPathError) throw err;
@@ -691,7 +692,7 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
       const st = await lstat(this.sessionsPath);
       this.assertSafeStat(this.sessionsPath, st, "file");
       this.unsafeMessage = undefined;
-      if (this.hasReadBits(st.mode)) this.warnReadBits(this.sessionsPath);
+      if (this.uid !== undefined && this.hasReadBits(st.mode)) this.warnReadBits(this.sessionsPath);
       fileStat = { mtimeMs: st.mtimeMs, size: st.size };
       this.loggedStatError = false;
     } catch (err) {
@@ -893,11 +894,13 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     if (path === this.authDir) {
       const directoryStat = await this.lstatFn(path);
       this.assertSafeStat(path, directoryStat, "directory");
-      if (this.hasReadBits(directoryStat.mode)) this.warnReadBits(path);
+      // Windows stat mode is synthetic (a private file still shows group/world bits) and there
+      // is no uid. The same skip as assertSafeStat: only a Unix owner is warned about read bits.
+      if (this.uid !== undefined && this.hasReadBits(directoryStat.mode)) this.warnReadBits(path);
     } else {
       const fileStat = await this.lstatFn(path);
       this.assertSafeStat(path, fileStat, "file");
-      if (this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
+      if (this.uid !== undefined && this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
     }
   }
 }

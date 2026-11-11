@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -168,7 +168,7 @@ describe("migrateDataRoot", () => {
       paused: false,
       archived: false,
     });
-    expect(project.name).toBe(repo.split("/").pop());
+    expect(project.name).toBe(basename(repo));
 
     // Every task kept its status.
     const tasks = await new TaskStore(join(root, "projects", "default")).list();
@@ -505,22 +505,26 @@ describe("plan approval backfill", () => {
     expect(await backfillPlanApprovals(root)).toEqual([]);
   });
 
-  it("logs a plan whose backfill write failed instead of swallowing it", async () => {
-    await new SettingsStore(root).save(defaultSettings());
-    const plans = new PlanStore(join(root, "projects", "p"));
-    await plans.create({ ...base, id: "stuck", status: "active" });
-    const plansDir = join(root, "projects", "p", "plans");
-    await chmod(plansDir, 0o555); // temp files cannot be created: the write fails
-    try {
-      if (process.getuid?.() === 0) return; // root ignores directory modes
-      const log = await backfillPlanApprovals(root);
-      expect(log).toHaveLength(1);
-      expect(log[0]).toMatch(/^could not backfill approval of plan p\/stuck: /);
-    } finally {
-      await chmod(plansDir, 0o755);
-    }
-    expect((await plans.require("stuck")).approvedBy).toBeUndefined();
-  });
+  // A 0555 directory does not stop the write on Windows; the mode is not the lock.
+  it.skipIf(process.platform === "win32")(
+    "logs a plan whose backfill write failed instead of swallowing it",
+    async () => {
+      await new SettingsStore(root).save(defaultSettings());
+      const plans = new PlanStore(join(root, "projects", "p"));
+      await plans.create({ ...base, id: "stuck", status: "active" });
+      const plansDir = join(root, "projects", "p", "plans");
+      await chmod(plansDir, 0o555); // temp files cannot be created: the write fails
+      try {
+        if (process.getuid?.() === 0) return; // root ignores directory modes
+        const log = await backfillPlanApprovals(root);
+        expect(log).toHaveLength(1);
+        expect(log[0]).toMatch(/^could not backfill approval of plan p\/stuck: /);
+      } finally {
+        await chmod(plansDir, 0o755);
+      }
+      expect((await plans.require("stuck")).approvedBy).toBeUndefined();
+    },
+  );
 
   it("leaves an archived plan alone", async () => {
     await new SettingsStore(root).save(defaultSettings());
@@ -583,7 +587,8 @@ describe("webhook secrets", () => {
       "wh-1": "whsec_" + "a".repeat(48),
       "wh-2": "whsec_" + "b".repeat(48),
     });
-    expect((await stat(secrets.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(secrets.filePath)).mode & 0o777).toBe(0o600);
     expect(await readFile(join(root, "migration-v2.log"), "utf8")).toContain("wh-2");
     expect((await migrateDataRoot(root)).log).toEqual([]);
     expect((await new SettingsStore(root).load()).webhooks).toEqual([hook("wh-1"), hook("wh-2")]);
@@ -632,8 +637,9 @@ describe("webhook secrets", () => {
       "dropped the unusable secret of webhook wh-2; delete and re-create the webhook",
     ]);
     expect(await readFile(join(root, "settings.json"), "utf8")).not.toContain("short");
-    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(root, "webhooks"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(root, "webhooks"))).mode & 0o777).toBe(0o700);
   });
 
   it("does not echo file content in the error for a corrupt secrets file", async () => {
@@ -819,7 +825,8 @@ describe("startup and the key directory", () => {
       await mkdir(join(dir, "auth"), { recursive: true });
       await chmod(join(dir, "auth"), 0o755);
       await migrateDataRoot(dir);
-      expect((await stat(join(dir, "auth"))).mode & 0o777).toBe(0o700);
+      if (process.platform !== "win32")
+        expect((await stat(join(dir, "auth"))).mode & 0o777).toBe(0o700);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

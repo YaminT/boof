@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, SettingsStore, scaffoldDataRoot } from "@boof/heart";
 import { assertBindAllowed } from "@boof/heart-server";
-import { normaliseHostname, remoteCommand } from "./remote-cli.js";
+import { normaliseHostname, normaliseRoot, remoteCommand } from "./remote-cli.js";
 
 let root: string;
 let out: string[];
@@ -66,14 +66,15 @@ describe("boof-runner remote setup", () => {
     expect(s.security.rateLimit.perMinute).toBe(7);
     expect(s.security.allowedHosts).toEqual(["old.example.com", "boof.example.com"]);
     expect(s.security.allowedProjectRoots).toContain("~/codes");
-    expect(s.security.allowedProjectRoots).toContain("/tmp/x");
+    // `/tmp/x` is absolute. On Windows that is the current drive's `\tmp\x`.
+    expect(s.security.allowedProjectRoots).toContain(normaliseRoot("/tmp/x"));
     expect(out.join("\n")).toContain("settings.projectsRoot");
 
     const text = out.join("\n");
     const key = out.map((l) => l.trim()).find((l) => l.startsWith("boof_harness_"))!;
     expect(key).toBeTruthy();
     expect((await new AuthStore(root).verify(key)).ok).toBe(true);
-    expect((await stat(root)).mode & 0o077).toBe(0);
+    if (process.platform !== "win32") expect((await stat(root)).mode & 0o077).toBe(0);
     expect(text).not.toContain("is already private");
     expect(text).toContain("--host 0.0.0.0 -p 4400 --tls-cert");
     expect(text).toContain("reverse_proxy 127.0.0.1:4400");
@@ -133,9 +134,11 @@ describe("boof-runner remote status / disable", () => {
     const text = out.join("\n");
     expect(text).toContain("Auth mode:             required");
     expect(text).toContain("boof.example.com");
-    expect(text).toContain("/tmp/x");
+    expect(text).toContain(normaliseRoot("/tmp/x"));
     expect(text).toContain("Active clients:        1");
-    expect(text).toContain("Data root permissions: 700");
+    expect(text).toContain(
+      process.platform === "win32" ? "Data root permissions: n/a" : "Data root permissions: 700",
+    );
     expect(text).toContain("Non-loopback bind:     allowed");
 
     const store = new AuthStore(root);

@@ -13,7 +13,7 @@ import {
   type AgentSdkEligibility,
   type PoolStatus,
 } from "@boof/owlish";
-import { appendFile, readFile, realpath, readdir, rm, stat } from "node:fs/promises";
+import { appendFile, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
@@ -99,7 +99,7 @@ import { OpError } from "../errors.js";
 import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
-import { ConciergeService } from "../../concierge/service.js";
+import type { ConciergeService } from "../../concierge/service.js";
 import type { ConciergeAgent } from "@boof/heart";
 import { cleanN8nName } from "../../n8n/text.js";
 
@@ -975,10 +975,21 @@ export class TaskService {
     let gatewayEligibility: AgentSdkEligibility | null | undefined;
     // One admin-route probe for the whole status. A key the gateway accepts is not separate.
     let agentProbe: AdminRouteProbe | undefined;
-    for (const project of await this.listProjects()) {
-      if (!authorized(project.id) || project.archived) continue;
+    const projects = (await this.listProjects()).filter(
+      (project) => authorized(project.id) && !project.archived,
+    );
+    // Pending-role scans are directory reads. One project at a time left each read waiting on
+    // the thread pool behind the event streams.
+    const pendingRolesByProject = new Map(
+      await Promise.all(
+        projects.map(
+          async (project) => [project.id, await this.pendingAgentRoles(project.id)] as const,
+        ),
+      ),
+    );
+    for (const project of projects) {
       const effective = effectiveSettings(settings, project);
-      const pendingRoles = await this.pendingAgentRoles(project.id);
+      const pendingRoles = pendingRolesByProject.get(project.id) ?? new Set<string>();
       const roles = (["planner", "developer", "observer", "reviewer"] as const).filter(
         (role) => effective.roles[role]?.tool === "claude-agent" || pendingRoles.has(role),
       );
@@ -1104,30 +1115,25 @@ export class TaskService {
   }
 
   /**
-   * Pending task overrides are needed for the status summary. Fingerprint the pending filenames
-   * and their mtimes first; unchanged task lists then avoid parsing every task on each poll.
+   * Pending task overrides are needed for the status summary. The pending directory mtime is
+   * the fingerprint: a task file is created, removed or replaced by rename, and that changes
+   * the directory. An unchanged directory then avoids parsing on each poll. Finished tasks are
+   * not in this directory and are not read.
    */
   private async pendingAgentRoles(projectId: string): Promise<Set<string>> {
     const pendingDir = join(this.projects.dir(projectId), "tasks", "pending");
-    let signature = "";
+    let signature = "missing";
     try {
-      const names = (await readdir(pendingDir)).filter((name) => name.endsWith(".md")).sort();
-      const entries = await Promise.all(
-        names.map(async (name) => {
-          const info = await stat(join(pendingDir, name), { bigint: true });
-          return `${name}:${info.size}:${info.mtimeNs}`;
-        }),
-      );
-      signature = entries.join("|");
+      const info = await stat(pendingDir, { bigint: true });
+      signature = String(info.mtimeNs);
     } catch {
-      // A missing pending directory is an empty list; TaskStore.list handles other read errors.
+      // A missing pending directory is an empty list.
     }
     const cached = this.pendingAgentRoleCache.get(projectId);
     if (cached?.signature === signature) return cached.roles;
-    const tasks = await new TaskStore(this.projects.dir(projectId)).list();
+    const tasks = await new TaskStore(this.projects.dir(projectId)).listByStatus("pending");
     const roles = new Set<string>();
     for (const task of tasks) {
-      if (task.frontmatter.status !== "pending") continue;
       for (const [role, tool] of Object.entries(task.frontmatter.tools ?? {}))
         if (tool?.tool === "claude-agent") roles.add(role);
     }
@@ -1714,15 +1720,21 @@ export class TaskService {
 
   // --- Settings / health ---
 
+  /**
+   * The assistant, built by the composition root (`attachConcierge`). TaskService does not
+   * construct it: that would import the operation registry and the concierge MCP server, which
+   * import TaskService.
+   */
+  useConcierge(concierge: ConciergeService): void {
+    this.conciergeService = concierge;
+  }
+
+  hasConcierge(): boolean {
+    return this.conciergeService !== undefined;
+  }
+
   concierge(): ConciergeService {
-    if (!this.conciergeService) {
-      this.conciergeService = new ConciergeService({
-        root: this.root,
-        services: this,
-        authStore: this.authStore,
-        agent: this.conciergeAgent,
-      });
-    }
+    if (!this.conciergeService) throw new Error("ConciergeService was not provided");
     return this.conciergeService;
   }
 

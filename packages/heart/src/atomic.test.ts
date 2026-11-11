@@ -125,7 +125,26 @@ describe("atomicWrite", () => {
     expect(sync).toHaveBeenCalledTimes(2);
     expect(destExistedAtSync).toEqual([false, true]);
     expect(await readFile(dest, "utf8")).toBe("{}\n");
-    expect((await stat(dest)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(dest)).mode & 0o777).toBe(0o600);
+  });
+
+  it("fails after denied replace retries instead of truncating the destination", async () => {
+    const dest = join(dir, "secret.json");
+    await atomicWrite(dest, "old complete value\n");
+    let attempts = 0;
+    const deniedRename = (async () => {
+      attempts += 1;
+      throw Object.assign(new Error("sharing violation"), { code: "EBUSY" });
+    }) as unknown as typeof import("node:fs/promises").rename;
+
+    await expect(
+      atomicWrite(dest, "new complete value\n", { renameFn: deniedRename }),
+    ).rejects.toMatchObject({
+      code: "EBUSY",
+    });
+    expect(attempts).toBe(3);
+    expect(await readFile(dest, "utf8")).toBe("old complete value\n");
+    expect((await readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("skips the directory sync when the directory cannot be opened (Windows)", async () => {

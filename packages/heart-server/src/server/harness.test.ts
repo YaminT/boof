@@ -26,9 +26,10 @@ describe("the generated harness guide", () => {
       await writeFile(HARNESS_MD_PATH, expected);
       await writeFile(HARNESS_TS, embeddedModule(expected));
     }
-    expect(UPDATE ? expected : current).toBe(expected);
-    expect(await readFile(HARNESS_TS, "utf8")).toBe(embeddedModule(expected));
-    expect(HARNESS_MD).toBe(expected);
+    const norm = (s: string) => s.replace(/\r\n/g, "\n");
+    expect(norm(UPDATE ? expected : current)).toBe(norm(expected));
+    expect(norm(await readFile(HARNESS_TS, "utf8"))).toBe(norm(embeddedModule(expected)));
+    expect(norm(HARNESS_MD)).toBe(norm(expected));
   });
 
   it("documents every operation, MCP tool and error code", () => {

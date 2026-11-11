@@ -6,6 +6,7 @@ import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { toKebabId, uniqueKebabId } from "./ids.js";
 import { assertKebabId, dataRootPaths, projectPaths, statusDir } from "./paths.js";
 import { isInsidePath, resolveUnbornPath } from "./project-path.js";
+import { isFilesystemRoot } from "./windows-acl.js";
 import { nowIso } from "./runtime.js";
 import { ProjectSchema, type Project, type ProjectOrigin, type ProjectPatch } from "./schema.js";
 import { TaskStore } from "./store.js";
@@ -115,6 +116,9 @@ export class ProjectStore {
   private readonly initGitRepo?: (dir: string) => Promise<void>;
   private readonly beforeCreateDir?: (dir: string) => Promise<void>;
   private readonly lockOpts: ProcessLockOptions;
+  /** Overlapping `list` calls share one directory read. Event streams list projects together. */
+  private listFlight: Promise<(Project | null)[]> | null = null;
+  private listGeneration = 0;
 
   constructor(
     private readonly root: string,
@@ -134,24 +138,46 @@ export class ProjectStore {
 
   /** Projects sorted by id; archived ones only with `includeArchived`. Unreadable entries are skipped. */
   async list(opts: { includeArchived?: boolean } = {}): Promise<Project[]> {
-    let names: string[] = [];
-    try {
-      const entries = await readdir(dataRootPaths(this.root).projects, { withFileTypes: true });
-      names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-    } catch {
-      return [];
-    }
-    const out: Project[] = [];
-    for (const name of names.sort()) {
-      let project: Project | null = null;
+    const loaded = await this.loadProjects();
+    return loaded.filter(
+      (project): project is Project =>
+        project !== null && (opts.includeArchived || !project.archived),
+    );
+  }
+
+  private loadProjects(): Promise<(Project | null)[]> {
+    if (this.listFlight) return this.listFlight;
+    const generation = this.listGeneration;
+    const flight = (async () => {
+      let names: string[] = [];
       try {
-        project = await this.get(name);
+        const entries = await readdir(dataRootPaths(this.root).projects, { withFileTypes: true });
+        names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
       } catch {
-        project = null;
+        names = [];
       }
-      if (project && (opts.includeArchived || !project.archived)) out.push(project);
-    }
-    return out;
+      const projects = await Promise.all(
+        names.sort().map(async (name) => {
+          try {
+            return await this.get(name);
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return generation === this.listGeneration ? projects : this.loadProjects();
+    })();
+    this.listFlight = flight;
+    void flight.finally(() => {
+      if (this.listFlight === flight) this.listFlight = null;
+    });
+    return flight;
+  }
+
+  /** Invalidate shared reads after a project mutation; stale readers retry against disk. */
+  private invalidateListFlight(): void {
+    this.listGeneration += 1;
+    this.listFlight = null;
   }
 
   /** The project, or null when it does not exist. Throws InvalidIdError for a non-kebab id. */
@@ -245,6 +271,14 @@ export class ProjectStore {
     }
     const { real, exists } = await resolveUnbornPath(target);
     await opts.assertTarget?.(real);
+    // `path.win32.resolve("/")` is `\` and that is not a parent of `C:\...`, so the
+    // "contains home" check below does not see a Windows drive root. Refuse it by name.
+    if (isFilesystemRoot(target) || isFilesystemRoot(real)) {
+      throw new ProjectError(
+        "directory_not_allowed",
+        "boof never initialises the filesystem root, the home directory, the data root or a directory containing them as a project",
+      );
+    }
     const dataRoot = await realpath(this.root).catch(() => this.root);
     if (isInsidePath(dataRoot, real)) {
       throw new ProjectError("inside_data_root", `Directory is inside the data root: ${real}`);
@@ -333,8 +367,18 @@ export class ProjectStore {
       }
     };
     if (!exists) {
+      // Recursive mkdir does not return the first directory it created on Windows,
+      // so remember that path before creating. Only those parents are removed later.
+      const createdParents: string[] = [];
+      for (let cursor = dirname(real); !(await isDirectory(cursor));) {
+        createdParents.unshift(cursor);
+        const parent = dirname(cursor);
+        if (parent === cursor) break;
+        cursor = parent;
+      }
+      if (createdParents.length > 0) firstParent = createdParents[0];
       try {
-        firstParent = await mkdir(dirname(real), { recursive: true });
+        await mkdir(dirname(real), { recursive: true });
         await this.beforeCreateDir?.(real);
         await mkdir(real);
         created = true;
@@ -472,6 +516,7 @@ export class ProjectStore {
       }
       wrote = true; // only now is project.json ours to remove
       await this.ensureDirs(id);
+      this.invalidateListFlight();
       return project;
     } catch (err) {
       if (wrote && id !== undefined) {
@@ -513,6 +558,7 @@ export class ProjectStore {
       next.updated = nowIso();
       const project = ProjectSchema.parse(next);
       await withFileLock(path, () => atomicWrite(path, JSON.stringify(project, null, 2) + "\n"));
+      this.invalidateListFlight();
       return project;
     });
   }
@@ -544,8 +590,10 @@ export class ProjectStore {
     if (await this.hasRunningTask(id)) {
       throw new ProjectError("has_running_task", `Project ${id} has a running task`);
     }
-    if (opts.purge) await rm(this.dir(id), { recursive: true, force: true });
-    else await this.archive(id);
+    if (opts.purge) {
+      await rm(this.dir(id), { recursive: true, force: true });
+      this.invalidateListFlight();
+    } else await this.archive(id);
   }
 
   /** True when a registered project (archived too) works in `dir`; its directory must not be deleted. */

@@ -21,7 +21,8 @@ describe("OpenAPI document", () => {
     if (process.env["UPDATE_OPENAPI"] === "1" || !existsSync(SNAPSHOT)) {
       writeFileSync(SNAPSHOT, text);
     }
-    expect(text).toBe(readFileSync(SNAPSHOT, "utf8"));
+    const norm = (s: string) => s.replace(/\r\n/g, "\n");
+    expect(norm(text)).toBe(norm(readFileSync(SNAPSHOT, "utf8")));
   });
 
   it("describes every operation once", () => {

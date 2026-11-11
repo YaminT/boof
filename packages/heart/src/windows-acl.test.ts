@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   aclNeedsTighten,
   canonicalSid,
+  sameAccount,
   decodeIcaclsText,
   extractDacl,
   isFilesystemRoot,
@@ -83,12 +84,22 @@ describe("SDDL access lists", () => {
   it("needs a rewrite for other accounts, inheritance, and a missing user write", () => {
     expect(aclNeedsTighten([userAce()], me)).toBe(false);
     expect(aclNeedsTighten([userAce(), userAce({ sid: "WD", rights: "FR" })], me)).toBe(true);
-    expect(aclNeedsTighten([userAce({ inherited: true })], me)).toBe(true);
+    // The owner's own inherited allow is the directory they just created. Another account is not.
+    expect(aclNeedsTighten([userAce({ inherited: true })], me)).toBe(false);
+    expect(aclNeedsTighten([userAce({ sid: "BU", inherited: true })], me)).toBe(true);
     expect(aclNeedsTighten([userAce({ inheritOnly: true })], me)).toBe(true);
     expect(
       aclNeedsTighten([userAce({ allow: false, rights: "FW" }), userAce({ rights: "FR" })], me),
     ).toBe(true);
     expect(aclNeedsTighten([], me)).toBe(true);
+  });
+
+  it("rejects inherit-only grants to Users and Everyone on a root", () => {
+    for (const principal of ["BU", "WD"]) {
+      const parsed = parseIcaclsSave(`data\nD:(A;OICIIO;FA;;;${principal})\n`);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(aclNeedsTighten(parsed.aces, me)).toBe(true);
+    }
   });
 
   it("accepts an inherited full-control ACE for the current user on a child, and nothing else", () => {
@@ -107,7 +118,7 @@ describe("SDDL access lists", () => {
       },
     ]);
     for (const aces of [folder.aces, file.aces]) {
-      expect(aclNeedsTighten(aces, me)).toBe(true);
+      expect(aclNeedsTighten(aces, me)).toBe(false);
       expect(aclNeedsTighten(aces, me, { acceptInheritedUser: true })).toBe(false);
     }
     const wider = parseIcaclsSave("child\nD:AI(A;OICIID;FA;;;S-1-5-21-1)(A;OICIID;FR;;;WD)\n");
@@ -145,8 +156,42 @@ describe("SDDL access lists", () => {
     ).toBeNull();
     expect(parentLetsOthersWrite([userAce({ sid: "WD" })], me)).toBe("S-1-1-0");
     expect(parentLetsOthersWrite([userAce({ sid: "BU" })], me)).toBe("S-1-5-32-545");
+    expect(parentLetsOthersWrite([userAce({ sid: "AU" })], me)).toBe("S-1-5-11");
     expect(parentLetsOthersWrite([userAce({ sid: "WD", inheritOnly: true })], me)).toBeNull();
     expect(parentLetsOthersWrite([userAce({ sid: "WD", rights: "FR" })], me)).toBeNull();
+  });
+
+  it("treats LA as the user only when that user is the built-in Administrator", () => {
+    const admin = "S-1-5-21-3289802278-1561746829-1498425070-500";
+    const other = "S-1-5-21-3289802278-1561746829-1498425070-1001";
+    // The bytes icacls /save wrote for a new directory under the GitHub runner temp folder.
+    const text = "boof-acl-diag\r\nD:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)\r\n";
+    const buf = Buffer.from(text, "utf16le");
+    expect(decodeIcaclsText(buf)).toBe(text);
+    const parsed = parseIcaclsSave(decodeIcaclsText(buf));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(sameAccount("LA", admin)).toBe(true);
+    expect(sameAccount("LA", other)).toBe(false);
+    expect(sameAccount("LA", me)).toBe(false);
+    expect(aclNeedsTighten(parsed.aces, admin)).toBe(false);
+    expect(aclNeedsTighten(parsed.aces, other)).toBe(true);
+    expect(parentLetsOthersWrite(parsed.aces, admin)).toBeNull();
+    expect(parentLetsOthersWrite(parsed.aces, other)).toBe("LA");
+    const inherited = parseIcaclsSave(
+      "child\nD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LA)\n",
+    );
+    expect(inherited.ok).toBe(true);
+    if (!inherited.ok) return;
+    expect(aclNeedsTighten(inherited.aces, admin)).toBe(false);
+    for (const foreign of ["BU", "WD", "AU"]) {
+      expect(
+        aclNeedsTighten([...parsed.aces, userAce({ sid: foreign, rights: "FA" })], admin),
+      ).toBe(true);
+      expect(
+        parentLetsOthersWrite([...parsed.aces, userAce({ sid: foreign, rights: "FA" })], admin),
+      ).toBe(canonicalSid(foreign));
+    }
   });
 
   it("knows a drive root and a filesystem root", () => {

@@ -23,8 +23,9 @@ describe("OwlishSecretStore", () => {
     await store.set(KEY);
     expect(store.filePath).toBe(join(root, "owlish", "secrets.json"));
     expect(dataRootPaths(root).owlishSecrets).toBe(store.filePath);
-    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(root, "owlish"))).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(join(root, "owlish"))).mode & 0o777).toBe(0o700);
     expect(await store.get()).toBe(KEY);
     expect(await store.source()).toBe("file");
     await store.delete();
@@ -88,7 +89,7 @@ describe("OwlishSecretStore", () => {
     const store = new OwlishSecretStore(root, {});
     await store.set(KEY);
     await store.setAgent("btr-agent-key-0001");
-    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
     expect(await store.get()).toBe(KEY);
     expect(await store.getAgent()).toBe("btr-agent-key-0001");
     expect(await store.agentSource()).toBe("file");
@@ -139,6 +140,6 @@ describe("OwlishSecretStore", () => {
     const { chmod } = await import("node:fs/promises");
     await chmod(store.filePath, 0o644);
     await store.tighten();
-    expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(store.filePath)).mode & 0o777).toBe(0o600);
   });
 });

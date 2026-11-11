@@ -6,11 +6,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AuthStore,
+  BrowserSessionStore,
   ConciergeStore,
+  ConciergeTurnError,
   conciergeDir,
   defaultSettings,
   execCommand,
   SettingsStore,
+  type ConciergeAgent,
+  type ConciergeTurnInput,
 } from "@boof/heart";
 import { ClaudeConcierge, DESKTOP_CLAUDE_AGENT_REASON, MockTool, ToolRegistry } from "@boof/runner";
 import { scriptedAgent } from "../concierge/fake-agent.js";
@@ -330,5 +334,129 @@ describe("concierge API", () => {
     );
     expect(discarded.status).toBe(200);
     expect((await service.forProject("shop").get("keep-me"))?.frontmatter.title).toBe("Keep me");
+  });
+
+  /** Blocks in `turn` until `signal` aborts. A stream that only closes the HTTP body leaves this false. */
+  function hangingAgent(): { agent: ConciergeAgent; aborted: () => boolean } {
+    let aborted = false;
+    const agent: ConciergeAgent = {
+      async availability() {
+        return { available: true, reason: null, via: "project-key" };
+      },
+      turn(input: ConciergeTurnInput) {
+        input.onEvent?.({ type: "text", text: "working" });
+        return new Promise((_resolve, reject) => {
+          const fail = () => {
+            aborted = true;
+            reject(new ConciergeTurnError("The turn was aborted", "aborted", null, null));
+          };
+          if (!input.signal) return;
+          if (input.signal.aborted) fail();
+          else input.signal.addEventListener("abort", fail, { once: true });
+        });
+      },
+    };
+    return { agent, aborted: () => aborted };
+  }
+
+  async function readUntil(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    text: { current: string },
+    needle: string,
+    budgetMs: number,
+  ) {
+    const decoder = new TextDecoder();
+    const deadline = Date.now() + budgetMs;
+    while (!text.current.includes(needle)) {
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error(`timed out waiting for ${needle}`);
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`timed out waiting for ${needle}`)), left),
+        ),
+      ]);
+      if (next.done) break;
+      text.current += decoder.decode(next.value);
+    }
+  }
+
+  it("ends a running stream within 2s when its API key is revoked", async () => {
+    // The authorization poll runs every 500 ms; allow Windows runners extra scheduling delay.
+    const revokeTimeoutMs = process.platform === "win32" ? 5000 : 2000;
+    const hang = hangingAgent();
+    service = new TaskService(root, new ToolRegistry([new MockTool()]), {
+      conciergeAgent: hang.agent,
+    });
+    app = createApp({
+      service,
+      authStore,
+      peerAddress: () => "10.0.0.9",
+    });
+    const { key, client } = await authStore.create({
+      name: "reader",
+      scopes: ["tasks:read"],
+      trust: "trusted",
+      projects: ["shop"],
+    });
+    const response = await request(
+      "/api/v1/projects/shop/concierge/messages/stream",
+      json("POST", { text: "hello" }, { authorization: `Bearer ${key}` }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = response.body!.getReader();
+    const text = { current: "" };
+    try {
+      await readUntil(reader, text, "event: text", 2000);
+      const revokedAt = Date.now();
+      await authStore.revoke(client.id);
+      await readUntil(reader, text, "event: unauthorized", revokeTimeoutMs);
+      expect(Date.now() - revokedAt).toBeLessThan(revokeTimeoutMs);
+      expect(text.current).toContain("API key revoked, expired or no longer authorized");
+      expect(text.current).not.toContain("The assistant request was aborted");
+      expect(hang.aborted()).toBe(true);
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  });
+
+  it("ends a running stream within 2s when the browser session is revoked", async () => {
+    const hang = hangingAgent();
+    const sessions = new BrowserSessionStore(root);
+    service = new TaskService(root, new ToolRegistry([new MockTool()]), {
+      conciergeAgent: hang.agent,
+    });
+    app = createApp({
+      service,
+      authStore,
+      browserSessions: sessions,
+      sessionCookieName: () => "boof_ui_4319",
+      linkPort: () => 4319,
+      peerAddress: () => "127.0.0.1",
+    });
+    const { code } = await sessions.createLink();
+    const signed = await request(`/auth/browser?code=${encodeURIComponent(code)}`);
+    expect(signed.status).toBe(303);
+    const token = signed.headers.get("set-cookie")!.match(/^boof_ui_4319=([^;]+)/)![1];
+    const response = await request(
+      "/api/v1/projects/shop/concierge/messages/stream",
+      json("POST", { text: "hello" }, { cookie: `boof_ui_4319=${token}` }),
+    );
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    const text = { current: "" };
+    try {
+      await readUntil(reader, text, "event: text", 2000);
+      const revokedAt = Date.now();
+      await sessions.revokeAll();
+      await readUntil(reader, text, "event: unauthorized", 2000);
+      expect(Date.now() - revokedAt).toBeLessThan(2000);
+      expect(text.current).toContain("Signed out");
+      expect(text.current).not.toContain("API key revoked");
+      expect(hang.aborted()).toBe(true);
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
   });
 });

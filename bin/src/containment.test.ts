@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentEnv } from "../../packages/runner/src/agent-env.js";
 import { agentMarkerFor } from "../../packages/runner/src/agent-marker.js";
@@ -248,7 +248,7 @@ describe("agent containment", () => {
   });
 
   describe("symlink and `..` spellings of the data root are refused (canonical form)", () => {
-    const name = (r: string) => r.split("/").pop()!;
+    const name = (r: string) => basename(r);
     const spellings: [string, (r: string, base: string) => Promise<string>][] = [
       ["plain", async (r) => r],
       [
@@ -256,7 +256,7 @@ describe("agent containment", () => {
         async (r, base) => {
           const a = join(base, "a");
           await symlink(join(r, ".."), a);
-          return `${a}/${name(r)}/../${name(r)}`;
+          return join(a, name(r), "..", name(r));
         },
       ],
       [
@@ -264,7 +264,7 @@ describe("agent containment", () => {
         async (r, base) => {
           const l = join(base, "l");
           await symlink(r, l);
-          return `${l}/missing/..`;
+          return join(l, "missing", "..");
         },
       ],
       [
@@ -272,7 +272,7 @@ describe("agent containment", () => {
         async (r, base) => {
           const l = join(base, "up");
           await symlink(join(r, ".."), l);
-          return `${l}/x/../${name(r)}`;
+          return join(l, "x", "..", name(r));
         },
       ],
     ];

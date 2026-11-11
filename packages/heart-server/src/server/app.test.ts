@@ -2,7 +2,7 @@ import { TEST_LOOPBACK_IS_UI } from "./test-ui-session.js";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultSettings,
@@ -714,7 +714,27 @@ describe("project registration prunes stale worktrees", () => {
     await g(["worktree", "add", "-q", wt, "-b", `boof-runner/${name}`]);
     await rm(wt, { recursive: true, force: true });
     const list = async () => (await g(["worktree", "list", "--porcelain"])).stdout;
-    expect(await list()).toContain(wt);
+    const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+    const canon = async (p: string) => {
+      try {
+        return await realpath(p);
+      } catch {
+        try {
+          return join(await realpath(dirname(p)), basename(p));
+        } catch {
+          return p;
+        }
+      }
+    };
+    const listed = await list();
+    const want = norm(await canon(wt));
+    const found = await Promise.all(
+      listed
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("worktree "))
+        .map(async (line) => norm(await canon(line.slice("worktree ".length)))),
+    );
+    expect(found).toContain(want);
     return list;
   };
 

@@ -41,6 +41,19 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 async function procState(pid: number): Promise<string> {
+  // macOS has no /proc. `ps` state is empty once the process is gone, and `Z` while it is a zombie.
+  if (process.platform === "darwin") {
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const out = await promisify(execFile)("ps", ["-o", "state=", "-p", String(pid)], {
+        encoding: "utf8",
+      });
+      return out.stdout.trim();
+    } catch {
+      return "";
+    }
+  }
   try {
     return (await readFile(`/proc/${pid}/stat`, "utf8")).split(" ")[2] ?? "";
   } catch {
@@ -562,7 +575,8 @@ describe("ClaudeAgentTool", () => {
     }
   });
 
-  it.each(["stop", "timeout", "stall", "abort"] as const)(
+  // POSIX process groups. Windows has no kill(-pid), so the grandchild keeps the temp directory busy.
+  it.skipIf(process.platform === "win32").each(["stop", "timeout", "stall", "abort"] as const)(
     "kills the full process group and retains its pid record until exit on %s",
     async (cause) => {
       const dir = await mkdtemp(join(tmpdir(), "claude-agent-process-group-"));

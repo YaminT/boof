@@ -105,6 +105,12 @@ interface Check {
   statFn: typeof stat;
   /** When set, unsafe ancestors are collected here instead of thrown. */
   collect?: UnsafeSecretPathError[];
+  /**
+   * Ancestors already accepted by this check. `checkLinkOwners` walks every path component,
+   * and each walk used to stat the same parents again. A directory is recorded only after it
+   * passes, so a refusal is never skipped.
+   */
+  safeAncestors: Set<string>;
 }
 
 async function makeCheck(
@@ -120,6 +126,7 @@ async function makeCheck(
     lstatFn: opts.lstat ?? lstat,
     statFn: opts.stat ?? stat,
     collect,
+    safeAncestors: new Set(),
   };
 }
 
@@ -225,6 +232,23 @@ function fail(path: string, message: string): never {
   throw new UnsafeSecretPathError(path, `${path} ${message}`);
 }
 
+/**
+ * Path of `absolutePath` relative to the data root, or null when it is outside.
+ * `resolve` does not follow symlinks, so a root under `/var` (a symlink to
+ * `/private/var` on macOS) is not equal to `realpath(root)`. The root itself is
+ * inside when either spelling matches. A link whose target leaves the root is
+ * still refused by the link-owner walk.
+ */
+function relativeInside(absolutePath: string, root: string, resolvedRoot: string): string | null {
+  const lexical = resolve(root);
+  if (absolutePath === lexical || absolutePath === resolvedRoot) return "";
+  for (const base of [lexical, resolvedRoot]) {
+    const prefix = `${base}${sep}`;
+    if (absolutePath.startsWith(prefix)) return absolutePath.slice(prefix.length);
+  }
+  return null;
+}
+
 async function checkLinkOwners(path: string, check: Check, depth = 0): Promise<void> {
   const { uid, lstatFn } = check;
   if (depth > 40) fail(path, "has too many symbolic links; use a real data root");
@@ -273,17 +297,23 @@ async function walkAncestors(rootPath: string, check: Check): Promise<void> {
   const { uid, statFn } = check;
   let current = dirname(rootPath);
   while (current !== dirname(current)) {
+    if (check.safeAncestors.has(current)) return;
     const st = await statFn(current);
     const mode = st.mode & 0o7777;
     if (st.uid !== 0 && st.uid !== uid)
       fail(current, `is owned by uid ${st.uid}; use a directory owned by your uid or root`);
-    if ((mode & 0o1000) !== 0) return;
+    if ((mode & 0o1000) !== 0) {
+      check.safeAncestors.add(current);
+      return;
+    }
     if ((mode & 0o002) !== 0) fail(current, `is world-writable; run chmod o-w ${current}`);
     if ((mode & 0o020) !== 0 && !(st.uid === uid && check.isPrivate(st.gid)))
       fail(
         current,
         `is group-writable by a group that is not your private group; run chmod g-w ${current}`,
       );
+    // Safe, including a root-owned directory where the walk stops on purpose.
+    check.safeAncestors.add(current);
     if (st.uid === 0) return;
     current = dirname(current);
   }
@@ -382,14 +412,7 @@ export async function assertSafeForSecrets(
   }
 
   const absolutePath = resolve(path);
-  const relative =
-    absolutePath === resolvedRoot
-      ? ""
-      : absolutePath.startsWith(`${resolve(root)}${sep}`)
-        ? absolutePath.slice(resolve(root).length + 1)
-        : absolutePath.startsWith(`${resolvedRoot}${sep}`)
-          ? absolutePath.slice(resolvedRoot.length + 1)
-          : null;
+  const relative = relativeInside(absolutePath, root, resolvedRoot);
   if (relative === null)
     fail(path, "is outside the data root; keep secret files inside the data root");
   const resolvedPath = join(resolvedRoot, relative);
@@ -637,16 +660,7 @@ async function assertSafeWindows(
     current = next;
   }
   const absolutePath = resolve(path);
-  const rootPrefix = `${resolve(root)}${sep}`;
-  const realPrefix = `${resolvedRoot}${sep}`;
-  const relative =
-    absolutePath === resolvedRoot
-      ? ""
-      : absolutePath.startsWith(rootPrefix)
-        ? absolutePath.slice(rootPrefix.length)
-        : absolutePath.startsWith(realPrefix)
-          ? absolutePath.slice(realPrefix.length)
-          : null;
+  const relative = relativeInside(absolutePath, root, resolvedRoot);
   if (relative === null)
     fail(path, "is outside the data root; keep secret files inside the data root");
   const target = relative === "" ? resolvedRoot : join(resolvedRoot, relative);
@@ -684,7 +698,7 @@ async function requireUserOnly(
 ): Promise<void> {
   let view = await acl.readAcl(path);
   if (!view.ok) fail(path, `access list could not be read (${view.error})`);
-  // A root (tighten) drops inherited entries. A child may keep this user's inherited allow.
+  // A root accepts inherited private principals; a child may also keep this user's inherited allow.
   if (!aclNeedsTighten(view.aces, user.sid, { acceptInheritedUser: !tighten })) return;
   if (tighten) {
     await acl.tightenToUser(path, user);

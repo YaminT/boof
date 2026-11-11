@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dataRootPaths } from "./paths.js";
 import {
@@ -130,7 +130,7 @@ describe("settings compatibility", () => {
     expect(s.runner.concurrency).toBe(1);
     expect(s.defaultProject).toBeNull();
     expect(resolveWorktreeRoot(worktreeSettings(s), "/tmp/x")).toBe(
-      "/tmp/x/.boof-runner-worktrees",
+      join("/tmp/x", ".boof-runner-worktrees"),
     );
   });
 
@@ -153,8 +153,8 @@ describe("settings compatibility", () => {
 
   it("resolves the worktree root: unset, relative, ~, absolute", () => {
     const wd = "/tmp/x";
-    expect(resolveWorktreeRoot({}, wd)).toBe("/tmp/x/.boof-runner-worktrees");
-    expect(resolveWorktreeRoot({ root: "../wt" }, wd)).toBe("/tmp/wt");
+    expect(resolveWorktreeRoot({}, wd)).toBe(join(wd, ".boof-runner-worktrees"));
+    expect(resolveWorktreeRoot({ root: "../wt" }, wd)).toBe(resolve(wd, "../wt"));
     expect(resolveWorktreeRoot({ root: "~/wts/a" }, wd)).toBe(join(homedir(), "wts", "a"));
     expect(resolveWorktreeRoot({ root: "~" }, wd)).toBe(homedir());
     expect(resolveWorktreeRoot({ root: "/abs/wt" }, wd)).toBe("/abs/wt");
@@ -362,7 +362,7 @@ describe("effectiveSettings", () => {
     const g = defaultSettings();
     const e = effectiveSettings(g, project({ worktree: { onDone: "delete" } }));
     expect(resolveWorktreeRoot(worktreeSettings(e), e.workingDirectory)).toBe(
-      "/repos/app/.boof-runner-worktrees",
+      join("/repos/app", ".boof-runner-worktrees"),
     );
     expect(worktreeSettings(e).onDone).toBe("delete");
   });

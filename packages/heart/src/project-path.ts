@@ -1,4 +1,4 @@
-import { access, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Settings } from "./schema.js";
@@ -24,19 +24,14 @@ export function isInsidePath(parent: string, child: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel));
 }
 
-async function exists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Resolves a path that may not exist yet: realpaths the deepest existing ancestor (following
  * symlinks) and re-joins the missing segments. Never creates anything. `exists` is true when
  * `target` itself exists.
+ *
+ * `access()` on Windows can succeed for a dangling symlink, and `realpath` then throws ENOENT.
+ * Walking on that error (instead of treating access failure as absence) keeps the link in the
+ * tail so the caller can refuse it, rather than leaking the ENOENT.
  */
 export async function resolveUnbornPath(
   target: string,
@@ -44,11 +39,18 @@ export async function resolveUnbornPath(
   if (!isAbsolute(target)) throw new Error("path must be absolute");
   let dir = resolve(target);
   const tail: string[] = [];
-  while (!(await exists(dir))) {
-    tail.unshift(basename(dir));
+  for (;;) {
+    try {
+      return { real: join(await realpath(dir), ...tail), exists: tail.length === 0 };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // ENOTDIR: an ancestor is a file. Walk up so the caller can say so, instead of leaking it.
+      if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES" && code !== "EPERM")
+        throw err;
+    }
     const parent = dirname(dir);
-    if (parent === dir) break;
+    if (parent === dir) return { real: dir, exists: false };
+    tail.unshift(basename(dir));
     dir = parent;
   }
-  return { real: join(await realpath(dir), ...tail), exists: tail.length === 0 };
 }

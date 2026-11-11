@@ -23,6 +23,20 @@ import { createApp } from "./app.js";
 import { TaskService } from "../api/index.js";
 import { DataWatcher } from "./watch.js";
 
+/** os.homedir() reads HOME on POSIX and USERPROFILE on Windows. Tests set both. */
+function withHome(dir: string): () => void {
+  const savedHome = process.env.HOME;
+  const savedProfile = process.env.USERPROFILE;
+  process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
+  return () => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    if (savedProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = savedProfile;
+  };
+}
+
 let base: string; // holds the data root and the repositories
 let root: string;
 let service: TaskService;
@@ -616,17 +630,16 @@ describe("project registration by non-local principals (project_root_not_allowed
   });
 
   it("expands ~ in allowed roots", async () => {
-    const home = process.env.HOME;
     const fakeHome = join(base, "home");
     await mkdir(join(fakeHome, "codes"), { recursive: true });
-    process.env.HOME = fakeHome;
+    const restore = withHome(fakeHome);
     try {
       await setSecurity({ allowedProjectRoots: ["~/codes"] });
       const dir = await repo("app", { parent: join(fakeHome, "codes") });
       expect((await create(dir)).status).toBe(200);
       expect((await create(await repo("elsewhere"))).status).toBe(403);
     } finally {
-      process.env.HOME = home;
+      restore();
     }
   });
 
@@ -817,15 +830,14 @@ describe("project registration by non-local principals (project_root_not_allowed
       expect(existsSync(join(root, "x"))).toBe(false);
       const home = join(base, "fake-home");
       await mkdir(home, { recursive: true });
-      const saved = process.env.HOME;
-      process.env.HOME = home;
+      const restore = withHome(home);
       try {
         const atHome = await createPath({ mode: "new", directory: home, confirm: true }, "");
         expect(atHome.status).toBe(400);
         expect((await atHome.json()).error.code).toBe("invalid_input");
         expect(existsSync(join(home, ".git"))).toBe(false);
       } finally {
-        process.env.HOME = saved;
+        restore();
       }
     });
 
@@ -833,15 +845,14 @@ describe("project registration by non-local principals (project_root_not_allowed
       await setSecurity({ allowedProjectRoots: ["/"] });
       const home = join(base, "fake-home");
       await mkdir(home, { recursive: true });
-      const saved = process.env.HOME;
-      process.env.HOME = home;
+      const restore = withHome(home);
       try {
         const res = await createPath({ mode: "new", directory: home, confirm: true });
         expect(res.status).toBe(403);
         expect((await res.json()).error.code).toBe("project_root_not_allowed");
         expect(existsSync(join(home, ".git"))).toBe(false);
       } finally {
-        process.env.HOME = saved;
+        restore();
       }
     });
   });
@@ -1029,15 +1040,14 @@ describe("project creation with path and brief", () => {
     await mkdir(fakeHome, { recursive: true });
     await new SettingsStore(root).update({ projectsRoot: null });
     await create({ workingDirectory: await repo("dup"), id: "dup" });
-    const saved = process.env.HOME;
-    process.env.HOME = fakeHome;
+    const restore = withHome(fakeHome);
     try {
       const res = await create({ path: { mode: "auto" }, id: "dup", brief: "b" });
       expect(res.status).toBe(409);
       expect((await res.json()).error.code).toBe("conflict");
       expect(existsSync(join(fakeHome, "boof-projects"))).toBe(false);
     } finally {
-      process.env.HOME = saved;
+      restore();
     }
   });
 
@@ -1253,17 +1263,16 @@ describe("worktree.root for non-local principals (project_root_not_allowed)", ()
   });
 
   it("expands ~ and refuses a relative root in the global settings", async () => {
-    const home = process.env.HOME;
     const fakeHome = join(base, "home");
     await mkdir(join(fakeHome, "codes"), { recursive: true });
-    process.env.HOME = fakeHome;
+    const restore = withHome(fakeHome);
     try {
       await setSecurity({ allowedProjectRoots: ["~/codes"] });
       expect((await setGlobal("~/codes/wt")).status).toBe(200);
       expect((await setGlobal("~/other")).status).toBe(403);
       expect((await setGlobal("relative/wt")).status).toBe(403);
     } finally {
-      process.env.HOME = home;
+      restore();
     }
   });
 

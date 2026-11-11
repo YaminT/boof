@@ -119,8 +119,10 @@ describe("N8nWatcher", () => {
         process.umask(old);
       }
       const paths = dataRootPaths(root);
-      expect((await stat(paths.n8nSeen)).mode & 0o777).toBe(0o600);
-      expect((await stat(paths.n8nWorkflows)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32")
+        expect((await stat(paths.n8nSeen)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32")
+        expect((await stat(paths.n8nWorkflows)).mode & 0o777).toBe(0o600);
     },
   );
 

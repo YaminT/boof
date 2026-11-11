@@ -45,47 +45,53 @@ describe("path builders reject non-kebab ids", () => {
 
 describe("data root layout v2 paths", () => {
   it("dataRootPaths and projectPaths", () => {
-    expect(dataRootPaths("/d")).toMatchObject({
-      root: "/d",
-      settings: "/d/settings.json",
-      runnerPid: "/d/.runner.pid",
-      commands: "/d/commands",
-      projects: "/d/projects",
-      auth: "/d/auth",
-      audit: "/d/audit",
-      owlishProjectKeys: "/d/owlish/project-keys.json",
-      claudeAgentConfigs: "/d/claude-agent-config",
+    const d = "/d";
+    expect(dataRootPaths(d)).toMatchObject({
+      root: d,
+      settings: join(d, "settings.json"),
+      runnerPid: join(d, ".runner.pid"),
+      commands: join(d, "commands"),
+      projects: join(d, "projects"),
+      auth: join(d, "auth"),
+      audit: join(d, "audit"),
+      owlishProjectKeys: join(d, "owlish", "project-keys.json"),
+      claudeAgentConfigs: join(d, "claude-agent-config"),
     });
-    expect(projectPaths("/d", "app")).toEqual({
-      dir: "/d/projects/app",
-      json: "/d/projects/app/project.json",
-      tasks: "/d/projects/app/tasks",
-      plans: "/d/projects/app/plans",
-      usage: "/d/projects/app/usage.json",
-      events: "/d/projects/app/events.jsonl",
-      epics: "/d/projects/app/epics.json",
+    expect(projectPaths(d, "app")).toEqual({
+      dir: join(d, "projects", "app"),
+      json: join(d, "projects", "app", "project.json"),
+      tasks: join(d, "projects", "app", "tasks"),
+      plans: join(d, "projects", "app", "plans"),
+      usage: join(d, "projects", "app", "usage.json"),
+      events: join(d, "projects", "app", "events.jsonl"),
+      epics: join(d, "projects", "app", "epics.json"),
     });
   });
 
   it("dataPaths stays as a deprecated alias", () => {
-    expect(dataPaths("/d")).toMatchObject({ settings: "/d/settings.json", tasks: "/d/tasks" });
+    expect(dataPaths("/d")).toMatchObject({
+      settings: join("/d", "settings.json"),
+      tasks: join("/d", "tasks"),
+    });
   });
 
   it("builds isolated Claude config paths by project", () => {
-    expect(claudeAgentConfigDir("/d", "app")).toBe("/d/claude-agent-config/app");
+    expect(claudeAgentConfigDir("/d", "app")).toBe(join("/d", "claude-agent-config", "app"));
     expect(() => claudeAgentConfigDir("/d", "../escape")).toThrow(InvalidIdError);
   });
 
   it("builds concierge directories under the data root", () => {
-    expect(conciergeDir("/d", "app")).toBe("/d/concierge/app");
-    expect(conciergeConfigDir("/d", "app")).toBe("/d/concierge/app/claude-config");
-    expect(conciergeScratchDir("/d", "app")).toBe("/d/concierge/app/cwd");
+    expect(conciergeDir("/d", "app")).toBe(join("/d", "concierge", "app"));
+    expect(conciergeConfigDir("/d", "app")).toBe(join("/d", "concierge", "app", "claude-config"));
+    expect(conciergeScratchDir("/d", "app")).toBe(join("/d", "concierge", "app", "cwd"));
     expect(() => conciergeDir("/d", "../escape")).toThrow(InvalidIdError);
   });
 
   it("a project dir is a valid root for the task path helpers", () => {
     const { dir } = projectPaths("/d", "app");
-    expect(taskFilePath(dir, "pending", "t1")).toBe("/d/projects/app/tasks/pending/t1.md");
+    expect(taskFilePath(dir, "pending", "t1")).toBe(
+      join("/d", "projects", "app", "tasks", "pending", "t1.md"),
+    );
   });
 });
 
