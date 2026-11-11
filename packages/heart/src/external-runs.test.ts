@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -142,6 +143,52 @@ describe("ExternalRunStore", () => {
     expect((await files()).filter((f) => f.endsWith(".closed"))).toEqual([]);
     // Each open, complete and cancel re-reads the Windows ACL.
   }, 90_000);
+
+  it.skipIf(process.platform !== "win32")(
+    "Windows stress: complete and cancel have exactly one winner over 300 races",
+    async () => {
+      const store = new ExternalRunStore(root);
+      for (let i = 0; i < 300; i++) {
+        const r = await store.open(INPUT);
+        const [complete, cancel] = await Promise.all([
+          store.complete(r.runId, RESULT),
+          store.cancel(r.runId),
+        ]);
+        expect(Number(complete) + Number(cancel)).toBe(1);
+      }
+      expect((await files()).some((f) => f.endsWith(".closed"))).toBe(false);
+    },
+    180_000,
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "Windows stress: a one-shot EPERM during result rename cannot create a second winner",
+    async () => {
+      let enteredRename!: () => void;
+      let releaseRename!: () => void;
+      const atRename = new Promise<void>((resolve) => (enteredRename = resolve));
+      const blockedRename = new Promise<void>((resolve) => (releaseRename = resolve));
+      let inject = true;
+      const store = new ExternalRunStore(root, Date.now, async (from, to) => {
+        if (inject && to.endsWith(".result.json")) {
+          inject = false;
+          enteredRename();
+          await blockedRename;
+          throw Object.assign(new Error("injected rename failure"), { code: "EPERM" });
+        }
+        return rename(from, to);
+      });
+      const r = await store.open(INPUT);
+      const completion = store.complete(r.runId, RESULT);
+      await atRename;
+      expect(await store.cancel(r.runId)).toBe(false);
+      releaseRename();
+      await expect(completion).rejects.toMatchObject({ code: "EPERM" });
+      expect(await store.complete(r.runId, RESULT)).toBe(true);
+      expect(await store.cancel(r.runId)).toBe(false);
+    },
+    30_000,
+  );
 
   it("cancel then complete → false and no result", async () => {
     const store = new ExternalRunStore(root);

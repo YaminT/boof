@@ -1,5 +1,16 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, utimes } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { lockedAtomicWrite } from "./atomic.js";
@@ -50,8 +61,8 @@ const sha256 = (s: string): Buffer => createHash("sha256").update(s).digest();
 /**
  * Single-use run records for external (n8n) steps, one set of files per run in
  * `<data>/external-runs/` (folder 0700, files 0600):
- * `<runId>.json` open record, `<runId>.closed` after the closing rename, `<runId>.result.json`.
- * The record keeps only sha256(token). `rename(.json → .closed)` is the single arbiter between
+ * `<runId>.json` open record, `<runId>.closed` after the closing claim, `<runId>.result.json`.
+ * The record keeps only sha256(token). An exclusive create of `.closed` arbitrates between
  * a callback, a replay, a timeout and a stop.
  */
 export class ExternalRunStore {
@@ -60,6 +71,7 @@ export class ExternalRunStore {
   constructor(
     private readonly root: string,
     private readonly now: () => number = Date.now,
+    private readonly renameFile: typeof rename = rename,
   ) {
     this.dir = dataRootPaths(this.root).externalRuns;
   }
@@ -165,26 +177,34 @@ export class ExternalRunStore {
   private async close(runId: string): Promise<boolean> {
     const from = this.p(runId, ".json");
     const to = this.p(runId, ".closed");
-    for (let attempt = 0; attempt < 8; attempt++) {
-      try {
-        await rename(from, to);
-        // rename keeps the open time; prune ages `.closed` from the close time.
-        const t = new Date(this.now());
-        await utimes(to, t, t).catch(() => {});
-        return true;
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") return false;
-        // Windows antivirus and a concurrent rename return EPERM/EBUSY for a moment.
-        // Retry the same arbiter. A later ENOENT means the other caller already closed it.
-        if ((code === "EPERM" || code === "EBUSY") && attempt < 7) {
-          await new Promise((r) => setTimeout(r, 15));
-          continue;
-        }
-        throw err;
-      }
+    let record: Buffer;
+    try {
+      record = await readFile(from);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
     }
-    return false;
+    // Windows can report success for competing renames of the same source, and a retry can
+    // overlap complete() restoring .json after a result-write failure. An exclusive create
+    // makes the winner explicit; only that caller may remove the open record and return true.
+    try {
+      await writeFile(to, record, { flag: "wx", mode: 0o600 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      await rm(to, { force: true }).catch(() => {});
+      throw err;
+    }
+    try {
+      await rm(from);
+    } catch (err) {
+      await rm(to, { force: true }).catch(() => {});
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+    // Prune ages `.closed` from the close time.
+    const t = new Date(this.now());
+    await utimes(to, t, t).catch(() => {});
+    return true;
   }
 
   /**
@@ -219,11 +239,11 @@ export class ExternalRunStore {
       throw err;
     }
     try {
-      await rename(tmp, this.p(runId, ".result.json"));
+      await this.renameFile(tmp, this.p(runId, ".result.json"));
     } catch (err) {
       // Nothing else creates <runId>.json, so reopening the run is safe.
       await rm(tmp, { force: true });
-      await rename(this.p(runId, ".closed"), this.p(runId, ".json")).catch(() => {});
+      await this.renameFile(this.p(runId, ".closed"), this.p(runId, ".json")).catch(() => {});
       throw err;
     }
     await rm(this.p(runId, ".closed"), { force: true });
@@ -234,14 +254,7 @@ export class ExternalRunStore {
   async cancel(runId: string): Promise<boolean> {
     if (!EXTERNAL_RUN_ID.test(runId)) return false;
     await this.guard(true);
-    let closed: boolean;
-    try {
-      closed = await this.close(runId);
-    } catch (err) {
-      // Windows: a transient EPERM/EBUSY (antivirus) on rename counts as "not closed".
-      if (process.platform === "win32") return false;
-      throw err;
-    }
+    const closed = await this.close(runId);
     if (!closed) return false;
     await rm(this.p(runId, ".closed"), { force: true });
     return true;

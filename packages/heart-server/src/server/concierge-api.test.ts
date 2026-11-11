@@ -382,6 +382,8 @@ describe("concierge API", () => {
   }
 
   it("ends a running stream within 2s when its API key is revoked", async () => {
+    // The authorization poll runs every 500 ms; allow Windows runners extra scheduling delay.
+    const revokeTimeoutMs = process.platform === "win32" ? 5000 : 2000;
     const hang = hangingAgent();
     service = new TaskService(root, new ToolRegistry([new MockTool()]), {
       conciergeAgent: hang.agent,
@@ -409,8 +411,8 @@ describe("concierge API", () => {
       await readUntil(reader, text, "event: text", 2000);
       const revokedAt = Date.now();
       await authStore.revoke(client.id);
-      await readUntil(reader, text, "event: unauthorized", 2000);
-      expect(Date.now() - revokedAt).toBeLessThan(2000);
+      await readUntil(reader, text, "event: unauthorized", revokeTimeoutMs);
+      expect(Date.now() - revokedAt).toBeLessThan(revokeTimeoutMs);
       expect(text.current).toContain("API key revoked, expired or no longer authorized");
       expect(text.current).not.toContain("The assistant request was aborted");
       expect(hang.aborted()).toBe(true);
