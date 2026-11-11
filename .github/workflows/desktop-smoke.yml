@@ -60,6 +60,7 @@ jobs:
         env:
           BOOF_SMOKE_EXPECTED_VERSION: ${{ github.event.inputs.tag && github.event.inputs.tag || github.ref_name }}
           BOOF_SMOKE_USER_DATA: ${{ runner.temp }}/boof-desktop-smoke
+          BOOF_SMOKE_NO_SANDBOX: ${{ runner.os == 'Linux' && '1' || '' }}
           HOME: ${{ runner.temp }}/boof-desktop-smoke-home
           USERPROFILE: ${{ runner.temp }}/boof-desktop-smoke-home
         run: |

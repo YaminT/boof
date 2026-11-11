@@ -21,7 +21,12 @@ await mkdir(userData, { recursive: true });
 await mkdir(process.env.HOME ?? userData, { recursive: true });
 await mkdir(process.env.USERPROFILE ?? userData, { recursive: true });
 const electron = (await import("electron")).default;
-const child = spawn(electron, [marker, stagedApp], {
+const electronArgs = [
+  ...(process.env.BOOF_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : []),
+  marker,
+  stagedApp,
+];
+const child = spawn(electron, electronArgs, {
   cwd: repo,
   env: {
     ...process.env,
