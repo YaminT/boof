@@ -4,7 +4,21 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { execCommand, killWindowsProcessTree, MAX_ARG_STRLEN } from "./process.js";
+import {
+  execCommand as runExecCommand,
+  killWindowsProcessTree,
+  MAX_ARG_STRLEN,
+  type ExecCommandDeps,
+  type ExecOptions,
+} from "./process.js";
+
+type TestExecOptions = Omit<ExecOptions, "launch"> & { launch?: ExecOptions["launch"] };
+const execCommand = (
+  command: string,
+  args: string[],
+  opts: TestExecOptions,
+  deps?: ExecCommandDeps,
+) => runExecCommand(command, args, { ...opts, launch: opts.launch ?? { kind: "direct" } }, deps);
 
 describe("execCommand", () => {
   it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {

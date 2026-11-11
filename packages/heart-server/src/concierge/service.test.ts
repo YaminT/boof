@@ -713,9 +713,9 @@ describe("ConciergeService", () => {
     value.concierge = { messagesPerMinute: 1 };
     await settings.save(value);
     agent = scriptedAgent([{ text: "one" }]);
-    concierge = new ConciergeService({ root, services, authStore, agent });
+    concierge = buildConcierge();
     await ask("first");
-    const again = new ConciergeService({ root, services, authStore, agent });
+    const again = buildConcierge();
     await again.ask(LOCAL_PRINCIPAL, "demo", { text: "second" });
     expect(await readdir(root)).not.toContain("ratelimit");
   });
