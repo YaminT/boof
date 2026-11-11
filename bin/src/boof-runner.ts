@@ -124,7 +124,7 @@ scan options:
       --tool <id>     Force all roles to this tool for the created tasks
       --model <name>  Model for --tool
 
-Exit codes: 0 success; 1 a task failed / was stopped / parked / nothing actionable / bad usage; operation commands: 2 not found, 3 not allowed (identity, scope, project, trust), 130 interrupted.`;
+Exit codes: 0 success; 1 a task failed / was stopped / parked / bad usage; operation commands: 2 not found, 3 not allowed (identity, scope, project, trust), 130 interrupted.`;
 
 /** True when the bind address only accepts connections from this machine. */
 function isLoopbackBind(host: string): boolean {

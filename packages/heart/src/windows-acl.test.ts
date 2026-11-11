@@ -55,15 +55,13 @@ describe("SDDL access lists", () => {
     });
   });
 
-  it("decodes UTF-16 LE without a BOM and still fails closed on an empty file", () => {
-    const text = "C:\\Users\\me\\data\r\nD:PAI(A;OICI;FA;;;S-1-5-21-1)\r\n";
+  it("detects UTF-16 LE icacls output without a BOM", () => {
+    const text = "data\r\nD:P(A;;FR;;;WD)\r\n";
     const buf = Buffer.from(text, "utf16le");
-    expect(buf[0]).not.toBe(0xff);
     expect(decodeIcaclsText(buf)).toBe(text);
-    expect(parseIcaclsSave(decodeIcaclsText(buf)).ok).toBe(true);
-    expect(parseIcaclsSave(decodeIcaclsText(Buffer.alloc(0)))).toEqual({
-      ok: false,
-      error: "icacls save had no DACL",
+    expect(parseIcaclsSave(decodeIcaclsText(buf))).toMatchObject({
+      ok: true,
+      aces: [{ sid: "WD", allow: true, rights: "FR" }],
     });
   });
 

@@ -125,7 +125,11 @@ export const n8nGet = defineOp({
   projectScoped: false,
   input: z.strictObject({}),
   output: N8nInfoSchema,
-  rest: { method: "GET", path: "/n8n" },
+  rest: {
+    method: "GET",
+    path: "/n8n",
+    text: (r: N8nInfo) => (r.configured ? `n8n at ${r.baseUrl}` : "configured: false"),
+  },
   mcp: { expose: true, name: "boof_get_n8n", annotations: READ },
   summary: (r) => (r.configured ? `n8n at ${r.baseUrl}` : "n8n is not configured"),
   handler: async (ctx) => infoOf(ctx, (await ctx.services.loadSettings()).n8n),

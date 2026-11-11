@@ -88,12 +88,12 @@ describe("runTask (headless)", () => {
     expect(res.status).toBe("done");
     const task = await tasksOf(res.projectId).get(res.id);
     expect(task?.frontmatter.status).toBe("done");
-    // The passed repo was registered as a project; only runner.enabled changed in settings.
+    // The passed repo was registered as a project; stored settings stay untouched.
     const projects = await projectsOf().list();
     expect(projects.map((p) => p.workingDirectory)).toEqual([repo]);
     expect(projects[0]!.origin).toEqual({ kind: "cli" });
     const settings = await new SettingsStore(dataRoot).load();
-    expect(settings.runner.enabled).toBe(true);
+    expect(settings.runner.enabled).toBe(false);
     expect(settings).not.toHaveProperty("workingDirectory");
     expect(settings.defaultProject).toBeNull();
   });
@@ -294,6 +294,7 @@ describe("scanRepoToTasks (scan mode)", () => {
     const drain = await drainQueue({ root: dataRoot, registry: registry(), out: silent });
     expect(drain.ran).toBe(2);
     expect(drain.failed).toBe(0);
+    expect((await new SettingsStore(dataRoot).load()).runner.enabled).toBe(false);
 
     // Both scanned goal files were bumped to done.
     expect(
@@ -512,7 +513,7 @@ describe("multi-project run and scan", () => {
     expect(res).toMatchObject({ projectId: "app", ok: true });
   });
 
-  it("never writes a working directory to settings; runner.enabled is the only change and is logged", async () => {
+  it("runs tasks without changing the runner.enabled setting", async () => {
     const store = new SettingsStore(dataRoot);
     const before = await store.load();
     expect(before.runner.enabled).toBe(false);
@@ -526,9 +527,11 @@ describe("multi-project run and scan", () => {
       out: (c) => (output += c),
     });
     const after = await store.load();
-    expect(after).toEqual({ ...before, runner: { ...before.runner, enabled: true } });
-    expect(output).toContain("runner.enabled = true");
-    // Already enabled: no further change, no further log line.
+    expect(after).toEqual(before);
+    expect(output).not.toContain("runner.enabled");
+    // An already enabled runner also keeps its setting.
+    await store.update({ runner: { enabled: true } });
+    const enabled = await store.load();
     output = "";
     await runTask({
       root: dataRoot,
@@ -538,6 +541,7 @@ describe("multi-project run and scan", () => {
       registry: registry(),
       out: (c) => (output += c),
     });
+    expect(await store.load()).toEqual(enabled);
     expect(output).not.toContain("runner.enabled");
   });
 
@@ -635,6 +639,7 @@ describe("multi-project run and scan", () => {
       console.log = log;
     }
     expect(code).toBe(0);
+    expect((await new SettingsStore(dataRoot).load()).runner.enabled).toBe(false);
     for (const p of projects) {
       const tasks = await tasksOf(p.id).list();
       expect(tasks.map((t) => t.frontmatter.status)).toEqual(["done"]);

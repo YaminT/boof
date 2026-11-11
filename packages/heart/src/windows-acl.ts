@@ -185,14 +185,19 @@ export function parseIcaclsSave(text: string): AclView {
 export function decodeIcaclsText(buf: Buffer): string {
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe)
     return buf.subarray(2).toString("utf16le");
-  const utf8 = buf.toString("utf8");
-  // `icacls /save` on Windows is often UTF-16 LE without a BOM. ASCII SDDL then
-  // has a NUL in every other byte, so the text does not contain the letters "D:".
-  // An empty or unreadable file stays as-is and the caller fails closed.
-  if (!utf8.includes("D:") && buf.length >= 4 && buf[1] === 0 && buf[3] === 0) {
-    return buf.toString("utf16le");
+  // icacls /save commonly emits UTF-16LE without a BOM. ASCII-heavy output contains
+  // zero bytes in every other position, which distinguishes it from its UTF-8 form.
+  const sampleLength = Math.min(buf.length, 128);
+  let oddZeros = 0;
+  let evenZeros = 0;
+  for (let i = 0; i < sampleLength; i++) {
+    if (buf[i] === 0) {
+      if (i % 2 === 0) evenZeros++;
+      else oddZeros++;
+    }
   }
-  return utf8;
+  if (oddZeros > sampleLength / 8 && oddZeros > evenZeros * 2) return buf.toString("utf16le");
+  return buf.toString("utf8");
 }
 
 export interface AclTightenOptions {

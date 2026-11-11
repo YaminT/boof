@@ -35,6 +35,14 @@ describe("install script", () => {
     expect(r).toMatchObject({ code: 0, stdout: "sourced\n" });
   });
 
+  it("uses BOOF_RUNNER_DIR before the checkout containing the script", async () => {
+    const chosen = join(dir, "chosen-checkout");
+    const r = await run("bash", ["-c", 'source "$BOOF_SCRIPT"; source_dir', "fn"], {
+      env: { ...process.env, BOOF_SCRIPT: script, BOOF_RUNNER_DIR: chosen },
+    });
+    expect(r.stdout).toBe(`${chosen}\n`);
+  });
+
   it("reads the Node floor from package.json and compares major.minor.patch", async () => {
     await writeFile(join(dir, "package.json"), JSON.stringify({ engines: { node: ">=22.22" } }));
     expect((await fn('node_floor "$1"', dir)).stdout).toBe(">=22.22\n");

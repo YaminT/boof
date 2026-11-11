@@ -87,7 +87,7 @@ describe("workspace manifests", () => {
 
   it("keeps the Claude Agent SDK in CLI/server installs and outside desktop bundles", async () => {
     const sdk = "@anthropic-ai/claude-agent-sdk";
-    const expected = "0.3.318";
+    const expected = "0.3.322";
     for (const rel of ["packages/runner", "bin", "."]) {
       const pkg = await read(rel);
       expect(pkg.dependencies?.[sdk], `${rel} dependency`).toBe(expected);
