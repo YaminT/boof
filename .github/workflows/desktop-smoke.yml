@@ -68,6 +68,18 @@ jobs:
           HOME: ${{ runner.temp }}/boof-desktop-smoke-home
           USERPROFILE: ${{ runner.temp }}/boof-desktop-smoke-home
         run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # The smoke runs with a scratch HOME, which has no login keychain. Electron's
+            # safeStorage then waits for a keychain prompt nobody can answer. Give it an
+            # unlocked one, as a real user's login keychain would be.
+            mkdir -p "$HOME/Library/Keychains"
+            kc="$HOME/Library/Keychains/login.keychain-db"
+            security create-keychain -p smoke "$kc"
+            security set-keychain-settings "$kc"
+            security unlock-keychain -p smoke "$kc"
+            security default-keychain -d user -s "$kc"
+            security list-keychains -d user -s "$kc"
+          fi
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             xvfb-run -a node packages/desktop/scripts/desktop-smoke.mjs
           else
