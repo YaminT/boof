@@ -134,4 +134,6 @@ jobs:
 
       - name: Diagnose Seatbelt denials
         if: always()
-        run: log show --last 5m --style compact --predicate 'eventMessage CONTAINS[c] "deny"' 2>&1 | tail -300
+        run: |
+          log show --last 5m --style compact --predicate 'eventMessage CONTAINS[c] "deny"' 2>&1 | tail -300
+          if [ -f "$RUNNER_TEMP/seatbelt.trace" ]; then head -400 "$RUNNER_TEMP/seatbelt.trace"; fi
