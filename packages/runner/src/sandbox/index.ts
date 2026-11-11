@@ -12,11 +12,13 @@ import {
   type SandboxMode,
   type SandboxStatus,
 } from "@boof/heart";
+import { planDarwinSandbox } from "./backend-darwin.js";
 import { planLinuxSandbox } from "./backend-linux.js";
 import { assessSandbox, type SandboxCheckDeps } from "./check.js";
 import { sandboxLaunchFor, type AgentLaunchContext } from "./runtime.js";
 
 if (process.platform === "linux") setSandboxApplier(planLinuxSandbox);
+else if (process.platform === "darwin") setSandboxApplier(planDarwinSandbox);
 
 export interface SandboxSettingsView {
   mode: SandboxMode;
@@ -82,7 +84,7 @@ async function enforceStatus(
 ): Promise<SandboxStatus> {
   const report = await assessSandbox({ ...deps, platform });
   if (!report.ok) return unavailable(platform, report.reason);
-  return { mode: "enforce", backend: "linux", state: "ok", reason: report.reason };
+  return { mode: "enforce", backend: report.backend, state: "ok", reason: report.reason };
 }
 
 /**
@@ -119,7 +121,11 @@ export async function prepareAgentLaunch(
 export { assessSandbox, type SandboxCheckReport } from "./check.js";
 export { judgeSelfTest } from "./selftest.js";
 export { planLinuxSandbox, boofSandboxHelperPath } from "./backend-linux.js";
-export { darwinSandboxStatus } from "./backend-darwin.js";
+export {
+  planDarwinSandbox,
+  darwinSandboxExecPath,
+  renderSeatbeltProfile,
+} from "./backend-darwin.js";
 export {
   boofStateHome,
   buildRunPolicy,

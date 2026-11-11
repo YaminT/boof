@@ -1,9 +1,13 @@
+#if defined(__linux__)
 #define _GNU_SOURCE
+#endif
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#if defined(__linux__)
 #include <linux/netlink.h>
+#endif
 #include <netinet/in.h>
 #include <signal.h>
 #include <stddef.h>
@@ -15,6 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__linux__)
 #ifndef IPPROTO_MPTCP
 #define IPPROTO_MPTCP 262
 #endif
@@ -26,6 +31,11 @@
 #endif
 #ifndef AF_ALG
 #define AF_ALG 38
+#endif
+#endif
+
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC 0
 #endif
 
 /* Prints one result line. The sandbox tests decide what is allowed. */
@@ -98,6 +108,8 @@ static void op_overwrite(const char *path) {
   }
 }
 
+#if defined(__linux__)
+/* Netlink, MPTCP, sendmmsg and SMC exist only on Linux. The shared ops below stay portable. */
 static int fill_loopback(int family, int port, struct sockaddr_storage *ss, socklen_t *len) {
   memset(ss, 0, sizeof *ss);
   if (family == AF_INET) {
@@ -295,6 +307,7 @@ static void op_pair_stream_connect(const char *path) {
   close(sv[0]);
   close(sv[1]);
 }
+#endif
 
 static void op_connect(int family, int port, const char *label) {
   int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -479,9 +492,25 @@ static void op_setsid(const char *mode, const char *arg) {
   waitpid(pid, NULL, 0);
 }
 
+static int pipe_cloexec(int fds[2]) {
+#if defined(__linux__)
+  return pipe2(fds, O_CLOEXEC);
+#else
+  if (pipe(fds) != 0) return -1;
+  if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(fds[1], F_SETFD, FD_CLOEXEC) != 0) {
+    int saved = errno;
+    close(fds[0]);
+    close(fds[1]);
+    errno = saved;
+    return -1;
+  }
+  return 0;
+#endif
+}
+
 static void op_double(const char *mode, const char *arg) {
   int fds[2];
-  if (pipe2(fds, O_CLOEXEC) != 0) {
+  if (pipe_cloexec(fds) != 0) {
     printf("double %s\n", errname(errno));
     return;
   }
@@ -514,6 +543,7 @@ static void op_double(const char *mode, const char *arg) {
   fputs(buf, stdout);
 }
 
+#if defined(__linux__)
 static void op_dgram_listen(const char *path) {
   int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
@@ -565,6 +595,7 @@ static void op_smc(int port) {
   printf("smc %s\n", rc == 0 ? "ok" : errname(errno));
   close(fd);
 }
+#endif
 
 static void usage(void) {
   fprintf(stderr, "probe: bad arguments\n");
@@ -606,6 +637,7 @@ int main(int argc, char **argv) {
   else if (strcmp(cmd, "setsid-connect4") == 0 && argc == 3) op_setsid("connect4", argv[2]);
   else if (strcmp(cmd, "double-read") == 0 && argc == 3) op_double("read", argv[2]);
   else if (strcmp(cmd, "double-connect4") == 0 && argc == 3) op_double("connect4", argv[2]);
+#if defined(__linux__)
   else if (strcmp(cmd, "pair-connect4") == 0 && argc == 4) {
     int denied = port_arg(argv[2]);
     int allowed = port_arg(argv[3]);
@@ -647,7 +679,9 @@ int main(int argc, char **argv) {
     op_pair_copy(SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, "pair-stream");
     op_pair_copy(SOCK_SEQPACKET | SOCK_CLOEXEC, "pair-seq");
     op_pair_stream_connect(argv[3]);
-  } else usage();
+  }
+#endif
+  else usage();
   if (fflush(stdout) != 0) return 1;
   return 0;
 }

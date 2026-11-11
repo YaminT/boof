@@ -12,7 +12,7 @@ import {
 } from "@boof/heart";
 import { prepareAgentLaunch, refreshSandbox, type SandboxSettingsView } from "./index.js";
 import { createRunTemp, type AgentLaunchContext } from "./runtime.js";
-import { linuxSandboxSuite } from "./accept-support.js";
+import { darwin, sandboxSuite } from "./accept-support.js";
 
 const enforce: SandboxSettingsView = {
   mode: "enforce",
@@ -35,7 +35,7 @@ function refusingSpawn() {
   });
 }
 
-linuxSandboxSuite("sandbox acceptance: fail closed, policy and mode off", () => {
+sandboxSuite("sandbox acceptance: fail closed, policy and mode off", () => {
   const scratch: string[] = [];
 
   afterEach(async () => {
@@ -44,6 +44,10 @@ linuxSandboxSuite("sandbox acceptance: fail closed, policy and mode off", () => 
   });
 
   it("A14 refuses a missing helper, a corrupted policy and ABI 3 before any process is spawned", async () => {
+    if (darwin) {
+      await expectA14Darwin();
+      return;
+    }
     const missing = refusingSpawn();
     await expect(
       execCommand(
@@ -192,6 +196,104 @@ linuxSandboxSuite("sandbox acceptance: fail closed, policy and mode off", () => 
     expect(fromMode.mock.calls[0]?.[2].env).toBe(env);
   });
 });
+
+/**
+ * macOS has no helper binary and no Landlock ABI. The same row is a missing sandbox-exec,
+ * a corrupt policy, a path that cannot be quoted, and a failed self-test. None of them spawn.
+ */
+async function expectA14Darwin(): Promise<void> {
+  const saved = process.env.BOOF_SANDBOX_EXEC;
+  const missing = refusingSpawn();
+  process.env.BOOF_SANDBOX_EXEC = "/no/such/sandbox-exec";
+  try {
+    await expect(
+      execCommand(
+        "true",
+        [],
+        { cwd: "/tmp", launch: { kind: "sandbox", helper: "/no/such/boof-sandbox", policy } },
+        { spawn: missing },
+      ),
+    ).rejects.toMatchObject({
+      code: "sandbox_unavailable",
+      message: "sandbox_unavailable: sandbox-exec is missing",
+    });
+  } finally {
+    if (saved === undefined) delete process.env.BOOF_SANDBOX_EXEC;
+    else process.env.BOOF_SANDBOX_EXEC = saved;
+  }
+  expect(missing).not.toHaveBeenCalled();
+
+  const corrupt = refusingSpawn();
+  await expect(
+    execCommand(
+      "true",
+      [],
+      {
+        cwd: "/tmp",
+        launch: {
+          kind: "sandbox",
+          helper: process.execPath,
+          policy: { ...policy, extra: true } as SandboxLaunchPolicy,
+        },
+      },
+      { spawn: corrupt },
+    ),
+  ).rejects.toMatchObject({
+    code: "sandbox_unavailable",
+    message: "sandbox_unavailable: sandbox policy is corrupt",
+  });
+  expect(corrupt).not.toHaveBeenCalled();
+
+  for (const path of ['/tmp/bad"path', "/tmp/bad\npath"]) {
+    const quoted = refusingSpawn();
+    await expect(
+      execCommand(
+        "true",
+        [],
+        {
+          cwd: "/tmp",
+          launch: {
+            kind: "sandbox",
+            helper: process.execPath,
+            policy: { ...policy, readExec: [path] },
+          },
+        },
+        { spawn: quoted },
+      ),
+    ).rejects.toMatchObject({
+      code: "sandbox_unavailable",
+      message: "sandbox_unavailable: sandbox policy path contains a quote or newline",
+    });
+    expect(quoted).not.toHaveBeenCalled();
+  }
+
+  const abiSpawn = refusingSpawn();
+  const status = await refreshSandbox(
+    { runner: { sandbox: enforce } },
+    {
+      platform: "darwin",
+      sandboxExecExists: () => true,
+      spawn: abiSpawn,
+      probes: async () => [
+        { id: "data-root-read", outcome: "allowed" },
+        { id: "denied-port", outcome: "denied" },
+        { id: "unix-socket", outcome: "denied" },
+        { id: "write-outside", outcome: "denied" },
+        { id: "signal", outcome: "denied" },
+        { id: "write-inside", outcome: "allowed" },
+      ],
+    },
+    { force: true },
+  );
+  expect(status).toMatchObject({
+    state: "unavailable",
+    reason: "self-test: read a file inside the data root",
+  });
+  expect(abiSpawn).not.toHaveBeenCalled();
+  await expect(prepareAgentLaunch({ runner: { sandbox: enforce } })).rejects.toMatchObject({
+    code: "sandbox_unavailable",
+  });
+}
 
 function fakeChild() {
   const child = new EventEmitter() as EventEmitter & {

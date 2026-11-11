@@ -19,6 +19,7 @@ import type { AgentLaunchContext } from "./runtime.js";
 import { createRunTemp } from "./runtime.js";
 
 const linux = process.platform === "linux";
+const darwin = process.platform === "darwin";
 const required = process.env.BOOF_REQUIRE_SANDBOX === "1";
 const here = dirname(fileURLToPath(import.meta.url));
 const sandboxDir = join(here, "../../../sandbox-linux");
@@ -47,15 +48,16 @@ function shQuote(path: string): string {
   return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
-describe.skipIf(!linux && !required)("sandbox acceptance A9-A12", () => {
-  if (!linux) {
-    it("fails closed when the Linux sandbox is required", () => {
-      throw new Error("BOOF_REQUIRE_SANDBOX=1 but the Linux sandbox backend is absent");
+describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () => {
+  if (!linux && !darwin) {
+    it("fails closed when the sandbox is required", () => {
+      throw new Error("BOOF_REQUIRE_SANDBOX=1 but this platform has no sandbox backend");
     });
     return;
   }
 
   beforeAll(() => {
+    if (!linux) return;
     const source = join(sandboxDir, "boof-sandbox.c");
     const stale = !existsSync(helper) || statSync(helper).mtimeMs < statSync(source).mtimeMs;
     if (!stale) return;
@@ -135,7 +137,12 @@ describe.skipIf(!linux && !required)("sandbox acceptance A9-A12", () => {
 
   async function sandboxed(fx: Fixture, script: string) {
     setSandboxStatus(
-      { mode: "enforce", backend: "linux", state: "ok", reason: "" },
+      {
+        mode: "enforce",
+        backend: darwin ? "darwin" : "linux",
+        state: "ok",
+        reason: "",
+      },
       sandboxSettingsFingerprint(sandboxSettings),
     );
     const launch = await prepareAgentLaunch({ runner: { sandbox: sandboxSettings } }, fx.ctx);
@@ -174,74 +181,83 @@ describe.skipIf(!linux && !required)("sandbox acceptance A9-A12", () => {
     expect(launch.policy.env.TMPDIR).toBe(fx.temp);
   }, 45_000);
 
-  it("A10 adds, commits, and reads status, diff and log", async () => {
-    const fx = await fixture();
-    const { launch, result } = await sandboxed(
-      fx,
-      [
-        "set -e",
-        "printf 'hello\\n' > sandbox-tracked.txt",
-        "git add -- sandbox-tracked.txt",
-        "git -c commit.gpgsign=false commit -m 'sandbox commit'",
-        'git status --porcelain > "$TMPDIR/status.txt"',
-        'git log -1 --format=%an > "$TMPDIR/author.txt"',
-        'if git diff --exit-code HEAD~1 -- sandbox-tracked.txt > "$TMPDIR/diff.txt"; then',
-        "  echo DIFF_CLEAN",
-        "  exit 1",
-        "fi",
-        'test ! -s "$TMPDIR/status.txt"',
-        'test -s "$TMPDIR/diff.txt"',
-        "echo A10_OK",
-      ].join("\n"),
-    );
-    expect(result.code, `${result.stderr}\n${result.stdout}`).toBe(0);
-    expect(result.stdout).toContain("A10_OK");
-    expect(launch.policy.env.GIT_AUTHOR_NAME).toBe("Ada Lovelace");
-    expect(launch.policy.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
-    const author = await git(fx.wt.path, ["log", "-1", "--format=%an%n%ae"], fx.env);
-    expect(author).toBe("Ada Lovelace\nada@example.com");
-    const status = await git(fx.wt.path, ["status", "--porcelain"], fx.env);
-    expect(status).toBe("");
-    const diff = await git(fx.wt.path, ["diff", "HEAD~1", "--", "sandbox-tracked.txt"], fx.env);
-    expect(diff).toContain("hello");
-  }, 45_000);
+  // Design section 7: macOS rows are A1–A9 and A12–A17. Git common-dir rows stay on Linux.
+  it.skipIf(darwin)(
+    "A10 adds, commits, and reads status, diff and log",
+    async () => {
+      const fx = await fixture();
+      const { launch, result } = await sandboxed(
+        fx,
+        [
+          "set -e",
+          "printf 'hello\\n' > sandbox-tracked.txt",
+          "git add -- sandbox-tracked.txt",
+          "git -c commit.gpgsign=false commit -m 'sandbox commit'",
+          'git status --porcelain > "$TMPDIR/status.txt"',
+          'git log -1 --format=%an > "$TMPDIR/author.txt"',
+          'if git diff --exit-code HEAD~1 -- sandbox-tracked.txt > "$TMPDIR/diff.txt"; then',
+          "  echo DIFF_CLEAN",
+          "  exit 1",
+          "fi",
+          'test ! -s "$TMPDIR/status.txt"',
+          'test -s "$TMPDIR/diff.txt"',
+          "echo A10_OK",
+        ].join("\n"),
+      );
+      expect(result.code, `${result.stderr}\n${result.stdout}`).toBe(0);
+      expect(result.stdout).toContain("A10_OK");
+      expect(launch.policy.env.GIT_AUTHOR_NAME).toBe("Ada Lovelace");
+      expect(launch.policy.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
+      const author = await git(fx.wt.path, ["log", "-1", "--format=%an%n%ae"], fx.env);
+      expect(author).toBe("Ada Lovelace\nada@example.com");
+      const status = await git(fx.wt.path, ["status", "--porcelain"], fx.env);
+      expect(status).toBe("");
+      const diff = await git(fx.wt.path, ["diff", "HEAD~1", "--", "sandbox-tracked.txt"], fx.env);
+      expect(diff).toContain("hello");
+    },
+    45_000,
+  );
 
-  it("A11 denies writes to config, hooks, info and refs/heads/main", async () => {
-    const fx = await fixture();
-    const common = await repoCommonDir(fx.wt.path);
-    expect(common).toBeTruthy();
-    const configPath = join(common!, "config");
-    const mainRef = join(common!, "refs", "heads", "main");
-    expect(existsSync(join(common!, "hooks"))).toBe(true);
-    expect(existsSync(join(common!, "info"))).toBe(true);
-    const configBefore = await readFile(configPath, "utf8");
-    const mainBefore = await readFile(mainRef, "utf8");
-    const quoted = shQuote(common!);
-    const { result } = await sandboxed(
-      fx,
-      [
-        `common=${quoted}`,
-        'try_write() { if printf x > "$1" 2>"$TMPDIR/err"; then echo "WROTE $2"; else echo "DENIED $2"; cat "$TMPDIR/err"; fi; }',
-        'try_write "$common/config" config',
-        'try_write "$common/hooks/pre-commit" hooks',
-        'try_write "$common/info/attributes" attributes',
-        'if git update-ref refs/heads/main HEAD 2>"$TMPDIR/err"; then echo "WROTE refs/heads/main"; else echo "DENIED refs/heads/main"; cat "$TMPDIR/err"; fi',
-        "echo A11_OK",
-      ].join("\n"),
-    );
-    expect(result.code, result.stderr).toBe(0);
-    expect(result.stdout).toContain("A11_OK");
-    expect(result.stdout).toContain("DENIED config");
-    expect(result.stdout).toContain("DENIED hooks");
-    expect(result.stdout).toContain("DENIED attributes");
-    expect(result.stdout).toContain("DENIED refs/heads/main");
-    expect(result.stdout).not.toContain("WROTE");
-    expect(result.stdout).toContain("Permission denied");
-    expect(await readFile(configPath, "utf8")).toBe(configBefore);
-    expect(await readFile(mainRef, "utf8")).toBe(mainBefore);
-    expect(existsSync(join(common!, "hooks", "pre-commit"))).toBe(false);
-    expect(existsSync(join(common!, "info", "attributes"))).toBe(false);
-  }, 45_000);
+  it.skipIf(darwin)(
+    "A11 denies writes to config, hooks, info and refs/heads/main",
+    async () => {
+      const fx = await fixture();
+      const common = await repoCommonDir(fx.wt.path);
+      expect(common).toBeTruthy();
+      const configPath = join(common!, "config");
+      const mainRef = join(common!, "refs", "heads", "main");
+      expect(existsSync(join(common!, "hooks"))).toBe(true);
+      expect(existsSync(join(common!, "info"))).toBe(true);
+      const configBefore = await readFile(configPath, "utf8");
+      const mainBefore = await readFile(mainRef, "utf8");
+      const quoted = shQuote(common!);
+      const { result } = await sandboxed(
+        fx,
+        [
+          `common=${quoted}`,
+          'try_write() { if printf x > "$1" 2>"$TMPDIR/err"; then echo "WROTE $2"; else echo "DENIED $2"; cat "$TMPDIR/err"; fi; }',
+          'try_write "$common/config" config',
+          'try_write "$common/hooks/pre-commit" hooks',
+          'try_write "$common/info/attributes" attributes',
+          'if git update-ref refs/heads/main HEAD 2>"$TMPDIR/err"; then echo "WROTE refs/heads/main"; else echo "DENIED refs/heads/main"; cat "$TMPDIR/err"; fi',
+          "echo A11_OK",
+        ].join("\n"),
+      );
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stdout).toContain("A11_OK");
+      expect(result.stdout).toContain("DENIED config");
+      expect(result.stdout).toContain("DENIED hooks");
+      expect(result.stdout).toContain("DENIED attributes");
+      expect(result.stdout).toContain("DENIED refs/heads/main");
+      expect(result.stdout).not.toContain("WROTE");
+      expect(result.stdout).toContain("Permission denied");
+      expect(await readFile(configPath, "utf8")).toBe(configBefore);
+      expect(await readFile(mainRef, "utf8")).toBe(mainBefore);
+      expect(existsSync(join(common!, "hooks", "pre-commit"))).toBe(false);
+      expect(existsSync(join(common!, "info", "attributes"))).toBe(false);
+    },
+    45_000,
+  );
 
   it("A12 denies a worktree symlink into the data root", async () => {
     const fx = await fixture();
@@ -263,7 +279,8 @@ describe.skipIf(!linux && !required)("sandbox acceptance A9-A12", () => {
     );
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain("A12_OK");
-    expect(result.stdout).toContain("Permission denied");
+    // Landlock says "Permission denied". Seatbelt says "Operation not permitted".
+    expect(result.stdout).toMatch(/Permission denied|Operation not permitted/);
     expect(result.stdout).not.toContain("top-secret");
     const cat = /cat_code=(\d+)/.exec(result.stdout);
     const write = /write_code=(\d+)/.exec(result.stdout);

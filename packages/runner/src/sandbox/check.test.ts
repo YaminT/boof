@@ -23,6 +23,37 @@ describe("assessSandbox", () => {
     expect(probes).not.toHaveBeenCalled();
   });
 
+  it("reports a missing sandbox-exec without running probes", async () => {
+    const probes = vi.fn();
+    const report = await assessSandbox({
+      platform: "darwin",
+      sandboxExecExists: () => false,
+      probes,
+    });
+    expect(report).toEqual({
+      ok: false,
+      backend: "darwin",
+      abi: null,
+      reason: "sandbox-exec is missing",
+      probes: [],
+    });
+    expect(probes).not.toHaveBeenCalled();
+  });
+
+  it("passes a macOS self-test without a Landlock ABI, and ignores the Linux ABI knob", async () => {
+    const report = await assessSandbox({
+      platform: "darwin",
+      env: { BOOF_SANDBOX_FAKE_ABI: "3" },
+      sandboxExecExists: () => true,
+      probes: async () => passing,
+    });
+    expect(report.ok).toBe(true);
+    expect(report.backend).toBe("darwin");
+    expect(report.abi).toBeNull();
+    expect(report.reason).toBe("");
+    expect(report.probes.map((probe) => probe.id)).toEqual([...SELF_TEST_PROBES]);
+  });
+
   it("reports a missing helper without running probes", async () => {
     const probes = vi.fn();
     const report = await assessSandbox({

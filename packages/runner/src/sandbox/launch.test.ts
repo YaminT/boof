@@ -12,6 +12,7 @@ import {
   type SandboxLaunchPolicy,
 } from "@boof/heart";
 import { transientReason } from "../tools/errors.js";
+import { planDarwinSandbox } from "./backend-darwin.js";
 import { planLinuxSandbox } from "./backend-linux.js";
 import { prepareAgentLaunch, refreshSandbox, type SandboxSettingsView } from "./index.js";
 import { SIGNALS_NOT_SCOPED, judgeSelfTest } from "./selftest.js";
@@ -83,33 +84,47 @@ function refusingSpawn() {
   });
 }
 
+function platformApplier() {
+  if (process.platform === "linux") return planLinuxSandbox;
+  if (process.platform === "darwin") return planDarwinSandbox;
+  return undefined;
+}
+
 beforeEach(() => {
   resetSandboxStatus();
-  if (process.platform === "linux") setSandboxApplier(planLinuxSandbox);
+  setSandboxApplier(platformApplier());
 });
 
 afterEach(() => {
   resetSandboxStatus();
-  setSandboxApplier(process.platform === "linux" ? planLinuxSandbox : undefined);
+  setSandboxApplier(platformApplier());
 });
 
 describe("A14 sandbox refusals spawn nothing", () => {
   it("refuses a missing helper before spawn", async () => {
     const spawn = refusingSpawn();
-    await expect(
-      execCommand(
-        "true",
-        ["--flag"],
-        {
-          cwd: "/tmp",
-          launch: { kind: "sandbox", helper: "/no/such/boof-sandbox", policy },
-        },
-        { spawn },
-      ),
-    ).rejects.toMatchObject({
-      code: "sandbox_unavailable",
-      message: "sandbox_unavailable: boof-sandbox helper is missing",
-    });
+    const saved = process.env.BOOF_SANDBOX_EXEC;
+    if (process.platform === "darwin") process.env.BOOF_SANDBOX_EXEC = "/no/such/sandbox-exec";
+    const message =
+      process.platform === "darwin"
+        ? "sandbox_unavailable: sandbox-exec is missing"
+        : "sandbox_unavailable: boof-sandbox helper is missing";
+    try {
+      await expect(
+        execCommand(
+          "true",
+          ["--flag"],
+          {
+            cwd: "/tmp",
+            launch: { kind: "sandbox", helper: "/no/such/boof-sandbox", policy },
+          },
+          { spawn },
+        ),
+      ).rejects.toMatchObject({ code: "sandbox_unavailable", message });
+    } finally {
+      if (saved === undefined) delete process.env.BOOF_SANDBOX_EXEC;
+      else process.env.BOOF_SANDBOX_EXEC = saved;
+    }
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -316,18 +331,41 @@ describe("resolveSandbox", () => {
     expect(probes).not.toHaveBeenCalled();
   });
 
-  it("reports darwin enforce unavailable and does not spawn", async () => {
+  it("reports a missing sandbox-exec and does not spawn", async () => {
     const spawn = refusingSpawn();
+    const probes = vi.fn();
     const status = await refreshSandbox(
       { runner: { sandbox: enforceSandbox } },
-      { platform: "darwin", spawn, probes: vi.fn() },
+      { platform: "darwin", spawn, probes, sandboxExecExists: () => false },
       { force: true },
     );
     expect(status).toEqual({
       mode: "enforce",
       backend: "darwin",
       state: "unavailable",
-      reason: "macOS sandbox backend is not available until I1g",
+      reason: "sandbox-exec is missing",
+    });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(probes).not.toHaveBeenCalled();
+  });
+
+  it("reports darwin enforce ok when the self-test passes", async () => {
+    const spawn = refusingSpawn();
+    const status = await refreshSandbox(
+      { runner: { sandbox: enforceSandbox } },
+      {
+        platform: "darwin",
+        spawn,
+        sandboxExecExists: () => true,
+        probes: async () => passingProbes,
+      },
+      { force: true },
+    );
+    expect(status).toEqual({
+      mode: "enforce",
+      backend: "darwin",
+      state: "ok",
+      reason: "",
     });
     expect(spawn).not.toHaveBeenCalled();
   });
