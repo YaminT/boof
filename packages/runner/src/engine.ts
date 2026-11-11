@@ -15,6 +15,7 @@ import {
   SettingsStore,
   statusDir,
   TaskStore,
+  ExternalRunStore,
   taskPidPath,
   workingAreaDir,
   type Project,
@@ -51,6 +52,8 @@ export interface EngineOptions {
   registry?: ToolRegistry;
   /** Only serve this project (headless `run --all --project`). */
   onlyProject?: string;
+  /** Explicit headless runs may drive tasks without changing the saved runner setting. */
+  runWhenDisabled?: boolean;
   /** The account pool gate; default: built from settings.owlish and the stored client key. */
   pool?: PoolGate;
   /** Compliance resolver; injectable so engine tests can use a fake gateway. */
@@ -69,6 +72,14 @@ function interruptedNote(requeue: boolean): string {
   return requeue
     ? `${INTERRUPTED_HEAD} It is back in the queue and will run again.`
     : `${INTERRUPTED_HEAD} Retry it to continue from the kept worktree.`;
+}
+
+/** Successful recovery attempts record the requeue count in the task log. */
+function interruptionRequeueCount(log: string): number {
+  return Math.max(
+    0,
+    ...[...log.matchAll(/^Recovery requeue count: (\d+)$/gm)].map((match) => Number(match[1])),
+  );
 }
 
 export type TickResult =
@@ -101,6 +112,7 @@ export class RunnerEngine {
   readonly registry: ToolRegistry;
   private readonly pollIntervalMs: number;
   private readonly onlyProject?: string;
+  private readonly runWhenDisabled: boolean;
   private readonly external?: ExternalStepTransport;
   private readonly serverPort?: number;
   /** In-flight pipelines by project id (the at-most-one-per-project invariant). */
@@ -136,6 +148,7 @@ export class RunnerEngine {
       });
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;
     this.onlyProject = opts.onlyProject;
+    this.runWhenDisabled = opts.runWhenDisabled ?? false;
     this.external = opts.external;
     this.serverPort = opts.serverPort;
     this.pool =
@@ -664,7 +677,7 @@ export class RunnerEngine {
   async tick(): Promise<TickResult> {
     const settings = await this.settingsStore.load();
     await refreshSandbox(settings);
-    if (!settings.runner.enabled) return { kind: "disabled" };
+    if (!settings.runner.enabled && !this.runWhenDisabled) return { kind: "disabled" };
 
     await this.syncAutoPlans();
     const { selection, blocked } = await this.selectWithBudget();
@@ -745,11 +758,13 @@ export class RunnerEngine {
    * Recover tasks a dead runner left in `running` (crash, SIGKILL, OOM, reboot). Call it only
    * from the process that holds the runner guard, before selecting work: nothing else is
    * driving those tasks. Each one gets an Interrupted block (live log mirrored into the body
-   * first). When the agent is gone (no pid file, or the process is dead or was just killed)
-   * the task goes back to `pending`, so the loop runs it again; its worktree and branch are
-   * kept. When the agent might still be running, the task moves to `failed` and keeps the
-   * agent identity, and a retry is refused until that process is gone. Entries with no
-   * readable task.md are skipped with a warning. Returns the recovered ids.
+   * first). The task goes back to `pending` only when the agent is confirmed gone (the recorded
+   * process is dead, or this recovery just killed it), no external run is open, and it has not
+   * already been requeued; the loop then runs it again, and its worktree and branch are kept.
+   * A task with no pid file goes to `failed`: that agent is not confirmed dead. When the agent
+   * might still be running, the task also moves to `failed` and keeps the agent identity, and a
+   * retry is refused until that process is gone. Entries with no readable task.md are skipped
+   * with a warning. Returns the recovered ids.
    */
   async recoverInterrupted(): Promise<string[]> {
     const recovered: string[] = [];
@@ -771,17 +786,27 @@ export class RunnerEngine {
             console.warn(`recovery: skipping ${project.id}/${id}: no task.md in ongoing/${id}`);
             continue;
           }
+          const interruptedTask = await store.get(id);
+          if (!interruptedTask) continue;
           const reaped = await reapOrphan(taskPidPath(dir, id), (l) =>
             console.warn(`recovery: ${project.id}/${id}: ${l}`),
           );
+          let externalInFlight = false;
+          try {
+            externalInFlight = await new ExternalRunStore(this.root).hasOpenForTask(project.id, id);
+          } catch (err) {
+            console.warn(`recovery: ${project.id}/${id}: could not inspect external runs:`, err);
+            externalInFlight = true;
+          }
           const live = await readFile(join(workingAreaDir(dir, id), "log.txt"), "utf8").catch(
             () => "",
           );
-          // `skipped` means the agent was not verified dead (another boot, a reused pid, a
-          // process we refused to signal). Leave those failed so a second agent is not started
-          // on a guess. none/dead/killed are safe to run again.
-          const unsafe = reaped.stillRunning || reaped.maybeRunning || reaped.outcome === "skipped";
-          const to: Status = unsafe ? "failed" : "pending";
+          // Only a verified-dead process or one killed by this recovery can be retried. Missing
+          // pid records also cover failed writes and external steps, so those must fail closed.
+          const processEnded = reaped.outcome === "dead" || reaped.outcome === "killed";
+          const requeues = interruptionRequeueCount(interruptedTask.body.log);
+          const canRequeue = processEnded && !externalInFlight && requeues < 1;
+          const to: Status = canRequeue ? "pending" : "failed";
           const task = await store.transition(
             id,
             to,
@@ -802,7 +827,15 @@ export class RunnerEngine {
                 };
               }
               const block =
-                `### Interrupted\n${interruptedNote(!unsafe)}` +
+                `### Interrupted\n${interruptedNote(canRequeue)}` +
+                (canRequeue ? `\nRecovery requeue count: ${requeues + 1}` : "") +
+                (externalInFlight
+                  ? "\nAn external run is still open or could not be checked; Retry after resolving it."
+                  : !processEnded
+                    ? "\nThe agent is not confirmed dead; Retry after checking for an agent that may still be running."
+                    : requeues >= 1
+                      ? "\nThis task has already been requeued once after an interruption; Retry it manually to continue."
+                      : "") +
                 (reaped.outcome === "killed"
                   ? `\nThe agent process group ${reaped.record!.pgid} was still running and was killed.`
                   : reaped.maybeRunning

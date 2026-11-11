@@ -173,6 +173,16 @@ describe("generated commands", () => {
     );
   });
 
+  it("runner set-enabled help shows the negated boolean flag", async () => {
+    expect(await run(["runner", "set-enabled", "--help"])).toBe(0);
+    expect(text()).toContain("--no-enabled");
+  });
+
+  it("n8n get prints configured: false in human mode when not configured", async () => {
+    expect(await run(["n8n", "get"])).toBe(0);
+    expect(text()).toBe("configured: false");
+  });
+
   it("bad usage exits 1", async () => {
     await seed();
     expect(await run(["tasks", "create", "--nope"])).toBe(1);

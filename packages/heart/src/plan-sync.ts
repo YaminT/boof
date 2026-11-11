@@ -5,7 +5,7 @@
  */
 import { appendFile, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { execCommand } from "./process.js";
+import { git } from "./git.js";
 import { appendEvent } from "./events.js";
 import { AuthStore } from "./auth-store.js";
 import { diffGoalContent, renderChanges, renderGoalContent, unifiedDiff } from "./plan-diff.js";
@@ -172,12 +172,13 @@ async function previousTaskBase(repoRoot: string, goalTasks: Task[]): Promise<st
   for (const t of done) {
     const branch = taskBranch(t.frontmatter.id);
     try {
-      const res = await execCommand(
-        "git",
+      const res = await git(
+        repoRoot,
         ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
-        { cwd: repoRoot, timeoutMs: 15000, launch: { kind: "direct" } },
+        undefined,
+        15000,
       );
-      if (res.code === 0 && res.stdout.trim()) return branch;
+      if (res.code === 0 && res.out) return branch;
     } catch {
       /* not a repository or git missing: fall back to the default base */
     }

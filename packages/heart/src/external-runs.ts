@@ -134,6 +134,33 @@ export class ExternalRunStore {
     }
   }
 
+  /** True when a task still has an open external run. Errors propagate so recovery can fail closed. */
+  async hasOpenForTask(projectId: string, taskId: string): Promise<boolean> {
+    await this.guard();
+    let names: string[];
+    try {
+      names = await readdir(this.dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".json") || name.endsWith(".result.json")) continue;
+      try {
+        const parsed = RecordSchema.safeParse(
+          JSON.parse(await readFile(this.p(name.slice(0, -5), ".json"), "utf8")),
+        );
+        if (!parsed.success) throw new Error("invalid external-run record");
+        if (parsed.success && parsed.data.projectId === projectId && parsed.data.taskId === taskId)
+          return true;
+      } catch {
+        // A malformed open record cannot prove that no external step is still in flight.
+        throw new Error(`cannot inspect external run ${name}`);
+      }
+    }
+    return false;
+  }
+
   /** The one arbiter: true when this caller closed the open record. */
   private async close(runId: string): Promise<boolean> {
     try {

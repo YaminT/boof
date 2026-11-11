@@ -119,14 +119,6 @@ async function streamTick(engine: RunnerEngine, out: Out): Promise<TickResult> {
   return res;
 }
 
-/** Turn the runner on (the only global setting headless commands change), logging the change. */
-async function ensureRunnerEnabled(root: string, out: Out): Promise<void> {
-  const store = new SettingsStore(root);
-  if ((await store.load()).runner.enabled) return;
-  await store.update({ runner: { enabled: true } });
-  out("Enabled the runner in settings.json (runner.enabled = true).\n");
-}
-
 export interface RunTaskOptions {
   root: string;
   prompt: string;
@@ -173,7 +165,6 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
   }
   const store = new TaskStore(new ProjectStore(opts.root).dir(project.id));
   const settings = await new SettingsStore(opts.root).load();
-  await ensureRunnerEnabled(opts.root, out);
 
   const registry = opts.registry ?? new ToolRegistry();
   const title = opts.title ?? firstLine(opts.prompt);
@@ -216,6 +207,7 @@ export async function runTask(opts: RunTaskOptions): Promise<RunResultSummary> {
     root: opts.root,
     registry,
     onlyProject: project.id,
+    runWhenDisabled: true,
     external: createN8nTransport({
       root: opts.root,
       via: "runner",
@@ -269,12 +261,12 @@ export async function drainQueue(opts: {
     throw new ProjectResolutionError(`Project not found: ${opts.project}`);
   }
   if (opts.project) opts.onProject?.(opts.project);
-  await ensureRunnerEnabled(opts.root, out);
   const settings = await new SettingsStore(opts.root).load();
   const engine = new RunnerEngine({
     root: opts.root,
     registry: opts.registry ?? new ToolRegistry(),
     onlyProject: opts.project,
+    runWhenDisabled: true,
     external: createN8nTransport({
       root: opts.root,
       via: "runner",

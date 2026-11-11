@@ -55,6 +55,16 @@ describe("SDDL access lists", () => {
     });
   });
 
+  it("detects UTF-16 LE icacls output without a BOM", () => {
+    const text = "data\r\nD:P(A;;FR;;;WD)\r\n";
+    const buf = Buffer.from(text, "utf16le");
+    expect(decodeIcaclsText(buf)).toBe(text);
+    expect(parseIcaclsSave(decodeIcaclsText(buf))).toMatchObject({
+      ok: true,
+      aces: [{ sid: "WD", allow: true, rights: "FR" }],
+    });
+  });
+
   it("treats aliases and hex masks as write or not", () => {
     expect(canonicalSid("wd")).toBe("S-1-1-0");
     expect(canonicalSid("SY")).toBe("S-1-5-18");
