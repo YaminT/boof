@@ -1,16 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import {
-  chmod,
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  utimes,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { lockedAtomicWrite } from "./atomic.js";
@@ -177,30 +166,59 @@ export class ExternalRunStore {
   private async close(runId: string): Promise<boolean> {
     const from = this.p(runId, ".json");
     const to = this.p(runId, ".closed");
+    let claim;
+    try {
+      claim = await open(to, "wx", 0o600);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw err;
+    }
+
     let record: Buffer;
     try {
-      record = await readFile(from);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          record = await readFile(from);
+          break;
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT") {
+            await claim.close();
+            await rm(to, { force: true });
+            return false;
+          }
+          if ((code === "EPERM" || code === "EBUSY") && attempt < 7) {
+            // Antivirus/indexing can briefly deny a read. Retry only while the open record
+            // still exists; a missing source means another actor consumed it.
+            try {
+              await stat(from);
+            } catch (statError) {
+              if ((statError as NodeJS.ErrnoException).code === "ENOENT") {
+                await claim.close();
+                await rm(to, { force: true });
+                return false;
+              }
+              throw statError;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            continue;
+          }
+          throw err;
+        }
+      }
+      await claim.writeFile(record!);
+      await claim.sync();
+      await claim.close();
+      await rm(from);
     } catch (err) {
+      await claim.close().catch(() => {});
+      await rm(to, { force: true }).catch(() => {});
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw err;
     }
     // Windows can report success for competing renames of the same source, and a retry can
     // overlap complete() restoring .json after a result-write failure. An exclusive create
-    // makes the winner explicit; only that caller may remove the open record and return true.
-    try {
-      await writeFile(to, record, { flag: "wx", mode: 0o600 });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
-      await rm(to, { force: true }).catch(() => {});
-      throw err;
-    }
-    try {
-      await rm(from);
-    } catch (err) {
-      await rm(to, { force: true }).catch(() => {});
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw err;
-    }
+    // makes the winner explicit; only that caller may read/remove the open record and return true.
     // Prune ages `.closed` from the close time.
     const t = new Date(this.now());
     await utimes(to, t, t).catch(() => {});
