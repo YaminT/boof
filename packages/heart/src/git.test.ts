@@ -543,7 +543,9 @@ describe("agent-planted git config does not run server-side", () => {
     const withLog = async (fn: (logPath: string) => Promise<void>) => {
       const shim = await mkdtemp(join(tmpdir(), "boof-gitlog-"));
       const logPath = join(shim, "log");
-      const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+      const real = (
+        await execCommand("which", ["git"], { launch: { kind: "direct" }, cwd: repo })
+      ).stdout.trim();
       await writeFile(
         join(shim, "git"),
         `#!/bin/sh\nprintf '%s\\n' "$*" >> '${logPath}'\nexec '${real}' "$@"\n`,
@@ -587,6 +589,7 @@ describe("agent-planted git config does not run server-side", () => {
     const shaRepo = await mkdtemp(join(tmpdir(), "boof-sha256-"));
     try {
       const init = await execCommand("git", ["init", "--object-format=sha256", "-q"], {
+        launch: { kind: "direct" },
         cwd: shaRepo,
         timeoutMs: 15_000,
       });
@@ -594,7 +597,7 @@ describe("agent-planted git config does not run server-side", () => {
       const hashed = await execCommand(
         "git",
         ["hash-object", "-t", "tree", "--no-filters", "--stdin"],
-        { cwd: shaRepo, timeoutMs: 15_000, input: "" },
+        { launch: { kind: "direct" }, cwd: shaRepo, timeoutMs: 15_000, input: "" },
       );
       const oid = hashed.stdout.trim();
       expect(oid).not.toBe(SHA1_EMPTY_TREE);
