@@ -212,9 +212,21 @@ export class RunnerEngine {
     const global = status?.exceeded.find((s) => s.scope === "global");
     if (global) blocked.set(global.scope, global);
     let best: Selection | null = null;
+    // Read every idle project's pending directory together. Selecting one project at a time
+    // left the concurrency slots empty while the next directory waited on the thread pool.
+    const pendingByProject = new Map(
+      await Promise.all(
+        projects.map(async (project) => {
+          if (this.inflight.has(project.id)) return [project.id, [] as Task[]] as const;
+          return [project.id, await this.storeFor(project).listByStatus("pending")] as const;
+        }),
+      ),
+    );
     for (const project of projects) {
       if (this.inflight.has(project.id)) continue;
-      for (const task of await this.storeFor(project).list()) {
+      // Pending files only. A full list() here re-reads every finished task, and that scan
+      // was slower than a running task, so concurrency stayed at one (F4 finding 3).
+      for (const task of pendingByProject.get(project.id) ?? []) {
         if (task.frontmatter.status !== "pending" || task.frontmatter.skip) continue;
         for (const key of this.authRefusalEvents)
           if (key.startsWith(`${project.id}\0${task.frontmatter.id}\0`))

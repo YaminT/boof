@@ -231,7 +231,12 @@ export async function evaluateBudget(
   const timezone = budgetTimeZone(settings);
   const date = dayKey(now, timezone);
   const budget = settings.budget;
-  const global = await readDailyLedger(dataRoot, date, timezone);
+  const [global, ...projectLedgers] = await Promise.all([
+    readDailyLedger(dataRoot, date, timezone),
+    ...projects.map((project) =>
+      readDailyLedger(projectPaths(dataRoot, project.id).dir, date, timezone),
+    ),
+  ]);
   const scopes: BudgetScope[] = [scopeOf("global", global.costUsd, budget?.perDayUsd)];
   const tools = new Set([
     ...Object.keys(global.tools),
@@ -240,8 +245,9 @@ export async function evaluateBudget(
   for (const tool of [...tools].sort()) {
     scopes.push(scopeOf(`tool:${tool}`, global.tools[tool] ?? 0, budget?.perToolDayUsd?.[tool]));
   }
-  for (const project of projects) {
-    const ledger = await readDailyLedger(projectPaths(dataRoot, project.id).dir, date, timezone);
+  for (let i = 0; i < projects.length; i++) {
+    const project = projects[i]!;
+    const ledger = projectLedgers[i]!;
     const limit = project.budget?.perProjectDayUsd ?? budget?.perProjectDayUsd;
     scopes.push(scopeOf(`project:${project.id}`, ledger.costUsd, limit));
     const own = project.budget?.perToolDayUsd ?? {};

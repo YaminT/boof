@@ -105,6 +105,12 @@ interface Check {
   statFn: typeof stat;
   /** When set, unsafe ancestors are collected here instead of thrown. */
   collect?: UnsafeSecretPathError[];
+  /**
+   * Ancestors already accepted by this check. `checkLinkOwners` walks every path component,
+   * and each walk used to stat the same parents again. A directory is recorded only after it
+   * passes, so a refusal is never skipped.
+   */
+  safeAncestors: Set<string>;
 }
 
 async function makeCheck(
@@ -120,6 +126,7 @@ async function makeCheck(
     lstatFn: opts.lstat ?? lstat,
     statFn: opts.stat ?? stat,
     collect,
+    safeAncestors: new Set(),
   };
 }
 
@@ -273,17 +280,23 @@ async function walkAncestors(rootPath: string, check: Check): Promise<void> {
   const { uid, statFn } = check;
   let current = dirname(rootPath);
   while (current !== dirname(current)) {
+    if (check.safeAncestors.has(current)) return;
     const st = await statFn(current);
     const mode = st.mode & 0o7777;
     if (st.uid !== 0 && st.uid !== uid)
       fail(current, `is owned by uid ${st.uid}; use a directory owned by your uid or root`);
-    if ((mode & 0o1000) !== 0) return;
+    if ((mode & 0o1000) !== 0) {
+      check.safeAncestors.add(current);
+      return;
+    }
     if ((mode & 0o002) !== 0) fail(current, `is world-writable; run chmod o-w ${current}`);
     if ((mode & 0o020) !== 0 && !(st.uid === uid && check.isPrivate(st.gid)))
       fail(
         current,
         `is group-writable by a group that is not your private group; run chmod g-w ${current}`,
       );
+    // Safe, including a root-owned directory where the walk stops on purpose.
+    check.safeAncestors.add(current);
     if (st.uid === 0) return;
     current = dirname(current);
   }

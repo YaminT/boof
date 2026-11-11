@@ -4,7 +4,16 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStore, LOCAL_PRINCIPAL, TaskStore, type Principal, type Scope } from "@boof/heart";
+import {
+  AuthStore,
+  LOCAL_PRINCIPAL,
+  newTask,
+  takeTaskFileReads,
+  TaskStore,
+  type Principal,
+  type Scope,
+  type TaskFrontmatter,
+} from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import type { OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
@@ -128,7 +137,58 @@ async function configure(withKey = true) {
   seen = [];
 }
 
+const doneFm = (id: string): TaskFrontmatter => ({
+  id,
+  title: id,
+  status: "done",
+  priority: 50,
+  skip: false,
+  labels: [],
+  command: null,
+  attachments: [],
+  questions: "none",
+  created: "2026-06-04T10:00:00.000Z",
+  updated: "2026-06-04T10:00:00.000Z",
+});
+
 describe("runner status gateway eligibility", () => {
+  it("reads a pending claude-agent override without scanning finished tasks", async () => {
+    const project = await service.projects.create({
+      id: "override-scan",
+      name: "Override scan",
+      path: { mode: "auto", projectsRoot: `${root}-workspaces` },
+    });
+    const tasks = service.forProject(project.id);
+    const pending = await tasks.create({ title: "Task override", status: "pending" });
+    await tasks.tasks.modify(pending.frontmatter.id, (current) => {
+      current.frontmatter.tools = {
+        developer: { tool: "claude-agent", model: "default" },
+      } as never;
+    });
+    await new TaskStore(service.projects.dir(project.id)).create(
+      newTask(doneFm("finished"), `${"agent output line\n".repeat(40)}done.`),
+    );
+    const fullScan = vi
+      .spyOn(TaskStore.prototype, "list")
+      .mockRejectedValue(new Error("full scan"));
+    try {
+      takeTaskFileReads();
+      const status = await run("runner.overview", LOCAL_PRINCIPAL);
+      expect(fullScan).not.toHaveBeenCalled();
+      expect(status.projects.find((p) => p.id === project.id)?.counts).toMatchObject({
+        pending: 1,
+        done: 1,
+      });
+      expect(status.agentAuth.find((row) => row.projectId === project.id)?.roles).toContain(
+        "developer",
+      );
+      // The pending override is one file. The finished task stays closed.
+      expect(takeTaskFileReads()).toBe(1);
+    } finally {
+      fullScan.mockRestore();
+    }
+  });
+
   it("uses the engine refusal when the gateway client key is missing", async () => {
     await configure(false);
     await service.projects.create({
@@ -213,12 +273,18 @@ describe("runner status gateway eligibility", () => {
         developer: { tool: "claude-agent", model: "default" },
       } as never;
     });
-    const list = vi.spyOn(TaskStore.prototype, "list");
-    await run("runner.status", LOCAL_PRINCIPAL);
-    const firstCallCount = list.mock.calls.length;
-    await run("runner.status", LOCAL_PRINCIPAL);
-    expect(firstCallCount).toBeGreaterThan(0);
-    expect(list).toHaveBeenCalledTimes(firstCallCount);
+    const fullScan = vi.spyOn(TaskStore.prototype, "list");
+    try {
+      takeTaskFileReads();
+      await run("runner.status", LOCAL_PRINCIPAL);
+      expect(fullScan).not.toHaveBeenCalled();
+      expect(takeTaskFileReads()).toBe(1);
+      await run("runner.status", LOCAL_PRINCIPAL);
+      expect(fullScan).not.toHaveBeenCalled();
+      expect(takeTaskFileReads()).toBe(0);
+    } finally {
+      fullScan.mockRestore();
+    }
   });
 
   it("checks once for four projects using the gateway", async () => {

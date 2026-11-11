@@ -24,6 +24,15 @@ afterEach(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDel
 const runner = (value: boolean) => ({ type: "runner.enabled" as const, value, by: "local" });
 
 describe("events", () => {
+  it("lets overlapping readers share one listing and still see the events", async () => {
+    await appendEvent(dir, runner(true), new Date("2026-10-01T00:00:00Z"));
+    const [a, b] = await Promise.all([readEvents(dir, null), readEvents(dir, null)]);
+    expect(a.map((e) => e.event.type)).toEqual(["runner.enabled"]);
+    expect(b.map((e) => e.pos)).toEqual(a.map((e) => e.pos));
+    await appendEvent(dir, runner(false), new Date("2026-10-02T00:00:00Z"));
+    expect(await readEvents(dir, a[0]!.pos)).toHaveLength(1);
+  });
+
   it("appends and reads back in order, resuming from a position", async () => {
     await appendEvent(dir, runner(true), new Date("2026-10-01T00:00:00Z"));
     await appendEvent(dir, runner(false), new Date("2026-10-02T00:00:00Z"));
