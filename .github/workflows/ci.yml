@@ -10,7 +10,6 @@ jobs:
   macos-tests:
     name: macOS unit suite
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -37,7 +36,6 @@ jobs:
   windows-tests:
     name: Windows unit suite
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -57,9 +55,6 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
-
-      - name: Diagnose Windows temp ACL
-        run: bun packages/heart/src/windows-acl-diag.ts
 
       - name: Test
         run: npx vitest run
