@@ -592,6 +592,15 @@ export const RunnerSettingsSchema = z.object({
 export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
 
 /**
+ * Whether the server may ask GitHub if a newer release exists. Absent means on.
+ * Off means no request is ever sent. The result is not an update: nothing is downloaded.
+ */
+export const UpdatesSettingsSchema = z.strictObject({
+  check: z.boolean().default(true),
+});
+export type UpdatesSettings = z.infer<typeof UpdatesSettingsSchema>;
+
+/**
  * The `schemaVersion` written by this release. Absent in settings.json means v1.
  * 2 is a 0.3.0 file: the first start stamps it to 3 and changes nothing else.
  * 0.3.0 refuses any other version, so a stamped root cannot be opened by 0.3.0.
@@ -621,6 +630,8 @@ export const SettingsSchema = z.object({
   webhooks: z.array(WebhookSchema).optional(),
   /** The optional n8n instance; managed through the n8n operations, never PUT /settings. */
   n8n: N8nSettingsSchema.optional(),
+  /** Release notice. Absent means `check: true` (see {@link UpdatesSettingsSchema}). */
+  updates: UpdatesSettingsSchema.optional(),
   models: z.record(z.string(), z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -666,6 +677,8 @@ export const SettingsPatchSchema = z
     /** The account pool; `null` removes it (the key is handled by settings.update, never stored here). */
     owlish: OwlishSettingsSchema.nullable().optional(),
     models: z.record(z.string(), z.array(z.string())).optional(),
+    /** `false` stops the daily release request. There is no download. */
+    updates: z.strictObject({ check: z.boolean() }).optional(),
   })
   .partial();
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;

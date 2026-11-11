@@ -75,6 +75,8 @@ export interface DataRootPaths {
   n8nSeen: string;
   /** One record per external-step run (token hash only). */
   externalRuns: string;
+  /** Last GitHub release check (`updates.json`, mode 0600). No credentials. */
+  updates: string;
 }
 
 export function dataRootPaths(root: string): DataRootPaths {
@@ -101,6 +103,7 @@ export function dataRootPaths(root: string): DataRootPaths {
     n8nWorkflows: join(root, "n8n", "workflows.json"),
     n8nSeen: join(root, "n8n", "seen.json"),
     externalRuns: join(root, "external-runs"),
+    updates: join(root, "updates.json"),
   };
 }
 

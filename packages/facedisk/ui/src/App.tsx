@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { Project } from "@boof/heart/schema";
 import { BudgetBanner } from "./shell/BudgetBanner.js";
+import { UpdateNotice } from "./shell/UpdateNotice.js";
 import { useAppData } from "./useAppData.js";
 import { useProjects } from "./useProjects.js";
 import { TasksPage } from "./tasks/TasksPage.js";
@@ -149,6 +150,7 @@ export function App() {
     >
       <Suspense fallback={null}>
         {budget && <BudgetBanner budget={budget} />}
+        <UpdateNotice />
         {routeReady && route.name === "overview" && (
           <OverviewPage pid={pid} project={selected} data={data} navigate={navigate} />
         )}

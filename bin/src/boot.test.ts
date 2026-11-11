@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const packageVersion = JSON.parse(
   readFileSync(resolve(fileURLToPath(new URL("../../", import.meta.url)), "package.json"), "utf8"),
@@ -179,5 +181,62 @@ describe("bin boot", () => {
       unavailableReason: "desktop unavailable",
     });
     await result.stop(0);
+  });
+
+  it("asks GitHub only when updates is set, and an agent process sends nothing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-boot-updates-"));
+    const agentRoot = await mkdtemp(join(tmpdir(), "boof-boot-updates-agent-"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no network"));
+    const calls: string[] = [];
+    const fetchImpl = async (url: string) => {
+      calls.push(url);
+      return {
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            tag_name: "v9.0.0",
+            html_url: "https://github.com/YaminT/boof/releases/tag/v9.0.0",
+            prerelease: false,
+            draft: false,
+          }),
+      };
+    };
+    const waitForCall = async () => {
+      for (let i = 0; i < 50 && calls.length === 0; i += 1)
+        await new Promise((r) => setTimeout(r, 20));
+    };
+    try {
+      startServer.mockResolvedValue({ stop: vi.fn(async () => {}) });
+      const quiet = await boot({ root, version: "0.4.0", runner: false });
+      await quiet.stop(0);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(calls).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const hooked = await boot({
+        root,
+        version: "0.4.0",
+        runner: false,
+        updates: { fetchImpl, env: {} },
+      });
+      await hooked.stop(0);
+      await waitForCall();
+      expect(calls).toEqual([expect.stringContaining("/releases/latest")]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const agent = await boot({
+        root: agentRoot,
+        version: "0.4.0",
+        runner: false,
+        updates: { fetchImpl, env: { BOOF_RUNNER_AGENT_OF: "marker" } },
+      });
+      await agent.stop(0);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(calls).toHaveLength(1);
+    } finally {
+      fetchSpy.mockRestore();
+      await rm(root, { recursive: true, force: true });
+      await rm(agentRoot, { recursive: true, force: true });
+    }
   });
 });

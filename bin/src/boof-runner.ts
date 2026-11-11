@@ -33,6 +33,8 @@ import {
   SettingsStore,
   securitySettings,
   UnsafeSecretPathError,
+  cliNoticeLine,
+  readUpdateCache,
 } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
@@ -183,6 +185,19 @@ function readVersion(): string {
   }
 }
 
+/**
+ * Print the version. A second line names a newer release already in the data-root cache.
+ * This never sends a request and never creates the data root or the cache file.
+ */
+async function printVersion(argv: string[]): Promise<void> {
+  const version = readVersion();
+  console.log(version);
+  const dataOpt = getOpt(argv, ["--data", "-d"]);
+  const root = dataOpt ? absPath(dataOpt) : defaultDataRoot();
+  const line = cliNoticeLine(version, await readUpdateCache(root));
+  if (line) console.log(line);
+}
+
 /** serve's own flags: the only tokens that may stand first without the `serve` word. */
 export const SERVE_FLAGS = [
   "--data",
@@ -310,6 +325,7 @@ export async function serve(argv: string[]): Promise<void> {
       host: args.host,
       uiDir,
       version: readVersion(),
+      updates: {},
       tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
       tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
       runner: !args.noRunner,
@@ -593,7 +609,7 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   const [cmd, ...rest] = argv;
   // --version also works after serve's own flags (`boof-runner -d x --version`).
   if ((cmd === "serve" || isServeFlag(cmd ?? "")) && hasFlag(argv, ["--version", "-v"])) {
-    console.log(readVersion());
+    await printVersion(argv);
     return;
   }
   // Top-level --help (but let the subcommands handle their own --help). An unknown first word is
@@ -751,7 +767,7 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       break;
     case "--version":
     case "-v":
-      console.log(readVersion());
+      await printVersion(argv);
       break;
     case "serve":
       if (strayWords(rest).length > 0) return refuseServe(rest);

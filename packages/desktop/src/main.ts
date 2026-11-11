@@ -199,6 +199,7 @@ async function startComposition(): Promise<void> {
     port: PORT,
     uiDir: uiDir(),
     version: app.getVersion(),
+    updates: {},
     serverOptions: operatorClientId(desktopToken)
       ? { operatorClients: new Set([operatorClientId(desktopToken)!]) }
       : {},
