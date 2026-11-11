@@ -167,11 +167,30 @@ export class ExternalRunStore {
     const from = this.p(runId, ".json");
     const to = this.p(runId, ".closed");
     let claim;
-    try {
-      claim = await open(to, "wx", 0o600);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
-      throw err;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        claim = await open(to, "wx", 0o600);
+        break;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") return false;
+        // Windows reports EPERM/EBUSY (not EEXIST) while the other caller is deleting its
+        // `.closed`. That caller owns the run, so once the open record is gone this one lost.
+        if (code === "EPERM" || code === "EBUSY") {
+          if (
+            !(await stat(from).then(
+              () => true,
+              () => false,
+            ))
+          )
+            return false;
+          if (attempt < 20) {
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            continue;
+          }
+        }
+        throw err;
+      }
     }
 
     let record: Buffer;
