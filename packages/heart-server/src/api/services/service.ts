@@ -669,7 +669,14 @@ export class ProjectService {
         throw new OpError(409, "task worktree has no trusted runner record; recreate or upgrade the worktree");
       }
       worktreeGit = async (args) => {
-        const result = await checkedWorktreeGit(record, args);
+        const result = await checkedWorktreeGit(record, [
+          "--no-pager",
+          "--no-optional-locks",
+          "--literal-pathspecs",
+          "-c",
+          "core.quotepath=off",
+          ...args,
+        ]);
         return { code: result.code, stdout: result.out, stderr: result.err };
       };
     }

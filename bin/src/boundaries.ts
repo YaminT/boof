@@ -8,7 +8,8 @@ export const ALLOWED: Record<Package, Package[]> = {
   heart: [],
   owlish: ["heart"],
   runner: ["heart", "owlish"],
-  "heart-server": ["heart", "owlish"],
+  // Server task diffs use the runner-owned worktree record to pin Git metadata.
+  "heart-server": ["heart", "owlish", "runner"],
   facedisk: ["heart", "heart-server"],
   bin: ["heart", "owlish", "runner", "heart-server", "facedisk"],
   desktop: ["heart", "owlish", "runner", "heart-server", "facedisk", "bin"],

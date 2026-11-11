@@ -299,6 +299,9 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(existsSync(join(common!, "refs", "heads", "boof-runner"))).toBe(true);
     expect(policy.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
     expect(policy.env.GIT_CONFIG_NOSYSTEM).toBe("1");
+    expect(policy.env.GIT_CONFIG_COUNT).toBe("1");
+    expect(policy.env.GIT_CONFIG_KEY_0).toBe("core.logAllRefUpdates");
+    expect(policy.env.GIT_CONFIG_VALUE_0).toBe("false");
     expect(policy.env.GIT_OBJECT_DIRECTORY).toBe(join(linked.temp, "git-objects"));
     expect(policy.env.GIT_ALTERNATE_OBJECT_DIRECTORIES).toBe(join(common!, "objects"));
     expect(policy.env.GIT_AUTHOR_NAME).toBe("Ada Lovelace");

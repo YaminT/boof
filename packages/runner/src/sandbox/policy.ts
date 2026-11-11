@@ -375,6 +375,9 @@ function policyEnv(facts: {
   Object.assign(env, facts.toolState);
   env.GIT_CONFIG_GLOBAL = "/dev/null";
   env.GIT_CONFIG_NOSYSTEM = "1";
+  env.GIT_CONFIG_COUNT = "1";
+  env.GIT_CONFIG_KEY_0 = "core.logAllRefUpdates";
+  env.GIT_CONFIG_VALUE_0 = "false";
   if (facts.identity) {
     env.GIT_AUTHOR_NAME = facts.identity.authorName;
     env.GIT_AUTHOR_EMAIL = facts.identity.authorEmail;

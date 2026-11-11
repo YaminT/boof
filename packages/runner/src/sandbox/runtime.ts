@@ -727,9 +727,10 @@ export async function importPrivateGitObjects(opts: {
     `.${basename(opts.runTempDir)}-git-import-${randomBytes(RUN_ID_BYTES).toString("hex")}`,
   );
   await rename(source, detached);
-  const snapshot = await mkdtemp(join(tmpdir(), "boof-git-objects-"));
+  let snapshot: string | undefined;
   let imported = false;
   try {
+    snapshot = await mkdtemp(join(tmpdir(), "boof-git-objects-"));
     const detachedInfo = await lstat(detached);
     if (detachedInfo.isSymbolicLink() || !detachedInfo.isDirectory()) {
       throw new SandboxUnavailableError("detached private git object directory was altered");
@@ -818,7 +819,7 @@ export async function importPrivateGitObjects(opts: {
     const detail = err instanceof Error ? err.message : String(err);
     throw new SandboxUnavailableError(`${detail}; private object store preserved at ${preserved}`);
   } finally {
-    await rm(snapshot, { recursive: true, force: true });
+    if (snapshot) await rm(snapshot, { recursive: true, force: true });
     if (imported) await rm(detached, { recursive: true, force: true });
   }
 }
