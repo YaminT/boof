@@ -434,22 +434,24 @@ describe("resolveSandbox", () => {
 });
 
 describe("prepareAgentLaunch", () => {
-  it("returns direct when the sandbox is off", () => {
-    expect(prepareAgentLaunch({ runner: { sandbox: offSandbox } })).toEqual({ kind: "direct" });
+  it("returns direct when the sandbox is off", async () => {
+    await expect(prepareAgentLaunch({ runner: { sandbox: offSandbox } })).resolves.toEqual({
+      kind: "direct",
+    });
   });
 
-  it("throws before spawn when enforce has not passed the self-test", () => {
-    expect(() => prepareAgentLaunch({ runner: { sandbox: enforceSandbox } })).toThrow(
+  it("throws before spawn when enforce has not passed the self-test", async () => {
+    await expect(prepareAgentLaunch({ runner: { sandbox: enforceSandbox } })).rejects.toThrow(
       /sandbox self-test has not run/,
     );
   });
 
-  it("throws when the self-test passed and no per-task policy is ready", () => {
+  it("throws when the self-test passed and no per-task policy is ready", async () => {
     setSandboxStatus(
       { mode: "enforce", backend: "linux", state: "ok", reason: "" },
       sandboxSettingsFingerprint(enforceSandbox),
     );
-    expect(() => prepareAgentLaunch({ runner: { sandbox: enforceSandbox } })).toThrow(
+    await expect(prepareAgentLaunch({ runner: { sandbox: enforceSandbox } })).rejects.toThrow(
       /sandbox policy is not ready for this step/,
     );
   });

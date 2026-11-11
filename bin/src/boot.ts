@@ -4,6 +4,7 @@ import {
   RunnerEngine,
   ToolRegistry,
   defaultTools,
+  reapCrashedRunTemps,
   refreshSandbox,
 } from "@boof/runner";
 import type { ConciergeAgent, Settings } from "@boof/heart";
@@ -79,6 +80,8 @@ export async function boot(opts: BootOptions): Promise<Booted> {
       unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
     });
   let engine: RunnerEngine | null = null;
+  // A crashed run leaves its temp directory. Remove those before this process serves anything.
+  await reapCrashedRunTemps(opts.root);
   const server = await startServer({
     ...commonServerOptions,
     ...serverOptions,
@@ -94,6 +97,7 @@ export async function boot(opts: BootOptions): Promise<Booted> {
       engine = new RunnerEngine({
         root: opts.root,
         registry,
+        serverPort: server.port,
         external: createN8nTransport({
           root: opts.root,
           via: "runner",

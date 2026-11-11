@@ -39,7 +39,7 @@ import {
   sumUsage,
   UsageStore,
 } from "@boof/heart";
-import { prepareAgentLaunch } from "./sandbox/index.js";
+import { createRunTemp, prepareAgentLaunch, removeRunTemp } from "./sandbox/index.js";
 import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
@@ -88,6 +88,8 @@ export interface PipelineDeps {
   agentAuth?: AgentAuthResolver;
   /** Triggers n8n workflows for the project's external steps and check tasks. */
   external?: ExternalStepTransport;
+  /** Bound port of the server in this process. Omit for a headless run, which is not listening. */
+  serverPort?: number;
 }
 
 const VERDICT_PROTOCOL =
@@ -109,10 +111,10 @@ export const NON_INTERACTIVE =
   "background commands, subagents or monitors.\n\n" +
   "A single foreground shell command is limited to about 10 minutes. For anything longer, such " +
   "as a commit whose pre-commit hook runs a long test gate:\n\n" +
-  "1. Start it in the background, writing its exit status to a marker file, for example " +
-  "`(cmd; echo $? > /tmp/x.done) > /tmp/x.log 2>&1 &`.\n" +
+  "1. Start it in the background in a private temporary directory, writing its exit status to a marker " +
+  'file, for example `d=$(mktemp -d); (cmd; echo $? > "$d/done") > "$d/log" 2>&1 &`.\n' +
   "2. Wait for it with repeated foreground loops that each stay under 10 minutes, for example " +
-  "`until [ -f /tmp/x.done ]; do sleep 5; done`, timing out at about 9 minutes, and repeat until " +
+  '`until [ -f "$d/done" ]; do sleep 5; done`, timing out at about 9 minutes, and repeat until ' +
   "the marker exists.\n" +
   "3. Read its status and log.\n\n" +
   "End your turn only when this step's work is complete and your final report is written.";
@@ -143,6 +145,20 @@ const BASE_SYSTEM_PROMPTS = {
     WORKTREE_HYGIENE +
     VERDICT_PROTOCOL,
 } as const;
+
+/**
+ * One sentence added to the developer prompts while `runner.sandbox.mode` is `enforce`.
+ * `git stash`, `git gc`, `git tag` and `git push` have no writable ref or ssh socket in the
+ * sandbox, and `/tmp` is not writable: temporary files belong in `$TMPDIR`.
+ */
+export const SANDBOX_DEVELOPER_LIMITS =
+  "Inside the sandbox, git stash, git gc, git tag and git push do not work, and temporary files belong in $TMPDIR.";
+
+/** Developer and developer-fix prompts. Other roles are unchanged. The sentence is added once. */
+export function withSandboxLimits(prompt: string, mode: "off" | "enforce"): string {
+  if (mode !== "enforce" || prompt.includes(SANDBOX_DEVELOPER_LIMITS)) return prompt;
+  return `${prompt}\n\n${SANDBOX_DEVELOPER_LIMITS}`;
+}
 
 export const SYSTEM_PROMPTS = {
   planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
@@ -297,6 +313,36 @@ export class Pipeline {
     this.usageStore = new UsageStore(deps.root);
   }
 
+  /** Temp directory of the run in progress. Set only while `sandbox.mode` is `enforce`. */
+  private runTempDir: string | undefined;
+
+  private sandboxMode(): "off" | "enforce" {
+    return this.deps.settings.runner.sandbox?.mode === "enforce" ? "enforce" : "off";
+  }
+
+  private developerPrompt(prompt: string): string {
+    return withSandboxLimits(prompt, this.sandboxMode());
+  }
+
+  /** Per-step sandbox facts. Undefined when the sandbox is off (the launch stays direct). */
+  private agentLaunchContext(tool: string, cwd: string) {
+    if (this.sandboxMode() !== "enforce") return undefined;
+    if (!this.runTempDir || !this.deps.dataRoot || !this.deps.project) {
+      throw new SandboxUnavailableError(
+        "sandbox policy needs the data root, the project and a temp directory",
+      );
+    }
+    return {
+      dataRoot: this.deps.dataRoot,
+      projectId: this.deps.project.id,
+      tool,
+      writableRoot: cwd,
+      mainCheckout: this.deps.settings.workingDirectory,
+      runTempDir: this.runTempDir,
+      ...(this.deps.serverPort !== undefined ? { serverPort: this.deps.serverPort } : {}),
+    };
+  }
+
   private closeSteps(id: string, label: (typeof CLOSING_STEP_LABELS)[number]): Promise<void> {
     return this.deps.store.appendStep(id, label).catch((err) => {
       console.error(`could not write the closing "${label}" entry for task ${id}:`, err);
@@ -346,7 +392,10 @@ export class Pipeline {
     tool: Tool,
     opts: RunOptions,
   ): Promise<RunResult> {
-    const launch = prepareAgentLaunch(this.deps.settings);
+    const launch = await prepareAgentLaunch(
+      this.deps.settings,
+      this.agentLaunchContext(tool.id, opts.cwd),
+    );
     if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
@@ -1024,6 +1073,15 @@ export class Pipeline {
     const cwd = workingDirectory;
 
     try {
+      if (this.sandboxMode() === "enforce") {
+        if (!this.deps.dataRoot || !this.deps.project) {
+          throw new SandboxUnavailableError("sandbox policy needs the data root and the project");
+        }
+        this.runTempDir = await createRunTemp({
+          dataRoot: this.deps.dataRoot,
+          projectId: this.deps.project.id,
+        });
+      }
       // Set up isolation when the working directory is a git repo. Reused
       // across iterations so later runs build on the prior run's work.
       if (await isGitRepo(workingDirectory)) {
@@ -1125,7 +1183,7 @@ export class Pipeline {
       const devOpts = {
         role: "developer" as const,
         model: developer.model,
-        systemPrompt: SYSTEM_PROMPTS.developer,
+        systemPrompt: this.developerPrompt(SYSTEM_PROMPTS.developer),
         prompt: await this.buildPrompt(task, withExternal(`## Plan\n${finalPlan}`)),
         cwd: stepCwd,
         autoApprove: true,
@@ -1243,7 +1301,7 @@ export class Pipeline {
         const fixOpts = {
           role: "developer" as const,
           model: developer.model,
-          systemPrompt: SYSTEM_PROMPTS.developerFix,
+          systemPrompt: this.developerPrompt(SYSTEM_PROMPTS.developerFix),
           prompt: await this.buildPrompt(task, withExternal(fixBase)),
           cwd: stepCwd,
           autoApprove: true,
@@ -1419,6 +1477,10 @@ export class Pipeline {
         ...(authRefused ? { authRefused: true as const } : {}),
         ...(sandboxUnavailable ? { sandbox: true as const } : {}),
       };
+    } finally {
+      const temp = this.runTempDir;
+      this.runTempDir = undefined;
+      if (temp) await removeRunTemp(temp);
     }
   }
 

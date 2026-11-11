@@ -57,6 +57,8 @@ export interface EngineOptions {
   agentAuth?: AgentAuthResolver;
   /** Triggers n8n workflows for external steps and check tasks; absent: they fail. */
   external?: ExternalStepTransport;
+  /** Bound port of the server in this process. The sandbox denies it. Omit when nothing is listening. */
+  serverPort?: number;
 }
 
 const INTERRUPTED_HEAD =
@@ -100,6 +102,7 @@ export class RunnerEngine {
   private readonly pollIntervalMs: number;
   private readonly onlyProject?: string;
   private readonly external?: ExternalStepTransport;
+  private readonly serverPort?: number;
   /** In-flight pipelines by project id (the at-most-one-per-project invariant). */
   private readonly inflight = new Map<string, Promise<TickResult>>();
   /** Task id in flight per project id (so a shutdown can ask each one to stop). */
@@ -134,6 +137,7 @@ export class RunnerEngine {
     this.pollIntervalMs = opts.pollIntervalMs ?? 1500;
     this.onlyProject = opts.onlyProject;
     this.external = opts.external;
+    this.serverPort = opts.serverPort;
     this.pool =
       opts.pool ??
       new PoolGate({
@@ -642,6 +646,7 @@ export class RunnerEngine {
         gateway: await this.pool.gateway(),
         agentAuth: this.agentAuth,
         ...(this.external ? { external: this.external } : {}),
+        ...(this.serverPort !== undefined ? { serverPort: this.serverPort } : {}),
       });
       const outcome = await pipeline.run(running!);
       await this.finalize(project, store, outcome);

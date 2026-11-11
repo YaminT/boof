@@ -46,7 +46,7 @@ import {
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof/heart";
-import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
+import { NON_INTERACTIVE, Pipeline, SANDBOX_DEVELOPER_LIMITS, SYSTEM_PROMPTS } from "./pipeline.js";
 import { currentBootIdentity, isAlive, writePidFile } from "@boof/heart";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
@@ -1698,6 +1698,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(has("You are the OBSERVER")).toBe(true);
     expect(has("You are the REVIEWER")).toBe(true);
     expect(has("Answer the following questions")).toBe(true);
+    expect(has(SANDBOX_DEVELOPER_LIMITS)).toBe(false);
     for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
   });
 

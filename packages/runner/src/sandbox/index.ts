@@ -15,6 +15,7 @@ import {
 } from "@boof/heart";
 import { darwinSandboxStatus } from "./backend-darwin.js";
 import { boofSandboxHelperPath, planLinuxSandbox } from "./backend-linux.js";
+import { sandboxLaunchFor, type AgentLaunchContext } from "./runtime.js";
 import {
   judgeSelfTest,
   readFakeAbi,
@@ -124,9 +125,9 @@ async function enforceStatus(
 }
 
 /**
- * Why an agent step must not start, or null when `mode` is off.
- * Until I1e builds a per-task policy, enforce with a passing self-test still returns
- * "sandbox policy is not ready for this step". There is no unsandboxed fallback.
+ * Why an agent must not start, or null when it may. `off` starts unsandboxed. `enforce` starts
+ * only after the self-test passed; the per-step policy is built by {@link prepareAgentLaunch}.
+ * There is no unsandboxed fallback.
  */
 export function sandboxBlockReason(settings: {
   runner: { sandbox: SandboxSettingsView };
@@ -135,16 +136,34 @@ export function sandboxBlockReason(settings: {
   if (sandbox.mode !== "enforce") return null;
   const status = sandboxStatusFor(sandbox, process.platform);
   if (status.state !== "ok") return status.reason;
-  return "sandbox policy is not ready for this step";
+  return null;
 }
 
-/** Direct when the sandbox is off. Enforce throws `SandboxUnavailableError` before any spawn. */
-export function prepareAgentLaunch(settings: {
-  runner: { sandbox: SandboxSettingsView };
-}): CommandLaunch {
-  const reason = sandboxBlockReason(settings);
-  if (reason) throw new SandboxUnavailableError(reason);
-  return { kind: "direct" };
+/**
+ * Direct when the sandbox is off. Enforce throws `SandboxUnavailableError` before any spawn
+ * when the self-test has not passed, or when the step context is missing. With a context, the
+ * launch carries the per-step policy (git paths, agent home, cache, temp, git identity).
+ */
+export async function prepareAgentLaunch(
+  settings: { runner: { sandbox: SandboxSettingsView } },
+  ctx?: AgentLaunchContext,
+): Promise<CommandLaunch> {
+  if (settings.runner.sandbox.mode !== "enforce") return { kind: "direct" };
+  const status = sandboxStatusFor(settings.runner.sandbox, process.platform);
+  if (status.state !== "ok") throw new SandboxUnavailableError(status.reason);
+  if (!ctx) throw new SandboxUnavailableError("sandbox policy is not ready for this step");
+  return sandboxLaunchFor(settings, ctx);
 }
 
 export { judgeSelfTest, planLinuxSandbox, boofSandboxHelperPath, darwinSandboxStatus };
+export {
+  boofStateHome,
+  buildRunPolicy,
+  createRunTemp,
+  dataRootHash,
+  linkedWorktreeGit,
+  readGitIdentity,
+  reapCrashedRunTemps,
+  removeRunTemp,
+} from "./runtime.js";
+export type { AgentLaunchContext } from "./runtime.js";
