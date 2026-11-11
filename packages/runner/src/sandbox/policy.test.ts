@@ -116,6 +116,7 @@ describe("buildSandboxPolicy", () => {
       `${AGENT_HOME}/claude-code/codex`,
       `${AGENT_HOME}/claude-code/xdg-config`,
       `${AGENT_HOME}/claude-code/xdg-data`,
+      `${AGENT_HOME}/claude-code/xdg-state`,
       ...SANDBOX_DEVICES,
       `${PROJECT}/.git/worktrees/task`,
       `${PROJECT}/.git/objects`,
@@ -168,12 +169,14 @@ describe("buildSandboxPolicy", () => {
         expect(policy.env.CODEX_HOME).toBe(`${root}/codex`);
         expect(policy.env.XDG_CONFIG_HOME).toBe(`${root}/xdg-config`);
         expect(policy.env.XDG_DATA_HOME).toBe(`${root}/xdg-data`);
+        expect(policy.env.XDG_STATE_HOME).toBe(`${root}/xdg-state`);
         expect(policy.env.HOME).toBe(AGENT_HOME);
         for (const path of [
           policy.env.CLAUDE_CONFIG_DIR,
           policy.env.CODEX_HOME,
           policy.env.XDG_CONFIG_HOME,
           policy.env.XDG_DATA_HOME,
+          policy.env.XDG_STATE_HOME,
         ]) {
           expect(path.startsWith(`${AGENT_HOME}/`)).toBe(true);
           expect(policy.readWrite).toContain(path);

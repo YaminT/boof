@@ -1,5 +1,15 @@
 import { closeSync, constants, existsSync, openSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -307,6 +317,34 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(main.readWrite).not.toContain(join(common!, "objects"));
     expect(main.readWrite).not.toContain(join(common!, "refs", "heads", "boof-runner"));
     expect(main.denyTcpPorts).toEqual([]);
+  });
+
+  it("resolves a symlinked CLI to its package root, including nested vendor binaries", async () => {
+    const fx = await fixture(true);
+    const install = join(fx.base, "node_modules", "@fake", "codex");
+    const binary = join(install, "vendor", "aarch64-unknown-linux-musl", "bin", "codex");
+    const linkDir = join(fx.base, "bin");
+    await mkdir(dirname(binary), { recursive: true });
+    await mkdir(linkDir);
+    await writeFile(
+      join(install, "package.json"),
+      '{"name":"@fake/codex","bin":{"codex":"bin/codex.js"}}\n',
+    );
+    await writeFile(binary, "#!/bin/sh\nexit 0\n");
+    await chmod(binary, 0o755);
+    await symlink(binary, join(linkDir, "codex"));
+    const env = {
+      ...fx.env,
+      PATH: `${linkDir}:/usr/bin:/bin`,
+    };
+    const policy = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, tool: "codex", env, serverPort: 4319 },
+    );
+
+    expect(policy.readExec).toContain(install);
+    expect(policy.readExec).not.toContain(dirname(binary));
+    expect(policy.readExec).not.toContain(fx.base);
   });
 
   it("names a configured path that does not exist", async () => {

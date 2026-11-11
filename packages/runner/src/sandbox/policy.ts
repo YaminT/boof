@@ -319,6 +319,7 @@ function keyModeState(agentHome: string, tool: string): Record<string, string> {
     CODEX_HOME: posix.join(root, "codex"),
     XDG_CONFIG_HOME: posix.join(root, "xdg-config"),
     XDG_DATA_HOME: posix.join(root, "xdg-data"),
+    XDG_STATE_HOME: posix.join(root, "xdg-state"),
   };
 }
 

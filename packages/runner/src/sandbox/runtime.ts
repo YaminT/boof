@@ -365,7 +365,28 @@ async function toolInstallRoot(tool: string, env: NodeJS.ProcessEnv): Promise<st
   const found = commandOnPath(command, env.PATH);
   if (!found) return undefined;
   try {
-    return dirname(await realpath(found));
+    const resolved = await realpath(found);
+    const binName = basename(command);
+    // Package launchers often resolve to <package>/bin/<tool>, then spawn a native executable
+    // from a sibling `vendor` or nested dependency directory. Granting dirname(resolved) misses
+    // that executable. Find the package that declares this CLI in its `bin` map and grant only
+    // that package directory. Starting from realpath(found) also makes symlinked npm/bun bins
+    // resolve to the owning package before we inspect its manifest.
+    let directory = dirname(resolved);
+    while (true) {
+      try {
+        const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8")) as {
+          bin?: string | Record<string, string>;
+        };
+        const bins = typeof manifest.bin === "string" ? { [tool]: manifest.bin } : manifest.bin;
+        if (bins && Object.hasOwn(bins, binName)) return directory;
+      } catch {
+        // Keep walking: not every directory in the resolved path is a package root.
+      }
+      const parent = dirname(directory);
+      if (parent === directory) return dirname(resolved);
+      directory = parent;
+    }
   } catch {
     return undefined;
   }
@@ -407,7 +428,7 @@ export async function buildRunPolicy(
   await chmod(projectDir, 0o700);
   const cacheDir = await makePrivate(join(projectDir, "cache"));
   const tool = ctx.tool;
-  for (const name of ["claude", "codex", "xdg-config", "xdg-data"]) {
+  for (const name of ["claude", "codex", "xdg-config", "xdg-data", "xdg-state"]) {
     await makePrivate(join(agentHome, tool, name));
   }
   const gitFacts = await linkedWorktreeGit(writableRoot);

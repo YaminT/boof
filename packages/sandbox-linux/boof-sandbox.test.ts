@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -171,6 +171,35 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(String(abi));
     expect(result.stderr).toBe("");
+  });
+
+  it("executes a nested tool binary through a symlinked bin and denies a binary outside its install tree", async () => {
+    await tree();
+    const install = await mkdtemp(join(tmpdir(), "boof-tool-install-"));
+    roots.push(install);
+    const nestedBin = join(install, "vendor", "aarch64-unknown-linux-musl", "bin");
+    const linkedBin = join(install, "bin");
+    const outside = join(dirname(install), `outside-tool-${process.pid}`);
+    roots.push(outside);
+    await mkdir(nestedBin, { recursive: true });
+    await mkdir(linkedBin, { recursive: true });
+    writeFileSync(
+      join(install, "package.json"),
+      '{"name":"fake-codex","bin":{"codex":"bin/codex"}}\n',
+    );
+    writeFileSync(join(nestedBin, "codex"), "#!/bin/sh\nprintf 'nested tool ran\\n'\n");
+    writeFileSync(outside, "#!/bin/sh\nprintf 'outside tool ran\\n'\n");
+    chmodSync(join(nestedBin, "codex"), 0o755);
+    chmodSync(outside, 0o755);
+    await symlink(join(nestedBin, "codex"), join(linkedBin, "codex"));
+
+    const text = policy([...readExec, install], [work], []);
+    const allowed = await run(text, [join(linkedBin, "codex")]);
+    expect(allowed.code).toBe(0);
+    expect(allowed.stdout).toBe("nested tool ran\n");
+    const denied = await run(text, [outside]);
+    expect(denied.code).not.toBe(0);
+    expect(denied.stderr).toContain("Permission denied");
   });
 
   it("rejects --self-test instead of running one", async () => {
