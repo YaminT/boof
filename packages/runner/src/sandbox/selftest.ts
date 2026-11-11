@@ -39,25 +39,26 @@ const DENY_REASON: Record<string, string> = {
 };
 
 const WRITE_INSIDE_REASON = "self-test: could not write inside the allowed folder";
-export const SIGNALS_NOT_SCOPED = "signals not scoped (kernel older than 6.12)";
+function signalScopeRequired(abi: number): string {
+  return `Landlock ABI ${abi} does not scope signals; upgrade the kernel to 6.12 or newer (ABI 6) before enabling enforce`;
+}
 
 /**
  * Pure verdict. A probe is denied only when its outcome is exactly `denied` (EACCES or EPERM).
- * Any other outcome, including a missing line, fails that probe. ABI below 6 does not judge
- * the signal probe: those kernels cannot scope signals, and a pass still says so.
+ * Any other outcome, including a missing line, fails that probe. ABI below 6 fails closed
+ * because those kernels cannot scope signals.
  */
 export function judgeSelfTest(
   results: readonly SelfTestProbeResult[],
   abi: number,
 ): { ok: true; reason: string } | { ok: false; reason: string } {
+  if (abi < 6) return { ok: false, reason: signalScopeRequired(abi) };
   const byId = new Map(results.map((result) => [result.id, result.outcome]));
-  const mustDeny = ["data-root-read", "denied-port", "unix-socket", "write-outside"];
-  if (abi >= 6) mustDeny.push("signal");
+  const mustDeny = ["data-root-read", "denied-port", "unix-socket", "write-outside", "signal"];
   for (const id of mustDeny) {
     if (byId.get(id) !== "denied") return { ok: false, reason: DENY_REASON[id]! };
   }
   if (byId.get("write-inside") !== "allowed") return { ok: false, reason: WRITE_INSIDE_REASON };
-  if (abi >= 4 && abi < 6) return { ok: true, reason: SIGNALS_NOT_SCOPED };
   return { ok: true, reason: "" };
 }
 

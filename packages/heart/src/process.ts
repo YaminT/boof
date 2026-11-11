@@ -76,6 +76,8 @@ export const MAX_ARG_STRLEN = 131_072;
  * end it.
  */
 const PROBE_BOUND_MS = 5_000;
+/** The Linux supervisor needs time to stop and reap a hostile fork storm. */
+const SANDBOX_KILL_BOUND_MS = 10_000;
 
 /**
  * `work`, or `fallback` when it is still pending after {@link PROBE_BOUND_MS}. A late rejection of
@@ -90,6 +92,47 @@ function withinProbeBound<T>(work: Promise<T>, fallback: T): Promise<T> {
     /* A rejection that loses the race must not be unhandled. */
   });
   return Promise.race([work, bound]).finally(() => clearTimeout(timer));
+}
+
+/** macOS has no helper supervisor; walk the live process table and signal children first. */
+export async function killDarwinProcessTree(root: number, signal: NodeJS.Signals): Promise<void> {
+  const table = await new Promise<string>((resolve, reject) => {
+    const child = spawn("ps", ["-axo", "pid=,ppid="], { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    child.stdout?.on("data", (chunk) => (out += chunk.toString()));
+    child.once("error", reject);
+    child.once("close", (code) => (code === 0 ? resolve(out) : reject(new Error("ps failed"))));
+  });
+  const children = new Map<number, number[]>();
+  for (const line of table.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    const siblings = children.get(ppid) ?? [];
+    siblings.push(pid);
+    children.set(ppid, siblings);
+  }
+  const order: number[] = [];
+  const visit = (pid: number, seen: Set<number>) => {
+    if (seen.has(pid)) return;
+    seen.add(pid);
+    for (const child of children.get(pid) ?? []) visit(child, seen);
+    order.push(pid);
+  };
+  visit(root, new Set());
+  for (const pid of order) {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      /* exited during the walk */
+    }
+  }
+  try {
+    process.kill(-root, signal);
+  } catch {
+    /* no remaining process group */
+  }
 }
 
 /** What the live Windows stop may call. Both are async: nothing on this path uses `spawnSync`. */
@@ -322,7 +365,15 @@ export function execCommand(
         return;
       }
       try {
-        if (launch.kind === "sandbox") child.kill(signal);
+        if (launch.kind === "sandbox" && platform === "darwin" && child.pid) {
+          void killDarwinProcessTree(child.pid, signal).catch(() => {
+            try {
+              child.kill(signal);
+            } catch {
+              /* already gone */
+            }
+          });
+        } else if (launch.kind === "sandbox") child.kill(signal);
         else if (child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
@@ -358,7 +409,10 @@ export function execCommand(
       idleTimer = setTimeout(() => {
         stalled = true;
         kill("SIGTERM");
-        killTimer = setTimeout(() => kill("SIGKILL"), 1500);
+        killTimer = setTimeout(
+          () => kill("SIGKILL"),
+          launch.kind === "sandbox" ? SANDBOX_KILL_BOUND_MS : 1500,
+        );
       }, opts.idleTimeoutMs);
     };
     armIdle();
@@ -368,7 +422,10 @@ export function execCommand(
         timedOut = true;
         if (launch.kind === "sandbox") {
           kill("SIGTERM");
-          killTimer = setTimeout(() => kill("SIGKILL"), 1500);
+          killTimer = setTimeout(
+            () => kill("SIGKILL"),
+            launch.kind === "sandbox" ? SANDBOX_KILL_BOUND_MS : 1500,
+          );
         } else {
           kill("SIGKILL");
         }
@@ -382,7 +439,10 @@ export function execCommand(
         else if (opts.steerSignalPath && existsSync(opts.steerSignalPath)) steered = true;
         else return;
         kill("SIGTERM");
-        killTimer = setTimeout(() => kill("SIGKILL"), 1500);
+        killTimer = setTimeout(
+          () => kill("SIGKILL"),
+          launch.kind === "sandbox" ? SANDBOX_KILL_BOUND_MS : 1500,
+        );
       }, opts.stopPollMs ?? 500);
     }
 

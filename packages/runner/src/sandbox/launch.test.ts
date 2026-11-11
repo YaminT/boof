@@ -15,7 +15,7 @@ import { transientReason } from "../tools/errors.js";
 import { planDarwinSandbox } from "./backend-darwin.js";
 import { planLinuxSandbox } from "./backend-linux.js";
 import { prepareAgentLaunch, refreshSandbox, type SandboxSettingsView } from "./index.js";
-import { SIGNALS_NOT_SCOPED, judgeSelfTest } from "./selftest.js";
+import { judgeSelfTest } from "./selftest.js";
 
 const offSandbox: SandboxSettingsView = {
   mode: "off",
@@ -289,22 +289,26 @@ describe("self-test probes", () => {
     expect(status).toEqual({ mode: "enforce", backend: "linux", state: "ok", reason: "" });
   });
 
-  it("passes ABI 5 when the signal probe is allowed and says signals are not scoped", async () => {
+  it("refuses ABI 5 with the required kernel upgrade instruction", async () => {
     const results = passingProbes.map((probe) =>
       probe.id === "signal" ? { ...probe, outcome: "allowed" } : probe,
     );
     const status = await refresh(results, "5");
-    expect(status).toEqual({
+    expect(status).toMatchObject({
       mode: "enforce",
       backend: "linux",
-      state: "ok",
-      reason: SIGNALS_NOT_SCOPED,
+      state: "unavailable",
+      reason: expect.stringContaining("Landlock ABI 5 does not scope signals"),
     });
+    expect(status.reason).toContain("upgrade the kernel to 6.12 or newer");
   });
 
-  it("passes ABI 4 without a signal probe and keeps the kernel reason", () => {
+  it("refuses ABI 4 without a signal probe", () => {
     const results = passingProbes.filter((probe) => probe.id !== "signal");
-    expect(judgeSelfTest(results, 4)).toEqual({ ok: true, reason: SIGNALS_NOT_SCOPED });
+    expect(judgeSelfTest(results, 4)).toEqual({
+      ok: false,
+      reason: expect.stringContaining("Landlock ABI 4 does not scope signals"),
+    });
   });
 });
 

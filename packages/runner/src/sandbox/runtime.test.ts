@@ -429,16 +429,19 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     await writeFile(commondir, old);
   });
 
-  it("refuses worktree config mode before sandboxing a linked worktree", async () => {
-    const fx = await fixture(true);
-    const commonConfig = join((await repoCommonDir(fx.repo))!, "config");
-    const original = await readFile(commonConfig, "utf8");
-    await writeFile(commonConfig, `${original}\n[extensions]\n\tworktreeConfig = true\n`);
-    await expect(buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx)).rejects.toThrow(
-      /config\.worktree is not allowed/,
-    );
-    await writeFile(commonConfig, original);
-  });
+  it.each(["true", "2", '"true"'])(
+    "refuses worktree config mode written as %s before sandboxing a linked worktree",
+    async (value) => {
+      const fx = await fixture(true);
+      const commonConfig = join((await repoCommonDir(fx.repo))!, "config");
+      const original = await readFile(commonConfig, "utf8");
+      await writeFile(commonConfig, `${original}\n[extensions]\n\tworktreeConfig = ${value}\n`);
+      await expect(
+        buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx),
+      ).rejects.toThrow(/config\.worktree is not allowed/);
+      await writeFile(commonConfig, original);
+    },
+  );
 
   it("imports verified private objects without changing an existing shared object", async () => {
     const fx = await fixture(true);

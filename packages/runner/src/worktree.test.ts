@@ -135,7 +135,7 @@ describe("worktree isolation", () => {
     await finalizeWorktree(repo, wt, "t");
   });
 
-  it("does not run a clean filter from an agent-controlled submodule", async () => {
+  it("keeps a committed submodule usable without running its clean filter", async () => {
     const source = await mkdtemp(join(tmpdir(), "boof-submodule-source-"));
     const marker = join(nonRepo, "filter-ran");
     const sh = (cwd: string, args: string[]) =>
@@ -163,12 +163,12 @@ describe("worktree isolation", () => {
         join(wt.path, ".gitmodules"),
         '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
       );
-      await expect(diffAgainstBase(wt)).rejects.toThrow(
-        /refusing task worktree git command with gitlinks or \.gitmodules/,
-      );
-      await expect(commitLeftovers(repo, wt, "submodule filter")).rejects.toThrow(
-        /refusing to snapshot gitlink entries/,
-      );
+      await expect(diffAgainstBase(wt)).resolves.toMatchObject({ text: expect.any(String) });
+      expect(await exists(marker)).toBe(false);
+      await rm(marker, { force: true });
+      await expect(commitLeftovers(repo, wt, "submodule filter")).resolves.toMatchObject({
+        branch: expect.stringContaining("--leftovers"),
+      });
       expect(await exists(marker)).toBe(false);
       await finalizeWorktree(repo, wt, "submodule filter");
     } finally {
@@ -185,6 +185,9 @@ describe("worktree isolation", () => {
       { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 10000 },
     );
     expect(staged.code, staged.stderr).toBe(0);
+    await expect(checkedWorktreeGit(wt, ["diff", wt.base])).rejects.toThrow(
+      /refusing task worktree git command with gitlinks/,
+    );
     await expect(commitLeftovers(repo, wt, "staged gitlink")).rejects.toThrow(
       "refusing to snapshot gitlink entries",
     );
@@ -263,6 +266,23 @@ describe("worktree isolation", () => {
       "task worktree config.worktree is not allowed",
     );
   });
+
+  it.each(["2", '"true"'])(
+    "parses common extensions.worktreeConfig values accepted by Git (%s)",
+    async (value) => {
+      const wt = await createWorktree(repo, `config-bool-${value.replace(/\W/g, "")}`);
+      const config = join((await repoCommonDir(repo))!, "config");
+      const original = await readFile(config, "utf8");
+      try {
+        await writeFile(config, `${original}\n[extensions]\n\tworktreeConfig = ${value}\n`);
+        await expect(verifyWorktreeRecord(wt)).rejects.toThrow(
+          "task worktree extensions.worktreeConfig is not allowed",
+        );
+      } finally {
+        await writeFile(config, original);
+      }
+    },
+  );
 
   it("clearly refuses a legacy worktree record without trusted git fields", async () => {
     const wt = await createWorktree(repo, "legacy-record");
