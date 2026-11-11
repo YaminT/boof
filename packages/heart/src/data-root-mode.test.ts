@@ -465,6 +465,58 @@ describe("windows access list", () => {
     ).rejects.toThrow(/symbolic link/);
   });
 
+  it("accepts SYSTEM, Administrators and the local Administrator on a temp directory", async () => {
+    const admin: AclPrincipal = {
+      account: "RUNNER\\runneradmin",
+      sid: "S-1-5-21-3289802278-1561746829-1498425070-500",
+    };
+    const normal = acesOf("D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)");
+    const inherited = acesOf("D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LA)");
+    const tightened: string[] = [];
+    const root = await temp();
+    const auth = join(root, "auth");
+    await mkdir(auth);
+    const acl: WindowsAclOps = {
+      currentUser: async () => admin,
+      readAcl: async (path) => ({ ok: true, aces: path === auth ? inherited : normal }),
+      tightenToUser: async (path) => {
+        tightened.push(path);
+        return true;
+      },
+    };
+    expect(await tightenDataRoot(root, { platform: "win32", windowsAcl: acl })).toEqual({
+      changed: false,
+      reason: "already-private",
+    });
+    expect(tightened).toEqual([]);
+    await expect(
+      assertSafeForSecrets(root, auth, "directory", { platform: "win32", windowsAcl: acl }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refuses Users, Everyone and Authenticated Users on a temp directory", async () => {
+    const admin: AclPrincipal = {
+      account: "RUNNER\\runneradmin",
+      sid: "S-1-5-21-3289802278-1561746829-1498425070-500",
+    };
+    for (const foreign of ["BU", "WD", "AU"]) {
+      const acl: WindowsAclOps = {
+        currentUser: async () => admin,
+        readAcl: async () => ({
+          ok: true,
+          aces: acesOf(
+            `D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)(A;OICI;FA;;;${foreign})`,
+          ),
+        }),
+        tightenToUser: async () => false,
+      };
+      const root = await temp();
+      await expect(
+        assertSafeForSecrets(root, root, "directory", { platform: "win32", windowsAcl: acl }),
+      ).rejects.toThrow(/other accounts/);
+    }
+  });
+
   it("accepts an inherited full-control ACE for the current user on a child file and folder", async () => {
     const root = await temp();
     const folder = join(root, "auth");

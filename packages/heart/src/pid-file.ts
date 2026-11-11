@@ -8,6 +8,7 @@ import {
   processTable,
   runProbe,
   readProcStat,
+  sameBoot,
   sharesRunnerGroup,
   verifiedDescendants,
   killVerified,
@@ -290,6 +291,18 @@ async function reapOffLinux(
     log(`refusing to signal this process (${record.pgid}); not killing`);
     return finish("skipped");
   }
+  // A different boot means this pid is not the recorded agent. Do not signal it, and do not
+  // report it dead: a live process may still be using that pid, so recovery must not requeue.
+  const boot = bootIdentity(identity);
+  if (record.bootId && boot && !sameBoot(record.bootId, boot)) {
+    log(`pid file is from another boot (${record.pgid}); not killing`);
+    return finish("skipped");
+  }
+  // A pid that leads no group is not the agent group. Signalling -pid would miss it and look
+  // like a successful kill. Only the real platform: tests inject a platform and fake pids.
+  if (deps.identity?.platform === undefined && platform !== "win32" && !groupAlive(record.pgid)) {
+    return finish("dead");
+  }
   const status = agentStatus(record, identity);
   if (status === "gone") return finish("dead");
   if (status === "unknown") {
@@ -301,7 +314,10 @@ async function reapOffLinux(
   }
   // Verified: the recorded boot, pid and start time. Is the recording runner still its parent?
   const probe = probeProcess(record.pgid, identity);
-  if (record.ownerPid && alive(record.ownerPid) && probe?.ppid === record.ownerPid) {
+  // The owner is a process, not a process group. On macOS the runner is often not a group
+  // leader, so a group signal would say it is gone and the reaper would kill its agent.
+  const ownerAlive = deps.isAlive ?? isAlive;
+  if (record.ownerPid && ownerAlive(record.ownerPid) && probe?.ppid === record.ownerPid) {
     log(`recording runner ${record.ownerPid} is still running (${record.pgid}); not killing`);
     return { outcome: "skipped", record, stillRunning: true };
   }

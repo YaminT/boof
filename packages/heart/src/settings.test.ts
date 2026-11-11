@@ -362,7 +362,7 @@ describe("effectiveSettings", () => {
     const g = defaultSettings();
     const e = effectiveSettings(g, project({ worktree: { onDone: "delete" } }));
     expect(resolveWorktreeRoot(worktreeSettings(e), e.workingDirectory)).toBe(
-      "/repos/app/.boof-runner-worktrees",
+      join("/repos/app", ".boof-runner-worktrees"),
     );
     expect(worktreeSettings(e).onDone).toBe("delete");
   });

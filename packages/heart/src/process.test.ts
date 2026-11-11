@@ -145,7 +145,8 @@ describe("execCommand", () => {
       await execCommand(process.execPath, ["-e", "process.exit(0)"], { cwd: dir, pidFilePath });
       expect(existsSync(pidFilePath)).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      // Windows keeps the child's cwd locked for a moment after exit.
+      await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   });
 

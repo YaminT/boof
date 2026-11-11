@@ -13,6 +13,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+
+/** A tool cwd is inside `root`. Windows joins with `\\` and folds case. */
+const cwdUnder = (cwd: string, root: string) => {
+  const fold = process.platform === "win32" ? (p: string) => p.toLowerCase() : (p: string) => p;
+  const norm = (p: string) => fold(p).replaceAll("\\", "/").replace(/\/+$/, "");
+  const child = norm(cwd);
+  const parent = norm(root);
+  return child === parent || child.startsWith(`${parent}/`);
+};
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommandStore,
@@ -616,12 +625,24 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
 
   it("a codex-shaped planner report with a questions block parks the task", async () => {
     const prev = process.env.BOOF_RUNNER_CODEX_BIN;
-    const bin = join(dataRoot, "codex");
-    await writeFile(
-      bin,
-      '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. ## Reports\\n\\`\\`\\`\\n" > "$2"; fi; shift; done\n',
-    );
-    await chmod(bin, 0o755);
+    // Windows will not execute a shebang file. A .cmd is a program CreateProcess can start.
+    const questions = "Need input.\n\n```questions\n1. Which DB?\n2. ## Reports\n```\n";
+    let bin = join(dataRoot, "codex");
+    if (process.platform === "win32") {
+      const script = join(dataRoot, "codex-fake.mjs");
+      await writeFile(
+        script,
+        `import { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nfor (let i = 0; i < args.length; i++) {\n  if (args[i] === "-o" && args[i + 1]) writeFileSync(args[i + 1], ${JSON.stringify(questions)});\n}\n`,
+      );
+      bin = join(dataRoot, "codex.cmd");
+      await writeFile(bin, `@echo off\r\n"${process.execPath}" "%~dp0codex-fake.mjs" %*\r\n`);
+    } else {
+      await writeFile(
+        bin,
+        '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. ## Reports\\n\\`\\`\\`\\n" > "$2"; fi; shift; done\n',
+      );
+      await chmod(bin, 0o755);
+    }
     process.env.BOOF_RUNNER_CODEX_BIN = bin;
     try {
       engine = new RunnerEngine({
@@ -2299,7 +2320,8 @@ describe("multi-project engine (mock tool)", () => {
       "default/same-a",
       "default/same-b",
     ]);
-  });
+    // Five full pipelines. Windows git is slower than the 20s default when the runner is busy.
+  }, 60_000);
 
   it("skips paused, archived and directory-less projects, and serves them again once resumed", async () => {
     const b = await addProject("b");
@@ -2388,8 +2410,8 @@ describe("multi-project engine (mock tool)", () => {
     await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
     expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
 
-    const bCwds = cwds.filter((c) => c.startsWith(`${wtRoot}/`));
-    const aCwds = cwds.filter((c) => c.startsWith(`${workDir}/.boof-runner-worktrees/`));
+    const bCwds = cwds.filter((c) => cwdUnder(c, wtRoot));
+    const aCwds = cwds.filter((c) => cwdUnder(c, join(workDir, ".boof-runner-worktrees")));
     expect(bCwds.length).toBeGreaterThan(0);
     expect(aCwds.length).toBeGreaterThan(0);
     expect(bCwds.length + aCwds.length).toBe(cwds.length);
@@ -2410,7 +2432,7 @@ describe("multi-project engine (mock tool)", () => {
     let allArrived!: () => void;
     const together = new Promise<void>((r) => (allArrived = r));
     mockState.onRun = async (run) => {
-      const repo = repos.find((r) => run.cwd.startsWith(`${r}/`)) ?? "?";
+      const repo = repos.find((r) => cwdUnder(run.cwd, r)) ?? "?";
       const n = (active.get(repo) ?? 0) + 1;
       active.set(repo, n);
       maxPerRepo.set(repo, Math.max(maxPerRepo.get(repo) ?? 0, n));

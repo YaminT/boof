@@ -1,6 +1,7 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   SHA1_EMPTY_TREE,
@@ -42,6 +43,53 @@ const exists = async (p: string) => {
   }
 };
 
+/** Git's worktree list spells the long path with forward slashes; Node's temp path may not. */
+const gitPath = async (p: string) => (await realpath(p)).replaceAll("\\", "/");
+
+async function gitExecutable(): Promise<string> {
+  const finder = process.platform === "win32" ? "where.exe" : "which";
+  const found = await execCommand(finder, ["git"], { cwd: repo, timeoutMs: 15_000 });
+  const line = found.stdout
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find(Boolean);
+  if (!line) throw new Error("git was not found on PATH");
+  return line;
+}
+
+/** A shebang script is not a program Windows can start. Git for Windows ships sh.exe. */
+async function windowsShell(): Promise<string> {
+  const git = await gitExecutable();
+  const root = resolve(git, "..", "..");
+  for (const candidate of [join(root, "usr", "bin", "sh.exe"), join(root, "bin", "sh.exe")]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`sh.exe was not found next to ${git}`);
+}
+
+/**
+ * Put a POSIX `git` on PATH. On Windows also write `git.cmd`, which CreateProcess finds,
+ * and run that script with Git's sh.exe.
+ */
+async function placeGitShim(dir: string, shell: string): Promise<void> {
+  await writeFile(join(dir, "git"), shell, { mode: 0o755 });
+  if (process.platform !== "win32") return;
+  const sh = await windowsShell();
+  await writeFile(join(dir, "git.cmd"), `@echo off\r\n"${sh}" "%~dp0git" %*\r\n`);
+}
+
+const prependPath = (dir: string) => {
+  process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ""}`;
+};
+
+/** Command git will execute: the script on POSIX, `sh.exe script` on Windows. */
+async function gitCommand(script: string): Promise<string> {
+  if (process.platform !== "win32") return script;
+  return `"${await windowsShell()}" "${script}"`;
+}
+
+const infoAttributes = /info[/\\]attributes(?: sets a filter= or merge= attribute)?/;
+
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "boof-runner-repo-"));
   nonRepo = await mkdtemp(join(tmpdir(), "boof-runner-nonrepo-"));
@@ -67,11 +115,13 @@ describe("git queries", () => {
   it("pruneStaleWorktrees drops a missing worktree registration and keeps a live one", async () => {
     const live = await addWorktree("live");
     const gone = await addWorktree("gone");
+    const liveListed = await gitPath(live.path);
+    const goneListed = await gitPath(gone.path);
     await rm(gone.path, { recursive: true, force: true });
     await pruneStaleWorktrees(repo);
-    const list = (await g(["worktree", "list", "--porcelain"])).stdout;
-    expect(list).toContain(live.path);
-    expect(list).not.toContain(gone.path);
+    const list = (await g(["worktree", "list", "--porcelain"])).stdout.replaceAll("\\", "/");
+    expect(list).toContain(liveListed);
+    expect(list).not.toContain(goneListed);
     expect(await exists(live.path)).toBe(true);
     await expect(pruneStaleWorktrees(nonRepo)).resolves.toBeUndefined();
   });
@@ -79,14 +129,13 @@ describe("git queries", () => {
   it("pruneStaleWorktrees rejects when git exits non-zero", async () => {
     // A git shim on PATH that fails `worktree prune` and forwards everything else.
     const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
-    await writeFile(
-      join(shim, "git"),
-      `#!/bin/sh\ncase " $* " in *" worktree prune "*) echo boom >&2; exit 3;; esac\nexec ${real} "$@"\n`,
-      { mode: 0o755 },
+    const real = await gitExecutable();
+    await placeGitShim(
+      shim,
+      `#!/bin/sh\ncase " $* " in *" worktree prune "*) echo boom >&2; exit 3;; esac\nexec '${real}' "$@"\n`,
     );
     const oldPath = process.env.PATH;
-    process.env.PATH = `${shim}:${oldPath}`;
+    prependPath(shim);
     try {
       await expect(pruneStaleWorktrees(repo)).rejects.toThrow(/prune failed.*exit 3.*boom/);
     } finally {
@@ -292,7 +341,7 @@ describe("agent-planted git config does not run server-side", () => {
     const hook = join(nonRepo, "hook-ran");
     const script = join(nonRepo, "fsmonitor.sh");
     await writeFile(script, `#!/bin/sh\ntouch '${fsmonitor}'\nprintf '/\\0'\n`, { mode: 0o755 });
-    await g(["config", "core.fsmonitor", script]);
+    await g(["config", "core.fsmonitor", await gitCommand(script)]);
     const hooks = join(repo, ".git", "hooks");
     await mkdir(hooks, { recursive: true });
     await writeFile(join(hooks, "post-checkout"), `#!/bin/sh\ntouch '${hook}'\n`, {
@@ -336,8 +385,9 @@ describe("agent-planted git config does not run server-side", () => {
     const wt = join(repo, ".wts", "t2");
     await g(["worktree", "add", "-q", wt, "boof-runner/t2"]);
     await writeFile(join(wt, "a.txt"), "one\n");
-    await g(["config", "diff.external", script]);
-    await g(["config", "diff.evil.textconv", script]);
+    const command = await gitCommand(script);
+    await g(["config", "diff.external", command]);
+    await g(["config", "diff.evil.textconv", command]);
     await writeFile(join(wt, ".gitattributes"), "*.txt diff=evil\n");
     // Sanity: plain git diff runs the external driver.
     await g(["-C", wt, "add", "-N", "a.txt"]);
@@ -378,8 +428,9 @@ describe("agent-planted git config does not run server-side", () => {
     const ran = join(nonRepo, "filter-ran");
     const script = join(nonRepo, "filter.sh");
     await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
-    await g(["config", "filter.evil.clean", script]);
-    await g(["config", "filter.evil.smudge", script]);
+    const command = await gitCommand(script);
+    await g(["config", "filter.evil.clean", command]);
+    await g(["config", "filter.evil.smudge", command]);
     await g(["config", "filter.evil.required", "true"]);
     await writeFile(join(repo, ".gitattributes"), "* filter=evil\n");
     await writeFile(join(repo, "a.txt"), "one\n");
@@ -413,8 +464,9 @@ describe("agent-planted git config does not run server-side", () => {
     const ran = join(nonRepo, "equals-filter-ran");
     const script = join(nonRepo, "equals-filter.sh");
     await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
-    await g(["config", "filter.x=y.clean", script]);
-    await g(["config", "filter.x=y.smudge", script]);
+    const command = await gitCommand(script);
+    await g(["config", "filter.x=y.clean", command]);
+    await g(["config", "filter.x=y.smudge", command]);
     await g(["config", "filter.x=y.required", "true"]);
     await writeFile(join(repo, ".gitattributes"), "* filter=x=y\n");
     await writeFile(join(repo, "a.txt"), "one\n");
@@ -435,6 +487,7 @@ describe("agent-planted git config does not run server-side", () => {
     const ran = join(nonRepo, "merge-ran");
     const script = join(nonRepo, "merge.sh");
     await writeFile(script, `#!/bin/sh\necho MERGE >> '${ran}'\nexit 0\n`, { mode: 0o755 });
+    const command = await gitCommand(script);
     await writeFile(join(repo, ".gitattributes"), "* merge=x=y\n");
     await g(["add", ".gitattributes"]);
     await g(["commit", "-q", "-m", "attr"]);
@@ -447,7 +500,7 @@ describe("agent-planted git config does not run server-side", () => {
     await writeFile(join(repo, "m.txt"), "right\n");
     await g(["add", "m.txt"]);
     await g(["commit", "-q", "-m", "right"]);
-    await g(["config", "merge.x=y.driver", script]);
+    await g(["config", "merge.x=y.driver", command]);
     const left = (await g(["rev-parse", "left"])).stdout.trim();
     await g(["checkout", "-q", "left"]);
     await g(["merge", "--no-ff", "--no-edit", "-m", "plain", "right"]);
@@ -465,26 +518,23 @@ describe("agent-planted git config does not run server-side", () => {
     const ran = join(nonRepo, "info-filter-ran");
     const script = join(nonRepo, "info-filter.sh");
     await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
-    await g(["config", "filter.late.clean", script]);
+    const command = await gitCommand(script);
+    await g(["config", "filter.late.clean", command]);
     await mkdir(join(repo, ".git", "info"), { recursive: true });
     await writeFile(join(repo, ".git", "info", "attributes"), "* filter=late\n");
     await writeFile(join(repo, "a.txt"), "content\n");
     await writeFile(join(wt.path, "b.txt"), "content\n");
-    await expect(git(repo, ["add", "--", "a.txt"])).rejects.toThrow(
-      /info\/attributes sets a filter= or merge= attribute/,
-    );
-    await expect(git(wt.path, ["add", "--", "b.txt"])).rejects.toThrow(/info\/attributes/);
+    await expect(git(repo, ["add", "--", "a.txt"])).rejects.toThrow(infoAttributes);
+    await expect(git(wt.path, ["add", "--", "b.txt"])).rejects.toThrow(infoAttributes);
     expect(await exists(ran)).toBe(false);
     const merged = await createIntegrationBranch(repo, "int-info", ["main", "missing"]);
     expect(merged.ok).toBe(false);
     if (merged.ok) return;
-    expect(merged.reason).toMatch(/info\/attributes sets a filter= or merge= attribute/);
+    expect(merged.reason).toMatch(infoAttributes);
     expect(await exists(ran)).toBe(false);
 
     await writeFile(join(repo, ".git", "info", "attributes"), "* merge=late\n");
-    await expect(git(repo, ["status", "--porcelain"])).rejects.toThrow(
-      /info\/attributes sets a filter= or merge= attribute/,
-    );
+    await expect(git(repo, ["status", "--porcelain"])).rejects.toThrow(infoAttributes);
     expect(await exists(ran)).toBe(false);
   });
 
@@ -515,7 +565,8 @@ describe("agent-planted git config does not run server-side", () => {
     const ran = join(nonRepo, "old-git-filter-ran");
     const script = join(nonRepo, "old-git-filter.sh");
     await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
-    await g(["config", "filter.evil.clean", script]);
+    const command = await gitCommand(script);
+    await g(["config", "filter.evil.clean", command]);
     await g(["config", "filter.evil.required", "true"]);
     await writeFile(join(repo, ".gitattributes"), "* filter=evil\n");
     await writeFile(join(repo, "a.txt"), "one\n");
@@ -528,7 +579,7 @@ describe("agent-planted git config does not run server-side", () => {
     await g(["config", "filter.late.clean", script]);
     await rm(ran, { force: true });
     await expect(git(repo, ["add", "--", "a.txt"], undefined, 15_000, apple)).rejects.toThrow(
-      /info\/attributes sets a filter= or merge= attribute/,
+      infoAttributes,
     );
     expect(await exists(ran)).toBe(false);
   });
@@ -539,14 +590,13 @@ describe("agent-planted git config does not run server-side", () => {
     const withLog = async (fn: (logPath: string) => Promise<void>) => {
       const shim = await mkdtemp(join(tmpdir(), "boof-gitlog-"));
       const logPath = join(shim, "log");
-      const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
-      await writeFile(
-        join(shim, "git"),
+      const real = await gitExecutable();
+      await placeGitShim(
+        shim,
         `#!/bin/sh\nprintf '%s\\n' "$*" >> '${logPath}'\nexec '${real}' "$@"\n`,
-        { mode: 0o755 },
       );
       const oldPath = process.env.PATH;
-      process.env.PATH = `${shim}:${oldPath ?? ""}`;
+      prependPath(shim);
       try {
         await fn(logPath);
       } finally {
@@ -609,10 +659,11 @@ describe("agent-planted git config does not run server-side", () => {
     const ran = join(nonRepo, "late-filter-ran");
     const script = join(nonRepo, "late-filter.sh");
     await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+    const command = await gitCommand(script);
     await writeFile(join(repo, ".gitattributes"), "* filter=late\n");
     await writeFile(join(repo, "late.txt"), "content\n");
     await withListingShim(
-      `    __REAL_GIT__ "$@"\n    __REAL_GIT__ config filter.late.clean '${script}'\n    __REAL_GIT__ config filter.late.smudge '${script}'`,
+      `    __REAL_GIT__ "$@"\n    __REAL_GIT__ config filter.late.clean '${command}'\n    __REAL_GIT__ config filter.late.smudge '${command}'`,
       async () => {
         const added = await git(repo, ["add", "--", "late.txt"]);
         expect(added.code).toBe(0);
@@ -625,14 +676,14 @@ describe("agent-planted git config does not run server-side", () => {
   async function withListingShim(body: string, fn: (ran: string) => Promise<void>): Promise<void> {
     const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
     const ran = join(shim, "ran");
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
-    await writeFile(
-      join(shim, "git"),
-      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body.replaceAll("__REAL_GIT__", real)}\n    ;;\n  *" --version "*|*" --git-common-dir "*|*" --show-object-format "*|*" hash-object "*)\n    exec '${real}' "$@"\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
-      { mode: 0o755 },
+    const real = await gitExecutable();
+    const quoted = `'${real}'`;
+    await placeGitShim(
+      shim,
+      `#!/bin/sh\ncase " $* " in\n  *" --version "*|*" --git-common-dir "*|*" --show-object-format "*|*" hash-object "*)\n    exec ${quoted} "$@"\n    ;;\n  *" --get-regexp "*)\n${body.replaceAll("__REAL_GIT__", quoted)}\n    ;;\nesac\ntouch '${ran}'\nexec ${quoted} "$@"\n`,
     );
     const oldPath = process.env.PATH;
-    process.env.PATH = `${shim}:${oldPath ?? ""}`;
+    prependPath(shim);
     try {
       await fn(ran);
     } finally {

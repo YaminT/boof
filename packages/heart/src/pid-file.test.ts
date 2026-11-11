@@ -166,9 +166,9 @@ describe("pid file", () => {
       });
       await liveGone;
       expect(log.at(-1)).toBe(
-        process.platform === "win32"
-          ? `killed orphaned agent ${live.pid} (node): exited`
-          : `killed orphaned agent process group ${live.pid} (node): exited`,
+        process.platform === "linux"
+          ? `killed orphaned agent process group ${live.pid} (node): exited`
+          : `killed orphaned agent ${live.pid} (node): ${process.platform === "win32" ? "killed" : "exited"}`,
       );
       expect(existsSync(path)).toBe(false);
 
@@ -179,42 +179,62 @@ describe("pid file", () => {
       expect(log.at(-1)).toBe(`pid file is from another boot (${other.pid}); not killing`);
       expect(existsSync(path)).toBe(false);
 
-      // A live process that leads no group (a plain child of this runner shares its group) is
-      // not a group at all: nothing is signalled, and the answer does not wait.
-      const member = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
-        stdio: "ignore",
-      });
-      try {
-        await writePidFile(path, { pgid: member.pid!, command: "node", ownerPid: null });
-        const t0 = Date.now();
-        expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("dead");
-        // Unlink only: this pid is not a group leader, so the term/kill waits do not run.
-        // 15s is scheduler slack under load. A kill would fail the outcome or isAlive check.
-        expect(Date.now() - t0).toBeLessThan(15_000);
-        expect(isAlive(member.pid!)).toBe(true);
-      } finally {
-        member.kill("SIGKILL");
+      // Linux and macOS: a live process that leads no group is not a group at all. Nothing is
+      // signalled. Windows has no process groups, so this pid is the agent and would be stopped.
+      if (process.platform !== "win32") {
+        const member = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+          stdio: "ignore",
+        });
+        try {
+          await writePidFile(path, { pgid: member.pid!, command: "node", ownerPid: null });
+          const t0 = Date.now();
+          expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("dead");
+          // Unlink only: this pid is not a group leader, so the term/kill waits do not run.
+          // 15s is scheduler slack under load. A kill would fail the outcome or isAlive check.
+          expect(Date.now() - t0).toBeLessThan(15_000);
+          expect(isAlive(member.pid!)).toBe(true);
+        } finally {
+          member.kill("SIGKILL");
+        }
       }
 
       // A forged record naming a real older group leader with the wrong start time.
       const older = sleeper();
       await writePidFile(path, { pgid: older.pid!, command: "node", ownerPid: null });
-      const rec = JSON.parse(await readFile(path, "utf8"));
-      await writeFile(path, JSON.stringify({ ...rec, startTicks: rec.startTicks - 1 }));
-      expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
-      expect(log.at(-1)).toContain("not the recorded agent group leader");
+      const rec = JSON.parse(await readFile(path, "utf8")) as {
+        startTicks: number | null;
+        startTime: string | null;
+      };
+      if (process.platform === "linux") {
+        await writeFile(path, JSON.stringify({ ...rec, startTicks: (rec.startTicks ?? 0) - 1 }));
+        expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
+        expect(log.at(-1)).toContain("not the recorded agent group leader");
+        expect(existsSync(path)).toBe(false);
+      } else {
+        await writeFile(path, JSON.stringify({ ...rec, startTime: "not-the-recorded-start" }));
+        const forged = await reapOrphan(path, (l) => log.push(l));
+        expect(forged.outcome === "dead" || forged.outcome === "skipped").toBe(true);
+        expect(forged.outcome).not.toBe("killed");
+      }
       expect(isAlive(older.pid!)).toBe(true);
-      expect(existsSync(path)).toBe(false);
 
-      // A record from an older version (no start time) is never killed.
+      // A record with no start identity is never killed. Linux names the missing ticks.
+      // macOS and Windows keep the record when the process is still alive but unverified.
       await writePidFile(path, {
         pgid: older.pid!,
         command: "node",
         ownerPid: null,
         startTicks: null,
+        startTime: null,
       });
       expect((await reapOrphan(path, (l) => log.push(l))).outcome).toBe("skipped");
-      expect(log.at(-1)).toContain("no process start time");
+      if (process.platform === "linux") {
+        expect(log.at(-1)).toContain("no process start time");
+        expect(existsSync(path)).toBe(false);
+      } else {
+        expect(log.at(-1)).toContain("may still be running");
+        expect(existsSync(path)).toBe(true);
+      }
       expect(isAlive(older.pid!)).toBe(true);
 
       // While the recording runner is alive and still the leader's parent, nothing is killed

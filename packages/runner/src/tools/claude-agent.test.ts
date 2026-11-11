@@ -49,7 +49,7 @@ async function procState(pid: number): Promise<string> {
       const out = await promisify(execFile)("ps", ["-o", "state=", "-p", String(pid)], {
         encoding: "utf8",
       });
-      return out.trim();
+      return out.stdout.trim();
     } catch {
       return "";
     }

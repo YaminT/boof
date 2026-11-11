@@ -44,7 +44,11 @@ describe("Claude Agent SDK loading", () => {
           },
         },
       ),
-    ).resolves.toEqual({ path: executable, source: "path" });
+    ).resolves.toEqual({
+      // Windows PATHEXT is `.EXE`; the file is found case-insensitively under that spelling.
+      path: process.platform === "win32" ? executable.replace(/exe$/i, "EXE") : executable,
+      source: "path",
+    });
   });
 
   it("rejects a directory named claude on PATH", async () => {
