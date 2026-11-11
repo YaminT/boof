@@ -426,9 +426,10 @@ function helpFor(op: AnyOperation): string[] {
   ];
   for (const [key, node] of Object.entries(schema.properties ?? {})) {
     const description = (node as { description?: string }).description ?? "";
+    const negated = fieldKind(node).kind === "boolean" ? ` (also --no-${flagName(key)})` : "";
     if (node.writeOnly !== true)
       lines.push(
-        `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}  ${description}`.trimEnd(),
+        `  --${flagName(key)} ${kindLabel(node)}  ${required.has(key) ? "required" : "optional"}${negated}  ${description}`.trimEnd(),
       );
   }
   lines.push(

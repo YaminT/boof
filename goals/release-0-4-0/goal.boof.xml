@@ -15,6 +15,7 @@
     <status>
       <versions>
         <version number="1" status="plan">Planned after desktop-e2e: prepare the v0.4.0 version bump, changelog and desktop release.</version>
+        <version number="2" status="done">v0.4.0 tagged without desktop-e2e by owner decision 2026-11-10; desktop unverified on real machines.</version>
       </versions>
     </status>
     <tests>

@@ -115,7 +115,7 @@ const moveKey = (root: string) => resolve(root);
 interface RootCache {
   structureGen: number;
   idGen: Map<string, number>;
-  files: Map<string, { mtimeNs: bigint; size: bigint; task: Task }>;
+  files: Map<string, { mtimeNs: bigint; ctimeNs: bigint; ino: bigint; size: bigint; task: Task }>;
   summary?: {
     gen: number;
     mtimeNs: bigint[];
@@ -125,6 +125,7 @@ interface RootCache {
 }
 
 const rootCaches = new Map<string, RootCache>();
+const MAX_CACHED_TASK_FILES = 4096;
 
 function cacheFor(root: string): RootCache {
   const key = moveKey(root);
@@ -454,7 +455,7 @@ export class TaskStore {
     return tasks.filter((task): task is Task => task !== null);
   }
 
-  /** The parsed file at `path`, from the cache when the mtime and size are unchanged. */
+  /** The parsed file at `path`, from the cache when its filesystem identity and timestamps match. */
   private async cachedTask(status: Status, name: string, path: string): Promise<Task | null> {
     const cache = cacheFor(this.root);
     const key = `${status}/${name}`;
@@ -470,8 +471,17 @@ export class TaskStore {
       throw err;
     }
     const hit = cache.files.get(key);
-    if (hit && hit.mtimeNs === before.mtimeNs && hit.size === before.size)
+    if (
+      hit &&
+      hit.mtimeNs === before.mtimeNs &&
+      hit.ctimeNs === before.ctimeNs &&
+      hit.ino === before.ino &&
+      hit.size === before.size
+    ) {
+      cache.files.delete(key);
+      cache.files.set(key, hit);
       return cloneTask(hit.task);
+    }
     const gen = cache.idGen.get(id) ?? 0;
     const task = await readTaskIfExists(path, status);
     if (!task) {
@@ -487,10 +497,24 @@ export class TaskStore {
     }
     if (
       after.mtimeNs === before.mtimeNs &&
+      after.ctimeNs === before.ctimeNs &&
+      after.ino === before.ino &&
       after.size === before.size &&
       (cache.idGen.get(id) ?? 0) === gen
     ) {
-      cache.files.set(key, { mtimeNs: before.mtimeNs, size: before.size, task });
+      cache.files.delete(key);
+      cache.files.set(key, {
+        mtimeNs: before.mtimeNs,
+        ctimeNs: before.ctimeNs,
+        ino: before.ino,
+        size: before.size,
+        task,
+      });
+      while (cache.files.size > MAX_CACHED_TASK_FILES) {
+        const oldest = cache.files.keys().next().value;
+        if (oldest === undefined) break;
+        cache.files.delete(oldest);
+      }
     }
     return cloneTask(task);
   }

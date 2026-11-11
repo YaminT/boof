@@ -7,7 +7,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitDriversUnreadError, hardenedGitCommand } from "./git.js";
+import { GitCommandRefusedError, hardenedGitCommand } from "./git.js";
 import { execCommand, type ExecResult } from "./process.js";
 
 const GIT_TIMEOUT_MS = 60_000;
@@ -22,7 +22,7 @@ async function git(cwd: string, args: string[]): Promise<ExecResult | null> {
       env: prepared.env,
     });
   } catch (error) {
-    if (error instanceof GitDriversUnreadError) {
+    if (error instanceof GitCommandRefusedError) {
       return {
         code: 1,
         stdout: "",
