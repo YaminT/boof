@@ -1,7 +1,13 @@
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { BackupError, SettingsStore, backupDataRoot, restoreDataRoot } from "@boof/heart";
+import {
+  AuthStore,
+  BackupError,
+  SettingsStore,
+  backupDataRoot,
+  restoreDataRoot,
+} from "@boof/heart";
 import { beginCliAudit } from "./cli-audit.js";
 
 export const BACKUP_HELP = `boof-runner backup — copy a data root to a tar.gz archive
@@ -14,7 +20,7 @@ Usage:
       --live          Copy while a runner or server holds the root. Task files are
                       copied under their task locks. Without --live, a live runner
                       or server refuses the backup
-      --no-secrets    Leave out auth/, external-runs/ and every secrets.json
+      --no-secrets    Leave out credentials, sessions, private agent data and secrets
 
 The archive holds manifest.json (boof version, schema version, sha256 of each file)
 and the data root under root/. Worktrees are not included, and neither are lock
@@ -28,10 +34,11 @@ Usage:
       --from <file>   Archive written by boof-runner backup
   -d, --data <path>   Empty or missing directory. Required
 
-The manifest is checked before anything is published: a tampered file, a path that
-escapes the directory, a symbolic link and a hard link are refused. A schema newer
-than this boof-runner is refused. An older schema is migrated. Directories are
-private (0700) and secret files are mode 0600.`;
+The manifest hashes detect accidental corruption; they do not detect tampering.
+Restore only archives you created and trust. An archive is trusted configuration:
+it can restore project roots, commands, webhooks and other settings. A schema newer
+than this boof-runner is refused. An older schema is migrated. Restored files are
+private (0600) and directories are private (0700).`;
 
 /** `backup` subcommand. Returns a process exit code. */
 export async function backupCommand(
@@ -67,6 +74,11 @@ export async function backupCommand(
     });
     for (const line of result.skipped) err(`backup: skipped ${line}`);
     out(`Wrote ${result.files} files to ${resolve(outFile)}`);
+    if (parsed.values["no-secrets"] !== true) {
+      err(
+        "backup: archive contains API keys and signing secrets in plaintext; store it like a password",
+      );
+    }
     await auditIfLoadable(root, "cli:backup", true);
     return 0;
   } catch (e) {
@@ -103,14 +115,23 @@ export async function restoreCommand(
     return 1;
   }
   const dest = resolve(parsed.values.data);
-  const hadSettings = existsSync(join(dest, "settings.json"));
   try {
+    err(
+      "restore: only restore archives you created and trust; hashes detect corruption, not tampering",
+    );
     await restoreDataRoot(resolve(from), dest);
     out(`Restored ${dest}`);
+    out("Restore notice: revoked API clients and browser sessions come back from this archive.");
+    const clients = await new AuthStore(dest).list();
+    out(
+      `Restored API clients: ${clients.length ? clients.map((client) => `${client.name} (${client.id})`).join(", ") : "none"}`,
+    );
+    out(
+      "Review auth/clients.json, auth/browser-sessions.json and auth/browser-links.json; revoke listed clients in the boof UI under API clients, then rotate restored webhook and n8n secrets that were revoked after this backup.",
+    );
     await auditIfLoadable(dest, "cli:restore", true);
     return 0;
   } catch (e) {
-    if (hadSettings) await auditIfLoadable(dest, "cli:restore", false, e);
     err(`restore: ${oneLine(e)}`);
     return 1;
   }

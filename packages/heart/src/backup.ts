@@ -13,11 +13,17 @@ import {
   rm,
   rmdir,
   stat,
+  statfs,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BOOF_VERSION } from "./version.js";
-import { PRIVATE_SUBDIRS, tightenDataRoot, UnsafeSecretPathError } from "./data-root-mode.js";
+import {
+  PRIVATE_SUBDIRS,
+  tightenDataRoot,
+  tightenWindowsPath,
+  UnsafeSecretPathError,
+} from "./data-root-mode.js";
 import { isInsidePath } from "./project-path.js";
 import { dataRootPaths, isKebabId, STATUS_DIRS } from "./paths.js";
 import {
@@ -29,10 +35,19 @@ import {
 import { inspectProcessLock, withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { resolveWorktreeRoot } from "./settings.js";
 import { SETTINGS_SCHEMA_VERSION } from "./schema.js";
-import { readTarGz, writeTarGz, TarError, type ArchiveMember, type TarMember } from "./tar-gz.js";
+import {
+  MAX_UNCOMPRESSED,
+  readTarGz,
+  writeTarGz,
+  TarError,
+  type ArchiveMember,
+  type TarMember,
+} from "./tar-gz.js";
+import type { WindowsAclOps } from "./windows-acl.js";
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 const COPY_CHUNK = 1024 * 1024;
+const NONBLOCK = constants.O_NONBLOCK ?? 0;
 
 /** Backup or restore refused the archive or the directory. */
 export class BackupError extends Error {
@@ -51,6 +66,8 @@ export interface BackupOptions {
   lock?: MigrateOptions;
   /** Called once the migration lock is held, before files are copied. */
   onLocked?: () => void | Promise<void>;
+  /** Windows ACL operations; injectable so tests can use a fake. */
+  windowsAcl?: WindowsAclOps;
 }
 
 export interface BackupResult {
@@ -66,6 +83,11 @@ export interface RestoreResult {
   /** Schema of the published root after migration. Null when settings.json is still absent. */
   schemaVersion: number | null;
   migrated: boolean;
+}
+
+export interface RestoreOptions {
+  /** Windows ACL operations; injectable so tests can use a fake. */
+  windowsAcl?: WindowsAclOps;
 }
 
 interface Entry {
@@ -104,6 +126,47 @@ interface LooseSettings {
 
 const FLAT_STATUS = new Set(Object.values(STATUS_DIRS).filter((dir) => dir !== "ongoing"));
 
+/** Shared classification used by no-secrets backups and restore permission handling. */
+export const SECRET_PATH_TABLE = [
+  ...PRIVATE_SUBDIRS.map((path) => ({
+    path,
+    scope: "tree" as const,
+    classification:
+      path === "audit"
+        ? ("safe" as const)
+        : path === "webhooks"
+          ? ("mixed" as const)
+          : ("secret" as const),
+  })),
+  { path: "webhooks/secrets.json", scope: "file" as const, classification: "secret" as const },
+  { path: "secrets.json", scope: "basename" as const, classification: "secret" as const },
+  { path: "browser-links.json", scope: "basename" as const, classification: "secret" as const },
+] as const;
+
+export function classifyDataRootPath(path: string): "secret" | "safe" | "unclassified" {
+  const value = path
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
+  const parts = value.split("/");
+  let classification: "secret" | "safe" | undefined;
+  for (const rule of SECRET_PATH_TABLE) {
+    const candidate = rule.path.toLowerCase();
+    let matches = false;
+    if (rule.scope === "tree" && (value === candidate || value.startsWith(`${candidate}/`))) {
+      matches = true;
+    }
+    if (rule.scope === "file" && value === candidate) matches = true;
+    if (rule.scope === "basename" && parts.at(-1) === candidate) matches = true;
+    if (matches) {
+      const result = rule.classification === "mixed" ? "safe" : rule.classification;
+      if (result === "secret") classification = "secret";
+      else if (classification === undefined) classification = "safe";
+    }
+  }
+  return classification ?? "unclassified";
+}
+
 /**
  * Copy `root` to a new gzip ustar archive at `outFile` (mode 0600).
  * The migration lock is held for the whole copy. A live runner (`.runner.pid`) or server
@@ -124,8 +187,12 @@ export async function backupDataRoot(
   const rootReal = await existingRoot(root);
   await refuseOut(rootReal, outFile);
 
+  await sweepStale(join(tmpdir()), "boof-backup-");
   const stage = await mkdtempPrivate(join(tmpdir(), "boof-backup-"));
+  const removeSignalCleanup = installSignalCleanup(stage);
   try {
+    if (process.platform === "win32")
+      await tightenWindowsPath(stage, { windowsAcl: opts.windowsAcl });
     if (isInsidePath(rootReal, stage)) {
       throw new BackupError(
         "the temporary directory is inside the data root; set TMPDIR outside it",
@@ -162,11 +229,25 @@ export async function backupDataRoot(
           .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
       };
       await writeArchive(outFile, stage, staged, manifest);
+      if (process.platform === "win32") {
+        try {
+          await tightenWindowsPath(stage, { windowsAcl: opts.windowsAcl });
+          for (const entry of staged)
+            await tightenWindowsPath(join(stage, ...entry.rel.split("/")), {
+              windowsAcl: opts.windowsAcl,
+            });
+          await tightenWindowsPath(outFile, { windowsAcl: opts.windowsAcl });
+        } catch (error) {
+          await rm(outFile, { force: true });
+          throw error;
+        }
+      }
       const bytes = files.reduce((sum, entry) => sum + entry.size, 0);
       return { files: files.length, bytes, schemaVersion, skipped };
     });
   } finally {
     await rm(stage, { recursive: true, force: true });
+    removeSignalCleanup();
   }
 }
 
@@ -176,27 +257,62 @@ export async function backupDataRoot(
  * `dest` and a hash that does not match the manifest are refused. A newer schema is
  * refused. An older one is migrated, then directory and secret modes are set.
  */
-export async function restoreDataRoot(archiveArg: string, destArg: string): Promise<RestoreResult> {
+export async function restoreDataRoot(
+  archiveArg: string,
+  destArg: string,
+  opts: RestoreOptions = {},
+): Promise<RestoreResult> {
   const archive = resolve(archiveArg);
   const dest = resolve(destArg);
   await existingArchive(archive);
   await destKind(dest);
 
   const parent = dirname(dest);
+  await sweepStale(parent, ".boof-restore-");
   const temp = await mkdtempPrivate(join(parent, ".boof-restore-"));
+  const removeSignalCleanup = installSignalCleanup(temp);
   let published = false;
   try {
-    const extracted = new Map<string, string>();
-    const seen = new Set<string>();
     let manifestBuf: Buffer | undefined;
+    let totalPayload = 0;
+    let entries = 0;
     await readTarGz(archive, async (member) => {
-      await takeMember(temp, member, extracted, seen, (buf) => {
+      entries += 1;
+      if (entries > 200_000) throw new BackupError("archive has too many entries");
+      if (member.kind === "other" || member.kind === "symlink" || member.kind === "hardlink") {
+        if (member.kind === "symlink")
+          throw new BackupError(
+            `archive contains a symbolic link (${member.path}); refusing to restore it`,
+          );
+        if (member.kind === "hardlink")
+          throw new BackupError(
+            `archive contains a hard link (${member.path}); refusing to restore it`,
+          );
+        throw new BackupError(`archive contains an unsupported entry (${member.path})`);
+      }
+      classify(member.path);
+      totalPayload += member.size;
+      if (totalPayload > MAX_UNCOMPRESSED) throw new BackupError("archive payload exceeds 2 GiB");
+      if (member.path === "manifest.json" && member.read) {
         if (manifestBuf) throw new BackupError("archive lists manifest.json more than once");
-        manifestBuf = buf;
-      });
+        manifestBuf = await member.read();
+      }
     });
     if (!manifestBuf) throw new BackupError("archive manifest is not a boof backup");
     const manifest = parseManifest(manifestBuf);
+    const fs = await statfs(parent);
+    const available = Number(fs.bavail) * Number(fs.bsize);
+    if (totalPayload > available)
+      throw new BackupError("not enough free disk space to restore this archive");
+    const compressed = (await stat(archive)).size;
+    if (totalPayload > 64 * 1024 * 1024 && totalPayload / Math.max(compressed, 1) > 1000) {
+      throw new BackupError("archive compression ratio is too high to restore safely");
+    }
+    const extracted = new Map<string, string>();
+    const seen = new Set<string>();
+    await readTarGz(archive, async (member) => {
+      await takeMember(temp, member, extracted, seen, () => undefined);
+    });
     checkTree(manifest, extracted);
     await applyModes(temp, manifest);
     const fileSchema = await schemaOf(join(temp, "settings.json"));
@@ -204,7 +320,7 @@ export async function restoreDataRoot(archiveArg: string, destArg: string): Prom
     const before = fileSchema === "missing" ? null : fileSchema;
     const migrated = before !== SETTINGS_SCHEMA_VERSION;
     if (migrated) await migrateDataRoot(temp);
-    await tightenDataRoot(temp);
+    await tightenDataRoot(temp, { windowsAcl: opts.windowsAcl });
     await forceSecretModes(temp);
     await publish(temp, dest);
     published = true;
@@ -218,6 +334,7 @@ export async function restoreDataRoot(archiveArg: string, destArg: string): Prom
     throw asBackup(err);
   } finally {
     if (!published) await rm(temp, { recursive: true, force: true });
+    removeSignalCleanup();
   }
 }
 
@@ -300,8 +417,10 @@ async function collect(
         await walk(abs, childRel);
         continue;
       }
-      if (!st.isFile()) {
-        ctx.skipped.push(`special file ${childRel}`);
+      if (!st.isFile() || st.nlink > 1) {
+        ctx.skipped.push(
+          st.nlink > 1 ? `hard-linked file ${childRel}` : `special file ${childRel}`,
+        );
         continue;
       }
       const lockRel = ctx.live ? taskLockRel(childRel) : undefined;
@@ -313,16 +432,7 @@ async function collect(
 }
 
 function omitted(rel: string, name: string, noSecrets: boolean): boolean {
-  if (
-    noSecrets &&
-    (rel === "auth" ||
-      rel.startsWith("auth/") ||
-      rel === "external-runs" ||
-      rel.startsWith("external-runs/"))
-  ) {
-    return true;
-  }
-  if (noSecrets && name === "secrets.json") return true;
+  if (noSecrets && classifyDataRootPath(rel) === "secret") return true;
   if (name === ".locks" || rel.split("/").includes(".locks")) return true;
   if (name === ".runner.pid" || name === ".migration.lock") return true;
   if (name === ".lock" || (name.startsWith(".") && name.endsWith(".lock"))) return true;
@@ -342,7 +452,8 @@ function assertSafeName(name: string, parentRel: string): void {
     name.includes("\\") ||
     name.includes("\0") ||
     name.includes("\r") ||
-    name.includes("\n")
+    name.includes("\n") ||
+    !isPortableName(name)
   ) {
     const rel = parentRel ? `${parentRel}/${name}` : name;
     throw new BackupError(`cannot back up ${rel}: the file name is not safe to store`);
@@ -438,13 +549,13 @@ async function copyEntry(entry: Entry, stage: string): Promise<void> {
 async function copyFile(src: string, dest: string, rel: string): Promise<void> {
   let fh;
   try {
-    fh = await open(src, constants.O_RDONLY | NOFOLLOW);
+    fh = await open(src, constants.O_RDONLY | NOFOLLOW | NONBLOCK);
   } catch (err) {
     throw changedOr(err, rel);
   }
   try {
     const before = await fh.stat();
-    if (!before.isFile()) {
+    if (!before.isFile() || before.nlink > 1) {
       throw new BackupError(`cannot back up ${rel}: it changed while archiving`);
     }
     await mkdir(dirname(dest), { recursive: true, mode: 0o700 });
@@ -455,10 +566,12 @@ async function copyFile(src: string, dest: string, rel: string): Promise<void> {
     );
     try {
       const buf = Buffer.alloc(COPY_CHUNK);
+      const copiedHash = createHash("sha256");
       let left = before.size;
       while (left > 0) {
         const read = await fh.read(buf, 0, Math.min(buf.length, left), null);
         if (read.bytesRead === 0) break;
+        copiedHash.update(buf.subarray(0, read.bytesRead));
         let off = 0;
         while (off < read.bytesRead) {
           const wrote = await out.write(buf.subarray(off, read.bytesRead));
@@ -471,7 +584,24 @@ async function copyFile(src: string, dest: string, rel: string): Promise<void> {
       }
       if (left !== 0) throw new BackupError(`cannot back up ${rel}: it changed while archiving`);
       const after = await fh.stat();
-      if (!after.isFile() || after.size !== before.size) {
+      const pathAfter = await lstat(src).catch(() => null);
+      const sourceHash = createHash("sha256");
+      let at = 0;
+      for (;;) {
+        const read = await fh.read(buf, 0, buf.length, at);
+        if (read.bytesRead === 0) break;
+        sourceHash.update(buf.subarray(0, read.bytesRead));
+        at += read.bytesRead;
+      }
+      if (
+        !after.isFile() ||
+        after.size !== before.size ||
+        after.mtimeMs !== before.mtimeMs ||
+        after.ctimeMs !== before.ctimeMs ||
+        !pathAfter?.isFile() ||
+        pathAfter.ino !== before.ino ||
+        sourceHash.digest("hex") !== copiedHash.digest("hex")
+      ) {
         throw new BackupError(`cannot back up ${rel}: it changed while archiving`);
       }
     } finally {
@@ -657,8 +787,9 @@ async function takeMember(
   }
   const rel = role.rel;
   if (!isSafeRel(rel)) throw new BackupError(`archive path escapes the data root (${member.path})`);
-  if (seen.has(rel)) throw new BackupError(`archive lists ${rel} more than once`);
-  seen.add(rel);
+  const folded = rel.toLowerCase();
+  if (seen.has(folded)) throw new BackupError(`archive lists ${rel} more than once`);
+  seen.add(folded);
   const target = inside(temp, rel, member.path);
   if (member.kind === "dir") {
     await mkdir(target, { recursive: true, mode: 0o700 });
@@ -693,9 +824,18 @@ function isSafeRel(rel: string): boolean {
   if (rel.startsWith("/")) return false;
   for (const part of rel.split("/")) {
     if (part === "" || part === "." || part === "..") return false;
-    if (/^[A-Za-z]:/.test(part)) return false;
+    if (!isPortableName(part)) return false;
   }
   return true;
+}
+
+function isPortableName(name: string): boolean {
+  if (name.includes(":") || /[. ]$/.test(name) || /[<>"|?*]/.test(name)) return false;
+  const base = name
+    .split(".")[0]!
+    .replace(/[. ]+$/g, "")
+    .toUpperCase();
+  return !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$/.test(base);
 }
 
 function inside(temp: string, rel: string, shown: string): string {
@@ -750,8 +890,9 @@ function parseManifest(buf: Buffer): Manifest {
     ) {
       throw new BackupError("archive manifest is not a boof backup");
     }
-    if (seen.has(file.path)) throw new BackupError(`archive lists ${file.path} more than once`);
-    seen.add(file.path);
+    const folded = file.path.toLowerCase();
+    if (seen.has(folded)) throw new BackupError(`archive lists ${file.path} more than once`);
+    seen.add(folded);
     files.push({ path: file.path, sha256: file.sha256, mode: file.mode });
   }
   return { format: 1, boofVersion: rec.boofVersion, schemaVersion, files };
@@ -773,17 +914,50 @@ function checkTree(manifest: Manifest, extracted: Map<string, string>): void {
 
 async function applyModes(temp: string, manifest: Manifest): Promise<void> {
   for (const file of manifest.files) {
-    const mode = secretRel(file.path) ? 0o600 : file.mode & 0o777 || 0o600;
-    await chmodMode(join(temp, ...file.path.split("/")), mode);
+    await chmodMode(join(temp, ...file.path.split("/")), 0o600);
   }
 }
 
-function secretRel(rel: string): boolean {
-  if (rel.startsWith("auth/") || rel.startsWith("external-runs/")) return true;
-  if (rel === "secrets.json" || rel.endsWith("/secrets.json")) return true;
-  if (rel === "n8n/workflows.json" || rel === "n8n/seen.json") return true;
-  if (rel.startsWith("owlish/") || rel.startsWith("concierge/")) return true;
-  return false;
+async function sweepStale(parent: string, prefix: string): Promise<void> {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  let names: string[];
+  try {
+    names = await readdir(parent);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const path = join(parent, name);
+    try {
+      const st = await lstat(path);
+      if (st.isDirectory() && !st.isSymbolicLink() && st.mtimeMs < cutoff) {
+        await rm(path, { recursive: true, force: true });
+      }
+    } catch {
+      /* A concurrent cleanup or an unreadable temp entry is harmless. */
+    }
+  }
+}
+
+function installSignalCleanup(path: string): () => void {
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    const handler = (): void => {
+      void rm(path, { recursive: true, force: true }).finally(() => {
+        try {
+          process.kill(process.pid, signal);
+        } catch {
+          process.exitCode = signal === "SIGINT" ? 130 : 143;
+        }
+      });
+    };
+    handlers.set(signal, handler);
+    process.once(signal, handler);
+  }
+  return () => {
+    for (const [signal, handler] of handlers) process.removeListener(signal, handler);
+  };
 }
 
 async function forceSecretModes(root: string): Promise<void> {
@@ -799,16 +973,32 @@ async function forceSecretModes(root: string): Promise<void> {
       const abs = join(dir, name);
       const st = await lstat(abs);
       if (st.isDirectory()) {
-        if ((PRIVATE_SUBDIRS as readonly string[]).includes(name) && rel === "") {
+        if (
+          (PRIVATE_SUBDIRS as readonly string[]).some(
+            (part) => part.toLowerCase() === name.toLowerCase(),
+          ) &&
+          rel === ""
+        ) {
           await chmodMode(abs, 0o700);
         }
         await walk(abs, child);
         continue;
       }
-      if (st.isFile() && secretRel(child)) await chmodMode(abs, 0o600);
+      if (st.isFile()) await chmodMode(abs, 0o600);
     }
   };
-  await chmodMode(root, 0o700);
+  const directories: string[] = [root];
+  const collectDirs = async (dir: string): Promise<void> => {
+    for (const name of await readdir(dir)) {
+      const path = join(dir, name);
+      if ((await lstat(path)).isDirectory()) {
+        directories.push(path);
+        await collectDirs(path);
+      }
+    }
+  };
+  await collectDirs(root);
+  for (const dir of directories) await chmodMode(dir, 0o700);
   await walk(root, "");
 }
 

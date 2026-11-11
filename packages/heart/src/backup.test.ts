@@ -11,6 +11,7 @@ import {
   realpath,
   rm,
   stat,
+  utimes,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -26,10 +27,13 @@ import {
   SettingsStore,
   TaskStore,
   WebhookSecretStore,
-  backupDataRoot,
+  backupDataRoot as backupDataRootImpl,
+  type BackupOptions,
   defaultSettings,
+  dataRootPaths,
   projectPaths,
-  restoreDataRoot,
+  restoreDataRoot as restoreDataRootImpl,
+  type RestoreOptions,
   scaffoldDataRoot,
   tryAcquireProcessLock,
 } from "./index.js";
@@ -37,9 +41,50 @@ import { testGoal } from "./plan-fixtures.js";
 import { newTask } from "./task-file.js";
 import type { TaskFrontmatter } from "./schema.js";
 import { readTarGz, writeRawTarGz, writeTarGz } from "./tar-gz.js";
+import type { WindowsAclOps } from "./windows-acl.js";
+import { tightenWindowsPath } from "./data-root-mode.js";
 
 const posix = process.platform !== "win32";
 const dirs: string[] = [];
+const fakeWindowsAcl: WindowsAclOps = (() => {
+  const secured = new Set<string>();
+  const sid = "S-1-5-21-1000";
+  return {
+    async currentUser() {
+      return { account: "test-user", sid };
+    },
+    async readAcl(path) {
+      const user = { sid, allow: true, inherited: false, inheritOnly: false, rights: "FA" };
+      return {
+        ok: true as const,
+        aces: secured.has(path)
+          ? [user]
+          : [
+              user,
+              { sid: "S-1-1-0", allow: true, inherited: true, inheritOnly: false, rights: "FA" },
+            ],
+      };
+    },
+    async tightenToUser(path) {
+      secured.add(path);
+      return true;
+    },
+  };
+})();
+
+async function backupDataRoot(root: string, out: string, opts: BackupOptions = {}) {
+  return backupDataRootImpl(root, out, {
+    ...opts,
+    ...(process.platform === "win32" ? { windowsAcl: opts.windowsAcl ?? fakeWindowsAcl } : {}),
+  });
+}
+
+async function restoreDataRoot(archive: string, dest: string, opts: RestoreOptions = {}) {
+  return restoreDataRootImpl(archive, dest, {
+    ...opts,
+    ...(process.platform === "win32" ? { windowsAcl: opts.windowsAcl ?? fakeWindowsAcl } : {}),
+  });
+}
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -91,6 +136,18 @@ async function sha256(path: string): Promise<string> {
     .digest("hex");
 }
 
+function setTarSize(raw: Buffer, headerAt: number, size: number): void {
+  const header = raw.subarray(headerAt, headerAt + 512);
+  header.fill(0, 124, 136);
+  header.write(size.toString(8).padStart(11, "0") + "\0", 124, "ascii");
+  header.fill(0x20, 148, 156);
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.write(sum.toString(8).padStart(6, "0"), 148, "ascii");
+  header[154] = 0;
+  header[155] = 0x20;
+}
+
 async function archivePaths(archive: string): Promise<string[]> {
   const paths: string[] = [];
   await readTarGz(archive, async (member) => {
@@ -113,6 +170,37 @@ describe("tar.gz", () => {
       if (member.read) got.push((await member.read()).toString("utf8"));
     });
     expect(got).toEqual(["file:root/src.txt:416", "hello"]);
+  });
+});
+
+describe("backup Windows ACL protection", () => {
+  it("uses the data-root owner-only ACL operation for archive and temp paths", async () => {
+    const secured: string[] = [];
+    const sid = "S-1-5-21-1000";
+    const acl: WindowsAclOps = {
+      async currentUser() {
+        return { account: "test-user", sid };
+      },
+      async readAcl(path) {
+        const user = { sid, allow: true, inherited: false, inheritOnly: false, rights: "FA" };
+        return {
+          ok: true,
+          aces: secured.includes(path)
+            ? [user]
+            : [
+                user,
+                { sid: "S-1-1-0", allow: true, inherited: true, inheritOnly: false, rights: "FA" },
+              ],
+        };
+      },
+      async tightenToUser(path) {
+        secured.push(path);
+        return true;
+      },
+    };
+    await tightenWindowsPath("C:\\Temp\\boof-backup-stage", { platform: "win32", windowsAcl: acl });
+    await tightenWindowsPath("C:\\Temp\\archive.tar.gz", { platform: "win32", windowsAcl: acl });
+    expect(secured).toEqual(["C:\\Temp\\boof-backup-stage", "C:\\Temp\\archive.tar.gz"]);
   });
 });
 
@@ -251,6 +339,13 @@ describe("backup and restore", () => {
     await writeSecret(join(root, "webhooks", "secrets.json"), "{}\n");
     await writeSecret(join(root, "external-runs", "note.json"), "{}\n");
     await writeSecret(join(root, "n8n", "workflows.json"), '{"keep":true}\n');
+    await writeSecret(join(root, "owlish", "project-keys.json"), '{"shop":"sk-secret"}\n');
+    await writeSecret(
+      join(root, "claude-agent-config", "shop", ".credentials.json"),
+      '{"token":"secret"}\n',
+    );
+    await writeSecret(join(root, "concierge", "shop", "transcript.jsonl"), "secret transcript\n");
+    await writeSecret(join(root, "idempotency", "cached.json"), '{"body":"private"}\n');
     await writeFile(join(root, "notes.txt"), "visible");
     const archive = join(base, "nosec.tar.gz");
     await backupDataRoot(root, archive, { noSecrets: true });
@@ -258,13 +353,201 @@ describe("backup and restore", () => {
     expect(paths.some((p) => p === "root/auth" || p.startsWith("root/auth/"))).toBe(false);
     expect(paths.some((p) => p.includes("external-runs"))).toBe(false);
     expect(paths.some((p) => p.endsWith("secrets.json"))).toBe(false);
-    expect(paths).toContain("root/n8n/workflows.json");
+    expect(paths.some((p) => p === "root/n8n" || p.startsWith("root/n8n/"))).toBe(false);
+    for (const secretPath of [
+      "owlish/project-keys.json",
+      "claude-agent-config/shop/.credentials.json",
+      "concierge/shop/transcript.jsonl",
+      "idempotency/cached.json",
+    ]) {
+      expect(paths).not.toContain(`root/${secretPath}`);
+    }
     expect(paths).toContain("root/notes.txt");
     const dest = join(base, "restored");
     await restoreDataRoot(archive, dest);
     expect(await readFile(join(dest, "notes.txt"), "utf8")).toBe("visible");
     expect(await new AuthStore(dest).list()).toEqual([]);
     expect(existsSync(join(dest, "auth"))).toBe(false);
+  });
+
+  it("classifies every private data-root layout path as secret or explicitly safe", async () => {
+    const { classifyDataRootPath } = await import("./backup.js");
+    const layout = dataRootPaths("/data");
+    const layoutPaths = [
+      layout.auth,
+      layout.authClients,
+      layout.browserSessions,
+      layout.browserLinks,
+      layout.webhooks,
+      layout.webhookSecrets,
+      layout.owlishSecrets,
+      layout.owlishProjectKeys,
+      layout.claudeAgentConfigs + "/shop/.credentials.json",
+      layout.n8n,
+      layout.n8nSecrets,
+      layout.n8nWorkflows,
+      layout.n8nSeen,
+      layout.externalRuns,
+      layout.idempotency,
+      "/data/concierge/shop/transcript.jsonl",
+      layout.audit,
+    ];
+    expect(
+      layoutPaths.every(
+        (path) => classifyDataRootPath(path.replace(/^\/data\//, "")) !== "unclassified",
+      ),
+    ).toBe(true);
+    const paths = [
+      "auth/clients.json",
+      "auth/browser-sessions.json",
+      "auth/browser-links.json",
+      "owlish/secrets.json",
+      "owlish/project-keys.json",
+      "claude-agent-config/shop/.credentials.json",
+      "external-runs/run.json",
+      "concierge/shop/transcript.jsonl",
+      "idempotency/cached.json",
+      "n8n/secrets.json",
+      "n8n/workflows.json",
+      "webhooks/secrets.json",
+      "webhooks/config.json",
+      "audit/events.jsonl",
+    ];
+    expect(paths.every((path) => classifyDataRootPath(path) !== "unclassified")).toBe(true);
+    for (const path of paths.filter(
+      (path) => !path.startsWith("audit/") && path !== "webhooks/config.json",
+    )) {
+      expect(classifyDataRootPath(path), path).toBe("secret");
+    }
+  });
+
+  it("restores every file privately without executable bits, including case-folded secret names", async () => {
+    const base = await scratch();
+    const archive = join(base, "modes.tar.gz");
+    const content = Buffer.from(JSON.stringify(defaultSettings()) + "\n");
+    const manifest = Buffer.from(
+      JSON.stringify({
+        format: 1,
+        boofVersion: BOOF_VERSION,
+        schemaVersion: defaultSettings().schemaVersion,
+        files: ["Auth/clients.json", "settings.json"].map((path) => ({
+          path,
+          sha256: createHash("sha256").update(content).digest("hex"),
+          mode: 0o777,
+        })),
+      }),
+    );
+    await writeTarGz(archive, [
+      { path: "manifest.json", kind: "file", mode: 0o600, body: manifest },
+      { path: "root", kind: "dir", mode: 0o700 },
+      { path: "root/Auth", kind: "dir", mode: 0o777 },
+      { path: "root/Auth/clients.json", kind: "file", mode: 0o777, body: content },
+      { path: "root/settings.json", kind: "file", mode: 0o777, body: content },
+    ]);
+    const dest = join(base, "restored");
+    await restoreDataRoot(archive, dest);
+    if (posix) {
+      expect(await modeOf(join(dest, "settings.json"))).toBe(0o600);
+      expect(await modeOf(join(dest, "Auth", "clients.json"))).toBe(0o600);
+      expect(await modeOf(join(dest, "Auth"))).toBe(0o700);
+    }
+  });
+
+  it("rejects Windows-invalid archive names on every platform", async () => {
+    const base = await scratch();
+    for (const name of [
+      "root/a:stream",
+      "root/NUL.txt",
+      "root/NUL .txt",
+      "root/aux.json",
+      "root/CONIN$",
+      "root/trailing.",
+      "root/trailing ",
+    ]) {
+      const archive = join(base, `${Buffer.from(name).toString("hex")}.tar.gz`);
+      await writeRawTarGz(archive, [{ path: name, typeflag: "0", body: Buffer.from("x") }]);
+      await expect(restoreDataRoot(archive, join(base, "dest"))).rejects.toThrow(
+        /unsafe|Windows|name|escapes/i,
+      );
+    }
+  });
+
+  it("rejects an oversized tar header before allocating its body", async () => {
+    const base = await scratch();
+    const archive = join(base, "oversized.tar.gz");
+    await writeRawTarGz(archive, [{ path: "root/huge", typeflag: "0", body: Buffer.from("x") }]);
+    const raw = gunzipSync(await readFile(archive));
+    setTarSize(raw, 0, 1024 * 1024 * 1024 + 1);
+    await writeFile(archive, gzipSync(raw));
+    await expect(restoreDataRoot(archive, join(base, "dest"))).rejects.toThrow(/larger than 1 GiB/);
+  });
+
+  it("rejects an oversized pax header before buffering its body", async () => {
+    const base = await scratch();
+    const archive = join(base, "oversized-pax.tar.gz");
+    await writeRawTarGz(archive, [
+      { path: `root/${"p".repeat(300)}`, typeflag: "0", body: Buffer.from("x") },
+    ]);
+    const raw = gunzipSync(await readFile(archive));
+    const oldSize = Number.parseInt(raw.toString("ascii", 124, 136).replace(/\0.*$/, "").trim(), 8);
+    const restAt = 512 + Math.ceil(oldSize / 512) * 512;
+    const header = Buffer.from(raw.subarray(0, 512));
+    setTarSize(header, 0, 65 * 1024);
+    const paxSize = 65 * 1024;
+    const paxPadding = (512 - (paxSize % 512)) % 512;
+    await writeFile(
+      archive,
+      gzipSync(
+        Buffer.concat([
+          header,
+          Buffer.alloc(paxSize),
+          Buffer.alloc(paxPadding),
+          raw.subarray(restAt),
+        ]),
+      ),
+    );
+    await expect(restoreDataRoot(archive, join(base, "dest"))).rejects.toThrow(
+      /pax header is larger than 64 KiB/,
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "skips hard-linked files so an outside secret cannot enter a backup",
+    async () => {
+      const base = await scratch();
+      const root = join(base, "data");
+      await mkdir(root);
+      await writeFile(join(root, "settings.json"), JSON.stringify(defaultSettings()) + "\n");
+      const outside = join(base, "outside-secret");
+      await writeFile(outside, "private-key");
+      await (await import("node:fs/promises")).link(outside, join(root, "planted"));
+      const archive = join(base, "backup.tar.gz");
+      const result = await backupDataRoot(root, archive);
+      expect(result.skipped).toContain("hard-linked file planted");
+      expect(await archivePaths(archive)).not.toContain("root/planted");
+    },
+  );
+
+  it("removes stale interrupted backup and restore directories on the next run", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await mkdir(root);
+    await writeFile(join(root, "settings.json"), JSON.stringify(defaultSettings()) + "\n");
+    const staleBackup = join(tmpdir(), `boof-backup-i10-${process.pid}-${Date.now()}`);
+    await mkdir(staleBackup);
+    await writeFile(join(staleBackup, "partial"), "secret");
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await utimes(staleBackup, old, old);
+    const archive = join(base, "backup.tar.gz");
+    await backupDataRoot(root, archive);
+    expect(existsSync(staleBackup)).toBe(false);
+
+    const staleRestore = join(base, `.boof-restore-i10-${Date.now()}`);
+    await mkdir(staleRestore);
+    await writeFile(join(staleRestore, "partial"), "secret");
+    await utimes(staleRestore, old, old);
+    await restoreDataRoot(archive, join(base, "restored"));
+    expect(existsSync(staleRestore)).toBe(false);
   });
 
   it("refuses a live runner or server unless --live, and does not create the archive", async () => {

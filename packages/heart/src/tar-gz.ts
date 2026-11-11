@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, open, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip, createGunzip } from "node:zlib";
@@ -17,7 +15,7 @@ export class TarError extends Error {
 }
 
 /** Uncompressed size cap. A gzip bomb stops here instead of filling the disk. */
-const MAX_UNCOMPRESSED = 8 * 1024 * 1024 * 1024;
+export const MAX_UNCOMPRESSED = 2 * 1024 * 1024 * 1024;
 /** One member, so a single entry cannot exhaust memory while it is copied. */
 const MAX_ENTRY = 1024 * 1024 * 1024;
 const MAX_ENTRIES = 200_000;
@@ -110,22 +108,23 @@ export async function readTarGz(
   archive: string,
   visit: (member: TarMember) => Promise<void>,
 ): Promise<void> {
-  const dir = await mkdirTemp();
-  const tarPath = join(dir, "archive.tar");
+  let total = 0;
+  const counter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      total += chunk.length;
+      if (total > MAX_UNCOMPRESSED) cb(new TarError("archive is larger than 2 GiB uncompressed"));
+      else cb(null, chunk);
+    },
+  });
+  const done = pipeline(createReadStream(archive), createGunzip(), counter);
   try {
-    await gunzip(archive, tarPath);
-    await readTar(tarPath, visit);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+    await readTarStream(counter, visit);
+    await done;
+  } catch (err) {
+    counter.destroy();
+    await done.catch(() => undefined);
+    throw err instanceof TarError ? err : toTarError(err);
   }
-}
-
-async function mkdirTemp(): Promise<string> {
-  const dir = await import("node:fs/promises").then((fs) =>
-    fs.mkdtemp(join(tmpdir(), "boof-tar-")),
-  );
-  await chmod(dir, 0o700);
-  return dir;
 }
 
 async function writeMembers(outFile: string, members: Member[]): Promise<void> {
@@ -318,47 +317,18 @@ function kindOf(flag: number): TarKind | "pax" {
   return "other";
 }
 
-async function gunzip(archive: string, tarPath: string): Promise<void> {
-  let total = 0;
-  const cap = new Transform({
-    transform(chunk: Buffer, _enc, cb) {
-      total += chunk.length;
-      if (total > MAX_UNCOMPRESSED) {
-        cb(new TarError("archive is larger than 8 GiB uncompressed"));
-        return;
-      }
-      cb(null, chunk);
-    },
-  });
-  try {
-    await pipeline(
-      createReadStream(archive),
-      createGunzip(),
-      cap,
-      createWriteStream(tarPath, { flags: "wx", mode: 0o600 }),
-    );
-  } catch (err) {
-    throw err instanceof TarError ? err : toTarError(err);
-  }
-}
-
-async function readTar(
-  tarPath: string,
+async function readTarStream(
+  stream: Readable,
   visit: (member: TarMember) => Promise<void>,
 ): Promise<void> {
-  const fh = await open(tarPath, constants.O_RDONLY | NOFOLLOW);
+  const reader = new StreamReader(stream);
   try {
-    const size = (await fh.stat()).size;
-    let pos = 0;
     let entries = 0;
     let pendingPath: string | undefined;
-    while (pos + 512 <= size) {
-      const block = Buffer.alloc(512);
-      const { bytesRead } = await fh.read(block, 0, 512, pos);
-      if (bytesRead !== 512) throw new TarError("truncated archive");
-      pos += 512;
+    for (;;) {
+      const block = await reader.readExact(512);
       if (block.every((b) => b === 0)) {
-        await assertTailZero(fh, pos, size);
+        await reader.assertRemainingZero();
         if (pendingPath !== undefined) throw new TarError("pax header without a file");
         return;
       }
@@ -371,13 +341,13 @@ async function readTar(
       const kind = kindOf(flag);
       const entrySize = readOctal(block, 124, 12);
       if (entrySize > MAX_ENTRY) throw new TarError("an archive entry is larger than 1 GiB");
-      const dataPos = pos;
+      if (kind === "pax" && entrySize > 64 * 1024)
+        throw new TarError("pax header is larger than 64 KiB");
       const padded = Math.ceil(entrySize / 512) * 512;
-      if (dataPos + padded > size) throw new TarError("truncated archive");
-      pos = dataPos + padded;
       const ustarName = joinPrefix(readStr(block, 345, 155), readStr(block, 0, 100));
       if (kind === "pax") {
-        const body = await readRange(fh, dataPos, entrySize);
+        const body = await reader.readExact(entrySize);
+        await reader.skip(padded - entrySize);
         const records = parsePax(body);
         if (records.path !== undefined) pendingPath = records.path;
         continue;
@@ -392,12 +362,14 @@ async function readTar(
         if (consumed) throw new TarError("entry body already read");
         consumed = true;
         if (entrySize > 32 * 1024 * 1024) throw new TarError("entry is too large to buffer");
-        return readRange(fh, dataPos, entrySize);
+        const buf = await reader.readExact(entrySize);
+        await reader.skip(padded - entrySize);
+        return buf;
       };
       const copyTo = async (dest: string): Promise<string> => {
         if (consumed) throw new TarError("entry body already read");
         consumed = true;
-        return copyRange(fh, dataPos, entrySize, dest);
+        return reader.copyTo(entrySize, padded - entrySize, dest);
       };
       await visit({
         path,
@@ -413,11 +385,10 @@ async function readTar(
             }
           : {}),
       });
+      if (!consumed) await reader.skip(padded);
     }
-    if (pos !== size) throw new TarError("truncated archive");
-    if (pendingPath !== undefined) throw new TarError("pax header without a file");
   } finally {
-    await fh.close();
+    stream.destroy();
   }
 }
 
@@ -426,62 +397,78 @@ function joinPrefix(prefix: string, name: string): string {
   return `${prefix}/${name}`;
 }
 
-async function assertTailZero(
-  fh: Awaited<ReturnType<typeof open>>,
-  pos: number,
-  size: number,
-): Promise<void> {
-  const n = size - pos;
-  if (n === 0) return;
-  const rest = await readRange(fh, pos, n);
-  if (rest.some((b) => b !== 0)) throw new TarError("archive has data after the end marker");
-}
-
-async function readRange(
-  fh: Awaited<ReturnType<typeof open>>,
-  pos: number,
-  size: number,
-): Promise<Buffer> {
-  const buf = Buffer.alloc(size);
-  let off = 0;
-  while (off < size) {
-    const { bytesRead } = await fh.read(buf, off, size - off, pos + off);
-    if (bytesRead === 0) throw new TarError("truncated archive");
-    off += bytesRead;
+class StreamReader {
+  private iterator: AsyncIterator<Buffer>;
+  private chunks: Buffer[] = [];
+  private buffered = 0;
+  constructor(stream: Readable) {
+    this.iterator = stream[Symbol.asyncIterator]();
   }
-  return buf;
-}
-
-async function copyRange(
-  fh: Awaited<ReturnType<typeof open>>,
-  pos: number,
-  size: number,
-  dest: string,
-): Promise<string> {
-  const hash = createHash("sha256");
-  const out = await open(
-    dest,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW,
-    0o600,
-  );
-  try {
-    const buf = Buffer.alloc(Math.min(size, 1024 * 1024));
-    let left = size;
-    let at = pos;
-    while (left > 0) {
-      const n = Math.min(left, buf.length);
-      const { bytesRead } = await fh.read(buf, 0, n, at);
-      if (bytesRead !== n) throw new TarError("truncated archive");
-      const slice = buf.subarray(0, bytesRead);
-      hash.update(slice);
-      await writeAll(out, slice);
-      left -= bytesRead;
-      at += bytesRead;
+  private async fill(n: number): Promise<void> {
+    while (this.buffered < n) {
+      const next = await this.iterator.next();
+      if (next.done) throw new TarError("truncated archive");
+      const chunk = Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
+      this.chunks.push(chunk);
+      this.buffered += chunk.length;
     }
-  } finally {
-    await out.close();
   }
-  return hash.digest("hex");
+  async readExact(n: number): Promise<Buffer> {
+    if (n === 0) return Buffer.alloc(0);
+    await this.fill(n);
+    const out = Buffer.alloc(n);
+    let at = 0;
+    while (at < n) {
+      const first = this.chunks[0]!;
+      const take = Math.min(first.length, n - at);
+      first.copy(out, at, 0, take);
+      at += take;
+      this.buffered -= take;
+      if (take === first.length) this.chunks.shift();
+      else this.chunks[0] = first.subarray(take);
+    }
+    return out;
+  }
+  async skip(n: number): Promise<void> {
+    while (n > 0) {
+      const size = Math.min(n, 1024 * 1024);
+      await this.readExact(size);
+      n -= size;
+    }
+  }
+  async assertRemainingZero(): Promise<void> {
+    for (const chunk of this.chunks)
+      if (chunk.some((b) => b !== 0)) throw new TarError("archive has data after the end marker");
+    this.chunks = [];
+    this.buffered = 0;
+    for (;;) {
+      const next = await this.iterator.next();
+      if (next.done) break;
+      if (Buffer.from(next.value).some((b) => b !== 0))
+        throw new TarError("archive has data after the end marker");
+    }
+  }
+  async copyTo(size: number, pad: number, dest: string): Promise<string> {
+    const hash = createHash("sha256");
+    const out = await open(
+      dest,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW,
+      0o600,
+    );
+    try {
+      let left = size;
+      while (left > 0) {
+        const chunk = await this.readExact(Math.min(left, 1024 * 1024));
+        hash.update(chunk);
+        await writeAll(out, chunk);
+        left -= chunk.length;
+      }
+      await this.skip(pad);
+    } finally {
+      await out.close();
+    }
+    return hash.digest("hex");
+  }
 }
 
 async function writeAll(fh: Awaited<ReturnType<typeof open>>, buf: Buffer): Promise<void> {
@@ -510,6 +497,7 @@ function parsePax(body: Buffer): { path?: string } {
     const key = record.toString("utf8", sp - i + 1, eq);
     const value = record.toString("utf8", eq + 1, record.length - 1);
     if (key === "path") out.path = value;
+    else throw new TarError("unsupported pax header key");
     i += len;
   }
   return out;
