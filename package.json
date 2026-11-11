@@ -2,7 +2,7 @@
   "name": "boof-runner",
   "version": "0.4.0",
   "private": true,
-  "description": "Agent Task Runner \u2014 queue prompts and run them through a planner → developer → reviewer pipeline",
+  "description": "Agent Task Runner \u2014 queue prompts and run them through a planner \u2192 developer \u2192 reviewer pipeline",
   "type": "module",
   "engines": {
     "node": ">=22.22"
@@ -18,11 +18,11 @@
     "boof-runner": "bin/dist/boof-runner.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.318",
-    "@hono/node-server": "^2.0.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.322",
+    "@hono/node-server": "^2.1.6",
     "chokidar": "^6.0.0",
     "gray-matter": "^4.0.3",
-    "hono": "^4.13.13",
+    "hono": "^4.13.17",
     "zod": "^4.6.7"
   },
   "scripts": {
@@ -49,13 +49,14 @@
     "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0",
+    "vitest": "^5.1.0",
     "@boof/runner": "*"
   },
   "overrides": {
     "tar": "^7.5.22",
     "http-cache-semantics": "^4.3.0",
     "fast-uri": "^3.1.9",
-    "@xmldom/xmldom": "^0.8.15"
+    "@xmldom/xmldom": "^0.8.15",
+    "minimatch@>=7.0.0 <11.0.1": "^11.0.1"
   }
 }

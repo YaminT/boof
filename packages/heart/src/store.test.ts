@@ -1,4 +1,4 @@
-import { mkdtemp, rm, readFile, mkdir, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, rm, readFile, mkdir, writeFile, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,6 +60,19 @@ describe("TaskStore", () => {
     const list = await store.list();
     expect(list).toHaveLength(1);
     expect(list[0].frontmatter.id).toBe("t1");
+  });
+
+  it("invalidates a cached task after a same-size rewrite with its mtime restored", async () => {
+    await store.create(newTask(fm({ title: "One" })));
+    expect((await store.list())[0]?.frontmatter.title).toBe("One");
+    const path = taskFilePath(root, "pending", "t1");
+    const before = await stat(path);
+    const raw = await readFile(path, "utf8");
+    const changed = raw.replace("title: One", "title: Two");
+    expect(Buffer.byteLength(changed)).toBe(Buffer.byteLength(raw));
+    await writeFile(path, changed);
+    await utimes(path, before.atime, before.mtime);
+    expect((await store.list())[0]?.frontmatter.title).toBe("Two");
   });
 
   it("moves the file on a valid transition (write-then-move)", async () => {

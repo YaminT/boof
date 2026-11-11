@@ -190,6 +190,11 @@ or BOOF_RUNNER_FORCE_UPDATE=1 to save them to a backup patch and reset to the la
 }
 
 source_dir() {
+  if [[ -n "${BOOF_RUNNER_DIR:-}" ]]; then
+    printf '%s\n' "$BOOF_RUNNER_DIR"
+    return 0
+  fi
+
   local root=""
   root="$(script_checkout_root || true)"
   if [[ -n "$root" ]] && is_boof_runner_checkout "$root"; then
