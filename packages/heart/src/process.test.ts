@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ describe("execCommand", () => {
       for (let n = 0; n < 50 && alive(root); n++)
         await new Promise((resolve) => setTimeout(resolve, 20));
       expect(alive(root)).toBe(false);
-      expect(alive(grandchild)).toBe(false);
+      expect(running(grandchild)).toBe(false);
     } finally {
       try {
         process.kill(root, "SIGKILL");
@@ -94,6 +94,12 @@ describe("execCommand", () => {
     } catch {
       return false;
     }
+  };
+
+  const running = (pid: number) => {
+    const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+    const state = result.stdout.trim();
+    return result.status === 0 && state.length > 0 && !state.startsWith("Z");
   };
 
   it("a steer signal kills the whole process group and reports steered, not stopped", async () => {
