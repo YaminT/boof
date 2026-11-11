@@ -16,6 +16,8 @@ import {
   discardWorktree,
   ensureWorktree as ensure,
   finalizeWorktree,
+  checkedWorktreeGit,
+  verifyWorktreeRecord,
   NotAGitRepoError,
   UnknownBaseRefError,
   type WorktreeOptions,
@@ -143,13 +145,27 @@ describe("worktree isolation", () => {
 
       await diffAgainstBase(wt);
       await expect(commitLeftovers(repo, wt, "submodule filter")).rejects.toThrow(
-        "refusing to snapshot nested git repositories",
+        /refusing to snapshot (gitlink entries|nested git repositories)/,
       );
       expect(await exists(marker)).toBe(false);
       await finalizeWorktree(repo, wt, "submodule filter");
     } finally {
       await rm(source, { recursive: true, force: true });
     }
+  });
+
+  it("refuses an agent-staged gitlink before leftovers can rewrite the index", async () => {
+    const wt = await createWorktree(repo, "staged-gitlink");
+    const commit = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    const staged = await execCommand(
+      "git",
+      ["update-index", "--add", "--cacheinfo", `160000,${commit},agent-link`],
+      { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 10000 },
+    );
+    expect(staged.code, staged.stderr).toBe(0);
+    await expect(commitLeftovers(repo, wt, "staged gitlink")).rejects.toThrow(
+      "refusing to snapshot gitlink entries",
+    );
   });
 
   it("refuses a symlink in the common reflog path before runner git calls", async () => {
@@ -170,6 +186,29 @@ describe("worktree isolation", () => {
       await unlink(logs);
       await rename(savedLogs, logs);
     }
+  });
+
+  it("verifies and pins checked worktree git calls, refusing config.worktree", async () => {
+    const wt = await createWorktree(repo, "trusted-record");
+    await expect(verifyWorktreeRecord(wt)).resolves.toBeUndefined();
+    const pinned = await checkedWorktreeGit(wt, ["rev-parse", "--show-toplevel"], {
+      GIT_DIR: "/tmp/attacker.git",
+      GIT_WORK_TREE: "/tmp/attacker-tree",
+    });
+    expect(pinned.code).toBe(0);
+    expect(pinned.out).toBe(wt.path);
+    const admin = join(wt.commonDir!, "worktrees", wt.worktreeName!);
+    await writeFile(join(admin, "config.worktree"), "[core]\\n\tfsmonitor = true\\n");
+    await expect(checkedWorktreeGit(wt, ["status", "--porcelain"])).rejects.toThrow(
+      "task worktree config.worktree is not allowed",
+    );
+  });
+
+  it("clearly refuses a legacy worktree record without trusted git fields", async () => {
+    const wt = await createWorktree(repo, "legacy-record");
+    await expect(
+      verifyWorktreeRecord({ path: wt.path, branch: wt.branch, base: wt.base }),
+    ).rejects.toThrow("task worktree is missing its trusted git record");
   });
 
   it("untracked content counts toward the inline cap", async () => {

@@ -10,8 +10,7 @@ import {
   registeredWorktreeBranch,
   repoCommonDir,
   canonical,
-  untrackedFiles,
-  untrackedPatch,
+  MAX_UNTRACKED,
 } from "@boof/heart";
 
 const BRANCH_PREFIX = "boof-runner/";
@@ -198,6 +197,14 @@ async function readMeta(root: string, taskId: string): Promise<Worktree | null> 
   }
 }
 
+/** Read and verify the runner-owned sidecar record for a live task worktree. */
+export async function loadWorktreeRecord(root: string, taskId: string): Promise<Worktree | null> {
+  const wt = await readMeta(root, taskId);
+  if (!wt) return null;
+  await verifyWorktreeRecord(wt);
+  return wt;
+}
+
 /**
  * Reuse the task's registered worktree if present, otherwise create one (reusing
  * an existing task branch). Reuse makes multi-run iterations cumulative: each
@@ -280,13 +287,13 @@ export async function diffAgainstBase(wt: Worktree, maxInlineBytes = 120000): Pr
     wt.base,
   ]);
   await verifyWorktreeRecord(wt);
-  const names = await untrackedFiles(wt.path);
+  const names = await worktreeUntrackedFiles(wt);
   const rev = await checkedWorktreeGit(wt, ["rev-parse", wt.base]);
   const baseSha = rev.code === 0 && rev.out ? rev.out : wt.base;
   const patches: string[] = [];
   for (const p of names) {
     await verifyWorktreeRecord(wt);
-    patches.push((await untrackedPatch(wt.path, p)).trimEnd());
+    patches.push((await worktreeUntrackedPatch(wt, p)).trimEnd());
   }
   const untrackedText = patches.filter(Boolean).join("\n");
   const bytes = Buffer.byteLength(full.out) + Buffer.byteLength(untrackedText);
@@ -329,9 +336,15 @@ export async function commitLeftovers(
   title: string,
 ): Promise<LeftoversResult | null> {
   // Inspect before status because status intentionally ignores submodule contents.
-  const nestedRepos = await nestedGitRepositories(wt.path);
-  if (nestedRepos.length > 0) {
-    throw new Error(`refusing to snapshot nested git repositories: ${nestedRepos.join(", ")}`);
+  const staged = await checkedWorktreeGit(wt, ["ls-files", "--stage", "-z"]);
+  if (staged.code !== 0) throw new Error(`git ls-files failed: ${staged.err || staged.out}`);
+  const stagedGitlinks = staged.out
+    .split("\0")
+    .filter((entry) => /^160000 /.test(entry))
+    .map((entry) => entry.slice(entry.indexOf("\t") + 1))
+    .filter(Boolean);
+  if (stagedGitlinks.length > 0) {
+    throw new Error(`refusing to snapshot gitlink entries: ${stagedGitlinks.join(", ")}`);
   }
   const status = await checkedWorktreeGit(wt, ["status", "--porcelain"]);
   if (status.code !== 0) throw new Error(`git status failed: ${status.err || status.out}`);
@@ -350,20 +363,11 @@ export async function commitLeftovers(
     await run(["read-tree", "HEAD"]);
     // `git add -A` can run clean filters from a nested repository's private config and
     // info/attributes. Refuse those entries before invoking it; gitlinks are never imported.
-    const staged = await run(["ls-files", "--stage", "-z"]);
-    const stagedGitlinks = staged
-      .split("\0")
-      .filter((entry) => /^160000 /.test(entry))
-      .map((entry) => entry.slice(entry.indexOf("\t") + 1))
-      .filter(Boolean);
-    if (stagedGitlinks.length > 0) {
-      throw new Error(`refusing to snapshot gitlink entries: ${stagedGitlinks.join(", ")}`);
-    }
     // A nested repository without a commit makes `git add` fail; leave those out.
     const skipped: string[] = [];
     for (;;) {
-      const add = await git(
-        wt.path,
+      const add = await checkedWorktreeGit(
+        wt,
         ["add", "-A", "--", ".", ...skipped.map((p) => `:(exclude)${p}`)],
         env,
         CHECKOUT_TIMEOUT_MS,
@@ -413,23 +417,6 @@ export async function commitLeftovers(
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
-}
-
-async function nestedGitRepositories(root: string): Promise<string[]> {
-  const found: string[] = [];
-  const walk = async (dir: string, prefix: string): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name === ".git") {
-        if (prefix) found.push(prefix);
-        continue;
-      }
-      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-      await walk(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
-    }
-  };
-  await walk(root, "");
-  return found.sort();
 }
 
 /** Remove the worktree directory (leftovers included) and delete the task branches. */
@@ -516,7 +503,7 @@ export async function finalizeWorktree(
   return lines;
 }
 
-async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
+export async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
   if (!wt.commonDir || !wt.worktreeName) {
     throw new Error("task worktree is missing its trusted git record");
   }
@@ -534,6 +521,10 @@ async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
   );
   if (!admin || admin !== expected)
     throw new Error("task worktree gitdir differs from the runner record");
+  const worktreeConfig = join(admin, "config.worktree");
+  if (await lstat(worktreeConfig).then(() => true, () => false)) {
+    throw new Error("task worktree config.worktree is not allowed");
+  }
   const commonFile = join(admin, "commondir");
   const commonInfo = await lstat(commonFile).catch(() => null);
   if (!commonInfo?.isFile() || commonInfo.isSymbolicLink())
@@ -567,7 +558,7 @@ async function refuseSymlinks(root: string): Promise<void> {
   }
 }
 
-async function checkedWorktreeGit(
+export async function checkedWorktreeGit(
   wt: Worktree,
   args: string[],
   env?: NodeJS.ProcessEnv,
@@ -584,6 +575,35 @@ async function checkedWorktreeGit(
       env?.GIT_INDEX_FILE ?? join(wt.commonDir!, "worktrees", wt.worktreeName!, "index"),
   };
   return git(wt.path, args, trustedEnv, timeoutMs);
+}
+
+async function worktreeUntrackedFiles(wt: Worktree): Promise<string[]> {
+  const result = await checkedWorktreeGit(wt, [
+    "--literal-pathspecs",
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+  ]);
+  if (result.code !== 0) {
+    throw new Error(`could not list untracked files in ${wt.path}: ${result.err || result.code}`);
+  }
+  return result.out.split("\0").filter(Boolean).slice(0, MAX_UNTRACKED);
+}
+
+async function worktreeUntrackedPatch(wt: Worktree, path: string, context = 3): Promise<string> {
+  const result = await checkedWorktreeGit(wt, [
+    "--literal-pathspecs",
+    "diff",
+    `-U${context}`,
+    "--no-index",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--",
+    "/dev/null",
+    path,
+  ]);
+  return result.out;
 }
 
 /** Delete a failed task's directory and branch (settings.worktree.onFailure=delete). Never throws. */

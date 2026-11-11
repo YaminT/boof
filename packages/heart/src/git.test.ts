@@ -34,6 +34,22 @@ const addWorktree = async (name: string) => {
   return { path, branch: `boof-runner/${name}` };
 };
 
+const pinnedWorktreeGit = (name: string, path: string) => {
+  const common = join(repo, ".git");
+  const admin = join(common, "worktrees", name);
+  const env = {
+    ...process.env,
+    GIT_DIR: admin,
+    GIT_COMMON_DIR: common,
+    GIT_WORK_TREE: path,
+    GIT_INDEX_FILE: join(admin, "index"),
+  };
+  return async (args: string[]) => {
+    const result = await git(path, args, env);
+    return { code: result.code, stdout: result.out, stderr: result.err };
+  };
+};
+
 const exists = async (p: string) => {
   try {
     await stat(p);
@@ -327,10 +343,52 @@ describe("agent-planted git config does not run server-side", () => {
     await writeFile(join(wt, "new.txt"), "x\n");
     const { fsmonitor } = await plant();
     await rm(fsmonitor, { force: true });
-    const diff = await taskDiff({ workingDir: repo, taskId: "t1", worktreePath: wt });
+    const diff = await taskDiff({
+      workingDir: repo,
+      taskId: "t1",
+      worktreePath: wt,
+      worktreeGit: pinnedWorktreeGit("t1", wt),
+    });
     expect(diff.includesUncommitted).toBe(true);
     expect(await untrackedFiles(wt)).toContain("new.txt");
     expect(await exists(fsmonitor)).toBe(false);
+  });
+
+  it("routes every live worktree diff command through the runner supplied Git callback", async () => {
+    const wt = await addWorktree("pinned-diff");
+    await writeFile(join(wt.path, "new.txt"), "new\n");
+    const admin = join(repo, ".git", "worktrees", "pinned-diff");
+    const env = {
+      ...process.env,
+      GIT_DIR: admin,
+      GIT_COMMON_DIR: join(repo, ".git"),
+      GIT_WORK_TREE: wt.path,
+      GIT_INDEX_FILE: join(admin, "index"),
+    };
+    const calls: string[][] = [];
+    const worktreeGit = async (args: string[]) => {
+      calls.push(args);
+      const result = await git(wt.path, args, env);
+      return { code: result.code, stdout: result.out, stderr: result.err };
+    };
+    const diff = await taskDiff({
+      workingDir: repo,
+      taskId: "pinned-diff",
+      worktreePath: wt.path,
+      worktreeGit,
+    });
+    expect(diff.includesUncommitted).toBe(true);
+    expect(calls.some((args) => args[0] === "status")).toBe(true);
+    expect(calls.some((args) => args[0] === "ls-files")).toBe(true);
+    expect(calls.filter((args) => args[0] === "diff").length).toBeGreaterThan(0);
+  });
+
+  it("refuses a live task worktree diff without the runner's trusted Git callback", async () => {
+    const wt = await addWorktree("missing-record");
+    await writeFile(join(wt.path, "new.txt"), "new\n");
+    await expect(
+      taskDiff({ workingDir: repo, taskId: "missing-record", worktreePath: wt.path }),
+    ).rejects.toThrow("live task diff requires the runner's trusted worktree Git callback");
   });
   it("never runs a planted diff.external or textconv in task diffs", async () => {
     const ran = join(nonRepo, "extdiff-ran");
@@ -348,7 +406,12 @@ describe("agent-planted git config does not run server-side", () => {
     await g(["-C", wt, "diff", "HEAD"]);
     expect(await exists(ran)).toBe(true);
     await rm(ran, { force: true });
-    const diff = await taskDiff({ workingDir: repo, taskId: "t2", worktreePath: wt });
+    const diff = await taskDiff({
+      workingDir: repo,
+      taskId: "t2",
+      worktreePath: wt,
+      worktreeGit: pinnedWorktreeGit("t2", wt),
+    });
     expect(diff.includesUncommitted).toBe(true);
     await git(wt, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--stat"]);
     expect(await exists(ran)).toBe(false);
@@ -405,7 +468,12 @@ describe("agent-planted git config does not run server-side", () => {
     await writeFile(join(wt, ".gitattributes"), "* filter=evil\n");
     await writeFile(join(wt, "a.txt"), "three\n");
     await rm(ran, { force: true });
-    const task = await taskDiff({ workingDir: repo, taskId: "t3", worktreePath: wt });
+    const task = await taskDiff({
+      workingDir: repo,
+      taskId: "t3",
+      worktreePath: wt,
+      worktreeGit: pinnedWorktreeGit("t3", wt),
+    });
     expect(task.includesUncommitted).toBe(true);
     await writeFile(join(wt, "new.txt"), "x\n");
     expect(await untrackedFiles(wt)).toContain("new.txt");
