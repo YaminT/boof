@@ -9,6 +9,7 @@ import {
   MAX_PENDING_PER_CONVERSATION,
   auditOperation,
   appendAuditLine,
+  takeCliTurn,
   securitySettings,
   blockingScopes,
   budgetTimeZone,
@@ -114,6 +115,8 @@ export class ConciergeService {
   private readonly inFlight = new Set<string>();
   private readonly rate = new Map<string, number[]>();
   private readonly now: () => number;
+  /** CLI only. The server leaves this false and keeps `rate` and `inFlight` in memory. */
+  private readonly persistLimits: boolean;
 
   constructor(
     private readonly opts: {
@@ -126,9 +129,12 @@ export class ConciergeService {
       getOp: (name: string) => AnyOperation | undefined;
       createMcpServer: CreateConciergeMcpServer;
       now?: () => number;
+      /** Write the per-minute window and the busy flag under `<root>/ratelimit/cli.json`. */
+      persistLimits?: boolean;
     },
   ) {
     this.now = opts.now ?? Date.now;
+    this.persistLimits = opts.persistLimits === true;
     this.store = new ConciergeStore(opts.root, this.now);
   }
 
@@ -238,15 +244,42 @@ export class ConciergeService {
         availability.reason ?? "Assistant unavailable",
         "concierge_unavailable",
       );
-    this.checkRate(user.id, cfg.messagesPerMinute);
     const flightKey = `${user.id}\0${projectId}`;
-    if (this.inFlight.has(flightKey))
-      throw new OpError(
-        409,
-        "A message to the assistant is still being answered.",
-        "concierge_busy",
-      );
-    this.inFlight.add(flightKey);
+    let releaseBusy: (() => Promise<void>) | undefined;
+    if (this.persistLimits) {
+      const decision = await takeCliTurn({
+        root: this.opts.root,
+        userId: user.id,
+        projectId,
+        limit: cfg.messagesPerMinute,
+        now: this.now(),
+      });
+      if (!decision.ok) {
+        if (decision.code === "rate_limited") {
+          throw new OpError(
+            429,
+            "Too many requests; retry after the Retry-After header.",
+            "rate_limited",
+            { retryAfter: decision.retryAfter },
+          );
+        }
+        throw new OpError(
+          409,
+          "A message to the assistant is still being answered.",
+          "concierge_busy",
+        );
+      }
+      releaseBusy = decision.release;
+    } else {
+      this.checkRate(user.id, cfg.messagesPerMinute);
+      if (this.inFlight.has(flightKey))
+        throw new OpError(
+          409,
+          "A message to the assistant is still being answered.",
+          "concierge_busy",
+        );
+      this.inFlight.add(flightKey);
+    }
     try {
       const settingsBudget = settings;
       const budget = await evaluateBudget(
@@ -606,7 +639,15 @@ export class ConciergeService {
       onEvent?.({ type: "done", answer: result });
       return result;
     } finally {
-      this.inFlight.delete(flightKey);
+      if (releaseBusy) {
+        try {
+          await releaseBusy();
+        } catch (err) {
+          console.error("could not clear the assistant busy flag:", err);
+        }
+      } else if (!this.persistLimits) {
+        this.inFlight.delete(flightKey);
+      }
     }
   }
 

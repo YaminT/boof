@@ -708,6 +708,18 @@ describe("ConciergeService", () => {
     await expectCode(ask("second"), "rate_limited");
   });
 
+  it("keeps the server limiter in memory, so a new service starts empty", async () => {
+    const value = defaultSettings();
+    value.concierge = { messagesPerMinute: 1 };
+    await settings.save(value);
+    agent = scriptedAgent([{ text: "one" }]);
+    concierge = new ConciergeService({ root, services, authStore, agent });
+    await ask("first");
+    const again = new ConciergeService({ root, services, authStore, agent });
+    await again.ask(LOCAL_PRINCIPAL, "demo", { text: "second" });
+    expect(await readdir(root)).not.toContain("ratelimit");
+  });
+
   it("enforces the conversation cost cap", async () => {
     const value = defaultSettings();
     value.concierge = { perConversationUsd: 0.02 };

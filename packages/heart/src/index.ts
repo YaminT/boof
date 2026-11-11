@@ -62,3 +62,4 @@ export * from "./audit-log.js";
 export * from "./instance-proof.js";
 export * from "./concierge.js";
 export * from "./concierge-store.js";
+export * from "./cli-rate-limit.js";

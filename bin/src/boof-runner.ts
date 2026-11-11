@@ -38,6 +38,7 @@ import {
   UnsafeSecretPathError,
   cliNoticeLine,
   readUpdateCache,
+  cliRateNow,
 } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
@@ -740,11 +741,14 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
     return opsCommand([cmd, ...rest], defaultDataRoot, {
       services: (root) => {
         const service = new TaskService(root, new ToolRegistry(), {
-          conciergeAgent: new ClaudeConcierge({ root }),
+          conciergeAgent:
+            (globalThis as { __boofDevConcierge?: ConciergeAgent }).__boofDevConcierge ??
+            new ClaudeConcierge({ root }),
           authStore: new AuthStore(root),
           ...sandboxServerHooks(),
+          cliRateLimits: true,
+          now: cliRateNow,
         });
-        attachConcierge(service);
         return service;
       },
     });
