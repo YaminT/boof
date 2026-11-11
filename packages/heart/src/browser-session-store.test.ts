@@ -18,7 +18,8 @@ import {
 } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_LINK_TTL_MS,
@@ -36,6 +37,34 @@ const DAY_MS = 86_400_000;
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+/** A child env that does not inherit the parent's secrets. Windows still needs SystemRoot. */
+function isolatedChildEnv(home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    PATH:
+      process.platform === "win32"
+        ? [
+            dirname(process.execPath),
+            join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+          ].join(";")
+        : "/usr/bin:/bin",
+    HOME: home,
+    TMPDIR: tmpdir(),
+    TZ: "UTC",
+  };
+  if (process.platform === "win32") {
+    env.USERPROFILE = home;
+    env.SystemRoot = process.env.SystemRoot;
+    env.SYSTEMROOT = process.env.SYSTEMROOT ?? process.env.SystemRoot;
+    env.windir = process.env.windir ?? process.env.SystemRoot;
+    env.PATHEXT = process.env.PATHEXT;
+    env.ComSpec = process.env.ComSpec ?? process.env.COMSPEC;
+    env.COMSPEC = process.env.COMSPEC ?? process.env.ComSpec;
+    env.TEMP = process.env.TEMP ?? tmpdir();
+    env.TMP = process.env.TMP ?? tmpdir();
+  }
+  return env;
 }
 
 function simulatedProcess(pid: number) {
@@ -175,8 +204,11 @@ describe("BrowserSessionStore", () => {
         process.execPath,
         ["--import", "tsx", childPath, root, code, String(clock), readyPath, releasePath],
         {
-          cwd: new URL(".", import.meta.url).pathname,
-          env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: tmpdir(), TZ: "UTC" },
+          // `pathname` is `/C:/...` on Windows, which is not a directory, and CreateProcess
+          // then reports ENOENT for node.exe. fileURLToPath is the real cwd. A custom env
+          // without SystemRoot fails the same way.
+          cwd: fileURLToPath(new URL(".", import.meta.url)),
+          env: isolatedChildEnv(root),
           stdio: ["ignore", "pipe", "pipe"],
         },
       );

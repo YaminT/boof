@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { installWinLauncher } from "../../heart/test-support/win-spawn-exe.js";
 
 /** A tool cwd is inside `root`. Windows joins with `\\` and folds case. */
 const cwdUnder = (cwd: string, root: string) => {
@@ -625,17 +626,17 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
 
   it("a codex-shaped planner report with a questions block parks the task", async () => {
     const prev = process.env.BOOF_RUNNER_CODEX_BIN;
-    // Windows will not execute a shebang file. A .cmd is a program CreateProcess can start.
+    // Windows spawn only starts .exe. A .cmd is ignored and the task fails instead of parking.
     const questions = "Need input.\n\n```questions\n1. Which DB?\n2. ## Reports\n```\n";
     let bin = join(dataRoot, "codex");
     if (process.platform === "win32") {
-      const script = join(dataRoot, "codex-fake.mjs");
       await writeFile(
-        script,
+        join(dataRoot, "payload.mjs"),
         `import { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nfor (let i = 0; i < args.length; i++) {\n  if (args[i] === "-o" && args[i + 1]) writeFileSync(args[i + 1], ${JSON.stringify(questions)});\n}\n`,
       );
-      bin = join(dataRoot, "codex.cmd");
-      await writeFile(bin, `@echo off\r\n"${process.execPath}" "%~dp0codex-fake.mjs" %*\r\n`);
+      bin = join(dataRoot, "codex.exe");
+      await installWinLauncher(bin);
+      await writeFile(join(dataRoot, "node.path"), process.execPath, "utf8");
     } else {
       await writeFile(
         bin,
@@ -3080,9 +3081,13 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       const pid = taskPidPath(projectDir, "t1");
       const done = engine.loop();
       try {
-        while (!existsSync(pid)) await new Promise((r) => setTimeout(r, 20));
+        const deadline = Date.now() + 45_000;
+        while (!existsSync(pid)) {
+          if (Date.now() > deadline) throw new Error(`pid file was not written: ${pid}`);
+          await new Promise((r) => setTimeout(r, 20));
+        }
         const rec = JSON.parse(await readFile(pid, "utf8"));
-        expect(rec.command).toBe("node");
+        expect(rec.command).toBe(basename(process.execPath));
         expect(isAlive(rec.pgid)).toBe(true);
         await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
         await writeFile(taskStopRequestPath(projectDir, "t1"), "test\n");
@@ -3092,7 +3097,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       }
       expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
       expect(existsSync(pid)).toBe(false);
-    });
+    }, 60_000);
 
     it("does nothing when no engine loop runs (the --no-runner path)", async () => {
       await crash();

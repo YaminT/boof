@@ -691,7 +691,9 @@ async function install(
       err(`service install: --env-file ${envFile} does not exist`);
       return 1;
     }
-    if (mode & 0o077) {
+    // Node's stat mode on Windows is synthetic: a file created with mode 0o600 still has
+    // group bits set. systemd units are Linux-only, so this Unix check does not apply there.
+    if (process.platform !== "win32" && mode & 0o077) {
       err(
         `service install: --env-file ${envFile} is readable by other users; run: chmod 600 "${envFile}"`,
       );

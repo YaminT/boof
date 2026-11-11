@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { installWinLauncher } from "../test-support/win-spawn-exe.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   SHA1_EMPTY_TREE,
@@ -68,14 +69,15 @@ async function windowsShell(): Promise<string> {
 }
 
 /**
- * Put a POSIX `git` on PATH. On Windows also write `git.cmd`, which CreateProcess finds,
- * and run that script with Git's sh.exe.
+ * Put a POSIX `git` on PATH. Windows `spawn` only starts `.exe`, so a `.cmd` or a shebang
+ * file is skipped and the real git.exe later on PATH runs. `git.exe` here is a launcher that
+ * runs this script with Git's sh.exe.
  */
 async function placeGitShim(dir: string, shell: string): Promise<void> {
   await writeFile(join(dir, "git"), shell, { mode: 0o755 });
   if (process.platform !== "win32") return;
-  const sh = await windowsShell();
-  await writeFile(join(dir, "git.cmd"), `@echo off\r\n"${sh}" "%~dp0git" %*\r\n`);
+  await installWinLauncher(join(dir, "git.exe"));
+  await writeFile(join(dir, "sh.path"), await windowsShell(), "utf8");
 }
 
 const prependPath = (dir: string) => {

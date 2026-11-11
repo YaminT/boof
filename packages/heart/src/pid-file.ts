@@ -113,6 +113,12 @@ function isSignalable(pgid: number): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Captured before tests replace `process.platform`. `kill(-pid)` only works where the host has
+ * process groups. A Windows host spoofed as darwin must not treat a live pid as dead.
+ */
+const hostHasProcessGroups = process.platform !== "win32";
+
 async function waitGone(pgid: number, ms: number, pollMs: number): Promise<boolean> {
   const deadline = Date.now() + ms;
   while (groupAlive(pgid)) {
@@ -299,8 +305,14 @@ async function reapOffLinux(
     return finish("skipped");
   }
   // A pid that leads no group is not the agent group. Signalling -pid would miss it and look
-  // like a successful kill. Only the real platform: tests inject a platform and fake pids.
-  if (deps.identity?.platform === undefined && platform !== "win32" && !groupAlive(record.pgid)) {
+  // like a successful kill. Only a host that has process groups, and only when the test did not
+  // inject a platform (a Windows host spoofed as darwin cannot signal -pid).
+  if (
+    hostHasProcessGroups &&
+    deps.identity?.platform === undefined &&
+    platform !== "win32" &&
+    !groupAlive(record.pgid)
+  ) {
     return finish("dead");
   }
   const status = agentStatus(record, identity);

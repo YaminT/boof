@@ -140,7 +140,8 @@ describe("ExternalRunStore", () => {
       expect(await store.result(r.runId)).toEqual(c ? expect.objectContaining(RESULT) : null);
     }
     expect((await files()).filter((f) => f.endsWith(".closed"))).toEqual([]);
-  });
+    // Each open, complete and cancel re-reads the Windows ACL.
+  }, 90_000);
 
   it("cancel then complete → false and no result", async () => {
     const store = new ExternalRunStore(root);

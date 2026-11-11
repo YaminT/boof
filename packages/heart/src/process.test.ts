@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { execCommand, killWindowsProcessTree, MAX_ARG_STRLEN } from "./process.js";
 
@@ -134,7 +134,7 @@ describe("execCommand", () => {
       });
       while (!existsSync(pidFilePath)) await new Promise((r) => setImmediate(r));
       const rec = JSON.parse(await readFile(pidFilePath, "utf8"));
-      expect(rec).toMatchObject({ command: "node" });
+      expect(rec).toMatchObject({ command: basename(process.execPath) });
       expect(rec.pgid).toBeGreaterThan(0);
       expect(() => process.kill(rec.pgid, 0)).not.toThrow();
       await writeFile(stop, "test\n");

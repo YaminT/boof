@@ -243,6 +243,8 @@ describe("service install", () => {
   it("--env-file refuses a missing or group/world-readable file and writes nothing", async () => {
     expect(await run(["install", "--data", data, "--env-file", join(home, "nope.env")])).toBe(1);
     expect(errs.join("\n")).toContain("does not exist");
+    // Windows stat mode is synthetic, so chmod 644 is not visible and the product skips the check.
+    if (process.platform === "win32") return;
     const loose = join(home, "loose.env");
     await writeFile(loose, "A=1\n", { mode: 0o644 });
     expect(await run(["install", "--data", data, "--env-file", loose])).toBe(1);
@@ -393,16 +395,21 @@ describe("service install", () => {
     );
   });
 
-  it("a kept --env-file is re-checked: a file that became world-readable refuses the install", async () => {
-    const envFile = join(home, "boof.env");
-    await writeFile(envFile, "X=1\n", { mode: 0o600 });
-    expect(await run(["install", "--data", data, "--env-file", envFile])).toBe(0);
-    await chmod(envFile, 0o644);
-    const before = await readFile(unitFile(), "utf8");
-    expect(await run(["install", "--data", data])).toBe(1);
-    expect(errs.join("\n")).toContain("is readable by other users");
-    expect(await readFile(unitFile(), "utf8")).toBe(before); // nothing written
-  });
+  // Unix mode bits. On Windows, chmod 644 does not change the mode Node reports, and the
+  // install check is skipped because a systemd unit is not installed there.
+  it.skipIf(process.platform === "win32")(
+    "a kept --env-file is re-checked: a file that became world-readable refuses the install",
+    async () => {
+      const envFile = join(home, "boof.env");
+      await writeFile(envFile, "X=1\n", { mode: 0o600 });
+      expect(await run(["install", "--data", data, "--env-file", envFile])).toBe(0);
+      await chmod(envFile, 0o644);
+      const before = await readFile(unitFile(), "utf8");
+      expect(await run(["install", "--data", data])).toBe(1);
+      expect(errs.join("\n")).toContain("is readable by other users");
+      expect(await readFile(unitFile(), "utf8")).toBe(before); // nothing written
+    },
+  );
 
   it("the unit is private (0600) because it records --env values, and the report never prints them", async () => {
     expect(await run(["install", "--data", data, "--env", "API_KEY=sk-very-secret"])).toBe(0);

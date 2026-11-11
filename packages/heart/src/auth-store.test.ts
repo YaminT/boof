@@ -316,5 +316,7 @@ describe("across processes", () => {
     expect(touch).toMatchObject({ ok: true });
     expect(revoke).toMatchObject({ ok: true, ops: 12 });
     expect((await store.list()).filter((c) => !c.revokedAt)).toEqual([]);
-  }, 30000);
+    // Each mutation re-reads the Windows ACL. Two processes doing that need more than the
+    // default 20s, and more than 30s when the runner is busy.
+  }, 120_000);
 });

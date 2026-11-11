@@ -893,11 +893,13 @@ export class BrowserSessionStore implements BrowserSessionVerifier {
     if (path === this.authDir) {
       const directoryStat = await this.lstatFn(path);
       this.assertSafeStat(path, directoryStat, "directory");
-      if (this.hasReadBits(directoryStat.mode)) this.warnReadBits(path);
+      // Windows stat mode is synthetic (a private file still shows group/world bits) and there
+      // is no uid. The same skip as assertSafeStat: only a Unix owner is warned about read bits.
+      if (this.uid !== undefined && this.hasReadBits(directoryStat.mode)) this.warnReadBits(path);
     } else {
       const fileStat = await this.lstatFn(path);
       this.assertSafeStat(path, fileStat, "file");
-      if (this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
+      if (this.uid !== undefined && this.hasReadBits(fileStat.mode)) this.warnReadBits(path);
     }
   }
 }
