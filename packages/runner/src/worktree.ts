@@ -379,14 +379,17 @@ export async function commitLeftovers(
       if (fresh.length === 0) throw new Error(`git add failed: ${add.err || add.out}`);
       skipped.push(...fresh);
     }
-    const tree = await run(["write-tree"], CHECKOUT_TIMEOUT_MS);
     // Nested repositories with commits become gitlinks; their objects are not in this repo.
     const gitlinks = (await run(["diff-index", "--cached", "--raw", "HEAD"]))
       .split("\n")
       .filter((l) => /^:\d+ 160000 /.test(l))
       .map((l) => l.split("\t")[1]!)
       .filter(Boolean);
-    const unsaved = [...skipped, ...gitlinks];
+    if (gitlinks.length > 0) {
+      throw new Error(`refusing to snapshot gitlink entries: ${gitlinks.join(", ")}`);
+    }
+    const tree = await run(["write-tree"], CHECKOUT_TIMEOUT_MS);
+    const unsaved = skipped;
 
     const parents = ["-p", head];
     const prior = await git(workingDir, [
@@ -522,7 +525,11 @@ export async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
   if (!admin || admin !== expected)
     throw new Error("task worktree gitdir differs from the runner record");
   const worktreeConfig = join(admin, "config.worktree");
-  if (await lstat(worktreeConfig).then(() => true, () => false)) {
+  const worktreeConfigInfo = await lstat(worktreeConfig).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  });
+  if (worktreeConfigInfo) {
     throw new Error("task worktree config.worktree is not allowed");
   }
   const commonFile = join(admin, "commondir");

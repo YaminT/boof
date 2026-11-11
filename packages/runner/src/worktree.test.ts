@@ -403,19 +403,6 @@ describe("worktree isolation", () => {
       await writeFile(join(wt.path, "README.md"), "# edited\n");
       await mkdir(join(wt.path, "scratch"), { recursive: true });
       await writeFile(join(wt.path, "scratch", "n.txt"), "n\n");
-      await mkdir(join(wt.path, "nested-repo"), { recursive: true });
-      await w({ path: join(wt.path, "nested-repo") }, ["init", "-b", "main"]);
-      await writeFile(join(wt.path, "nested-repo", "f"), "f\n");
-      await w({ path: join(wt.path, "nested-repo") }, ["add", "."]);
-      await w({ path: join(wt.path, "nested-repo") }, [
-        "-c",
-        "user.name=x",
-        "-c",
-        "user.email=x@y",
-        "commit",
-        "-m",
-        "n",
-      ]);
       const statusBefore = (await w(wt, ["status", "--porcelain"])).stdout;
 
       const left = await commitLeftovers(repo, wt, "title");
@@ -488,16 +475,22 @@ describe("worktree isolation", () => {
       await nested(wt, "withcommit", true);
       const lines = (await finalizeWorktree(repo, wt, "t")).join("\n");
       expect(await exists(join(wt.path, "withcommit", "uncommitted.txt"))).toBe(true);
-      expect(lines).toContain("nested git repositories");
+      expect(lines).toContain("refusing to snapshot gitlink entries");
       expect(lines).toContain("withcommit");
     });
 
-    it("commitLeftovers reports the unsaved paths", async () => {
+    it("refuses untracked nested repositories that become gitlinks", async () => {
       const wt = await createWorktree(repo, "n3");
       await nested(wt, "fresh", false);
       await nested(wt, "withcommit", true);
-      const left = await commitLeftovers(repo, wt, "t");
-      expect([...left!.unsaved].sort()).toEqual(["fresh", "withcommit"]);
+      const wtGit = (args: string[]) =>
+        execCommand("git", args, { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 15000 });
+      const indexBefore = (await wtGit(["ls-files", "--stage", "-z"])).stdout;
+      await expect(commitLeftovers(repo, wt, "t")).rejects.toThrow(
+        "refusing to snapshot gitlink entries: withcommit",
+      );
+      expect((await wtGit(["ls-files", "--stage", "-z"])).stdout).toBe(indexBefore);
+      expect((await g(["rev-parse", "--verify", "--quiet", "refs/heads/n3--leftovers"])).code).toBe(1);
     });
   });
 
