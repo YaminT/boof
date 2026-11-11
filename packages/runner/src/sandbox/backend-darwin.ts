@@ -14,9 +14,8 @@ import {
  *
  * Decisions, where the design leaves a choice:
  * - Seatbelt is last-match-wins for filtered rules. The `*:*` allows come first and the
- *   per-port denies come after, so they win. `sandbox-exec` only accepts `localhost` or `*`
- *   as an IP host, so the design's `localhost:<port>` form is the one that both compiles and
- *   covers 127.0.0.1 and ::1. A literal `127.0.0.1` makes the whole profile fail to compile.
+ *   per-port denies come after, so they win. `sandbox-exec` accepts `*` as an IP host, so
+ *   each protected outbound port is denied for every destination address.
  * - Section 4's macOS sentence names the outbound rules. Bind is denied for the same ports
  *   because the platform-neutral rule denies bind and row A4 requires it. Inbound on those
  *   ports is denied for the same reason.
@@ -255,7 +254,7 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
   }
   for (const port of ports) {
     lines.push(
-      `(deny network-outbound (remote ip "localhost:${port}"))`,
+      `(deny network-outbound (remote ip "*:${port}"))`,
       `(deny network-bind (local ip "*:${port}"))`,
       `(deny network-inbound (local ip "*:${port}"))`,
     );

@@ -37,11 +37,11 @@ describe("renderSeatbeltProfile", () => {
     expect(text.slice(readAt, writeAt)).not.toContain('"/work"');
   });
 
-  it("allows every TCP port and then denies the listed loopback ports", () => {
+  it("allows every TCP port and then denies the listed protected ports", () => {
     const text = profile();
     const allowAt = text.indexOf('(allow network-outbound (remote ip "*:*"))');
     const bindAllow = text.indexOf('(allow network-bind (local ip "*:*"))');
-    const denyOut = text.indexOf('(deny network-outbound (remote ip "localhost:9"))');
+    const denyOut = text.indexOf('(deny network-outbound (remote ip "*:9"))');
     const denyBind = text.indexOf('(deny network-bind (local ip "*:9"))');
     const denyIn = text.indexOf('(deny network-inbound (local ip "*:9"))');
     expect(allowAt).toBeGreaterThan(0);
@@ -49,7 +49,7 @@ describe("renderSeatbeltProfile", () => {
     expect(denyOut).toBeGreaterThan(bindAllow);
     expect(denyBind).toBeGreaterThan(denyOut);
     expect(denyIn).toBeGreaterThan(denyBind);
-    expect(text).toContain('(deny network-outbound (remote ip "localhost:8080"))');
+    expect(text).toContain('(deny network-outbound (remote ip "*:8080"))');
     expect(text).toContain('(deny network-bind (local ip "*:8080"))');
     expect(text).not.toContain("127.0.0.1");
     expect(text).not.toContain("::1");
