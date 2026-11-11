@@ -1,6 +1,7 @@
 import { closeSync, constants, existsSync, openSync } from "node:fs";
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -12,6 +13,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
+import { createHash } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execCommand, repoCommonDir } from "@boof/heart";
@@ -342,7 +345,23 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     await symlink(fx.data, statePath);
     await expect(
       buildRunPolicy({ runner: { sandbox: sandboxSettings } }, { ...fx.ctx, serverPort: 4319 }),
-    ).rejects.toThrow(/sandbox directory is not a real directory/);
+    ).rejects.toThrow(/sandbox directory path contains a non-directory or symlink/);
+    expect((await stat(fx.data)).mode & 0o777).toBe(targetMode);
+  });
+
+  it("refuses a symlink in an intermediate agent state path component", async () => {
+    const fx = await fixture(false);
+    const initial = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const toolStateParent = dirname(initial.env.CLAUDE_CONFIG_DIR);
+    await rm(toolStateParent, { recursive: true, force: true });
+    const targetMode = (await stat(fx.data)).mode & 0o777;
+    await symlink(fx.data, toolStateParent);
+    await expect(
+      buildRunPolicy({ runner: { sandbox: sandboxSettings } }, { ...fx.ctx, serverPort: 4319 }),
+    ).rejects.toThrow(/sandbox directory path contains a non-directory or symlink/);
     expect((await stat(fx.data)).mode & 0o777).toBe(targetMode);
   });
 
@@ -410,6 +429,17 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     await writeFile(commondir, old);
   });
 
+  it("refuses worktree config mode before sandboxing a linked worktree", async () => {
+    const fx = await fixture(true);
+    const commonConfig = join((await repoCommonDir(fx.repo))!, "config");
+    const original = await readFile(commonConfig, "utf8");
+    await writeFile(commonConfig, `${original}\n[extensions]\n\tworktreeConfig = true\n`);
+    await expect(buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx)).rejects.toThrow(
+      /config\.worktree is not allowed/,
+    );
+    await writeFile(commonConfig, original);
+  });
+
   it("imports verified private objects without changing an existing shared object", async () => {
     const fx = await fixture(true);
     const launch = await buildRunPolicy(
@@ -455,6 +485,74 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     ).rejects.toThrow(/private git object.*failed verification/);
     expect(existsSync(source)).toBe(true);
   });
+
+  it("rejects a loose object hardlinked into the writable worktree", async () => {
+    const fx = await fixture(true);
+    const launch = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const content = join(fx.base, "hardlinked-blob");
+    await writeFile(content, "hardlink race target\n");
+    const oid = await git(fx.wtPath, ["hash-object", "-w", content], {
+      ...fx.env,
+      GIT_OBJECT_DIRECTORY: launch.env.GIT_OBJECT_DIRECTORY,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: launch.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+    });
+    const objectPath = join(launch.env.GIT_OBJECT_DIRECTORY!, oid.slice(0, 2), oid.slice(2));
+    await link(objectPath, join(fx.wtPath, "object-hardlink"));
+    await expect(
+      importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wtPath,
+        mainCheckout: fx.repo,
+        worktree: fx.wt!,
+      }),
+    ).rejects.toThrow(/linked or non-regular/);
+  });
+
+  it("strictly rejects a hash-valid malformed loose tree object", async () => {
+    const fx = await fixture(true);
+    const launch = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const raw = Buffer.concat([Buffer.from("tree 3\0"), Buffer.from("bad")]);
+    const oid = createHash("sha1").update(raw).digest("hex");
+    const dir = join(launch.env.GIT_OBJECT_DIRECTORY!, oid.slice(0, 2));
+    await mkdir(dir);
+    await writeFile(join(dir, oid.slice(2)), deflateSync(raw));
+    await expect(
+      importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wtPath,
+        mainCheckout: fx.repo,
+        worktree: fx.wt!,
+      }),
+    ).rejects.toThrow(/strict index-pack/);
+  });
+
+  it("bounds the inflated size of one private loose object", async () => {
+    const fx = await fixture(true);
+    const launch = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const payload = Buffer.alloc(100 * 1024 * 1024 + 1);
+    const header = Buffer.from(`blob ${payload.length}\0`);
+    const oid = createHash("sha1").update(header).update(payload).digest("hex");
+    const dir = join(launch.env.GIT_OBJECT_DIRECTORY!, oid.slice(0, 2));
+    await mkdir(dir);
+    await writeFile(join(dir, oid.slice(2)), deflateSync(Buffer.concat([header, payload])));
+    await expect(
+      importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wtPath,
+        mainCheckout: fx.repo,
+        worktree: fx.wt!,
+      }),
+    ).rejects.toThrow(/failed verification.*larger than/);
+  }, 45_000);
 
   it("does not scan unrelated shared objects while importing private objects", async () => {
     const fx = await fixture(true);

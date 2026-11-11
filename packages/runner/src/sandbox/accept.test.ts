@@ -320,6 +320,79 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
     expect(existsSync(fx.wt.path)).toBe(true);
   }, 45_000);
 
+  it("commits on a reused branch after migrating its pre-existing common reflog", async () => {
+    const fx = await fixture();
+    const log = join(fx.wt.commonDir!, "logs", "refs", "heads", "boof-runner", "task-1");
+    await mkdir(dirname(log), { recursive: true });
+    await writeFile(log, "old branch reflog\n");
+    const reused = await createWorktree(fx.repo, "task-1", {
+      root: dirname(fx.wt.path),
+    });
+    expect(reused.reused).toBe(true);
+    expect(existsSync(log)).toBe(false);
+    const { result } = await sandboxed(
+      fx,
+      "printf 'committed\\n' > reused.txt\ngit add reused.txt\ngit commit -m reused-branch",
+    );
+    expect(result.code, result.stderr).toBe(0);
+    await importPrivateGitObjects({
+      runTempDir: fx.temp,
+      writableRoot: fx.wt.path,
+      mainCheckout: fx.repo,
+      worktree: fx.wt,
+    });
+    expect(await git(fx.wt.path, ["show", "HEAD:reused.txt"], fx.env)).toBe("committed");
+  }, 45_000);
+
+  it("detects a hardlinked private loose object created by the real sandbox helper", async () => {
+    const fx = await fixture();
+    const { result } = await sandboxed(
+      fx,
+      [
+        "set -e",
+        "oid=$(printf 'hardlink payload\\n' | git hash-object -w --stdin)",
+        "prefix=$(printf '%s' \"$oid\" | cut -c1-2)",
+        "rest=${oid#??}",
+        'ln "$GIT_OBJECT_DIRECTORY/$prefix/$rest" object-hardlink',
+      ].join("\n"),
+    );
+    expect(result.code, result.stderr).toBe(0);
+    await expect(
+      importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wt.path,
+        mainCheckout: fx.repo,
+        worktree: fx.wt,
+      }),
+    ).rejects.toThrow(/linked or non-regular/);
+  }, 45_000);
+
+  it.skipIf(!linux)(
+    "reaps a setsid descendant when a real sandbox launch times out",
+    async () => {
+      const fx = await fixture();
+      setSandboxStatus(
+        { mode: "enforce", backend: "linux", state: "ok", reason: "" },
+        sandboxSettingsFingerprint(sandboxSettings),
+      );
+      const launch = await prepareAgentLaunch({ runner: { sandbox: sandboxSettings } }, fx.ctx);
+      if (launch.kind !== "sandbox") throw new Error("expected a sandbox launch");
+      const pidFile = join(fx.temp, "timeout-daemon.pid");
+      const result = await execCommand(
+        "/bin/sh",
+        ["-c", `setsid /bin/sh -c 'echo $$ > "${pidFile}"; exec sleep 30' & wait`],
+        { cwd: fx.wt.path, launch, env: { PATH: "/usr/bin:/bin", LANG: "C" }, timeoutMs: 800 },
+      );
+      expect(result.timedOut).toBe(true);
+      const pid = Number((await readFile(pidFile, "utf8")).trim());
+      for (let i = 0; i < 100 && existsSync(`/proc/${pid}`); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(existsSync(`/proc/${pid}`)).toBe(false);
+    },
+    45_000,
+  );
+
   it("denies the sandboxed agent writes and symlink creation under common reflogs", async () => {
     const fx = await fixture();
     const common = (await repoCommonDir(fx.repo))!;

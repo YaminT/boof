@@ -154,9 +154,15 @@ describe("worktree isolation", () => {
       await sh(nested, ["config", "filter.pwn.clean", `touch ${marker}; cat`]);
       await writeFile(join(nested, "g"), "changed!!\n");
 
-      await diffAgainstBase(wt);
+      await writeFile(
+        join(wt.path, ".gitmodules"),
+        '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
+      );
+      await expect(diffAgainstBase(wt)).rejects.toThrow(
+        /refusing task worktree git command with gitlinks or \.gitmodules/,
+      );
       await expect(commitLeftovers(repo, wt, "submodule filter")).rejects.toThrow(
-        /refusing to snapshot (gitlink entries|nested git repositories)/,
+        /refusing to snapshot gitlink entries/,
       );
       expect(await exists(marker)).toBe(false);
       await finalizeWorktree(repo, wt, "submodule filter");
@@ -179,6 +185,32 @@ describe("worktree isolation", () => {
     );
   });
 
+  it("refuses a gitlink present only in HEAD after the agent removed it from the index", async () => {
+    const wt = await createWorktree(repo, "head-gitlink");
+    const commit = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    const add = await execCommand(
+      "git",
+      ["update-index", "--add", "--cacheinfo", `160000,${commit},agent-link`],
+      { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 10000 },
+    );
+    expect(add.code, add.stderr).toBe(0);
+    const commitGitlink = await execCommand("git", ["commit", "-m", "agent gitlink"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    expect(commitGitlink.code, commitGitlink.stderr).toBe(0);
+    const remove = await execCommand("git", ["rm", "--cached", "agent-link"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    expect(remove.code, remove.stderr).toBe(0);
+    await expect(commitLeftovers(repo, wt, "HEAD gitlink")).rejects.toThrow(
+      "gitlink entries present in HEAD",
+    );
+  });
+
   it("refuses a symlink in the common reflog path before runner git calls", async () => {
     const wt = await createWorktree(repo, "reflog-symlink");
     const common = (await repoCommonDir(repo))!;
@@ -197,6 +229,18 @@ describe("worktree isolation", () => {
       await unlink(logs);
       await rename(savedLogs, logs);
     }
+  });
+
+  it("refuses a symlink in the per-worktree HEAD reflog", async () => {
+    const wt = await createWorktree(repo, "worktree-reflog-link");
+    const admin = join(wt.commonDir!, "worktrees", wt.worktreeName!);
+    const victim = join(nonRepo, "worktree-reflog-victim");
+    const logs = join(admin, "logs");
+    await writeFile(victim, "preserve\n");
+    await mkdir(logs, { recursive: true });
+    await symlink(victim, join(logs, "HEAD"));
+    await expect(verifyWorktreeRecord(wt)).rejects.toThrow("git reflog path contains a symlink");
+    expect(await readFile(victim, "utf8")).toBe("preserve\n");
   });
 
   it("verifies and pins checked worktree git calls, refusing config.worktree", async () => {

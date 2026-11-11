@@ -618,6 +618,27 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     }
   });
 
+  it("keeps the supervisor unsignalable and reaps after the agent attacks its parent", async () => {
+    await tree();
+    const pidFile = join(work, "attacked-daemon.pid");
+    const command = [
+      `"${probe}" orphan-sleep "${pidFile}"`,
+      'kill -STOP "$PPID" 2>/dev/null || echo STOP_DENIED',
+      'kill -9 "$PPID" 2>/dev/null || echo KILL_DENIED',
+      "sleep 0.05",
+    ].join("; ");
+    const result = await run(basePolicy([]), ["/bin/sh", "-c", command]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("STOP_DENIED");
+    expect(result.stdout).toContain("KILL_DENIED");
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(Number.isInteger(pid)).toBe(true);
+    for (let i = 0; i < 100 && existsSync(`/proc/${pid}`); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(existsSync(`/proc/${pid}`)).toBe(false);
+  });
+
   it("exits 126 when a readWrite path is missing and does not exec", async () => {
     const missing = join(tmpdir(), `boof-sandbox-missing-${process.pid}`);
     const marker = join(tmpdir(), `boof-sandbox-marker-${process.pid}`);

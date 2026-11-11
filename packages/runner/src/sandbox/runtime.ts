@@ -12,6 +12,7 @@ import {
   rename,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { createConnection } from "node:net";
@@ -20,6 +21,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import {
   SandboxUnavailableError,
   dataRootPaths,
+  execCommand,
   git,
   isGitRepo,
   isKebabId,
@@ -68,6 +70,8 @@ export interface SandboxSettingsInput {
  */
 
 const RUN_ID_BYTES = 8;
+const MAX_LOOSE_OBJECT_BYTES = 100 * 1024 * 1024;
+const MAX_LOOSE_OBJECT_TOTAL_BYTES = 1024 * 1024 * 1024;
 const FALLBACK_IDENTITY: SandboxGitIdentity = {
   authorName: "boof-runner",
   authorEmail: "boof-runner@localhost",
@@ -154,7 +158,7 @@ export async function createRunTemp(opts: {
   const runsDir = join(projectDir, "runs");
   const id = randomBytes(RUN_ID_BYTES).toString("hex");
   const dir = join(runsDir, id);
-  await mkdir(dir, { recursive: true });
+  await mkdirNoSymlinkRecursive(dir);
   // `mkdir` applies the umask, so the mode has to be set again. The project directory is
   // boof-owned; the state home above it is left as the user created it.
   await chmodPrivateDir(dir);
@@ -301,8 +305,35 @@ export async function linkedWorktreeGit(
       "git worktree commondir does not match the runner worktree record",
     );
   }
+  const worktreeConfig = join(gitdir, "config.worktree");
+  const worktreeConfigInfo = await lstat(worktreeConfig).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  });
+  const commonConfig = await readFile(join(common, "config"), "utf8").catch(() => "");
+  if (worktreeConfigInfo || extensionsWorktreeConfigEnabled(commonConfig)) {
+    throw new SandboxUnavailableError("task worktree config.worktree is not allowed");
+  }
   await ensureGitWriteDirs(common, name);
   return { commonDir: common, worktreeName: name };
+}
+
+function extensionsWorktreeConfigEnabled(config: string): boolean {
+  let section = "";
+  for (const line of config.split(/\r?\n/)) {
+    const header = /^\s*\[([^\]]+)\]\s*(?:[#;].*)?$/.exec(line);
+    if (header) {
+      section = header[1]!.trim().toLowerCase();
+      continue;
+    }
+    if (
+      section === "extensions" &&
+      /^\s*worktreeConfig(?:\s*=\s*(true|yes|on|1))?\s*(?:[#;].*)?$/i.test(line)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function ensureGitWriteDirs(commonDir: string, worktreeName: string): Promise<void> {
@@ -330,7 +361,7 @@ async function realDir(path: string): Promise<string> {
 }
 
 async function makePrivate(path: string): Promise<string> {
-  await mkdir(path, { recursive: true });
+  await mkdirNoSymlinkRecursive(path);
   await chmodPrivateDir(path);
   return realDir(path);
 }
@@ -350,6 +381,25 @@ async function chmodPrivateDir(path: string): Promise<void> {
   }
 }
 
+async function mkdirNoSymlinkRecursive(path: string): Promise<void> {
+  const absolute = resolve(path);
+  let current: string = sep;
+  for (const segment of absolute.split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    try {
+      await mkdir(current);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    const info = await lstat(current);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new SandboxUnavailableError(
+        `sandbox directory path contains a non-directory or symlink: ${current}`,
+      );
+    }
+  }
+}
+
 async function checkedAgentState(agentHome: string, tool: string): Promise<Record<string, string>> {
   const root = join(agentHome, tool);
   const dirs = [
@@ -357,7 +407,7 @@ async function checkedAgentState(agentHome: string, tool: string): Promise<Recor
     ...["claude", "codex", "xdg-config", "xdg-data", "xdg-state"].map((n) => join(root, n)),
   ];
   for (const path of dirs) {
-    await mkdir(path, { recursive: true });
+    await mkdirNoSymlinkRecursive(path);
     await chmodPrivateDir(path);
     const real = await realpath(path);
     const relative = resolve(agentHome) === real ? "" : relativePath(agentHome, real);
@@ -750,6 +800,8 @@ export async function importPrivateGitObjects(opts: {
     const objectHash = objectFormat;
     const objectHexLength = objectHash === "sha256" ? 64 : 40;
     const packPaths: string[] = [];
+    const looseOids: string[] = [];
+    let inflatedTotal = 0;
     for (const prefix of await readdir(detached)) {
       if (!/^[0-9a-f]{2}$/.test(prefix) && prefix !== "pack" && prefix !== "info") continue;
       const fromDir = join(detached, prefix);
@@ -778,8 +830,30 @@ export async function importPrivateGitObjects(opts: {
         }
         if (name.length !== objectHexLength - 2 || !/^[0-9a-f]+$/.test(name)) continue;
         const oid = `${prefix}${name}`;
-        await verifyLooseObject(file, oid, objectHash);
-        await copyFile(file, join(toDir, name));
+        const sourceFd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const openedInfo = await sourceFd.stat();
+          if (!openedInfo.isFile() || openedInfo.nlink !== 1) {
+            throw new SandboxUnavailableError(
+              `private git object is linked or non-regular: ${oid}`,
+            );
+          }
+          if (openedInfo.size > MAX_LOOSE_OBJECT_BYTES) {
+            throw new SandboxUnavailableError(
+              `private git object compressed size exceeds limit: ${oid}`,
+            );
+          }
+          const compressed = await sourceFd.readFile();
+          const inflated = await verifyLooseObject(compressed, oid, objectHash);
+          inflatedTotal += inflated;
+          if (inflatedTotal > MAX_LOOSE_OBJECT_TOTAL_BYTES) {
+            throw new SandboxUnavailableError("private git loose objects exceed total size limit");
+          }
+          await writeFile(join(toDir, name), compressed, { flag: "wx", mode: 0o600 });
+          looseOids.push(oid);
+        } finally {
+          await sourceFd.close();
+        }
       }
     }
     const env = {
@@ -794,6 +868,33 @@ export async function importPrivateGitObjects(opts: {
       if (verifiedPack.code !== 0) {
         throw new SandboxUnavailableError(
           `private git pack failed verification: ${verifiedPack.err || verifiedPack.out}`,
+        );
+      }
+    }
+    if (looseOids.length > 0) {
+      // Pack only the newly imported loose objects, then let index-pack perform Git's strict
+      // object validation without scanning unrelated loose objects in the shared alternate.
+      const packDir = join(snapshot, "pack");
+      await mkdir(packDir, { recursive: true, mode: 0o700 });
+      const prefix = join(packDir, "loose-import");
+      const packed = await execCommand(
+        "git",
+        ["pack-objects", "--no-reuse-delta", "--no-reuse-object", prefix],
+        { launch: { kind: "direct" }, cwd: wt.path, env, input: `${looseOids.join("\n")}\n` },
+      );
+      if (packed.code !== 0 || !/^[0-9a-f]{40,64}$/.test(packed.stdout.trim())) {
+        throw new SandboxUnavailableError(
+          `private loose git objects could not be packed for strict checking: ${packed.stderr || packed.stdout}`,
+        );
+      }
+      const strict = await checkedWorktreeGit(
+        wt,
+        ["index-pack", "--strict", `${prefix}-${packed.stdout.trim()}.pack`],
+        env,
+      );
+      if (strict.code !== 0) {
+        throw new SandboxUnavailableError(
+          `private loose git objects failed strict index-pack: ${strict.err || strict.out}`,
         );
       }
     }
@@ -836,12 +937,12 @@ export async function importPrivateGitObjects(opts: {
 }
 
 async function verifyLooseObject(
-  path: string,
+  compressed: Buffer,
   oid: string,
   algorithm: "sha1" | "sha256",
-): Promise<void> {
+): Promise<number> {
   try {
-    const inflated = inflateSync(await readFile(path));
+    const inflated = inflateSync(compressed, { maxOutputLength: MAX_LOOSE_OBJECT_BYTES });
     const headerEnd = inflated.indexOf(0);
     if (headerEnd < 0) throw new Error("missing object header");
     const header = inflated.subarray(0, headerEnd).toString("ascii");
@@ -851,6 +952,7 @@ async function verifyLooseObject(
     }
     const actual = createHash(algorithm).update(inflated).digest("hex");
     if (actual !== oid) throw new Error("object hash does not match its filename");
+    return inflated.length;
   } catch (err) {
     throw new SandboxUnavailableError(
       `private git object ${oid} failed verification: ${err instanceof Error ? err.message : String(err)}`,

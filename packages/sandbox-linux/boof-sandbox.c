@@ -736,6 +736,10 @@ static void kill_and_reap_descendants(void) {
   }
 }
 
+static volatile sig_atomic_t supervisor_signal = 0;
+
+static void note_supervisor_signal(int sig) { supervisor_signal = sig; }
+
 static int policy_fd_arg(const char *text) {
   if (text == NULL || text[0] < '1' || text[0] > '9') return -1;
   char *end = NULL;
@@ -797,23 +801,41 @@ int main(int argc, char **argv) {
 
   if (prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0)
     failf("child subreaper: %s", strerror(errno));
-  apply_landlock(landlock_abi());
-  apply_seccomp();
-
-  free(policy_buf);
-  policy_buf = NULL;
-  free(arena);
-  arena = NULL;
+  struct sigaction action;
+  memset(&action, 0, sizeof action);
+  action.sa_handler = note_supervisor_signal;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGTERM, &action, NULL) != 0 || sigaction(SIGINT, &action, NULL) != 0 ||
+      sigaction(SIGHUP, &action, NULL) != 0)
+    failf("signal handlers: %s", strerror(errno));
 
   pid_t child = fork();
   if (child < 0) failf("fork: %s", strerror(errno));
   if (child == 0) {
+    struct sigaction def;
+    memset(&def, 0, sizeof def);
+    def.sa_handler = SIG_DFL;
+    sigemptyset(&def.sa_mask);
+    sigaction(SIGTERM, &def, NULL);
+    sigaction(SIGINT, &def, NULL);
+    sigaction(SIGHUP, &def, NULL);
+    apply_landlock(landlock_abi());
+    apply_seccomp();
+    free(policy_buf);
+    policy_buf = NULL;
+    free(arena);
+    arena = NULL;
     execvp(argv[4], &argv[4]);
     failf("exec %s: %s", argv[4], strerror(errno));
   }
   int status;
-  while (waitpid(child, &status, 0) < 0) {
-    if (errno != EINTR) failf("waitpid: %s", strerror(errno));
+  for (;;) {
+    pid_t waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) break;
+    if (waited < 0 && errno != EINTR) failf("waitpid: %s", strerror(errno));
+    if (supervisor_signal) kill_process_tree(child);
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
+    nanosleep(&delay, NULL);
   }
   kill_and_reap_descendants();
   if (WIFEXITED(status)) return WEXITSTATUS(status);

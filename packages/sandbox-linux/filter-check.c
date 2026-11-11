@@ -141,7 +141,7 @@ static void check_child(pid_t pid) {
     fprintf(stderr, "filter-check: wait failed\n");
     exit(1);
   }
-  if (ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD) != 0) {
+  if (ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK) != 0) {
     fprintf(stderr, "filter-check: options failed\n");
     exit(1);
   }
@@ -156,6 +156,20 @@ static void check_child(pid_t pid) {
     if (!WIFSTOPPED(status)) break;
     int sig = WSTOPSIG(status);
     int pass = 0;
+    if (sig == SIGTRAP && (status >> 16) == PTRACE_EVENT_FORK) {
+      unsigned long child_value = 0;
+      if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_value) != 0 ||
+          waitpid((pid_t)child_value, &status, 0) != (pid_t)child_value ||
+          ptrace(PTRACE_SETOPTIONS, (pid_t)child_value, 0,
+                 PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK) != 0 ||
+          ptrace(PTRACE_SYSCALL, (pid_t)child_value, 0, 0) != 0) {
+        fprintf(stderr, "filter-check: could not follow sandbox child\n");
+        exit(1);
+      }
+      pid = (pid_t)child_value;
+      entering = 1;
+      continue;
+    }
     if (sig == (SIGTRAP | 0x80)) {
       if (entering) {
         unsigned long long nr = 0, a0 = 0, a2 = 0;

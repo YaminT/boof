@@ -42,8 +42,6 @@ export const GIT_HARDENING_ARGS: readonly string[] = [
   "-c",
   "core.logAllRefUpdates=false",
   "-c",
-  "diff.ignoreSubmodules=all",
-  "-c",
   "submodule.recurse=false",
   "-c",
   "status.submoduleSummary=false",
@@ -431,8 +429,14 @@ export async function hardenedGitCommand(
   const overrides = await readDriverOverrides(cwd, callerEnv, timeoutMs, hardening);
   // Last step before the caller runs git: a filter planted during the driver list is visible.
   if (common.kind === "dir") await assertInfoAttributesClear(common.path);
+  const commandIndex = args.findIndex((arg) => ["status", "diff", "add"].includes(arg));
+  const guardedArgs = [...args];
+  if (commandIndex >= 0 && args[commandIndex] !== "add") {
+    // Command-line precedence is required: agent-controlled .gitmodules can override -c.
+    guardedArgs.splice(commandIndex + 1, 0, "--ignore-submodules=all");
+  }
   return {
-    args: [...hardening, ...args],
+    args: [...hardening, ...guardedArgs],
     env:
       overrides.length === 0
         ? callerEnv

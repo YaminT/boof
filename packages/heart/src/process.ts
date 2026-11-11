@@ -309,7 +309,8 @@ export function execCommand(
         return;
       }
       try {
-        if (child.pid) process.kill(-child.pid, signal);
+        if (launch.kind === "sandbox") child.kill(signal);
+        else if (child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
         try {
@@ -352,7 +353,12 @@ export function execCommand(
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        kill("SIGKILL");
+        if (launch.kind === "sandbox") {
+          kill("SIGTERM");
+          killTimer = setTimeout(() => kill("SIGKILL"), 1500);
+        } else {
+          kill("SIGKILL");
+        }
       }, opts.timeoutMs);
     }
 

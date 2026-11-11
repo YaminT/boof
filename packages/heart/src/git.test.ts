@@ -354,6 +354,60 @@ describe("agent-planted git config does not run server-side", () => {
     expect(await exists(fsmonitor)).toBe(false);
   });
 
+  it("taskDiff ignores an agent .gitmodules submodule ignore override on the command line", async () => {
+    const source = await mkdtemp(join(tmpdir(), "boof-filter-submodule-"));
+    const marker = join(nonRepo, "taskdiff-filter-ran");
+    const sh = (cwd: string, args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 15000 });
+    try {
+      await sh(source, ["init", "-b", "main"]);
+      await sh(source, ["config", "user.email", "test@example.com"]);
+      await sh(source, ["config", "user.name", "Test"]);
+      await writeFile(join(source, "g"), "same-size\n");
+      await sh(source, ["add", "."]);
+      await sh(source, ["commit", "-m", "submodule base"]);
+      await g(["-c", "protocol.file.allow=always", "submodule", "add", source, "sub"]);
+      await g(["add", "."]);
+      await g(["commit", "-m", "with submodule"]);
+      const wt = await addWorktree("filter-live");
+      const update = await sh(wt.path, [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+      ]);
+      expect(update.code, update.stderr).toBe(0);
+      const nested = join(wt.path, "sub");
+      const gitDir = await sh(nested, ["rev-parse", "--absolute-git-dir"]);
+      expect(gitDir.code, gitDir.stderr).toBe(0);
+      const nestedGit = gitDir.stdout.trim();
+      await mkdir(join(nestedGit, "info"), { recursive: true });
+      await writeFile(join(nestedGit, "info", "attributes"), "* filter=pwn\n");
+      await sh(nested, ["config", "filter.pwn.clean", `touch ${marker}; cat`]);
+      await writeFile(
+        join(wt.path, ".gitmodules"),
+        '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
+      );
+      await writeFile(join(nested, "g"), "changed!!\n");
+      const pinned = pinnedWorktreeGit("filter-live", wt.path);
+      const diff = await taskDiff({
+        workingDir: repo,
+        taskId: "filter-live",
+        worktreePath: wt.path,
+        worktreeGit: pinned,
+      });
+      expect(diff.includesUncommitted).toBe(true);
+      const statusArgs = await hardenedGitCommand(wt.path, ["status", "--porcelain"]);
+      const diffArgs = await hardenedGitCommand(wt.path, ["diff", "HEAD"]);
+      expect(statusArgs.args).toContain("--ignore-submodules=all");
+      expect(diffArgs.args).toContain("--ignore-submodules=all");
+      expect(await exists(marker)).toBe(false);
+    } finally {
+      await rm(source, { recursive: true, force: true });
+    }
+  });
+
   it("routes every live worktree diff command through the runner supplied Git callback", async () => {
     const wt = await addWorktree("pinned-diff");
     await writeFile(join(wt.path, "new.txt"), "new\n");
