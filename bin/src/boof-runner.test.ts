@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleStartupSignal, isServeFlag, main, routeArgv } from "./boof-runner.js";
 import { AuthStore } from "@boof/heart";
+import { agentMarkerFor } from "@boof/runner";
 
 describe("boof-runner top level", () => {
   let logs: string[];
@@ -190,6 +191,51 @@ describe("boof-runner top level", () => {
     expect(routeArgv(["-d", "x", "--version"])).toEqual(["-d", "x", "--version"]);
     expect(routeArgv(["tasks", "list", "-d", "x"])).toEqual(["tasks", "list", "-d", "x"]);
     expect(routeArgv([])).toEqual([]);
+    expect(routeArgv(["--from", "a.tar.gz", "restore", "-d", "dest"])).toEqual([
+      "restore",
+      "-d",
+      "dest",
+      "--from",
+      "a.tar.gz",
+    ]);
+    expect(routeArgv(["--live", "--no-secrets", "backup", "--out", "a.tar.gz"])).toEqual([
+      "backup",
+      "--out",
+      "a.tar.gz",
+      "--live",
+      "--no-secrets",
+    ]);
+    expect(routeArgv(["--live"])).toEqual(["--live"]);
+  });
+
+  it("backup and restore are commands, and a task agent is refused", async () => {
+    await main(["--help"]);
+    expect(logs.join("\n")).toContain("boof-runner backup");
+    expect(logs.join("\n")).toContain("boof-runner restore");
+    logs.length = 0;
+    await main(["backup", "--help"]);
+    expect(logs.join("\n")).toContain("--no-secrets");
+    expect(process.exitCode).toBeUndefined();
+    expect(await readdir(dataRoot)).toEqual([]);
+
+    process.env.BOOF_RUNNER_AGENT_OF = agentMarkerFor(dataRoot);
+    try {
+      const out = join(dataRoot, "out.tar.gz");
+      await main(["backup", "-d", dataRoot, "--out", out]);
+      expect(process.exitCode).toBe(3);
+      expect(errs.join("\n")).toContain(
+        "refused. This process was started by a task agent of this boof data root",
+      );
+      expect(existsSync(out)).toBe(false);
+      process.exitCode = undefined;
+      errs.length = 0;
+      await main(["restore", "--from", out, "-d", join(dataRoot, "dest")]);
+      expect(process.exitCode).toBe(3);
+      expect(errs.join("\n")).toContain("refused. This process was started by a task agent");
+      expect(existsSync(join(dataRoot, "dest"))).toBe(false);
+    } finally {
+      delete process.env.BOOF_RUNNER_AGENT_OF;
+    }
   });
 
   it("an operation after -d runs and starts no server", async () => {

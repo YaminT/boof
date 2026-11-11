@@ -212,6 +212,19 @@ export async function tightenDataRoot(
   }
 }
 
+/** Apply the same owner-only Windows DACL used for private data roots to one file or directory. */
+export async function tightenWindowsPath(
+  path: string,
+  opts: { platform?: NodeJS.Platform; windowsAcl?: WindowsAclOps } = {},
+): Promise<void> {
+  if ((opts.platform ?? process.platform) !== "win32") return;
+  const acl = opts.windowsAcl ?? windowsAclFromRunner();
+  const user = await acl.currentUser();
+  if (!user) throw new Error("could not identify the current Windows user to protect backup data");
+  const result = await tightenOne(path, user, acl);
+  if (!result.ok) throw new Error(result.message);
+}
+
 export class UnsafeSecretPathError extends Error {
   constructor(
     readonly path: string,
