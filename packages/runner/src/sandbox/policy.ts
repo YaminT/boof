@@ -288,7 +288,6 @@ export function buildSandboxPolicy(ctx: SandboxPolicyContext): SandboxPolicy {
   if (git) {
     grantWrite(posix.join(git.commonDir, "worktrees", git.worktreeName));
     grantWrite(posix.join(git.commonDir, "refs", "heads", "boof-runner"));
-    grantWrite(posix.join(git.commonDir, "logs"));
   }
   for (const path of writePaths) grantWrite(path);
 

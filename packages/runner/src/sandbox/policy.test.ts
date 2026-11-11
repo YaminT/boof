@@ -128,8 +128,8 @@ describe("buildSandboxPolicy", () => {
       ...SANDBOX_DEVICES,
       `${PROJECT}/.git/worktrees/task`,
       `${PROJECT}/.git/refs/heads/boof-runner`,
-      `${PROJECT}/.git/logs`,
     ]);
+    expect(policy.readWrite).not.toContain(`${PROJECT}/.git/logs`);
     expect(policy.readExec).not.toContain(HOME);
     expect(policy.readWrite).not.toContain(HOME);
     expect(policy.readExec).not.toContain(DATA);

@@ -40,6 +40,8 @@ export const GIT_HARDENING_ARGS: readonly string[] = [
   "-c",
   "core.attributesFile=/dev/null",
   "-c",
+  "core.logAllRefUpdates=false",
+  "-c",
   "diff.ignoreSubmodules=all",
   "-c",
   "submodule.recurse=false",

@@ -520,6 +520,7 @@ async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
   if (!wt.commonDir || !wt.worktreeName) {
     throw new Error("task worktree is missing its trusted git record");
   }
+  await refuseSymlinks(join(wt.commonDir, "logs"));
   const dotGit = join(wt.path, ".git");
   const dotInfo = await lstat(dotGit).catch(() => null);
   if (!dotInfo?.isFile() || dotInfo.isSymbolicLink()) {
@@ -551,6 +552,19 @@ async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
   );
   if (registered !== (await realpath(dotGit)))
     throw new Error("task worktree admin gitdir differs from the runner record");
+}
+
+async function refuseSymlinks(root: string): Promise<void> {
+  const info = await lstat(root).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  });
+  if (!info) return;
+  if (info.isSymbolicLink()) throw new Error(`git reflog path contains a symlink: ${root}`);
+  if (!info.isDirectory()) return;
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    await refuseSymlinks(join(root, entry.name));
+  }
 }
 
 async function checkedWorktreeGit(

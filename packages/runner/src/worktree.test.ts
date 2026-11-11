@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, stat, mkdir, readFile, chmod, rename, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -149,6 +149,26 @@ describe("worktree isolation", () => {
       await finalizeWorktree(repo, wt, "submodule filter");
     } finally {
       await rm(source, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlink in the common reflog path before runner git calls", async () => {
+    const wt = await createWorktree(repo, "reflog-symlink");
+    const common = (await repoCommonDir(repo))!;
+    const logs = join(common, "logs");
+    const savedLogs = join(common, "logs-saved-for-test");
+    const victim = join(nonRepo, "victim");
+    await writeFile(victim, "preserve this file\n");
+    await rename(logs, savedLogs);
+    await symlink(victim, logs);
+    try {
+      await expect(commitLeftovers(repo, wt, "reflog symlink")).rejects.toThrow(
+        "git reflog path contains a symlink",
+      );
+      expect(await readFile(victim, "utf8")).toBe("preserve this file\n");
+    } finally {
+      await unlink(logs);
+      await rename(savedLogs, logs);
     }
   });
 

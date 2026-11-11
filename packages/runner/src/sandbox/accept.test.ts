@@ -309,4 +309,24 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
     expect(lines.some((line) => line.startsWith("Leftovers committed"))).toBe(true);
     expect(existsSync(fx.wt.path)).toBe(true);
   }, 45_000);
+
+  it("denies the sandboxed agent writes and symlink creation under common reflogs", async () => {
+    const fx = await fixture();
+    const common = (await repoCommonDir(fx.repo))!;
+    const logPath = join(common, "logs", "agent-planted");
+    const target = join(fx.wt.path, "reflog-target");
+    await writeFile(target, "safe\n");
+    const { launch, result } = await sandboxed(
+      fx,
+      [
+        `if ln -s ${shQuote(target)} ${shQuote(logPath)}; then echo LINKED; else echo LINK_DENIED; fi`,
+        `if printf pwn > ${shQuote(logPath)}; then echo WRITTEN; else echo WRITE_DENIED; fi`,
+      ].join("\n"),
+    );
+    expect(launch.policy.readWrite).not.toContain(join(common, "logs"));
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("LINK_DENIED");
+    expect(result.stdout).toContain("WRITE_DENIED");
+    expect(await readFile(target, "utf8")).toBe("safe\n");
+  }, 45_000);
 });
