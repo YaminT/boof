@@ -192,6 +192,9 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
   const lines = [
     "(version 1)",
     "(deny default)",
+    // `process-exec*` covers interpreter execution on some Seatbelt versions, but the
+    // base operation is needed for ordinary execve/execvp on current macOS runners.
+    "(allow process-exec)",
     "(allow process-exec*)",
     "(allow process-fork)",
     "(allow process-info* (target same-sandbox))",

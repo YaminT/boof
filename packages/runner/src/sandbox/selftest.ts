@@ -322,7 +322,7 @@ export async function runDarwinProbes(opts: {
 }): Promise<SelfTestProbeResult[]> {
   const realNode = await realpath(process.execPath);
   const nodeDirs = [dirname(process.execPath), dirname(realNode)];
-  const roots = [...DARWIN_SYSTEM_ROOTS];
+  const roots: string[] = [...DARWIN_SYSTEM_ROOTS];
   for (const dir of nodeDirs) {
     if (!roots.includes(dir)) roots.push(dir);
     const prefix = dirname(dir);
