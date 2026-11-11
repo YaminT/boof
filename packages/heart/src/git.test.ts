@@ -1,10 +1,14 @@
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  SHA1_EMPTY_TREE,
+  attributesSelectDriver,
   driverOverridesFromConfig,
   git,
+  gitVersionSupportsAttrSource,
+  hardenedGitCommand,
   initGitRepo,
   isGitRepo,
   leftoversBranch,
@@ -247,6 +251,36 @@ describe("initGitRepo", () => {
   }, 45_000);
 });
 
+describe("git capability and info/attributes parsing", () => {
+  it("treats git 2.40 as the first version with --attr-source", () => {
+    expect(gitVersionSupportsAttrSource("git version 2.39.5 (Apple Git-154)")).toBe(false);
+    expect(gitVersionSupportsAttrSource("git version 2.39.0.windows.1")).toBe(false);
+    expect(gitVersionSupportsAttrSource("git version 2.40.0")).toBe(true);
+    expect(gitVersionSupportsAttrSource("git version 2.40")).toBe(true);
+    expect(gitVersionSupportsAttrSource("git version 2.40.0.windows.1")).toBe(true);
+    expect(gitVersionSupportsAttrSource("git version 2.43.0")).toBe(true);
+    expect(gitVersionSupportsAttrSource("git version 3.0.0")).toBe(true);
+    expect(gitVersionSupportsAttrSource("git version 1.9.1")).toBe(false);
+    expect(gitVersionSupportsAttrSource("not git")).toBe(false);
+  });
+
+  it("selects only filter= and merge= attributes", () => {
+    expect(attributesSelectDriver("* filter=late\n")).toBe(true);
+    expect(attributesSelectDriver("* merge=late\n")).toBe(true);
+    expect(attributesSelectDriver("* filter=x=y\n* merge=ours\n")).toBe(true);
+    expect(attributesSelectDriver("[attr]bin filter=late\n* bin\n")).toBe(true);
+    expect(attributesSelectDriver('"spa ce" filter=late\n')).toBe(true);
+    expect(attributesSelectDriver("* text\n*.png binary\n")).toBe(false);
+    expect(attributesSelectDriver("# * filter=late\n")).toBe(false);
+    expect(attributesSelectDriver("*filter=late text\n")).toBe(false);
+    expect(attributesSelectDriver("* -filter\n* !merge\n* filter\n")).toBe(false);
+    expect(attributesSelectDriver('"* filter=late"\n')).toBe(false);
+    expect(attributesSelectDriver("* diff=evil\n")).toBe(false);
+    expect(attributesSelectDriver("")).toBe(false);
+    expect(attributesSelectDriver("* filter=late\r\n")).toBe(true);
+  });
+});
+
 describe("agent-planted git config does not run server-side", () => {
   /** An agent sets core.fsmonitor (and a hook) in the shared .git/config; each would drop a file. */
   async function plant(): Promise<{ fsmonitor: string; hook: string }> {
@@ -422,6 +456,151 @@ describe("agent-planted git config does not run server-side", () => {
     expect(await exists(ran)).toBe(false);
   });
 
+  it("refuses a filter planted in .git/info/attributes and does not run it", async () => {
+    const wt = await addWorktree("info-attr");
+    const ran = join(nonRepo, "info-filter-ran");
+    const script = join(nonRepo, "info-filter.sh");
+    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+    await g(["config", "filter.late.clean", script]);
+    await mkdir(join(repo, ".git", "info"), { recursive: true });
+    await writeFile(join(repo, ".git", "info", "attributes"), "* filter=late\n");
+    await writeFile(join(repo, "a.txt"), "content\n");
+    await writeFile(join(wt.path, "b.txt"), "content\n");
+    await expect(git(repo, ["add", "--", "a.txt"])).rejects.toThrow(
+      /info\/attributes sets a filter= or merge= attribute/,
+    );
+    await expect(git(wt.path, ["add", "--", "b.txt"])).rejects.toThrow(/info\/attributes/);
+    expect(await exists(ran)).toBe(false);
+    const merged = await createIntegrationBranch(repo, "int-info", ["main", "missing"]);
+    expect(merged.ok).toBe(false);
+    if (merged.ok) return;
+    expect(merged.reason).toMatch(/info\/attributes sets a filter= or merge= attribute/);
+    expect(await exists(ran)).toBe(false);
+
+    await writeFile(join(repo, ".git", "info", "attributes"), "* merge=late\n");
+    await expect(git(repo, ["status", "--porcelain"])).rejects.toThrow(
+      /info\/attributes sets a filter= or merge= attribute/,
+    );
+    expect(await exists(ran)).toBe(false);
+  });
+
+  it("allows info/attributes that do not assign a filter or merge driver", async () => {
+    await mkdir(join(repo, ".git", "info"), { recursive: true });
+    await writeFile(
+      join(repo, ".git", "info", "attributes"),
+      "# comment filter=late\n*filter=late text\n* text\n*.png binary\n",
+    );
+    const st = await git(repo, ["status", "--porcelain"]);
+    expect(st.code).toBe(0);
+  });
+
+  it("omits --attr-source before git 2.40 and still blanks filters and info/attributes", async () => {
+    const apple = { versionText: "git version 2.39.5 (Apple Git-154)" };
+    const prepared = await hardenedGitCommand(
+      repo,
+      ["status", "--porcelain"],
+      undefined,
+      15_000,
+      apple,
+    );
+    expect(prepared.args.some((arg) => arg.startsWith("--attr-source="))).toBe(false);
+    expect(prepared.args).toContain("core.fsmonitor=false");
+    expect(prepared.args).toContain("core.hooksPath=/dev/null");
+    expect(prepared.args).toContain("core.attributesFile=/dev/null");
+
+    const ran = join(nonRepo, "old-git-filter-ran");
+    const script = join(nonRepo, "old-git-filter.sh");
+    await writeFile(script, `#!/bin/sh\necho ran >> '${ran}'\ncat\n`, { mode: 0o755 });
+    await g(["config", "filter.evil.clean", script]);
+    await g(["config", "filter.evil.required", "true"]);
+    await writeFile(join(repo, ".gitattributes"), "* filter=evil\n");
+    await writeFile(join(repo, "a.txt"), "one\n");
+    const added = await git(repo, ["add", "--", "a.txt"], undefined, 15_000, apple);
+    expect(added.code).toBe(0);
+    expect(await exists(ran)).toBe(false);
+
+    await mkdir(join(repo, ".git", "info"), { recursive: true });
+    await writeFile(join(repo, ".git", "info", "attributes"), "* filter=late\n");
+    await g(["config", "filter.late.clean", script]);
+    await rm(ran, { force: true });
+    await expect(git(repo, ["add", "--", "a.txt"], undefined, 15_000, apple)).rejects.toThrow(
+      /info\/attributes sets a filter= or merge= attribute/,
+    );
+    expect(await exists(ran)).toBe(false);
+  });
+
+  it("passes the SHA-1 empty tree on git 2.40 without hashing, and hashes when the format is sha256", async () => {
+    const lines = async (logPath: string) =>
+      (await readFile(logPath, "utf8").catch(() => "")).split("\n").filter(Boolean);
+    const withLog = async (fn: (logPath: string) => Promise<void>) => {
+      const shim = await mkdtemp(join(tmpdir(), "boof-gitlog-"));
+      const logPath = join(shim, "log");
+      const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+      await writeFile(
+        join(shim, "git"),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> '${logPath}'\nexec '${real}' "$@"\n`,
+        { mode: 0o755 },
+      );
+      const oldPath = process.env.PATH;
+      process.env.PATH = `${shim}:${oldPath ?? ""}`;
+      try {
+        await fn(logPath);
+      } finally {
+        process.env.PATH = oldPath;
+        await rm(shim, { recursive: true, force: true });
+      }
+    };
+
+    const sawHashObject = async (logPath: string) =>
+      (await lines(logPath)).some((line) => line.includes("hash-object"));
+
+    await withLog(async (logPath) => {
+      const prepared = await hardenedGitCommand(repo, ["status"], undefined, 15_000, {
+        versionText: "git version 2.40.0",
+        objectFormat: "sha1",
+      });
+      expect(prepared.args[0]).toBe(`--attr-source=${SHA1_EMPTY_TREE}`);
+      expect(await sawHashObject(logPath)).toBe(false);
+    });
+
+    await withLog(async (logPath) => {
+      const prepared = await hardenedGitCommand(repo, ["status"], undefined, 15_000, {
+        versionText: "git version 2.43.0",
+        objectFormat: "sha256",
+      });
+      // This fixture is SHA-1, so hash-object's empty tree is the SHA-1 id. The call is the point:
+      // a sha256 format must not skip the hash and assume the constant.
+      expect(prepared.args[0]).toBe(`--attr-source=${SHA1_EMPTY_TREE}`);
+      expect(await sawHashObject(logPath)).toBe(true);
+    });
+  });
+
+  it("uses the repository's own empty tree in a SHA-256 repo", async () => {
+    const shaRepo = await mkdtemp(join(tmpdir(), "boof-sha256-"));
+    try {
+      const init = await execCommand("git", ["init", "--object-format=sha256", "-q"], {
+        cwd: shaRepo,
+        timeoutMs: 15_000,
+      });
+      expect(init.code).toBe(0);
+      const hashed = await execCommand(
+        "git",
+        ["hash-object", "-t", "tree", "--no-filters", "--stdin"],
+        { cwd: shaRepo, timeoutMs: 15_000, input: "" },
+      );
+      const oid = hashed.stdout.trim();
+      expect(oid).not.toBe(SHA1_EMPTY_TREE);
+      const prepared = await hardenedGitCommand(shaRepo, ["status", "--porcelain"]);
+      expect(prepared.args[0]).toBe(`--attr-source=${oid}`);
+      await writeFile(join(shaRepo, "a.txt"), "one\n");
+      const added = await git(shaRepo, ["add", "--", "a.txt"]);
+      expect(added.code).toBe(0);
+      expect(added.err).not.toMatch(/bad --attr-source/);
+    } finally {
+      await rm(shaRepo, { recursive: true, force: true });
+    }
+  });
+
   it("does not select a filter added after the driver list was read", async () => {
     const ran = join(nonRepo, "late-filter-ran");
     const script = join(nonRepo, "late-filter.sh");
@@ -445,7 +624,7 @@ describe("agent-planted git config does not run server-side", () => {
     const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
     await writeFile(
       join(shim, "git"),
-      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body.replaceAll("__REAL_GIT__", real)}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
+      `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body.replaceAll("__REAL_GIT__", real)}\n    ;;\n  *" --version "*|*" --git-common-dir "*|*" --show-object-format "*|*" hash-object "*)\n    exec '${real}' "$@"\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,
       { mode: 0o755 },
     );
     const oldPath = process.env.PATH;
