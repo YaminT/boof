@@ -126,4 +126,4 @@ When a task finishes, boof appends the new status to the goal file (`planWriteBa
 - [x] [`publish-runbook`](publish-runbook/goal.boof.xml) — Publish the server runbook on nodets.com
 - [x] [`release-0-3-0`](release-0-3-0/goal.boof.xml) — Release v0.3.0 with a changelog (after: desktop-e2e, verify-steering-codex, publish-runbook)
 - [ ] [`agent-containment-layer-2`](agent-containment-layer-2/goal.boof.xml) — OS-level sandboxing for task agents (after: agent-containment)
-- [ ] [`release-0-4-0`](release-0-4-0/goal.boof.xml) — Prepare the v0.4.0 release (after: desktop-e2e)
+- [x] [`release-0-4-0`](release-0-4-0/goal.boof.xml) — Prepare the v0.4.0 release
