@@ -394,7 +394,7 @@ describe("backup and restore", () => {
     ];
     expect(
       layoutPaths.every(
-        (path) => classifyDataRootPath(path.replace(/^\/data\//, "")) !== "unclassified",
+        (path) => classifyDataRootPath(path.replace(/^[/\\]data[/\\]/i, "")) !== "unclassified",
       ),
     ).toBe(true);
     const paths = [

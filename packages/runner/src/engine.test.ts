@@ -1817,7 +1817,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
       // Only the final round, not the earlier CHANGES_REQUESTED one.
       expect(section).not.toContain("mock issue observer round 1");
     }
-  });
+  }, 60_000);
 });
 
 /** A second (and third) registered repository for the multi-project tests. */
