@@ -103,7 +103,7 @@ describe("a dependent goal starts from the branches of its dependencies", () => 
       expect(await fileOn("boof-runner/boof-about", "posts.txt")).toBe(false);
       expect((await task("boof-rss")).body.prompt).not.toContain("## Dependencies");
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it(
@@ -127,7 +127,7 @@ describe("a dependent goal starts from the branches of its dependencies", () => 
       expect((await git(["log", "--oneline", "main"])).stdout.trim().split("\n")).toHaveLength(1);
       expect((await git(["worktree", "list"])).stdout).not.toContain("boof-integration");
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it(
@@ -149,7 +149,7 @@ describe("a dependent goal starts from the branches of its dependencies", () => 
       expect((await git(["worktree", "list"])).stdout).not.toContain("boof-integration");
       expect((await git(["status", "--porcelain"])).stdout.trim()).toBe("");
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("createIntegrationBranch refuses fewer than two branches", async () => {

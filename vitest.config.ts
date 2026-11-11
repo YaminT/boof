@@ -6,6 +6,8 @@ export default defineConfig({
     include: ["packages/**/*.test.ts", "bin/**/*.test.ts"],
     environment: "node",
     globals: false,
-    testTimeout: 20000,
+    // Windows runners spawn git and child processes several times slower.
+    testTimeout: process.platform === "win32" ? 180_000 : 20000,
+    hookTimeout: process.platform === "win32" ? 180_000 : 10000,
   },
 });

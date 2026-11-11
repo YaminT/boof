@@ -237,7 +237,7 @@ describe("harness flow over /api/v1", () => {
       expect(types.filter((t) => t === "task.status").length).toBeGreaterThanOrEqual(6);
       expect((await call("/openapi.json")).status).toBe(200);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("wait: tasks and plans return at once when there is nothing to wait for", async () => {

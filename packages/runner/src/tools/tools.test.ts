@@ -238,7 +238,7 @@ describe("exec cancellation", () => {
         await rm(dir, { recursive: true, force: true });
       }
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 });
 

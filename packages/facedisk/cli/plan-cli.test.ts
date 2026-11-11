@@ -130,7 +130,7 @@ describe("scan on top of plans (golden)", () => {
         ).toBe("done");
       }
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 });
 

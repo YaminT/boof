@@ -122,7 +122,7 @@ describe("runTask (headless)", () => {
       expect(res.ok).toBe(true);
       expect(res.status).toBe("done");
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("reports failure (ok=false) when a role errors", async () => {
@@ -185,7 +185,7 @@ describe("run --parent and --epic", () => {
         /Epic not found/,
       );
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 });
 
@@ -665,7 +665,7 @@ describe("multi-project run and scan", () => {
         /Project not found/,
       );
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("migrates a v1 data root on first use and runs its pending task under project `default`", async () => {

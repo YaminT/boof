@@ -133,7 +133,7 @@ describe("E2E: draft → enqueue → reorder → run → answer → done (mock t
       const usage = await (await req("/api/usage")).json();
       expect(usage.known).toBe(true);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 });
 
@@ -194,6 +194,6 @@ describe("E2E: two projects served by one runner (mock tool)", () => {
       expect(total.inputTokens).toBe(a.inputTokens + b.inputTokens);
       expect(total.costUsd).toBeCloseTo(a.costUsd + b.costUsd);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 });

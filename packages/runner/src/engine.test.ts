@@ -1417,7 +1417,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
       expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
       expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it.each(["observer", "reviewer"] as const)(
@@ -1454,7 +1454,7 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
       expect(count("developer")).toBe(4);
       expect(count("reviewer")).toBe(4);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("gate false: verdicts are recorded but not enforced", async () => {
@@ -1828,7 +1828,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
         expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
       }
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
@@ -2343,7 +2343,7 @@ describe("multi-project engine (mock tool)", () => {
       expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
       expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it(
@@ -2370,7 +2370,7 @@ describe("multi-project engine (mock tool)", () => {
         "default/same-b",
       ]);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("skips paused, archived and directory-less projects, and serves them again once resumed", async () => {
@@ -2472,7 +2472,7 @@ describe("multi-project engine (mock tool)", () => {
       expect(bCwds.length + aCwds.length).toBe(cwds.length);
       expect(models).toEqual(["project-dev", "g-dev"]);
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   /** Tracks how many roles run at once per repository and overall, with a delay in every step. */
@@ -2544,7 +2544,7 @@ describe("multi-project engine (mock tool)", () => {
       for (const id of ["b1", "b2"])
         expect((await b.store.get(id))?.frontmatter.status).toBe("done");
     },
-    process.platform === "win32" ? 60_000 : 20_000,
+    process.platform === "win32" ? 180_000 : 20_000,
   );
 
   it("concurrency=2 with a single project still runs its tasks one after the other", async () => {
@@ -3149,7 +3149,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
         expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
         expect(existsSync(pid)).toBe(false);
       },
-      process.platform === "win32" ? 60_000 : 20_000,
+      process.platform === "win32" ? 180_000 : 20_000,
     );
 
     it("does nothing when no engine loop runs (the --no-runner path)", async () => {
