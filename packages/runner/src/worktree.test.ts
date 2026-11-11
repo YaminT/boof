@@ -1,5 +1,6 @@
 import {
   mkdtemp,
+  realpath,
   rm,
   writeFile,
   stat,
@@ -59,6 +60,8 @@ beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "boof-runner-repo-"));
   nonRepo = await mkdtemp(join(tmpdir(), "boof-runner-nonrepo-"));
   await g(["init", "-b", "main"]);
+  await g(["config", "core.autocrlf", "false"]);
+  await g(["config", "core.filemode", "false"]);
   await g(["config", "user.email", "test@example.com"]);
   await g(["config", "user.name", "Test"]);
   await writeFile(join(repo, "README.md"), "# base\n");
@@ -98,7 +101,9 @@ describe("worktree isolation", () => {
     const diff = (await diffAgainstBase(wt)).text;
     expect(diff).toContain("feature.txt");
 
-    expect(await finalizeWorktree(repo, wt, "t")).toEqual([expect.stringContaining("Removed")]);
+    expect(await finalizeWorktree(repo, wt, "t")).toEqual(
+      expect.arrayContaining([expect.stringContaining("Removed")]),
+    );
     expect(await exists(wt.path)).toBe(false);
     expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
   });
@@ -251,7 +256,7 @@ describe("worktree isolation", () => {
       GIT_WORK_TREE: "/tmp/attacker-tree",
     });
     expect(pinned.code).toBe(0);
-    expect(pinned.out).toBe(wt.path);
+    expect(await realpath(pinned.out)).toBe(await realpath(wt.path));
     const admin = join(wt.commonDir!, "worktrees", wt.worktreeName!);
     await writeFile(join(admin, "config.worktree"), "[core]\\n\tfsmonitor = true\\n");
     await expect(checkedWorktreeGit(wt, ["status", "--porcelain"])).rejects.toThrow(

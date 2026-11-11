@@ -120,14 +120,14 @@ describe("planDarwinSandbox", () => {
   });
 
   it("runs sandbox-exec -p with the profile and closes the unused policy pipe", () => {
-    process.env.BOOF_SANDBOX_EXEC = "/bin/true";
+    process.env.BOOF_SANDBOX_EXEC = process.execPath;
     const plan = planDarwinSandbox(
       { kind: "sandbox", policy, helper: "/no/such/boof-sandbox" },
       "/bin/echo",
       ["hi"],
       { PATH: "/bin" },
     );
-    expect(plan.command).toBe("/bin/true");
+    expect(plan.command).toBe(process.execPath);
     expect(plan.args[0]).toBe("-p");
     expect(plan.args[1]).toContain("(deny default)");
     expect(plan.args.slice(2)).toEqual(["/bin/echo", "hi"]);

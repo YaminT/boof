@@ -125,7 +125,9 @@ describe("the release request", () => {
     expect(newer.calls[0]?.redirect).toBe("error");
     expect(newer.calls[0]?.signal).toBeInstanceOf(AbortSignal);
     expect(newer.calls[0]?.headers).not.toHaveProperty("authorization");
-    expect((await stat(dataRootPaths(root).updates)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(dataRootPaths(root).updates)).mode & 0o777).toBe(0o600);
+    }
     const cache = await readUpdateCache(root);
     expect(cache?.latest).toEqual({
       version: "0.5.0",

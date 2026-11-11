@@ -44,6 +44,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-diff-"));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-diff-repo-")));
   await g(repo, ["init", "-q", "-b", "main"]);
+  await g(repo, ["config", "core.autocrlf", "false"]);
   await writeFile(join(repo, "a.txt"), "one\ntwo\nthree\n");
   await writeFile(join(repo, "b.txt"), "bee\n");
   await writeFile(join(repo, "old.txt"), "a long enough file\nto be a rename\nsource\nfor git\n");

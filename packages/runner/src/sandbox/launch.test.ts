@@ -87,7 +87,8 @@ function refusingSpawn() {
 function platformApplier() {
   if (process.platform === "linux") return planLinuxSandbox;
   if (process.platform === "darwin") return planDarwinSandbox;
-  return undefined;
+  // These launch unit tests use a fake spawn and exercise Linux policy planning on Windows too.
+  return planLinuxSandbox;
 }
 
 beforeEach(() => {
@@ -407,16 +408,22 @@ describe("resolveSandbox", () => {
   it("writes the policy without env when the launch is valid", async () => {
     const child = fakeChild();
     const spawn = vi.fn(() => child);
-    await execCommand(
-      "agent",
-      ["--print"],
-      {
-        cwd: "/tmp",
-        env: { PATH: "/bin" },
-        launch: { kind: "sandbox", helper: process.execPath, policy },
-      },
-      { spawn },
-    );
+    const previous = sandboxApplier();
+    setSandboxApplier(planLinuxSandbox);
+    try {
+      await execCommand(
+        "agent",
+        ["--print"],
+        {
+          cwd: "/tmp",
+          env: { PATH: "/bin" },
+          launch: { kind: "sandbox", helper: process.execPath, policy },
+        },
+        { spawn, platform: "linux" },
+      );
+    } finally {
+      setSandboxApplier(previous);
+    }
     expect(spawn).toHaveBeenCalledWith(
       process.execPath,
       ["--policy-fd", "3", "--", "agent", "--print"],

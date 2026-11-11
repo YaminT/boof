@@ -95,6 +95,7 @@ describe("install script", () => {
     const r = await run("bash", ["-c", 'source "$BOOF_SCRIPT"; build_sandbox "$1"', "fn", repo], {
       env: { ...process.env, BOOF_SCRIPT: script, CC: "/no/such/boof-sandbox-cc" },
     });
-    expect(r.stdout).toContain("the sandbox is unavailable");
+    if (process.platform === "linux") expect(r.stdout).toContain("the sandbox is unavailable");
+    else expect(r.stdout).toContain("not Linux; not building the helper");
   });
 });

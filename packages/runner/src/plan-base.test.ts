@@ -30,6 +30,7 @@ beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-base-data-"));
   workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-base-work-")));
   await git(["init", "-b", "main"]);
+  await git(["config", "core.autocrlf", "false"]);
   await git(["config", "user.email", "t@e.com"]);
   await git(["config", "user.name", "T"]);
   await writeFile(join(workDir, "README.md"), "# work\n");
@@ -101,42 +102,51 @@ describe("a dependent goal starts from the branches of its dependencies", () => 
     expect((await task("boof-rss")).body.prompt).not.toContain("## Dependencies");
   });
 
-  it("two dependencies: an integration branch merges both; the user's checkout is untouched", async () => {
-    await runPlan([testGoal("a", 1), testGoal("b", 2), testGoal("c", 3, ["a", "b"])]);
-    const c = await task("boof-c");
-    expect(c.frontmatter.status).toBe("done");
-    expect(c.frontmatter.base).toBe("boof-runner/boof-c--base");
-    expect(c.body.log).toContain(
-      "boof-runner/boof-c--base (merge of boof-runner/boof-a (goal a), boof-runner/boof-b (goal b))",
-    );
-    expect(await fileOn("boof-runner/boof-c--base", "a.txt")).toBe(true);
-    expect(await fileOn("boof-runner/boof-c--base", "b.txt")).toBe(true);
-    expect(await fileOn("boof-runner/boof-c", "a.txt")).toBe(true);
-    expect(await fileOn("boof-runner/boof-c", "b.txt")).toBe(true);
-    expect(c.body.prompt).not.toContain("## Dependencies");
-    // The user's branch, index and working tree are untouched; no temporary worktree is left.
-    expect((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()).toBe("main");
-    expect((await git(["status", "--porcelain"])).stdout.trim()).not.toContain("a.txt");
-    expect((await git(["log", "--oneline", "main"])).stdout.trim().split("\n")).toHaveLength(1);
-    expect((await git(["worktree", "list"])).stdout).not.toContain("boof-integration");
-  });
+  it(
+    "two dependencies: an integration branch merges both; the user's checkout is untouched",
+    async () => {
+      await runPlan([testGoal("a", 1), testGoal("b", 2), testGoal("c", 3, ["a", "b"])]);
+      const c = await task("boof-c");
+      expect(c.frontmatter.status).toBe("done");
+      expect(c.frontmatter.base).toBe("boof-runner/boof-c--base");
+      expect(c.body.log).toContain(
+        "boof-runner/boof-c--base (merge of boof-runner/boof-a (goal a), boof-runner/boof-b (goal b))",
+      );
+      expect(await fileOn("boof-runner/boof-c--base", "a.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-c--base", "b.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-c", "a.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-c", "b.txt")).toBe(true);
+      expect(c.body.prompt).not.toContain("## Dependencies");
+      // The user's branch, index and working tree are untouched; no temporary worktree is left.
+      expect((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()).toBe("main");
+      expect((await git(["status", "--porcelain"])).stdout.trim()).not.toContain("a.txt");
+      expect((await git(["log", "--oneline", "main"])).stdout.trim().split("\n")).toHaveLength(1);
+      expect((await git(["worktree", "list"])).stdout).not.toContain("boof-integration");
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
-  it("two conflicting dependencies: no integration branch; first dependency is the base; the prompt lists the other", async () => {
-    await runPlan([testGoal("xa", 1), testGoal("xb", 2), testGoal("c", 3, ["xa", "xb"])]);
-    const c = await task("boof-c");
-    expect(c.frontmatter.base).toBe("boof-runner/boof-xa");
-    expect(c.body.prompt).toContain("## Dependencies");
-    expect(c.body.prompt).toContain("git merge");
-    expect(c.body.prompt).toContain("- boof-runner/boof-xb");
-    expect(c.body.log).toContain(
-      "no integration branch because merging boof-runner/boof-xb conflicts",
-    );
-    expect(
-      (await git(["rev-parse", "--verify", "--quiet", "refs/heads/boof-runner/boof-c--base"])).code,
-    ).not.toBe(0);
-    expect((await git(["worktree", "list"])).stdout).not.toContain("boof-integration");
-    expect((await git(["status", "--porcelain"])).stdout.trim()).toBe("");
-  });
+  it(
+    "two conflicting dependencies: no integration branch; first dependency is the base; the prompt lists the other",
+    async () => {
+      await runPlan([testGoal("xa", 1), testGoal("xb", 2), testGoal("c", 3, ["xa", "xb"])]);
+      const c = await task("boof-c");
+      expect(c.frontmatter.base).toBe("boof-runner/boof-xa");
+      expect(c.body.prompt).toContain("## Dependencies");
+      expect(c.body.prompt).toContain("git merge");
+      expect(c.body.prompt).toContain("- boof-runner/boof-xb");
+      expect(c.body.log).toContain(
+        "no integration branch because merging boof-runner/boof-xb conflicts",
+      );
+      expect(
+        (await git(["rev-parse", "--verify", "--quiet", "refs/heads/boof-runner/boof-c--base"]))
+          .code,
+      ).not.toBe(0);
+      expect((await git(["worktree", "list"])).stdout).not.toContain("boof-integration");
+      expect((await git(["status", "--porcelain"])).stdout.trim()).toBe("");
+    },
+    process.platform === "win32" ? 60_000 : 20_000,
+  );
 
   it("createIntegrationBranch refuses fewer than two branches", async () => {
     const res = await createIntegrationBranch(workDir, "x--base", ["main"]);
