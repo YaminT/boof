@@ -37,6 +37,9 @@ import {
   scaffoldDataRoot,
   tryAcquireProcessLock,
 } from "./index.js";
+import { safeAttachmentName } from "./attachments.js";
+import { installSignalCleanup } from "./signal-cleanup.js";
+import { EventEmitter } from "node:events";
 import { testGoal } from "./plan-fixtures.js";
 import { newTask } from "./task-file.js";
 import type { TaskFrontmatter } from "./schema.js";
@@ -425,14 +428,20 @@ describe("backup and restore", () => {
     const base = await scratch();
     const archive = join(base, "modes.tar.gz");
     const content = Buffer.from(JSON.stringify(defaultSettings()) + "\n");
+    const clients = Buffer.from('{"clients":[]}\n');
     const manifest = Buffer.from(
       JSON.stringify({
         format: 1,
         boofVersion: BOOF_VERSION,
         schemaVersion: defaultSettings().schemaVersion,
-        files: ["Auth/clients.json", "settings.json"].map((path) => ({
+        files: [
+          ["Auth/clients.json", clients],
+          ["settings.json", content],
+        ].map(([path, body]) => ({
           path,
-          sha256: createHash("sha256").update(content).digest("hex"),
+          sha256: createHash("sha256")
+            .update(body as Buffer)
+            .digest("hex"),
           mode: 0o777,
         })),
       }),
@@ -441,7 +450,7 @@ describe("backup and restore", () => {
       { path: "manifest.json", kind: "file", mode: 0o600, body: manifest },
       { path: "root", kind: "dir", mode: 0o700 },
       { path: "root/Auth", kind: "dir", mode: 0o777 },
-      { path: "root/Auth/clients.json", kind: "file", mode: 0o777, body: content },
+      { path: "root/Auth/clients.json", kind: "file", mode: 0o777, body: clients },
       { path: "root/settings.json", kind: "file", mode: 0o777, body: content },
     ]);
     const dest = join(base, "restored");
@@ -731,6 +740,215 @@ describe("backup and restore", () => {
     await expect(restoreDataRoot(archive, dest)).rejects.toThrow(/symbolic link/);
     expect((await lstat(dest)).isSymbolicLink()).toBe(true);
     expect(await readdir(real)).toEqual([]);
+  });
+});
+
+async function rawBackup(
+  archive: string,
+  files: Record<string, string | Buffer>,
+  schemaVersion: number | null = null,
+): Promise<void> {
+  const bodies = Object.entries(files).map(([path, body]) => ({
+    path,
+    body: Buffer.isBuffer(body) ? body : Buffer.from(body),
+  }));
+  const manifest = {
+    format: 1,
+    boofVersion: BOOF_VERSION,
+    schemaVersion,
+    files: bodies.map((f) => ({
+      path: f.path,
+      sha256: createHash("sha256").update(f.body).digest("hex"),
+      mode: 0o600,
+    })),
+  };
+  const dirs = new Set<string>();
+  for (const f of bodies) {
+    const parts = f.path.split("/");
+    for (let i = 1; i < parts.length; i += 1) dirs.add(parts.slice(0, i).join("/"));
+  }
+  await writeRawTarGz(archive, [
+    { path: "manifest.json", typeflag: "0", body: Buffer.from(JSON.stringify(manifest)) },
+    { path: "root", typeflag: "5" },
+    ...[...dirs].sort().map((d) => ({ path: `root/${d}`, typeflag: "5" as const })),
+    ...bodies.map((f) => ({ path: `root/${f.path}`, typeflag: "0" as const, body: f.body })),
+  ]);
+}
+
+function recordingAcl(onTighten: (path: string) => void | Promise<void>): WindowsAclOps {
+  const secured = new Set<string>();
+  const sid = "S-1-5-21-1000";
+  return {
+    async currentUser() {
+      return { account: "test-user", sid };
+    },
+    async readAcl(path) {
+      const user = { sid, allow: true, inherited: false, inheritOnly: false, rights: "FA" };
+      const everyone = {
+        sid: "S-1-1-0",
+        allow: true,
+        inherited: true,
+        inheritOnly: false,
+        rights: "FA",
+      };
+      return { ok: true as const, aces: secured.has(path) ? [user] : [user, everyone] };
+    },
+    async tightenToUser(path) {
+      await onTighten(path);
+      secured.add(path);
+      return true;
+    },
+  };
+}
+
+describe("backup and restore hardening", () => {
+  it("validates auth/clients.json before publishing and leaves nothing behind", async () => {
+    const base = await scratch();
+    const archive = join(base, "bad.tar.gz");
+    await rawBackup(archive, { "auth/clients.json": '{"clients":[{"id":"x"}]}' });
+    const dest = join(base, "dest");
+    await expect(restoreDataRoot(archive, dest)).rejects.toThrow(/auth\/clients\.json/);
+    expect(existsSync(dest)).toBe(false);
+    expect((await readdir(base)).filter((n) => n.startsWith(".boof-restore-"))).toEqual([]);
+    await mkdir(dest);
+    await expect(restoreDataRoot(archive, dest)).rejects.toThrow(/auth\/clients\.json/);
+    expect(await readdir(dest)).toEqual([]);
+  });
+
+  it("refuses a backup over the restore limit and writes no archive", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    await writeFile(join(root, "big.bin"), Buffer.alloc(2 * 1024 * 1024));
+    const archive = join(base, "big.tar.gz");
+    await expect(backupDataRoot(root, archive, { maxBytes: 1024 * 1024 })).rejects.toThrow(
+      /larger than/,
+    );
+    expect(existsSync(archive)).toBe(false);
+  });
+
+  it("a backup under the limit restores under the same limit", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    await writeFile(join(root, "mid.bin"), Buffer.alloc(900 * 1024, 7));
+    const archive = join(base, "mid.tar.gz");
+    const limit = 1024 * 1024;
+    await backupDataRoot(root, archive, { maxBytes: limit });
+    await restoreDataRoot(archive, join(base, "dest"), { maxBytes: limit });
+    expect((await stat(join(base, "dest", "mid.bin"))).size).toBe(900 * 1024);
+  });
+
+  it.skipIf(!posix)("skips names Windows cannot store and still backs up the rest", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    const assets = join(root, "tasks", "assets", "t1");
+    await mkdir(assets, { recursive: true });
+    for (const name of ["aux.png", "report.", "notes:1.md", "what?.md", "fine.png"]) {
+      await writeFile(join(assets, name), "x");
+    }
+    const archive = join(base, "names.tar.gz");
+    const result = await backupDataRoot(root, archive);
+    const joined = result.skipped.join("\n");
+    for (const name of ["aux.png", "report.", "notes:1.md", "what?.md"]) {
+      expect(joined).toContain(`tasks/assets/t1/${name}`);
+    }
+    const paths = await archivePaths(archive);
+    expect(paths).toContain("root/tasks/assets/t1/fine.png");
+    expect(paths.some((p) => p.includes("aux.png"))).toBe(false);
+    await restoreDataRoot(archive, join(base, "dest"));
+    expect(await readFile(join(base, "dest", "tasks", "assets", "t1", "fine.png"), "utf8")).toBe(
+      "x",
+    );
+  });
+
+  it("makes attachment names portable", () => {
+    expect(safeAttachmentName("aux.png")).toBe("_aux.png");
+    expect(safeAttachmentName("con.txt")).toBe("_con.txt");
+    expect(safeAttachmentName("report.")).toBe("report");
+    expect(safeAttachmentName("shot.png")).toBe("shot.png");
+  });
+
+  it("applies the Windows ACL to the archive while it is still empty", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    const archive = join(base, "acl.tar.gz");
+    let sizeAtAcl = -1;
+    const acl = recordingAcl(async (path) => {
+      if (path === archive) sizeAtAcl = (await stat(path)).size;
+    });
+    await backupDataRootImpl(root, archive, { platform: "win32", windowsAcl: acl });
+    expect(sizeAtAcl).toBe(0);
+    expect((await stat(archive)).size).toBeGreaterThan(0);
+  });
+
+  it("removes the archive when protecting it fails", async () => {
+    const base = await scratch();
+    const root = join(base, "data");
+    await scaffoldDataRoot(root);
+    const archive = join(base, "fail.tar.gz");
+    const acl = recordingAcl((path) => {
+      if (path === archive) throw new Error("acl failed");
+    });
+    await expect(
+      backupDataRootImpl(root, archive, { platform: "win32", windowsAcl: acl }),
+    ).rejects.toThrow(/acl failed/);
+    expect(existsSync(archive)).toBe(false);
+  });
+
+  it("applies the Windows ACL to the restore temp folder before anything is extracted", async () => {
+    const base = await scratch();
+    const archive = join(base, "a.tar.gz");
+    await rawBackup(archive, { "notes.txt": "hi" });
+    const dest = join(base, "dest");
+    const seen: { path: string; entries: string[] }[] = [];
+    const acl = recordingAcl(async (path) => {
+      seen.push({ path, entries: await readdir(path).catch(() => ["?"]) });
+    });
+    await restoreDataRootImpl(archive, dest, { platform: "win32", windowsAcl: acl });
+    expect(seen[0]!.path.startsWith(join(base, ".boof-restore-"))).toBe(true);
+    expect(seen[0]!.entries).toEqual([]);
+  });
+
+  it("bounds a small, highly compressible archive by free space and the hard cap", async () => {
+    const base = await scratch();
+    const archive = join(base, "zeros.tar.gz");
+    await rawBackup(archive, { "zeros.bin": Buffer.alloc(8 * 1024 * 1024) });
+    expect((await stat(archive)).size).toBeLessThan(64 * 1024);
+    await expect(
+      restoreDataRoot(archive, join(base, "d1"), { freeBytes: async () => 10 * 1024 * 1024 }),
+    ).rejects.toThrow(/free disk space/);
+    await expect(
+      restoreDataRoot(archive, join(base, "d2"), { maxBytes: 4 * 1024 * 1024 }),
+    ).rejects.toThrow(/limit|larger than/);
+    expect(existsSync(join(base, "d1"))).toBe(false);
+    expect(existsSync(join(base, "d2"))).toBe(false);
+    expect((await readdir(base)).filter((n) => n.startsWith(".boof-restore-"))).toEqual([]);
+    await restoreDataRoot(archive, join(base, "d3"));
+    expect((await stat(join(base, "d3", "zeros.bin"))).size).toBe(8 * 1024 * 1024);
+  });
+
+  it("removes paths synchronously on a signal and marks the run interrupted", async () => {
+    const base = await scratch();
+    const a = join(base, "a");
+    const b = join(base, "b.tar.gz");
+    await mkdir(a);
+    await writeFile(join(a, "f"), "x");
+    await writeFile(b, "partial");
+    const target = new EventEmitter() as unknown as NodeJS.Process;
+    const killed: string[] = [];
+    const cleanup = installSignalCleanup([a], { target, kill: (s) => void killed.push(s) });
+    cleanup.add(b);
+    expect(cleanup.interrupted()).toBe(false);
+    target.emit("SIGINT");
+    expect(existsSync(a)).toBe(false);
+    expect(existsSync(b)).toBe(false);
+    expect(killed).toEqual(["SIGINT"]);
+    expect(cleanup.interrupted()).toBe(true);
+    expect(target.listenerCount("SIGINT")).toBe(0);
+    expect(target.listenerCount("SIGTERM")).toBe(0);
   });
 });
 

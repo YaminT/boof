@@ -17,7 +17,7 @@ export class TarError extends Error {
 /** Uncompressed size cap. A gzip bomb stops here instead of filling the disk. */
 export const MAX_UNCOMPRESSED = 2 * 1024 * 1024 * 1024;
 /** One member, so a single entry cannot exhaust memory while it is copied. */
-const MAX_ENTRY = 1024 * 1024 * 1024;
+export const MAX_ENTRY = 1024 * 1024 * 1024;
 const MAX_ENTRIES = 200_000;
 const MAX_PATH = 4096;
 
@@ -72,7 +72,11 @@ interface Member {
  * fields are stored with a pax `path` header. The file is created exclusively
  * with mode 0600.
  */
-export async function writeTarGz(outFile: string, members: ArchiveMember[]): Promise<void> {
+export async function writeTarGz(
+  outFile: string,
+  members: ArchiveMember[],
+  hooks: WriteHooks = {},
+): Promise<void> {
   await writeMembers(
     outFile,
     members.map((member) => ({
@@ -82,6 +86,7 @@ export async function writeTarGz(outFile: string, members: ArchiveMember[]): Pro
       source: member.source,
       body: member.body,
     })),
+    hooks,
   );
 }
 
@@ -107,12 +112,15 @@ export async function writeRawTarGz(outFile: string, entries: RawTarEntry[]): Pr
 export async function readTarGz(
   archive: string,
   visit: (member: TarMember) => Promise<void>,
+  opts: { maxBytes?: number } = {},
 ): Promise<void> {
+  const maxBytes = opts.maxBytes ?? MAX_UNCOMPRESSED;
   let total = 0;
   const counter = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       total += chunk.length;
-      if (total > MAX_UNCOMPRESSED) cb(new TarError("archive is larger than 2 GiB uncompressed"));
+      if (total > maxBytes)
+        cb(new TarError(`archive is larger than ${formatLimit(maxBytes)} uncompressed`));
       else cb(null, chunk);
     },
   });
@@ -127,12 +135,36 @@ export async function readTarGz(
   }
 }
 
-async function writeMembers(outFile: string, members: Member[]): Promise<void> {
+/** Hooks around creating the archive file. */
+export interface WriteHooks {
+  /**
+   * Called once the file exists and is still empty, before any byte is written.
+   * Backup uses it to restrict access (Windows ACL) and to register the file for cleanup.
+   */
+  onCreated?: () => Promise<void>;
+}
+
+function formatLimit(bytes: number): string {
+  const gib = 1024 * 1024 * 1024;
+  if (bytes >= gib && bytes % gib === 0) return `${bytes / gib} GiB`;
+  return `${bytes} bytes`;
+}
+
+async function writeMembers(
+  outFile: string,
+  members: Member[],
+  hooks: WriteHooks = {},
+): Promise<void> {
   try {
+    if (hooks.onCreated) {
+      const created = await open(outFile, "wx", 0o600);
+      await created.close();
+      await hooks.onCreated();
+    }
     await pipeline(
       Readable.from(tarBytes(members)),
       createGzip(),
-      createWriteStream(outFile, { flags: "wx", mode: 0o600 }),
+      createWriteStream(outFile, hooks.onCreated ? { flags: "r+" } : { flags: "wx", mode: 0o600 }),
     );
     await chmod(outFile, 0o600);
   } catch (err) {

@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
   AuthStore,
   BackupError,
+  isExpired,
   SettingsStore,
   backupDataRoot,
   restoreDataRoot,
@@ -121,15 +122,27 @@ export async function restoreCommand(
     );
     await restoreDataRoot(resolve(from), dest);
     out(`Restored ${dest}`);
-    out("Restore notice: revoked API clients and browser sessions come back from this archive.");
-    const clients = await new AuthStore(dest).list();
-    out(
-      `Restored API clients: ${clients.length ? clients.map((client) => `${client.name} (${client.id})`).join(", ") : "none"}`,
-    );
-    out(
-      "Review auth/clients.json, auth/browser-sessions.json and auth/browser-links.json; revoke listed clients in the boof UI under API clients, then rotate restored webhook and n8n secrets that were revoked after this backup.",
-    );
+    // The data is restored and valid from here on: nothing below may turn this into a failure.
     await auditIfLoadable(dest, "cli:restore", true);
+    if (existsSync(join(dest, "auth"))) {
+      out(
+        "Restore notice: API clients and browser sessions that were revoked after this backup come back from this archive.",
+      );
+      try {
+        const now = Date.now();
+        const active = (await new AuthStore(dest).list()).filter(
+          (client) => !client.revokedAt && !isExpired(client, now),
+        );
+        out(
+          `Restored active API clients: ${active.length ? active.map((client) => `${printable(client.name)} (${printable(client.id)})`).join(", ") : "none"}`,
+        );
+      } catch (e) {
+        err(`restore: warning: could not read auth/clients.json: ${oneLine(e)}`);
+      }
+      out(
+        "Revoke any client you no longer trust with `boof-runner auth revoke <id> -d <dir>`, and sign out every restored browser session with `boof-runner open --revoke-all -d <dir>`. Rotate webhook, n8n and owlish keys that were rotated after this backup.",
+      );
+    }
     return 0;
   } catch (e) {
     err(`restore: ${oneLine(e)}`);
@@ -198,5 +211,14 @@ async function auditIfLoadable(
 
 function oneLine(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  return message.replace(/[\r\n]+/g, " ");
+  return printable(message.replace(/[\r\n]+/g, " "));
+}
+
+/** Escape control characters (terminal escapes, bells) so archive-supplied text cannot rewrite the screen. */
+function printable(text: string): string {
+  return text.replace(
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`,
+  );
 }

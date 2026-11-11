@@ -36,6 +36,7 @@ import { inspectProcessLock, withProcessLock, type ProcessLockOptions } from "./
 import { resolveWorktreeRoot } from "./settings.js";
 import { SETTINGS_SCHEMA_VERSION } from "./schema.js";
 import {
+  MAX_ENTRY,
   MAX_UNCOMPRESSED,
   readTarGz,
   writeTarGz,
@@ -44,6 +45,10 @@ import {
   type TarMember,
 } from "./tar-gz.js";
 import type { WindowsAclOps } from "./windows-acl.js";
+import { isPortableName } from "./portable-name.js";
+import { installSignalCleanup } from "./signal-cleanup.js";
+import { AuthStore } from "./auth-store.js";
+import { SettingsStore } from "./settings.js";
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 const COPY_CHUNK = 1024 * 1024;
@@ -68,6 +73,10 @@ export interface BackupOptions {
   onLocked?: () => void | Promise<void>;
   /** Windows ACL operations; injectable so tests can use a fake. */
   windowsAcl?: WindowsAclOps;
+  /** Platform whose ACL rules apply. Tests only; defaults to the running platform. */
+  platform?: NodeJS.Platform;
+  /** Largest archive payload backup writes. Default 2 GiB, the cap restore enforces. */
+  maxBytes?: number;
 }
 
 export interface BackupResult {
@@ -88,6 +97,12 @@ export interface RestoreResult {
 export interface RestoreOptions {
   /** Windows ACL operations; injectable so tests can use a fake. */
   windowsAcl?: WindowsAclOps;
+  /** Platform whose ACL rules apply. Tests only; defaults to the running platform. */
+  platform?: NodeJS.Platform;
+  /** Hard cap on the uncompressed archive size. Default 2 GiB, the same cap backup enforces. */
+  maxBytes?: number;
+  /** Free bytes on the destination volume. Tests only; defaults to statfs. */
+  freeBytes?: () => Promise<number>;
 }
 
 interface Entry {
@@ -189,10 +204,11 @@ export async function backupDataRoot(
 
   await sweepStale(join(tmpdir()), "boof-backup-");
   const stage = await mkdtempPrivate(join(tmpdir(), "boof-backup-"));
-  const removeSignalCleanup = installSignalCleanup(stage);
+  const platform = opts.platform ?? process.platform;
+  const cleanup = installSignalCleanup([stage]);
   try {
-    if (process.platform === "win32")
-      await tightenWindowsPath(stage, { windowsAcl: opts.windowsAcl });
+    if (platform === "win32")
+      await tightenWindowsPath(stage, { platform, windowsAcl: opts.windowsAcl });
     if (isInsidePath(rootReal, stage)) {
       throw new BackupError(
         "the temporary directory is inside the data root; set TMPDIR outside it",
@@ -213,6 +229,7 @@ export async function backupDataRoot(
       const entries = await collect(rootReal, { noSecrets, live, skipped, worktrees });
       await copyEntries(rootReal, stage, entries, lock);
       const staged = await walkStage(stage);
+      assertRestorable(staged, opts.maxBytes ?? MAX_UNCOMPRESSED);
       const schema = await readSettingsFile(join(stage, "settings.json"));
       const schemaVersion = schema?.schemaVersion ?? null;
       const files = staged.filter((entry) => entry.kind === "file");
@@ -228,26 +245,18 @@ export async function backupDataRoot(
           }))
           .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
       };
-      await writeArchive(outFile, stage, staged, manifest);
-      if (process.platform === "win32") {
-        try {
-          await tightenWindowsPath(stage, { windowsAcl: opts.windowsAcl });
-          for (const entry of staged)
-            await tightenWindowsPath(join(stage, ...entry.rel.split("/")), {
-              windowsAcl: opts.windowsAcl,
-            });
-          await tightenWindowsPath(outFile, { windowsAcl: opts.windowsAcl });
-        } catch (error) {
-          await rm(outFile, { force: true });
-          throw error;
-        }
-      }
+      await writeArchive(outFile, stage, staged, manifest, async () => {
+        // The file exists and is empty: protect it before any secret is written, and make a
+        // signal remove it. A failure here makes writeTarGz remove the file.
+        cleanup.add(outFile);
+        await tightenWindowsPath(outFile, { platform, windowsAcl: opts.windowsAcl });
+      });
       const bytes = files.reduce((sum, entry) => sum + entry.size, 0);
       return { files: files.length, bytes, schemaVersion, skipped };
     });
   } finally {
     await rm(stage, { recursive: true, force: true });
-    removeSignalCleanup();
+    cleanup.dispose();
   }
 }
 
@@ -270,49 +279,69 @@ export async function restoreDataRoot(
   const parent = dirname(dest);
   await sweepStale(parent, ".boof-restore-");
   const temp = await mkdtempPrivate(join(parent, ".boof-restore-"));
-  const removeSignalCleanup = installSignalCleanup(temp);
+  const cleanup = installSignalCleanup([temp]);
+  const platform = opts.platform ?? process.platform;
+  const maxBytes = opts.maxBytes ?? MAX_UNCOMPRESSED;
   let published = false;
   try {
+    if (platform === "win32")
+      await tightenWindowsPath(temp, { platform, windowsAcl: opts.windowsAcl });
+    // Real bounds on what pass 1 may add up to: the hard cap, and the free space on the volume
+    // minus a margin. Both are checked as each entry streams past, before anything is extracted.
+    const free = opts.freeBytes ? await opts.freeBytes() : await freeSpace(parent);
+    const margin = Math.max(16 * 1024 * 1024, Math.floor(free / 20));
+    const budget = Math.min(maxBytes, free - margin);
     let manifestBuf: Buffer | undefined;
     let totalPayload = 0;
     let entries = 0;
-    await readTarGz(archive, async (member) => {
-      entries += 1;
-      if (entries > 200_000) throw new BackupError("archive has too many entries");
-      if (member.kind === "other" || member.kind === "symlink" || member.kind === "hardlink") {
-        if (member.kind === "symlink")
-          throw new BackupError(
-            `archive contains a symbolic link (${member.path}); refusing to restore it`,
-          );
-        if (member.kind === "hardlink")
-          throw new BackupError(
-            `archive contains a hard link (${member.path}); refusing to restore it`,
-          );
-        throw new BackupError(`archive contains an unsupported entry (${member.path})`);
-      }
-      classify(member.path);
-      totalPayload += member.size;
-      if (totalPayload > MAX_UNCOMPRESSED) throw new BackupError("archive payload exceeds 2 GiB");
-      if (member.path === "manifest.json" && member.read) {
-        if (manifestBuf) throw new BackupError("archive lists manifest.json more than once");
-        manifestBuf = await member.read();
-      }
-    });
+    await readTarGz(
+      archive,
+      async (member) => {
+        entries += 1;
+        if (entries > 200_000) throw new BackupError("archive has too many entries");
+        if (member.kind === "other" || member.kind === "symlink" || member.kind === "hardlink") {
+          if (member.kind === "symlink")
+            throw new BackupError(
+              `archive contains a symbolic link (${member.path}); refusing to restore it`,
+            );
+          if (member.kind === "hardlink")
+            throw new BackupError(
+              `archive contains a hard link (${member.path}); refusing to restore it`,
+            );
+          throw new BackupError(`archive contains an unsupported entry (${member.path})`);
+        }
+        classify(member.path);
+        totalPayload += member.size;
+        if (totalPayload > maxBytes) {
+          throw new BackupError(`archive payload exceeds the ${maxBytes} byte limit`);
+        }
+        if (totalPayload > budget) {
+          throw new BackupError("not enough free disk space to restore this archive");
+        }
+        if (member.path === "manifest.json" && member.read) {
+          if (manifestBuf) throw new BackupError("archive lists manifest.json more than once");
+          manifestBuf = await member.read();
+        }
+      },
+      { maxBytes },
+    );
     if (!manifestBuf) throw new BackupError("archive manifest is not a boof backup");
     const manifest = parseManifest(manifestBuf);
-    const fs = await statfs(parent);
-    const available = Number(fs.bavail) * Number(fs.bsize);
-    if (totalPayload > available)
-      throw new BackupError("not enough free disk space to restore this archive");
-    const compressed = (await stat(archive)).size;
-    if (totalPayload > 64 * 1024 * 1024 && totalPayload / Math.max(compressed, 1) > 1000) {
-      throw new BackupError("archive compression ratio is too high to restore safely");
-    }
     const extracted = new Map<string, string>();
     const seen = new Set<string>();
-    await readTarGz(archive, async (member) => {
-      await takeMember(temp, member, extracted, seen, () => undefined);
-    });
+    // The archive may change between the passes; the same bounds apply while extracting.
+    let written = 0;
+    await readTarGz(
+      archive,
+      async (member) => {
+        written += member.size;
+        if (written > totalPayload) {
+          throw new BackupError("archive changed while it was being restored");
+        }
+        await takeMember(temp, member, extracted, seen, () => undefined);
+      },
+      { maxBytes },
+    );
     checkTree(manifest, extracted);
     await applyModes(temp, manifest);
     const fileSchema = await schemaOf(join(temp, "settings.json"));
@@ -322,6 +351,9 @@ export async function restoreDataRoot(
     if (migrated) await migrateDataRoot(temp);
     await tightenDataRoot(temp, { windowsAcl: opts.windowsAcl });
     await forceSecretModes(temp);
+    // Refuse to publish a root whose config this version cannot read: nothing is left behind.
+    await validateConfig(temp);
+    if (cleanup.interrupted()) throw new BackupError("interrupted");
     await publish(temp, dest);
     published = true;
     const after = await schemaOf(join(dest, "settings.json"));
@@ -334,7 +366,31 @@ export async function restoreDataRoot(
     throw asBackup(err);
   } finally {
     if (!published) await rm(temp, { recursive: true, force: true });
-    removeSignalCleanup();
+    cleanup.dispose();
+  }
+}
+
+async function freeSpace(dir: string): Promise<number> {
+  const fs = await statfs(dir);
+  return Number(fs.bavail) * Number(fs.bsize);
+}
+
+/** Parse every config file that has a reader: a bad one is refused before the root is published. */
+async function validateConfig(root: string): Promise<void> {
+  const fail = (file: string, err: unknown): never => {
+    const raw = err instanceof Error ? err.message : String(err);
+    const detail = raw.replace(/\s+/g, " ").slice(0, 200);
+    throw new BackupError(`archive has an unreadable ${file}: ${detail}`);
+  };
+  try {
+    await new SettingsStore(root).load();
+  } catch (err) {
+    fail("settings.json", err);
+  }
+  try {
+    await new AuthStore(root).list();
+  } catch (err) {
+    fail("auth/clients.json", err);
   }
 }
 
@@ -402,9 +458,12 @@ async function collect(
   const walk = async (absDir: string, rel: string): Promise<void> => {
     const names = (await readdir(absDir)).sort();
     for (const name of names) {
-      assertSafeName(name, rel);
       const childRel = rel ? `${rel}/${name}` : name;
       if (omitted(childRel, name, ctx.noSecrets)) continue;
+      if (!isStorableName(name)) {
+        ctx.skipped.push(`${childRel} (the file name is not safe to store)`);
+        continue;
+      }
       const abs = join(absDir, name);
       const st = await lstat(abs);
       if (st.isSymbolicLink()) {
@@ -443,20 +502,38 @@ function omitted(rel: string, name: string, noSecrets: boolean): boolean {
   return false;
 }
 
-function assertSafeName(name: string, parentRel: string): void {
-  if (
-    name.length === 0 ||
-    name === "." ||
-    name === ".." ||
-    name.includes("/") ||
-    name.includes("\\") ||
-    name.includes("\0") ||
-    name.includes("\r") ||
-    name.includes("\n") ||
-    !isPortableName(name)
-  ) {
-    const rel = parentRel ? `${parentRel}/${name}` : name;
-    throw new BackupError(`cannot back up ${rel}: the file name is not safe to store`);
+/** Names restore accepts. Backup skips every other name, so it never writes an archive restore refuses. */
+function isStorableName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    name !== "." &&
+    name !== ".." &&
+    !/[\\/\0\r\n]/.test(name) &&
+    isPortableName(name)
+  );
+}
+
+/** Backup refuses a payload restore would refuse: one file over MAX_ENTRY or a tar over MAX_UNCOMPRESSED. */
+function assertRestorable(staged: Staged[], maxBytes: number): void {
+  // Tar size: a 512-byte header, a pax header (up to 1 KiB) for a path over 100 bytes, the body
+  // padded to 512, the manifest line (about 300 bytes per file) and the end marker.
+  let total = 4096;
+  for (const entry of staged) {
+    if (entry.kind === "file" && entry.size > Math.min(MAX_ENTRY, maxBytes)) {
+      throw new BackupError(
+        `cannot back up ${entry.rel}: the file is larger than restore accepts (1 GiB per file)`,
+      );
+    }
+    total +=
+      512 +
+      (Buffer.byteLength(entry.rel) + 5 > 100 ? 1024 : 0) +
+      Math.ceil(entry.size / 512) * 512 +
+      300;
+  }
+  if (total > maxBytes) {
+    throw new BackupError(
+      "the data root is larger than the limit that restore accepts (2 GiB); no archive was written. Remove large files (for example old transcripts or attachments) or back up without them",
+    );
   }
 }
 
@@ -675,6 +752,7 @@ async function writeArchive(
   stage: string,
   staged: Staged[],
   manifest: Manifest,
+  onCreated: () => Promise<void>,
 ): Promise<void> {
   const ordered = [...staged].sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
   const members: ArchiveMember[] = [
@@ -697,7 +775,7 @@ async function writeArchive(
     ),
   ];
   try {
-    await writeTarGz(outFile, members);
+    await writeTarGz(outFile, members, { onCreated });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("EEXIST") || message.includes("already exists")) {
@@ -829,15 +907,6 @@ function isSafeRel(rel: string): boolean {
   return true;
 }
 
-function isPortableName(name: string): boolean {
-  if (name.includes(":") || /[. ]$/.test(name) || /[<>"|?*]/.test(name)) return false;
-  const base = name
-    .split(".")[0]!
-    .replace(/[. ]+$/g, "")
-    .toUpperCase();
-  return !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$/.test(base);
-}
-
 function inside(temp: string, rel: string, shown: string): string {
   const target = join(temp, ...rel.split("/"));
   const relTo = relative(temp, target);
@@ -938,26 +1007,6 @@ async function sweepStale(parent: string, prefix: string): Promise<void> {
       /* A concurrent cleanup or an unreadable temp entry is harmless. */
     }
   }
-}
-
-function installSignalCleanup(path: string): () => void {
-  const handlers = new Map<NodeJS.Signals, () => void>();
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    const handler = (): void => {
-      void rm(path, { recursive: true, force: true }).finally(() => {
-        try {
-          process.kill(process.pid, signal);
-        } catch {
-          process.exitCode = signal === "SIGINT" ? 130 : 143;
-        }
-      });
-    };
-    handlers.set(signal, handler);
-    process.once(signal, handler);
-  }
-  return () => {
-    for (const [signal, handler] of handlers) process.removeListener(signal, handler);
-  };
 }
 
 async function forceSecretModes(root: string): Promise<void> {
