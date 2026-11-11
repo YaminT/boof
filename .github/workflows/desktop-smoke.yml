@@ -10,6 +10,10 @@ on:
         description: "Tag to smoke (for example v0.4.0-beta.1)"
         required: true
         type: string
+      ref:
+        description: "Optional branch or commit to build instead of the tag (the tag still sets the version)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
       - name: Check out tag
         uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ github.event.inputs.ref || env.TAG }}
 
       - name: Set up Node
         uses: actions/setup-node@v7
