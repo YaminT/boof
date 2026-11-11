@@ -45,6 +45,8 @@ export const GIT_HARDENING_ARGS: readonly string[] = [
   "submodule.recurse=false",
   "-c",
   "status.submoduleSummary=false",
+  "-c",
+  "diff.ignoreSubmodules=all",
 ];
 
 /** `--attr-source` arrived in git 2.40. Earlier git exits 129 on the unknown option. */

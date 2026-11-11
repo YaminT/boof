@@ -22,6 +22,18 @@ const helper = join(dist, "boof-sandbox");
 const testHelper = join(dist, "boof-sandbox-test");
 const probe = join(dist, "probe");
 const filterCheck = join(dist, "filter-check");
+const hostAbiProbe = join(tmpdir(), `boof-landlock-abi-${process.pid}`);
+const abiProbeBuild = spawnSync(
+  "cc",
+  ["-O2", "-Wall", "-Wextra", "-Werror", "-o", hostAbiProbe, join(here, "boof-sandbox.c")],
+  { encoding: "utf8" },
+);
+const abiProbe =
+  abiProbeBuild.status === 0
+    ? spawnSync(hostAbiProbe, ["--abi"], { encoding: "utf8" })
+    : { status: 1, stdout: "" };
+rmSync(hostAbiProbe, { force: true });
+const hostAbi = abiProbe.status === 0 ? Number(abiProbe.stdout.trim()) : 0;
 
 const roots: string[] = [];
 
@@ -118,7 +130,20 @@ async function listen(host: string, port = 0): Promise<{ server: Server; port: n
   return { server, port: address.port };
 }
 
-describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
+describe.runIf(process.platform === "linux" && hostAbi >= 4 && hostAbi < 6)(
+  "boof-sandbox refuses enforce without signal scoping",
+  () => {
+    it("reports the actual Landlock ABI and an upgrade instruction", async () => {
+      mkdirSync(dist, { recursive: true });
+      compile(join(here, "boof-sandbox.c"), helper);
+      const result = await run(policy([], [], []), ["/bin/true"]);
+      expectHelperError(result, `Landlock ABI ${hostAbi}`);
+      expect(result.stderr).toContain("upgrade the kernel to 6.12 or newer");
+    });
+  },
+);
+
+describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () => {
   let abi = 0;
   let readExec: string[] = [];
   let work = "";
@@ -637,6 +662,18 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(existsSync(`/proc/${pid}`)).toBe(false);
+  });
+
+  it("stops and reaps a real fork storm before the supervisor exits", async () => {
+    await tree();
+    const pids = join(work, "storm-pids");
+    writeFileSync(pids, "");
+    const result = await run(basePolicy([]), [probe, "fork-storm", pids], 20000);
+    expect(result.code).toBe(0);
+    const recorded = readFileSync(pids, "utf8").split(/\s+/).filter(Boolean).map(Number);
+    expect(recorded.length).toBeGreaterThan(500);
+    const survivors = recorded.filter((pid) => existsSync(`/proc/${pid}`));
+    expect(survivors).toEqual([]);
   });
 
   it("exits 126 when a readWrite path is missing and does not exec", async () => {

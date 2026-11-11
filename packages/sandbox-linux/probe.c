@@ -554,6 +554,41 @@ static void op_orphan_sleep(const char *pid_path) {
   close(ready[0]);
 }
 
+static void op_fork_storm(const char *pid_path) {
+  int fd = open(pid_path, O_WRONLY | O_APPEND);
+  if (fd < 0) {
+    printf("fork-storm open %s\n", errname(errno));
+    return;
+  }
+  pid_t workers[4];
+  int worker_count = 0;
+  for (int worker = 0; worker < 4; worker++) {
+    pid_t branch = fork();
+    if (branch < 0) break;
+    if (branch == 0) {
+      for (int n = 0; n < 1200; n++) {
+        pid_t pid = fork();
+        if (pid < 0) break;
+        if (pid == 0) {
+          close(fd);
+          for (;;) sleep(60);
+        }
+        char line[32];
+        int len = snprintf(line, sizeof line, "%ld\n", (long)pid);
+        if (len > 0) {
+          ssize_t wrote = write(fd, line, (size_t)len);
+          (void)wrote;
+        }
+      }
+      close(fd);
+      _exit(0);
+    }
+    workers[worker_count++] = branch;
+  }
+  close(fd);
+  for (int i = 0; i < worker_count; i++) (void)waitpid(workers[i], NULL, 0);
+}
+
 static int pipe_cloexec(int fds[2]) {
 #if defined(__linux__)
   return pipe2(fds, O_CLOEXEC);
@@ -702,6 +737,7 @@ int main(int argc, char **argv) {
   else if (strcmp(cmd, "setsid-read") == 0 && argc == 3) op_setsid("read", argv[2]);
   else if (strcmp(cmd, "setsid-connect4") == 0 && argc == 3) op_setsid("connect4", argv[2]);
   else if (strcmp(cmd, "orphan-sleep") == 0 && argc == 3) op_orphan_sleep(argv[2]);
+  else if (strcmp(cmd, "fork-storm") == 0 && argc == 3) op_fork_storm(argv[2]);
   else if (strcmp(cmd, "double-read") == 0 && argc == 3) op_double("read", argv[2]);
   else if (strcmp(cmd, "double-connect4") == 0 && argc == 3) op_double("connect4", argv[2]);
 #if defined(__linux__)

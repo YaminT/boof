@@ -701,14 +701,14 @@ static int process_children(pid_t parent, pid_t **out) {
   return (int)len;
 }
 
-static void kill_process_tree(pid_t pid) {
+static void signal_process_tree(pid_t pid, int sig) {
   pid_t *children = NULL;
   int count = process_children(pid, &children);
   if (count > 0) {
-    for (int i = 0; i < count; i++) kill_process_tree(children[i]);
+    for (int i = 0; i < count; i++) signal_process_tree(children[i], sig);
   }
   free(children);
-  (void)kill(pid, SIGKILL);
+  (void)kill(pid, sig);
 }
 
 /* PR_SET_CHILD_SUBREAPER makes orphaned setsid/double-fork descendants our children. */
@@ -728,7 +728,10 @@ static void kill_and_reap_descendants(void) {
       while (waitpid(-1, NULL, WNOHANG) > 0) {}
       return;
     }
-    for (int i = 0; i < count; i++) kill_process_tree(children[i]);
+    // Stop every current descendant before killing. Repeat the walk until there are no
+    // descendants; a process cannot fork while stopped, so a fork storm cannot outrun the walk.
+    for (int i = 0; i < count; i++) signal_process_tree(children[i], SIGSTOP);
+    for (int i = 0; i < count; i++) signal_process_tree(children[i], SIGKILL);
     free(children);
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
     struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
@@ -784,6 +787,9 @@ int main(int argc, char **argv) {
   }
   if (argc < 5 || strcmp(argv[1], "--policy-fd") != 0 || strcmp(argv[3], "--") != 0)
     fail("bad arguments");
+  int abi = landlock_abi();
+  if (abi < 6)
+    failf("Landlock ABI %d does not scope signals; upgrade the kernel to 6.12 or newer (ABI 6) before enforcing", abi);
   struct rlimit nofile;
   if (getrlimit(RLIMIT_NOFILE, &nofile) != 0) failf("getrlimit: %s", strerror(errno));
   if (nofile.rlim_max > 4096) nofile.rlim_max = 4096;
@@ -819,7 +825,7 @@ int main(int argc, char **argv) {
     sigaction(SIGTERM, &def, NULL);
     sigaction(SIGINT, &def, NULL);
     sigaction(SIGHUP, &def, NULL);
-    apply_landlock(landlock_abi());
+    apply_landlock(abi);
     apply_seccomp();
     free(policy_buf);
     policy_buf = NULL;
@@ -833,7 +839,7 @@ int main(int argc, char **argv) {
     pid_t waited = waitpid(child, &status, WNOHANG);
     if (waited == child) break;
     if (waited < 0 && errno != EINTR) failf("waitpid: %s", strerror(errno));
-    if (supervisor_signal) kill_process_tree(child);
+    if (supervisor_signal) signal_process_tree(child, SIGKILL);
     struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
     nanosleep(&delay, NULL);
   }

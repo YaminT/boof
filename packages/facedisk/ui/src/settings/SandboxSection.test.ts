@@ -45,6 +45,13 @@ describe("SandboxPanel", () => {
     expect(html).toContain("Unavailable. boof-sandbox helper is missing");
   });
 
+  it("shows the Landlock ABI upgrade requirement when enforce is unavailable", () => {
+    const reason =
+      "Landlock ABI 5 does not scope signals; upgrade the kernel to 6.12 or newer (Landlock ABI 6) before enabling enforce";
+    const html = render("enforce", { mode: "enforce", state: "unavailable", reason });
+    expect(html).toContain(reason);
+  });
+
   it("keeps a passing self-test's kernel note", () => {
     const html = render("enforce", {
       mode: "enforce",

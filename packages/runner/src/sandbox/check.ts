@@ -80,6 +80,12 @@ export async function assessSandbox(deps: SandboxCheckDeps = {}): Promise<Sandbo
     }
     const abi = fake.kind === "n" ? fake.n : await readHelperAbi(helper, deps.spawn);
     if (abi < 4) return fail(`landlock abi ${abi} is below 4`, abi);
+    if (abi < 6) {
+      return fail(
+        `Landlock ABI ${abi} does not scope signals; upgrade the kernel to 6.12 or newer (Landlock ABI 6) before enabling enforce`,
+        abi,
+      );
+    }
     const probes = deps.probes
       ? await deps.probes({ helper, abi })
       : await runRealProbes({ helper, env });

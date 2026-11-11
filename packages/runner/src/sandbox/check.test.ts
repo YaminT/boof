@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SELF_TEST_PROBES } from "./selftest.js";
-import { assessSandbox } from "./check.js";
+import { assessSandbox, formatSandboxCheck } from "./check.js";
 
 const passing = SELF_TEST_PROBES.map((id) => ({
   id,
@@ -84,6 +84,22 @@ describe("assessSandbox", () => {
     expect(report.abi).toBe(6);
     expect(report.reason).toBe("");
     expect(report.probes.map((probe) => probe.id)).toEqual([...SELF_TEST_PROBES]);
+  });
+
+  it.each([4, 5])("refuses enforce on Landlock ABI %i before running probes", async (abi) => {
+    const probes = vi.fn(async () => passing);
+    const report = await assessSandbox({
+      platform: "linux",
+      env: { BOOF_SANDBOX_FAKE_ABI: String(abi) },
+      helperExists: () => true,
+      helperPath: () => "/helper",
+      probes,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.reason).toContain(`Landlock ABI ${abi}`);
+    expect(report.reason).toContain("kernel to 6.12 or newer");
+    expect(formatSandboxCheck(report).stderr).toContain(report.reason);
+    expect(probes).not.toHaveBeenCalled();
   });
 
   it("is not ok when a denial probe is allowed", async () => {

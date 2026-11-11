@@ -310,30 +310,25 @@ export async function linkedWorktreeGit(
     if (err.code === "ENOENT") return null;
     throw err;
   });
-  const commonConfig = await readFile(join(common, "config"), "utf8").catch(() => "");
-  if (worktreeConfigInfo || extensionsWorktreeConfigEnabled(commonConfig)) {
+  const worktreeConfigEnabled = await git(trustedCheckout ?? writableRoot, [
+    "config",
+    "--file",
+    join(common, "config"),
+    "--type=bool",
+    "--get",
+    "extensions.worktreeConfig",
+  ]);
+  if (
+    worktreeConfigInfo ||
+    (worktreeConfigEnabled.code === 0 && worktreeConfigEnabled.out.trim() === "true")
+  ) {
     throw new SandboxUnavailableError("task worktree config.worktree is not allowed");
+  }
+  if (worktreeConfigEnabled.code !== 0 && worktreeConfigEnabled.code !== 1) {
+    throw new SandboxUnavailableError("common git extensions.worktreeConfig setting is invalid");
   }
   await ensureGitWriteDirs(common, name);
   return { commonDir: common, worktreeName: name };
-}
-
-function extensionsWorktreeConfigEnabled(config: string): boolean {
-  let section = "";
-  for (const line of config.split(/\r?\n/)) {
-    const header = /^\s*\[([^\]]+)\]\s*(?:[#;].*)?$/.exec(line);
-    if (header) {
-      section = header[1]!.trim().toLowerCase();
-      continue;
-    }
-    if (
-      section === "extensions" &&
-      /^\s*worktreeConfig(?:\s*=\s*(true|yes|on|1))?\s*(?:[#;].*)?$/i.test(line)
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 async function ensureGitWriteDirs(commonDir: string, worktreeName: string): Promise<void> {
@@ -891,8 +886,34 @@ export async function importPrivateGitObjects(opts: {
       const prefix = join(packDir, "loose-import");
       const packed = await execCommand(
         "git",
-        ["pack-objects", "--no-reuse-delta", "--no-reuse-object", prefix],
-        { launch: { kind: "direct" }, cwd: wt.path, env, input: `${looseOids.join("\n")}\n` },
+        [
+          "-c",
+          "core.fsmonitor=false",
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-c",
+          "diff.ignoreSubmodules=all",
+          "pack-objects",
+          "--window=0",
+          "--no-reuse-delta",
+          "--no-reuse-object",
+          prefix,
+        ],
+        {
+          launch: { kind: "direct" },
+          cwd: wt.path,
+          env: {
+            ...env,
+            GIT_DIR: join(commonDir, "worktrees", wt.worktreeName!),
+            GIT_COMMON_DIR: commonDir,
+            GIT_WORK_TREE: wt.path,
+            GIT_INDEX_FILE: join(commonDir, "worktrees", wt.worktreeName!, "index"),
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+          },
+          timeoutMs: 30_000,
+          input: `${looseOids.join("\n")}\n`,
+        },
       );
       if (packed.code !== 0 || !/^[0-9a-f]{40,64}$/.test(packed.stdout.trim())) {
         throw new SandboxUnavailableError(
