@@ -214,6 +214,7 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
         runTempDir: fx.temp,
         writableRoot: fx.wt.path,
         mainCheckout: fx.repo,
+        worktree: fx.wt,
       });
       expect(launch.policy.env.GIT_AUTHOR_NAME).toBe("Ada Lovelace");
       expect(launch.policy.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");

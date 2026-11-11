@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, closeSync, constants, existsSync, openSync } from "node:fs";
 import {
-  chmod,
   copyFile,
+  open,
   lstat,
   mkdir,
   mkdtemp,
@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { createConnection } from "node:net";
+import { inflateSync } from "node:zlib";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   SandboxUnavailableError,
@@ -26,6 +27,7 @@ import {
   type CommandLaunch,
 } from "@boof/heart";
 import { boofSandboxHelperPath } from "./backend-linux.js";
+import { checkedWorktreeGit, verifyWorktreeRecord, type Worktree } from "../worktree.js";
 import {
   DARWIN_SYSTEM_ROOTS,
   LINUX_LIB_PATHS,
@@ -155,9 +157,9 @@ export async function createRunTemp(opts: {
   await mkdir(dir, { recursive: true });
   // `mkdir` applies the umask, so the mode has to be set again. The project directory is
   // boof-owned; the state home above it is left as the user created it.
-  await chmod(dir, 0o700);
-  await chmod(runsDir, 0o700);
-  await chmod(projectDir, 0o700);
+  await chmodPrivateDir(dir);
+  await chmodPrivateDir(runsDir);
+  await chmodPrivateDir(projectDir);
   const real = await realpath(dir);
   if (!RUN_TEMP.test(real)) {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -329,12 +331,23 @@ async function realDir(path: string): Promise<string> {
 
 async function makePrivate(path: string): Promise<string> {
   await mkdir(path, { recursive: true });
-  const entry = await lstat(path);
-  if (entry.isSymbolicLink() || !entry.isDirectory()) {
-    throw new SandboxUnavailableError(`sandbox directory is not a real directory: ${path}`);
-  }
-  await chmod(path, 0o700);
+  await chmodPrivateDir(path);
   return realDir(path);
+}
+
+async function chmodPrivateDir(path: string): Promise<void> {
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    if (!(await handle.stat()).isDirectory()) throw new Error("not a directory");
+    await handle.chmod(0o700);
+  } catch (err) {
+    throw new SandboxUnavailableError(
+      `sandbox directory is not a real directory: ${path}${err instanceof Error ? ` (${err.message})` : ""}`,
+    );
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 async function checkedAgentState(agentHome: string, tool: string): Promise<Record<string, string>> {
@@ -345,16 +358,12 @@ async function checkedAgentState(agentHome: string, tool: string): Promise<Recor
   ];
   for (const path of dirs) {
     await mkdir(path, { recursive: true });
-    const entry = await lstat(path);
-    if (entry.isSymbolicLink() || !entry.isDirectory()) {
-      throw new SandboxUnavailableError(`agent state path must be a real directory: ${path}`);
-    }
+    await chmodPrivateDir(path);
     const real = await realpath(path);
     const relative = resolve(agentHome) === real ? "" : relativePath(agentHome, real);
     if (relative === ".." || relative.startsWith(`..${sep}`) || isAbsolute(relative)) {
       throw new SandboxUnavailableError(`agent state path escapes agent home: ${path}`);
     }
-    await chmod(path, 0o700);
   }
   return {
     CLAUDE_CONFIG_DIR: await realpath(join(root, "claude")),
@@ -526,7 +535,7 @@ export async function buildRunPolicy(
   if (projectEntry.isSymbolicLink() || !projectEntry.isDirectory()) {
     throw new SandboxUnavailableError(`agent project path is not a real directory: ${projectDir}`);
   }
-  await chmod(projectDir, 0o700);
+  await chmodPrivateDir(projectDir);
   const cacheDir = await makePrivate(join(projectDir, "cache"));
   const tool = ctx.tool;
   const toolStatePaths = await checkedAgentState(agentHome, tool);
@@ -696,11 +705,15 @@ export async function importPrivateGitObjects(opts: {
   runTempDir: string;
   writableRoot: string;
   mainCheckout: string;
+  worktree: Worktree;
 }): Promise<void> {
-  const gitFacts = await linkedWorktreeGit(opts.writableRoot, opts.mainCheckout);
-  if (!gitFacts) return;
-  const commonDir = await repoCommonDir(opts.mainCheckout);
-  if (!commonDir) return;
+  const wt = opts.worktree;
+  if (wt.path !== opts.writableRoot) {
+    throw new SandboxUnavailableError("private git import worktree does not match its runner record");
+  }
+  await verifyWorktreeRecord(wt);
+  const commonDir = wt.commonDir;
+  if (!commonDir) throw new SandboxUnavailableError("private git import needs a trusted worktree record");
   const source = join(opts.runTempDir, "git-objects");
   const sourceInfo = await lstat(source).catch(() => null);
   if (!sourceInfo) return;
@@ -715,25 +728,45 @@ export async function importPrivateGitObjects(opts: {
   );
   await rename(source, detached);
   const snapshot = await mkdtemp(join(tmpdir(), "boof-git-objects-"));
+  let imported = false;
   try {
     const detachedInfo = await lstat(detached);
     if (detachedInfo.isSymbolicLink() || !detachedInfo.isDirectory()) {
       throw new SandboxUnavailableError("detached private git object directory was altered");
     }
+    const formatRun = await checkedWorktreeGit(wt, ["rev-parse", "--show-object-format"]);
+    const objectFormat = formatRun.out.trim();
+    if (formatRun.code !== 0 || (objectFormat !== "sha1" && objectFormat !== "sha256")) {
+      throw new Error(`could not determine repository object format: ${formatRun.err || formatRun.out}`);
+    }
+    const objectHash = objectFormat;
+    const objectHexLength = objectHash === "sha256" ? 64 : 40;
+    const packPaths: string[] = [];
     for (const prefix of await readdir(detached)) {
       if (!/^[0-9a-f]{2}$/.test(prefix) && prefix !== "pack" && prefix !== "info") continue;
       const fromDir = join(detached, prefix);
       const info = await lstat(fromDir);
-      if (info.isSymbolicLink() || !info.isDirectory()) continue;
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new SandboxUnavailableError(`private git object path is not a real directory: ${prefix}`);
+      }
+      if (prefix === "info") continue;
       const toDir = join(snapshot, prefix);
       await mkdir(toDir, { recursive: true, mode: 0o700 });
       for (const name of await readdir(fromDir)) {
         const file = join(fromDir, name);
         const item = await lstat(file);
-        if (item.isSymbolicLink() || !item.isFile()) continue;
-        if (prefix !== "pack" && !/^[0-9a-f]{38,62}$/.test(name)) continue;
-        if (prefix === "pack" && !/^pack-[0-9a-f]{40,64}\.(pack|idx|bitmap|rev)$/.test(name))
+        if (item.isSymbolicLink() || !item.isFile()) {
+          throw new SandboxUnavailableError(`private git object file is not regular: ${prefix}/${name}`);
+        }
+        if (prefix === "pack") {
+          if (!/^pack-[0-9a-f]{40,64}\.pack$/.test(name)) continue;
+          await copyFile(file, join(toDir, name));
+          packPaths.push(join(toDir, name));
           continue;
+        }
+        if (name.length !== objectHexLength - 2 || !/^[0-9a-f]+$/.test(name)) continue;
+        const oid = `${prefix}${name}`;
+        await verifyLooseObject(file, oid, objectHash);
         await copyFile(file, join(toDir, name));
       }
     }
@@ -744,21 +777,33 @@ export async function importPrivateGitObjects(opts: {
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_NOSYSTEM: "1",
     };
-    const verified = await git(
-      opts.writableRoot,
-      ["fsck", "--full", "--strict", "--no-reflogs"],
-      env,
-    );
-    if (verified.code !== 0) {
-      throw new SandboxUnavailableError(
-        `private git objects failed verification: ${verified.err || verified.out}`,
+    for (const pack of packPaths) {
+      const verifiedPack = await checkedWorktreeGit(wt, ["index-pack", "--strict", pack], env);
+      if (verifiedPack.code !== 0) {
+        throw new SandboxUnavailableError(
+          `private git pack failed verification: ${verifiedPack.err || verifiedPack.out}`,
+        );
+      }
+    }
+    const taskRef = await checkedWorktreeGit(wt, ["rev-parse", "--verify", wt.branch], env);
+    if (taskRef.code === 0 && taskRef.out) {
+      const connected = await checkedWorktreeGit(
+        wt,
+        ["rev-list", "--objects", "--no-object-names", taskRef.out],
+        env,
       );
+      if (connected.code !== 0) {
+        throw new SandboxUnavailableError(
+          `task refs do not have a complete object graph: ${connected.err || connected.out}`,
+        );
+      }
     }
     for (const prefix of await readdir(snapshot)) {
       const fromDir = join(snapshot, prefix);
       const toDir = join(commonDir, "objects", prefix);
       await mkdir(toDir, { recursive: true });
       for (const name of await readdir(fromDir)) {
+        if (prefix === "pack" && !/^pack-[0-9a-f]{40,64}\.(pack|idx)$/.test(name)) continue;
         try {
           await copyFile(join(fromDir, name), join(toDir, name), constants.COPYFILE_EXCL);
         } catch (err) {
@@ -766,8 +811,37 @@ export async function importPrivateGitObjects(opts: {
         }
       }
     }
+    imported = true;
+  } catch (err) {
+    await rename(detached, source).catch(() => {});
+    const preserved = existsSync(source) ? source : detached;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new SandboxUnavailableError(`${detail}; private object store preserved at ${preserved}`);
   } finally {
     await rm(snapshot, { recursive: true, force: true });
-    await rm(detached, { recursive: true, force: true });
+    if (imported) await rm(detached, { recursive: true, force: true });
+  }
+}
+
+async function verifyLooseObject(
+  path: string,
+  oid: string,
+  algorithm: "sha1" | "sha256",
+): Promise<void> {
+  try {
+    const inflated = inflateSync(await readFile(path));
+    const headerEnd = inflated.indexOf(0);
+    if (headerEnd < 0) throw new Error("missing object header");
+    const header = inflated.subarray(0, headerEnd).toString("ascii");
+    const match = /^(commit|tree|blob|tag) (0|[1-9]\d*)$/.exec(header);
+    if (!match || Number(match[2]) !== inflated.length - headerEnd - 1) {
+      throw new Error("invalid object header or size");
+    }
+    const actual = createHash(algorithm).update(inflated).digest("hex");
+    if (actual !== oid) throw new Error("object hash does not match its filename");
+  } catch (err) {
+    throw new SandboxUnavailableError(
+      `private git object ${oid} failed verification: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }

@@ -320,6 +320,23 @@ export class Pipeline {
 
   /** Temp directory of the run in progress. Set only while `sandbox.mode` is `enforce`. */
   private runTempDir: string | undefined;
+  /** Set when private object import fails so the run data survives for recovery. */
+  private preserveRunTempDir: string | undefined;
+
+  private async importPrivateObjects(worktree: Worktree, writableRoot: string): Promise<void> {
+    if (!this.runTempDir) return;
+    try {
+      await importPrivateGitObjects({
+        runTempDir: this.runTempDir,
+        writableRoot,
+        mainCheckout: this.deps.settings.workingDirectory,
+        worktree,
+      });
+    } catch (err) {
+      this.preserveRunTempDir = this.runTempDir;
+      throw err;
+    }
+  }
 
   private sandboxMode(): "off" | "enforce" {
     return this.deps.settings.runner.sandbox?.mode === "enforce" ? "enforce" : "off";
@@ -396,6 +413,7 @@ export class Pipeline {
     label: string,
     tool: Tool,
     opts: RunOptions,
+    worktree?: Worktree,
   ): Promise<RunResult> {
     const launch = await prepareAgentLaunch(
       this.deps.settings,
@@ -554,22 +572,14 @@ export class Pipeline {
               : {}),
             onChunk: (c) => void this.streamChunk(id, c),
           });
-          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot) {
-            await importPrivateGitObjects({
-              runTempDir: this.runTempDir,
-              writableRoot: opts.cwd,
-              mainCheckout: this.deps.settings.workingDirectory,
-            });
+          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot && worktree) {
+            await this.importPrivateObjects(worktree, opts.cwd);
           }
           await this.recordStepCost(id, tool.id, result.usage);
           return finish(result);
         } catch (err) {
-          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot) {
-            await importPrivateGitObjects({
-              runTempDir: this.runTempDir,
-              writableRoot: opts.cwd,
-              mainCheckout: this.deps.settings.workingDirectory,
-            });
+          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot && worktree) {
+            await this.importPrivateObjects(worktree, opts.cwd);
           }
           if (err instanceof ToolRunError && err.usage) {
             await this.recordStepCost(id, tool.id, err.usage);
@@ -1088,6 +1098,7 @@ export class Pipeline {
     }
 
     let worktree: Worktree | null = null;
+    this.preserveRunTempDir = undefined;
     const { workingDirectory } = this.deps.settings;
     const cwd = workingDirectory;
 
@@ -1156,7 +1167,7 @@ export class Pipeline {
         prompt: await this.buildPrompt(task, ""),
         cwd: stepCwd,
         autoApprove: true,
-      });
+      }, worktree ?? undefined);
       record(planResult);
       recordBody(`### Planner\n${planResult.output}`);
 
@@ -1177,7 +1188,7 @@ export class Pipeline {
         prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
         cwd: stepCwd,
         autoApprove: true,
-      });
+      }, worktree ?? undefined);
       record(refineResult);
       recordBody(`### Planner (refinement)\n${refineResult.output}`);
       if (refineResult.questions && refineResult.questions.length > 0) {
@@ -1207,7 +1218,7 @@ export class Pipeline {
         cwd: stepCwd,
         autoApprove: true,
       };
-      let devResult = await this.runStep(id, "Developer", developer.tool, devOpts);
+      let devResult = await this.runStep(id, "Developer", developer.tool, devOpts, worktree ?? undefined);
       record(devResult);
       recordBody(`### Developer\n${devResult.output}`);
 
@@ -1228,11 +1239,12 @@ export class Pipeline {
                 task,
                 withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
               ),
-            });
+            }, worktree ?? undefined);
             record(again);
             recordBody(`### Developer (with answers)\n${again.output}`);
             return again;
           },
+          worktree ?? undefined,
         );
       }
       await this.writeReport(task, "developer", devResult.report);
@@ -1263,7 +1275,7 @@ export class Pipeline {
           cwd: stepCwd,
           autoApprove: true,
         };
-        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, checkOpts);
+        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, checkOpts, worktree ?? undefined);
         record(result);
         recordBody(`### ${label} (round ${round})\n${result.output}`);
         // Parse before the planner dialogue is appended, so only the agent's own
@@ -1292,11 +1304,13 @@ export class Pipeline {
                     ),
                   ),
                 },
+                worktree ?? undefined,
               );
               record(again);
               recordBody(`### ${label} (round ${round}, with answers)\n${again.output}`);
               return again;
             },
+            worktree ?? undefined,
           );
           // The verdict that counts is the one the role gave after it got its answers.
           result = answered;
@@ -1330,6 +1344,7 @@ export class Pipeline {
           `Developer (fix round ${fixRound}, ${role})`,
           developer.tool,
           fixOpts,
+          worktree ?? undefined,
         );
         record(fixResult);
         recordBody(`### Developer (fix round ${fixRound}, ${role})\n${fixResult.output}`);
@@ -1354,6 +1369,7 @@ export class Pipeline {
                     withExternal(`${fixBase}\n\n${answersSection(answers)}`),
                   ),
                 },
+                worktree ?? undefined,
               );
               record(again);
               recordBody(
@@ -1361,6 +1377,7 @@ export class Pipeline {
               );
               return again;
             },
+            worktree ?? undefined,
           );
         }
         await this.writeReport(
@@ -1499,7 +1516,7 @@ export class Pipeline {
     } finally {
       const temp = this.runTempDir;
       this.runTempDir = undefined;
-      if (temp) await removeRunTemp(temp);
+      if (temp && temp !== this.preserveRunTempDir) await removeRunTemp(temp);
     }
   }
 
@@ -1532,6 +1549,7 @@ export class Pipeline {
     usages: TokenUsage[],
     /** Runs the asking role again with the planner's answers in its prompt. */
     rerun: (answers: string) => Promise<RunResult>,
+    worktree?: Worktree,
   ): Promise<RunResult & { ownReport?: string }> {
     const id = task.frontmatter.id;
     const questions = result.questions ?? [];
@@ -1548,7 +1566,7 @@ export class Pipeline {
       ),
       cwd,
       autoApprove: true,
-    });
+    }, worktree);
     if (answer.usage) usages.push(answer.usage);
     if (answer.questions && answer.questions.length > 0) {
       // The planner cannot answer: the owner must. Say which role asked what.

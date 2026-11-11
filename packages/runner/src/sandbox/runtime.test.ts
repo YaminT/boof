@@ -15,7 +15,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execCommand, repoCommonDir } from "@boof/heart";
-import { createWorktree } from "../worktree.js";
+import { createWorktree, type Worktree } from "../worktree.js";
 import {
   NON_INTERACTIVE,
   SANDBOX_DEVELOPER_LIMITS,
@@ -51,6 +51,7 @@ interface Fixture {
   data: string;
   repo: string;
   wtPath: string;
+  wt?: Worktree;
   temp: string;
   ctx: AgentLaunchContext;
 }
@@ -119,9 +120,8 @@ async function fixture(linked: boolean): Promise<Fixture> {
   await writeFile(join(repo, "README"), "hi\n");
   await git(repo, ["add", "README"], env);
   await git(repo, ["commit", "-m", "init"], env);
-  const wtPath = linked
-    ? (await createWorktree(repo, "task-1", { root: wtRoot })).worktree.path
-    : repo;
+  const wt = linked ? (await createWorktree(repo, "task-1", { root: wtRoot })).worktree : undefined;
+  const wtPath = wt?.path ?? repo;
   const temp = await createRunTemp({ dataRoot: data, projectId: "proj", env });
   const ctx: AgentLaunchContext = {
     dataRoot: data,
@@ -133,7 +133,7 @@ async function fixture(linked: boolean): Promise<Fixture> {
     env,
     helper: "/never-spawned",
   };
-  return { base, home, env, data, repo, wtPath, temp, ctx };
+  return { base, home, env, data, repo, wtPath, wt, temp, ctx };
 }
 
 describe("developer sandbox sentence", () => {
@@ -288,9 +288,9 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
         linked.temp,
         join(common!, "worktrees", "task-1"),
         join(common!, "refs", "heads", "boof-runner"),
-        join(common!, "logs"),
       ]),
     );
+    expect(policy.readWrite).not.toContain(join(common!, "logs"));
     expect(policy.readWrite).not.toContain(join(common!, "config"));
     expect(policy.readWrite).not.toContain(join(common!, "hooks"));
     expect(policy.readWrite).not.toContain(join(common!, "info"));
@@ -306,7 +306,7 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(policy.env.HOME.endsWith("/home")).toBe(true);
     expect(policy.env.TMPDIR).toBe(linked.temp);
     expect(policy.env.XDG_CACHE_HOME.endsWith("/cache")).toBe(true);
-    expect(policy.denyTcpPorts).toEqual([4319]);
+    expect(policy.denyTcpPorts).toEqual([4319, 1]);
     expect(policy.readWrite).not.toContain(home);
     expect(policy.readExec).not.toContain(home);
     expect(policy.readWrite.includes("/dev/null")).toBe(opens("/dev/null"));
@@ -335,10 +335,12 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     );
     const statePath = initial.env.CLAUDE_CONFIG_DIR;
     await rm(statePath, { recursive: true, force: true });
+    const targetMode = (await stat(fx.data)).mode & 0o777;
     await symlink(fx.data, statePath);
     await expect(
       buildRunPolicy({ runner: { sandbox: sandboxSettings } }, { ...fx.ctx, serverPort: 4319 }),
-    ).rejects.toThrow(/agent state path must be a real directory/);
+    ).rejects.toThrow(/sandbox directory is not a real directory/);
+    expect((await stat(fx.data)).mode & 0o777).toBe(targetMode);
   });
 
   it("recovers a live server port from the data-root record for headless launches", async () => {
@@ -423,10 +425,59 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
       runTempDir: fx.temp,
       writableRoot: fx.wtPath,
       mainCheckout: fx.repo,
+      worktree: fx.wt!,
     });
     expect(existsSync(join(fx.temp, "git-objects"))).toBe(false);
     await expect(git(fx.repo, ["cat-file", "-e", hash], fx.env)).resolves.toBe("");
     await expect(git(fx.repo, ["rev-parse", "HEAD"], fx.env)).resolves.toBe(existing);
+  });
+
+  it("keeps the private object directory when an import fails verification", async () => {
+    const fx = await fixture(true);
+    const launch = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const source = launch.env.GIT_OBJECT_DIRECTORY!;
+    const prefix = join(source, "aa");
+    await mkdir(prefix);
+    await writeFile(join(prefix, "0".repeat(38)), "not a compressed git object\n");
+    await expect(
+      importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wtPath,
+        mainCheckout: fx.repo,
+        worktree: fx.wt!,
+      }),
+    ).rejects.toThrow(/private git object.*failed verification/);
+    expect(existsSync(source)).toBe(true);
+  });
+
+  it("does not scan unrelated shared objects while importing private objects", async () => {
+    const fx = await fixture(true);
+    const launch = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const content = join(fx.base, "valid-blob");
+    await writeFile(content, "valid new object\n");
+    const hash = await git(fx.wtPath, ["hash-object", "-w", content], {
+      ...fx.env,
+      GIT_OBJECT_DIRECTORY: launch.env.GIT_OBJECT_DIRECTORY,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: launch.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+    });
+    const corrupt = join(fx.repo, ".git", "objects", "ff", "0".repeat(38));
+    await mkdir(dirname(corrupt), { recursive: true });
+    await writeFile(corrupt, "unrelated corrupt shared object\n");
+    await expect(
+      importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wtPath,
+        mainCheckout: fx.repo,
+        worktree: fx.wt!,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(git(fx.repo, ["cat-file", "-e", hash], fx.env)).resolves.toBe("");
   });
 
   it("resolves a symlinked CLI to its package root, including nested vendor binaries", async () => {
