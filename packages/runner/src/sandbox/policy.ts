@@ -30,7 +30,7 @@ export const LINUX_SYSTEM_ROOTS = [
 /** Directories matching the design's `/lib*`, and no others (`/library` is not one). */
 export const LINUX_LIB_PATHS = ["/lib", "/lib64", "/lib32", "/libx32"] as const;
 
-/** macOS read+execute roots, in policy order. `/dev` is read-only here; the device list is writable. */
+/** macOS read+execute roots, in policy order. Devices are granted individually. */
 export const DARWIN_SYSTEM_ROOTS = [
   "/System",
   "/usr",
@@ -40,7 +40,6 @@ export const DARWIN_SYSTEM_ROOTS = [
   "/opt/homebrew",
   "/private/etc",
   "/private/var/db/timezone",
-  "/dev",
 ] as const;
 
 /**
@@ -53,9 +52,6 @@ export const SANDBOX_DEVICES = [
   "/dev/full",
   "/dev/random",
   "/dev/urandom",
-  "/dev/tty",
-  "/dev/ptmx",
-  "/dev/pts",
 ] as const;
 
 /** Toolchain directories under the real home, relative, that stay read-only when they exist. */
@@ -89,7 +85,8 @@ export type SandboxPolicyErrorCode =
   | "path_overlaps_data_root"
   | "path_is_home"
   | "temp_not_private"
-  | "git_inside_writable";
+  | "git_inside_writable"
+  | "device_tree_refused";
 
 export class SandboxPolicyError extends Error {
   constructor(
@@ -146,6 +143,8 @@ export interface SandboxPolicyContext {
   agentHome: string;
   /** `<state>/agents/<rootHash>/<project>/cache`. */
   cacheDir: string;
+  /** Checked, real paths for per-tool config and state directories. */
+  toolStatePaths?: Record<string, string>;
   credentialMode: SandboxCredentialMode;
   /** Tool id: `claude-code`, `claude-agent`, `codex`, `opencode`, `mock`, or another single segment. */
   tool: string;
@@ -156,6 +155,8 @@ export interface SandboxPolicyContext {
    * dir must sit outside `writableRoot`, or hooks and config could not be kept read-only.
    */
   git?: { commonDir: string; worktreeName: string };
+  /** Private per-task git objects, with common objects as a read-only alternate. */
+  gitObjects?: { privateDir: string; alternateDir: string };
   /** From `git var` in the main checkout. Omit when the project is not a git repository. */
   gitIdentity?: SandboxGitIdentity;
 }
@@ -198,8 +199,30 @@ export function buildSandboxPolicy(ctx: SandboxPolicyContext): SandboxPolicy {
   const tempDir = mustPath(ctx.tempDir, "temp directory");
   const agentHome = mustPath(ctx.agentHome, "agent home");
   const cacheDir = mustPath(ctx.cacheDir, "cache directory");
+  const toolState = ctx.toolStatePaths ?? keyModeState(agentHome, tool);
+  const checkedToolState: Record<string, string> = {};
+  for (const [name, path] of Object.entries(toolState)) {
+    const checked = mustPath(path, "agent tool state");
+    assertPrivateDir("agent tool state", checked, dataRoot, home);
+    if (checked !== agentHome && !contains(agentHome, checked)) {
+      throw new SandboxPolicyError(
+        "invalid_path",
+        `agent tool state path escapes agent home: ${checked}`,
+      );
+    }
+    checkedToolState[name] = checked;
+  }
   const readPaths = ctx.readPaths.map((p) => mustPath(p, "allowed path"));
   const writePaths = ctx.writePaths.map((p) => mustPath(p, "allowed path"));
+  if (
+    platform === "darwin" &&
+    [...readPaths, ...writePaths].some((path) => path === "/dev" || contains("/dev", path))
+  ) {
+    throw new SandboxPolicyError(
+      "device_tree_refused",
+      "the macOS /dev tree cannot be granted; only individual safe devices are available",
+    );
+  }
 
   // The worktree (or the project folder, when there is no worktree) must not hold the data root.
   // A folder inside the data root is the same hole, so that is refused too.
@@ -260,12 +283,10 @@ export function buildSandboxPolicy(ctx: SandboxPolicyContext): SandboxPolicy {
   grantWrite(tempDir);
   grantWrite(agentHome);
   grantWrite(cacheDir);
-  const toolState = keyModeState(agentHome, tool);
-  for (const path of Object.values(toolState)) grantWrite(path);
+  for (const path of Object.values(checkedToolState)) grantWrite(path);
   for (const path of devicesFor(ctx.devices)) grantWrite(path);
   if (git) {
     grantWrite(posix.join(git.commonDir, "worktrees", git.worktreeName));
-    grantWrite(posix.join(git.commonDir, "objects"));
     grantWrite(posix.join(git.commonDir, "refs", "heads", "boof-runner"));
     grantWrite(posix.join(git.commonDir, "logs"));
   }
@@ -282,8 +303,9 @@ export function buildSandboxPolicy(ctx: SandboxPolicyContext): SandboxPolicy {
       cacheDir,
       rustupHome,
       path: allowedPath.join(":"),
-      toolState,
+      toolState: checkedToolState,
       identity,
+      gitObjects: ctx.gitObjects,
     }),
   };
 }
@@ -331,6 +353,7 @@ function policyEnv(facts: {
   path: string;
   toolState: Record<string, string>;
   identity: SandboxGitIdentity | undefined;
+  gitObjects: SandboxPolicyContext["gitObjects"];
 }): Record<string, string> {
   const cache = facts.cacheDir;
   const env: Record<string, string> = {
@@ -358,6 +381,10 @@ function policyEnv(facts: {
     env.GIT_AUTHOR_EMAIL = facts.identity.authorEmail;
     env.GIT_COMMITTER_NAME = facts.identity.committerName;
     env.GIT_COMMITTER_EMAIL = facts.identity.committerEmail;
+  }
+  if (facts.gitObjects) {
+    env.GIT_OBJECT_DIRECTORY = facts.gitObjects.privateDir;
+    env.GIT_ALTERNATE_OBJECT_DIRECTORIES = facts.gitObjects.alternateDir;
   }
   env.UV_USE_IO_URING = "0";
   return env;

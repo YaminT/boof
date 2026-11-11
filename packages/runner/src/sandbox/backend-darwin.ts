@@ -256,8 +256,8 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
   for (const port of ports) {
     lines.push(
       `(deny network-outbound (remote ip "localhost:${port}"))`,
-      `(deny network-bind (local ip "localhost:${port}"))`,
-      `(deny network-inbound (local ip "localhost:${port}"))`,
+      `(deny network-bind (local ip "*:${port}"))`,
+      `(deny network-inbound (local ip "*:${port}"))`,
     );
   }
   return `${lines.join("\n")}\n`;

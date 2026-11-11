@@ -6,6 +6,7 @@ import {
   openSync,
   closeSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -38,7 +39,7 @@ function compile(source: string, out: string, flags: string[] = []): void {
 }
 
 function existing(paths: string[]): string[] {
-  return paths.filter((path) => existsSync(path));
+  return paths.filter((path) => existsSync(path)).map((path) => realpathSync(path));
 }
 
 interface RunResult {
@@ -147,7 +148,7 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     abi = Number(abiRun.stdout.trim());
     expect(abi).toBeGreaterThanOrEqual(4);
     readExec = existing(["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc", "/sys", dist]);
-  });
+  }, 60_000);
 
   afterAll(async () => {
     boofV4?.server.close();
@@ -250,6 +251,42 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     expect(existsSync(join(data, "pwned"))).toBe(false);
     const overwritten = await run(text, [probe, "overwrite", join(data, "settings.json")]);
     expect(overwritten.stdout).toBe("overwrite EACCES\n");
+  });
+
+  it("refuses a rule path that is a symlink before executing the child", async () => {
+    await tree();
+    const link = join(work, "escape");
+    await symlink(data, link);
+    const result = await run(policy(readExec, [link], []), [
+      probe,
+      "read",
+      join(data, "settings.json"),
+    ]);
+    expectHelperError(result, "cannot open path");
+    expect(result.stdout).toBe("");
+  });
+
+  it("keeps a shared git objects directory read-only", async () => {
+    await tree();
+    const objects = join(data, "objects");
+    await mkdir(objects);
+    await writeFile(join(objects, "existing-object"), "owner object\n");
+    const text = policy([...readExec, objects], [work], []);
+    const rewrite = await run(text, [probe, "overwrite", join(objects, "existing-object")]);
+    const removeAttempt = await run(text, [probe, "write", join(objects, "agent-object")]);
+    expect(rewrite.stdout).toBe("overwrite EACCES\n");
+    expect(removeAttempt.stdout).toBe("write EACCES\n");
+    expect(readFileSync(join(objects, "existing-object"), "utf8")).toBe("owner object\n");
+  });
+
+  it("bounds listen-without-bind port guessing by the helper fd limit", async () => {
+    await tree();
+    const result = await run(basePolicy([]), [probe, "listen-loop"], 12000);
+    expect(result.code).toBe(0);
+    const match = /^listen-loop (\d+) EMFILE\n$/.exec(result.stdout);
+    expect(match).not.toBeNull();
+    expect(Number(match![1])).toBeLessThan(4096);
+    expect(Number(match![1])).toBeGreaterThan(0);
   });
 
   it("A3 denies connect to the boof port on 127.0.0.1 and ::1", async () => {
@@ -379,6 +416,7 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
       "tcp ok",
       expect.stringMatching(/^icmp (ok|EACCES)$/),
       expect.stringMatching(/^icmp6 (ok|EACCES)$/),
+      "seqpacket-inet EPERM",
       "netlink ok",
       "netlink-diag EPERM",
       "",

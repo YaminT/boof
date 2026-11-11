@@ -42,15 +42,15 @@ describe("renderSeatbeltProfile", () => {
     const allowAt = text.indexOf('(allow network-outbound (remote ip "*:*"))');
     const bindAllow = text.indexOf('(allow network-bind (local ip "*:*"))');
     const denyOut = text.indexOf('(deny network-outbound (remote ip "localhost:9"))');
-    const denyBind = text.indexOf('(deny network-bind (local ip "localhost:9"))');
-    const denyIn = text.indexOf('(deny network-inbound (local ip "localhost:9"))');
+    const denyBind = text.indexOf('(deny network-bind (local ip "*:9"))');
+    const denyIn = text.indexOf('(deny network-inbound (local ip "*:9"))');
     expect(allowAt).toBeGreaterThan(0);
     expect(bindAllow).toBeGreaterThan(allowAt);
     expect(denyOut).toBeGreaterThan(bindAllow);
     expect(denyBind).toBeGreaterThan(denyOut);
     expect(denyIn).toBeGreaterThan(denyBind);
     expect(text).toContain('(deny network-outbound (remote ip "localhost:8080"))');
-    expect(text).toContain('(deny network-bind (local ip "localhost:8080"))');
+    expect(text).toContain('(deny network-bind (local ip "*:8080"))');
     expect(text).not.toContain("127.0.0.1");
     expect(text).not.toContain("::1");
   });
@@ -62,6 +62,12 @@ describe("renderSeatbeltProfile", () => {
     expect(text).not.toContain("securityd");
     expect(text).toContain("(allow system-socket (socket-domain AF_UNIX))");
     expect(text).not.toContain("(allow ipc-posix-shm)");
+  });
+
+  it("does not grant the whole device tree", () => {
+    const text = profile({ readExec: ["/usr"], readWrite: ["/dev/null"] });
+    expect(text).not.toContain('(subpath "/dev")');
+    expect(text).not.toContain('(subpath "/dev/ttys');
   });
 
   it("quotes a path that contains a space", () => {

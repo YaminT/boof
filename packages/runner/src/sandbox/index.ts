@@ -131,6 +131,7 @@ export {
   buildRunPolicy,
   createRunTemp,
   dataRootHash,
+  importPrivateGitObjects,
   linkedWorktreeGit,
   readGitIdentity,
   reapCrashedRunTemps,

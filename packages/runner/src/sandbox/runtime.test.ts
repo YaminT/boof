@@ -11,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execCommand, repoCommonDir } from "@boof/heart";
@@ -24,6 +25,8 @@ import {
 import {
   buildRunPolicy,
   createRunTemp,
+  importPrivateGitObjects,
+  linkedWorktreeGit,
   readGitIdentity,
   reapCrashedRunTemps,
   removeRunTemp,
@@ -100,6 +103,7 @@ async function fixture(linked: boolean): Promise<Fixture> {
     HOME: home,
     XDG_STATE_HOME: join(home, ".local", "state"),
     PATH: process.env.PATH ?? "/usr/bin:/bin",
+    BOOF_RUNNER_PORT: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
   };
@@ -275,7 +279,7 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
       { ...linked.ctx, serverPort: 4319 },
     );
     expect(policy.readExec).toContain(common);
-    expect(policy.readExec).toContain("/bin");
+    expect(policy.readExec).toContain(await realpath("/bin"));
     const home = await realpath(linked.home);
     const worktree = await realpath(linked.wtPath);
     expect(policy.readWrite).toEqual(
@@ -283,7 +287,6 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
         worktree,
         linked.temp,
         join(common!, "worktrees", "task-1"),
-        join(common!, "objects"),
         join(common!, "refs", "heads", "boof-runner"),
         join(common!, "logs"),
       ]),
@@ -296,6 +299,8 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(existsSync(join(common!, "refs", "heads", "boof-runner"))).toBe(true);
     expect(policy.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
     expect(policy.env.GIT_CONFIG_NOSYSTEM).toBe("1");
+    expect(policy.env.GIT_OBJECT_DIRECTORY).toBe(join(linked.temp, "git-objects"));
+    expect(policy.env.GIT_ALTERNATE_OBJECT_DIRECTORIES).toBe(join(common!, "objects"));
     expect(policy.env.GIT_AUTHOR_NAME).toBe("Ada Lovelace");
     expect(policy.env.GIT_AUTHOR_EMAIL).toBe("ada@example.com");
     expect(policy.env.HOME.endsWith("/home")).toBe(true);
@@ -305,7 +310,9 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(policy.readWrite).not.toContain(home);
     expect(policy.readExec).not.toContain(home);
     expect(policy.readWrite.includes("/dev/null")).toBe(opens("/dev/null"));
-    if (!opens("/dev/tty")) expect(policy.readWrite).not.toContain("/dev/tty");
+    expect(policy.readWrite).not.toContain("/dev/pts");
+    expect(policy.readWrite).not.toContain("/dev/ptmx");
+    expect(policy.readWrite).not.toContain("/dev/tty");
 
     const main = await buildRunPolicy(
       { runner: { sandbox: sandboxSettings } },
@@ -318,6 +325,94 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(main.readWrite).not.toContain(join(common!, "objects"));
     expect(main.readWrite).not.toContain(join(common!, "refs", "heads", "boof-runner"));
     expect(main.denyTcpPorts).toEqual([]);
+  });
+
+  it("refuses an agent planted tool-state symlink before chmod or policy construction", async () => {
+    const fx = await fixture(false);
+    const initial = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const statePath = initial.env.CLAUDE_CONFIG_DIR;
+    await rm(statePath, { recursive: true, force: true });
+    await symlink(fx.data, statePath);
+    await expect(
+      buildRunPolicy({ runner: { sandbox: sandboxSettings } }, { ...fx.ctx, serverPort: 4319 }),
+    ).rejects.toThrow(/agent state path must be a real directory/);
+  });
+
+  it("recovers a live server port from the data-root record for headless launches", async () => {
+    const fx = await fixture(false);
+    await writeFile(
+      join(fx.data, ".server-port"),
+      JSON.stringify({ pid: process.pid, port: 43817 }),
+    );
+    const policy = await buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx);
+    expect(policy.denyTcpPorts).toContain(43817);
+  });
+
+  it("blocks the configured server port when a legacy server has no port record", async () => {
+    const fx = await fixture(false);
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("expected test server port");
+    const env = { ...fx.env, BOOF_RUNNER_PORT: String(address.port) };
+    try {
+      const policy = await buildRunPolicy(
+        { runner: { sandbox: sandboxSettings } },
+        { ...fx.ctx, env },
+      );
+      expect(policy.denyTcpPorts).toContain(address.port);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("rejects tampered worktree .git and commondir metadata on the next step", async () => {
+    const fx = await fixture(true);
+    const dotGit = join(fx.wtPath, ".git");
+    const original = await readFile(dotGit, "utf8");
+    await writeFile(dotGit, "gitdir: /tmp/attacker.git\n");
+    await expect(buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx)).rejects.toThrow(
+      /git worktree gitdir/,
+    );
+    await writeFile(dotGit, original);
+    const linked = await linkedWorktreeGit(fx.wtPath, fx.repo);
+    expect(linked).toBeTruthy();
+    const commondir = join(linked!.commonDir, "worktrees", linked!.worktreeName, "commondir");
+    const old = await readFile(commondir, "utf8");
+    await writeFile(commondir, "/tmp/fake-common\n");
+    await expect(buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx)).rejects.toThrow(
+      /commondir does not match/,
+    );
+    await writeFile(commondir, old);
+  });
+
+  it("imports verified private objects without changing an existing shared object", async () => {
+    const fx = await fixture(true);
+    const launch = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, serverPort: 4319 },
+    );
+    const content = join(fx.base, "new-blob");
+    await writeFile(content, "agent object\n");
+    const hash = await git(fx.wtPath, ["hash-object", "-w", content], {
+      ...fx.env,
+      GIT_OBJECT_DIRECTORY: launch.env.GIT_OBJECT_DIRECTORY,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: launch.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+    });
+    const existing = await git(fx.repo, ["rev-parse", "HEAD"], fx.env);
+    await importPrivateGitObjects({
+      runTempDir: fx.temp,
+      writableRoot: fx.wtPath,
+      mainCheckout: fx.repo,
+    });
+    await expect(git(fx.repo, ["cat-file", "-e", hash], fx.env)).resolves.toBe("");
+    await expect(git(fx.repo, ["rev-parse", "HEAD"], fx.env)).resolves.toBe(existing);
   });
 
   it("resolves a symlinked CLI to its package root, including nested vendor binaries", async () => {

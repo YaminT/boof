@@ -14,7 +14,7 @@ import {
   setSandboxStatus,
 } from "@boof/heart";
 import { commitLeftovers, createWorktree, finalizeWorktree, type Worktree } from "../worktree.js";
-import { prepareAgentLaunch, type SandboxSettingsView } from "./index.js";
+import { importPrivateGitObjects, prepareAgentLaunch, type SandboxSettingsView } from "./index.js";
 import type { AgentLaunchContext } from "./runtime.js";
 import { createRunTemp } from "./runtime.js";
 
@@ -206,6 +206,11 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
       );
       expect(result.code, `${result.stderr}\n${result.stdout}`).toBe(0);
       expect(result.stdout).toContain("A10_OK");
+      await importPrivateGitObjects({
+        runTempDir: fx.temp,
+        writableRoot: fx.wt.path,
+        mainCheckout: fx.repo,
+      });
       expect(launch.policy.env.GIT_AUTHOR_NAME).toBe("Ada Lovelace");
       expect(launch.policy.env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
       const author = await git(fx.wt.path, ["log", "-1", "--format=%an%n%ae"], fx.env);

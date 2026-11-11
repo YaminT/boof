@@ -81,6 +81,14 @@ function refusal(run: () => void): SandboxPolicyError {
 }
 
 describe("buildSandboxPolicy", () => {
+  it("refuses macOS grants that expose other sessions through /dev", () => {
+    for (const path of ["/dev", "/dev/ttys001"]) {
+      expect(() => buildSandboxPolicy(ctx({ platform: "darwin", readPaths: [path] }))).toThrow(
+        /macOS \/dev tree cannot be granted/,
+      );
+    }
+  });
+
   it("grants the Linux path lists and hides the real home and the data root", () => {
     const policy = buildSandboxPolicy(ctx());
     expect(policy.version).toBe(1);
@@ -119,7 +127,6 @@ describe("buildSandboxPolicy", () => {
       `${AGENT_HOME}/claude-code/xdg-state`,
       ...SANDBOX_DEVICES,
       `${PROJECT}/.git/worktrees/task`,
-      `${PROJECT}/.git/objects`,
       `${PROJECT}/.git/refs/heads/boof-runner`,
       `${PROJECT}/.git/logs`,
     ]);
@@ -350,7 +357,7 @@ describe("buildSandboxPolicy", () => {
     expect(policy.readExec).toContain("/usr");
     expect(policy.readExec).toContain("/opt/homebrew");
     expect(policy.readExec).toContain("/System");
-    expect(policy.readExec).toContain("/dev");
+    expect(policy.readExec).not.toContain("/dev");
     expect(policy.readExec).not.toContain("/lib64");
     expect(policy.readWrite).toContain("/dev/null");
   });

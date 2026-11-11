@@ -15,9 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <linux/openat2.h>
 #include <unistd.h>
 
 /*
@@ -141,6 +143,14 @@ static int port_zero_bind_allowed(void) {
     if (deny_port[port]) return 0;
   }
   return 1;
+}
+
+static int open_rule_path(const char *path) {
+  struct open_how how = {
+      .flags = O_PATH | O_CLOEXEC,
+      .resolve = RESOLVE_NO_SYMLINKS,
+  };
+  return (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof how);
 }
 
 static void fail(const char *msg) {
@@ -494,7 +504,7 @@ static void apply_landlock(int abi) {
   mode_t modes[MAX_PATHS];
   for (int i = 0; i < npaths; i++) {
     const char *path = arena + path_off[i];
-    int fd = open(path, O_PATH | O_CLOEXEC);
+    int fd = open_rule_path(path);
     if (fd < 0) {
       if (errno == ENOENT) fail_path("missing path", path);
       fail_path("cannot open path", path);
@@ -575,28 +585,36 @@ static void apply_seccomp(void) {
     emit(filter, &n, BPF_JMP | BPF_JGE | BPF_K, 0, 1, table->x32_bit);
     emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS);
   }
-  /* socket: 17 instructions. A miss skips the 16 after the compare.
+  /* socket: 22 instructions. A miss skips the whole block.
    *   ld domain
    *   jeq AF_INET, +6
    *   jeq AF_INET6, +5
    *   jeq AF_NETLINK, +1
    *   ret EPERM
    *   ld protocol          (netlink: only NETLINK_ROUTE)
-   *   jeq NETLINK_ROUTE, +8
+   *   jeq NETLINK_ROUTE, +13
+   *   ret EPERM
+   *   ld type (mask flags); stream or datagram only
+   *   jeq STREAM, +2 / DGRAM, +1
    *   ret EPERM
    *   ld protocol          (inet: IP, ICMP, TCP, UDP, ICMPv6)
    *   jeq IP, +5 / ICMP, +4 / TCP, +3 / UDP, +2 / ICMPV6, +1
    *   ret EPERM
    *   ret ALLOW
    */
-  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 16, table->socket_nr);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 21, table->socket_nr);
   emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg0);
   emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 6, 0, AF_INET);
   emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 5, 0, AF_INET6);
   emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, AF_NETLINK);
   emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
   emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg2);
-  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 8, 0, NETLINK_ROUTE);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 13, 0, NETLINK_ROUTE);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg1);
+  emit(filter, &n, BPF_ALU | BPF_AND | BPF_K, 0, 0, ~(__u32)(SOCK_NONBLOCK | SOCK_CLOEXEC));
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 2, 0, SOCK_STREAM);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, SOCK_DGRAM);
   emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
   emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg2);
   emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 5, 0, IPPROTO_IP);
@@ -690,6 +708,11 @@ int main(int argc, char **argv) {
   }
   if (argc < 5 || strcmp(argv[1], "--policy-fd") != 0 || strcmp(argv[3], "--") != 0)
     fail("bad arguments");
+  struct rlimit nofile;
+  if (getrlimit(RLIMIT_NOFILE, &nofile) != 0) failf("getrlimit: %s", strerror(errno));
+  if (nofile.rlim_max > 4096) nofile.rlim_max = 4096;
+  if (nofile.rlim_cur > nofile.rlim_max) nofile.rlim_cur = nofile.rlim_max;
+  if (setrlimit(RLIMIT_NOFILE, &nofile) != 0) failf("setrlimit: %s", strerror(errno));
   int fd = policy_fd_arg(argv[2]);
   if (fd < 0 || fcntl(fd, F_GETFD) < 0) fail("bad arguments");
   int flags = fcntl(fd, F_GETFD);

@@ -39,7 +39,12 @@ import {
   sumUsage,
   UsageStore,
 } from "@boof/heart";
-import { createRunTemp, prepareAgentLaunch, removeRunTemp } from "./sandbox/index.js";
+import {
+  createRunTemp,
+  importPrivateGitObjects,
+  prepareAgentLaunch,
+  removeRunTemp,
+} from "./sandbox/index.js";
 import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
@@ -549,9 +554,23 @@ export class Pipeline {
               : {}),
             onChunk: (c) => void this.streamChunk(id, c),
           });
+          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot) {
+            await importPrivateGitObjects({
+              runTempDir: this.runTempDir,
+              writableRoot: opts.cwd,
+              mainCheckout: this.deps.settings.workingDirectory,
+            });
+          }
           await this.recordStepCost(id, tool.id, result.usage);
           return finish(result);
         } catch (err) {
+          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot) {
+            await importPrivateGitObjects({
+              runTempDir: this.runTempDir,
+              writableRoot: opts.cwd,
+              mainCheckout: this.deps.settings.workingDirectory,
+            });
+          }
           if (err instanceof ToolRunError && err.usage) {
             await this.recordStepCost(id, tool.id, err.usage);
             if (err.steered) interrupted.push(err.usage);

@@ -1,10 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, closeSync, constants, existsSync, openSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+} from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { createConnection } from "node:net";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   SandboxUnavailableError,
+  dataRootPaths,
   git,
   isGitRepo,
   isKebabId,
@@ -224,26 +237,66 @@ export async function readGitIdentity(
  */
 export async function linkedWorktreeGit(
   writableRoot: string,
+  trustedCheckout?: string,
 ): Promise<{ commonDir: string; worktreeName: string } | undefined> {
   const dotGit = join(writableRoot, ".git");
   let info;
   try {
-    info = await stat(dotGit);
+    info = await lstat(dotGit);
   } catch {
     return undefined;
   }
   if (info.isDirectory()) return undefined;
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new SandboxUnavailableError("git worktree .git entry was altered");
+  }
   const text = await readFile(dotGit, "utf8").catch(() => "");
   const match = /^gitdir:\s*(.+)\s*$/.exec(text.trim());
-  if (!match?.[1]) return undefined;
-  const gitdir = await realpath(resolve(writableRoot, match[1]));
+  if (!match?.[1]) throw new SandboxUnavailableError("git worktree .git file was altered");
+  const gitdir = await realpath(resolve(writableRoot, match[1])).catch(() => null);
+  if (!gitdir) throw new SandboxUnavailableError("git worktree gitdir was altered");
   const name = basename(gitdir);
-  if (basename(dirname(gitdir)) !== "worktrees") return undefined;
-  const common = await repoCommonDir(writableRoot);
+  if (basename(dirname(gitdir)) !== "worktrees") {
+    throw new SandboxUnavailableError("git worktree gitdir is outside the runner worktree record");
+  }
+  if (name !== basename(writableRoot)) {
+    throw new SandboxUnavailableError(
+      "git worktree gitdir differs from the runner worktree record",
+    );
+  }
+  const common = trustedCheckout
+    ? await repoCommonDir(trustedCheckout)
+    : await repoCommonDir(writableRoot);
   if (!common) return undefined;
   const expected = await realpath(join(common, "worktrees", name)).catch(() => null);
   if (expected !== gitdir) {
     throw new SandboxUnavailableError("git worktree admin directory does not match the common dir");
+  }
+  const gitdirFile = join(gitdir, "gitdir");
+  const gitdirInfo = await lstat(gitdirFile).catch(() => null);
+  if (!gitdirInfo?.isFile() || gitdirInfo.isSymbolicLink()) {
+    throw new SandboxUnavailableError("git worktree admin gitdir entry was altered");
+  }
+  const registeredPath = await realpath(
+    resolve(gitdir, (await readFile(gitdirFile, "utf8")).trim()),
+  ).catch(() => null);
+  if (registeredPath !== (await realpath(dotGit))) {
+    throw new SandboxUnavailableError(
+      "git worktree admin gitdir does not match the runner worktree record",
+    );
+  }
+  const commondirPath = join(gitdir, "commondir");
+  const commondirInfo = await lstat(commondirPath).catch(() => null);
+  if (!commondirInfo?.isFile() || commondirInfo.isSymbolicLink()) {
+    throw new SandboxUnavailableError("git worktree commondir entry was altered");
+  }
+  const commondir = await realpath(
+    resolve(gitdir, (await readFile(commondirPath, "utf8")).trim()),
+  ).catch(() => null);
+  if (commondir !== (await realpath(common))) {
+    throw new SandboxUnavailableError(
+      "git worktree commondir does not match the runner worktree record",
+    );
   }
   await ensureGitWriteDirs(common, name);
   return { commonDir: common, worktreeName: name };
@@ -275,8 +328,45 @@ async function realDir(path: string): Promise<string> {
 
 async function makePrivate(path: string): Promise<string> {
   await mkdir(path, { recursive: true });
+  const entry = await lstat(path);
+  if (entry.isSymbolicLink() || !entry.isDirectory()) {
+    throw new SandboxUnavailableError(`sandbox directory is not a real directory: ${path}`);
+  }
   await chmod(path, 0o700);
   return realDir(path);
+}
+
+async function checkedAgentState(agentHome: string, tool: string): Promise<Record<string, string>> {
+  const root = join(agentHome, tool);
+  const dirs = [
+    root,
+    ...["claude", "codex", "xdg-config", "xdg-data", "xdg-state"].map((n) => join(root, n)),
+  ];
+  for (const path of dirs) {
+    await mkdir(path, { recursive: true });
+    const entry = await lstat(path);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new SandboxUnavailableError(`agent state path must be a real directory: ${path}`);
+    }
+    const real = await realpath(path);
+    const relative = resolve(agentHome) === real ? "" : relativePath(agentHome, real);
+    if (relative === ".." || relative.startsWith(`..${sep}`) || isAbsolute(relative)) {
+      throw new SandboxUnavailableError(`agent state path escapes agent home: ${path}`);
+    }
+    await chmod(path, 0o700);
+  }
+  return {
+    CLAUDE_CONFIG_DIR: await realpath(join(root, "claude")),
+    CODEX_HOME: await realpath(join(root, "codex")),
+    XDG_CONFIG_HOME: await realpath(join(root, "xdg-config")),
+    XDG_DATA_HOME: await realpath(join(root, "xdg-data")),
+    XDG_STATE_HOME: await realpath(join(root, "xdg-state")),
+  };
+}
+
+function relativePath(from: string, to: string): string {
+  if (resolve(from) === to) return "";
+  return relative(from, to);
 }
 
 async function existingDirs(paths: readonly string[]): Promise<string[]> {
@@ -417,6 +507,7 @@ export async function buildRunPolicy(
   const platform = sandboxPlatform(process.platform);
   const sandbox = settings.runner.sandbox;
   const dataRoot = await realDir(ctx.dataRoot);
+  const livePort = ctx.serverPort ?? (await liveServerPort(dataRoot, env));
   const home = await realDir(userHome(env));
   const writableRoot = await realDir(ctx.writableRoot);
   const tempDir = await realDir(ctx.runTempDir);
@@ -425,28 +516,44 @@ export async function buildRunPolicy(
   }
   const projectDir = await agentProjectDir(dataRoot, ctx.projectId, env);
   const agentHome = await makePrivate(join(projectDir, "home"));
+  const projectEntry = await lstat(projectDir);
+  if (projectEntry.isSymbolicLink() || !projectEntry.isDirectory()) {
+    throw new SandboxUnavailableError(`agent project path is not a real directory: ${projectDir}`);
+  }
   await chmod(projectDir, 0o700);
   const cacheDir = await makePrivate(join(projectDir, "cache"));
   const tool = ctx.tool;
-  for (const name of ["claude", "codex", "xdg-config", "xdg-data", "xdg-state"]) {
-    await makePrivate(join(agentHome, tool, name));
-  }
-  const gitFacts = await linkedWorktreeGit(writableRoot);
+  const toolStatePaths = await checkedAgentState(agentHome, tool);
+  const gitFacts = await linkedWorktreeGit(writableRoot, ctx.mainCheckout);
+  const gitObjects = gitFacts
+    ? {
+        privateDir: join(tempDir, "git-objects"),
+        alternateDir: join(gitFacts.commonDir, "objects"),
+      }
+    : undefined;
+  if (gitObjects) await mkdir(gitObjects.privateDir, { recursive: true, mode: 0o700 });
   const identity = await readGitIdentity(ctx.mainCheckout, env);
   const toolchain = await existingDirs(TOOLCHAIN_RELATIVE_PATHS.map((rel) => join(home, rel)));
   const policyCtx: SandboxPolicyContext = {
     platform,
     dataRoot,
     home,
-    serverRunning: ctx.serverPort !== undefined,
-    boofPorts: ctx.serverPort !== undefined ? [ctx.serverPort] : [],
+    serverRunning: livePort !== undefined,
+    boofPorts: livePort !== undefined ? [livePort] : [],
     readPaths: await configuredPaths(sandbox.readPaths, "read path"),
     writePaths: await configuredPaths(sandbox.writePaths, "write path"),
     denyTcpPorts: sandbox.denyTcpPorts,
-    // Literal paths, not realpaths. On a merged /usr, realpath("/bin") is "/usr/bin", which is not
-    // a system root, so the builder would drop it and the shell would be unreadable.
+    // Resolve symlinked system-root aliases before the helper opens rules with RESOLVE_NO_SYMLINKS.
     systemPaths:
-      platform === "win32" ? [] : systemRoots(platform).filter((path) => pathOpens(path)),
+      platform === "win32"
+        ? []
+        : (
+            await Promise.all(
+              systemRoots(platform)
+                .filter((path) => pathOpens(path))
+                .map((path) => realpath(path).catch(() => null)),
+            )
+          ).filter((path): path is string => path !== null),
     pathEntries: await resolvePathEntries(env.PATH),
     toolInstallRoot: await toolInstallRoot(tool, env),
     toolchainPaths: toolchain,
@@ -454,10 +561,14 @@ export async function buildRunPolicy(
     tempDir,
     agentHome,
     cacheDir,
+    toolStatePaths,
     credentialMode: "key",
     tool,
-    devices: existingDevices(),
+    devices: await Promise.all(
+      existingDevices().map((path) => realpath(path).catch(() => "")),
+    ).then((paths) => paths.filter(Boolean)),
     ...(gitFacts ? { git: gitFacts } : {}),
+    ...(gitObjects ? { gitObjects } : {}),
     ...(identity ? { gitIdentity: identity } : {}),
   };
   try {
@@ -466,6 +577,68 @@ export async function buildRunPolicy(
     if (err instanceof SandboxPolicyError) throw new SandboxUnavailableError(err.message);
     throw err;
   }
+}
+
+async function liveServerPort(
+  dataRoot: string,
+  env: NodeJS.ProcessEnv,
+): Promise<number | undefined> {
+  const path = dataRootPaths(dataRoot).serverPort;
+  const text = await readFile(path, "utf8").catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  });
+  if (text === null) {
+    const configured = env.BOOF_RUNNER_PORT ?? "4319";
+    const port = Number(configured);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new SandboxUnavailableError("boof server port is unknown; refusing sandbox launch");
+    }
+    return (await portIsListening(port)) ? port : undefined;
+  }
+  let record: unknown;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    throw new SandboxUnavailableError(
+      "boof server port record is invalid; refusing sandbox launch",
+    );
+  }
+  if (
+    typeof record !== "object" ||
+    record === null ||
+    !Number.isInteger((record as { pid?: unknown }).pid) ||
+    !Number.isInteger((record as { port?: unknown }).port) ||
+    (record as { pid: number }).pid < 1 ||
+    (record as { port: number }).port < 1 ||
+    (record as { port: number }).port > 65535
+  )
+    throw new SandboxUnavailableError(
+      "boof server port record is invalid; refusing sandbox launch",
+    );
+  const pid = (record as { pid: number }).pid;
+  try {
+    process.kill(pid, 0);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return undefined;
+  }
+  return (record as { port: number }).port;
+}
+
+function portIsListening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    let done = false;
+    const finish = (listening: boolean) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(250, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
 }
 
 async function refuseUnsafeOpenCodePortZero(policy: SandboxPolicy, tool: string): Promise<void> {
@@ -506,4 +679,73 @@ export async function sandboxLaunchFor(
     policy,
     helper: ctx.helper ?? boofSandboxHelperPath(env),
   };
+}
+
+/** Verify and import new objects from the run-private object store without replacing shared ones. */
+export async function importPrivateGitObjects(opts: {
+  runTempDir: string;
+  writableRoot: string;
+  mainCheckout: string;
+}): Promise<void> {
+  const gitFacts = await linkedWorktreeGit(opts.writableRoot, opts.mainCheckout);
+  if (!gitFacts) return;
+  const commonDir = await repoCommonDir(opts.mainCheckout);
+  if (!commonDir) return;
+  const source = join(opts.runTempDir, "git-objects");
+  const sourceInfo = await lstat(source).catch(() => null);
+  if (!sourceInfo) return;
+  if (sourceInfo.isSymbolicLink() || !sourceInfo.isDirectory()) {
+    throw new SandboxUnavailableError("private git object directory was altered");
+  }
+  const snapshot = await mkdtemp(join(tmpdir(), "boof-git-objects-"));
+  try {
+    for (const prefix of await readdir(source)) {
+      if (!/^[0-9a-f]{2}$/.test(prefix) && prefix !== "pack" && prefix !== "info") continue;
+      const fromDir = join(source, prefix);
+      const info = await lstat(fromDir);
+      if (info.isSymbolicLink() || !info.isDirectory()) continue;
+      const toDir = join(snapshot, prefix);
+      await mkdir(toDir, { recursive: true, mode: 0o700 });
+      for (const name of await readdir(fromDir)) {
+        const file = join(fromDir, name);
+        const item = await lstat(file);
+        if (item.isSymbolicLink() || !item.isFile()) continue;
+        if (prefix !== "pack" && !/^[0-9a-f]{38,62}$/.test(name)) continue;
+        if (prefix === "pack" && !/^pack-[0-9a-f]{40,64}\.(pack|idx|bitmap|rev)$/.test(name))
+          continue;
+        await copyFile(file, join(toDir, name));
+      }
+    }
+    const env = {
+      ...process.env,
+      GIT_OBJECT_DIRECTORY: snapshot,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: join(commonDir, "objects"),
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+    };
+    const verified = await git(
+      opts.writableRoot,
+      ["fsck", "--full", "--strict", "--no-reflogs"],
+      env,
+    );
+    if (verified.code !== 0) {
+      throw new SandboxUnavailableError(
+        `private git objects failed verification: ${verified.err || verified.out}`,
+      );
+    }
+    for (const prefix of await readdir(snapshot)) {
+      const fromDir = join(snapshot, prefix);
+      const toDir = join(commonDir, "objects", prefix);
+      await mkdir(toDir, { recursive: true });
+      for (const name of await readdir(fromDir)) {
+        try {
+          await copyFile(join(fromDir, name), join(toDir, name), constants.COPYFILE_EXCL);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        }
+      }
+    }
+  } finally {
+    await rm(snapshot, { recursive: true, force: true });
+  }
 }

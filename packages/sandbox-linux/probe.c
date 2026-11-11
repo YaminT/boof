@@ -56,6 +56,8 @@ static const char *errname(int err) {
       return "EINVAL";
     case EAGAIN:
       return "EAGAIN";
+    case EMFILE:
+      return "EMFILE";
     case EISCONN:
       return "EISCONN";
     default:
@@ -705,8 +707,23 @@ int main(int argc, char **argv) {
     op_connect_proto(AF_INET, port, IPPROTO_TCP, "tcp");
     op_socket_line("icmp", AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
     op_socket_line("icmp6", AF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6);
+    op_socket_line("seqpacket-inet", AF_INET, SOCK_SEQPACKET, 0);
     op_socket_line("netlink", AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     op_socket_line("netlink-diag", AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_SOCK_DIAG);
+  } else if (strcmp(cmd, "listen-loop") == 0 && argc == 2) {
+    unsigned count = 0;
+    for (;; count++) {
+      int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+      if (fd < 0) {
+        printf("listen-loop %u %s\n", count, errname(errno));
+        break;
+      }
+      if (listen(fd, 1) != 0) {
+        printf("listen-loop %u %s\n", count, errname(errno));
+        close(fd);
+        break;
+      }
+    }
   } else if (strcmp(cmd, "dgram-listen") == 0 && argc == 3) op_dgram_listen(argv[2]);
   else if (strcmp(cmd, "pairs") == 0 && argc == 4) {
     op_pair_dgram(argv[2], SOCK_DGRAM, "pair-dgram");

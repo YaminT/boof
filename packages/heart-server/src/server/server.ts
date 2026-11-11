@@ -1,5 +1,5 @@
 import { createServer as createHttpsServer } from "node:https";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import {
@@ -222,6 +222,35 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : (opts.port ?? 4319);
   boundPort = port;
+  let ipv6Server: ServerType | undefined;
+  if (host === "127.0.0.1") {
+    // Bind ::1 immediately after IPv4 so a V6ONLY agent socket cannot squat this port. The
+    // brief startup/restart interval before this second bind remains; the sandbox helper caps
+    // each agent's descriptors at 4096 to bound blind listen/connect port guessing there.
+    ipv6Server = await new Promise<ServerType>((resolve, reject) => {
+      const base = { fetch: app.fetch, hostname: "::1", port };
+      const listening = () => resolve(s);
+      const s = tls
+        ? serve(
+            {
+              ...base,
+              createServer: createHttpsServer as never,
+              serverOptions: { key: tls.key, cert: tls.cert } as never,
+            },
+            listening,
+          )
+        : serve(base, listening);
+      s.once("error", reject);
+    }).catch(async (err: unknown) => {
+      clearInterval(pruneTimer);
+      await watcher.stop().catch(() => {});
+      (server as { closeAllConnections?: () => void }).closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      throw err;
+    });
+  }
+  const serverPortRecord = dataRootPaths(opts.root).serverPort;
+  await writeFile(serverPortRecord, JSON.stringify({ pid: process.pid, port }), { mode: 0o600 });
 
   // Webhooks are delivered by one server per data root (headless run/scan processes do not
   // deliver): the one holding `webhooks/.dispatcher.lock`. A second server waits and takes over
@@ -272,6 +301,13 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
         // Long-lived SSE streams and keep-alive sockets would hold close() open forever.
         (server as { closeAllConnections?: () => void }).closeAllConnections?.();
       });
+      if (ipv6Server) {
+        await new Promise<void>((resolve) => {
+          ipv6Server!.close(() => resolve());
+          (ipv6Server as { closeAllConnections?: () => void }).closeAllConnections?.();
+        });
+      }
+      await rm(serverPortRecord, { force: true });
     },
   };
 }

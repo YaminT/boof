@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   localBranchExists,
   git,
@@ -8,6 +8,7 @@ import {
   leftoversBranch,
   pathExists,
   registeredWorktreeBranch,
+  repoCommonDir,
   canonical,
   untrackedFiles,
   untrackedPatch,
@@ -29,6 +30,9 @@ export interface Worktree {
   branch: string;
   /** Base revision the worktree was branched from (for diffing). */
   base: string;
+  /** Trusted runner record used to check mutable .git metadata before every server git call. */
+  commonDir?: string;
+  worktreeName?: string;
 }
 
 /** Timeout for checkout-sized git calls (worktree add/remove, add -A): slow on a big repository. */
@@ -93,6 +97,9 @@ export async function createWorktree(
   const hasPath = await pathExists(path);
   const hasBranch = await localBranchExists(workingDir, branch);
   const baseIgnored = !!opts.base && (hasPath || hasBranch);
+  const commonDir = await repoCommonDir(workingDir);
+  if (!commonDir) throw new Error(`git common dir is unavailable for ${workingDir}`);
+  const trustedGit = { commonDir: await realpath(commonDir), worktreeName: basename(path) };
 
   if (hasPath) {
     if ((await registeredWorktreeBranch(workingDir, path)) !== branch) {
@@ -101,7 +108,10 @@ export async function createWorktree(
           `Refusing to touch it; move or remove it manually.`,
       );
     }
-    const wt = meta ?? { path, branch, base: await mergeBase(workingDir, branch) };
+    const wt = {
+      ...(meta ?? { path, branch, base: await mergeBase(workingDir, branch) }),
+      ...trustedGit,
+    };
     await writeMeta(root, taskId, wt);
     return { worktree: wt, reused: true, baseIgnored };
   }
@@ -148,7 +158,7 @@ export async function createWorktree(
         : `git worktree add failed: ${add.err || add.out}`,
     );
   }
-  const wt = { path, branch, base };
+  const wt = { path, branch, base, ...trustedGit };
   await writeMeta(root, taskId, wt);
   return { worktree: wt, reused: hasBranch, baseIgnored };
 }
@@ -255,25 +265,29 @@ export interface InlineDiff {
  */
 export async function diffAgainstBase(wt: Worktree, maxInlineBytes = 120000): Promise<InlineDiff> {
   // Include both committed and uncommitted changes relative to base.
-  const stat = await git(wt.path, [
+  const stat = await checkedWorktreeGit(wt, [
     "diff",
     "--no-ext-diff",
     "--no-textconv",
     `${wt.base}`,
     "--stat",
   ]);
-  const full = await git(wt.path, [
+  const full = await checkedWorktreeGit(wt, [
     "--no-pager",
     "diff",
     "--no-ext-diff",
     "--no-textconv",
     wt.base,
   ]);
+  await verifyWorktreeRecord(wt);
   const names = await untrackedFiles(wt.path);
-  const rev = await git(wt.path, ["rev-parse", wt.base]);
+  const rev = await checkedWorktreeGit(wt, ["rev-parse", wt.base]);
   const baseSha = rev.code === 0 && rev.out ? rev.out : wt.base;
   const patches: string[] = [];
-  for (const p of names) patches.push((await untrackedPatch(wt.path, p)).trimEnd());
+  for (const p of names) {
+    await verifyWorktreeRecord(wt);
+    patches.push((await untrackedPatch(wt.path, p)).trimEnd());
+  }
   const untrackedText = patches.filter(Boolean).join("\n");
   const bytes = Buffer.byteLength(full.out) + Buffer.byteLength(untrackedText);
   const untrackedBlock = names.length ? "## Untracked files\n" + names.join("\n") : "";
@@ -314,7 +328,7 @@ export async function commitLeftovers(
   wt: Worktree,
   title: string,
 ): Promise<LeftoversResult | null> {
-  const status = await git(wt.path, ["status", "--porcelain"]);
+  const status = await checkedWorktreeGit(wt, ["status", "--porcelain"]);
   if (status.code !== 0) throw new Error(`git status failed: ${status.err || status.out}`);
   if (!status.out) return null;
 
@@ -323,7 +337,7 @@ export async function commitLeftovers(
   try {
     const env = { GIT_INDEX_FILE: join(tmp, "index") };
     const run = async (args: string[], timeoutMs?: number): Promise<string> => {
-      const res = await git(wt.path, args, env, timeoutMs);
+      const res = await checkedWorktreeGit(wt, args, env, timeoutMs);
       if (res.code !== 0) throw new Error(`git ${args[0]} failed: ${res.err || res.out}`);
       return res.out;
     };
@@ -365,8 +379,8 @@ export async function commitLeftovers(
 
     // Fresh machines and CI may have no committer identity configured.
     const ident =
-      (await git(wt.path, ["var", "GIT_COMMITTER_IDENT"])).code === 0 &&
-      (await git(wt.path, ["var", "GIT_AUTHOR_IDENT"])).code === 0;
+      (await checkedWorktreeGit(wt, ["var", "GIT_COMMITTER_IDENT"])).code === 0 &&
+      (await checkedWorktreeGit(wt, ["var", "GIT_AUTHOR_IDENT"])).code === 0;
     const identArgs = ident
       ? []
       : ["-c", "user.name=boof-runner", "-c", "user.email=boof-runner@localhost"];
@@ -422,10 +436,15 @@ export async function finalizeWorktree(
   title: string,
   policy: DonePolicy = "keep-branch",
 ): Promise<string[]> {
+  try {
+    await verifyWorktreeRecord(wt);
+  } catch (err) {
+    return [`Kept worktree ${wt.path}: ${err instanceof Error ? err.message : String(err)}`];
+  }
   if (policy === "delete") return deleteWork(workingDir, wt, "onDone=delete");
 
   // A detached or switched HEAD would leave commits unreferenced once the directory is removed.
-  const head = await git(wt.path, ["symbolic-ref", "--quiet", "HEAD"]);
+  const head = await checkedWorktreeGit(wt, ["symbolic-ref", "--quiet", "HEAD"]);
   if (head.code !== 0 || head.out !== `refs/heads/${wt.branch}`) {
     return [`Kept worktree ${wt.path}: HEAD is not on ${wt.branch} (${head.out || "detached"})`];
   }
@@ -462,6 +481,62 @@ export async function finalizeWorktree(
   }
   lines.push(`Removed worktree directory ${wt.path} (branch ${wt.branch} kept)`);
   return lines;
+}
+
+async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
+  if (!wt.commonDir || !wt.worktreeName) {
+    throw new Error("task worktree is missing its trusted git record");
+  }
+  const dotGit = join(wt.path, ".git");
+  const dotInfo = await lstat(dotGit).catch(() => null);
+  if (!dotInfo?.isFile() || dotInfo.isSymbolicLink()) {
+    throw new Error("task worktree .git entry was altered");
+  }
+  const match = /^gitdir:\s*(.+)\s*$/.exec((await readFile(dotGit, "utf8")).trim());
+  if (!match?.[1]) throw new Error("task worktree .git file was altered");
+  const admin = await realpath(resolve(wt.path, match[1])).catch(() => null);
+  const expected = await realpath(join(wt.commonDir, "worktrees", wt.worktreeName)).catch(
+    () => null,
+  );
+  if (!admin || admin !== expected)
+    throw new Error("task worktree gitdir differs from the runner record");
+  const commonFile = join(admin, "commondir");
+  const commonInfo = await lstat(commonFile).catch(() => null);
+  if (!commonInfo?.isFile() || commonInfo.isSymbolicLink())
+    throw new Error("task worktree commondir was altered");
+  const common = await realpath(resolve(admin, (await readFile(commonFile, "utf8")).trim())).catch(
+    () => null,
+  );
+  if (common !== wt.commonDir)
+    throw new Error("task worktree commondir differs from the runner record");
+  const backref = join(admin, "gitdir");
+  const backInfo = await lstat(backref).catch(() => null);
+  if (!backInfo?.isFile() || backInfo.isSymbolicLink())
+    throw new Error("task worktree admin gitdir was altered");
+  const registered = await realpath(resolve(admin, (await readFile(backref, "utf8")).trim())).catch(
+    () => null,
+  );
+  if (registered !== (await realpath(dotGit)))
+    throw new Error("task worktree admin gitdir differs from the runner record");
+}
+
+async function checkedWorktreeGit(
+  wt: Worktree,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+  timeoutMs?: number,
+): Promise<Awaited<ReturnType<typeof git>>> {
+  await verifyWorktreeRecord(wt);
+  const trustedEnv = {
+    ...process.env,
+    ...env,
+    GIT_DIR: join(wt.commonDir!, "worktrees", wt.worktreeName!),
+    GIT_COMMON_DIR: wt.commonDir!,
+    GIT_WORK_TREE: wt.path,
+    GIT_INDEX_FILE:
+      env?.GIT_INDEX_FILE ?? join(wt.commonDir!, "worktrees", wt.worktreeName!, "index"),
+  };
+  return git(wt.path, args, trustedEnv, timeoutMs);
 }
 
 /** Delete a failed task's directory and branch (settings.worktree.onFailure=delete). Never throws. */
