@@ -12,7 +12,8 @@
     "check:staged-app": "node scripts/check-staged-app.mjs",
     "dist": "npm run stage && electron-builder --publish never",
     "dist:mac": "npm run stage && electron-builder --mac --publish never",
-    "dist:win": "npm run stage && electron-builder --win --publish never"
+    "dist:win": "npm run stage && electron-builder --win --publish never",
+    "dist:linux": "npm run stage && electron-builder --linux --publish never"
   },
   "dependencies": {
     "@boof/boof": "*",

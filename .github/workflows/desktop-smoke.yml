@@ -1,0 +1,129 @@
+name: Desktop start smoke
+
+# Manual run, and on every release tag. The Linux leg builds the AppImage and starts
+# it with --appimage-extract-and-run under xvfb. macOS and Windows start the staged app.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to smoke (for example v0.4.0-beta.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Start on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            launch: staged
+          - os: windows-latest
+            name: Windows
+            launch: staged
+          - os: ubuntu-latest
+            name: Linux
+            launch: appimage
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Version from the tag
+        run: bash scripts/release-version.sh "$TAG" >> "$GITHUB_ENV"
+
+      - name: Build and stage desktop
+        run: |
+          npm run desktop:build
+          npm run stage -w @boof/desktop
+
+      - name: Require clean staged desktop scan
+        run: npm run check:staged-app -w @boof/desktop
+
+      - name: Build the Linux AppImage
+        if: matrix.launch == 'appimage'
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          npm exec --workspace @boof/desktop -- electron-builder --linux --publish never
+
+      - name: Install a virtual display and the Electron libraries
+        if: matrix.launch == 'appimage'
+        run: |
+          sudo apt-get update
+          # Ubuntu 24.04 renamed several libraries with a t64 suffix. 26.04 may
+          # offer either name. Pick whichever the cache knows.
+          pick() {
+            if apt-cache show "$1" >/dev/null 2>&1; then printf '%s\n' "$1"
+            else printf '%s\n' "$2"; fi
+          }
+          sudo apt-get install -y --no-install-recommends \
+            xvfb \
+            libnss3 \
+            libxss1 \
+            libxtst6 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libgbm1 \
+            libdrm2 \
+            libxkbcommon0 \
+            libpango-1.0-0 \
+            libcairo2 \
+            "$(pick libgtk-3-0t64 libgtk-3-0)" \
+            "$(pick libatk1.0-0t64 libatk1.0-0)" \
+            "$(pick libatk-bridge2.0-0t64 libatk-bridge2.0-0)" \
+            "$(pick libatspi2.0-0t64 libatspi2.0-0)" \
+            "$(pick libasound2t64 libasound2)" \
+            "$(pick libcups2t64 libcups2)"
+
+      - name: Start desktop and check health
+        env:
+          BOOF_SMOKE_LAUNCH: ${{ matrix.launch }}
+          BOOF_SMOKE_EXPECTED_VERSION: ${{ env.TAG }}
+          BOOF_SMOKE_USER_DATA: ${{ runner.temp }}/boof-desktop-smoke
+          HOME: ${{ runner.temp }}/boof-desktop-smoke-home
+          USERPROFILE: ${{ runner.temp }}/boof-desktop-smoke-home
+        run: |
+          if [[ "${{ matrix.launch }}" == "appimage" ]]; then
+            export BOOF_SMOKE_EXPECT_KEYRING_FALLBACK=1
+            xvfb-run -a node packages/desktop/scripts/desktop-smoke.mjs
+          else
+            node packages/desktop/scripts/desktop-smoke.mjs
+          fi
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-${{ matrix.name }}
+          path: .desktop-smoke/
+          if-no-files-found: warn

@@ -20,6 +20,42 @@ export function shutdownGraceMs(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_GRACE_MS;
 }
 
+/**
+ * Logged when the desktop key cannot be kept in the OS secret store. The window then signs
+ * in with a browser session (see createWindowAuth). The text is part of the startup contract.
+ */
+export const SAFE_STORAGE_FALLBACK_WARNING =
+  "safeStorage unavailable: the desktop UI uses a browser session set by the app";
+
+/**
+ * Chromium's Linux backends that are a real keyring. `basic_text` is a hardcoded key
+ * (no keyring, or `--password-store=basic`). `unknown` means the backend was not ready.
+ */
+const LINUX_KEYRING_BACKENDS: ReadonlySet<string> = new Set([
+  "gnome_libsecret",
+  "kwallet",
+  "kwallet5",
+  "kwallet6",
+]);
+
+/**
+ * Whether the desktop API key may be stored with safeStorage.
+ * macOS and Windows trust Electron's encryption check (Keychain, DPAPI).
+ * Linux without a keyring still reports encryption available when the backend is
+ * `basic_text`. That key is not a secret, so the app uses the browser-session fallback
+ * instead of writing `desktop-ui.key`.
+ */
+export function desktopKeyringAvailable(input: {
+  platform: string;
+  encryptionAvailable: boolean;
+  /** `safeStorage.getSelectedStorageBackend()` on Linux. Ignored on other platforms. */
+  backend?: string | null;
+}): boolean {
+  if (!input.encryptionAvailable) return false;
+  if (input.platform !== "linux") return true;
+  return LINUX_KEYRING_BACKENDS.has(input.backend ?? "");
+}
+
 export interface QuitDeps {
   engine: () => Pick<RunnerEngine, "shutdown"> | null;
   server: () => Pick<RunningServer, "stop"> | null;
