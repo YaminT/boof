@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/audit.h>
@@ -19,6 +20,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <time.h>
 #include <linux/openat2.h>
 #include <unistd.h>
 
@@ -664,6 +668,74 @@ static void apply_seccomp(void) {
     failf("seccomp: %s", strerror(errno));
 }
 
+static int process_children(pid_t parent, pid_t **out) {
+  char path[128];
+  snprintf(path, sizeof path, "/proc/%ld/task/%ld/children", (long)parent, (long)parent);
+  FILE *file = fopen(path, "r");
+  if (file == NULL) return -1;
+  pid_t *pids = NULL;
+  size_t len = 0, cap = 0;
+  long value;
+  while (fscanf(file, "%ld", &value) == 1) {
+    if (value <= 1 || value == getpid()) continue;
+    if (len == cap) {
+      size_t next_cap = cap == 0 ? 8 : cap * 2;
+      pid_t *next = realloc(pids, next_cap * sizeof *pids);
+      if (next == NULL) {
+        free(pids);
+        fclose(file);
+        return -1;
+      }
+      pids = next;
+      cap = next_cap;
+    }
+    pids[len++] = (pid_t)value;
+  }
+  int failed = ferror(file);
+  if (fclose(file) != 0) failed = 1;
+  if (failed) {
+    free(pids);
+    return -1;
+  }
+  *out = pids;
+  return (int)len;
+}
+
+static void kill_process_tree(pid_t pid) {
+  pid_t *children = NULL;
+  int count = process_children(pid, &children);
+  if (count > 0) {
+    for (int i = 0; i < count; i++) kill_process_tree(children[i]);
+  }
+  free(children);
+  (void)kill(pid, SIGKILL);
+}
+
+/* PR_SET_CHILD_SUBREAPER makes orphaned setsid/double-fork descendants our children. */
+static void kill_and_reap_descendants(void) {
+  for (;;) {
+    pid_t *children = NULL;
+    int count = process_children(getpid(), &children);
+    if (count < 0) {
+      free(children);
+      /* Keep the helper alive if procfs cannot enumerate the sandbox. */
+      struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
+      nanosleep(&delay, NULL);
+      continue;
+    }
+    if (count == 0) {
+      free(children);
+      while (waitpid(-1, NULL, WNOHANG) > 0) {}
+      return;
+    }
+    for (int i = 0; i < count; i++) kill_process_tree(children[i]);
+    free(children);
+    while (waitpid(-1, NULL, WNOHANG) > 0) {}
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
+    nanosleep(&delay, NULL);
+  }
+}
+
 static int policy_fd_arg(const char *text) {
   if (text == NULL || text[0] < '1' || text[0] > '9') return -1;
   char *end = NULL;
@@ -723,6 +795,8 @@ int main(int argc, char **argv) {
   close(fd);
   parse_policy(buf, len);
 
+  if (prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0)
+    failf("child subreaper: %s", strerror(errno));
   apply_landlock(landlock_abi());
   apply_seccomp();
 
@@ -731,7 +805,18 @@ int main(int argc, char **argv) {
   free(arena);
   arena = NULL;
 
-  execvp(argv[4], &argv[4]);
-  failf("exec %s: %s", argv[4], strerror(errno));
+  pid_t child = fork();
+  if (child < 0) failf("fork: %s", strerror(errno));
+  if (child == 0) {
+    execvp(argv[4], &argv[4]);
+    failf("exec %s: %s", argv[4], strerror(errno));
+  }
+  int status;
+  while (waitpid(child, &status, 0) < 0) {
+    if (errno != EINTR) failf("waitpid: %s", strerror(errno));
+  }
+  kill_and_reap_descendants();
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
   return 126;
 }

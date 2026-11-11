@@ -596,6 +596,28 @@ describe.skipIf(process.platform !== "linux")("boof-sandbox", () => {
     expect(doubleConnect.stdout).toBe("connect EACCES\n");
   });
 
+  it("kills and reaps a setsid daemon when the sandboxed step exits", async () => {
+    await tree();
+    const pidFile = join(work, "daemon.pid");
+    const result = await run(basePolicy([]), [probe, "orphan-sleep", pidFile]);
+    expect(result.code).toBe(0);
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(Number.isInteger(pid)).toBe(true);
+    expect(pid).toBeGreaterThan(1);
+    try {
+      for (let i = 0; i < 100 && existsSync(`/proc/${pid}`); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(existsSync(`/proc/${pid}`)).toBe(false);
+    } finally {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already reaped */
+      }
+    }
+  });
+
   it("exits 126 when a readWrite path is missing and does not exec", async () => {
     const missing = join(tmpdir(), `boof-sandbox-missing-${process.pid}`);
     const marker = join(tmpdir(), `boof-sandbox-marker-${process.pid}`);

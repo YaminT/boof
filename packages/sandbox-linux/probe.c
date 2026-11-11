@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -526,6 +527,33 @@ static void op_setsid(const char *mode, const char *arg) {
   waitpid(pid, NULL, 0);
 }
 
+static void op_orphan_sleep(const char *pid_path) {
+  int ready[2];
+  if (pipe(ready) != 0) return;
+  pid_t pid = fork();
+  if (pid < 0) return;
+  if (pid == 0) {
+    close(ready[0]);
+    if (setsid() < 0) _exit(2);
+    FILE *file = fopen(pid_path, "w");
+    if (file == NULL) _exit(3);
+    fprintf(file, "%ld\n", (long)getpid());
+    fclose(file);
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+    ssize_t wrote = write(ready[1], "x", 1);
+    (void)wrote;
+    close(ready[1]);
+    for (;;) sleep(60);
+  }
+  close(ready[1]);
+  char byte;
+  ssize_t got = read(ready[0], &byte, 1);
+  (void)got;
+  close(ready[0]);
+}
+
 static int pipe_cloexec(int fds[2]) {
 #if defined(__linux__)
   return pipe2(fds, O_CLOEXEC);
@@ -673,6 +701,7 @@ int main(int argc, char **argv) {
   else if (strcmp(cmd, "signal") == 0 && argc == 3) op_signal(argv[2]);
   else if (strcmp(cmd, "setsid-read") == 0 && argc == 3) op_setsid("read", argv[2]);
   else if (strcmp(cmd, "setsid-connect4") == 0 && argc == 3) op_setsid("connect4", argv[2]);
+  else if (strcmp(cmd, "orphan-sleep") == 0 && argc == 3) op_orphan_sleep(argv[2]);
   else if (strcmp(cmd, "double-read") == 0 && argc == 3) op_double("read", argv[2]);
   else if (strcmp(cmd, "double-connect4") == 0 && argc == 3) op_double("connect4", argv[2]);
 #if defined(__linux__)
