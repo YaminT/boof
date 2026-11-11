@@ -192,9 +192,6 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
   const lines = [
     "(version 1)",
     "(deny default)",
-    // `process-exec*` covers interpreter execution on some Seatbelt versions, but the
-    // base operation is needed for ordinary execve/execvp on current macOS runners.
-    "(allow process-exec)",
     "(allow process-exec*)",
     "(allow process-fork)",
     "(allow process-info* (target same-sandbox))",
@@ -281,14 +278,9 @@ export function planDarwinSandbox(
   const bin = darwinSandboxExecPath();
   if (!existsSync(bin)) throw new SandboxUnavailableError("sandbox-exec is missing");
   const childEnv: NodeJS.ProcessEnv = { ...(env ?? process.env), ...launch.policy.env };
-  const spawnArgs = ["-p", profile, command, ...args];
-  if (process.env.BOOF_DEBUG_SEATBELT_PROFILE === "1" && !seatbeltTraceUsed) {
-    seatbeltTraceUsed = true;
-    spawnArgs.unshift("-t", `${process.env.RUNNER_TEMP ?? "/tmp"}/seatbelt.trace`);
-  }
   return {
     command: bin,
-    args: spawnArgs,
+    args: ["-p", profile, command, ...args],
     env: childEnv,
     stdio: ["pipe", "pipe", "pipe", "pipe"],
     deliver(child: SandboxChild) {
@@ -301,5 +293,3 @@ export function planDarwinSandbox(
     },
   };
 }
-
-let seatbeltTraceUsed = false;

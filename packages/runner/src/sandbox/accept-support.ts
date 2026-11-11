@@ -16,7 +16,6 @@ import {
 import { createWorktree, type Worktree } from "../worktree.js";
 import { prepareAgentLaunch, type SandboxSettingsView } from "./index.js";
 import { createRunTemp, type AgentLaunchContext } from "./runtime.js";
-import { renderSeatbeltProfile } from "./backend-darwin.js";
 
 export const linux = process.platform === "linux";
 export const darwin = process.platform === "darwin";
@@ -223,10 +222,6 @@ export async function sandboxed(
   );
   const launch = await prepareAgentLaunch({ runner: { sandbox: fx.settings } }, fx.ctx);
   if (launch.kind !== "sandbox") throw new Error("expected a sandbox launch");
-  if (darwin && process.env.BOOF_DEBUG_SEATBELT_PROFILE === "1" && !profileLogged) {
-    profileLogged = true;
-    console.error(`SEATBELT PROFILE FOR ${fx.probe}\n${renderSeatbeltProfile(launch.policy)}`);
-  }
   return execCommand(command, args, {
     cwd: opts.cwd ?? fx.wt.path,
     launch,
@@ -234,8 +229,6 @@ export async function sandboxed(
     timeoutMs: opts.timeoutMs ?? 20_000,
   });
 }
-
-let profileLogged = false;
 
 export function runProbe(fx: AcceptFixture, args: string[]): Promise<ExecResult> {
   return sandboxed(fx, fx.probe, args);

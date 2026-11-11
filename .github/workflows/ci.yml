@@ -119,21 +119,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Diagnose sandbox-exec baseline
-        run: |
-          /usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/sh -c true
-          cc -O2 -Wall -Wextra -Werror -o "$RUNNER_TEMP/seatbelt-probe" packages/sandbox-linux/probe.c
-          /usr/bin/sandbox-exec -p '(version 1)(allow default)' "$RUNNER_TEMP/seatbelt-probe" read /etc/hostname
-          /usr/bin/sandbox-exec -p '(version 1)(deny default)(allow process-exec*)(allow file-read*)' "$RUNNER_TEMP/seatbelt-probe" read /etc/hostname
-
       - name: Sandbox acceptance
         env:
           BOOF_REQUIRE_SANDBOX: "1"
-          BOOF_DEBUG_SEATBELT_PROFILE: "1"
         run: npx vitest run packages/runner/src/sandbox/accept-files.test.ts packages/runner/src/sandbox/accept-net.test.ts packages/runner/src/sandbox/accept-proc.test.ts packages/runner/src/sandbox/accept.test.ts packages/runner/src/sandbox/accept-gate.test.ts packages/runner/src/sandbox/accept-task.test.ts
-
-      - name: Diagnose Seatbelt denials
-        if: always()
-        run: |
-          log show --last 5m --style compact --predicate 'eventMessage CONTAINS[c] "deny"' 2>&1 | tail -300
-          if [ -f "$RUNNER_TEMP/seatbelt.trace" ]; then head -400 "$RUNNER_TEMP/seatbelt.trace"; fi
