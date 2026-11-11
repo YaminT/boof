@@ -94,6 +94,14 @@ describe("SDDL access lists", () => {
     expect(aclNeedsTighten([], me)).toBe(true);
   });
 
+  it("rejects inherit-only grants to Users and Everyone on a root", () => {
+    for (const principal of ["BU", "WD"]) {
+      const parsed = parseIcaclsSave(`data\nD:(A;OICIIO;FA;;;${principal})\n`);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(aclNeedsTighten(parsed.aces, me)).toBe(true);
+    }
+  });
+
   it("accepts an inherited full-control ACE for the current user on a child, and nothing else", () => {
     const folder = parseIcaclsSave("child\nD:AI(A;OICIID;FA;;;S-1-5-21-1)\n");
     const file = parseIcaclsSave("child\nD:AI(A;ID;FA;;;S-1-5-21-1)\n");

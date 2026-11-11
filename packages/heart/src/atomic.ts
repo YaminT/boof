@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { rename, open, rm, mkdir, readFile, link, unlink, copyFile } from "node:fs/promises";
+import { rename, open, rm, mkdir, readFile, link, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /**
@@ -47,6 +47,8 @@ export interface AtomicWriteOptions {
   sync?: boolean;
   /** Test hook: replaces link(2) for the exclusive publish. */
   linkFn?: typeof link;
+  /** Test hook: replaces rename(2) for the normal publish. */
+  renameFn?: typeof rename;
   /** Test hook: replaces the in-place write of the "wx" fallback (used without hard links). */
   fallbackWrite?: (fh: FileHandle, contents: string) => Promise<void>;
 }
@@ -80,6 +82,7 @@ export async function atomicWrite(
     exclusive,
     sync = true,
     linkFn = link,
+    renameFn = rename,
     fallbackWrite,
   } = typeof opts === "number" ? { mode: opts } : (opts ?? {});
   const dir = dirname(path);
@@ -119,7 +122,7 @@ export async function atomicWrite(
     } else {
       // Windows antivirus and an open reader return EPERM/EBUSY for a moment on replace.
       // The temp file is still the only copy until rename succeeds, so retry the same publish.
-      await renameReplacing(tmp, path);
+      await renameReplacing(tmp, path, renameFn);
     }
   } catch (err) {
     await rm(tmp, { force: true });
@@ -154,13 +157,13 @@ function replaceDenied(err: unknown): boolean {
 /**
  * Publish `from` as `to`. A Windows scanner or directory watcher can refuse the rename for a
  * moment, or keep the destination's directory entry open. The temp file is already complete.
- * After a few denied renames, copy it onto the destination instead of failing the write.
+ * After a few denied renames, fail the write: copying would expose a partial destination on crash.
  */
-async function renameReplacing(from: string, to: string): Promise<void> {
+async function renameReplacing(from: string, to: string, renameFn: typeof rename): Promise<void> {
   let last: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await rename(from, to);
+      await renameFn(from, to);
       return;
     } catch (err) {
       last = err;
@@ -169,21 +172,6 @@ async function renameReplacing(from: string, to: string): Promise<void> {
         continue;
       }
       break;
-    }
-  }
-  if (process.platform === "win32" && replaceDenied(last)) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        await copyFile(from, to);
-        await unlink(from).catch(() => {});
-        return;
-      } catch (err) {
-        if (replaceDenied(err) && attempt < 2) {
-          await new Promise((r) => setTimeout(r, 25));
-          continue;
-        }
-        throw err;
-      }
     }
   }
   throw last;

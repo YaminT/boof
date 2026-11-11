@@ -118,6 +118,7 @@ export class ProjectStore {
   private readonly lockOpts: ProcessLockOptions;
   /** Overlapping `list` calls share one directory read. Event streams list projects together. */
   private listFlight: Promise<(Project | null)[]> | null = null;
+  private listGeneration = 0;
 
   constructor(
     private readonly root: string,
@@ -146,15 +147,16 @@ export class ProjectStore {
 
   private loadProjects(): Promise<(Project | null)[]> {
     if (this.listFlight) return this.listFlight;
+    const generation = this.listGeneration;
     const flight = (async () => {
       let names: string[] = [];
       try {
         const entries = await readdir(dataRootPaths(this.root).projects, { withFileTypes: true });
         names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
       } catch {
-        return [];
+        names = [];
       }
-      return Promise.all(
+      const projects = await Promise.all(
         names.sort().map(async (name) => {
           try {
             return await this.get(name);
@@ -163,12 +165,19 @@ export class ProjectStore {
           }
         }),
       );
+      return generation === this.listGeneration ? projects : this.loadProjects();
     })();
     this.listFlight = flight;
     void flight.finally(() => {
       if (this.listFlight === flight) this.listFlight = null;
     });
     return flight;
+  }
+
+  /** Invalidate shared reads after a project mutation; stale readers retry against disk. */
+  private invalidateListFlight(): void {
+    this.listGeneration += 1;
+    this.listFlight = null;
   }
 
   /** The project, or null when it does not exist. Throws InvalidIdError for a non-kebab id. */
@@ -507,6 +516,7 @@ export class ProjectStore {
       }
       wrote = true; // only now is project.json ours to remove
       await this.ensureDirs(id);
+      this.invalidateListFlight();
       return project;
     } catch (err) {
       if (wrote && id !== undefined) {
@@ -548,6 +558,7 @@ export class ProjectStore {
       next.updated = nowIso();
       const project = ProjectSchema.parse(next);
       await withFileLock(path, () => atomicWrite(path, JSON.stringify(project, null, 2) + "\n"));
+      this.invalidateListFlight();
       return project;
     });
   }
@@ -579,8 +590,10 @@ export class ProjectStore {
     if (await this.hasRunningTask(id)) {
       throw new ProjectError("has_running_task", `Project ${id} has a running task`);
     }
-    if (opts.purge) await rm(this.dir(id), { recursive: true, force: true });
-    else await this.archive(id);
+    if (opts.purge) {
+      await rm(this.dir(id), { recursive: true, force: true });
+      this.invalidateListFlight();
+    } else await this.archive(id);
   }
 
   /** True when a registered project (archived too) works in `dir`; its directory must not be deleted. */

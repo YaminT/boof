@@ -254,8 +254,8 @@ export function aclNeedsTighten(
       continue;
     }
     if (benign) continue;
-    // Inherit-only does not grant access to this folder.
-    if (ace.allow && !ace.inheritOnly) return true;
+    // Even inherit-only grants matter on a root: future children inherit them.
+    if (ace.allow) return true;
   }
   return !userWrite;
 }

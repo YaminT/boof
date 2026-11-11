@@ -53,6 +53,37 @@ afterEach(async () => {
 });
 
 describe("ProjectStore", () => {
+  it("retries a list read that overlapped a project update", async () => {
+    const dir = await makeRepo("list-flight");
+    const project = await store.create({ workingDirectory: dir });
+    const originalGet = store.get.bind(store);
+    let unblock!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>((resolve) => (unblock = resolve));
+    const started = new Promise<void>((resolve) => (entered = resolve));
+    let first = true;
+    const getSpy = vi.spyOn(store, "get").mockImplementation(async (id) => {
+      const result = await originalGet(id);
+      if (first) {
+        first = false;
+        entered();
+        await blocked;
+      }
+      return result;
+    });
+
+    try {
+      const listing = store.list();
+      await started;
+      await store.update(project.id, { paused: true });
+      unblock();
+      expect((await listing).find((item) => item.id === project.id)?.paused).toBe(true);
+    } finally {
+      unblock();
+      getSpy.mockRestore();
+    }
+  });
+
   it("creates a project: realpath, derived id and name, status directories, project.json", async () => {
     const dir = await makeRepo("My App");
     const link = join(base, "link");
