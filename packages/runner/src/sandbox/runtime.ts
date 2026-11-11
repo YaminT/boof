@@ -382,7 +382,19 @@ async function chmodPrivateDir(path: string): Promise<void> {
 }
 
 async function mkdirNoSymlinkRecursive(path: string): Promise<void> {
-  const absolute = resolve(path);
+  let absolute = resolve(path);
+  // macOS exposes temporary directories through the standard /var and /tmp aliases.
+  // Resolve only those OS-owned prefixes; managed components below them stay no-follow.
+  for (const alias of ["/var", "/tmp"]) {
+    if (absolute !== alias && !absolute.startsWith(`${alias}${sep}`)) continue;
+    const info = await lstat(alias).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") return null;
+      throw err;
+    });
+    if (info?.isSymbolicLink()) {
+      absolute = resolve(await realpath(alias), relative(alias, absolute));
+    }
+  }
   let current: string = sep;
   for (const segment of absolute.split(sep).filter(Boolean)) {
     current = join(current, segment);
