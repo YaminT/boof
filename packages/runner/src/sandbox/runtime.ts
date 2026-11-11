@@ -509,6 +509,11 @@ export async function buildRunPolicy(
   const sandbox = settings.runner.sandbox;
   const dataRoot = await realDir(ctx.dataRoot);
   const livePort = ctx.serverPort ?? (await liveServerPort(dataRoot, env));
+  const configuredPort = Number(env.BOOF_RUNNER_PORT ?? "4319");
+  if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65535) {
+    throw new SandboxUnavailableError("configured boof server port is invalid; refusing sandbox launch");
+  }
+  const protectedPorts = [...new Set([4319, configuredPort, ...(livePort ? [livePort] : [])])];
   const home = await realDir(userHome(env));
   const writableRoot = await realDir(ctx.writableRoot);
   const tempDir = await realDir(ctx.runTempDir);
@@ -540,7 +545,7 @@ export async function buildRunPolicy(
     dataRoot,
     home,
     serverRunning: livePort !== undefined,
-    boofPorts: livePort !== undefined ? [livePort] : [],
+    boofPorts: protectedPorts,
     readPaths: await configuredPaths(sandbox.readPaths, "read path"),
     writePaths: await configuredPaths(sandbox.writePaths, "write path"),
     denyTcpPorts: sandbox.denyTcpPorts,
@@ -621,7 +626,11 @@ async function liveServerPort(
   try {
     process.kill(pid, 0);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") return undefined;
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+      // A stale pid does not make its port safe. Probe it and keep denying it either way.
+      await portIsListening((record as { port: number }).port);
+      return (record as { port: number }).port;
+    }
   }
   return (record as { port: number }).port;
 }

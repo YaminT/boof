@@ -324,7 +324,7 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(main.readExec).not.toContain(common);
     expect(main.readWrite).not.toContain(join(common!, "objects"));
     expect(main.readWrite).not.toContain(join(common!, "refs", "heads", "boof-runner"));
-    expect(main.denyTcpPorts).toEqual([]);
+    expect(main.denyTcpPorts).toEqual([4319, 1]);
   });
 
   it("refuses an agent planted tool-state symlink before chmod or policy construction", async () => {
@@ -349,6 +349,19 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     );
     const policy = await buildRunPolicy({ runner: { sandbox: sandboxSettings } }, fx.ctx);
     expect(policy.denyTcpPorts).toContain(43817);
+  });
+
+  it("always denies default, configured, and stale recorded server ports", async () => {
+    const fx = await fixture(false);
+    await writeFile(
+      join(fx.data, ".server-port"),
+      JSON.stringify({ pid: 2_147_483_647, port: 43818 }),
+    );
+    const policy = await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...fx.ctx, env: { ...fx.env, BOOF_RUNNER_PORT: "43819" } },
+    );
+    expect(policy.denyTcpPorts).toEqual([4319, 43819, 43818]);
   });
 
   it("blocks the configured server port when a legacy server has no port record", async () => {
