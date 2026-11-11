@@ -95,7 +95,10 @@ sandboxSuite("sandbox acceptance: mock task and layer 1", () => {
       };
       await store.create(newTask(fm(), "Build the feature."));
       const result = await engine.tick();
-      expect(result.kind).toBe("ran");
+      if (result.kind !== "ran") {
+        const failed = await store.get("t1");
+        expect(result.kind, failed?.body.log ?? JSON.stringify(result)).toBe("ran");
+      }
       if (result.kind === "ran") expect(result.outcome.kind).toBe("done");
       const done = await store.get("t1");
       expect(done?.frontmatter.status).toBe("done");

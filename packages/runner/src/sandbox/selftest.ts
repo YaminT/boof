@@ -210,7 +210,10 @@ interface CanarySpec {
  * Tests inject a probe list instead of calling this.
  */
 async function runCanary(opts: CanarySpec): Promise<SelfTestProbeResult[]> {
-  const scratch = await mkdtemp(join(tmpdir(), "boof-sandbox-canary-"));
+  // realpath so the canary's paths match the grant. On macOS tmpdir() is
+  // /var/folders, whose real path is /private/var/folders; Seatbelt matches
+  // the spelling the syscall presents, and the profile allows both.
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "boof-sandbox-canary-")));
   const insideDir = join(scratch, "inside");
   const outsideDir = join(scratch, "outside");
   const dataDir = join(scratch, "data");
@@ -317,10 +320,15 @@ export async function runDarwinProbes(opts: {
   env: NodeJS.ProcessEnv;
   sandboxExec: string;
 }): Promise<SelfTestProbeResult[]> {
-  const nodeDir = dirname(await realpath(process.execPath));
-  const prefix = dirname(nodeDir);
-  const roots = [...DARWIN_SYSTEM_ROOTS, nodeDir];
-  if (prefix !== "/" && prefix !== nodeDir) roots.push(prefix);
+  const realNode = await realpath(process.execPath);
+  const nodeDirs = [dirname(process.execPath), dirname(realNode)];
+  const roots = [...DARWIN_SYSTEM_ROOTS];
+  for (const dir of nodeDirs) {
+    if (!roots.includes(dir)) roots.push(dir);
+    const prefix = dirname(dir);
+    // The Node prefix holds the binary's sibling libraries. Never grant `/`.
+    if (prefix !== "/" && prefix !== dir && !roots.includes(prefix)) roots.push(prefix);
+  }
   return runCanary({
     helper: opts.sandboxExec,
     readRoots: roots,

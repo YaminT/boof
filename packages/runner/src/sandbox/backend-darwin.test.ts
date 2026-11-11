@@ -18,7 +18,11 @@ describe("renderSeatbeltProfile", () => {
   it("denies by default and grants paths with subpath", () => {
     const text = profile();
     expect(text.startsWith("(version 1)\n(deny default)\n")).toBe(true);
-    expect(text).toContain("(allow process-exec)\n");
+    expect(text).toContain("(allow process-exec*)\n");
+    expect(text).toContain("(allow dynamic-code-generation)\n");
+    expect(text).toContain('(allow file-read-data (literal "/"))\n');
+    expect(text).not.toContain('(subpath "/")');
+    expect(text).not.toContain("(allow process*)\n");
     expect(text).toContain("(allow process-fork)\n");
     expect(text).toContain("(allow signal (target same-sandbox))\n");
     expect(text).toContain("(allow sysctl-read)\n");
@@ -62,6 +66,23 @@ describe("renderSeatbeltProfile", () => {
 
   it("quotes a path that contains a space", () => {
     expect(profile({ readWrite: ["/tmp/my dir"] })).toContain('(subpath "/tmp/my dir")');
+  });
+
+  it("grants both spellings of a /var, /tmp or /etc path without widening the root", () => {
+    const text = profile({
+      readExec: ["/private/etc", "/tmp/tool"],
+      readWrite: ["/private/var/folders/abc/work"],
+    });
+    expect(text).toContain('(subpath "/private/etc")');
+    expect(text).toContain('(subpath "/etc")');
+    expect(text).toContain('(subpath "/tmp/tool")');
+    expect(text).toContain('(subpath "/private/tmp/tool")');
+    expect(text).toContain('(subpath "/private/var/folders/abc/work")');
+    expect(text).toContain('(subpath "/var/folders/abc/work")');
+    expect(text).not.toContain('(subpath "/var")\n');
+    expect(text).not.toContain('(subpath "/private/var")\n');
+    expect(text).not.toContain('(subpath "/tmp")\n');
+    expect(text).not.toContain('(subpath "/private/tmp")\n');
   });
 
   it.each([

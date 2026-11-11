@@ -26,6 +26,17 @@ import {
  * - `file-map-executable` is global. dyld maps the shared cache through that check, and
  *   mapping does not grant file bytes. Directory metadata is global so a lookup can walk
  *   ancestors; listing a directory and reading a file still need a granted subpath.
+ *   The root inode is the exception: dyld reads `/` itself while resolving the first
+ *   component, and a literal read of `/` does not reveal anything under it.
+ * - `/tmp`, `/var` and `/etc` are symlinks to `/private/tmp`, `/private/var` and
+ *   `/private/etc`. Seatbelt matches the path the syscall presents, so a grant of one
+ *   spelling misses the other. Each granted path is emitted under both spellings. The
+ *   alias keeps the same suffix (`/private/var/folders/x` and `/var/folders/x`), so it
+ *   is the same directory and not a wider root.
+ * - `process-exec*` covers the binary and a shebang interpreter. It does not replace
+ *   the file-read check: a binary outside a granted path is still unreadable, so it
+ *   cannot be executed. `dynamic-code-generation` is V8's MAP_JIT. Without it the
+ *   Node canary is killed and `enforce` never starts.
  * - Mach lookup is a fixed list a CLI needs to start. The Security Server and `securityd`
  *   are not on it: that is the Keychain, and opening it opens all of it.
  * - `sysctl-read` is unfiltered. A short name list misses `hw.*` names current macOS shells
@@ -136,8 +147,40 @@ function sbplQuote(value: string): string {
   return `"${value}"`;
 }
 
+/** Symlink roots Seatbelt does not collapse. The two spellings are one directory. */
+const SYMLINK_ROOTS: ReadonlyArray<readonly [string, string]> = [
+  ["/private/var", "/var"],
+  ["/private/tmp", "/tmp"],
+  ["/private/etc", "/etc"],
+];
+
+function aliasPath(path: string, from: string, to: string): string | null {
+  if (path === from) return to;
+  if (path.startsWith(`${from}/`)) return to + path.slice(from.length);
+  return null;
+}
+
+/** The path as granted, plus the other spelling when it sits under a symlink root. */
+function seatbeltPathSpellings(path: string): string[] {
+  const out = [path];
+  for (const [canonical, link] of SYMLINK_ROOTS) {
+    const alias = aliasPath(path, canonical, link) ?? aliasPath(path, link, canonical);
+    if (alias && !out.includes(alias)) out.push(alias);
+  }
+  return out;
+}
+
 function subpaths(paths: readonly string[]): string[] {
-  return paths.map((path) => `  (subpath ${sbplQuote(path)})`);
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const path of paths) {
+    for (const spelling of seatbeltPathSpellings(path)) {
+      if (seen.has(spelling)) continue;
+      seen.add(spelling);
+      lines.push(`  (subpath ${sbplQuote(spelling)})`);
+    }
+  }
+  return lines;
 }
 
 /**
@@ -149,12 +192,13 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
   const lines = [
     "(version 1)",
     "(deny default)",
-    "(allow process-exec)",
+    "(allow process-exec*)",
     "(allow process-fork)",
     "(allow process-info* (target same-sandbox))",
     "(allow signal (target same-sandbox))",
     "(allow mach-priv-task-port (target same-sandbox))",
     "(allow file-map-executable)",
+    "(allow dynamic-code-generation)",
     "(allow sysctl-read)",
     '(allow sysctl-write (sysctl-name "kern.tcsm_enable"))',
     "(allow user-preference-read)",
@@ -173,6 +217,7 @@ export function renderSeatbeltProfile(policy: SandboxLaunchPolicy): string {
     "(allow system-socket (socket-domain AF_INET6))",
     "(allow system-socket (socket-domain AF_UNIX))",
     "(allow file-read-metadata (vnode-type DIRECTORY))",
+    '(allow file-read-data (literal "/"))',
     '(allow file-ioctl (literal "/dev/dtracehelper"))',
   ];
   if (checked.readExec.length > 0) {

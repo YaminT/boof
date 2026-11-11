@@ -106,7 +106,13 @@ sandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
       const abstractResult = await runProbe(fx, ["abstract", name]);
       expect(pathResult.code, pathResult.stderr).toBe(0);
       expect(pathResult.stdout).toBe("unix EPERM\n");
-      expect(abstractResult.stdout).toBe("abstract EPERM\n");
+      if (darwin) {
+        // macOS has no abstract namespace, so the kernel rejects the address
+        // before a connect can succeed. Seatbelt may also return EPERM.
+        expect(abstractResult.stdout).toMatch(/^abstract (?!ok\b)\S+\n$/);
+      } else {
+        expect(abstractResult.stdout).toBe("abstract EPERM\n");
+      }
       expect(accepted).toBe(0);
     } finally {
       pathServer.close();
