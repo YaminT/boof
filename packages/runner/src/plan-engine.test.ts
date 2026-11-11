@@ -48,7 +48,8 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-planeng-data-"));
   workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-planeng-work-")));
-  const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);

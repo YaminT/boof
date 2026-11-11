@@ -85,7 +85,7 @@ async function disableAudit(root: string): Promise<void> {
 async function gitRepo(parent: string, name: string): Promise<string> {
   const dir = join(parent, name);
   await mkdir(dir, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: dir });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: dir });
   return realpath(dir);
 }
 

@@ -25,7 +25,10 @@ let wtRoot: string;
 const V1 = "/api/v1";
 const call = (path: string, init: RequestInit = {}) => app.request("http://localhost" + path, init);
 const g = (cwd: string, args: string[]) =>
-  execCommand("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd });
+  execCommand("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    launch: { kind: "direct" },
+    cwd,
+  });
 const diffUrl = (id: string, qs = "") => `${V1}/projects/demo/tasks/${id}/diff${qs}`;
 
 async function mkTask(title: string): Promise<string> {

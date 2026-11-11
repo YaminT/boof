@@ -9,6 +9,7 @@ import { execCommand, killWindowsProcessTree, MAX_ARG_STRLEN } from "./process.j
 describe("execCommand", () => {
   it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {
     const res = await execCommand("true", ["ok", "x".repeat(MAX_ARG_STRLEN)], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       timeoutMs: 5000,
     });
@@ -17,7 +18,12 @@ describe("execCommand", () => {
       `argument 2 is ${MAX_ARG_STRLEN} bytes, over the ${MAX_ARG_STRLEN}-byte limit of one argument (E2BIG)`,
     );
     expect(
-      (await execCommand("true", ["x".repeat(MAX_ARG_STRLEN - 1)], { cwd: process.cwd() })).code,
+      (
+        await execCommand("true", ["x".repeat(MAX_ARG_STRLEN - 1)], {
+          launch: { kind: "direct" },
+          cwd: process.cwd(),
+        })
+      ).code,
     ).toBe(0);
   });
 
@@ -29,6 +35,7 @@ describe("execCommand", () => {
       // 8 MB is far more than a pipe buffer, so the write is still pending when
       // `true` exits; before the fix this raised an uncaught EPIPE.
       const res = await execCommand("true", [], {
+        launch: { kind: "direct" },
         cwd: process.cwd(),
         input: "x".repeat(8 * 1024 * 1024),
         timeoutMs: 10000,
@@ -57,6 +64,7 @@ describe("execCommand", () => {
       // The shell prints the pid of a background grandchild, then waits on it.
       let out = "";
       const running = execCommand("sh", ["-c", "sleep 60 & echo $!; wait"], {
+        launch: { kind: "direct" },
         cwd: dir,
         steerSignalPath: steer,
         stopPollMs: 20,
@@ -86,6 +94,7 @@ describe("execCommand", () => {
       await writeFile(stop, "x\n");
       await writeFile(steer, "x\n");
       const both = await execCommand("sleep", ["60"], {
+        launch: { kind: "direct" },
         cwd: dir,
         stopSignalPath: stop,
         steerSignalPath: steer,
@@ -93,7 +102,11 @@ describe("execCommand", () => {
       });
       expect(both.stopped).toBe(true);
       expect(both.steered).toBe(false);
-      const none = await execCommand("true", [], { cwd: dir, steerSignalPath: steer + "-x" });
+      const none = await execCommand("true", [], {
+        launch: { kind: "direct" },
+        cwd: dir,
+        steerSignalPath: steer + "-x",
+      });
       expect(none.steered).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -106,6 +119,7 @@ describe("execCommand", () => {
       const pidFilePath = join(dir, "control", "pid");
       const stop = join(dir, "control", "stop");
       const running = execCommand(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        launch: { kind: "direct" },
         cwd: dir,
         pidFilePath,
         stopSignalPath: stop,
@@ -122,7 +136,7 @@ describe("execCommand", () => {
       expect(res.stopped).toBe(true);
       expect(existsSync(pidFilePath)).toBe(false);
       // A child that finishes on its own leaves no file either.
-      await execCommand("true", [], { cwd: dir, pidFilePath });
+      await execCommand("true", [], { launch: { kind: "direct" }, cwd: dir, pidFilePath });
       expect(existsSync(pidFilePath)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -193,7 +207,7 @@ describe("execCommand", () => {
     const res = await execCommand(
       "git",
       ["status"],
-      { cwd: process.cwd(), timeoutMs: 1000 },
+      { launch: { kind: "direct" }, cwd: process.cwd(), timeoutMs: 1000 },
       { spawn },
     );
     expect(res.code).toBe(1);
@@ -220,7 +234,13 @@ describe("execCommand", () => {
       const res = await execCommand(
         "git",
         ["status"],
-        { cwd: dir, stopSignalPath: stop, stopPollMs: 10, timeoutMs: 1000 },
+        {
+          launch: { kind: "direct" },
+          cwd: dir,
+          stopSignalPath: stop,
+          stopPollMs: 10,
+          timeoutMs: 1000,
+        },
         {
           platform: "win32",
           spawn,
@@ -268,7 +288,13 @@ describe("execCommand", () => {
       const res = await execCommand(
         "git",
         ["status"],
-        { cwd: dir, stopSignalPath: stop, stopPollMs: 10, timeoutMs: 1000 },
+        {
+          launch: { kind: "direct" },
+          cwd: dir,
+          stopSignalPath: stop,
+          stopPollMs: 10,
+          timeoutMs: 1000,
+        },
         {
           platform: "win32",
           spawn,
@@ -304,7 +330,13 @@ describe("execCommand", () => {
       const running = execCommand(
         "git",
         ["status"],
-        { cwd: dir, stopSignalPath: stop, stopPollMs: 500, timeoutMs: 10_000 },
+        {
+          launch: { kind: "direct" },
+          cwd: dir,
+          stopSignalPath: stop,
+          stopPollMs: 500,
+          timeoutMs: 10_000,
+        },
         { platform: "win32", spawn, windowsKill: { table, killList } },
       );
       await vi.advanceTimersByTimeAsync(500);
@@ -378,7 +410,13 @@ describe("execCommand", () => {
       const running = execCommand(
         "git",
         ["status"],
-        { cwd: dir, stopSignalPath: stop, stopPollMs: 500, timeoutMs: 60_000 },
+        {
+          launch: { kind: "direct" },
+          cwd: dir,
+          stopSignalPath: stop,
+          stopPollMs: 500,
+          timeoutMs: 60_000,
+        },
         { platform: "win32", spawn, windowsKill: { table, killList } },
       );
       await vi.advanceTimersByTimeAsync(500);
@@ -430,7 +468,13 @@ describe("execCommand", () => {
       const running = execCommand(
         "git",
         ["status"],
-        { cwd: dir, stopSignalPath: stop, stopPollMs: 500, timeoutMs: 60_000 },
+        {
+          launch: { kind: "direct" },
+          cwd: dir,
+          stopSignalPath: stop,
+          stopPollMs: 500,
+          timeoutMs: 60_000,
+        },
         { platform: "win32", spawn, windowsKill: { table, killList } },
       );
       await vi.advanceTimersByTimeAsync(500);
@@ -472,7 +516,7 @@ describe("execCommand", () => {
       const running = execCommand(
         "git",
         ["status"],
-        { cwd: process.cwd(), timeoutMs: 1_000 },
+        { launch: { kind: "direct" }, cwd: process.cwd(), timeoutMs: 1_000 },
         { platform: "win32", spawn, windowsKill: { table, killList } },
       );
       await vi.advanceTimersByTimeAsync(1_000);

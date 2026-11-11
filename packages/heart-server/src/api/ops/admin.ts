@@ -3,6 +3,7 @@ import {
   authorizeProject,
   hasScope,
   parseDuration,
+  sandboxStatusFor,
   SettingsPatchSchema,
   settingsVersion,
   TokenUsageSchema,
@@ -321,6 +322,12 @@ export const runnerStatus = defineOp({
     /** The account pool (absent when settings.owlish is not set). */
     pool: PoolStatusSchema,
     agentAuth: AgentAuthStatusSchema,
+    sandbox: z.object({
+      mode: z.enum(["off", "enforce"]),
+      backend: z.enum(["none", "linux", "darwin"]),
+      state: z.enum(["off", "ok", "unavailable"]),
+      reason: z.string(),
+    }),
   }),
   rest: { method: "GET", path: "/runner" },
   mcp: { expose: true, name: "boof_get_runner", annotations: READ },
@@ -336,6 +343,7 @@ export const runnerStatus = defineOp({
       agentAuth: await ctx.services.agentAuthStatus((pid: string) =>
         authorizeProject(ctx.principal, pid),
       ),
+      sandbox: sandboxStatusFor(runner.sandbox, process.platform),
     };
   },
 });

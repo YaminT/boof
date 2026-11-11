@@ -20,7 +20,8 @@ import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 let repo: string;
 let nonRepo: string;
 
-const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+const g = (args: string[]) =>
+  execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
 
 /** A linked worktree with its own branch, made with plain git (no Runner lifecycle code). */
 const addWorktree = async (name: string) => {
@@ -75,7 +76,9 @@ describe("git queries", () => {
   it("pruneStaleWorktrees rejects when git exits non-zero", async () => {
     // A git shim on PATH that fails `worktree prune` and forwards everything else.
     const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+    const real = (
+      await execCommand("which", ["git"], { launch: { kind: "direct" }, cwd: repo })
+    ).stdout.trim();
     await writeFile(
       join(shim, "git"),
       `#!/bin/sh\ncase " $* " in *" worktree prune "*) echo boom >&2; exit 3;; esac\nexec ${real} "$@"\n`,
@@ -94,7 +97,7 @@ describe("git queries", () => {
   it("repoCommonDir is shared by a checkout, its subdirectory and linked worktrees only", async () => {
     const other = await mkdtemp(join(tmpdir(), "boof-other-"));
     try {
-      await execCommand("git", ["init", "-q"], { cwd: other });
+      await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: other });
       const main = await repoCommonDir(repo);
       expect(main).toBeTruthy();
       expect(await repoCommonDir(other)).not.toBe(main);
@@ -121,7 +124,12 @@ describe("initGitRepo", () => {
   let base: string;
   let env: NodeJS.ProcessEnv;
   const gitIn = (dir: string, args: string[]) =>
-    execCommand("git", args, { cwd: dir, timeoutMs: 15000, env: { ...process.env, ...env } });
+    execCommand("git", args, {
+      launch: { kind: "direct" },
+      cwd: dir,
+      timeoutMs: 15000,
+      env: { ...process.env, ...env },
+    });
   const count = async (dir: string) =>
     (await gitIn(dir, ["rev-list", "--count", "HEAD"])).stdout.trim();
 
@@ -426,7 +434,9 @@ describe("agent-planted git config does not run server-side", () => {
   async function withListingShim(body: string, fn: (ran: string) => Promise<void>): Promise<void> {
     const shim = await mkdtemp(join(tmpdir(), "boof-gitshim-"));
     const ran = join(shim, "ran");
-    const real = (await execCommand("which", ["git"], { cwd: repo })).stdout.trim();
+    const real = (
+      await execCommand("which", ["git"], { launch: { kind: "direct" }, cwd: repo })
+    ).stdout.trim();
     await writeFile(
       join(shim, "git"),
       `#!/bin/sh\ncase " $* " in\n  *" --get-regexp "*)\n${body}\n    ;;\nesac\ntouch '${ran}'\nexec '${real}' "$@"\n`,

@@ -23,6 +23,7 @@ export class OpencodeTool implements Tool {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
     const res = await execCommand(this.bin, ["--version"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       timeoutMs: 8000,
       env: agentEnv(),
@@ -32,6 +33,7 @@ export class OpencodeTool implements Tool {
     }
     const model = (await this.listModels())[0] ?? this.defaultModels[0];
     const probe = await execCommand(this.bin, ["run", "-m", model, "Reply with exactly: hi"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       env: agentEnv(),
       timeoutMs: 90000,
@@ -53,6 +55,7 @@ export class OpencodeTool implements Tool {
   async listModels(): Promise<string[]> {
     if (!(await commandExists(this.bin))) return [...this.defaultModels];
     const res = await execCommand(this.bin, ["models"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       timeoutMs: 20000,
       env: agentEnv(),
@@ -112,6 +115,7 @@ export class OpencodeTool implements Tool {
     // process.env.PWD ?? process.cwd()`), and v2 has no `--dir`. The worktree has to win over a
     // `PWD` inherited from the server (`runner.agentEnv` can name it).
     const res = await execCommand(this.bin, args, {
+      launch: opts.launch ?? { kind: "direct" },
       cwd: opts.cwd,
       env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway), PWD: opts.cwd },
       input: this.promptText(opts),

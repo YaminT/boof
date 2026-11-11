@@ -77,7 +77,8 @@ async function disableAudit(root: string): Promise<void> {
 async function gitRepo(parent: string, name: string, commit = false): Promise<string> {
   const dir = join(parent, name);
   await mkdir(dir, { recursive: true });
-  const git = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+  const git = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
   await git(["init", "-q", "-b", "main"]);
   if (commit) {
     await git(["config", "user.email", "t@e.com"]);

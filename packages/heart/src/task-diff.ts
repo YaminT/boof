@@ -101,6 +101,7 @@ async function git(cwd: string, args: string[]) {
     30000,
   );
   const res = await execCommand("git", prepared.args, {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs: 30000,
     env: prepared.env,

@@ -4,6 +4,7 @@ import {
   RunnerEngine,
   ToolRegistry,
   defaultTools,
+  refreshSandbox,
 } from "@boof/runner";
 import type { ConciergeAgent, Settings } from "@boof/heart";
 import {
@@ -85,6 +86,7 @@ export async function boot(opts: BootOptions): Promise<Booted> {
     catalog: registry,
     conciergeAgent,
     runnerRunning: () => engine !== null,
+    refreshSandbox: (settings) => refreshSandbox(settings, {}, { force: true }).then(() => {}),
   });
   await onServer?.(server);
   try {

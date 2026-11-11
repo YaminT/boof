@@ -31,7 +31,7 @@ const send = (method: string, body?: unknown): RequestInit => ({
 
 async function gitDir(prefix: string) {
   const d = await realpath(await mkdtemp(join(tmpdir(), prefix)));
-  await execCommand("git", ["init", "-q"], { cwd: d });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: d });
   return d;
 }
 

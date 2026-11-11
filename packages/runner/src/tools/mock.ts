@@ -219,6 +219,7 @@ export class MockTool implements Tool {
     if (stalls < stallFirst) {
       mockState.stallCounts.set(opts.role, stalls + 1);
       const res = await execCommand(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+        launch: opts.launch ?? { kind: "direct" },
         cwd: opts.cwd,
         idleTimeoutMs: opts.idleTimeoutMs,
         stopSignalPath: opts.stopSignalPath,

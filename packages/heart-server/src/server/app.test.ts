@@ -35,7 +35,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-runner-web-"));
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-repo-")));
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
   await service.projects.create({ workingDirectory: repo, id: "default" });
   app = createApp({
@@ -97,10 +97,13 @@ describe("POST /api/v1/projects", () => {
     await execCommand(
       "git",
       ["-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i"],
-      { cwd: repo },
+      { launch: { kind: "direct" }, cwd: repo },
     );
     const linked = `${repo}-linked`;
-    await execCommand("git", ["worktree", "add", "-q", "-b", "wt", linked], { cwd: repo });
+    await execCommand("git", ["worktree", "add", "-q", "-b", "wt", linked], {
+      launch: { kind: "direct" },
+      cwd: repo,
+    });
     const res = await req("/api/v1/projects", json({ workingDirectory: linked }));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatchObject({
@@ -706,7 +709,8 @@ void taskFilePath;
 
 describe("project registration prunes stale worktrees", () => {
   const stale = async (dir: string, name: string) => {
-    const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+    const g = (args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
     await g(["config", "user.email", "t@e.com"]);
     await g(["config", "user.name", "T"]);
     await g(["commit", "--allow-empty", "-q", "-m", "init"]);
@@ -720,7 +724,7 @@ describe("project registration prunes stale worktrees", () => {
 
   it("on create and on unarchive, without a runner restart", async () => {
     const other = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-other-")));
-    await execCommand("git", ["init", "-q"], { cwd: other });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: other });
     const list = await stale(other, "gone");
     const created = await req("/api/v1/projects", json({ workingDirectory: other, id: "other" }));
     expect(created.status).toBe(201);

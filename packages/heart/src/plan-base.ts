@@ -16,6 +16,7 @@ async function git(cwd: string, args: string[]): Promise<ExecResult | null> {
   try {
     const prepared = await hardenedGitCommand(cwd, args, undefined, GIT_TIMEOUT_MS);
     return await execCommand("git", prepared.args, {
+      launch: { kind: "direct" },
       cwd,
       timeoutMs: GIT_TIMEOUT_MS,
       env: prepared.env,

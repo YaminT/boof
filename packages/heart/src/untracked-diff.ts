@@ -15,6 +15,7 @@ async function git(cwd: string, args: string[]) {
     GIT_TIMEOUT_MS,
   );
   return execCommand("git", prepared.args, {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs: GIT_TIMEOUT_MS,
     env: prepared.env,

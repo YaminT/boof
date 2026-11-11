@@ -111,7 +111,7 @@ async function readDriverOverrides(
     listed = await execCommand(
       "git",
       [...GIT_HARDENING_ARGS, "config", "--null", "--get-regexp", DRIVER_LIST_PATTERN],
-      { cwd, timeoutMs: listTimeout, env },
+      { launch: { kind: "direct" }, cwd, timeoutMs: listTimeout, env },
     );
   } catch (error) {
     throw new GitDriversUnreadError(error instanceof Error ? error.message : String(error));
@@ -154,6 +154,7 @@ export async function git(
 ): Promise<{ code: number | null; out: string; err: string; timedOut: boolean }> {
   const prepared = await hardenedGitCommand(cwd, args, env, timeoutMs);
   const res = await execCommand("git", prepared.args, {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs,
     env: prepared.env,

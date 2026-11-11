@@ -63,7 +63,8 @@ beforeEach(async () => {
   root = join(base, "data");
   repo = join(base, "repos", "shop");
   await mkdir(repo, { recursive: true });
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);

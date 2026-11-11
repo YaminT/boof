@@ -255,7 +255,11 @@ export function parseWhoamiCsv(stdout: string): AclPrincipal | null {
 }
 
 async function defaultRun(command: string, args: string[]): Promise<CommandResult> {
-  const res = await execCommand(command, args, { cwd: tmpdir(), timeoutMs: 15_000 });
+  const res = await execCommand(command, args, {
+    launch: { kind: "direct" },
+    cwd: tmpdir(),
+    timeoutMs: 15_000,
+  });
   return { code: res.code, stdout: res.stdout, stderr: res.stderr };
 }
 

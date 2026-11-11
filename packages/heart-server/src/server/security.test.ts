@@ -94,7 +94,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-runner-sec-"));
   service = new TaskService(root, new ToolRegistry([new MockTool()]));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-web-repo-")));
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await new SettingsStore(root).save({ ...defaultSettings(), defaultProject: "default" });
   await service.projects.create({ workingDirectory: repo, id: "default" });
   clock = Date.parse("2026-03-01T12:00:00Z");

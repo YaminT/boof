@@ -175,7 +175,7 @@ async function previousTaskBase(repoRoot: string, goalTasks: Task[]): Promise<st
       const res = await execCommand(
         "git",
         ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
-        { cwd: repoRoot, timeoutMs: 15000 },
+        { cwd: repoRoot, timeoutMs: 15000, launch: { kind: "direct" } },
       );
       if (res.code === 0 && res.stdout.trim()) return branch;
     } catch {

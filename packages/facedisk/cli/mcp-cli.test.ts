@@ -139,7 +139,7 @@ describe("boof-runner mcp over stdio", () => {
     const base = await mkdtemp(join(tmpdir(), "boof-mcp-pin-"));
     const repoDir = join(base, "repo");
     await mkdir(repoDir, { recursive: true });
-    await execCommand("git", ["init", "-q"], { cwd: repoDir });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repoDir });
     await new ProjectStore(root).create({ workingDirectory: repoDir, id: "shop" });
     try {
       const res = await runMcp(
@@ -225,7 +225,7 @@ describe("boof-runner mcp over stdio", () => {
     const elsewhere = join(base, "elsewhere");
     for (const d of [repoDir, elsewhere]) {
       await mkdir(d, { recursive: true });
-      await execCommand("git", ["init", "-q"], { cwd: d });
+      await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: d });
     }
     await new ProjectStore(root).create({ workingDirectory: repoDir, id: "shop" });
     const chain: [string, Record<string, unknown>][] = [

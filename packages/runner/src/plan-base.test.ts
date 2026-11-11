@@ -23,7 +23,8 @@ let tasks: TaskStore;
 let plans: PlanStore;
 
 const mock = { tool: "mock", model: "mock-default" };
-const git = (args: string[], cwd = workDir) => execCommand("git", args, { cwd, timeoutMs: 20000 });
+const git = (args: string[], cwd = workDir) =>
+  execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 20000 });
 
 beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-base-data-"));

@@ -25,6 +25,7 @@ export * from "./process-lock.js";
 export * from "./process-identity.js";
 export * from "./loopback-listener.js";
 export * from "./process.js";
+export * from "./sandbox-launch.js";
 export * from "./pid-file.js";
 export * from "./webhook-secrets.js";
 export * from "./n8n-secrets.js";

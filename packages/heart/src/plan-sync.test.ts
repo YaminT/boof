@@ -524,7 +524,8 @@ describe("buildGoalPrompt: goals without an automated test", () => {
 });
 
 describe("syncPlan: follow-up base and goal.tasks", () => {
-  const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const git = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   async function initRepo(): Promise<void> {
     await git(["init", "-b", "main"]);
     await git(["config", "user.email", "t@e.com"]);
@@ -575,7 +576,8 @@ describe("syncPlan: follow-up base and goal.tasks", () => {
 });
 
 describe("syncPlan: dependency base and follow-ups", () => {
-  const git = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const git = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   async function branchWithCommit(name: string): Promise<void> {
     await git(["checkout", "-q", "-b", name, "main"]);
     await git(["commit", "--allow-empty", "-m", name]);

@@ -62,7 +62,7 @@ async function snapshot(
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "boof-get-")));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-get-repo-")));
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await new SettingsStore(root).save(defaultSettings());
   spy = new SpyTool();
   service = new TaskService(root, new ToolRegistry([spy as Tool]));

@@ -66,7 +66,7 @@ beforeEach(async () => {
   for (const id of ["a", "b"]) {
     const repo = join(base, id);
     await mkdir(repo);
-    await execCommand("git", ["init", "-q"], { cwd: repo });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
     await service.projects.create({ workingDirectory: repo, id });
   }
   for (const k of Object.keys(dns)) delete dns[k];

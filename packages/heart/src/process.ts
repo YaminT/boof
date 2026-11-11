@@ -5,6 +5,12 @@ import { rm } from "node:fs/promises";
 import { basename } from "node:path";
 import { writePidFile } from "./pid-file.js";
 import {
+  SandboxUnavailableError,
+  sandboxApplier,
+  type CommandLaunch,
+  type SandboxSpawnPlan,
+} from "./sandbox-launch.js";
+import {
   killVerifiedAsync,
   processTableAsync,
   verifiedDescendants,
@@ -26,6 +32,11 @@ export interface ExecResult {
 
 export interface ExecOptions {
   cwd: string;
+  /**
+   * How this child is started. Required: a missing launch is a refusal, not an unsandboxed
+   * spawn. `direct` is today's spawn. `sandbox` is applied by the registered backend.
+   */
+  launch: CommandLaunch;
   input?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -166,6 +177,7 @@ export async function killWindowsProcessTree(
  * Spawn a child process scoped to `cwd`, capture stdout/stderr, optionally feed
  * stdin, and enforce a timeout. Portable across Bun + Node (node:child_process
  * works on both). Never throws on non-zero exit — the caller inspects `code`.
+ * A missing or refused sandbox launch rejects before any process is started.
  */
 export function execCommand(
   command: string,
@@ -173,7 +185,12 @@ export function execCommand(
   opts: ExecOptions,
   deps: ExecCommandDeps = {},
 ): Promise<ExecResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const launch = opts.launch as CommandLaunch | undefined;
+    if (!launch || (launch.kind !== "direct" && launch.kind !== "sandbox")) {
+      reject(new SandboxUnavailableError("spawn launch is missing"));
+      return;
+    }
     // Node's spawn rejects argv entries / stdin containing NUL bytes. Agent
     // output (a plan, a diff) gets fed into the next step's prompt and can carry
     // a stray NUL — strip them so a poisoned prompt doesn't crash the run.
@@ -193,19 +210,63 @@ export function execCommand(
     }
     const platform = deps.platform ?? process.platform;
     const spawnFn = deps.spawn ?? spawn;
-    // stdio is always three pipes, so stdout, stderr and stdin are present. The injected
+    let commandToRun = command;
+    let argsToRun = safeArgs;
+    let plan: SandboxSpawnPlan | undefined;
+    if (launch.kind === "sandbox") {
+      const apply = sandboxApplier();
+      if (!apply) {
+        reject(new SandboxUnavailableError("no sandbox backend is registered"));
+        return;
+      }
+      try {
+        plan = apply(launch, command, safeArgs, opts.env);
+        commandToRun = plan.command;
+        argsToRun = plan.args;
+      } catch (err) {
+        reject(sandboxRefusal(err));
+        return;
+      }
+    }
+    // Direct stdio is three pipes, so stdout, stderr and stdin are present. The injected
     // spawn's return type says so; Node's own overloads only see that on an object literal.
-    const child = spawnFn(command, safeArgs, {
-      cwd: opts.cwd,
-      env: opts.env ?? process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      // POSIX: own process group, so a stop kills the agent and everything it spawned.
-      // Windows has no groups. A stop kills verified children, then the root through this
-      // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
-      // (the desktop app) from opening a console for git or an agent.
-      detached: platform !== "win32",
-      windowsHide: true,
-    }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    // The sandbox adds a fourth pipe for the policy. The direct object stays as it is today.
+    let child: ChildProcessByStdio<Writable, Readable, Readable>;
+    if (plan) {
+      child = spawnFn(commandToRun, argsToRun, {
+        cwd: opts.cwd,
+        env: plan.env,
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        detached: platform !== "win32",
+        windowsHide: true,
+      }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      // A kill inside deliver must not surface as an unhandled error. The close path below
+      // is not attached yet, and a refused launch never attaches it.
+      child.on("error", () => {});
+      try {
+        plan.deliver(child);
+      } catch (err) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        reject(sandboxRefusal(err));
+        return;
+      }
+    } else {
+      child = spawnFn(command, safeArgs, {
+        cwd: opts.cwd,
+        env: opts.env ?? process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        // POSIX: own process group, so a stop kills the agent and everything it spawned.
+        // Windows has no groups. A stop kills verified children, then the root through this
+        // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
+        // (the desktop app) from opening a console for git or an agent.
+        detached: platform !== "win32",
+        windowsHide: true,
+      }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    }
     const pidWritten =
       opts.pidFilePath && child.pid
         ? writePidFile(opts.pidFilePath, { pgid: child.pid, command: basename(command) }).catch(
@@ -349,9 +410,19 @@ export function execCommand(
   });
 }
 
+function sandboxRefusal(err: unknown): SandboxUnavailableError {
+  return err instanceof SandboxUnavailableError
+    ? err
+    : new SandboxUnavailableError(err instanceof Error ? err.message : String(err));
+}
+
 /** Returns true if a command resolves on PATH (used by health checks). */
 export async function commandExists(command: string): Promise<boolean> {
   const probe = process.platform === "win32" ? "where" : "which";
-  const res = await execCommand(probe, [command], { cwd: process.cwd(), timeoutMs: 5000 });
+  const res = await execCommand(probe, [command], {
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+    launch: { kind: "direct" },
+  });
   return res.code === 0;
 }

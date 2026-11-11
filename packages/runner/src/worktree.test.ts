@@ -24,7 +24,8 @@ import {
 let repo: string;
 let nonRepo: string;
 
-const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+const g = (args: string[]) =>
+  execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
 
 const rootOf = () => join(repo, ".boof-runner-worktrees");
 const createWorktree = async (dir: string, id: string, opts?: Partial<WorktreeOptions>) =>
@@ -70,8 +71,16 @@ describe("worktree isolation", () => {
 
     // Make a change inside the worktree.
     await writeFile(join(wt.path, "feature.txt"), "new feature\n");
-    await execCommand("git", ["add", "."], { cwd: wt.path, timeoutMs: 10000 });
-    await execCommand("git", ["commit", "-m", "feat"], { cwd: wt.path, timeoutMs: 10000 });
+    await execCommand("git", ["add", "."], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    await execCommand("git", ["commit", "-m", "feat"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
 
     const diff = (await diffAgainstBase(wt)).text;
     expect(diff).toContain("feature.txt");
@@ -151,8 +160,16 @@ describe("worktree isolation", () => {
   it("re-creating a task whose branch exists reuses it and keeps its commits", async () => {
     const first = await createWorktree(repo, "t4");
     await writeFile(join(first.path, "prior.txt"), "prior\n");
-    await execCommand("git", ["add", "."], { cwd: first.path, timeoutMs: 10000 });
-    await execCommand("git", ["commit", "-m", "prior"], { cwd: first.path, timeoutMs: 10000 });
+    await execCommand("git", ["add", "."], {
+      launch: { kind: "direct" },
+      cwd: first.path,
+      timeoutMs: 10000,
+    });
+    await execCommand("git", ["commit", "-m", "prior"], {
+      launch: { kind: "direct" },
+      cwd: first.path,
+      timeoutMs: 10000,
+    });
     await finalizeWorktree(repo, first, "prior work");
     const sha = (await g(["rev-parse", "refs/heads/boof-runner/t4"])).stdout.trim();
     expect(await exists(first.path)).toBe(false);
@@ -192,7 +209,8 @@ describe("worktree isolation", () => {
   it("finalize keeps a worktree whose HEAD left the task branch", async () => {
     const wt = await createWorktree(repo, "t7");
     const sha = (await g(["rev-parse", "refs/heads/boof-runner/t7"])).stdout.trim();
-    const w = (args: string[]) => execCommand("git", args, { cwd: wt.path, timeoutMs: 15000 });
+    const w = (args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 15000 });
     await w(["checkout", "--detach"]);
     await writeFile(join(wt.path, "detached.txt"), "x\n");
     await w(["add", "-A"]);
@@ -225,7 +243,12 @@ describe("worktree isolation", () => {
 
     const bySha = await createWorktree(repo, "b2", { base: relSha });
     expect(bySha.base).toBe(relSha);
-    const headOf = (await execCommand("git", ["rev-parse", "HEAD"], { cwd: bySha.path })).stdout;
+    const headOf = (
+      await execCommand("git", ["rev-parse", "HEAD"], {
+        launch: { kind: "direct" },
+        cwd: bySha.path,
+      })
+    ).stdout;
     expect(headOf.trim()).toBe(relSha);
 
     const byDefault = await createWorktree(repo, "b3");
@@ -275,7 +298,7 @@ describe("worktree isolation", () => {
 
   describe("leftovers", () => {
     const w = (wt: { path: string }, args: string[]) =>
-      execCommand("git", args, { cwd: wt.path, timeoutMs: 15000 });
+      execCommand("git", args, { launch: { kind: "direct" }, cwd: wt.path, timeoutMs: 15000 });
 
     it("commitLeftovers leaves the task branch and worktree untouched", async () => {
       const wt = await createWorktree(repo, "l1");
@@ -345,7 +368,8 @@ describe("worktree isolation", () => {
     const nested = async (wt: { path: string }, name: string, commit: boolean) => {
       const dir = join(wt.path, name);
       await mkdir(dir, { recursive: true });
-      const run = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+      const run = (args: string[]) =>
+        execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
       await run(["init", "-b", "main"]);
       await writeFile(join(dir, "f.txt"), "f\n");
       if (commit) {
@@ -468,7 +492,9 @@ describe("worktree add timeout and cleanup", () => {
   /** A `git` that runs the real `worktree add`, deletes README.md from the new tree, then hangs or fails. */
   const shim = async (mode: "hang" | "fail") => {
     shimDir = await mkdtemp(join(tmpdir(), "boof-git-shim-"));
-    const real = (await execCommand("sh", ["-c", "command -v git"], { cwd: repo })).stdout.trim();
+    const real = (
+      await execCommand("sh", ["-c", "command -v git"], { launch: { kind: "direct" }, cwd: repo })
+    ).stdout.trim();
     await writeFile(
       join(shimDir, "git"),
       [

@@ -223,6 +223,7 @@ describe("exec cancellation", () => {
     try {
       setTimeout(() => void writeFile(stopPath, "stop\n"), 100);
       const res = await execCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        launch: { kind: "direct" },
         cwd: dir,
         timeoutMs: 5000,
         stopSignalPath: stopPath,
@@ -586,6 +587,7 @@ describe("execCommand idle watchdog", () => {
   it("kills a silent child and reports stalled", async () => {
     const started = Date.now();
     const res = await execCommand(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       idleTimeoutMs: 300,
     });
@@ -600,6 +602,7 @@ describe("execCommand idle watchdog", () => {
     const script =
       "console.log('ready');let n=0;const t=setInterval(()=>{console.log('tick');if(++n===8){clearInterval(t)}},100)";
     const res = await execCommand(process.execPath, ["-e", script], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       idleTimeoutMs: 2000,
     });
@@ -611,6 +614,7 @@ describe("execCommand idle watchdog", () => {
 
   it("is off by default", async () => {
     const res = await execCommand(process.execPath, ["-e", "setTimeout(()=>{},500)"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
     });
     expect(res.stalled).toBe(false);

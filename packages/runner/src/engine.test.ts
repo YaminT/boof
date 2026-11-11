@@ -42,6 +42,7 @@ import {
   isGitRepo,
   repoCommonDir,
   readEvents,
+  resetSandboxStatus,
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof/heart";
@@ -77,7 +78,7 @@ const exists = async (p: string) => {
 
 const wtPath = (id = "t1") => join(workDir, ".boof-runner-worktrees", id);
 const gitOut = (args: string[], cwd = workDir) =>
-  execCommand("git", args, { cwd, timeoutMs: 15000 });
+  execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 15000 });
 const writeIn = (opts: RunOptions, file: string, content = "x\n") =>
   writeFile(join(opts.cwd, file), content);
 const commitIn = async (opts: RunOptions, file: string) => {
@@ -111,7 +112,8 @@ beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-runner-data-"));
   workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-work-")));
   // Make workDir a git repo so worktree isolation engages.
-  const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -136,6 +138,7 @@ afterEach(async () => {
   await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
+  resetSandboxStatus();
 });
 
 describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
@@ -186,6 +189,47 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
         (e) => e.event.type === "runner.agent_auth_refused",
       ),
     ).toHaveLength(1);
+  });
+
+  it("fails an enforce task before any agent starts when the sandbox helper is missing, and does not retry it", async () => {
+    const prevHelper = process.env.BOOF_SANDBOX_HELPER;
+    const prevAbi = process.env.BOOF_SANDBOX_FAKE_ABI;
+    process.env.BOOF_SANDBOX_HELPER = "/no/such/boof-sandbox";
+    delete process.env.BOOF_SANDBOX_FAKE_ABI;
+    try {
+      const settings = new SettingsStore(dataRoot);
+      const current = await settings.load();
+      await settings.save({
+        ...current,
+        runner: {
+          ...current.runner,
+          sandbox: { ...current.runner.sandbox, mode: "enforce" },
+        },
+      });
+      await store.create(newTask(fm(), "Sandboxed work."));
+      const result = await engine.tick();
+      expect(result.kind).toBe("idle");
+      const task = await store.get("t1");
+      expect(task?.frontmatter.status).toBe("failed");
+      expect(task?.body.log).toContain("### Not started");
+      expect(task?.body.log).toContain("sandbox_unavailable: boof-sandbox helper is missing");
+      expect(mockState.calls).toEqual([]);
+      expect(await exists(wtPath("t1"))).toBe(false);
+      expect(
+        (await readEvents(dataRoot, null)).filter(
+          (e) => e.event.type === "runner.agent_auth_refused",
+        ),
+      ).toHaveLength(0);
+      await engine.tick();
+      expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+      expect(mockState.calls).toEqual([]);
+    } finally {
+      if (prevHelper === undefined) delete process.env.BOOF_SANDBOX_HELPER;
+      else process.env.BOOF_SANDBOX_HELPER = prevHelper;
+      if (prevAbi === undefined) delete process.env.BOOF_SANDBOX_FAKE_ABI;
+      else process.env.BOOF_SANDBOX_FAKE_ABI = prevAbi;
+      resetSandboxStatus();
+    }
   });
 
   it("an n8n check task is not touched by agent auth or an unavailable tool; a normal task still is", async () => {
@@ -1801,7 +1845,8 @@ const extraRepos: string[] = [];
 async function addProject(id: string): Promise<Extra> {
   const repo = await realpath(await mkdtemp(join(tmpdir(), `boof-runner-${id}-`)));
   extraRepos.push(repo);
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -2642,6 +2687,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
         cwd: opts.cwd,
         stopSignalPath: opts.stopSignalPath,
         stopPollMs: 25,
+        launch: opts.launch ?? { kind: "direct" },
       });
       clearInterval(watch);
       throw new ToolRunError("mock", res.code, res.timedOut, res.stopped, "stopped", res.stderr);

@@ -35,9 +35,11 @@ import {
   branchHead,
   currentBranch,
   isGitRepo,
+  SandboxUnavailableError,
   sumUsage,
   UsageStore,
 } from "@boof/heart";
+import { prepareAgentLaunch } from "./sandbox/index.js";
 import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
@@ -258,7 +260,15 @@ class PoolExhaustedError extends Error {
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true; authRefused?: true }
+  | {
+      kind: "failed";
+      task: Task;
+      error: string;
+      budget?: true;
+      pool?: true;
+      authRefused?: true;
+      sandbox?: true;
+    }
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
@@ -336,6 +346,7 @@ export class Pipeline {
     tool: Tool,
     opts: RunOptions,
   ): Promise<RunResult> {
+    const launch = prepareAgentLaunch(this.deps.settings);
     if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
@@ -452,6 +463,7 @@ export class Pipeline {
             throw new Error(POOL_AGENT_KEY_REQUIRED);
           const result = await tool.run({
             ...opts,
+            launch,
             model: stepModel,
             ...authOptions,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
@@ -1351,12 +1363,14 @@ export class Pipeline {
       const overBudget = err instanceof BudgetExceededError;
       const poolExhausted = err instanceof PoolExhaustedError;
       const authRefused = err instanceof AgentAuthRefusedError;
+      const sandboxUnavailable = err instanceof SandboxUnavailableError;
       const message =
         err instanceof ReviewNotApprovedError ||
         err instanceof ExternalStepFailedError ||
         overBudget ||
         poolExhausted ||
-        authRefused
+        authRefused ||
+        sandboxUnavailable
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -1379,7 +1393,8 @@ export class Pipeline {
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
           !stopped &&
           !keepForBudget &&
-          !authRefused
+          !authRefused &&
+          !sandboxUnavailable
         ) {
           for (const line of await discardWorktree(workingDirectory, worktree)) {
             await appendLog(line).catch(() => {});
@@ -1402,6 +1417,7 @@ export class Pipeline {
         ...(overBudget ? { budget: true as const } : {}),
         ...(poolExhausted ? { pool: true as const } : {}),
         ...(authRefused ? { authRefused: true as const } : {}),
+        ...(sandboxUnavailable ? { sandbox: true as const } : {}),
       };
     }
   }

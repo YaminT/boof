@@ -55,6 +55,11 @@ export interface StartServerOptions {
   webhookIntervalMs?: number;
   /** How often a server that is not delivering retries the dispatcher lock (default 5000 ms). */
   webhookLockRetryMs?: number;
+  /**
+   * Recompute the sandbox self-test. Called after settings load and when `runner.sandbox` changes.
+   * A failure must not stop the server: the gate reports `unavailable` and refuses agent starts.
+   */
+  refreshSandbox?: (settings: Settings) => Promise<void>;
 }
 
 export interface RunningServer {
@@ -119,8 +124,12 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const service = new TaskService(opts.root, opts.catalog, {
     conciergeAgent: opts.conciergeAgent,
     authStore,
+    refreshSandbox: opts.refreshSandbox,
   });
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
+  await opts.refreshSandbox?.(settings).catch((err) => {
+    warn(`sandbox self-test failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);
   await assertBindAllowed(host, settings, authStore);

@@ -1962,7 +1962,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_runner`
 - CLI: `boof-runner runner status`
 - What it does: Returns whether the runner is enabled and its concurrency. No input. No side effects.
-- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null } }`.
+- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, sandbox: { backend: "none" | "linux" | "darwin", mode: "off" | "enforce", reason: string, state: "off" | "ok" | "unavailable" } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/runner/status` (Runner and queue status)

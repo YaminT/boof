@@ -173,6 +173,13 @@ export interface RunnerStatus {
   enabled: boolean;
   concurrency: number;
   agentAuth: AgentAuthEntry[];
+  /** OS sandbox gate. The notice itself is drawn by a later task. */
+  sandbox?: {
+    mode: "off" | "enforce";
+    backend: "none" | "linux" | "darwin";
+    state: "off" | "ok" | "unavailable";
+    reason: string;
+  };
 }
 
 /**

@@ -13918,6 +13918,44 @@
                         "reason"
                       ],
                       "type": "object"
+                    },
+                    "sandbox": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "backend": {
+                          "enum": [
+                            "none",
+                            "linux",
+                            "darwin"
+                          ],
+                          "type": "string"
+                        },
+                        "mode": {
+                          "enum": [
+                            "off",
+                            "enforce"
+                          ],
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "enum": [
+                            "off",
+                            "ok",
+                            "unavailable"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "backend",
+                        "state",
+                        "reason"
+                      ],
+                      "type": "object"
                     }
                   },
                   "required": [
@@ -13925,7 +13963,8 @@
                     "concurrency",
                     "budgetExceeded",
                     "pool",
-                    "agentAuth"
+                    "agentAuth",
+                    "sandbox"
                   ],
                   "type": "object"
                 }

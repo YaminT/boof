@@ -873,10 +873,16 @@ export class TaskService {
     { signature: string; roles: Set<string> }
   >();
 
+  private readonly refreshSandboxHook?: (settings: Settings) => Promise<void>;
+
   constructor(
     readonly root: string,
     catalog: ToolCatalog,
-    opts: { conciergeAgent?: ConciergeAgent | null; authStore?: AuthStore } = {},
+    opts: {
+      conciergeAgent?: ConciergeAgent | null;
+      authStore?: AuthStore;
+      refreshSandbox?: (settings: Settings) => Promise<void>;
+    } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
     this.commands = new CommandStore(root);
@@ -891,6 +897,7 @@ export class TaskService {
     this.catalog = catalog;
     this.conciergeAgent = opts.conciergeAgent ?? null;
     this.authStore = opts.authStore ?? new AuthStore(root);
+    this.refreshSandboxHook = opts.refreshSandbox;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1756,6 +1763,11 @@ export class TaskService {
         type: "runner.enabled",
         value: next.runner.enabled,
         by: actor?.id ?? "local",
+      });
+    }
+    if (patch.runner?.sandbox) {
+      await this.refreshSandboxHook?.(next).catch((err) => {
+        console.error("sandbox self-test failed:", err);
       });
     }
     return next;

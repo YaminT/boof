@@ -50,7 +50,7 @@ beforeEach(async () => {
   root = join(base, "data");
   repo = join(base, "shop");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   out = [];
   errs = [];
   written = [];
