@@ -16,7 +16,7 @@ export function EpicHeader({
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const title = section.epic?.title ?? "No epic";
+  const title = section.label ?? section.epic?.title ?? "No epic";
   const Chevron = collapsed ? ChevronRightIcon : ChevronDownIcon;
   return (
     <button

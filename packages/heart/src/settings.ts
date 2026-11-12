@@ -16,6 +16,7 @@ import {
   WorktreeSettingsSchema,
   type ConciergeSettings,
   type McpSettings,
+  type OrchestrationProfile,
   type Project,
   type RetrySettings,
   type ReviewSettings,
@@ -95,6 +96,8 @@ export class SettingsStore {
 
   async save(settings: Settings): Promise<Settings> {
     const validated = SettingsSchema.parse(settings);
+    const inconsistent = profileConsistency(validated);
+    if (inconsistent) throw new Error(inconsistent);
     await lockedAtomicWrite(this.path, JSON.stringify(validated, null, 2) + "\n");
     return validated;
   }
@@ -104,7 +107,11 @@ export class SettingsStore {
    * merges per key too, so changing `mode` does not clear the path lists. `guard` runs on the
    * current settings under the same lock, before the merge: it throws to refuse the write.
    */
-  update(patch: SettingsUpdate, guard?: (current: Settings) => void): Promise<Settings> {
+  update(
+    patch: SettingsUpdate,
+    guard?: (current: Settings) => void,
+    validate?: (current: Settings, next: Settings) => void,
+  ): Promise<Settings> {
     return this.mutate((current) => {
       guard?.(current);
       const { runner, projectsRoot, owlish, ...rest } = patch;
@@ -118,6 +125,9 @@ export class SettingsStore {
       else if (owlish !== undefined) next.owlish = owlish;
       if (projectsRoot === null) delete next.projectsRoot;
       else if (projectsRoot !== undefined) next.projectsRoot = projectsRoot;
+      // `null` switches back to the plain roles.
+      if (next.activeProfile === null) delete next.activeProfile;
+      validate?.(current, next);
       return next;
     });
   }
@@ -165,10 +175,42 @@ function stripUndefined<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
+/** The profile a task resolves roles from: the project's choice, else the global active one. */
+export function activeProfileFor(
+  settings: Pick<Settings, "profiles" | "activeProfile">,
+  projectProfile?: string | null,
+): OrchestrationProfile | undefined {
+  const id = projectProfile ?? settings.activeProfile;
+  if (!id) return undefined;
+  return settings.profiles?.find((profile) => profile.id === id);
+}
+
 /**
- * Resolve the tool+model for a role: a per-task `tools` override wins over the
- * global `settings.roles` assignment (settings spec). The observer is optional,
- * so it resolves to undefined when unset in both places.
+ * Resolve a role with "off" kept: task `tools` override, then the project's own role override, then
+ * the profile (project's, else the active one), then `settings.roles`. A profile role of `null`
+ * returns `null` (the role is off). With no profiles this is exactly the 0.5.0 order. Pass settings
+ * from {@link effectiveSettings} so the project's choices apply.
+ */
+export function resolveRoleOrOff(
+  settings: Settings | EffectiveSettings,
+  task: Task,
+  role: Role,
+): RoleAssignment | null | undefined {
+  const own = task.frontmatter.tools?.[role];
+  if (own) return own;
+  const eff = settings as Partial<EffectiveSettings>;
+  const fromProject = eff.projectRoles?.[role];
+  if (fromProject) return fromProject;
+  const profile = activeProfileFor(settings, eff.projectProfile);
+  if (profile) return profile.roles[role];
+  return settings.roles[role];
+}
+
+/**
+ * Resolve the tool+model for a role. Callers written before profiles still get an assignment for
+ * the planner and reviewer, so a profile that turns one off is read there as the plain
+ * `settings.roles` one; use {@link resolveRoleOrOff} to see "off". The observer resolves to
+ * undefined when unset or off.
  */
 export function resolveRole(
   settings: Settings,
@@ -185,7 +227,10 @@ export function resolveRole(
   task: Task,
   role: Role,
 ): RoleAssignment | undefined {
-  return task.frontmatter.tools?.[role] ?? settings.roles[role];
+  return (
+    resolveRoleOrOff(settings, task, role) ??
+    (role === "observer" ? undefined : settings.roles[role])
+  );
 }
 
 /** Observer assignment (per-task override, then global), or undefined when unset. */
@@ -232,6 +277,10 @@ export function updatesSettings(settings: Settings): UpdatesSettings {
 export type EffectiveSettings = Settings & {
   workingDirectory: string;
   claudeAgent?: Project["claudeAgent"];
+  /** The project's own role overrides, kept apart so they beat a profile (see resolveRoleOrOff). */
+  projectRoles?: Project["roles"];
+  /** The project's chosen profile id, if any. */
+  projectProfile?: string;
 };
 
 /**
@@ -241,7 +290,11 @@ export type EffectiveSettings = Settings & {
 export function effectiveSettings(global: Settings, project: Project): EffectiveSettings {
   const merged: EffectiveSettings = { ...global, workingDirectory: project.workingDirectory };
   if (project.claudeAgent) merged.claudeAgent = project.claudeAgent;
-  if (project.roles) merged.roles = { ...global.roles, ...definedOnly(project.roles) };
+  if (project.profile) merged.projectProfile = project.profile;
+  if (project.roles) {
+    merged.projectRoles = project.roles;
+    merged.roles = { ...global.roles, ...definedOnly(project.roles) };
+  }
   if (project.review) merged.review = { ...global.review, ...definedOnly(project.review) } as never;
   if (project.worktree) {
     merged.worktree = { ...global.worktree, ...definedOnly(project.worktree) } as never;
@@ -274,4 +327,72 @@ export function resolveWorktreeRoot(
   if (root === "~") return homedir();
   if (root.startsWith("~/")) return join(homedir(), root.slice(2));
   return isAbsolute(root) ? root : resolve(workingDirectory, root);
+}
+
+/** What a settings write must satisfy beyond the schema; see {@link checkProfiles}. */
+export interface ProfileCheckContext {
+  /** Tool ids that exist; unknown ones are refused. Omit to skip the check. */
+  knownTools?: readonly string[];
+  /** Projects and the profile each one chose. */
+  projects: readonly { id: string; profile?: string }[];
+}
+
+/** Duplicate profile ids, or an `activeProfile` that does not exist; null when consistent. */
+export function profileConsistency(
+  settings: Pick<Settings, "profiles" | "activeProfile">,
+): string | null {
+  const ids = new Set<string>();
+  for (const profile of settings.profiles ?? []) {
+    if (ids.has(profile.id)) return `Duplicate profile id: ${profile.id}`;
+    ids.add(profile.id);
+  }
+  if (settings.activeProfile && !ids.has(settings.activeProfile)) {
+    return `activeProfile does not exist: ${settings.activeProfile}`;
+  }
+  return null;
+}
+
+export type ProfileProblem =
+  | { code: "invalid_profiles" | "unknown_tool"; message: string }
+  | { code: "profile_in_use"; message: string; projects: string[] };
+
+/**
+ * Check a settings change that touches profiles: every profile role names a known tool, and no
+ * profile that a project uses is removed. Returns the first problem, or null.
+ */
+export function checkProfiles(
+  current: Settings,
+  next: Settings,
+  ctx: ProfileCheckContext,
+): ProfileProblem | null {
+  const inconsistent = profileConsistency(next);
+  if (inconsistent) return { code: "invalid_profiles", message: inconsistent };
+  const known = ctx.knownTools ? new Set(ctx.knownTools) : undefined;
+  if (known) {
+    for (const profile of next.profiles ?? []) {
+      for (const [role, assignment] of Object.entries(profile.roles)) {
+        if (assignment && !known.has(assignment.tool)) {
+          return {
+            code: "unknown_tool",
+            message: `Profile "${profile.id}" role ${role}: unknown tool "${assignment.tool}"`,
+          };
+        }
+      }
+    }
+  }
+  const kept = new Set((next.profiles ?? []).map((profile) => profile.id));
+  const removed = new Set(
+    (current.profiles ?? []).map((profile) => profile.id).filter((id) => !kept.has(id)),
+  );
+  if (removed.size > 0) {
+    const users = ctx.projects.filter((p) => p.profile !== undefined && removed.has(p.profile));
+    if (users.length > 0) {
+      return {
+        code: "profile_in_use",
+        message: `Profile is used by: ${users.map((p) => p.id).join(", ")}`,
+        projects: users.map((p) => p.id),
+      };
+    }
+  }
+  return null;
 }

@@ -31,7 +31,6 @@ import { useRoute } from "./lib/useRoute.js";
 import { epicFromSearch, manageEpicsFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
-import { NowStrip } from "./overview/NowStrip.js";
 
 const TaskDetailPage = lazy(() =>
   import("./task/TaskDetailPage.js").then((m) => ({ default: m.TaskDetailPage })),
@@ -158,7 +157,6 @@ export function App() {
         )}
         {routeReady && route.name === "tasks" && (
           <>
-            <NowStrip pid={pid} groups={groups} />
             <TasksPage
               pid={pid}
               data={data}
@@ -182,7 +180,6 @@ export function App() {
         )}
         {routeReady && route.name === "plans" && (
           <>
-            <NowStrip pid={pid} groups={groups} />
             {route.planId ? (
               <PlanPage
                 key={`${pid}/${route.planId}`}

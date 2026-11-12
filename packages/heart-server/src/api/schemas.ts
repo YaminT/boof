@@ -233,7 +233,7 @@ const ConciergeTargetSchema = z
 export const ConciergeStatusSchema = z.object({
   available: z.boolean(),
   reason: z.string().nullable(),
-  via: z.enum(["gateway", "project-key"]).nullable(),
+  via: z.enum(["gateway", "project-key", "claude-code"]).nullable(),
   model: z.string(),
   limits: z.object({
     perMessageUsd: z.number(),

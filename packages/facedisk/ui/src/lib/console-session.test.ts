@@ -114,3 +114,22 @@ describe("submitConsole", () => {
     expect(r.line.kind).toBe("result");
   });
 });
+
+describe("submitConsole suggestions", () => {
+  it("returns the prefill and does not run anything", async () => {
+    const run = vi.fn();
+    const action = {
+      id: "activate-plan-p1",
+      label: "Create tasks from plan: Launch",
+      group: "Actions",
+      searchValue: "x",
+      keywords: [],
+      targetTitle: "Launch",
+      run,
+    } as unknown as CommandAction;
+    const r = await submitConsole("make tasks out of the plans", [action], "all");
+    expect(r.prefill).toBe("/activate Launch");
+    expect(r.line.text).toContain("Did you mean: /activate Launch?");
+    expect(run).not.toHaveBeenCalled();
+  });
+});

@@ -99,7 +99,7 @@ export interface ConciergeAnswer {
 export interface ConciergeStatus {
   available: boolean;
   reason: string | null;
-  via: "gateway" | "project-key" | null;
+  via: "gateway" | "project-key" | "claude-code" | null;
   model: string;
   limits: { perMessageUsd: number; perConversationUsd: number; messagesPerMinute: number };
   conversation: {
@@ -145,7 +145,7 @@ export class ConciergeService {
     let availability: ConciergeAvailability = {
       available: false,
       reason: "The assistant is not set up in this boof process.",
-      via: null as "gateway" | "project-key" | null,
+      via: null as "gateway" | "project-key" | "claude-code" | null,
     };
     if (!cfg.enabled)
       availability = {

@@ -22,8 +22,12 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "projects.unarchive": {
     where: "unarchiveProject \u2014 ArchivedProjects (restore an archived project)",
   },
-  "projects.pause": { none: "the project settings page sets `paused` through projects.update" },
-  "projects.resume": { none: "the project settings page sets `paused` through projects.update" },
+  "projects.pause": {
+    where: "pauseProject \u2014 TopBar (Pause for a project-restricted key)",
+  },
+  "projects.resume": {
+    where: "resumeProject \u2014 TopBar (Start for a project-restricted key)",
+  },
   "projects.delete": { where: "deleteProject \u2014 ArchivedProjects (purge an archived project)" },
   "projects.usage": { where: "projectUsage \u2014 BudgetsPage (project usage)" },
   "plans.list": { where: "listPlans \u2014 useAppData (the Plans list)" },
@@ -73,7 +77,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where: "stopTask \u2014 RunningCard, useCommandActions, useTaskActions (stop a running task)",
   },
   "tasks.inject": { where: "injectPrompt \u2014 SteerBox (steer a running task)" },
-  "tasks.liveLog": { where: "liveLog \u2014 NowStrip, useLiveLog (the live output)" },
+  "tasks.liveLog": { where: "liveLog \u2014 useRunningStep, useLiveLog (the live output)" },
   "tasks.wait": { none: "the UI follows changes through the event stream" },
   "tasks.attachments.add": { where: "uploadAttachment \u2014 TaskAttachments (attach a file)" },
   "tasks.attachments.remove": { where: "deleteAttachment \u2014 TaskAttachments (remove a file)" },
@@ -90,7 +94,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "settings.get": { where: "getSettings \u2014 useAppData (global settings)" },
   "settings.update": {
     where:
-      "updateSettings \u2014 useSettingsPage, Projects, RunnerSwitch, useCommandActions, SandboxSection, SandboxNotice (change settings)",
+      "updateSettings \u2014 useSettingsPage, Projects, TopBar, RunnerSwitch, useCommandActions, SandboxSection, SandboxNotice (change settings)",
   },
   "settings.health": {
     none: "the UI runs the check itself (settings.checkHealth) and shows its result",
@@ -112,10 +116,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
       "runnerStatus \u2014 AgentsPage, useAgentAuth, SandboxSection, SandboxNotice (claude-agent line, sandbox state, and the off-mode notice)",
   },
   "runner.overview": {
-    none: "the shell reads the runner state from settings.get and usage.budget",
+    where: "runnerOverview \u2014 useRunnerOverview (the topbar)",
   },
   "runner.setEnabled": {
-    where: "updateSettings {runner.enabled} \u2014 RunnerSwitch (the runner switch)",
+    where: "updateSettings {runner.enabled} \u2014 TopBar (Pause and Start)",
   },
   "actions.list": { where: "actions \u2014 useAppData (tasks that need an answer)" },
   "commands.list": { where: "listCommands \u2014 CommandTemplates, TaskForm (command templates)" },

@@ -67,6 +67,7 @@ describe("createCommandActions", () => {
       "open-task-t2",
       "open-task-t3",
       "new-task",
+      "new-plan",
       "activate-plan-p1",
       "queue-t1",
       "stop-t2",

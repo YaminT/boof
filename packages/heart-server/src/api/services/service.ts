@@ -79,6 +79,7 @@ import {
   WebhookSecretStore,
   N8nSecretStore,
   atomicWrite,
+  checkProfiles,
   settingsVersion,
   initGitRepo,
   isGitRepo,
@@ -1468,6 +1469,12 @@ export class TaskService {
       // The store resolves the path again; check the directory it really uses.
       assertTarget = (real) => this.assertRegistrationAllowed(actor, real);
     }
+    if (patch.profile) {
+      const known = (await this.loadSettings()).profiles ?? [];
+      if (!known.some((profile) => profile.id === patch.profile)) {
+        throw new OpError(400, `Unknown profile: ${patch.profile}`, "invalid_input");
+      }
+    }
     try {
       return await this.projects.update(id, patch, { assertTarget, expectedUpdated });
     } catch (err) {
@@ -1826,15 +1833,38 @@ export class TaskService {
       if (!report.ok) throw new OpError(409, report.reason, "sandbox_unavailable");
     }
     const before = enabledChanging ? current!.runner.enabled : undefined;
-    const next = await this.settingsStore.update(patch, (current) => {
-      if (expectedVersion !== undefined && expectedVersion !== settingsVersion(current)) {
-        throw new OpError(
-          409,
-          "The settings changed since the version you last read; reload and retry.",
-          "settings_modified",
-        );
-      }
-    });
+    const profilesChange = patch.profiles !== undefined || patch.activeProfile !== undefined;
+    const profileUsers = profilesChange
+      ? (await this.projects.list({ includeArchived: true })).map((p) => ({
+          id: p.id,
+          profile: p.profile,
+        }))
+      : [];
+    const next = await this.settingsStore.update(
+      patch,
+      (current) => {
+        if (expectedVersion !== undefined && expectedVersion !== settingsVersion(current)) {
+          throw new OpError(
+            409,
+            "The settings changed since the version you last read; reload and retry.",
+            "settings_modified",
+          );
+        }
+      },
+      (current, candidate) => {
+        if (!profilesChange) return;
+        // The schema checks duplicate ids and a missing active profile (SettingsSchema.parse in
+        // save); here: tool ids that exist, and no deletion of a profile a project uses.
+        const problem = checkProfiles(current, candidate, {
+          knownTools: this.catalog.list().map((tool) => tool.id),
+          projects: profileUsers,
+        });
+        if (problem?.code === "profile_in_use") {
+          throw new OpError(409, problem.message, "profile_in_use");
+        }
+        if (problem) throw new OpError(400, problem.message, "invalid_input");
+      },
+    );
     if (before !== undefined && before !== next.runner.enabled) {
       await appendEvent(this.root, {
         type: "runner.enabled",

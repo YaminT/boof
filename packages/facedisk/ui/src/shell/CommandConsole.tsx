@@ -110,12 +110,18 @@ export function CommandConsole({
     setRecalled(NO_RECALL);
     setValue("");
     setBusy(true);
-    const { outcome, line } = await submitConsole(text, actions, held);
+    const { outcome, line, prefill } = await submitConsole(text, actions, held);
     setBusy(false);
     const at = assistantState.lines.length;
     const print = (...lines: ConsoleLine[]) =>
       setLocal((o) => [...o, ...lines.map((l) => ({ ...l, at }))].slice(-OUTPUT_MAX));
     const echoed: ConsoleLine = { kind: "input", text: `> ${text}` };
+    if (outcome.kind === "suggest") {
+      print(echoed, ...outcome.lines.map((text): ConsoleLine => ({ kind: "system", text })));
+      if (prefill) setValue(prefill);
+      setOpen(true);
+      return;
+    }
     if (outcome.kind === "unknown") {
       const plan = planUnknownInput(text, assistant, line);
       if (plan.kind === "ask") {
@@ -163,7 +169,7 @@ export function CommandConsole({
             className="mb-2 max-h-40 overflow-y-auto rounded-lg bg-page p-2 font-mono text-[length:var(--text-meta)] text-ink-muted"
           >
             {output.length === 0 ? (
-              <p>No output yet. Try /task, /queue, /stop, /open or a palette label.</p>
+              <p>No output yet. Try /plan, /task, /queue, /stop, /open or a palette label.</p>
             ) : (
               <ConsoleLog
                 lines={output}

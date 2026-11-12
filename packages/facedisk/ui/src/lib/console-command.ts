@@ -1,14 +1,36 @@
 import type { Scope } from "@boof/heart/schema";
 import type { CommandAction } from "./command-actions.js";
+import { matchIntent } from "./console-intents.js";
 
 export type ConsoleResolution =
   | { kind: "run"; action: CommandAction; args: string }
+  | { kind: "suggest"; input: string; lines: string[]; prefill: string | null }
   | { kind: "unknown"; input: string; reason?: string };
 
 export type ConsoleOutcome =
   | { kind: "ok"; action: CommandAction }
   | { kind: "error"; action: CommandAction; message: string }
+  | { kind: "suggest"; input: string; lines: string[]; prefill: string | null }
   | { kind: "unknown"; input: string; reason?: string };
+
+/** Every slash verb the console understands. The hint after `unknown:` is built from this. */
+export const CONSOLE_VERBS = [
+  "task",
+  "queue",
+  "stop",
+  "open",
+  "go",
+  "epic",
+  "move",
+  "subtask",
+  "detach",
+  "activate",
+  "plan",
+  "project",
+  "runner",
+  "theme",
+  "new",
+] as const;
 
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
@@ -90,6 +112,7 @@ function slash(raw: string, actions: CommandAction[]): ConsoleResolution {
 
   if (verb === "task") return run(byId("new-task"), "/task");
   if (verb === "epic") return run(byId("new-epic"), "/epic");
+  if (verb === "plan") return run(byId("new-plan"), "/plan");
   if (verb === "new") return run(byId("assistant.new"), "/new");
   if (verb === "detach") {
     const what = norm(args);
@@ -148,6 +171,10 @@ export function resolveConsoleCommand(input: string, actions: CommandAction[]): 
   const exact = actions.filter((a) => norm(a.label) === want || a.id === want);
   if (exact.length === 1) return { kind: "run", action: exact[0]!, args: "" };
 
+  // Plain words that look like a request get a suggestion, never a run.
+  const intent = matchIntent(raw, actions);
+  if (intent) return { kind: "suggest", input: raw, ...intent };
+
   // Fuzzy words only reach actions that change nothing (navigation, theme).
   const words = want.split(" ");
   const fuzzy = actions.filter(
@@ -163,5 +190,6 @@ export function resolveConsoleCommand(input: string, actions: CommandAction[]): 
 export function formatConsoleResult(o: ConsoleOutcome): string {
   if (o.kind === "ok") return `ok: ${o.action.label}`;
   if (o.kind === "error") return `error: ${o.action.label}: ${o.message}`;
-  return `unknown: "${o.input}"${o.reason ? ` (${o.reason})` : ""}. Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach.`;
+  if (o.kind === "suggest") return o.lines.join("\n");
+  return `unknown: "${o.input}"${o.reason ? ` (${o.reason})` : ""}. Try a palette label or ${CONSOLE_VERBS.map((v) => `/${v}`).join(", ")}.`;
 }

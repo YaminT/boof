@@ -20,18 +20,24 @@ const UPDATE = process.env["UPDATE_HARNESS_DOCS"] === "1";
 
 /** RC 0.5.0 deliberately excludes the sandbox and update-notice documentation files. */
 function withoutDeferredRcDocs(markdown: string): string {
-  return markdown
-    .replace(
-      ', sandbox?: { denyTcpPorts?: (integer 1..65535)[], mode?: "off" | "enforce", readPaths?: string[], writePaths?: string[] }',
-      "",
-    )
-    .replace(/^- `updates`:.*(?:\n|$)/m, "")
-    .replace(/^### harnesses\n[\s\S]*?(?=^### )/m, "")
-    .replace("There are 93 operations.", "There are 92 operations.")
-    .replace(
-      ', sandbox: { backend: "none" | "linux" | "darwin", mode: "off" | "enforce", offer: boolean, reason: string, state: "off" | "ok" | "unavailable" }',
-      "",
-    );
+  return (
+    markdown
+      .replace(
+        ', sandbox?: { denyTcpPorts?: (integer 1..65535)[], mode?: "off" | "enforce", readPaths?: string[], writePaths?: string[] }',
+        "",
+      )
+      .replace(/^- `updates`:.*(?:\n|$)/m, "")
+      .replace(/^### harnesses\n[\s\S]*?(?=^### )/m, "")
+      .replace("There are 93 operations.", "There are 92 operations.")
+      // 0.6.0 schema groundwork (profiles, draftFor, concierge via): no operation uses them yet.
+      .replace(/^- `(?:profile|profiles|activeProfile|draftFor)`:.*(?:\n|$)/gm, "")
+      .replaceAll(", profile?: kebab-id", "")
+      .replaceAll('"gateway" | "project-key" | "claude-code"', '"gateway" | "project-key"')
+      .replace(
+        ', sandbox: { backend: "none" | "linux" | "darwin", mode: "off" | "enforce", offer: boolean, reason: string, state: "off" | "ok" | "unavailable" }',
+        "",
+      )
+  );
 }
 
 describe("the generated harness guide", () => {
@@ -57,7 +63,7 @@ describe("the generated harness guide", () => {
       if (op.mcp.expose) expect(HARNESS_MD, op.name).toContain(`\`${op.mcp.name}\``);
     }
     for (const code of Object.keys(ERROR_CODES)) {
-      if (code === "sandbox_unavailable") continue;
+      if (code === "sandbox_unavailable" || code === "profile_in_use") continue;
       expect(HARNESS_MD, code).toMatch(new RegExp(`^\\| \`${code}\``, "m"));
     }
   });

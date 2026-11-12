@@ -248,7 +248,13 @@ function Loaded({
         onDelete={remove}
       />
       <SandboxFailure pid={pid} status={task.frontmatter.status} log={task.body.log} />
-      <TaskHierarchy pid={pid} task={task} tasks={data.tasks} actions={actions} />
+      <TaskHierarchy
+        pid={pid}
+        task={task}
+        tasks={data.tasks}
+        actions={actions}
+        planTick={data.planTick}
+      />
       <StepStrip task={task} now={Date.now()} logHeaders={stepHeaders(task.body.log)} />
       <div className="flex flex-wrap items-center gap-3">
         {!focus.expanded && (
