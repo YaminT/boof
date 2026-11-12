@@ -83,7 +83,6 @@ describe("UI coverage of the operations", () => {
       .map(([k]) => k);
     expect(none).toMatchInlineSnapshot(`
       [
-        "plans.replaceGoals",
         "plans.wait",
         "tasks.wait",
         "epics.get",

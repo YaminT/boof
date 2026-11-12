@@ -9,6 +9,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where:
       "whoami \u2014 AutomationPage, KeysPage, useHeldScopes (who the key is, what it may do; the console and Manage epics use it)",
   },
+  "projects.detectStack": { where: "detectStack \u2014 PlanWizard (About this project prefill)" },
   "projects.list": {
     where:
       "listProjects \u2014 useProjects, ArchivedProjects (the project switcher, archived list)",
@@ -33,12 +34,13 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "plans.list": { where: "listPlans \u2014 useAppData (the Plans list)" },
   "plans.create": { where: "createPlan \u2014 PlansPage (new plan)" },
   "plans.get": { where: "getPlan \u2014 usePlan, GoalEditor (the plan screen)" },
+  "plans.draftGoals": {
+    where: "draftPlanGoals \u2014 PlanWizard (Draft tasks, Ask the agent to adjust)",
+  },
   "plans.update": {
     where: "updatePlan \u2014 PlanPage, InboxPage, useCommandActions (approve, draft, archive)",
   },
-  "plans.replaceGoals": {
-    none: "goals are edited one at a time (plans.upsertGoal, plans.removeGoal)",
-  },
+  "plans.replaceGoals": { where: "replacePlanGoals \u2014 PlanWizard (save the task list)" },
   "plans.upsertGoal": { where: "putGoal \u2014 GoalEditor (add or edit a goal)" },
   "plans.removeGoal": { where: "deleteGoal \u2014 PlanPage (remove a goal)" },
   "plans.reorderGoals": { where: "reorderGoals \u2014 PlanPage (drag a goal)" },

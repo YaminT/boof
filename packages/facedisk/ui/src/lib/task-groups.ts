@@ -45,10 +45,12 @@ export function runOrder(a: TaskView, b: TaskView): number {
 }
 
 export function groupTasks(
-  tasks: TaskView[],
+  allTasks: TaskView[],
   plans: PlanSummary[] = [],
   opts: { recentLimit?: number } = {},
 ): TaskGroups {
+  // A plan-draft task (an agent writing a plan's goals) belongs to its plan page, not these lists.
+  const tasks = allTasks.filter((t) => !t.frontmatter.draftFor);
   const recentLimit = opts.recentLimit ?? 5;
   const by = (status: string) => tasks.filter((t) => t.frontmatter.status === status);
 

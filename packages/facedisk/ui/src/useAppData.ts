@@ -20,6 +20,7 @@ export interface AppData {
   plans: PlanSummary[];
   /** The plan list request failed. */
   plansError: boolean;
+  plansLoaded: boolean;
   budget: BudgetStatus | null;
   /** Bumped on each `plan.*` event for the selected project; plan views reload on it. */
   planTick: number;
@@ -55,6 +56,7 @@ export function useAppData(
     [planState, selectedId],
   );
   const plansError = planState.pid === selectedId && planState.error;
+  const plansLoaded = planState.pid === selectedId && planState.loaded;
   const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const [planTick, setPlanTick] = useState(0);
   const [needsToken, setNeedsToken] = useState<UnauthorizedReason | null>(null);
@@ -207,6 +209,7 @@ export function useAppData(
     actions,
     plans,
     plansError,
+    plansLoaded,
     budget,
     planTick,
     refresh,

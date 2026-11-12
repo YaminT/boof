@@ -321,3 +321,12 @@ describe("backFor", () => {
       expect(backFor(prev, "a")).toEqual({ route: tasks, label: "← Tasks" });
   });
 });
+
+describe("wizard route", () => {
+  it("round-trips p/<pid>/plans/new and leaves the plan route alone", () => {
+    expect(parseRoute("p/a/plans/new")).toEqual({ name: "wizard", pid: "a" });
+    expect(formatRoute({ name: "wizard", pid: "a" })).toBe("p/a/plans/new");
+    expect(parseRoute("p/a/plans/other")).toEqual({ name: "plans", pid: "a", planId: "other" });
+    expect(routePid({ name: "wizard", pid: "a" })).toBe("a");
+  });
+});
