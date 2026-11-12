@@ -18,6 +18,7 @@ const catalog = {
   list: () => [],
   get: () => undefined,
   healthAll: async () => ({}),
+  installedAll: async () => ({}),
   lastHealth: () => ({}),
   modelsAll: async () => ({}),
   cachedModels: () => ({}),

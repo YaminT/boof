@@ -44,6 +44,7 @@ function stubCatalog(calls: string[]): ToolCatalog {
       calls.push("healthAll"),
       { stub: { status: "available", message: "stub ok" } }
     ),
+    installedAll: async () => ({}),
     lastHealth: () => ({ stub: health }),
     modelsAll: async () => (calls.push("modelsAll"), { stub: ["stub-1", "stub-2"] }),
     cachedModels: () => ({ stub: ["stub-1"] }),

@@ -267,6 +267,27 @@ export class RunnerEngine {
           }
           continue;
         }
+        const installs = await this.registry.installedAll();
+        const missing = (["planner", "developer", "reviewer", "observer"] as const).find((role) => {
+          const id = resolveRole(eff, task, role as "observer")?.tool;
+          const tool = id === undefined ? undefined : this.registry.get(id);
+          // An Agent SDK tool has its own selection check, with its own reason, just below.
+          return tool && !tool.needsAgentAuth && installs[tool.id]?.installed === false;
+        });
+        if (missing) {
+          const id = resolveRole(eff, task, missing as "observer")!.tool;
+          try {
+            await this.refuseBeforeStart(
+              project,
+              task,
+              `tool_not_installed: ${id} (role ${missing}): ${installs[id].message}`,
+            );
+            await this.noteGoalTaskStatus(project, task, "failed");
+          } catch (error) {
+            console.error(`could not refuse task ${task.frontmatter.id}:`, error);
+          }
+          continue;
+        }
         const authTool = resolved.find((tool) => tool.needsAgentAuth);
         let agentDecision;
         if (authTool) {

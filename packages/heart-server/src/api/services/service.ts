@@ -93,6 +93,7 @@ import {
   type TaskDiff,
   type CachedHealth,
   type HealthResult,
+  type InstallResult,
   type ToolCatalog,
 } from "@boof/heart";
 import { checkedWorktreeGit, loadWorktreeRecord } from "@boof/runner";
@@ -1858,6 +1859,32 @@ export class TaskService {
     return this.catalog.healthAll(HEALTH_COOLDOWN_MS, {
       inheritMcpServers: runner.inheritMcpServers === true,
     });
+  }
+
+  /**
+   * Which tools are installed. Free: no prompt. Cached for five minutes; `refresh` re-checks, but
+   * a check younger than ten seconds is reused.
+   */
+  async harnesses(refresh = false): Promise<{
+    tools: Record<string, InstallResult & { displayName: string }>;
+    anyInstalled: boolean;
+    checkedAt: string;
+  }> {
+    const installs = await this.catalog.installedAll(refresh ? 10_000 : 5 * 60_000);
+    const tools: Record<string, InstallResult & { displayName: string }> = {};
+    let oldest = Date.now();
+    for (const info of this.catalog.list()) {
+      const found = installs[info.id];
+      if (!found) continue;
+      const { checkedAt, ...install } = found;
+      oldest = Math.min(oldest, Date.parse(checkedAt));
+      tools[info.id] = { displayName: info.displayName, ...install };
+    }
+    return {
+      tools,
+      anyInstalled: Object.values(tools).some((t) => t.installed),
+      checkedAt: new Date(oldest).toISOString(),
+    };
   }
 
   /** The last health results of this process, without running a tool (empty until a check ran). */

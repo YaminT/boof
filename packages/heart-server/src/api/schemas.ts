@@ -291,6 +291,25 @@ export const HealthResultSchema = z.object({
     .meta({ description: "ISO-8601 time the check ran in this server process (GET /health)." }),
 });
 
+/** One tool's install check, as `harnesses.status` reports it. */
+export const HarnessInstallSchema = z.object({
+  displayName: z.string(),
+  installed: z.boolean(),
+  version: z.string().optional(),
+  path: z.string().optional(),
+  foundOffPath: z
+    .string()
+    .optional()
+    .meta({ description: "Set when the program exists but is not on PATH: where it was found." }),
+  message: z.string(),
+});
+
+export const HarnessStatusSchema = z.object({
+  tools: z.record(z.string(), HarnessInstallSchema),
+  anyInstalled: z.boolean(),
+  checkedAt: z.string().meta({ description: "ISO-8601 time of the oldest check in the answer." }),
+});
+
 /** One model of a tool, as `models.details` reports it. */
 export const ModelDetailSchema = z.object({
   id: z.string(),

@@ -92,6 +92,7 @@ describe("UI coverage of the operations", () => {
         "settings.health",
         "settings.models",
         "runner.overview",
+        "harnesses.status",
       ]
     `);
   });

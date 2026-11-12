@@ -1,4 +1,4 @@
-import type { Role } from "@boof/heart";
+import type { InstallResult, Role } from "@boof/heart";
 import type { HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { execCommand, parseUsage } from "@boof/heart";
 import { ToolRunError } from "./errors.js";
@@ -171,6 +171,10 @@ export class MockTool implements Tool {
 
   get supportsResume(): boolean {
     return mockState.resumeSupported;
+  }
+
+  async installed(): Promise<InstallResult> {
+    return { installed: true, version: "1.0.0", message: "Mock tool is always installed" };
   }
 
   async detect(): Promise<HealthResult> {

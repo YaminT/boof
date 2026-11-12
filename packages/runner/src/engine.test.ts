@@ -151,6 +151,7 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
       displayName: "Claude Agent",
       defaultModels: ["default"],
       needsAgentAuth: true,
+      installed: () => agent.installed(),
       detect: () => agent.detect(),
       listModels: () => agent.listModels(),
       run: (opts: RunOptions) => agent.run(opts),
@@ -244,6 +245,7 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
       defaultModels: ["default"],
       needsAgentAuth: true,
       unavailableReason: "agent tool unavailable",
+      installed: () => agent.installed(),
       detect: () => agent.detect(),
       listModels: () => agent.listModels(),
       run: (opts: RunOptions) => agent.run(opts),
@@ -301,6 +303,35 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
     await engine.tick();
     expect((await store.get("normal"))?.frontmatter.status).toBe("failed");
     expect((await store.get("normal"))?.body.log).toContain("agent tool unavailable");
+  });
+
+  it("refuses a task whose role tool is not installed, instead of a spawn error", async () => {
+    const mock = new MockTool();
+    const missing = {
+      id: "ghost",
+      displayName: "Ghost",
+      defaultModels: ["g"],
+      installed: async () => ({ installed: false, message: "`ghost` not found on PATH" }),
+      detect: () => mock.detect(),
+      listModels: () => mock.listModels(),
+      run: (opts: RunOptions) => mock.run(opts),
+    };
+    engine = new RunnerEngine({
+      root: dataRoot,
+      registry: new ToolRegistry([mock, missing]),
+    });
+    await store.create(
+      newTask(
+        fm({ tools: { ...fm().tools, developer: { tool: "ghost", model: "g" } } }),
+        "Needs ghost.",
+      ),
+    );
+    const result = await engine.tick();
+    expect(result.kind).toBe("idle");
+    const task = await store.get("t1");
+    expect(task?.frontmatter.status).toBe("failed");
+    expect(task?.body.log).toContain("tool_not_installed: ghost (role developer)");
+    expect(mockState.calls).toEqual([]);
   });
 
   it("fails desktop-unavailable claude-agent selection without asking for auth", async () => {
@@ -381,6 +412,7 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
       displayName: "Claude Agent",
       defaultModels: ["default"],
       needsAgentAuth: true,
+      installed: () => mock.installed(),
       detect: () => mock.detect(),
       listModels: () => mock.listModels(),
       run: (opts: RunOptions) => mock.run(opts),
@@ -416,6 +448,7 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
       displayName: "Claude Agent",
       defaultModels: ["default"],
       needsAgentAuth: true,
+      installed: () => mock.installed(),
       detect: () => mock.detect(),
       listModels: () => mock.listModels(),
       run: (opts: RunOptions) => {
@@ -468,6 +501,7 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
       displayName: "Claude Agent",
       defaultModels: ["default"],
       needsAgentAuth: true,
+      installed: () => mock.installed(),
       detect: () => mock.detect(),
       listModels: () => mock.listModels(),
       run: (opts: RunOptions) => mock.run(opts),
@@ -2088,6 +2122,7 @@ describe("steering a running step (mock tool)", () => {
         id,
         displayName: id,
         defaultModels: ["test-model"],
+        installed: () => mock.installed(),
         detect: () => mock.detect(),
         listModels: () => mock.listModels(),
         run: async (opts) => {
@@ -2155,6 +2190,7 @@ describe("steering a running step (mock tool)", () => {
       id: originalTool.id,
       displayName: originalTool.displayName,
       defaultModels: originalTool.defaultModels,
+      installed: () => originalTool.installed(),
       detect: (...args: any[]) => originalTool.detect(...args),
       listModels: () => originalTool.listModels(),
       run: (opts: RunOptions) => originalTool.run(opts),
@@ -2206,6 +2242,7 @@ describe("steering a running step (mock tool)", () => {
       id: originalTool.id,
       displayName: originalTool.displayName,
       defaultModels: originalTool.defaultModels,
+      installed: () => originalTool.installed(),
       detect: (...args: any[]) => originalTool.detect(...args),
       listModels: () => originalTool.listModels(),
       run: async (opts: RunOptions) => {
@@ -2267,6 +2304,7 @@ describe("steering a running step (mock tool)", () => {
       id: originalTool.id,
       displayName: originalTool.displayName,
       defaultModels: originalTool.defaultModels,
+      installed: () => originalTool.installed(),
       detect: (...args: any[]) => originalTool.detect(...args),
       listModels: () => originalTool.listModels(),
       run: (opts: RunOptions) => originalTool.run(opts),

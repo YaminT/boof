@@ -146,6 +146,7 @@ describe("runTask (headless)", () => {
       displayName: "Claude Agent",
       defaultModels: ["default"],
       needsAgentAuth: true,
+      installed: async () => ({ installed: true, message: "test" }),
       detect: async () => ({ status: "available" as const, message: "test" }),
       listModels: async () => ["default"],
       run: async () => ({ output: "", report: "" }),

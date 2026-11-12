@@ -3,7 +3,13 @@ import { ClaudeAgentTool } from "./claude-agent.js";
 import { CodexTool } from "./codex.js";
 import { MockTool } from "./mock.js";
 import { OpencodeTool } from "./opencode.js";
-import type { CachedHealth, HealthResult, ToolCatalog } from "@boof/heart";
+import type {
+  CachedHealth,
+  CachedInstall,
+  HealthResult,
+  InstallResult,
+  ToolCatalog,
+} from "@boof/heart";
 import type { DetectOptions, Tool } from "./types.js";
 
 export type { CachedHealth } from "@boof/heart";
@@ -39,6 +45,51 @@ export class ToolRegistry implements ToolCatalog {
 
   list(): Tool[] {
     return [...this.tools.values()];
+  }
+
+  /** Last install check per tool id, written by {@link installedAll}. */
+  private readonly installCache = new Map<string, CachedInstall>();
+  private installInFlight: Promise<Record<string, CachedInstall>> | undefined;
+
+  /**
+   * Check which tools are installed (free: no prompt) unless the last check is younger than
+   * `maxAgeMs`; concurrent callers share one check. Returns id → result.
+   */
+  installedAll(maxAgeMs = 5 * 60_000): Promise<Record<string, CachedInstall>> {
+    if (this.installInFlight) return this.installInFlight;
+    const ids = this.list().map((t) => t.id);
+    if (
+      maxAgeMs > 0 &&
+      ids.length > 0 &&
+      ids.every((id) => {
+        const c = this.installCache.get(id);
+        return c !== undefined && Date.now() - Date.parse(c.checkedAt) < maxAgeMs;
+      })
+    ) {
+      return Promise.resolve(Object.fromEntries(ids.map((id) => [id, this.installCache.get(id)!])));
+    }
+    const run = this.runInstalled().finally(() => {
+      this.installInFlight = undefined;
+    });
+    this.installInFlight = run;
+    return run;
+  }
+
+  private async runInstalled(): Promise<Record<string, CachedInstall>> {
+    const out: Record<string, CachedInstall> = {};
+    await Promise.all(
+      this.list().map(async (t) => {
+        let result: InstallResult;
+        try {
+          result = await t.installed();
+        } catch (err) {
+          result = { installed: false, message: String(err) };
+        }
+        out[t.id] = { ...result, checkedAt: new Date().toISOString() };
+        this.installCache.set(t.id, out[t.id]);
+      }),
+    );
+    return out;
   }
 
   /** The check in progress, shared by every caller that arrives meanwhile. */

@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@boof/heart";
+import type { InstallResult, TokenUsage } from "@boof/heart";
 import {
   SandboxUnavailableError,
   killGroup,
@@ -194,6 +194,18 @@ export class ClaudeAgentTool implements Tool {
         "Claude Code native binary not found (set BOOF_RUNNER_CLAUDE_AGENT_BIN or install claude)"
       );
     return null;
+  }
+  /** Free check: the SDK loads and a Claude Code binary resolves. It never sends a prompt. */
+  async installed(): Promise<InstallResult> {
+    const reason = await this.checkAvailableForSelection();
+    if (reason) return { installed: false, message: reason };
+    const exe = await this.resolveExecutable();
+    return {
+      installed: true,
+      ...(exe.path ? { path: exe.path } : {}),
+      version: SDK_VERSION,
+      message: `Agent SDK ${SDK_VERSION}`,
+    };
   }
   async detect(_opts: DetectOptions = {}): Promise<HealthResult> {
     if (this.unavailableReason) return { status: "unavailable", message: this.unavailableReason };
