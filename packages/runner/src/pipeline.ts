@@ -10,7 +10,9 @@ import {
   parseVerdict,
   projectTaskBudget,
   recordSpend,
+  activeProfileFor,
   resolveRole,
+  resolveRoleOrOff,
   resolveWorktreeRoot,
   retrySettings,
   reviewSettings,
@@ -95,6 +97,31 @@ export interface PipelineDeps {
   external?: ExternalStepTransport;
   /** Bound port of the server in this process. Omit for a headless run, which is not listening. */
   serverPort?: number;
+}
+
+interface ResolvedTool {
+  tool: Tool;
+  model: string;
+}
+interface RolesSnapshot {
+  planner: ResolvedTool | null;
+  developer: ResolvedTool;
+  observer: ResolvedTool | null;
+  reviewer: ResolvedTool | null;
+}
+
+/** Stands in for the plan when the planner role is off. */
+const PLANNER_OFF_PLAN =
+  "(The planner is off: there is no separate plan. Work from the task description above.)";
+
+/** One line per run: which roles are off, and the tool and model of the others. */
+function describeRoles(roles: RolesSnapshot): string {
+  return (["planner", "developer", "observer", "reviewer"] as const)
+    .map((role) => {
+      const r = roles[role];
+      return r ? `${role} ${r.tool.id} ${r.model}` : `${role} off`;
+    })
+    .join(", ");
 }
 
 const VERDICT_PROTOCOL =
@@ -774,19 +801,24 @@ export class Pipeline {
     }
   }
 
-  private tool(
-    task: Task,
-    role: "planner" | "developer" | "reviewer",
-  ): { tool: Tool; model: string } {
-    const assignment = resolveRole(this.deps.settings, task, role);
-    return { tool: this.deps.registry.require(assignment.tool), model: assignment.model };
-  }
-
-  /** The observer's tool+model, or null when no observer is configured. */
-  private observerTool(task: Task): { tool: Tool; model: string } | null {
-    const assignment = resolveRole(this.deps.settings, task, "observer");
-    if (!assignment) return null;
-    return { tool: this.deps.registry.require(assignment.tool), model: assignment.model };
+  /**
+   * All four roles, resolved once. `null` = the role is off (a profile turned it off, or the
+   * observer is not configured). The developer is always on.
+   */
+  private rolesSnapshot(task: Task): RolesSnapshot {
+    const settings = this.deps.settings;
+    const pick = (role: "planner" | "observer" | "reviewer"): ResolvedTool | null => {
+      const assignment = resolveRoleOrOff(settings, task, role);
+      if (!assignment) return null;
+      return { tool: this.deps.registry.require(assignment.tool), model: assignment.model };
+    };
+    const dev = resolveRole(settings, task, "developer");
+    return {
+      planner: pick("planner"),
+      developer: { tool: this.deps.registry.require(dev.tool), model: dev.model },
+      observer: pick("observer"),
+      reviewer: pick("reviewer"),
+    };
   }
 
   /**
@@ -1159,70 +1191,104 @@ export class Pipeline {
         this.previousFindings.delete(id);
       }
 
-      // --- Step 1: Planner ---
-      const planner = this.tool(task, "planner");
-      const planResult = await this.runStep(
-        id,
-        "Planner",
-        planner.tool,
-        {
-          role: "planner",
-          model: planner.model,
-          systemPrompt: SYSTEM_PROMPTS.planner,
-          prompt: await this.buildPrompt(task, ""),
-          cwd: stepCwd,
-          autoApprove: true,
-        },
-        worktree ?? undefined,
-      );
-      record(planResult);
-      recordBody(`### Planner\n${planResult.output}`);
-
-      // Park if the planner raised questions.
-      // A planner that asks again on a resumed run parks the task again.
-      if (planResult.questions && planResult.questions.length > 0) {
-        return this.park(task, usages, planResult.questions);
+      // The roles are resolved once, here, and kept for the whole run: a profile or settings
+      // change while this task runs only affects tasks that start later.
+      const roles = this.rolesSnapshot(task);
+      const profileName = activeProfileFor(
+        this.deps.settings,
+        this.deps.settings.projectProfile,
+      )?.name;
+      if (profileName !== undefined) {
+        await appendLog(`profile ${profileName}: ${describeRoles(roles)}`);
       }
+      const { planner, developer, observer, reviewer } = roles;
 
-      await writeFile(join(this.areaDir(id), "plan.md"), planResult.report + "\n", "utf8");
-      await this.writeReport(task, "planner", planResult.report);
+      // --- Step 1: Planner (skipped when the planner role is off) ---
+      let finalPlan = PLANNER_OFF_PLAN;
+      if (planner) {
+        const planResult = await this.runStep(
+          id,
+          "Planner",
+          planner.tool,
+          {
+            role: "planner",
+            model: planner.model,
+            systemPrompt: SYSTEM_PROMPTS.planner,
+            prompt: await this.buildPrompt(task, ""),
+            cwd: stepCwd,
+            autoApprove: true,
+          },
+          worktree ?? undefined,
+        );
+        record(planResult);
+        recordBody(`### Planner\n${planResult.output}`);
 
-      // --- Step 2: Planner refinement pass (always run) ---
-      const refineResult = await this.runStep(
-        id,
-        "Planner (refinement)",
-        planner.tool,
-        {
-          role: "planner",
-          model: planner.model,
-          systemPrompt: SYSTEM_PROMPTS.refine,
-          prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
-          cwd: stepCwd,
-          autoApprove: true,
-        },
-        worktree ?? undefined,
-      );
-      record(refineResult);
-      recordBody(`### Planner (refinement)\n${refineResult.output}`);
-      if (refineResult.questions && refineResult.questions.length > 0) {
-        return this.park(task, usages, refineResult.questions);
+        // Park if the planner raised questions.
+        // A planner that asks again on a resumed run parks the task again.
+        if (planResult.questions && planResult.questions.length > 0) {
+          return this.park(task, usages, planResult.questions);
+        }
+
+        await writeFile(join(this.areaDir(id), "plan.md"), planResult.report + "\n", "utf8");
+        await this.writeReport(task, "planner", planResult.report);
+
+        // --- Step 2: Planner refinement pass (always run) ---
+        const refineResult = await this.runStep(
+          id,
+          "Planner (refinement)",
+          planner.tool,
+          {
+            role: "planner",
+            model: planner.model,
+            systemPrompt: SYSTEM_PROMPTS.refine,
+            prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
+            cwd: stepCwd,
+            autoApprove: true,
+          },
+          worktree ?? undefined,
+        );
+        record(refineResult);
+        recordBody(`### Planner (refinement)\n${refineResult.output}`);
+        if (refineResult.questions && refineResult.questions.length > 0) {
+          return this.park(task, usages, refineResult.questions);
+        }
+        await writeFile(join(this.areaDir(id), "plan.md"), refineResult.report + "\n", "utf8");
+        await this.writeReport(
+          task,
+          "planner",
+          `${planResult.report}\n\n## Refinement\n${refineResult.report}`,
+        );
+        finalPlan = refineResult.report;
       }
-      await writeFile(join(this.areaDir(id), "plan.md"), refineResult.report + "\n", "utf8");
-      await this.writeReport(
-        task,
-        "planner",
-        `${planResult.report}\n\n## Refinement\n${refineResult.report}`,
-      );
-      const finalPlan = refineResult.report;
       // The external reports so far, appended to a prompt's extra text.
       const withExternal = (extra: string): string => {
         const section = this.externalSection(id);
         return section ? `${extra}\n\n${section}` : extra;
       };
-      await this.externalAt(task, "after-planner", worktree, { planner: finalPlan }, appendLog);
+      // A role's questions go to the planner; with the planner off they park the task for the owner.
+      const answerQuestions = (
+        fromRole: "developer" | "observer" | "reviewer",
+        result: RunResult,
+        rerun: (answers: string) => Promise<RunResult>,
+      ): Promise<RunResult & { ownReport?: string }> =>
+        planner
+          ? this.answerViaPlanner(
+              task,
+              planner,
+              fromRole,
+              result,
+              stepCwd,
+              finalPlan,
+              usages,
+              rerun,
+              worktree ?? undefined,
+            )
+          : this.parkForOwner(task, fromRole, result);
+      if (planner) {
+        await this.externalAt(task, "after-planner", worktree, { planner: finalPlan }, appendLog);
+      }
 
       // --- Step 3: Developer ---
-      const developer = this.tool(task, "developer");
       const devOpts = {
         role: "developer" as const,
         model: developer.model,
@@ -1243,34 +1309,24 @@ export class Pipeline {
 
       // Developer questions are routed to the planner via file, never the user.
       if (devResult.questions && devResult.questions.length > 0) {
-        devResult = await this.answerViaPlanner(
-          task,
-          planner,
-          "developer",
-          devResult,
-          stepCwd,
-          finalPlan,
-          usages,
-          async (answers) => {
-            const again = await this.runStep(
-              id,
-              "Developer (with answers)",
-              developer.tool,
-              {
-                ...devOpts,
-                prompt: await this.buildPrompt(
-                  task,
-                  withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
-                ),
-              },
-              worktree ?? undefined,
-            );
-            record(again);
-            recordBody(`### Developer (with answers)\n${again.output}`);
-            return again;
-          },
-          worktree ?? undefined,
-        );
+        devResult = await answerQuestions("developer", devResult, async (answers) => {
+          const again = await this.runStep(
+            id,
+            "Developer (with answers)",
+            developer.tool,
+            {
+              ...devOpts,
+              prompt: await this.buildPrompt(
+                task,
+                withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
+              ),
+            },
+            worktree ?? undefined,
+          );
+          record(again);
+          recordBody(`### Developer (with answers)\n${again.output}`);
+          return again;
+        });
       }
       await this.writeReport(task, "developer", devResult.report);
       await this.externalAt(
@@ -1282,11 +1338,9 @@ export class Pipeline {
       );
 
       // --- Step 4: Observer (optional) and Reviewer, gated by verdicts ---
-      const observer = this.observerTool(task);
-      const reviewer = this.tool(task, "reviewer");
       const { gate, maxFixRounds } = reviewSettings(this.deps.settings);
       const checkRole = async (role: "observer" | "reviewer", round: number) => {
-        const who = role === "observer" ? observer! : reviewer;
+        const who = role === "observer" ? observer! : reviewer!;
         const label = role === "observer" ? "Observer" : "Reviewer";
         const diff = await this.inlineDiff(id, worktree);
         const checkOpts = {
@@ -1313,36 +1367,26 @@ export class Pipeline {
         // final line counts.
         let verdict = parseVerdict(result.report);
         if (result.questions && result.questions.length > 0) {
-          const answered = await this.answerViaPlanner(
-            task,
-            planner,
-            role,
-            result,
-            stepCwd,
-            finalPlan,
-            usages,
-            async (answers) => {
-              const again = await this.runStep(
-                id,
-                `${label} (round ${round}, with answers)`,
-                who.tool,
-                {
-                  ...checkOpts,
-                  prompt: await this.buildPrompt(
-                    task,
-                    withExternal(
-                      `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
-                    ),
+          const answered = await answerQuestions(role, result, async (answers) => {
+            const again = await this.runStep(
+              id,
+              `${label} (round ${round}, with answers)`,
+              who.tool,
+              {
+                ...checkOpts,
+                prompt: await this.buildPrompt(
+                  task,
+                  withExternal(
+                    `## Plan\n${finalPlan}\n\n## Diff under review\n${diff}\n\n${answersSection(answers)}`,
                   ),
-                },
-                worktree ?? undefined,
-              );
-              record(again);
-              recordBody(`### ${label} (round ${round}, with answers)\n${again.output}`);
-              return again;
-            },
-            worktree ?? undefined,
-          );
+                ),
+              },
+              worktree ?? undefined,
+            );
+            record(again);
+            recordBody(`### ${label} (round ${round}, with answers)\n${again.output}`);
+            return again;
+          });
           // The verdict that counts is the one the role gave after it got its answers.
           result = answered;
           verdict = parseVerdict(answered.ownReport ?? answered.report);
@@ -1380,36 +1424,26 @@ export class Pipeline {
         record(fixResult);
         recordBody(`### Developer (fix round ${fixRound}, ${role})\n${fixResult.output}`);
         if (fixResult.questions && fixResult.questions.length > 0) {
-          fixResult = await this.answerViaPlanner(
-            task,
-            planner,
-            "developer",
-            fixResult,
-            stepCwd,
-            finalPlan,
-            usages,
-            async (answers) => {
-              const again = await this.runStep(
-                id,
-                `Developer (fix round ${fixRound}, ${role}, with answers)`,
-                developer.tool,
-                {
-                  ...fixOpts,
-                  prompt: await this.buildPrompt(
-                    task,
-                    withExternal(`${fixBase}\n\n${answersSection(answers)}`),
-                  ),
-                },
-                worktree ?? undefined,
-              );
-              record(again);
-              recordBody(
-                `### Developer (fix round ${fixRound}, ${role}, with answers)\n${again.output}`,
-              );
-              return again;
-            },
-            worktree ?? undefined,
-          );
+          fixResult = await answerQuestions("developer", fixResult, async (answers) => {
+            const again = await this.runStep(
+              id,
+              `Developer (fix round ${fixRound}, ${role}, with answers)`,
+              developer.tool,
+              {
+                ...fixOpts,
+                prompt: await this.buildPrompt(
+                  task,
+                  withExternal(`${fixBase}\n\n${answersSection(answers)}`),
+                ),
+              },
+              worktree ?? undefined,
+            );
+            record(again);
+            recordBody(
+              `### Developer (fix round ${fixRound}, ${role}, with answers)\n${again.output}`,
+            );
+            return again;
+          });
         }
         await this.writeReport(
           task,
@@ -1424,6 +1458,9 @@ export class Pipeline {
       let obsRound = 0;
       let revRound = 0;
       let lastReviewerReport = "";
+      if (!observer && !reviewer) {
+        await appendLog(`Not reviewed (profile ${profileName ?? "none"})`);
+      }
       for (;;) {
         if (observer) {
           for (;;) {
@@ -1435,6 +1472,7 @@ export class Pipeline {
             await fix(++obsFix, "observer", obsRound, obs.report);
           }
         }
+        if (!reviewer) break;
         const rev = await checkRole("reviewer", ++revRound);
         lastReviewerReport = rev.report;
         if (!gate || rev.verdict === "APPROVE") break;
@@ -1482,7 +1520,7 @@ export class Pipeline {
       return { kind: "done", task };
     } catch (err) {
       if (err instanceof ParkForOwner) {
-        await this.log(id, `Planner needs the owner to answer; parking the task.`).catch(() => {});
+        await this.log(id, `The task needs the owner to answer; parking the task.`).catch(() => {});
         return this.park(task, usages, err.questions);
       }
       const overBudget = err instanceof BudgetExceededError;
@@ -1563,6 +1601,22 @@ export class Pipeline {
     await this.mirrorLiveLog(task).catch(() => {});
     await this.persistUsage(task, usages);
     return { kind: "parked", task, questions };
+  }
+
+  /**
+   * The planner is off, so a role's questions go to the owner: record them and park the task (the
+   * pipeline catches ParkForOwner). Never returns.
+   */
+  private async parkForOwner(
+    task: Task,
+    fromRole: "developer" | "observer" | "reviewer",
+    result: RunResult,
+  ): Promise<never> {
+    const questions = result.questions ?? [];
+    task.body.questions = task.body.questions.trim()
+      ? task.body.questions
+      : `### ${fromRole} asked\n${questions.join("\n")}`;
+    throw new ParkForOwner(questions.map((q) => `(for the ${fromRole}) ${q}`));
   }
 
   /**
