@@ -22,7 +22,8 @@ import {
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof/heart";
-import { mockState, resetMock } from "./tools/mock.js";
+import { MockTool, mockState, resetMock } from "./tools/mock.js";
+import type { ToolRegistry } from "./tools/registry.js";
 
 let dataRoot: string;
 const dirs: string[] = [];
@@ -273,7 +274,11 @@ describe("day limits", () => {
     await useBudget({ perToolDayUsd: { mock: 1.2 } });
     await addTask(main, "t1", 0.5, { priority: 90 });
     await addTask(main, "t2", 0.5, { priority: 80 });
-    // A task on another tool is not blocked (its tool has no limit and no spend).
+    // A task on another tool is not blocked (its tool has no limit and no spend). The tool is a
+    // fake, so the test does not depend on a real codex being installed on the machine.
+    (engine as unknown as { registry: ToolRegistry }).registry.register(
+      Object.assign(Object.create(new MockTool()), { id: "codex" }),
+    );
     await addTask(main, "t3", 0.5, {
       priority: 10,
       tools: {

@@ -4357,6 +4357,100 @@
         "x-boof-scope": "tasks:read"
       }
     },
+    "/harnesses": {
+      "get": {
+        "description": "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` re-checks (at most once every ten seconds). Needs settings:read.",
+        "operationId": "harnesses.status",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "anyInstalled": {
+                      "type": "boolean"
+                    },
+                    "checkedAt": {
+                      "description": "ISO-8601 time of the oldest check in the answer.",
+                      "type": "string"
+                    },
+                    "tools": {
+                      "additionalProperties": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "foundOffPath": {
+                            "description": "Set when the program exists but is not on PATH: where it was found.",
+                            "type": "string"
+                          },
+                          "installed": {
+                            "type": "boolean"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "displayName",
+                          "installed",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "tools",
+                    "anyInstalled",
+                    "checkedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Installed coding agents",
+        "tags": [
+          "harnesses"
+        ],
+        "x-boof-scope": "settings:read"
+      }
+    },
     "/health": {
       "get": {
         "description": "Returns the last health check of each agent tool (claude-code, codex, opencode) made by this server process, with its time (checkedAt); empty until settings.checkHealth ran. No input. No side effects: it runs no tool.",

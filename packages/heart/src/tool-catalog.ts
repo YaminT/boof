@@ -15,6 +15,22 @@ export interface HealthResult {
   version?: string;
 }
 
+/** Whether a tool's program is on this computer. Free: it never sends a prompt. */
+export interface InstallResult {
+  installed: boolean;
+  version?: string;
+  /** Absolute path of the program when it was found. */
+  path?: string;
+  /** Set when the program exists but is not on PATH (the path it was found at). */
+  foundOffPath?: string;
+  message: string;
+}
+
+/** An install result plus when it was computed in this server process. */
+export interface CachedInstall extends InstallResult {
+  checkedAt: string;
+}
+
 /** A health result plus when it was computed in this server process. */
 export interface CachedHealth extends HealthResult {
   checkedAt: string;
@@ -49,6 +65,11 @@ export interface ToolCatalog {
     maxAgeMs?: number,
     opts?: HealthOptions,
   ): Promise<Readonly<Record<string, Readonly<HealthResult>>>>;
+  /**
+   * Check which tools are installed, unless the last check is younger than `maxAgeMs` (default
+   * five minutes); concurrent callers share one check. Never sends a prompt. Returns id → result.
+   */
+  installedAll(maxAgeMs?: number): Promise<Readonly<Record<string, Readonly<CachedInstall>>>>;
   /** Last health result per tool id of this process, without running a tool. */
   lastHealth(): Readonly<Record<string, Readonly<CachedHealth>>>;
   /** Models each tool lists now (runs the tools), falling back to the built-in defaults. */

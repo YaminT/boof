@@ -1,8 +1,9 @@
-import type { TokenUsage } from "@boof/heart";
+import type { InstallResult, TokenUsage } from "@boof/heart";
 import { commandExists, execCommand, parseUsage } from "@boof/heart";
 import { agentEnv } from "../agent-env.js";
 import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
+import { checkInstalled } from "./install-check.js";
 import { ToolRunError } from "./errors.js";
 import { withQuestions } from "./questions.js";
 
@@ -21,6 +22,10 @@ export class ClaudeCodeTool implements Tool {
   readonly displayName = "Claude Code";
   readonly defaultModels = ["opus", "sonnet", "haiku"];
   private readonly bin = process.env.BOOF_RUNNER_CLAUDE_BIN ?? "claude";
+
+  installed(): Promise<InstallResult> {
+    return checkInstalled(this.bin);
+  }
 
   async detect(detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {

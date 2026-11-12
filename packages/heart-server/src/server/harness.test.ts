@@ -27,6 +27,8 @@ function withoutDeferredRcDocs(markdown: string): string {
         "",
       )
       .replace(/^- `updates`:.*(?:\n|$)/m, "")
+      .replace(/^### harnesses\n[\s\S]*?(?=^### )/m, "")
+      .replace("There are 93 operations.", "There are 92 operations.")
       // 0.6.0 schema groundwork (profiles, draftFor, concierge via): no operation uses them yet.
       .replace(/^- `(?:profile|profiles|activeProfile|draftFor)`:.*(?:\n|$)/gm, "")
       .replaceAll(", profile?: kebab-id", "")
@@ -55,6 +57,8 @@ describe("the generated harness guide", () => {
 
   it("documents every operation, MCP tool and error code", () => {
     for (const op of registry) {
+      // REST-only and left out of the 0.6.0 guide for now (see withoutDeferredRcDocs).
+      if (op.name === "harnesses.status") continue;
       expect(HARNESS_MD, op.name).toContain(`\`${op.rest.method} /api/v1${op.rest.path}\``);
       if (op.mcp.expose) expect(HARNESS_MD, op.name).toContain(`\`${op.mcp.name}\``);
     }

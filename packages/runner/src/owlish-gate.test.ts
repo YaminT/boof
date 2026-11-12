@@ -84,6 +84,7 @@ function pooledMock(): Tool {
     get supportsResume() {
       return m.supportsResume;
     },
+    installed: () => m.installed(),
     detect: () => m.detect(),
     listModels: () => m.listModels(),
     run: async (o) => {

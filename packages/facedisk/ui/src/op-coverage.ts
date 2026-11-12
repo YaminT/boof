@@ -130,6 +130,9 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.create": { where: "createClient \u2014 KeysPage (new API client)" },
   "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
   "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
+  "harnesses.status": {
+    none: "no screen reads it yet: the Agents page gets its doctor panel in a later change",
+  },
   "accounts.list": { where: "listAccounts — AccountsPage (pool account list)" },
   "accounts.agentSdk": {
     where:

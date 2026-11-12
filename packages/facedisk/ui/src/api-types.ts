@@ -51,6 +51,23 @@ export interface HealthResult {
   unavailableReason?: string;
 }
 
+/** One tool's install check as GET /api/v1/harnesses reports it. */
+export interface HarnessInstall {
+  displayName: string;
+  installed: boolean;
+  version?: string;
+  path?: string;
+  /** Set when the program exists but is not on PATH: where it was found. */
+  foundOffPath?: string;
+  message: string;
+}
+
+export interface HarnessStatus {
+  tools: Record<string, HarnessInstall>;
+  anyInstalled: boolean;
+  checkedAt: string;
+}
+
 /** One model of a tool as GET /api/v1/models/details reports it. */
 export interface ModelDetail {
   id: string;

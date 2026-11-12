@@ -2,13 +2,14 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commandExists, execCommand, parseUsage } from "@boof/heart";
+import { checkInstalled } from "./install-check.js";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
 import { gatewayEnv, gatewayUrl } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
-import type { TokenUsage } from "@boof/heart";
+import type { InstallResult, TokenUsage } from "@boof/heart";
 
 /** Build the inline TOML provider table; JSON's string quoting is valid TOML basic-string syntax. */
 export function codexProviderConfig(url: string): string {
@@ -24,6 +25,10 @@ export class CodexTool implements Tool {
   readonly displayName = "Codex";
   readonly defaultModels: string[] = [];
   private readonly bin = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
+
+  installed(): Promise<InstallResult> {
+    return checkInstalled(this.bin);
+  }
 
   async detect(detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {

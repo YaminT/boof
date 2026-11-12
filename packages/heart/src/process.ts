@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessByStdio, type SpawnOptions } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { basename } from "node:path";
+import { constants as fsConstants, existsSync } from "node:fs";
+import { access, rm, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, posix, win32 } from "node:path";
 import { writePidFile } from "./pid-file.js";
 import {
   SandboxUnavailableError,
@@ -504,4 +505,100 @@ export async function commandExists(command: string): Promise<boolean> {
     launch: { kind: "direct" },
   });
   return res.code === 0;
+}
+
+export interface FindExecutableOptions {
+  /** Environment to read PATH/PATHEXT from; default `process.env`. */
+  env?: Readonly<Record<string, string | undefined>>;
+  platform?: NodeJS.Platform;
+  /** Home directory for the known install locations; default `os.homedir()`. */
+  home?: string;
+  /** Install locations to try after PATH; default {@link knownInstallDirs}. */
+  extraDirs?: readonly string[];
+}
+
+export interface FoundExecutable {
+  path: string;
+  /** True when the binary was not on PATH and came from a known install location. */
+  offPath: boolean;
+}
+
+/** Where agent CLIs usually install, for a desktop launch whose PATH misses them. */
+export function knownInstallDirs(
+  opts: {
+    env?: Readonly<Record<string, string | undefined>>;
+    platform?: NodeJS.Platform;
+    home?: string;
+  } = {},
+): string[] {
+  const env = opts.env ?? process.env;
+  const platform = opts.platform ?? process.platform;
+  const home = opts.home ?? homedir();
+  const sep = platform === "win32" ? win32 : posix;
+  const dirs: string[] = [];
+  if (platform === "win32") {
+    if (env.APPDATA) dirs.push(sep.join(env.APPDATA, "npm"));
+    if (env.LOCALAPPDATA) dirs.push(sep.join(env.LOCALAPPDATA, "Programs"));
+    dirs.push(sep.join(home, ".local", "bin"), sep.join(home, ".claude", "local"));
+    return dirs;
+  }
+  dirs.push(
+    sep.join(home, ".local", "bin"),
+    sep.join(home, ".claude", "local"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  );
+  if (env.NPM_CONFIG_PREFIX) dirs.push(sep.join(env.NPM_CONFIG_PREFIX, "bin"));
+  dirs.push(sep.join(home, ".npm-global", "bin"), sep.join(home, ".bun", "bin"));
+  return dirs;
+}
+
+/**
+ * Finds a program by scanning PATH entries directly (no `which`, which minimal images lack), then
+ * the known install locations. On Windows it tries each PATHEXT extension. Spawns nothing.
+ */
+export async function findExecutable(
+  command: string,
+  opts: FindExecutableOptions = {},
+): Promise<FoundExecutable | undefined> {
+  const env = opts.env ?? process.env;
+  const platform = opts.platform ?? process.platform;
+  // Path syntax is the host's; `platform` only picks the delimiter, extensions and locations.
+  const sep = process.platform === "win32" ? win32 : posix;
+  const exts =
+    platform === "win32"
+      ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
+      : [""];
+  const isFile = async (path: string): Promise<boolean> => {
+    try {
+      if (!(await stat(path)).isFile()) return false;
+      if (platform !== "win32") await access(path, fsConstants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const tryDir = async (dir: string): Promise<string | undefined> => {
+    for (const ext of exts) {
+      const candidate = sep.join(dir, command + ext);
+      if (await isFile(candidate)) return candidate;
+    }
+    return undefined;
+  };
+  if (sep.isAbsolute(command) || command.includes("/") || command.includes("\\")) {
+    return (await isFile(command)) ? { path: command, offPath: false } : undefined;
+  }
+  const pathDirs = (env.PATH ?? env.Path ?? "")
+    .split(platform === "win32" ? ";" : ":")
+    .filter(Boolean);
+  for (const dir of pathDirs) {
+    const found = await tryDir(dir);
+    if (found) return { path: found, offPath: false };
+  }
+  for (const dir of opts.extraDirs ?? knownInstallDirs({ env, platform, home: opts.home })) {
+    if (pathDirs.includes(dir)) continue;
+    const found = await tryDir(dir);
+    if (found) return { path: found, offPath: true };
+  }
+  return undefined;
 }

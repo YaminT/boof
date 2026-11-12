@@ -1,11 +1,12 @@
 import { commandExists, execCommand, parseUsage } from "@boof/heart";
+import { checkInstalled } from "./install-check.js";
 import { ToolRunError } from "./errors.js";
 import { agentEnv } from "../agent-env.js";
 import { gatewayEnv } from "../gateway-env.js";
 import type { DetectOptions, HealthResult, RunOptions, RunResult, Tool } from "./types.js";
 import { JsonlRenderer, num, obj, oneLine, parseJsonLine, str, stripAnsi } from "./jsonl.js";
 import { withQuestions } from "./questions.js";
-import type { TokenUsage } from "@boof/heart";
+import type { InstallResult, TokenUsage } from "@boof/heart";
 
 /**
  * Adapter for the `opencode` CLI. Runs non-interactively via `opencode run`;
@@ -17,6 +18,10 @@ export class OpencodeTool implements Tool {
   readonly displayName = "OpenCode";
   readonly defaultModels = ["opencode-go/kimi-k3"];
   private readonly bin = process.env.BOOF_RUNNER_OPENCODE_BIN ?? "opencode";
+
+  installed(): Promise<InstallResult> {
+    return checkInstalled(this.bin);
+  }
 
   async detect(_detect: DetectOptions = {}): Promise<HealthResult> {
     if (!(await commandExists(this.bin))) {

@@ -8,6 +8,7 @@ import { taskOps } from "./ops/tasks.js";
 import { webhookOps } from "./ops/webhooks.js";
 import { n8nOps } from "./ops/n8n.js";
 import { whoamiOps } from "./ops/whoami.js";
+import { harnessOps } from "./ops/harnesses.js";
 import { conciergeOps } from "./ops/concierge.js";
 
 /** Every operation, in the order the docs and the OpenAPI document list them. */
@@ -18,6 +19,7 @@ export const registry: readonly AnyOperation[] = [
   ...taskOps,
   ...epicOps,
   ...adminOps,
+  ...harnessOps,
   ...accountOps,
   ...webhookOps,
   ...n8nOps,

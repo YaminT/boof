@@ -89,6 +89,7 @@ describe("UI coverage of the operations", () => {
         "epics.get",
         "settings.health",
         "settings.models",
+        "harnesses.status",
       ]
     `);
   });

@@ -1,4 +1,4 @@
-import type { CommandLaunch, HealthResult, Role, TokenUsage } from "@boof/heart";
+import type { CommandLaunch, HealthResult, InstallResult, Role, TokenUsage } from "@boof/heart";
 import type { AgentAuth } from "@boof/owlish";
 import type { Gateway } from "../gateway-env.js";
 
@@ -98,6 +98,8 @@ export interface Tool {
   defaultModels: string[];
   /** Check that the tool is installed and usable (sends a short, paid prompt). */
   detect(opts?: DetectOptions): Promise<HealthResult>;
+  /** Free install check: finds the program and asks it for its version. Never sends a prompt. */
+  installed(): Promise<InstallResult>;
   listModels(): Promise<string[]>;
   /** True when `run` honours `resumeSessionId`; otherwise a steered step restarts. */
   readonly supportsResume?: boolean;

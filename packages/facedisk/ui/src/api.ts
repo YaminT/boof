@@ -13,6 +13,7 @@ import type { Task } from "@boof/heart/task-types";
 import type {
   BudgetStatus,
   CommandTemplate,
+  HarnessStatus,
   HealthResult,
   PublicClient,
   TaskDiff,
@@ -387,6 +388,9 @@ export const api = {
     http<{ tools: Record<string, HealthResult> }>(`${V1}/health/check`, { method: "POST" }).then(
       (r) => r.tools,
     ),
+  /** Which coding agents are installed here (free: no prompt). `refresh` re-checks. */
+  harnesses: (refresh = false) =>
+    http<HarnessStatus>(`${V1}/harnesses${refresh ? "?refresh=true" : ""}`),
   /** Asks the tools for their models (POST). GET /models only reads the last lists. */
   models: () =>
     http<{ models: Record<string, string[]> }>(`${V1}/models/refresh`, { method: "POST" }).then(

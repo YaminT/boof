@@ -23,6 +23,7 @@ import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { openCommand } from "@boof/facedisk/cli/open-cli.js";
 import { sandboxCommand } from "./sandbox-cli.js";
+import { doctorCommand } from "./doctor-cli.js";
 import { backupCommand, restoreCommand } from "@boof/facedisk/cli/backup-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
@@ -93,6 +94,7 @@ Usage:
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
   boof-runner sandbox check            Print whether enforce would work (see: sandbox --help)
+  boof-runner doctor [--json]          Print which coding agents are installed (see: doctor --help)
   boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
   boof-runner backup --out <file.tar.gz> [-d <root>]  Copy a data root to an archive (see: backup --help)
   boof-runner restore --from <file.tar.gz> -d <root>  Restore an archive into an empty directory (see: restore --help)
@@ -801,6 +803,9 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
         console.log,
         sandboxServerHooks(),
       );
+      break;
+    case "doctor":
+      code = await doctorCommand(rest, new ToolRegistry());
       break;
     case "sandbox":
       code = await sandboxCommand(rest, () => assessSandbox());
