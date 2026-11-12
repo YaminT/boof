@@ -10,6 +10,7 @@ import {
   assertConciergeIdAvailable,
   conciergeOps,
   conciergePrincipal,
+  isConfirmCall,
 } from "./policy.js";
 
 const projectId = "shop";
@@ -266,5 +267,19 @@ describe("assertConfirmInput", () => {
     expect(() => assertConfirmInput("projects.update", input, "p")).toThrowError(
       expect.objectContaining({ code }),
     );
+  });
+});
+
+describe("isConfirmCall", () => {
+  it("keeps the listed confirm tools and adds plan activation", () => {
+    expect(isConfirmCall("tasks.delete", {})).toBe(true);
+    expect(isConfirmCall("plans.update", { status: "active" })).toBe(true);
+  });
+
+  it("leaves other plan edits and reads alone", () => {
+    expect(isConfirmCall("plans.update", { status: "draft" })).toBe(false);
+    expect(isConfirmCall("plans.update", { title: "x" })).toBe(false);
+    expect(isConfirmCall("plans.create", { status: "active" })).toBe(false);
+    expect(isConfirmCall("plans.get", {})).toBe(false);
   });
 });

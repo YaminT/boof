@@ -36,6 +36,15 @@ export const CONCIERGE_TOOLS: Readonly<Record<string, ConciergeToolMode>> = Obje
   "projects.update": "confirm",
 });
 
+/**
+ * Whether this call is a confirm-class change. Besides the tools listed as `confirm`, setting a
+ * plan to `active` is one: activating creates one task per goal, so the user applies it.
+ */
+export function isConfirmCall(opName: string, input: Record<string, unknown>): boolean {
+  if (CONCIERGE_TOOLS[opName] === "confirm") return true;
+  return opName === "plans.update" && input.status === "active";
+}
+
 export const CONCIERGE_SCOPES: readonly Scope[] = [
   "projects:read",
   "plans:read",

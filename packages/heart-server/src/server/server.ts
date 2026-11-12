@@ -18,6 +18,7 @@ import {
   type ConciergeAgent,
   reservedIdWarning,
 } from "@boof/heart";
+import { sweepConciergeTurns } from "../concierge/sweep.js";
 import { attachConcierge } from "../concierge/compose.js";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
@@ -157,6 +158,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (reserved) warn(reserved);
   await pruneAudit(opts.root, sec.audit.retentionDays).catch(() => []);
   await new IdempotencyStore(opts.root).prune().catch(() => 0);
+  await sweepConciergeTurns(opts.root).catch(() => 0);
 
   const watcher = new DataWatcher(opts.root);
   watcher.start();
@@ -224,6 +226,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : (opts.port ?? 4319);
   boundPort = port;
+  service.concierge().bridge.setBaseUrl(conciergeBridgeUrl(host, port, tls !== undefined));
   let ipv6Server: ServerType | undefined;
   if (host === "127.0.0.1") {
     // Reserve ::1 when available so a V6ONLY socket cannot squat localhost while the server
@@ -313,6 +316,20 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       await rm(serverPortRecord, { force: true });
     },
   };
+}
+
+/**
+ * Where the claude CLI, running on this machine, reaches the assistant's MCP endpoint. Null when
+ * no local address can: TLS (the CLI would not trust the certificate) or a bind to one
+ * non-loopback address (a connection to it would not come from a loopback peer).
+ */
+export function conciergeBridgeUrl(host: string, port: number, tls: boolean): string | null {
+  if (tls) return null;
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "::1") return `http://[::1]:${port}`;
+  if (h === "0.0.0.0" || h === "::" || h === "localhost" || isLoopbackHost(h))
+    return `http://${h === "::" || h === "0.0.0.0" || h === "localhost" ? "127.0.0.1" : h}:${port}`;
+  return null;
 }
 
 /** Retain the existing warning when the root could not safely be tightened. */
