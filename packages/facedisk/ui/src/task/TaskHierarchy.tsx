@@ -5,6 +5,8 @@ import { formatRoute } from "../lib/route.js";
 import { childTasks, hierarchyLine, newSubtaskHref, tasksForEpicHref } from "../lib/task-links.js";
 import { progressLabel } from "../lib/task-hierarchy.js";
 import { StatusPill } from "../shell/StatusPill.js";
+import { goalInfo, planRefOf } from "../lib/plan-grouping.js";
+import { usePlanDetails } from "../lib/usePlanDetails.js";
 import { useEpics } from "../tasks/useEpics.js";
 import type { TaskActions } from "../tasks/useTaskActions.js";
 
@@ -21,22 +23,55 @@ export function TaskHierarchy({
   task,
   tasks,
   actions,
+  planTick = 0,
 }: {
   pid: string;
   task: TaskView;
   tasks: TaskView[];
   actions: TaskActions;
+  /** Bumps on plan.* events, so the plan's title and goal stay current. */
+  planTick?: number;
 }) {
   const epics = useEpics(pid, tasks).byId;
   const f = task.frontmatter;
+  const ref = planRefOf(task);
+  const planDetails = usePlanDetails(pid, ref ? [ref.planId] : [], planTick);
   const line = hierarchyLine(task, epics, tasks);
   const kids = childTasks(tasks, f.id);
   const canAdd = !f.parentId && f.status !== "archived";
   const showSubtasks = kids.items.length > 0 || canAdd;
-  if (!line.epic && !line.parent && !showSubtasks) return null;
+  if (!ref && !line.epic && !line.parent && !showSubtasks) return null;
 
   return (
     <section aria-label="Hierarchy" className="flex flex-col gap-3">
+      {ref && (
+        <p className="m-0 text-[length:var(--text-row)] text-ink-muted">
+          {(() => {
+            const plan = planDetails.get(ref.planId);
+            const goal = goalInfo(plan, ref.goalId);
+            return (
+              <>
+                Part of plan{" "}
+                <a href={formatRoute({ name: "plans", pid, planId: ref.planId })} className={link}>
+                  {plan?.title ?? ref.planId}
+                </a>
+                , goal{" "}
+                <a
+                  href={formatRoute({
+                    name: "plans",
+                    pid,
+                    planId: ref.planId,
+                    goalId: ref.goalId,
+                  })}
+                  className={link}
+                >
+                  {goal ? `${goal.n} of ${goal.m}: ${goal.title}` : ref.goalId}
+                </a>
+              </>
+            );
+          })()}
+        </p>
+      )}
       {(line.parent || line.epic) && (
         <p className="m-0 flex flex-wrap items-center gap-x-4 gap-y-2 text-[length:var(--text-row)] text-ink-muted">
           {line.parent &&

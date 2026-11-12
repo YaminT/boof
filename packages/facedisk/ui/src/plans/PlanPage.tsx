@@ -20,6 +20,7 @@ import { GoalEditor } from "./GoalEditor.js";
 import { GoalPanel } from "./GoalPanel.js";
 import { GoalRow } from "./GoalRow.js";
 import { ArchivePlanDialog, DeleteGoalDialog, ExportDialog, SyncDialog } from "./PlanDialogs.js";
+import { planTaskCounts } from "../lib/plan-grouping.js";
 import { PlanHeader } from "./PlanHeader.js";
 import { usePlan } from "./usePlan.js";
 
@@ -205,6 +206,7 @@ export function PlanPage({
         pid={pid}
         plan={plan}
         busy={false}
+        taskCounts={planTaskCounts(data.tasks, plan.id)}
         onActivate={() =>
           void mutate((p) => api.updatePlan(pid, p, { status: "active" }), "Could not activate")
         }
