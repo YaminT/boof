@@ -10,6 +10,9 @@ import { useFocusMode } from "../lib/useFocusMode.js";
 import { groupTasks } from "../lib/task-groups.js";
 import { useTaskActions } from "../tasks/useTaskActions.js";
 import { TonePill } from "../shell/StatusPill.js";
+import { useHarnesses } from "../useHarnesses.js";
+import { noAgentFound } from "../lib/harnesses.js";
+import { NoAgentCard } from "./NoAgentCard.js";
 import { NowLane } from "./NowLane.js";
 import { RecentList } from "./RecentList.js";
 import { SpendBar } from "./SpendBar.js";
@@ -27,6 +30,7 @@ export function OverviewPage({
   navigate: (to: Route) => void;
 }) {
   const actions = useTaskActions(pid, data, navigate);
+  const harnesses = useHarnesses();
   const focus = useFocusMode("overview");
   const groups = useMemo(() => groupTasks(data.tasks, data.plans), [data.tasks, data.plans]);
   const parts = overviewParts(
@@ -50,6 +54,7 @@ export function OverviewPage({
           </p>
         )}
       </header>
+      {noAgentFound(harnesses.status) && <NoAgentCard />}
       <section aria-label="Now" className="flex flex-col gap-3">
         <h2 className="m-0 text-[length:var(--text-section)] font-semibold">Now</h2>
         {data.tasksError && data.tasks.length === 0 ? (

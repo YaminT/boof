@@ -131,7 +131,8 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "auth.clients.revoke": { where: "revokeClient \u2014 KeysPage (revoke a client)" },
   "auth.clients.rotate": { where: "rotateClient \u2014 KeysPage (rotate a client's key)" },
   "harnesses.status": {
-    none: "no screen reads it yet: the Agents page gets its doctor panel in a later change",
+    where:
+      "harnesses \u2014 useHarnesses (Settings \u203a Agents doctor panel, installed-only tool selects, Overview no-agent card)",
   },
   "accounts.list": { where: "listAccounts — AccountsPage (pool account list)" },
   "accounts.agentSdk": {
