@@ -1,5 +1,7 @@
 import {
   DESKTOP_CLAUDE_AGENT_REASON,
+  AutoConcierge,
+  ClaudeCodeConcierge,
   ClaudeConcierge,
   RunnerEngine,
   ToolRegistry,
@@ -13,6 +15,7 @@ import {
   checkForUpdate,
   sandboxStatus,
   setSandboxOffer,
+  SettingsStore,
   type ConciergeAgent,
   type Settings,
   type UpdateFetch,
@@ -113,11 +116,18 @@ export async function boot(opts: BootOptions): Promise<Booted> {
       claudeAgent === "unavailable" ? { claudeAgentUnavailable: DESKTOP_CLAUDE_AGENT_REASON } : {},
     ),
   );
+  // `settings.concierge.tool` picks the assistant: `auto` is claude-agent when it is available
+  // (never in the desktop app), else the user's own claude-code when it is installed.
+  const settingsStore = new SettingsStore(opts.root);
   const conciergeAgent =
     conciergeOverride ??
-    new ClaudeConcierge({
-      root: opts.root,
-      unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
+    new AutoConcierge({
+      agent: new ClaudeConcierge({
+        root: opts.root,
+        unavailableReason: claudeAgent === "unavailable" ? DESKTOP_CLAUDE_AGENT_REASON : undefined,
+      }),
+      code: new ClaudeCodeConcierge({ root: opts.root, loadSettings: () => settingsStore.load() }),
+      loadSettings: () => settingsStore.load(),
     });
   let engine: RunnerEngine | null = null;
   // A crashed run leaves its temp directory. Remove those before this process serves anything.

@@ -40,6 +40,7 @@ import {
   assertConciergeIdAvailable,
   RESULT_TEXT_CAP,
   CONCIERGE_TOOLS,
+  isConfirmCall,
 } from "./policy.js";
 import {
   buildConciergeMessage,
@@ -48,6 +49,7 @@ import {
   type ResolvedContext,
 } from "./prompt.js";
 import { previewChange } from "./preview.js";
+import { ConciergeBridgeRegistry } from "./bridge.js";
 
 type CreateConciergeMcpServer = typeof import("../mcp/server.js").createConciergeMcpServer;
 
@@ -117,6 +119,8 @@ export class ConciergeService {
   private readonly now: () => number;
   /** CLI only. The server leaves this false and keeps `rate` and `inFlight` in memory. */
   private readonly persistLimits: boolean;
+  /** Loopback MCP endpoints for agents that cannot take an in-process server (claude-code). */
+  readonly bridge = new ConciergeBridgeRegistry();
 
   constructor(
     private readonly opts: {
@@ -153,7 +157,8 @@ export class ConciergeService {
         reason: "The assistant is turned off (settings.concierge.enabled is false).",
         via: null,
       };
-    else if (this.opts.agent) availability = await this.opts.agent.availability(project);
+    else if (this.opts.agent)
+      availability = await this.opts.agent.availability(project, { bridge: this.bridge.ready });
     const conversation = await this.readStatusConversation(
       projectId,
       user.id,
@@ -237,7 +242,9 @@ export class ConciergeService {
         "concierge_unavailable",
       );
     }
-    const availability = await this.opts.agent.availability(project);
+    const availability = await this.opts.agent.availability(project, {
+      bridge: this.bridge.ready,
+    });
     if (!availability.available)
       throw new OpError(
         409,
@@ -333,7 +340,7 @@ export class ConciergeService {
       const changes: ConciergeAnswer["changes"] = [];
       const gate = {
         before: async (op: AnyOperation, raw: Record<string, unknown>) => {
-          if (CONCIERGE_TOOLS[op.name] !== "confirm") return undefined;
+          if (!isConfirmCall(op.name, raw)) return undefined;
           const parsed = op.input.safeParse(raw);
           if (!parsed.success)
             throw new OpError(
@@ -408,7 +415,11 @@ export class ConciergeService {
           }
         },
         refused: async (op: AnyOperation, raw: Record<string, unknown>, err: OpError) => {
-          if (CONCIERGE_TOOLS[op.name] !== "write" || err.code !== "forbidden_trust")
+          if (
+            CONCIERGE_TOOLS[op.name] !== "write" ||
+            isConfirmCall(op.name, raw) ||
+            err.code !== "forbidden_trust"
+          )
             return undefined;
           const parsed = op.input.safeParse(raw);
           if (!parsed.success)
@@ -492,29 +503,36 @@ export class ConciergeService {
       };
       const ops = conciergeOps(this.opts.registry);
       const allowedTools = conciergeAllowedTools(ops, principal, user, projectId);
-      const mcpServer = this.opts.createMcpServer({
-        root: this.opts.root,
-        principal,
-        project: projectId,
-        services: this.opts.services,
-        authStore: this.opts.authStore,
-        gate,
-        listable: (op) => conciergeCanList(op, principal, user, projectId),
-        instructions: CONCIERGE_MCP_INSTRUCTIONS,
-        onCall: (info) => {
-          toolCount++;
-          void auditOperation(this.opts.root, {
-            principal: info.principal,
-            action: `concierge:mcp:${info.tool}`,
-            via: "concierge",
-            project: projectId,
-            ok: info.ok,
-            code: info.code,
-            ms: info.ms,
-            at: info.startedAt,
-          });
-        },
-      });
+      const makeMcpServer = () =>
+        this.opts.createMcpServer({
+          root: this.opts.root,
+          principal,
+          project: projectId,
+          services: this.opts.services,
+          authStore: this.opts.authStore,
+          gate,
+          listable: (op) => conciergeCanList(op, principal, user, projectId),
+          instructions: CONCIERGE_MCP_INSTRUCTIONS,
+          onCall: (info) => {
+            toolCount++;
+            void auditOperation(this.opts.root, {
+              principal: info.principal,
+              action: `concierge:mcp:${info.tool}`,
+              via: "concierge",
+              project: projectId,
+              ok: info.ok,
+              code: info.code,
+              ms: info.ms,
+              at: info.startedAt,
+            });
+          },
+        });
+      const mcpServer = makeMcpServer();
+      // The claude-code agent reaches the same tools over a per-turn loopback endpoint.
+      const bridged =
+        cfg.tool !== "claude-agent" && this.bridge.ready
+          ? this.bridge.forTurn(makeMcpServer)
+          : undefined;
       const prompt = buildConciergeMessage(text, resolved);
       onEvent?.({ type: "conversation", conversationId: conversation.id });
       let answerText = "";
@@ -536,6 +554,7 @@ export class ConciergeService {
           timeoutMs: cfg.timeoutMs,
           mcpServer,
           mcpServerName: "boof",
+          ...(bridged ? { bridge: bridged.bridge } : {}),
           allowedTools,
           onEvent: (event) => {
             if (event.type === "text") answerText += event.text;
@@ -557,6 +576,7 @@ export class ConciergeService {
           throw err;
         }
       } finally {
+        bridged?.closeAll();
         if (usage !== null) {
           try {
             await recordSpend({

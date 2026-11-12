@@ -40,7 +40,7 @@ const TOOL_NAME = /^[a-z0-9_]{1,64}$/;
 type SdkOptions = NonNullable<Parameters<AgentSdk["query"]>[0]["options"]>;
 
 /** Built-in tools the concierge must not have, even if a preset or config would add them. */
-const DISALLOWED_TOOLS = [
+export const DISALLOWED_TOOLS = [
   "Bash",
   "Read",
   "Write",

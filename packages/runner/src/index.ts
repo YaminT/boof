@@ -17,6 +17,7 @@ export * from "./worktree.js";
 export * from "./pipeline.js";
 export * from "./engine.js";
 export * from "./concierge.js";
+export * from "./concierge-claude-code.js";
 export * from "./external-step.js";
 export * from "./sandbox/policy.js";
 export * from "./sandbox/index.js";

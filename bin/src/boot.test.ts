@@ -15,6 +15,8 @@ const {
   engineLoop,
   engineShutdown,
   constructConcierge,
+  constructCodeConcierge,
+  constructAutoConcierge,
   createN8nTransport,
   reapCrashedRunTemps,
 } = vi.hoisted(() => ({
@@ -24,6 +26,8 @@ const {
   engineLoop: vi.fn(),
   engineShutdown: vi.fn(),
   constructConcierge: vi.fn(),
+  constructCodeConcierge: vi.fn(),
+  constructAutoConcierge: vi.fn(),
   reapCrashedRunTemps: vi.fn(async () => {}),
 }));
 vi.mock("@boof/heart-server", () => ({ startServer, createN8nTransport }));
@@ -33,6 +37,16 @@ vi.mock("@boof/runner", () => ({
   ClaudeConcierge: class {
     constructor(options: unknown) {
       constructConcierge(options);
+    }
+  },
+  ClaudeCodeConcierge: class {
+    constructor(options: unknown) {
+      constructCodeConcierge(options);
+    }
+  },
+  AutoConcierge: class {
+    constructor(options: unknown) {
+      constructAutoConcierge(options);
     }
   },
   defaultTools: (opts: { claudeAgentUnavailable?: string } = {}) => [
@@ -190,6 +204,18 @@ describe("bin boot", () => {
       root: "/tmp/boot-test",
       unavailableReason: "desktop unavailable",
     });
+    // The assistant harness follows settings.concierge.tool: claude-agent (unavailable on the
+    // desktop) first, then the user's own claude-code.
+    expect(constructCodeConcierge).toHaveBeenCalledWith(
+      expect.objectContaining({ root: "/tmp/boot-test" }),
+    );
+    expect(constructAutoConcierge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.anything(),
+        code: expect.anything(),
+        loadSettings: expect.any(Function),
+      }),
+    );
     await result.stop(0);
   });
 

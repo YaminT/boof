@@ -16,6 +16,24 @@ export type ConciergeAgentEvent =
   | { type: "text"; text: string }
   | { type: "tool"; tool: string; phase: "start" | "end"; ok?: boolean };
 
+/** What the server can offer an agent that talks to the tools over HTTP instead of in-process. */
+export interface ConciergeEnv {
+  /** True when the loopback MCP endpoint is up for this process. */
+  bridge: boolean;
+}
+
+/** One turn's loopback MCP endpoint. Valid until `close()` or the end of the turn. */
+export interface ConciergeBridgeLease {
+  url: string;
+  /** A per-turn secret. Goes in a 0600 file for the child process, never in argv, env or logs. */
+  token: string;
+  close(): void;
+}
+
+export interface ConciergeBridge {
+  open(): ConciergeBridgeLease;
+}
+
 export interface ConciergeTurnInput {
   project: Project;
   systemPrompt: string;
@@ -32,6 +50,8 @@ export interface ConciergeTurnInput {
   /** An McpServer instance; opaque to Heart and Runner. */
   mcpServer: unknown;
   mcpServerName: "boof";
+  /** Present when the server runs the loopback MCP endpoint; claude-code uses it. */
+  bridge?: ConciergeBridge;
   /** `mcp__boof__<tool>`. */
   allowedTools: readonly string[];
   onEvent?: (event: ConciergeAgentEvent) => void;
@@ -62,6 +82,6 @@ export class ConciergeTurnError extends Error {
 
 export interface ConciergeAgent {
   /** Never sends a prompt and never spends. */
-  availability(project: Project): Promise<ConciergeAvailability>;
+  availability(project: Project, env?: ConciergeEnv): Promise<ConciergeAvailability>;
   turn(input: ConciergeTurnInput): Promise<ConciergeTurnResult>;
 }
