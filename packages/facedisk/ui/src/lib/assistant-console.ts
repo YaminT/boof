@@ -36,11 +36,19 @@ function failedLabel(code?: string): string {
   return code.startsWith("Failed") ? code : `Failed: ${code}`;
 }
 
-/** The one line shown when the assistant cannot run. The reason is the server's, word for word. */
+export const COMMANDS_HINT = "Commands work: /plan, /activate, /queue, /stop, /open.";
+export const DESKTOP_NO_ASSISTANT_LINE = `Plain-words questions need Claude Code installed. ${COMMANDS_HINT}`;
+
+/** The one line shown when the assistant cannot run. */
 export function unavailableLine(reason: string | null): string {
   const why = (reason ?? "The assistant is not available.").trim();
+  if (/desktop app/i.test(why) || /no assistant harness/i.test(why))
+    return DESKTOP_NO_ASSISTANT_LINE;
+  if (/disabled|turned off/i.test(why) && /setting/i.test(why)) {
+    return `The assistant is disabled in settings. ${COMMANDS_HINT}`;
+  }
   const sentence = /[.!?]$/.test(why) ? why : `${why}.`;
-  return `Assistant unavailable: ${sentence} Commands still work: try /task, /queue, /stop, /open.`;
+  return `Assistant unavailable: ${sentence} ${COMMANDS_HINT}`;
 }
 
 export type UnknownPlan = { kind: "ask" } | { kind: "print"; lines: ConsoleLine[] };
