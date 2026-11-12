@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Project } from "@boof/heart/schema";
+import type { OrchestrationProfile, Project } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import { createCommandActions, type ActionContext, type ActionEffects } from "./command-actions.js";
 
@@ -58,6 +58,7 @@ describe("createCommandActions", () => {
       "go-plans",
       "go-settings-project",
       "go-settings-agents",
+      "go-settings-profiles",
       "go-settings-budgets",
       "go-settings-keys",
       "go-settings-automation",
@@ -258,5 +259,28 @@ describe("hierarchy actions", () => {
     expect(by["new-epic"]).toBe("tasks:write");
     expect(by["move-epic-e1"]).toBe("tasks:write");
     expect(by["make-subtask-b"]).toBe("tasks:write");
+  });
+});
+
+describe("profile actions", () => {
+  const profiles = [
+    { id: "dev-only", name: "Developer only" },
+    { id: "full", name: "Full crew" },
+  ] as unknown as OrchestrationProfile[];
+
+  it("offers one switch action per profile, marks the active one and runs the effect", async () => {
+    const fx = { ...effects(), setProfile: vi.fn() };
+    const actions = createCommandActions(ctx({ profiles, activeProfile: "full", effects: fx }));
+    const use = actions.filter((a) => a.id.startsWith("use-profile-"));
+    expect(use.map((a) => [a.id, a.meta, a.requiredScope])).toEqual([
+      ["use-profile-dev-only", undefined, "settings:write"],
+      ["use-profile-full", "active", "settings:write"],
+    ]);
+    await use[0]!.run();
+    expect(fx.setProfile).toHaveBeenCalledWith("dev-only");
+  });
+
+  it("offers none without profiles", () => {
+    expect(ids(ctx()).some((id) => id.startsWith("use-profile-"))).toBe(false);
   });
 });

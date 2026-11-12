@@ -1,4 +1,4 @@
-import type { Project, Scope } from "@boof/heart/schema";
+import type { OrchestrationProfile, Project, Scope } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import type { Route, SettingsPageId } from "./route.js";
 import type { ThemePref } from "./theme.js";
@@ -41,6 +41,8 @@ export interface ActionEffects {
   activatePlan(pid: string, plan: PlanSummary): Promise<void> | void;
   queueTask(pid: string, taskId: string): Promise<void> | void;
   setRunner(enabled: boolean): Promise<void> | void;
+  /** Make a profile the active one (`settings.activeProfile`). */
+  setProfile?(id: string): Promise<void> | void;
   /** Open the new-plan flow. Without it the console opens the plan wizard. */
   openNewPlan?(pid: string, title?: string): void;
   /** Create an epic with this name and refresh. */
@@ -68,6 +70,9 @@ export interface ActionContext {
   /** The task open on screen, which the hierarchy actions apply to; null elsewhere. */
   currentTask: TaskView | null;
   runnerEnabled: boolean;
+  /** The settings' profiles and the active one; absent profiles offer no switch actions. */
+  profiles?: OrchestrationProfile[];
+  activeProfile?: string | null;
   settingsLoaded: boolean;
   effects: ActionEffects;
 }
@@ -75,6 +80,7 @@ export interface ActionContext {
 const SETTINGS_PAGES: { page: SettingsPageId; label: string }[] = [
   { page: "project", label: "Go to Settings › Project" },
   { page: "agents", label: "Go to Settings › Agents" },
+  { page: "profiles", label: "Go to Settings › Profiles" },
   { page: "budgets", label: "Go to Settings › Budgets" },
   { page: "keys", label: "Go to Settings › API keys" },
   { page: "automation", label: "Go to Settings › Automation" },
@@ -232,6 +238,20 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     disabled: !ctx.settingsLoaded,
     run: () => fx.setRunner(ctx.runnerEnabled),
   });
+  for (const p of ctx.profiles ?? []) {
+    add({
+      id: `use-profile-${p.id}`,
+      targetTitle: p.name,
+      label: `Use profile: ${p.name}`,
+      group: "Actions",
+      searchValue: `Use profile: ${p.name} ${p.id}`,
+      keywords: ["profile", "roles", p.id],
+      requiredScope: "settings:write",
+      ...(p.id === ctx.activeProfile ? { meta: "active" } : {}),
+      disabled: !fx.setProfile,
+      run: () => fx.setProfile?.(p.id),
+    });
+  }
   for (const { pref, label } of THEMES) {
     add({
       id: `theme-${pref}`,

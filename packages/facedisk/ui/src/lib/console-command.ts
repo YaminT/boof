@@ -28,6 +28,7 @@ export const CONSOLE_VERBS = [
   "plan",
   "project",
   "runner",
+  "profile",
   "theme",
   "new",
 ] as const;
@@ -60,6 +61,7 @@ const TARGETED: Record<string, string> = {
   open: "open-task-",
   activate: "activate-plan-",
   project: "switch-project-",
+  profile: "use-profile-",
   move: "move-epic-",
   subtask: "make-subtask-",
 };
@@ -129,6 +131,7 @@ function slash(raw: string, actions: CommandAction[]): ConsoleResolution {
     const a = byId("detach-epic");
     return a ? { kind: "run", action: a, args } : unknown(raw, "this task has no epic of its own");
   }
+  if (verb === "profile" && !args) return run(byId("go-settings-profiles"), "/profile");
   if (verb in TARGETED) return pickTarget(raw, verb, args, actions);
   if (verb === "go") {
     const want = norm(args);

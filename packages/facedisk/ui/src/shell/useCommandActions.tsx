@@ -74,6 +74,8 @@ export function useCommandActions({
     epics: epics.list,
     currentTask,
     runnerEnabled: data.settings?.runner.enabled ?? false,
+    profiles: data.settings?.profiles ?? [],
+    activeProfile: data.settings?.activeProfile ?? null,
     settingsLoaded: !!data.settings,
     effects: {
       navigate,
@@ -110,6 +112,12 @@ export function useCommandActions({
       },
       moveTask: (id, taskId, move) =>
         mutate(() => api.moveTask(id, taskId, move), "Moved", "Could not move the task"),
+      setProfile: (id) =>
+        mutate(
+          () => api.updateSettings({ activeProfile: id }),
+          "Profile changed",
+          "Could not change the profile",
+        ),
       setRunner: (enabled) =>
         mode === "throw"
           ? api.updateSettings({ runner: { enabled: !enabled } }).then(() => data.refresh())
