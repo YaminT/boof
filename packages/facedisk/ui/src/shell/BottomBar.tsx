@@ -14,7 +14,7 @@ export function BottomBar({
   active: NavKey | null;
   counts: NavCounts;
   go: (key: NavKey) => void;
-  /** Project menu, runner switch and theme menu. */
+  /** Project menu and theme menu. */
   moreContent: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);

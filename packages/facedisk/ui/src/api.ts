@@ -34,6 +34,7 @@ import type {
   N8nWorkflowsResult,
 } from "./api-types.js";
 import { parseSse } from "./lib/concierge-stream.js";
+import type { RunnerOverview } from "./lib/topbar.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
 import { confirmInstance, noteInstanceHeader } from "./instance.js";
@@ -364,6 +365,8 @@ export const api = {
     http<AgentSdkEligibility>(`${V1}/accounts/agent-sdk${refresh ? "?refresh=true" : ""}`),
   /** Runner state, with the claude-agent authentication result per project. */
   runnerStatus: () => http<RunnerStatus>(`${V1}/runner`),
+  /** Runner on/off and, per project, what runs now (the topbar). */
+  runnerOverview: () => http<RunnerOverview>(`${V1}/runner/status`),
   accountAction: (verb: "pause" | "resume", accountId: string) =>
     http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/${verb}`, {
       method: "POST",

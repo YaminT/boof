@@ -45,7 +45,7 @@ export function NavItem({
   );
 }
 
-/** Left rail for wide screens: project menu, navigation, runner switch and theme. */
+/** Left rail for wide screens: project menu, navigation and theme. */
 export function Rail({
   active,
   counts,
