@@ -15,7 +15,7 @@ import { useEpics } from "../tasks/useEpics.js";
 import { BottomBar } from "./BottomBar.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { Rail } from "./Rail.js";
-import { RunnerSwitch } from "./RunnerSwitch.js";
+import { TopBar } from "./TopBar.js";
 import { ThemeMenu } from "./ThemeMenu.js";
 import { inboxCount, inboxGroups } from "../lib/inbox.js";
 import { groupTasks } from "../lib/task-groups.js";
@@ -157,9 +157,6 @@ export function AppShell({
       }}
     />
   );
-  const runner = (close?: () => void) => (
-    <RunnerSwitch settings={data.settings} onChange={() => data.refresh()} onToggled={close} />
-  );
 
   return (
     <TooltipProvider>
@@ -172,12 +169,12 @@ export function AppShell({
           footer={
             <>
               <SearchButton onClick={() => setSearching(true)} withShortcut />
-              {runner()}
               <ThemeMenu />
             </>
           }
         />
         <div className="flex min-w-0 flex-1 flex-col px-4 min-[720px]:px-8">
+          <TopBar data={data} projects={projects} selected={selected} needsYou={counts.inbox} />
           <main className="mx-auto w-full max-w-[1320px] min-w-0 flex-1 pt-6 pb-8 min-[720px]:pb-12">
             {children}
           </main>
@@ -196,7 +193,6 @@ export function AppShell({
                 }}
               />
               {projectMenu(close)}
-              {runner(close)}
               <ThemeMenu onPicked={close} />
             </>
           )}
