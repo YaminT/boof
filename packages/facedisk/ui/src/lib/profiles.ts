@@ -5,7 +5,6 @@ import type {
   Settings,
   SettingsPatch,
 } from "@boof/heart/schema";
-import { MAX_PROFILES } from "@boof/heart/schema";
 import { sameValue, type PageModel, type PageValues } from "./settings-draft.js";
 
 export type ProfileRoleName = "planner" | "developer" | "observer" | "reviewer";
@@ -27,6 +26,8 @@ export interface ProfilesGlobal {
 }
 export type ProfilesValues = PageValues<ProfilesGlobal, Record<string, never>>;
 
+/** The most profiles settings accept (the schema's limit; the UI may import only types from heart). */
+export const MAX_PROFILES = 20;
 const NAME_MAX = 60;
 
 /** A kebab-case id from a name, unique among `taken`. */

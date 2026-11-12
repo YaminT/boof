@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { OrchestrationProfile, Project, Settings } from "@boof/heart/schema";
-import { OrchestrationProfileSchema } from "@boof/heart/schema";
+import { MAX_PROFILES as SCHEMA_MAX, OrchestrationProfileSchema } from "@boof/heart/schema";
 import {
   deleteProfile,
+  MAX_PROFILES,
   duplicateProfile,
   newProfile,
   profileProblems,
@@ -21,6 +22,10 @@ const roles = {
 const settings = { roles, profiles: [], activeProfile: null } as unknown as Settings;
 const project = { id: "alpha", name: "Alpha" } as Project;
 const latest = { settings, project };
+
+it("MAX_PROFILES matches the schema limit", () => {
+  expect(MAX_PROFILES).toBe(SCHEMA_MAX);
+});
 
 describe("templates", () => {
   it("current roles copies settings.roles; a missing observer is off", () => {

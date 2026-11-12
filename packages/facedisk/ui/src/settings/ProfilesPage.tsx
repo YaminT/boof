@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import type { OrchestrationProfile, Project, RoleAssignment, Settings } from "@boof/heart/schema";
-import { MAX_PROFILES } from "@boof/heart/schema";
 import { api } from "../api.js";
 import type { ToolModelDetails } from "../api-types.js";
 import { isDesktop } from "../desktop.js";
@@ -8,6 +7,7 @@ import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
 import {
+  MAX_PROFILES,
   deleteProfile,
   duplicateProfile,
   newProfile,
