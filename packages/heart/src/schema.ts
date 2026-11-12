@@ -233,6 +233,9 @@ export const TaskFrontmatterSchema = z.object({
   // "plan": the prompt was generated from the goal and sync may rewrite it; "manual": a human
   // edited it, so sync appends the spec diff instead (plan model, risks).
   promptSource: z.enum(["plan", "manual"]).optional(),
+  // Set on a plan-draft task: it drafts the goals of this plan (version when it started) instead of
+  // writing code. No consumer yet; the wizard server work reads it.
+  draftFor: z.strictObject({ planId: kebab, planVersion: z.int().min(0) }).optional(),
   // Set when the task was submitted by an external client (drives the prompt's Provenance section).
   origin: TaskOriginSchema.optional(),
   // The agent process of an interrupted run that was still alive when the runner recovered the task.
@@ -465,6 +468,8 @@ export type McpSettings = z.infer<typeof McpSettingsSchema>;
  */
 export const ConciergeSettingsSchema = z.object({
   enabled: z.boolean().default(true),
+  /** Which harness runs the assistant. `auto`: claude-agent when available, else claude-code. */
+  tool: z.enum(["auto", "claude-agent", "claude-code"]).default("auto"),
   model: z
     .string()
     .regex(/^[A-Za-z0-9._:\[\]\/-]{1,100}$/)
@@ -496,6 +501,30 @@ export const WebhookSchema = z.object({
 export type Webhook = z.infer<typeof WebhookSchema>;
 /** A webhook as listed over the API (it carries no secret). */
 export type PublicWebhook = Webhook;
+
+/** A profile role: a tool+model, or `null` for "role off". */
+const ProfileRoleSchema = RoleAssignmentSchema.nullable();
+
+/**
+ * A named set of role assignments (settings.profiles). Strict on purpose: a profile holds tool ids
+ * and model names only, never env, keys, URLs or free-form options, so it cannot carry a secret.
+ * The planner is the "advisor"; the observer is the "second reviewer". `null` turns a role off.
+ */
+export const OrchestrationProfileSchema = z.strictObject({
+  id: kebab,
+  name: z.string().trim().min(1).max(60),
+  roles: z.strictObject({
+    planner: ProfileRoleSchema,
+    developer: RoleAssignmentSchema,
+    observer: ProfileRoleSchema.default(null),
+    reviewer: ProfileRoleSchema,
+  }),
+  maxFixRounds: z.int().min(0).max(10).optional(),
+});
+export type OrchestrationProfile = z.infer<typeof OrchestrationProfileSchema>;
+
+export const MAX_PROFILES = 20;
+const ProfilesSchema = z.array(OrchestrationProfileSchema).max(MAX_PROFILES);
 
 const RolesSchema = z.object({
   planner: RoleAssignmentSchema,
@@ -666,6 +695,10 @@ export const SettingsSchema = z.object({
   /** Where `auto` and the UI's default create project directories; `~` expands. Unset: `~/boof-projects`. */
   projectsRoot: z.string().min(1).optional(),
   roles: RolesSchema,
+  /** Named role presets. Absent: `roles` is the only one. Every key is optional (0.5.0 files load). */
+  profiles: ProfilesSchema.optional(),
+  /** The profile new tasks use, unless the project picks one. Null/absent: `roles`. */
+  activeProfile: kebab.nullable().optional(),
   review: ReviewSettingsSchema.optional(),
   worktree: WorktreeSettingsSchema.optional(),
   retries: RetrySettingsSchema.optional(),
@@ -721,6 +754,9 @@ export const SettingsPatchSchema = z
     defaultProject: kebab.nullable().optional(),
     projectsRoot: z.string().trim().min(1).max(4096).nullable().optional(),
     roles: RolesSchema.optional(),
+    /** Replaced whole. Unknown tool ids and in-use deletions are refused by settings.update. */
+    profiles: ProfilesSchema.optional(),
+    activeProfile: kebab.nullable().optional(),
     review: ReviewSettingsSchema.optional(),
     worktree: WorktreeSettingsSchema.optional(),
     retries: RetrySettingsSchema.optional(),
@@ -796,6 +832,8 @@ export const ProjectSchema = z.object({
   /** Default task `base` ref. */
   defaultBase: z.string().min(1).optional(),
   roles: ProjectRolesOverrideSchema.optional(),
+  /** Id of a settings profile this project uses; absent: the global active one. */
+  profile: kebab.optional(),
   review: ProjectReviewOverrideSchema.optional(),
   worktree: ProjectWorktreeOverrideSchema.optional(),
   retries: ProjectRetriesOverrideSchema.optional(),
@@ -822,6 +860,7 @@ export const ProjectPatchSchema = z
     archived: z.boolean(),
     defaultBase: z.string().min(1).nullable(),
     roles: ProjectRolesOverrideSchema.nullable(),
+    profile: kebab.nullable(),
     review: ProjectReviewOverrideSchema.nullable(),
     worktree: ProjectWorktreeOverrideSchema.nullable(),
     retries: ProjectRetriesOverrideSchema.nullable(),

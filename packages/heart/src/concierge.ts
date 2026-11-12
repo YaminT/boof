@@ -9,7 +9,7 @@ export const CONCIERGE_PRINCIPAL_PREFIX = "concierge-";
 export interface ConciergeAvailability {
   available: boolean;
   reason: string | null;
-  via: "gateway" | "project-key" | null;
+  via: "gateway" | "project-key" | "claude-code" | null;
 }
 
 export type ConciergeAgentEvent =

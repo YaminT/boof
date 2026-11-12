@@ -164,7 +164,7 @@ export interface AgentAuthEntry {
   projectId: string;
   roles: Role[];
   allowed: boolean;
-  via: "gateway" | "project-key" | null;
+  via: "gateway" | "project-key" | "claude-code" | null;
   reason: string | null;
 }
 
@@ -229,7 +229,7 @@ export interface ConciergeAnswer {
 export interface ConciergeStatus {
   available: boolean;
   reason: string | null;
-  via: "gateway" | "project-key" | null;
+  via: "gateway" | "project-key" | "claude-code" | null;
   model: string;
   limits: { perMessageUsd: number; perConversationUsd: number; messagesPerMinute: number };
   conversation: {

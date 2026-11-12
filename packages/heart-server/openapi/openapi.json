@@ -127,6 +127,7 @@
                   "plan_exists",
                   "plan_not_active",
                   "goal_has_dependents",
+                  "profile_in_use",
                   "project_exists",
                   "project_busy",
                   "directory_not_empty",
@@ -1399,6 +1400,10 @@
             "default": true,
             "type": "boolean"
           },
+          "profile": {
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
           "retries": {
             "additionalProperties": false,
             "properties": {
@@ -1571,6 +1576,17 @@
       "Settings": {
         "additionalProperties": false,
         "properties": {
+          "activeProfile": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "budget": {
             "additionalProperties": false,
             "properties": {
@@ -1661,10 +1677,20 @@
                 "maximum": 600000,
                 "minimum": 10000,
                 "type": "integer"
+              },
+              "tool": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "claude-agent",
+                  "claude-code"
+                ],
+                "type": "string"
               }
             },
             "required": [
               "enabled",
+              "tool",
               "model",
               "perMessageUsd",
               "perConversationUsd",
@@ -1735,6 +1761,141 @@
               "healthGate"
             ],
             "type": "object"
+          },
+          "profiles": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "maxFixRounds": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "maxLength": 60,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "roles": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "developer": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "model": {
+                          "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                          "type": "string"
+                        },
+                        "tool": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "tool",
+                        "model"
+                      ],
+                      "type": "object"
+                    },
+                    "observer": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "planner": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reviewer": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                              "type": "string"
+                            },
+                            "tool": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tool",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "planner",
+                    "developer",
+                    "observer",
+                    "reviewer"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "roles"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
           },
           "projectsRoot": {
             "minLength": 1,
@@ -2485,6 +2646,25 @@
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
             "type": "string"
+          },
+          "draftFor": {
+            "additionalProperties": false,
+            "properties": {
+              "planId": {
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "planVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "planId",
+              "planVersion"
+            ],
+            "type": "object"
           },
           "epicId": {
             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -5365,6 +5545,10 @@
                             "default": true,
                             "type": "boolean"
                           },
+                          "profile": {
+                            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
                           "retries": {
                             "additionalProperties": false,
                             "properties": {
@@ -6159,6 +6343,10 @@
                       "default": true,
                       "type": "boolean"
                     },
+                    "profile": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
                     "retries": {
                       "additionalProperties": false,
                       "properties": {
@@ -6578,6 +6766,17 @@
                   "planWriteBack": {
                     "type": "boolean"
                   },
+                  "profile": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "retries": {
                     "anyOf": [
                       {
@@ -6938,6 +7137,10 @@
                     "planWriteBack": {
                       "default": true,
                       "type": "boolean"
+                    },
+                    "profile": {
+                      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                      "type": "string"
                     },
                     "retries": {
                       "additionalProperties": false,
@@ -7343,7 +7546,8 @@
                         {
                           "enum": [
                             "gateway",
-                            "project-key"
+                            "project-key",
+                            "claude-code"
                           ],
                           "type": "string"
                         },
@@ -14424,6 +14628,17 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "activeProfile": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "budget": {
                     "properties": {
                       "onExceed": {
@@ -14546,6 +14761,136 @@
                     ],
                     "description": "boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins).",
                     "writeOnly": true
+                  },
+                  "profiles": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "maxFixRounds": {
+                          "maximum": 10,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "name": {
+                          "maxLength": 60,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "roles": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "developer": {
+                              "properties": {
+                                "model": {
+                                  "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                                  "type": "string"
+                                },
+                                "tool": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "tool",
+                                "model"
+                              ],
+                              "type": "object"
+                            },
+                            "observer": {
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "model": {
+                                      "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                                      "type": "string"
+                                    },
+                                    "tool": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "tool",
+                                    "model"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "default": null
+                            },
+                            "planner": {
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "model": {
+                                      "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                                      "type": "string"
+                                    },
+                                    "tool": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "tool",
+                                    "model"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reviewer": {
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "model": {
+                                      "description": "Model identifier. For codex, an empty string uses the Codex CLI built-in default; config.toml model is ignored unless runner.inheritMcpServers is enabled. Required (non-empty) for every other tool.",
+                                      "type": "string"
+                                    },
+                                    "tool": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "tool",
+                                    "model"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "planner",
+                            "developer",
+                            "reviewer"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "roles"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 20,
+                    "type": "array"
                   },
                   "projectsRoot": {
                     "anyOf": [
@@ -15890,6 +16235,10 @@
     },
     "plan_version_conflict": {
       "description": "The plan changed since the version in If-Match / expectedVersion.",
+      "status": 409
+    },
+    "profile_in_use": {
+      "description": "A project still uses the profile; the message lists the projects.",
       "status": 409
     },
     "project_busy": {
