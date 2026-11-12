@@ -265,7 +265,8 @@ export class ConciergeService {
         }
         throw new OpError(
           409,
-          "A message to the assistant is still being answered.",
+          "A message to the assistant is still being answered. " +
+            "If none is, a stuck mark expires after 15 minutes, or remove ratelimit/cli.json in the data root.",
           "concierge_busy",
         );
       }

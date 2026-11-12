@@ -15,6 +15,8 @@ import {
  * The server keeps that limiter; only the CLI writes this file.
  */
 export const CLI_RATE_WINDOW_MS = 60_000;
+/** A busy mark older than this is dropped: no assistant answer runs that long. */
+export const CLI_BUSY_MAX_AGE_MS = 15 * 60_000;
 
 const StampSchema = z.object({
   userId: z.string().min(1).max(500),
@@ -121,7 +123,7 @@ function busyLive(row: Busy): boolean {
 /**
  * Drop a user's whole window when any of its stamps are in the future (the clock jumped
  * backwards). Then keep only the open 60s window. A busy mark from the future is dropped;
- * a busy mark whose process is gone is dropped.
+ * a busy mark whose process is gone, or that is older than CLI_BUSY_MAX_AGE_MS, is dropped.
  */
 function fresh(state: State, now: number): State {
   const reset = new Set<string>();
@@ -130,7 +132,9 @@ function fresh(state: State, now: number): State {
     rate: state.rate.filter(
       (row) => !reset.has(row.userId) && row.at > now - CLI_RATE_WINDOW_MS && row.at <= now,
     ),
-    busy: state.busy.filter((row) => row.at <= now && busyLive(row)),
+    busy: state.busy.filter(
+      (row) => row.at <= now && now - row.at <= CLI_BUSY_MAX_AGE_MS && busyLive(row),
+    ),
   };
 }
 
