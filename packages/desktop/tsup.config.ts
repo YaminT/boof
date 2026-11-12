@@ -36,7 +36,7 @@ export default defineConfig({
           }
           const rewritten = "function sandboxModuleFile(): string {\n  return __filename;\n}";
           const contents = source.replace(
-            /function sandboxModuleFile\(\): string \{\n {2}\/\/ cjs-bundle-filename\n[\s\S]*?\n\}/,
+            /function sandboxModuleFile\(\): string \{\r?\n {2}\/\/ cjs-bundle-filename\r?\n[\s\S]*?\r?\n\}/,
             rewritten,
           );
           if (!contents.includes(rewritten)) {

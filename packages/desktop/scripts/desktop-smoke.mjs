@@ -63,11 +63,27 @@ if (expectFallback) {
   delete childEnv.DESKTOP_SESSION;
   delete childEnv.GNOME_KEYRING_CONTROL;
 }
+// The AppImage runtime forks the app and does not forward signals: a SIGTERM to the runtime
+// alone leaves the Electron processes running. Give it its own process group and signal that.
+const ownGroup = launch === "appimage" && process.platform !== "win32";
 const child = spawn(launched.command, launched.args, {
   cwd: repo,
   env: childEnv,
   stdio: ["ignore", "pipe", "pipe"],
+  detached: ownGroup,
 });
+
+function signalChild(signal) {
+  if (ownGroup && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The group is already gone; fall through to the single process.
+    }
+  }
+  child.kill(signal);
+}
 
 let exitInfo;
 let startupError;
@@ -213,7 +229,8 @@ try {
   startupError = error;
   throw error;
 } finally {
-  if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  if (child.exitCode === null && child.signalCode === null) signalChild("SIGTERM");
+  else if (ownGroup) signalChild("SIGTERM");
   if (child.exitCode === null && child.signalCode === null) {
     const result = await Promise.race([exit, delay(10_000).then(() => "timeout")]);
     if (result === "timeout") {
@@ -225,7 +242,7 @@ try {
         console.log(`--- desktop ${name} (last 4000 chars) ---\n${text.slice(-4000)}`);
       }
       console.log(`--- processes ---\n${(await listProcesses()).join("\n")}`);
-      child.kill("SIGKILL");
+      signalChild("SIGKILL");
       throw new Error("desktop did not exit within 10 seconds after quit signal");
     }
   }
