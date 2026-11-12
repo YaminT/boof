@@ -92,7 +92,8 @@ export const plansGet = defineOp({
   summary: planText,
   handler: async (ctx, input) => {
     const plan = await (await requireProject(ctx, input.projectId)).plans.get(input.planId);
-    return { ...plan, mergeOrder: mergeOrderOf(plan) };
+    const draftTask = await (await requireProject(ctx, input.projectId)).plans.draftTask(plan.id);
+    return { ...plan, mergeOrder: mergeOrderOf(plan), ...(draftTask ? { draftTask } : {}) };
   },
 });
 
@@ -148,6 +149,34 @@ export const plansReplaceGoals = defineOp({
       expectedVersion,
       ctx.principal,
     ),
+});
+
+export const plansDraftGoals = defineOp({
+  name: "plans.draftGoals",
+  title: "Have an agent draft the goals of a plan",
+  description:
+    "Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Review-trust clients are refused.",
+  scope: "tasks:write",
+  projectScoped: true,
+  input: z.strictObject({
+    ...planBase,
+    tool: z.string().min(1).max(100),
+    model: z.string().max(200),
+    note: z.string().max(4000).optional(),
+  }),
+  output: z.object({
+    plan: PlanSchema,
+    task: z.object({ id: z.string(), status: z.string() }),
+  }),
+  rest: { method: "POST", path: "/projects/{projectId}/plans/{planId}/draft", status: 202 },
+  mcp: {
+    expose: false,
+    why: "A button of the plan wizard in the web UI; agents write goals themselves with boof_replace_goals.",
+  },
+  summary: (r) => `Queued task ${r.task.id} to draft the goals of plan ${r.plan.id}`,
+  ...base,
+  handler: async (ctx, { projectId, planId, ...input }) =>
+    (await requireProject(ctx, projectId)).plans.draftGoals(planId, input, ctx.principal),
 });
 
 export const plansUpsertGoal = defineOp({
@@ -400,6 +429,7 @@ export const planOps = [
   plansList,
   plansCreate,
   plansGet,
+  plansDraftGoals,
   plansUpdate,
   plansReplaceGoals,
   plansUpsertGoal,

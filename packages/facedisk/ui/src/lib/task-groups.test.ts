@@ -162,3 +162,20 @@ describe("groupTasks", () => {
     expect(compareFinished(a, a)).toBe(0);
   });
 });
+
+describe("groupTasks and plan-draft tasks", () => {
+  it("leaves plan-draft tasks out of every list and count", () => {
+    const drafting = task({ id: "drafting", status: "running" });
+    drafting.frontmatter.draftFor = { planId: "p", planVersion: 1 };
+    const asking = task({ id: "asking", status: "action" });
+    asking.frontmatter.draftFor = { planId: "p", planVersion: 1 };
+    const finished = task({ id: "finished", status: "done" });
+    finished.frontmatter.draftFor = { planId: "p", planVersion: 1 };
+    const real = task({ id: "real", status: "running" });
+    const groups = groupTasks([drafting, asking, finished, real]);
+    expect(groups.running.map((t) => t.frontmatter.id)).toEqual(["real"]);
+    expect(groups.needsYou).toEqual([]);
+    expect(groups.finished.counts.done).toBe(0);
+    expect(groups.finished.recent).toEqual([]);
+  });
+});

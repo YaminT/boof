@@ -5,6 +5,7 @@ import {
   ANTHROPIC_API_KEY_PATTERN,
   type Project,
   currentBranch,
+  detectStack,
 } from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { CreateProjectBody } from "../validation.js";
@@ -240,7 +241,30 @@ export const projectsUsage = defineOp({
   handler: (ctx, input) => ctx.services.projectUsage(input.projectId),
 });
 
+export const projectsDetectStack = defineOp({
+  name: "projects.detectStack",
+  title: "Guess a project's stack and test command",
+  description:
+    "Reads a few well-known files of the project directory (package.json, lockfiles, pyproject.toml, Cargo.toml, go.mod; each at most 256 KB, never outside the directory) and reports a guessed stack and test command for the plan wizard. No model, no network, no side effects.",
+  scope: "projects:read",
+  projectScoped: true,
+  input: byProject,
+  output: z.object({
+    detected: z.array(z.string()),
+    stack: z.string(),
+    testCommand: z.string(),
+  }),
+  rest: { method: "GET", path: "/projects/{projectId}/detect-stack" },
+  mcp: { expose: false, why: "A prefill for the plan wizard in the web UI." },
+  summary: (r) => (r.stack ? `Detected ${r.stack}` : "Nothing detected"),
+  handler: async (ctx, { projectId }) => {
+    const project = await ctx.services.getProject(projectId);
+    return detectStack(project.workingDirectory);
+  },
+});
+
 export const projectOps = [
+  projectsDetectStack,
   projectsList,
   projectsCreate,
   projectsGet,

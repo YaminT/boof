@@ -35,7 +35,10 @@ describe("every operation is reachable", () => {
     const exposed = new Set(exposedOps(registry).map((o) => o.name));
     for (const op of registry) expect(exposed.has(op.name), op.name).toBe(json(op) && !op.mcp.why);
     for (const op of registry.filter((item) => item.mcp.why))
-      expect(/^(concierge|harnesses)\./.test(op.name), op.name).toBe(true);
+      expect(
+        /^(concierge|harnesses|plans\.draftGoals|projects\.detectStack)(\.|$)/.test(op.name),
+        op.name,
+      ).toBe(true);
   });
 
   it("is a CLI command", () => {

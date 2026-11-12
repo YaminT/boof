@@ -100,6 +100,10 @@ export const PlanViewSchema = PlanSchema.extend({
       description:
         "The final task branch of each goal that ran a task, in topological plan order. Merge them in this order.",
     }),
+  draftTask: z
+    .object({ id: z.string(), status: z.string() })
+    .optional()
+    .meta({ description: "The newest plan-draft task of the plan (an agent writing its goals)." }),
 });
 
 /** A project as `projects.get` and `projects.list` show it: the stored project plus the live branch. */

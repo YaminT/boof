@@ -27,6 +27,9 @@ import {
   mergeImportedGoals,
   PlanNotActiveError,
   syncPlan,
+  createTaskInHierarchy,
+  newTask,
+  RoleAssignmentSchema,
   taskStatusForPlan,
   type SyncResult,
 } from "@boof/heart";
@@ -205,6 +208,109 @@ export class PlanService {
 
   async get(planId: string): Promise<Plan> {
     return this.run(() => this.store.require(planId));
+  }
+
+  /** The newest plan-draft task of a plan, if any. */
+  async draftTask(
+    planId: string,
+  ): Promise<{ id: string; status: Task["frontmatter"]["status"] } | undefined> {
+    const tasks = (await new TaskStore(this.projectDir).list()).filter(
+      (t) => t.frontmatter.draftFor?.planId === planId,
+    );
+    tasks.sort((a, b) => (a.frontmatter.created < b.frontmatter.created ? 1 : -1));
+    const newest = tasks[0];
+    return newest ? { id: newest.frontmatter.id, status: newest.frontmatter.status } : undefined;
+  }
+
+  /**
+   * Queue a plan-draft task: an agent reads the repository and writes the plan's goals (the
+   * wizard's "Let an agent write the tasks"). Refused while another one is pending, running or
+   * waiting for answers (409 `draft_in_progress`), for a tool that is not installed (400
+   * `tool_not_installed`) and for a plan that is not a draft (409 `plan_not_draft`).
+   */
+  async draftGoals(
+    planId: string,
+    input: { tool: string; model: string; note?: string },
+    actor?: Principal,
+  ): Promise<{ plan: Plan; task: { id: string; status: Task["frontmatter"]["status"] } }> {
+    if (await this.restricted(actor)) {
+      throw new OpError(
+        403,
+        "This client has review trust and cannot queue a task; ask a human",
+        "forbidden_trust",
+      );
+    }
+    const plan = await this.get(planId);
+    if (plan.status !== "draft") {
+      throw new OpError(409, `Plan ${planId} is ${plan.status}, not a draft`, "plan_not_draft", {
+        status: plan.status,
+      });
+    }
+    const assignment = RoleAssignmentSchema.safeParse({ tool: input.tool, model: input.model });
+    if (!assignment.success) {
+      throw new OpError(400, "Invalid input", "invalid_input", formatIssues(assignment.error));
+    }
+    const info = this.parent.catalog.get(input.tool);
+    if (!info) {
+      throw new OpError(400, `Unknown tool: ${input.tool}`, "tool_not_installed", {
+        tool: input.tool,
+      });
+    }
+    const install = (await this.parent.catalog.installedAll())[input.tool];
+    if (install && install.installed === false) {
+      throw new OpError(
+        400,
+        `${info.displayName} is not installed: ${install.message}`,
+        "tool_not_installed",
+        { tool: input.tool },
+      );
+    }
+    const current = await this.draftTask(planId);
+    if (current && ["pending", "running", "action"].includes(current.status)) {
+      throw new OpError(
+        409,
+        `A task list is already being drafted for plan ${planId}`,
+        "draft_in_progress",
+        { taskId: current.id },
+      );
+    }
+    const existing = plan.goals.map((g) => `- ${g.id}: ${g.title}`).join("\n");
+    const prompt = [
+      `## Request\n${plan.description.trim() || plan.title}`,
+      input.note?.trim() ? `## Note from the user\n${input.note.trim()}` : "",
+      existing ? `## Current task list (adjust it as the note says)\n${existing}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const origin =
+      actor?.kind === "client" ? { kind: "api" as const, client: actor.id } : undefined;
+    const task = await createTaskInHierarchy(
+      this.projectDir,
+      newTask(
+        {
+          id: "pending-id",
+          title: `Draft tasks: ${plan.title}`.slice(0, 200),
+          status: "pending",
+          priority: 50,
+          skip: false,
+          labels: ["plan-draft"],
+          command: null,
+          attachments: [],
+          questions: "none",
+          runs: 1,
+          completedRuns: 0,
+          tools: { planner: assignment.data },
+          promptSource: "manual",
+          draftFor: { planId, planVersion: plan.version },
+          ...(origin ? { origin } : {}),
+          created: "",
+          updated: "",
+        },
+        prompt,
+      ),
+      { by: actor?.id ?? "local" },
+    );
+    return { plan, task: { id: task.frontmatter.id, status: task.frontmatter.status } };
   }
 
   /**

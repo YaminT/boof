@@ -11,6 +11,9 @@ import {
   projectTaskBudget,
   recordSpend,
   activeProfileFor,
+  applyPlanDraft,
+  detectStack,
+  PlanDraftParseError,
   resolveRole,
   resolveRoleOrOff,
   resolveWorktreeRoot,
@@ -155,6 +158,14 @@ const BASE_SYSTEM_PROMPTS = {
   planner:
     "You are the PLANNER. Produce a concise implementation plan. If — and only if — " +
     "you genuinely cannot proceed without user input, list clarifying questions.",
+  planDraft:
+    "You are the PLANNER drafting the task list of a plan for the user's request below. Read the " +
+    "repository, and ask clarifying questions only if you cannot go on without them. Do not " +
+    "change any file. End the report with exactly one fenced ```json block of the form " +
+    '{"goals":[{"id":"kebab-case-id","title":"short title","details":"what to do and how to ' +
+    'check it","dependsOn":["earlier-goal-id"]}]}: at most 40 goals, ids unique and kebab-case, ' +
+    "and dependsOn only naming goals listed earlier. Each goal should be one task a developer " +
+    "can finish and test on its own.",
   refine:
     "You are the PLANNER doing a refinement pass. Read the repo context and the existing " +
     "plan, then output an improved, final plan. Do not ask the user questions.",
@@ -194,6 +205,7 @@ export function withSandboxLimits(prompt: string, mode: "off" | "enforce"): stri
 
 export const SYSTEM_PROMPTS = {
   planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
+  planDraft: `${BASE_SYSTEM_PROMPTS.planDraft}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
   refine: `${BASE_SYSTEM_PROMPTS.refine}\n\n${NON_INTERACTIVE}`,
   developer: `${BASE_SYSTEM_PROMPTS.developer}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
   developerFix: `${BASE_SYSTEM_PROMPTS.developerFix}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
@@ -1203,6 +1215,24 @@ export class Pipeline {
       }
       const { planner, developer, observer, reviewer } = roles;
 
+      // A plan-draft task runs one planner step and puts the goals it reports into its plan.
+      if (task.frontmatter.draftFor) {
+        return await this.runPlanDraft(task, {
+          planner:
+            planner ??
+            (() => {
+              const a = resolveRole(this.deps.settings, task, "planner");
+              return { tool: this.deps.registry.require(a.tool), model: a.model };
+            })(),
+          stepCwd,
+          worktree,
+          usages,
+          record,
+          recordBody,
+          appendLog,
+        });
+      }
+
       // --- Step 1: Planner (skipped when the planner role is off) ---
       let finalPlan = PLANNER_OFF_PLAN;
       if (planner) {
@@ -1601,6 +1631,84 @@ export class Pipeline {
     await this.mirrorLiveLog(task).catch(() => {});
     await this.persistUsage(task, usages);
     return { kind: "parked", task, questions };
+  }
+
+  /**
+   * The plan-draft run: one planner step, no developer, review or merge. The goals the agent
+   * reports go into the plan it was drafted for (when that plan is still the draft it started
+   * from); invalid output fails the task with the report kept. The worktree is deleted.
+   */
+  private async runPlanDraft(
+    task: Task,
+    ctx: {
+      planner: ResolvedTool;
+      stepCwd: string;
+      worktree: Worktree | null;
+      usages: TokenUsage[];
+      record: (r: RunResult) => void;
+      recordBody: (block: string) => void;
+      appendLog: (line: string) => Promise<void>;
+    },
+  ): Promise<PipelineOutcome> {
+    const id = task.frontmatter.id;
+    const draftFor = task.frontmatter.draftFor!;
+    const { planner, worktree } = ctx;
+    const result = await this.runStep(
+      id,
+      "Planner (task list)",
+      planner.tool,
+      {
+        role: "planner",
+        model: planner.model,
+        systemPrompt: SYSTEM_PROMPTS.planDraft,
+        prompt: await this.buildPrompt(task, ""),
+        cwd: ctx.stepCwd,
+        autoApprove: true,
+      },
+      worktree ?? undefined,
+    );
+    ctx.record(result);
+    ctx.recordBody(`### Planner (task list)\n${result.output}`);
+    if (result.questions && result.questions.length > 0) {
+      return this.park(task, ctx.usages, result.questions);
+    }
+    await this.writeReport(task, "planner", result.report);
+    const stack = await detectStack(this.deps.settings.workingDirectory);
+    let outcome;
+    try {
+      outcome = await applyPlanDraft({
+        projectDir: this.deps.root,
+        planId: draftFor.planId,
+        planVersion: draftFor.planVersion,
+        report: result.report,
+        shared: {
+          ...(stack.stack ? { stack: stack.stack } : {}),
+          ...(stack.testCommand ? { testRun: stack.testCommand } : {}),
+        },
+      });
+    } catch (err) {
+      if (err instanceof PlanDraftParseError) throw new Error(`plan draft: ${err.message}`);
+      throw err;
+    }
+    await ctx.appendLog(
+      outcome.kind === "applied"
+        ? `Plan ${draftFor.planId} now has ${outcome.goals} goal(s) from the agent.`
+        : `${outcome.reason[0]!.toUpperCase()}${outcome.reason.slice(1)}; nothing was replaced. The agent's goals are in the report.`,
+    );
+    if (worktree) {
+      for (const line of await finalizeWorktree(
+        this.deps.settings.workingDirectory,
+        worktree,
+        task.frontmatter.title,
+        "delete",
+      )) {
+        await ctx.appendLog(line);
+      }
+    }
+    await this.mirrorLiveLog(task);
+    await this.persistUsage(task, ctx.usages);
+    await this.closeSteps(id, "Finished");
+    return { kind: "done", task };
   }
 
   /**

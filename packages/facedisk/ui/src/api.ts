@@ -147,6 +147,16 @@ const withLog = (t: TaskView): TaskView => ({ ...t, body: { ...t.body, log: t.bo
 const httpTask = (path: string, init?: RequestInit) => http<TaskView>(path, init).then(withLog);
 
 /** A plan in the list: no goals, with progress counters. */
+/** `plans.get`: the plan plus the newest plan-draft task (an agent writing its goals). */
+export type PlanView = Plan & { draftTask?: { id: string; status: string } };
+
+/** `projects.detectStack`: a guess at the stack and test command from known files. */
+export interface DetectedStack {
+  detected: string[];
+  stack: string;
+  testCommand: string;
+}
+
 export type PlanSummary = Omit<Plan, "goals"> & { goalCount: number; doneCount: number };
 
 export interface SyncReport {
@@ -477,7 +487,17 @@ export const api = {
 
   listPlans: (pid: string) =>
     http<{ plans: PlanSummary[] }>(`${P(pid)}/plans`).then((r) => r.plans),
-  getPlan: (pid: string, planId: string) => http<Plan>(PL(pid, planId)),
+  getPlan: (pid: string, planId: string) => http<PlanView>(PL(pid, planId)),
+  draftPlanGoals: (
+    pid: string,
+    planId: string,
+    input: { tool: string; model: string; note?: string },
+  ) =>
+    http<{ plan: Plan; task: { id: string; status: string } }>(
+      `${PL(pid, planId)}/draft`,
+      json("POST", input),
+    ),
+  detectStack: (pid: string) => http<DetectedStack>(`${P(pid)}/detect-stack`),
   createPlan: (pid: string, input: { title: string; description?: string; goals?: GoalInput[] }) =>
     http<Plan>(`${P(pid)}/plans`, json("POST", { goals: [], ...input })),
   updatePlan: (

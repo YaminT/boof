@@ -9,6 +9,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where:
       "whoami \u2014 AutomationPage, KeysPage, useHeldScopes (who the key is, what it may do; the console and Manage epics use it)",
   },
+  "projects.detectStack": { none: "no screen yet; the plan wizard (next task) calls it" },
   "projects.list": {
     where:
       "listProjects \u2014 useProjects, ArchivedProjects (the project switcher, archived list)",
@@ -33,6 +34,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "plans.list": { where: "listPlans \u2014 useAppData (the Plans list)" },
   "plans.create": { where: "createPlan \u2014 PlansPage (new plan)" },
   "plans.get": { where: "getPlan \u2014 usePlan, GoalEditor (the plan screen)" },
+  "plans.draftGoals": { none: "no screen yet; the plan wizard (next task) calls it" },
   "plans.update": {
     where: "updatePlan \u2014 PlanPage, InboxPage, useCommandActions (approve, draft, archive)",
   },
