@@ -238,12 +238,16 @@ install_dependencies() {
   fi
 }
 
-# Compiles boof-sandbox when a C compiler exists. build.mjs exits 0 and prints one line when
-# the compiler is missing or this is not Linux, so the install continues either way.
+# Compiles boof-sandbox when a C compiler exists. The helper is optional: a missing compiler,
+# a non-Linux host or a failed compile (for example kernel headers older than 6.7, which lack
+# the Landlock network API) prints a note and the install continues. Nothing else depends on it.
 build_sandbox() {
   local dir="$1"
   log "Building the sandbox helper"
-  (cd "$dir" && node packages/sandbox-linux/build.mjs)
+  if ! (cd "$dir" && node packages/sandbox-linux/build.mjs); then
+    log "sandbox helper not built; enforce mode unavailable"
+  fi
+  return 0
 }
 
 build_app() {
