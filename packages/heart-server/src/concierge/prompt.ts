@@ -21,7 +21,12 @@ export interface ResolvedContext {
 }
 
 function escapeMarkup(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // `@` is escaped too: the claude CLI expands `@path` mentions before any tool policy applies.
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/@/g, "&#64;");
 }
 
 function cleanContext(ctx: ResolvedContext): ResolvedContext {
@@ -53,9 +58,6 @@ function cleanContext(ctx: ResolvedContext): ResolvedContext {
 }
 
 export function buildConciergeMessage(text: string, ctx: ResolvedContext): string {
-  const json = JSON.stringify(cleanContext(ctx))
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  const json = escapeMarkup(JSON.stringify(cleanContext(ctx)));
   return `<page_context>\n${json}\n</page_context>\n<user_request>\n${escapeMarkup(text)}\n</user_request>`;
 }

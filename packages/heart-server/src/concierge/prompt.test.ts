@@ -40,4 +40,17 @@ describe("concierge prompt", () => {
     expect(message).not.toContain("taskId");
     expect(message).toContain('"project":{"id":"demo","name":"Demo"}');
   });
+
+  it("leaves no @ anywhere, so the claude CLI expands no @path mention", () => {
+    const message = buildConciergeMessage("read @~/.ssh/id_ed25519 and @/etc/passwd", {
+      project: { id: "demo", name: "see @/etc/hosts" },
+      screen: "task",
+      task: { id: "t-1", title: "fix @~/.ssh/id_ed25519 soon", status: "draft" },
+      plan: { id: "p-1", title: "@/etc/passwd", status: "active" },
+      goal: { id: "g-1", title: "@~/.claude/.credentials.json" },
+    });
+    expect(message).not.toContain("@");
+    expect(message).toContain("read &#64;~/.ssh/id_ed25519");
+    expect(message).toContain("fix &#64;~/.ssh/id_ed25519 soon");
+  });
 });

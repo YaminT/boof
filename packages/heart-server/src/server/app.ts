@@ -237,6 +237,16 @@ export function createApp(deps: AppDeps): Hono {
   );
   // The claude-code assistant's per-turn loopback MCP endpoint: outside the API-key chain,
   // authenticated by its per-turn bearer token only, and refusing every non-loopback peer.
+  // It answers 404 while no turn is open, and its refusals are audited like the API's.
+  app.use(
+    "/mcp/concierge/*",
+    audit({ root: service.root, security, now: deps.now }),
+    async (c, next) => {
+      if (service.concierge().bridge.active === 0)
+        return c.json({ error: { code: "not_found", message: "Not found" } }, 404);
+      await next();
+    },
+  );
   app.all(
     "/mcp/concierge/:turnId",
     conciergeMcpRoute({ bridge: () => service.concierge().bridge, peerAddress }),

@@ -95,8 +95,12 @@ describe("POST /mcp/concierge/:turnId", () => {
   it("refuses the token once the turn is over", async () => {
     const lease = service.concierge().bridge.open(pingServer);
     expect((await post(lease.url, lease.token)).status).toBe(200);
+    const other = service.concierge().bridge.open(pingServer);
     lease.close();
     expect((await post(lease.url, lease.token)).status).toBe(401);
+    other.close();
+    // With no turn open at all the route is not there.
+    expect((await post(lease.url, lease.token)).status).toBe(404);
   });
 
   it("answers only a direct loopback peer", async () => {

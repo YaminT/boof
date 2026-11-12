@@ -57,6 +57,12 @@ export const DISALLOWED_TOOLS = [
   "ReadMcpResourceTool",
 ];
 
+/**
+ * Permission deny rules for any file read. The claude CLI expands `@path` mentions in a prompt
+ * before the tool policy applies; with these rules such a mention reads nothing.
+ */
+export const READ_DENY_RULES = ["Read(//**)", "Read(~/**)", "Read(**)"];
+
 export interface ClaudeConciergeOptions {
   root: string;
   auth?: AgentAuthResolver;
@@ -267,6 +273,7 @@ export class ClaudeConcierge implements ConciergeAgent {
       permissionMode: "default",
       permissionPrompts: "none",
       settingSources: [],
+      settings: { permissions: { deny: READ_DENY_RULES } },
       extraArgs: { bare: null },
       resume: input.resumeSessionId,
       includePartialMessages: true,

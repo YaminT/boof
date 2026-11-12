@@ -1,4 +1,5 @@
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -22,7 +23,7 @@ import { agentEnv } from "./agent-env.js";
 import { agentMarkerFor } from "./agent-marker.js";
 import { gatewayEnv } from "./gateway-env.js";
 import { PoolGate } from "./pool-gate.js";
-import { DISALLOWED_TOOLS } from "./concierge.js";
+import { DISALLOWED_TOOLS, READ_DENY_RULES } from "./concierge.js";
 import { checkInstalled } from "./tools/install-check.js";
 import { createStreamRedactor, usageFromSdkResult } from "./tools/claude-agent.js";
 
@@ -49,19 +50,61 @@ const REQUIRED_FLAGS: readonly (readonly string[])[] = [
   ["--setting-sources"],
   ["--system-prompt"],
   ["--tools"],
+  ["--settings"],
 ];
+
+/** Where the user's own claude settings live; `$CLAUDE_CONFIG_DIR` or `~/.claude`. */
+const ROUTING_ENV =
+  /^(ANTHROPIC_|CLAUDE_CODE_USE_|AWS_|CLOUD_ML_|GOOGLE_|HTTPS?_PROXY$|NO_PROXY$)/i;
+const ROUTING_KEYS = ["apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh"];
+
+export interface UserRouting {
+  /** Provider settings keys that are commands or paths (not secrets); safe in argv. */
+  settings: Record<string, string>;
+  /** `env` entries that route requests; they go to the child's environment, never argv. */
+  env: Record<string, string>;
+}
+
+/**
+ * The provider routing in the user's claude `settings.json`. The assistant runs with
+ * `--setting-sources ""`, which drops it, so the adapter forwards just this subset.
+ */
+export async function readUserRouting(configDir: string): Promise<UserRouting> {
+  const out: UserRouting = { settings: {}, env: {} };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(join(configDir, "settings.json"), "utf8"));
+  } catch {
+    return out;
+  }
+  if (!parsed || typeof parsed !== "object") return out;
+  const record = parsed as Record<string, unknown>;
+  for (const key of ROUTING_KEYS)
+    if (typeof record[key] === "string" && record[key]) out.settings[key] = record[key] as string;
+  const env = record.env;
+  if (env && typeof env === "object")
+    for (const [name, value] of Object.entries(env as Record<string, unknown>))
+      if (ROUTING_ENV.test(name) && typeof value === "string") out.env[name] = value;
+  return out;
+}
 
 /** `--max-budget-usd` and `--max-turns` are used when the installed CLI lists them. */
 export interface Capabilities {
   missing: string | null;
   maxBudget: boolean;
   maxTurns: boolean;
+  noSlashCommands: boolean;
 }
 
 export function parseCapabilities(help: string): Capabilities {
   const has = (flag: string) => new RegExp(`(^|[\\s,\\[(])${flag}(?![\\w-])`).test(help);
   const missing = REQUIRED_FLAGS.find((names) => !names.some(has))?.[0] ?? null;
-  return { missing, maxBudget: has("--max-budget-usd"), maxTurns: has("--max-turns") };
+  return {
+    missing,
+    maxBudget: has("--max-budget-usd"),
+    maxTurns: has("--max-turns"),
+    noSlashCommands: has("--disable-slash-commands"),
+  };
 }
 
 export interface ClaudeCodeConciergeOptions {
@@ -73,7 +116,12 @@ export interface ClaudeCodeConciergeOptions {
   /** How long an install check and a capability check are reused. Default 30 s. */
   cacheMs?: number;
   now?: () => number;
+  /** The user's claude config directory; default `$CLAUDE_CONFIG_DIR` or `~/.claude`. */
+  claudeConfigDir?: string;
 }
+
+/** `--resume` takes an optional value, so only a plain session id is passed, joined with `=`. */
+const SESSION_ID = /^[0-9a-f-]{8,64}$/i;
 
 function unknownUsage(): TokenUsage {
   return { inputTokens: 0, outputTokens: 0, costUsd: 0, known: false };
@@ -118,6 +166,7 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
   private readonly pool: PoolGate;
   private readonly cacheMs: number;
   private readonly now: () => number;
+  private readonly claudeConfigDir?: string;
   private cache?: {
     at: number;
     installed: { ok: true; path: string; caps: Capabilities } | { ok: false; reason: string };
@@ -128,6 +177,7 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
     this.bin = options.bin ?? process.env.BOOF_RUNNER_CLAUDE_BIN ?? "claude";
     this.cacheMs = options.cacheMs ?? 30_000;
     this.now = options.now ?? Date.now;
+    this.claudeConfigDir = options.claudeConfigDir;
     const settings = options.loadSettings ? undefined : new SettingsStore(options.root);
     this.loadSettings = options.loadSettings ?? (() => settings!.load());
     this.pool =
@@ -138,6 +188,11 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
         readKey: () => new OwlishSecretStore(options.root).get(),
         readAgentKey: () => new OwlishSecretStore(options.root).getAgent(),
       });
+  }
+
+  private userRouting(): Promise<UserRouting> {
+    const dir = this.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+    return readUserRouting(dir);
   }
 
   /** Installed (free `--version`) and capable (`--help`), reused for a short while. */
@@ -202,6 +257,8 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
     if (input.signal?.aborted)
       throw new ConciergeTurnError("assistant aborted", "aborted", null, null);
     if (!input.bridge) throw new ConciergeTurnError(NO_BRIDGE_REASON, "refused", null, null);
+    if (input.resumeSessionId && !SESSION_ID.test(input.resumeSessionId))
+      throw new ConciergeTurnError("invalid assistant session id", "refused", null, null);
     const probe = await this.probe();
     if (!probe.ok) throw new ConciergeTurnError(probe.reason, "refused", null, null);
     const { caps } = probe;
@@ -220,6 +277,8 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
       throw new ConciergeTurnError(messageOf(error), "failed", null, null);
     }
 
+    // Without the pool, the user's own provider routing (settings.json) still applies, as for tasks.
+    const routing: UserRouting = gateway ? { settings: {}, env: {} } : await this.userRouting();
     const secrets = gateway?.apiKey ? [gateway.apiKey] : [];
     const redact = (text: string) => redactSecrets(text, secrets);
     const childEnv = agentEnv(process.env, settings.runner.agentEnv, agentMarkerFor(this.root), {
@@ -235,7 +294,10 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
         if (key.startsWith("CLAUDE_CODE_USE_") || key.startsWith("ANTHROPIC_FOUNDRY_"))
           delete childEnv[key];
       Object.assign(childEnv, gatewayEnv("anthropic", gateway));
-    }
+    } else Object.assign(childEnv, routing.env);
+    for (const [name, value] of Object.entries(routing.env))
+      if (/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(name) && value.length >= 8)
+        secrets.push(value);
     // The endpoint is on this machine: never send it through a proxy.
     for (const name of ["NO_PROXY", "no_proxy"]) {
       const entries = (childEnv[name] ?? "")
@@ -304,9 +366,12 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
       DISALLOWED_TOOLS.join(","),
       "--setting-sources",
       "",
+      "--settings",
+      JSON.stringify({ ...routing.settings, permissions: { deny: READ_DENY_RULES } }),
+      ...(caps.noSlashCommands ? ["--disable-slash-commands"] : []),
       ...(caps.maxTurns ? ["--max-turns", String(input.maxTurns)] : []),
       ...(caps.maxBudget ? ["--max-budget-usd", String(input.maxBudgetUsd)] : []),
-      ...(input.resumeSessionId ? ["--resume", input.resumeSessionId] : []),
+      ...(input.resumeSessionId ? [`--resume=${input.resumeSessionId}`] : []),
     ];
 
     const chunks: string[] = [];

@@ -29,6 +29,8 @@ if (argv[0] === "--help") {
     "--allowedTools, --allowed-tools",
     "--disallowedTools, --disallowed-tools",
     "--setting-sources",
+    "--settings",
+    "--disable-slash-commands",
     "--system-prompt",
     "--tools",
     "--resume",

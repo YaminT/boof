@@ -9,7 +9,7 @@ import type { AgentAuthResolver } from "./agent-auth.js";
 import { agentMarkerFor } from "./agent-marker.js";
 import { DESKTOP_CLAUDE_AGENT_REASON } from "./index.js";
 import type { PoolGate } from "./pool-gate.js";
-import { ClaudeConcierge } from "./concierge.js";
+import { ClaudeConcierge, READ_DENY_RULES } from "./concierge.js";
 import { fakeSdk, loadMcpSdk, type FakeStep } from "./tools/fake-agent-sdk.js";
 
 const KEY = "sk-ant-api03-abcdefghijklmnop";
@@ -157,6 +157,7 @@ describe("ClaudeConcierge", () => {
     const cwd = options.cwd as string;
     expect(options.tools).toEqual([]);
     expect(options.disallowedTools).toEqual(DISALLOWED);
+    expect(options.settings).toEqual({ permissions: { deny: READ_DENY_RULES } });
     expect(options.mcpServers.boof.type).toBe("sdk");
     expect(options.mcpServers.boof.name).toBe("boof");
     expect(options.mcpServers.boof.instance).toBe(mcp);

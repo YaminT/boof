@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,7 @@ import {
   NO_BRIDGE_REASON,
   parseCapabilities,
 } from "./concierge-claude-code.js";
-import { DISALLOWED_TOOLS } from "./concierge.js";
+import { DISALLOWED_TOOLS, READ_DENY_RULES } from "./concierge.js";
 
 const FAKE = fileURLToPath(
   new URL("./tools/__fixtures__/fake-claude-concierge.mjs", import.meta.url),
@@ -40,6 +40,7 @@ const HELP_FLAGS = [
   "--allowedTools",
   "--disallowedTools",
   "--setting-sources",
+  "--settings",
   "--system-prompt",
   "--tools",
 ];
@@ -73,7 +74,12 @@ afterEach(async () => {
 });
 
 function agent(bin = FAKE) {
-  return new ClaudeCodeConcierge({ root, bin, cacheMs: 0 });
+  return new ClaudeCodeConcierge({
+    root,
+    bin,
+    cacheMs: 0,
+    claudeConfigDir: join(root, "no-claude-config"),
+  });
 }
 
 async function logs(): Promise<Record<string, unknown>[]> {
@@ -124,7 +130,12 @@ describe("parseCapabilities", () => {
   const help = HELP_FLAGS.map((f) => `  ${f}  text`).join("\n");
 
   it("accepts a help text naming every required flag", () => {
-    expect(parseCapabilities(help)).toEqual({ missing: null, maxBudget: false, maxTurns: false });
+    expect(parseCapabilities(help)).toEqual({
+      missing: null,
+      maxBudget: false,
+      maxTurns: false,
+      noSlashCommands: false,
+    });
   });
 
   it("names the first missing flag", () => {
@@ -145,6 +156,7 @@ describe("parseCapabilities", () => {
       missing: null,
       maxBudget: true,
       maxTurns: true,
+      noSlashCommands: false,
     });
   });
 
@@ -190,7 +202,7 @@ describe.skipIf(process.platform === "win32")("ClaudeCodeConcierge", () => {
     const result = await agent().turn(
       turnInput({
         model: "sonnet",
-        resumeSessionId: "sess-0",
+        resumeSessionId: "0a1b2c3d-0000",
         bridge: b,
         onEvent: (e) => events.push(e),
       }),
@@ -210,7 +222,8 @@ describe.skipIf(process.platform === "win32")("ClaudeCodeConcierge", () => {
     expect(after("--tools")).toBe("");
     expect(after("--setting-sources")).toBe("");
     expect(after("--model")).toBe("sonnet");
-    expect(after("--resume")).toBe("sess-0");
+    expect(argv).toContain("--resume=0a1b2c3d-0000");
+    expect(after("--disable-slash-commands")).not.toBe("");
     expect(after("--system-prompt")).toBe("You are the assistant.");
     expect(after("--allowedTools")).toBe("mcp__boof__boof_list_tasks,mcp__boof__boof_create_task");
     expect(after("--disallowedTools")).toBe(DISALLOWED_TOOLS.join(","));
@@ -227,6 +240,59 @@ describe.skipIf(process.platform === "win32")("ClaudeCodeConcierge", () => {
     expect(existsSync(entry!.configPath as string)).toBe(false);
     expect(await turnDirs()).toEqual([]);
     expect(b).toMatchObject({ opened: 1, closed: 1 });
+  });
+
+  it("denies every file read through --settings, so an @path mention reads nothing", async () => {
+    await agent().turn(turnInput());
+    const argv = (await logs())[0]!.argv as string[];
+    const settingsArg = JSON.parse(argv[argv.indexOf("--settings") + 1]!);
+    expect(settingsArg.permissions.deny).toEqual(READ_DENY_RULES);
+    expect(READ_DENY_RULES).toEqual(
+      expect.arrayContaining(["Read(//**)", "Read(~/**)", "Read(**)"]),
+    );
+  });
+
+  it("refuses a session id that could be read as a flag", async () => {
+    await expect(
+      agent().turn(turnInput({ resumeSessionId: "--dangerously-skip-permissions" })),
+    ).rejects.toMatchObject({ kind: "refused", message: "invalid assistant session id" });
+    expect(await logs()).toEqual([]);
+  });
+
+  it("forwards the user's provider routing from settings.json, secrets only through the environment", async () => {
+    const configDir = join(root, "user-claude");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "settings.json"),
+      JSON.stringify({
+        apiKeyHelper: "/opt/corp/key-helper",
+        hooks: { SessionStart: [{ hooks: [{ type: "command", command: "evil" }] }] },
+        env: {
+          ANTHROPIC_BASE_URL: "http://corp-gateway.invalid",
+          ANTHROPIC_AUTH_TOKEN: "corp-token-0123456789",
+          SOMETHING_ELSE: "x",
+        },
+      }),
+    );
+    const answer = await new ClaudeCodeConcierge({
+      root,
+      bin: FAKE,
+      cacheMs: 0,
+      claudeConfigDir: configDir,
+    }).turn(turnInput());
+    expect(answer.stopReason).toBe("done");
+    const [entry] = await logs();
+    expect(entry).toMatchObject({
+      baseUrl: "http://corp-gateway.invalid",
+      authToken: "corp-token-0123456789",
+    });
+    expect(entry!.envKeys).not.toContain("SOMETHING_ELSE");
+    const argv = entry!.argv as string[];
+    const forwarded = JSON.parse(argv[argv.indexOf("--settings") + 1]!);
+    expect(forwarded.apiKeyHelper).toBe("/opt/corp/key-helper");
+    expect(forwarded.hooks).toBeUndefined();
+    expect(forwarded.env).toBeUndefined();
+    expect(argv.join(" ")).not.toContain("corp-token");
   });
 
   it("subtracts the resume baseline from the turn's usage", async () => {

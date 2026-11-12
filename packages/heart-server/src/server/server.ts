@@ -18,6 +18,7 @@ import {
   type ConciergeAgent,
   reservedIdWarning,
 } from "@boof/heart";
+import { sweepConciergeTurns } from "../concierge/sweep.js";
 import { attachConcierge } from "../concierge/compose.js";
 import { createApp } from "./app.js";
 import { isLoopbackHost } from "./middleware/auth.js";
@@ -157,6 +158,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   if (reserved) warn(reserved);
   await pruneAudit(opts.root, sec.audit.retentionDays).catch(() => []);
   await new IdempotencyStore(opts.root).prune().catch(() => 0);
+  await sweepConciergeTurns(opts.root).catch(() => 0);
 
   const watcher = new DataWatcher(opts.root);
   watcher.start();
