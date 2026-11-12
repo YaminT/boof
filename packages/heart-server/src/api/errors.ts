@@ -66,6 +66,7 @@ export const ERROR_CODES = {
   plan_exists: [409, "A plan with this id already exists."],
   plan_not_active: [409, "The plan is not active; activate it before syncing."],
   goal_has_dependents: [409, "Other goals depend on this one; pass cascade to remove them too."],
+  profile_in_use: [409, "A project still uses the profile; the message lists the projects."],
   project_exists: [409, "A project for this directory already exists."],
   project_busy: [
     409,

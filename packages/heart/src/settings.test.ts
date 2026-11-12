@@ -4,8 +4,10 @@ import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dataRootPaths } from "./paths.js";
 import {
+  checkProfiles,
   conciergeSettings,
   effectiveSettings,
+  resolveRoleOrOff,
   resolveObserver,
   resolveRole,
   resolveWorktreeRoot,
@@ -20,6 +22,9 @@ import { defaultSettings } from "./settings.js";
 import { newTask, parseTask, serializeTask } from "./task-file.js";
 import {
   ConciergeSettingsSchema,
+  OrchestrationProfileSchema,
+  ProjectPatchSchema,
+  TaskFrontmatterSchema,
   RoleAssignmentSchema,
   SETTINGS_SCHEMA_VERSION,
   SandboxSettingsSchema,
@@ -58,6 +63,7 @@ const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
 describe("concierge settings", () => {
   const defaults = {
     enabled: true,
+    tool: "auto",
     model: "default",
     perMessageUsd: 0.25,
     perConversationUsd: 2,
@@ -511,5 +517,230 @@ describe("runner.agentEnv", () => {
     );
     expect(() => SettingsPatchSchema.parse({ runner: { agentEnv: ["bad name"] } })).toThrow();
     expect(() => SettingsPatchSchema.parse({ runner: { agentEnv: ["A=B"] } })).toThrow();
+  });
+});
+
+describe("orchestration profiles", () => {
+  const project = (over: Partial<Project> = {}): Project => ({
+    id: "app",
+    name: "app",
+    workingDirectory: "/repos/app",
+    paused: false,
+    archived: false,
+    planWriteBack: true,
+    labels: [],
+    origin: { kind: "cli" },
+    created: "2026-06-04T10:00:00.000Z",
+    updated: "2026-06-04T10:00:00.000Z",
+    ...over,
+  });
+  const A = { tool: "mock", model: "a" };
+  const B = { tool: "mock", model: "b" };
+  const C = { tool: "mock", model: "c" };
+  const profile = (over: Record<string, unknown> = {}) => ({
+    id: "lean",
+    name: "Lean",
+    roles: { planner: null, developer: B, observer: null, reviewer: null },
+    ...over,
+  });
+
+  it("a 0.5.0 settings file loads unchanged, with no profile keys", () => {
+    const parsed = SettingsSchema.parse(defaultSettings());
+    expect(parsed.profiles).toBeUndefined();
+    expect(parsed.activeProfile).toBeUndefined();
+    expect(parsed.schemaVersion).toBe(3);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(3);
+  });
+
+  it("the profile schema is strict and limited to tool+model", () => {
+    expect(OrchestrationProfileSchema.safeParse(profile()).success).toBe(true);
+    expect(OrchestrationProfileSchema.safeParse(profile({ env: { KEY: "x" } })).success).toBe(
+      false,
+    );
+    expect(OrchestrationProfileSchema.safeParse(profile({ apiKey: "sk-x" })).success).toBe(false);
+    const withExtra = profile({
+      roles: { planner: null, developer: { ...B, apiKey: "sk-x" }, reviewer: null },
+    });
+    expect(OrchestrationProfileSchema.safeParse(withExtra).success).toBe(true); // role objects strip
+    expect(
+      OrchestrationProfileSchema.safeParse(
+        profile({ roles: { planner: null, developer: B, reviewer: null, extra: A } }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("roles: planner and reviewer may be null, the developer may not; observer defaults to off", () => {
+    const parsed = OrchestrationProfileSchema.parse(
+      profile({ roles: { planner: null, developer: B, reviewer: null } }),
+    );
+    expect(parsed.roles.observer).toBeNull();
+    expect(
+      OrchestrationProfileSchema.safeParse(
+        profile({ roles: { planner: null, developer: null, reviewer: null } }),
+      ).success,
+    ).toBe(false);
+    expect(
+      OrchestrationProfileSchema.safeParse(profile({ roles: { developer: B, reviewer: null } }))
+        .success,
+    ).toBe(false);
+  });
+
+  it("limits: name length, id shape, fix rounds, 20 profiles", () => {
+    expect(OrchestrationProfileSchema.safeParse(profile({ name: "x".repeat(61) })).success).toBe(
+      false,
+    );
+    expect(OrchestrationProfileSchema.safeParse(profile({ name: "  " })).success).toBe(false);
+    expect(OrchestrationProfileSchema.safeParse(profile({ id: "Not Kebab" })).success).toBe(false);
+    expect(OrchestrationProfileSchema.safeParse(profile({ maxFixRounds: 11 })).success).toBe(false);
+    expect(OrchestrationProfileSchema.safeParse(profile({ maxFixRounds: 10 })).success).toBe(true);
+    const many = Array.from({ length: 21 }, (_, i) => profile({ id: `p-${i}` }));
+    expect(SettingsPatchSchema.safeParse({ profiles: many }).success).toBe(false);
+    expect(SettingsPatchSchema.safeParse({ profiles: many.slice(0, 20) }).success).toBe(true);
+  });
+
+  it("the patch and project patch accept the new keys; unknown ones stay refused", () => {
+    expect(SettingsPatchSchema.safeParse({ activeProfile: null }).success).toBe(true);
+    expect(SettingsPatchSchema.safeParse({ activeProfiles: "x" }).success).toBe(false);
+    expect(ProjectPatchSchema.safeParse({ profile: "lean" }).success).toBe(true);
+    expect(ProjectPatchSchema.safeParse({ profile: null }).success).toBe(true);
+    expect(ProjectPatchSchema.safeParse({ profile: "Bad Id" }).success).toBe(false);
+  });
+
+  it("concierge.tool defaults to auto and accepts the three values", () => {
+    expect(conciergeSettings(defaultSettings()).tool).toBe("auto");
+    for (const tool of ["auto", "claude-agent", "claude-code"]) {
+      expect(ConciergeSettingsSchema.safeParse({ tool }).success).toBe(true);
+    }
+    expect(ConciergeSettingsSchema.safeParse({ tool: "codex" }).success).toBe(false);
+  });
+
+  it("task frontmatter takes draftFor", () => {
+    const base = fm();
+    expect(
+      TaskFrontmatterSchema.safeParse({ ...base, draftFor: { planId: "p-1", planVersion: 3 } })
+        .success,
+    ).toBe(true);
+    expect(
+      TaskFrontmatterSchema.safeParse({ ...base, draftFor: { planId: "P 1", planVersion: 3 } })
+        .success,
+    ).toBe(false);
+    expect(
+      TaskFrontmatterSchema.safeParse({ ...base, draftFor: { planId: "p", planVersion: 1.5 } })
+        .success,
+    ).toBe(false);
+    expect(TaskFrontmatterSchema.safeParse(base).success).toBe(true);
+  });
+
+  const withProfiles = (): Settings => ({
+    ...defaultSettings(),
+    roles: {
+      planner: { tool: "mock", model: "g-plan" },
+      developer: { tool: "mock", model: "g-dev" },
+      reviewer: { tool: "mock", model: "g-rev" },
+    },
+    profiles: [
+      OrchestrationProfileSchema.parse(profile()),
+      OrchestrationProfileSchema.parse(
+        profile({
+          id: "full",
+          name: "Full",
+          roles: { planner: A, developer: B, observer: C, reviewer: A },
+        }),
+      ),
+    ],
+  });
+
+  it("resolution order: task, project role, profile, global roles", () => {
+    const s = withProfiles();
+    s.activeProfile = "full";
+    const none = newTask(fm());
+    // Profile beats the global roles.
+    expect(resolveRoleOrOff(s, none, "developer")).toEqual(B);
+    expect(resolveRoleOrOff(s, none, "observer")).toEqual(C);
+    // Project override beats the profile; profile still applies to the other roles.
+    const e = effectiveSettings(s, project({ roles: { developer: A } }));
+    expect(resolveRoleOrOff(e, none, "developer")).toEqual(A);
+    expect(resolveRoleOrOff(e, none, "reviewer")).toEqual(A);
+    // Task beats the project.
+    const task = newTask(fm({ tools: { developer: C } }));
+    expect(resolveRoleOrOff(e, task, "developer")).toEqual(C);
+    // The project's profile beats the active one.
+    const p = effectiveSettings(s, project({ profile: "lean" }));
+    expect(resolveRoleOrOff(p, none, "developer")).toEqual(B);
+    expect(resolveRoleOrOff(p, none, "reviewer")).toBeNull();
+    // A project role override still beats the project's profile.
+    const both = effectiveSettings(s, project({ profile: "lean", roles: { reviewer: C } }));
+    expect(resolveRoleOrOff(both, none, "reviewer")).toEqual(C);
+  });
+
+  it("a null profile role is off; a task override can turn it back on", () => {
+    const s = withProfiles();
+    s.activeProfile = "lean";
+    const none = newTask(fm());
+    expect(resolveRoleOrOff(s, none, "planner")).toBeNull();
+    expect(resolveRoleOrOff(s, none, "reviewer")).toBeNull();
+    expect(resolveRoleOrOff(s, none, "observer")).toBeNull();
+    const task = newTask(fm({ tools: { planner: A } }));
+    expect(resolveRoleOrOff(s, task, "planner")).toEqual(A);
+  });
+
+  it("with no profiles, or no active one, resolution is exactly the 0.5.0 order", () => {
+    const plain = defaultSettings();
+    const t = newTask(fm());
+    for (const role of ["planner", "developer", "reviewer"] as const) {
+      expect(resolveRoleOrOff(plain, t, role)).toEqual(plain.roles[role]);
+      expect(resolveRole(plain, t, role)).toEqual(plain.roles[role]);
+    }
+    expect(resolveRoleOrOff(plain, t, "observer")).toBeUndefined();
+    const idle = withProfiles(); // defined but none active
+    expect(resolveRoleOrOff(idle, t, "reviewer")).toEqual(idle.roles.reviewer);
+    // An active id that no longer exists falls back to the global roles.
+    idle.activeProfile = "gone";
+    expect(resolveRoleOrOff(idle, t, "planner")).toEqual(idle.roles.planner);
+  });
+
+  it("legacy resolveRole reads an off planner/reviewer as the global role and off observer as unset", () => {
+    const s = withProfiles();
+    s.activeProfile = "lean";
+    const t = newTask(fm());
+    expect(resolveRole(s, t, "planner")).toEqual(s.roles.planner);
+    expect(resolveRole(s, t, "observer")).toBeUndefined();
+    expect(resolveRole(s, t, "developer")).toEqual(B);
+  });
+
+  it("checkProfiles: unknown tool, in-use deletion, consistency", () => {
+    const current = withProfiles();
+    const ctx = {
+      knownTools: ["mock"],
+      projects: [{ id: "alpha", profile: "lean" }, { id: "beta" }],
+    };
+    expect(checkProfiles(current, current, ctx)).toBeNull();
+    const dropped = { ...current, profiles: current.profiles!.filter((p) => p.id !== "lean") };
+    expect(checkProfiles(current, dropped, ctx)).toMatchObject({
+      code: "profile_in_use",
+      projects: ["alpha"],
+    });
+    const free = { ...current, profiles: current.profiles!.filter((p) => p.id !== "full") };
+    expect(checkProfiles(current, free, ctx)).toBeNull();
+    expect(checkProfiles(current, current, { ...ctx, knownTools: ["codex"] })).toMatchObject({
+      code: "unknown_tool",
+    });
+    expect(checkProfiles(current, { ...current, activeProfile: "ghost" }, ctx)).toMatchObject({
+      code: "invalid_profiles",
+    });
+    const dup = { ...current, profiles: [...current.profiles!, current.profiles![0]!] };
+    expect(checkProfiles(current, dup, ctx)).toMatchObject({ code: "invalid_profiles" });
+  });
+
+  it("the store refuses to save an inconsistent file and keeps profiles across a reload", async () => {
+    const store = new SettingsStore(root);
+    await expect(store.save({ ...withProfiles(), activeProfile: "ghost" })).rejects.toThrow(
+      /activeProfile does not exist/,
+    );
+    const saved = { ...withProfiles(), activeProfile: "full" };
+    await store.save(saved);
+    const loaded = await store.load();
+    expect(loaded.activeProfile).toBe("full");
+    expect(loaded.profiles).toHaveLength(2);
   });
 });
