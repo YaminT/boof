@@ -4,6 +4,7 @@ import type { Route, SettingsPageId } from "./route.js";
 import type { ThemePref } from "./theme.js";
 import { statusLabel } from "./status.js";
 import { groupTasks } from "./task-groups.js";
+import { emptyDraft, loadDraft, saveDraft } from "./wizard.js";
 
 export type ActionGroup = "Go to" | "Projects" | "Tasks" | "Actions";
 
@@ -40,7 +41,7 @@ export interface ActionEffects {
   activatePlan(pid: string, plan: PlanSummary): Promise<void> | void;
   queueTask(pid: string, taskId: string): Promise<void> | void;
   setRunner(enabled: boolean): Promise<void> | void;
-  /** Open the new-plan flow (the wizard once it exists). Without it the console opens Plans. */
+  /** Open the new-plan flow. Without it the console opens the plan wizard. */
   openNewPlan?(pid: string, title?: string): void;
   /** Create an epic with this name and refresh. */
   createEpic(pid: string, title: string): Promise<void> | void;
@@ -86,6 +87,17 @@ const THEMES: { pref: ThemePref; label: string }[] = [
 ];
 
 /** Every action the palette and the console offer in the current context. */
+/** Opens the plan wizard; a title given to /plan starts a new draft with it (one in progress is kept). */
+function openWizard(fx: Pick<ActionEffects, "navigate">, pid: string, title?: string) {
+  try {
+    if (title && !loadDraft(window.sessionStorage, pid))
+      saveDraft(window.sessionStorage, pid, { ...emptyDraft(), title });
+  } catch {
+    /* no storage: the wizard opens without the title */
+  }
+  fx.navigate({ name: "wizard", pid });
+}
+
 export function createCommandActions(ctx: ActionContext): CommandAction[] {
   const { pid, effects: fx } = ctx;
   const out: CommandAction[] = [];
@@ -149,7 +161,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
       run: (args) =>
         fx.openNewPlan
           ? fx.openNewPlan(pid, args?.trim() || undefined)
-          : fx.navigate({ name: "plans", pid }),
+          : openWizard(fx, pid, args?.trim() || undefined),
     });
     for (const plan of groups.needsYou.flatMap((n) => (n.kind === "draft-plan" ? [n.plan] : []))) {
       add({
