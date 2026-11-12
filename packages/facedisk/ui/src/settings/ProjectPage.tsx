@@ -33,6 +33,8 @@ export function ProjectPage({
   onProjectAdded,
   reloadProjects,
   advancedOpen,
+  updatesCheck,
+  onUpdatesCheck,
 }: {
   /** Show the advanced sections (expanded view, or the page has unsaved edits). */
   advancedOpen: boolean;
@@ -46,6 +48,10 @@ export function ProjectPage({
   projectsRoot: string | undefined;
   onProjectAdded: (p: Project) => void;
   reloadProjects: () => Promise<void>;
+  /** `updates.check`. Absent settings mean on. */
+  updatesCheck: boolean;
+  /** Saves immediately. Off means the server never asks GitHub. */
+  onUpdatesCheck: (check: boolean) => void;
 }) {
   const [archiving, setArchiving] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -183,6 +189,19 @@ export function ProjectPage({
         eligibility={eligibility}
         eligibilityFailed={eligibilityFailed}
       />
+
+      <section className="flex flex-col gap-2">
+        <h2 className={h2}>Updates</h2>
+        <label className="m-0 flex flex-row items-center gap-2 text-[length:var(--text-body)] font-normal">
+          <input
+            type="checkbox"
+            checked={updatesCheck}
+            onChange={(e) => onUpdatesCheck(e.target.checked)}
+          />
+          Look for a new version, at most once a day
+        </label>
+        <span className={help}>Off sends no request. Nothing is downloaded.</span>
+      </section>
 
       <AdvancedSection title="All projects" className="flex flex-col gap-4" open={advancedOpen}>
         <label className={label}>

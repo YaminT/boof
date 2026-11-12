@@ -138,6 +138,7 @@
                   "concierge_busy",
                   "concierge_limit",
                   "budget_exceeded",
+                  "sandbox_unavailable",
                   "change_not_found",
                   "change_stale",
                   "change_expired",
@@ -1915,12 +1916,67 @@
               "inheritMcpServers": {
                 "default": false,
                 "type": "boolean"
+              },
+              "sandbox": {
+                "additionalProperties": false,
+                "properties": {
+                  "denyTcpPorts": {
+                    "default": [],
+                    "description": "Extra TCP ports the sandbox blocks, besides the boof port. Integers from 1 to 65535.",
+                    "items": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "mode": {
+                    "default": "off",
+                    "description": "off: agents are not sandboxed. enforce: an agent starts only inside the OS sandbox.",
+                    "enum": [
+                      "off",
+                      "enforce"
+                    ],
+                    "type": "string"
+                  },
+                  "readPaths": {
+                    "default": [],
+                    "description": "Extra read-only folders. Absolute paths only.",
+                    "items": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "writePaths": {
+                    "default": [],
+                    "description": "Extra writable folders. Absolute paths only.",
+                    "items": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "readPaths",
+                  "writePaths",
+                  "denyTcpPorts"
+                ],
+                "type": "object"
               }
             },
             "required": [
               "enabled",
               "concurrency",
-              "inheritMcpServers"
+              "inheritMcpServers",
+              "sandbox"
             ],
             "type": "object"
           },
@@ -2041,6 +2097,19 @@
               "externalTasksRequireApproval",
               "rateLimit",
               "audit"
+            ],
+            "type": "object"
+          },
+          "updates": {
+            "additionalProperties": false,
+            "properties": {
+              "check": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "check"
             ],
             "type": "object"
           },
@@ -13863,6 +13932,48 @@
                         "reason"
                       ],
                       "type": "object"
+                    },
+                    "sandbox": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "backend": {
+                          "enum": [
+                            "none",
+                            "linux",
+                            "darwin"
+                          ],
+                          "type": "string"
+                        },
+                        "mode": {
+                          "enum": [
+                            "off",
+                            "enforce"
+                          ],
+                          "type": "string"
+                        },
+                        "offer": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "enum": [
+                            "off",
+                            "ok",
+                            "unavailable"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "backend",
+                        "state",
+                        "reason",
+                        "offer"
+                      ],
+                      "type": "object"
                     }
                   },
                   "required": [
@@ -13870,7 +13981,8 @@
                     "concurrency",
                     "budgetExceeded",
                     "pool",
-                    "agentAuth"
+                    "agentAuth",
+                    "sandbox"
                   ],
                   "type": "object"
                 }
@@ -14603,8 +14715,64 @@
                       },
                       "inheritMcpServers": {
                         "type": "boolean"
+                      },
+                      "sandbox": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "denyTcpPorts": {
+                            "description": "Extra TCP ports the sandbox blocks, besides the boof port. Integers from 1 to 65535.",
+                            "items": {
+                              "maximum": 65535,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxItems": 100,
+                            "type": "array"
+                          },
+                          "mode": {
+                            "description": "off: agents are not sandboxed. enforce: an agent starts only inside the OS sandbox.",
+                            "enum": [
+                              "off",
+                              "enforce"
+                            ],
+                            "type": "string"
+                          },
+                          "readPaths": {
+                            "description": "Extra read-only folders. Absolute paths only.",
+                            "items": {
+                              "maxLength": 4096,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 100,
+                            "type": "array"
+                          },
+                          "writePaths": {
+                            "description": "Extra writable folders. Absolute paths only.",
+                            "items": {
+                              "maxLength": 4096,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 100,
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
+                    "type": "object"
+                  },
+                  "updates": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "check": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "check"
+                    ],
                     "type": "object"
                   },
                   "worktree": {
@@ -15747,6 +15915,10 @@
     "rate_limited": {
       "description": "Too many requests; retry after the Retry-After header.",
       "status": 429
+    },
+    "sandbox_unavailable": {
+      "description": "The sandbox self-test failed, so enforce was not saved. The message is the reason.",
+      "status": 409
     },
     "settings_modified": {
       "description": "The settings changed since the ETag in If-Match.",

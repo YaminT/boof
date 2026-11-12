@@ -51,7 +51,8 @@ const REMOTE = "10.1.2.3";
 async function repo(name: string, opts: { git?: boolean; parent?: string } = {}): Promise<string> {
   const dir = join(opts.parent ?? base, "repos", name);
   await mkdir(dir, { recursive: true });
-  if (opts.git !== false) await execCommand("git", ["init", "-q"], { cwd: dir });
+  if (opts.git !== false)
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: dir });
   return realpath(dir);
 }
 
@@ -123,16 +124,22 @@ describe("project routes", () => {
     ]);
     expect((await (await call("/api/projects/my-app")).json()).name).toBe("My App");
     const branch = (
-      await execCommand("git", ["symbolic-ref", "--short", "HEAD"], { cwd: dir })
+      await execCommand("git", ["symbolic-ref", "--short", "HEAD"], {
+        launch: { kind: "direct" },
+        cwd: dir,
+      })
     ).stdout.trim();
     expect((await (await call("/api/projects/my-app")).json()).currentBranch).toBe(branch);
     expect((await (await call("/api/projects")).json()).projects[0].currentBranch).toBe(branch);
     await execCommand(
       "git",
       ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x"],
-      { cwd: dir },
+      { launch: { kind: "direct" }, cwd: dir },
     );
-    await execCommand("git", ["checkout", "-q", "--detach"], { cwd: dir });
+    await execCommand("git", ["checkout", "-q", "--detach"], {
+      launch: { kind: "direct" },
+      cwd: dir,
+    });
     expect((await (await call("/api/projects/my-app")).json()).currentBranch).toBeNull();
 
     const patched = await (
@@ -185,7 +192,7 @@ describe("project routes", () => {
   it("refuses a project inside the data root", async () => {
     const inside = join(root, "inner");
     await mkdir(inside);
-    await execCommand("git", ["init", "-q"], { cwd: inside });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: inside });
     const res = await call("/api/projects", post({ workingDirectory: inside }));
     expect(res.status).toBe(400);
   });
@@ -465,7 +472,12 @@ describe("settings with projects", () => {
   it("toggling the runner keeps runner.concurrency", async () => {
     await call("/api/settings", put({ runner: { concurrency: 3 } }));
     const s = await (await call("/api/settings", put({ runner: { enabled: true } }))).json();
-    expect(s.runner).toEqual({ enabled: true, concurrency: 3, inheritMcpServers: false });
+    expect(s.runner).toEqual({
+      enabled: true,
+      concurrency: 3,
+      inheritMcpServers: false,
+      sandbox: { mode: "off", readPaths: [], writePaths: [], denyTcpPorts: [] },
+    });
   });
 });
 
@@ -619,7 +631,7 @@ describe("project registration by non-local principals (project_root_not_allowed
     expect((await notGit.json()).error.code).toBe("project_root_not_allowed");
     const inside = join(root, "inner");
     await mkdir(inside);
-    await execCommand("git", ["init", "-q"], { cwd: inside });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: inside });
     expect((await create(inside)).status).toBe(403);
   });
 
@@ -974,7 +986,12 @@ describe("project creation with path and brief", () => {
       brief: "New thing",
     });
     expect(
-      (await execCommand("git", ["rev-list", "--count", "HEAD"], { cwd: dir })).stdout.trim(),
+      (
+        await execCommand("git", ["rev-list", "--count", "HEAD"], {
+          launch: { kind: "direct" },
+          cwd: dir,
+        })
+      ).stdout.trim(),
     ).toBe("1");
   });
 
@@ -1288,13 +1305,13 @@ describe("worktree.root for non-local principals (project_root_not_allowed)", ()
   it("re-checks a stored relative root when the working directory moves", async () => {
     const deep = join(allowedRoot, "b", "c", "d");
     await mkdir(deep, { recursive: true });
-    await execCommand("git", ["init", "-q"], { cwd: deep });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: deep });
     await new ProjectStore(root).create({ workingDirectory: deep, id: "deep" });
     // From .../allowed/b/c/d, three levels up is `allowed`: fine.
     expect((await setProject("deep", "../../..")).status).toBe(200);
     // Moving the project up to `allowed/b` would make the same root point at `/`...
     const up = join(allowedRoot, "b");
-    await execCommand("git", ["init", "-q"], { cwd: up });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: up });
     const res = await call("/api/projects/deep", put({ workingDirectory: up }), key);
     expect(res.status).toBe(403);
     expect(await code(res)).toBe("project_root_not_allowed");

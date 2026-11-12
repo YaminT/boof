@@ -5,6 +5,12 @@ import { rm } from "node:fs/promises";
 import { basename } from "node:path";
 import { writePidFile } from "./pid-file.js";
 import {
+  SandboxUnavailableError,
+  sandboxApplier,
+  type CommandLaunch,
+  type SandboxSpawnPlan,
+} from "./sandbox-launch.js";
+import {
   killVerifiedAsync,
   processTableAsync,
   verifiedDescendants,
@@ -26,6 +32,11 @@ export interface ExecResult {
 
 export interface ExecOptions {
   cwd: string;
+  /**
+   * How this child is started. Required: a missing launch is a refusal, not an unsandboxed
+   * spawn. `direct` is today's spawn. `sandbox` is applied by the registered backend.
+   */
+  launch: CommandLaunch;
   input?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -65,6 +76,8 @@ export const MAX_ARG_STRLEN = 131_072;
  * end it.
  */
 const PROBE_BOUND_MS = 5_000;
+/** The Linux supervisor needs time to stop and reap a hostile fork storm. */
+const SANDBOX_KILL_BOUND_MS = 10_000;
 
 /**
  * `work`, or `fallback` when it is still pending after {@link PROBE_BOUND_MS}. A late rejection of
@@ -79,6 +92,47 @@ function withinProbeBound<T>(work: Promise<T>, fallback: T): Promise<T> {
     /* A rejection that loses the race must not be unhandled. */
   });
   return Promise.race([work, bound]).finally(() => clearTimeout(timer));
+}
+
+/** macOS has no helper supervisor; walk the live process table and signal children first. */
+export async function killDarwinProcessTree(root: number, signal: NodeJS.Signals): Promise<void> {
+  const table = await new Promise<string>((resolve, reject) => {
+    const child = spawn("ps", ["-axo", "pid=,ppid="], { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    child.stdout?.on("data", (chunk) => (out += chunk.toString()));
+    child.once("error", reject);
+    child.once("close", (code) => (code === 0 ? resolve(out) : reject(new Error("ps failed"))));
+  });
+  const children = new Map<number, number[]>();
+  for (const line of table.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    const siblings = children.get(ppid) ?? [];
+    siblings.push(pid);
+    children.set(ppid, siblings);
+  }
+  const order: number[] = [];
+  const visit = (pid: number, seen: Set<number>) => {
+    if (seen.has(pid)) return;
+    seen.add(pid);
+    for (const child of children.get(pid) ?? []) visit(child, seen);
+    order.push(pid);
+  };
+  visit(root, new Set());
+  for (const pid of order) {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      /* exited during the walk */
+    }
+  }
+  try {
+    process.kill(-root, signal);
+  } catch {
+    /* no remaining process group */
+  }
 }
 
 /** What the live Windows stop may call. Both are async: nothing on this path uses `spawnSync`. */
@@ -166,6 +220,7 @@ export async function killWindowsProcessTree(
  * Spawn a child process scoped to `cwd`, capture stdout/stderr, optionally feed
  * stdin, and enforce a timeout. Portable across Bun + Node (node:child_process
  * works on both). Never throws on non-zero exit — the caller inspects `code`.
+ * A missing or refused sandbox launch rejects before any process is started.
  */
 export function execCommand(
   command: string,
@@ -173,7 +228,12 @@ export function execCommand(
   opts: ExecOptions,
   deps: ExecCommandDeps = {},
 ): Promise<ExecResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const launch = opts.launch as CommandLaunch | undefined;
+    if (!launch || (launch.kind !== "direct" && launch.kind !== "sandbox")) {
+      reject(new SandboxUnavailableError("spawn launch is missing"));
+      return;
+    }
     // Node's spawn rejects argv entries / stdin containing NUL bytes. Agent
     // output (a plan, a diff) gets fed into the next step's prompt and can carry
     // a stray NUL — strip them so a poisoned prompt doesn't crash the run.
@@ -193,23 +253,63 @@ export function execCommand(
     }
     const platform = deps.platform ?? process.platform;
     const spawnFn = deps.spawn ?? spawn;
-    // stdio is always three pipes, so stdout, stderr and stdin are present. The injected
-    // spawn's return type says so; Node's own overloads only see that on an object literal.
+    let commandToRun = command;
+    let argsToRun = safeArgs;
+    let plan: SandboxSpawnPlan | undefined;
+    if (launch.kind === "sandbox") {
+      const apply = sandboxApplier();
+      if (!apply) {
+        reject(new SandboxUnavailableError("no sandbox backend is registered"));
+        return;
+      }
+      try {
+        plan = apply(launch, command, safeArgs, opts.env);
+        commandToRun = plan.command;
+        argsToRun = plan.args;
+      } catch (err) {
+        reject(sandboxRefusal(err));
+        return;
+      }
+    }
+    // Direct stdio is three pipes. The sandbox adds a fourth pipe for its policy.
     // Windows rejects a command line near 32 KiB with a synchronous ENAMETOOLONG, below the
     // POSIX MAX_ARG_STRLEN guard above. Spawn must not reject the promise: callers inspect `code`.
     let child: ChildProcessByStdio<Writable, Readable, Readable>;
     try {
-      child = spawnFn(command, safeArgs, {
-        cwd: opts.cwd,
-        env: opts.env ?? process.env,
-        stdio: ["pipe", "pipe", "pipe"],
-        // POSIX: own process group, so a stop kills the agent and everything it spawned.
-        // Windows has no groups. A stop kills verified children, then the root through this
-        // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
-        // (the desktop app) from opening a console for git or an agent.
-        detached: platform !== "win32",
-        windowsHide: true,
-      }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      if (plan) {
+        child = spawnFn(commandToRun, argsToRun, {
+          cwd: opts.cwd,
+          env: plan.env,
+          stdio: ["pipe", "pipe", "pipe", "pipe"],
+          detached: platform !== "win32",
+          windowsHide: true,
+        }) as ChildProcessByStdio<Writable, Readable, Readable>;
+        // A kill inside deliver must not surface as an unhandled error before close is attached.
+        child.on("error", () => {});
+        try {
+          plan.deliver(child);
+        } catch (err) {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            /* already gone */
+          }
+          reject(sandboxRefusal(err));
+          return;
+        }
+      } else {
+        child = spawnFn(command, safeArgs, {
+          cwd: opts.cwd,
+          env: opts.env ?? process.env,
+          stdio: ["pipe", "pipe", "pipe"],
+          // POSIX: own process group, so a stop kills the agent and everything it spawned.
+          // Windows has no groups. A stop kills verified children, then the root through this
+          // handle. It does not walk parent ids (`taskkill /T`). windowsHide keeps a GUI parent
+          // (the desktop app) from opening a console for git or an agent.
+          detached: platform !== "win32",
+          windowsHide: true,
+        }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      }
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       resolve({
@@ -265,7 +365,16 @@ export function execCommand(
         return;
       }
       try {
-        if (child.pid) process.kill(-child.pid, signal);
+        if (launch.kind === "sandbox" && platform === "darwin" && child.pid) {
+          void killDarwinProcessTree(child.pid, signal).catch(() => {
+            try {
+              child.kill(signal);
+            } catch {
+              /* already gone */
+            }
+          });
+        } else if (launch.kind === "sandbox") child.kill(signal);
+        else if (child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
         try {
@@ -300,7 +409,10 @@ export function execCommand(
       idleTimer = setTimeout(() => {
         stalled = true;
         kill("SIGTERM");
-        killTimer = setTimeout(() => kill("SIGKILL"), 1500);
+        killTimer = setTimeout(
+          () => kill("SIGKILL"),
+          launch.kind === "sandbox" ? SANDBOX_KILL_BOUND_MS : 1500,
+        );
       }, opts.idleTimeoutMs);
     };
     armIdle();
@@ -308,7 +420,15 @@ export function execCommand(
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        kill("SIGKILL");
+        if (launch.kind === "sandbox") {
+          kill("SIGTERM");
+          killTimer = setTimeout(
+            () => kill("SIGKILL"),
+            launch.kind === "sandbox" ? SANDBOX_KILL_BOUND_MS : 1500,
+          );
+        } else {
+          kill("SIGKILL");
+        }
       }, opts.timeoutMs);
     }
 
@@ -319,7 +439,10 @@ export function execCommand(
         else if (opts.steerSignalPath && existsSync(opts.steerSignalPath)) steered = true;
         else return;
         kill("SIGTERM");
-        killTimer = setTimeout(() => kill("SIGKILL"), 1500);
+        killTimer = setTimeout(
+          () => kill("SIGKILL"),
+          launch.kind === "sandbox" ? SANDBOX_KILL_BOUND_MS : 1500,
+        );
       }, opts.stopPollMs ?? 500);
     }
 
@@ -366,9 +489,19 @@ export function execCommand(
   });
 }
 
+function sandboxRefusal(err: unknown): SandboxUnavailableError {
+  return err instanceof SandboxUnavailableError
+    ? err
+    : new SandboxUnavailableError(err instanceof Error ? err.message : String(err));
+}
+
 /** Returns true if a command resolves on PATH (used by health checks). */
 export async function commandExists(command: string): Promise<boolean> {
   const probe = process.platform === "win32" ? "where" : "which";
-  const res = await execCommand(probe, [command], { cwd: process.cwd(), timeoutMs: 5000 });
+  const res = await execCommand(probe, [command], {
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+    launch: { kind: "direct" },
+  });
   return res.code === 0;
 }

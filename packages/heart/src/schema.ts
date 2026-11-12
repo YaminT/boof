@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 
 /** Task statuses; each maps to a directory under tasks/. */
@@ -571,6 +572,53 @@ export function isValidOwlishGatewayUrl(value: string): boolean {
 }
 export type OwlishSettings = z.infer<typeof OwlishSettingsSchema>;
 
+const AbsolutePathSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => isAbsolute(value) && !value.includes("\0"), "must be an absolute path");
+
+const TcpPortSchema = z.number().int().min(1).max(65535);
+
+const sandboxMode = z.enum(["off", "enforce"]).meta({
+  description:
+    "off: agents are not sandboxed. enforce: an agent starts only inside the OS sandbox.",
+});
+const sandboxReadPaths = z.array(AbsolutePathSchema).max(100).meta({
+  description: "Extra read-only folders. Absolute paths only.",
+});
+const sandboxWritePaths = z.array(AbsolutePathSchema).max(100).meta({
+  description: "Extra writable folders. Absolute paths only.",
+});
+const sandboxDenyTcpPorts = z.array(TcpPortSchema).max(100).meta({
+  description:
+    "Extra TCP ports the sandbox blocks, besides the boof port. Integers from 1 to 65535.",
+});
+
+/**
+ * OS sandbox for task agents. Unknown keys are refused. Absent on an old file means `mode: "off"`
+ * with empty lists (existing roots stay unsandboxed).
+ */
+export const SandboxSettingsSchema = z.strictObject({
+  mode: sandboxMode.default("off"),
+  readPaths: sandboxReadPaths.default([]),
+  writePaths: sandboxWritePaths.default([]),
+  denyTcpPorts: sandboxDenyTcpPorts.default([]),
+});
+export type SandboxSettings = z.infer<typeof SandboxSettingsSchema>;
+
+/**
+ * Patch form: omitted fields stay as they are. Defaults are not filled here, so setting `mode`
+ * does not clear the path lists.
+ */
+export const SandboxSettingsPatchSchema = z.strictObject({
+  mode: sandboxMode.optional(),
+  readPaths: sandboxReadPaths.optional(),
+  writePaths: sandboxWritePaths.optional(),
+  denyTcpPorts: sandboxDenyTcpPorts.optional(),
+});
+export type SandboxSettingsPatch = z.infer<typeof SandboxSettingsPatchSchema>;
+
 /** Runner section of settings.json. */
 export const RunnerSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -588,8 +636,19 @@ export const RunnerSettingsSchema = z.object({
    * one, are not passed on.
    */
   agentEnv: z.array(EnvNameSchema).max(100).optional(),
+  /** OS sandbox. Absent on an old file: `off`, no extra paths, no extra ports. */
+  sandbox: SandboxSettingsSchema.prefault({}),
 });
 export type RunnerSettings = z.infer<typeof RunnerSettingsSchema>;
+
+/**
+ * Whether the server may ask GitHub if a newer release exists. Absent means on.
+ * Off means no request is ever sent. The result is not an update: nothing is downloaded.
+ */
+export const UpdatesSettingsSchema = z.strictObject({
+  check: z.boolean().default(true),
+});
+export type UpdatesSettings = z.infer<typeof UpdatesSettingsSchema>;
 
 /**
  * The `schemaVersion` written by this release. Absent in settings.json means v1.
@@ -621,6 +680,8 @@ export const SettingsSchema = z.object({
   webhooks: z.array(WebhookSchema).optional(),
   /** The optional n8n instance; managed through the n8n operations, never PUT /settings. */
   n8n: N8nSettingsSchema.optional(),
+  /** Release notice. Absent means `check: true` (see {@link UpdatesSettingsSchema}). */
+  updates: UpdatesSettingsSchema.optional(),
   models: z.record(z.string(), z.array(z.string())),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -654,6 +715,7 @@ export const SettingsPatchSchema = z
         concurrency: z.number().int().min(1).optional(),
         inheritMcpServers: z.boolean().optional(),
         agentEnv: z.array(EnvNameSchema).max(100).optional(),
+        sandbox: SandboxSettingsPatchSchema.optional(),
       })
       .optional(),
     defaultProject: kebab.nullable().optional(),
@@ -666,6 +728,8 @@ export const SettingsPatchSchema = z
     /** The account pool; `null` removes it (the key is handled by settings.update, never stored here). */
     owlish: OwlishSettingsSchema.nullable().optional(),
     models: z.record(z.string(), z.array(z.string())).optional(),
+    /** `false` stops the daily release request. There is no download. */
+    updates: z.strictObject({ check: z.boolean() }).optional(),
   })
   .partial();
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;

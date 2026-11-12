@@ -43,4 +43,17 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
 
+# x64 only. ubuntu-latest builds that arch natively. An arm64 AppImage needs a
+# native arm runner or QEMU, and a seventh asset would miss the six-asset release
+# (four macOS, one Windows, this AppImage). ${arch} for an AppImage is x86_64.
+linux:
+  category: Development
+  executableName: boof-runner
+  # Match Electron's app id (package.json desktopName) so the window groups with
+  # the desktop entry. The name is the appId, which is already a reverse-DNS id.
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch: [x64]
+
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}

@@ -1,5 +1,5 @@
 import { createServer as createHttpsServer } from "node:https";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import {
@@ -56,6 +56,16 @@ export interface StartServerOptions {
   webhookIntervalMs?: number;
   /** How often a server that is not delivering retries the dispatcher lock (default 5000 ms). */
   webhookLockRetryMs?: number;
+  /**
+   * Recompute the sandbox self-test. Called after settings load and when `runner.sandbox` changes.
+   * A failure must not stop the server: the gate reports `unavailable` and refuses agent starts.
+   */
+  refreshSandbox?: (settings: Settings) => Promise<void>;
+  /**
+   * Whether `enforce` would work. When set, an off-to-enforce settings write runs it first and
+   * keeps `off` if it does not pass. Absent in unit tests, which do not spawn a helper.
+   */
+  assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
 }
 
 export interface RunningServer {
@@ -120,9 +130,14 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const service = new TaskService(opts.root, opts.catalog, {
     conciergeAgent: opts.conciergeAgent,
     authStore,
+    refreshSandbox: opts.refreshSandbox,
+    assessSandbox: opts.assessSandbox,
   });
   attachConcierge(service);
   const settings = await service.loadSettings(); // scaffolds settings.json if missing
+  await opts.refreshSandbox?.(settings).catch((err) => {
+    warn(`sandbox self-test failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
   const host = opts.host ?? "127.0.0.1";
   const sec = securitySettings(settings);
   await assertBindAllowed(host, settings, authStore);
@@ -209,6 +224,36 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : (opts.port ?? 4319);
   boundPort = port;
+  let ipv6Server: ServerType | undefined;
+  if (host === "127.0.0.1") {
+    // Reserve ::1 when available so a V6ONLY socket cannot squat localhost while the server
+    // runs. RLIMIT_NOFILE is per process and fork bypasses it; sandbox policies permanently
+    // deny this port to both bind and connect, including during startup and restart.
+    ipv6Server = await new Promise<ServerType>((resolve, reject) => {
+      const base = { fetch: app.fetch, hostname: "::1", port };
+      const listening = () => resolve(s);
+      const s = tls
+        ? serve(
+            {
+              ...base,
+              createServer: createHttpsServer as never,
+              serverOptions: { key: tls.key, cert: tls.cert } as never,
+            },
+            listening,
+          )
+        : serve(base, listening);
+      s.once("error", reject);
+    }).catch((err: unknown) => {
+      // Residual: without IPv6 the host cannot reserve this address against unrelated local
+      // processes. Sandboxed agents still cannot claim the port because policy denies it always.
+      warn(
+        `warning: could not reserve [::1]:${port}; continuing on 127.0.0.1 (${err instanceof Error ? err.message : String(err)})`,
+      );
+      return undefined;
+    });
+  }
+  const serverPortRecord = dataRootPaths(opts.root).serverPort;
+  await writeFile(serverPortRecord, JSON.stringify({ pid: process.pid, port }), { mode: 0o600 });
 
   // Webhooks are delivered by one server per data root (headless run/scan processes do not
   // deliver): the one holding `webhooks/.dispatcher.lock`. A second server waits and takes over
@@ -259,6 +304,13 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
         // Long-lived SSE streams and keep-alive sockets would hold close() open forever.
         (server as { closeAllConnections?: () => void }).closeAllConnections?.();
       });
+      if (ipv6Server) {
+        await new Promise<void>((resolve) => {
+          ipv6Server!.close(() => resolve());
+          (ipv6Server as { closeAllConnections?: () => void }).closeAllConnections?.();
+        });
+      }
+      await rm(serverPortRecord, { force: true });
     },
   };
 }

@@ -35,9 +35,16 @@ import {
   branchHead,
   currentBranch,
   isGitRepo,
+  SandboxUnavailableError,
   sumUsage,
   UsageStore,
 } from "@boof/heart";
+import {
+  createRunTemp,
+  importPrivateGitObjects,
+  prepareAgentLaunch,
+  removeRunTemp,
+} from "./sandbox/index.js";
 import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
@@ -86,6 +93,8 @@ export interface PipelineDeps {
   agentAuth?: AgentAuthResolver;
   /** Triggers n8n workflows for the project's external steps and check tasks. */
   external?: ExternalStepTransport;
+  /** Bound port of the server in this process. Omit for a headless run, which is not listening. */
+  serverPort?: number;
 }
 
 const VERDICT_PROTOCOL =
@@ -141,6 +150,20 @@ const BASE_SYSTEM_PROMPTS = {
     WORKTREE_HYGIENE +
     VERDICT_PROTOCOL,
 } as const;
+
+/**
+ * One sentence added to the developer prompts while `runner.sandbox.mode` is `enforce`.
+ * `git stash`, `git gc`, `git tag` and `git push` have no writable ref or ssh socket in the
+ * sandbox, and `/tmp` is not writable: temporary files belong in `$TMPDIR`.
+ */
+export const SANDBOX_DEVELOPER_LIMITS =
+  "Inside the sandbox, git stash, git gc, git tag and git push do not work, and temporary files belong in $TMPDIR.";
+
+/** Developer and developer-fix prompts. Other roles are unchanged. The sentence is added once. */
+export function withSandboxLimits(prompt: string, mode: "off" | "enforce"): string {
+  if (mode !== "enforce" || prompt.includes(SANDBOX_DEVELOPER_LIMITS)) return prompt;
+  return `${prompt}\n\n${SANDBOX_DEVELOPER_LIMITS}`;
+}
 
 export const SYSTEM_PROMPTS = {
   planner: `${BASE_SYSTEM_PROMPTS.planner}\n\n${QUESTIONS_PROTOCOL}\n\n${NON_INTERACTIVE}`,
@@ -258,7 +281,15 @@ class PoolExhaustedError extends Error {
 export type PipelineOutcome =
   | { kind: "done"; task: Task }
   | { kind: "parked"; task: Task; questions: string[] }
-  | { kind: "failed"; task: Task; error: string; budget?: true; pool?: true; authRefused?: true }
+  | {
+      kind: "failed";
+      task: Task;
+      error: string;
+      budget?: true;
+      pool?: true;
+      authRefused?: true;
+      sandbox?: true;
+    }
   /** A stop request (user or server shutdown) ended the run; the worktree and branch are kept. */
   | { kind: "stopped"; task: Task; reason: "user" | "shutdown"; note: string };
 
@@ -285,6 +316,53 @@ export class Pipeline {
   private readonly externalOutcomes = new Map<string, ExternalStepOutcome[]>();
   constructor(private readonly deps: PipelineDeps) {
     this.usageStore = new UsageStore(deps.root);
+  }
+
+  /** Temp directory of the run in progress. Set only while `sandbox.mode` is `enforce`. */
+  private runTempDir: string | undefined;
+  /** Set when private object import fails so the run data survives for recovery. */
+  private preserveRunTempDir: string | undefined;
+
+  private async importPrivateObjects(worktree: Worktree, writableRoot: string): Promise<void> {
+    if (!this.runTempDir) return;
+    try {
+      await importPrivateGitObjects({
+        runTempDir: this.runTempDir,
+        writableRoot,
+        mainCheckout: this.deps.settings.workingDirectory,
+        worktree,
+      });
+    } catch (err) {
+      this.preserveRunTempDir = this.runTempDir;
+      throw err;
+    }
+  }
+
+  private sandboxMode(): "off" | "enforce" {
+    return this.deps.settings.runner.sandbox?.mode === "enforce" ? "enforce" : "off";
+  }
+
+  private developerPrompt(prompt: string): string {
+    return withSandboxLimits(prompt, this.sandboxMode());
+  }
+
+  /** Per-step sandbox facts. Undefined when the sandbox is off (the launch stays direct). */
+  private agentLaunchContext(tool: string, cwd: string) {
+    if (this.sandboxMode() !== "enforce") return undefined;
+    if (!this.runTempDir || !this.deps.dataRoot || !this.deps.project) {
+      throw new SandboxUnavailableError(
+        "sandbox policy needs the data root, the project and a temp directory",
+      );
+    }
+    return {
+      dataRoot: this.deps.dataRoot,
+      projectId: this.deps.project.id,
+      tool,
+      writableRoot: cwd,
+      mainCheckout: this.deps.settings.workingDirectory,
+      runTempDir: this.runTempDir,
+      ...(this.deps.serverPort !== undefined ? { serverPort: this.deps.serverPort } : {}),
+    };
   }
 
   private closeSteps(id: string, label: (typeof CLOSING_STEP_LABELS)[number]): Promise<void> {
@@ -335,7 +413,12 @@ export class Pipeline {
     label: string,
     tool: Tool,
     opts: RunOptions,
+    worktree?: Worktree,
   ): Promise<RunResult> {
+    const launch = await prepareAgentLaunch(
+      this.deps.settings,
+      this.agentLaunchContext(tool.id, opts.cwd),
+    );
     if (tool.unavailableReason) throw new AgentAuthRefusedError(tool.unavailableReason);
     await this.assertNotStopped(id);
     await this.assertBudget(id, tool.id);
@@ -452,6 +535,7 @@ export class Pipeline {
             throw new Error(POOL_AGENT_KEY_REQUIRED);
           const result = await tool.run({
             ...opts,
+            launch,
             model: stepModel,
             ...authOptions,
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
@@ -488,9 +572,15 @@ export class Pipeline {
               : {}),
             onChunk: (c) => void this.streamChunk(id, c),
           });
+          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot && worktree) {
+            await this.importPrivateObjects(worktree, opts.cwd);
+          }
           await this.recordStepCost(id, tool.id, result.usage);
           return finish(result);
         } catch (err) {
+          if (launch.kind === "sandbox" && this.runTempDir && this.deps.dataRoot && worktree) {
+            await this.importPrivateObjects(worktree, opts.cwd);
+          }
           if (err instanceof ToolRunError && err.usage) {
             await this.recordStepCost(id, tool.id, err.usage);
             if (err.steered) interrupted.push(err.usage);
@@ -1008,10 +1098,20 @@ export class Pipeline {
     }
 
     let worktree: Worktree | null = null;
+    this.preserveRunTempDir = undefined;
     const { workingDirectory } = this.deps.settings;
     const cwd = workingDirectory;
 
     try {
+      if (this.sandboxMode() === "enforce") {
+        if (!this.deps.dataRoot || !this.deps.project) {
+          throw new SandboxUnavailableError("sandbox policy needs the data root and the project");
+        }
+        this.runTempDir = await createRunTemp({
+          dataRoot: this.deps.dataRoot,
+          projectId: this.deps.project.id,
+        });
+      }
       // Set up isolation when the working directory is a git repo. Reused
       // across iterations so later runs build on the prior run's work.
       if (await isGitRepo(workingDirectory)) {
@@ -1019,6 +1119,7 @@ export class Pipeline {
         const made = await ensureWorktree(workingDirectory, id, {
           root: resolveWorktreeRoot(worktreeSettings(this.deps.settings), workingDirectory),
           base,
+          strict: this.sandboxMode() === "enforce",
         });
         worktree = made.worktree;
         await appendLog(
@@ -1060,14 +1161,20 @@ export class Pipeline {
 
       // --- Step 1: Planner ---
       const planner = this.tool(task, "planner");
-      const planResult = await this.runStep(id, "Planner", planner.tool, {
-        role: "planner",
-        model: planner.model,
-        systemPrompt: SYSTEM_PROMPTS.planner,
-        prompt: await this.buildPrompt(task, ""),
-        cwd: stepCwd,
-        autoApprove: true,
-      });
+      const planResult = await this.runStep(
+        id,
+        "Planner",
+        planner.tool,
+        {
+          role: "planner",
+          model: planner.model,
+          systemPrompt: SYSTEM_PROMPTS.planner,
+          prompt: await this.buildPrompt(task, ""),
+          cwd: stepCwd,
+          autoApprove: true,
+        },
+        worktree ?? undefined,
+      );
       record(planResult);
       recordBody(`### Planner\n${planResult.output}`);
 
@@ -1081,14 +1188,20 @@ export class Pipeline {
       await this.writeReport(task, "planner", planResult.report);
 
       // --- Step 2: Planner refinement pass (always run) ---
-      const refineResult = await this.runStep(id, "Planner (refinement)", planner.tool, {
-        role: "planner",
-        model: planner.model,
-        systemPrompt: SYSTEM_PROMPTS.refine,
-        prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
-        cwd: stepCwd,
-        autoApprove: true,
-      });
+      const refineResult = await this.runStep(
+        id,
+        "Planner (refinement)",
+        planner.tool,
+        {
+          role: "planner",
+          model: planner.model,
+          systemPrompt: SYSTEM_PROMPTS.refine,
+          prompt: await this.buildPrompt(task, `## Existing plan\n${planResult.report}`),
+          cwd: stepCwd,
+          autoApprove: true,
+        },
+        worktree ?? undefined,
+      );
       record(refineResult);
       recordBody(`### Planner (refinement)\n${refineResult.output}`);
       if (refineResult.questions && refineResult.questions.length > 0) {
@@ -1113,12 +1226,18 @@ export class Pipeline {
       const devOpts = {
         role: "developer" as const,
         model: developer.model,
-        systemPrompt: SYSTEM_PROMPTS.developer,
+        systemPrompt: this.developerPrompt(SYSTEM_PROMPTS.developer),
         prompt: await this.buildPrompt(task, withExternal(`## Plan\n${finalPlan}`)),
         cwd: stepCwd,
         autoApprove: true,
       };
-      let devResult = await this.runStep(id, "Developer", developer.tool, devOpts);
+      let devResult = await this.runStep(
+        id,
+        "Developer",
+        developer.tool,
+        devOpts,
+        worktree ?? undefined,
+      );
       record(devResult);
       recordBody(`### Developer\n${devResult.output}`);
 
@@ -1133,17 +1252,24 @@ export class Pipeline {
           finalPlan,
           usages,
           async (answers) => {
-            const again = await this.runStep(id, "Developer (with answers)", developer.tool, {
-              ...devOpts,
-              prompt: await this.buildPrompt(
-                task,
-                withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
-              ),
-            });
+            const again = await this.runStep(
+              id,
+              "Developer (with answers)",
+              developer.tool,
+              {
+                ...devOpts,
+                prompt: await this.buildPrompt(
+                  task,
+                  withExternal(`## Plan\n${finalPlan}\n\n${answersSection(answers)}`),
+                ),
+              },
+              worktree ?? undefined,
+            );
             record(again);
             recordBody(`### Developer (with answers)\n${again.output}`);
             return again;
           },
+          worktree ?? undefined,
         );
       }
       await this.writeReport(task, "developer", devResult.report);
@@ -1174,7 +1300,13 @@ export class Pipeline {
           cwd: stepCwd,
           autoApprove: true,
         };
-        let result = await this.runStep(id, `${label} (round ${round})`, who.tool, checkOpts);
+        let result = await this.runStep(
+          id,
+          `${label} (round ${round})`,
+          who.tool,
+          checkOpts,
+          worktree ?? undefined,
+        );
         record(result);
         recordBody(`### ${label} (round ${round})\n${result.output}`);
         // Parse before the planner dialogue is appended, so only the agent's own
@@ -1203,11 +1335,13 @@ export class Pipeline {
                     ),
                   ),
                 },
+                worktree ?? undefined,
               );
               record(again);
               recordBody(`### ${label} (round ${round}, with answers)\n${again.output}`);
               return again;
             },
+            worktree ?? undefined,
           );
           // The verdict that counts is the one the role gave after it got its answers.
           result = answered;
@@ -1231,7 +1365,7 @@ export class Pipeline {
         const fixOpts = {
           role: "developer" as const,
           model: developer.model,
-          systemPrompt: SYSTEM_PROMPTS.developerFix,
+          systemPrompt: this.developerPrompt(SYSTEM_PROMPTS.developerFix),
           prompt: await this.buildPrompt(task, withExternal(fixBase)),
           cwd: stepCwd,
           autoApprove: true,
@@ -1241,6 +1375,7 @@ export class Pipeline {
           `Developer (fix round ${fixRound}, ${role})`,
           developer.tool,
           fixOpts,
+          worktree ?? undefined,
         );
         record(fixResult);
         recordBody(`### Developer (fix round ${fixRound}, ${role})\n${fixResult.output}`);
@@ -1265,6 +1400,7 @@ export class Pipeline {
                     withExternal(`${fixBase}\n\n${answersSection(answers)}`),
                   ),
                 },
+                worktree ?? undefined,
               );
               record(again);
               recordBody(
@@ -1272,6 +1408,7 @@ export class Pipeline {
               );
               return again;
             },
+            worktree ?? undefined,
           );
         }
         await this.writeReport(
@@ -1351,12 +1488,14 @@ export class Pipeline {
       const overBudget = err instanceof BudgetExceededError;
       const poolExhausted = err instanceof PoolExhaustedError;
       const authRefused = err instanceof AgentAuthRefusedError;
+      const sandboxUnavailable = err instanceof SandboxUnavailableError;
       const message =
         err instanceof ReviewNotApprovedError ||
         err instanceof ExternalStepFailedError ||
         overBudget ||
         poolExhausted ||
-        authRefused
+        authRefused ||
+        sandboxUnavailable
           ? err.message
           : err instanceof Error
             ? `${err.name}: ${err.message}`
@@ -1379,7 +1518,8 @@ export class Pipeline {
           worktreeSettings(this.deps.settings).onFailure === "delete" &&
           !stopped &&
           !keepForBudget &&
-          !authRefused
+          !authRefused &&
+          !sandboxUnavailable
         ) {
           for (const line of await discardWorktree(workingDirectory, worktree)) {
             await appendLog(line).catch(() => {});
@@ -1402,7 +1542,12 @@ export class Pipeline {
         ...(overBudget ? { budget: true as const } : {}),
         ...(poolExhausted ? { pool: true as const } : {}),
         ...(authRefused ? { authRefused: true as const } : {}),
+        ...(sandboxUnavailable ? { sandbox: true as const } : {}),
       };
+    } finally {
+      const temp = this.runTempDir;
+      this.runTempDir = undefined;
+      if (temp && temp !== this.preserveRunTempDir) await removeRunTemp(temp);
     }
   }
 
@@ -1435,23 +1580,30 @@ export class Pipeline {
     usages: TokenUsage[],
     /** Runs the asking role again with the planner's answers in its prompt. */
     rerun: (answers: string) => Promise<RunResult>,
+    worktree?: Worktree,
   ): Promise<RunResult & { ownReport?: string }> {
     const id = task.frontmatter.id;
     const questions = result.questions ?? [];
-    const answer = await this.runStep(id, `Planner (answering ${fromRole})`, planner.tool, {
-      role: "planner",
-      model: planner.model,
-      systemPrompt:
-        "You are the PLANNER. Answer the following questions from the " +
-        `${fromRole} using the plan and task context. Do not escalate to the user.\n\n` +
-        NON_INTERACTIVE,
-      prompt: await this.buildPrompt(
-        task,
-        `## Plan\n${plan}\n\n## ${fromRole} questions\n${questions.join("\n")}`,
-      ),
-      cwd,
-      autoApprove: true,
-    });
+    const answer = await this.runStep(
+      id,
+      `Planner (answering ${fromRole})`,
+      planner.tool,
+      {
+        role: "planner",
+        model: planner.model,
+        systemPrompt:
+          "You are the PLANNER. Answer the following questions from the " +
+          `${fromRole} using the plan and task context. Do not escalate to the user.\n\n` +
+          NON_INTERACTIVE,
+        prompt: await this.buildPrompt(
+          task,
+          `## Plan\n${plan}\n\n## ${fromRole} questions\n${questions.join("\n")}`,
+        ),
+        cwd,
+        autoApprove: true,
+      },
+      worktree,
+    );
     if (answer.usage) usages.push(answer.usage);
     if (answer.questions && answer.questions.length > 0) {
       // The planner cannot answer: the owner must. Say which role asked what.

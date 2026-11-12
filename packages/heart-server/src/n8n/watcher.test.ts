@@ -41,7 +41,7 @@ async function makeProject(): Promise<void> {
   if (await service.projects.get("shop")) return;
   const repo = await realpath(await mkdtemp(join(tmpdir(), "boof-n8n-watch-proj-")));
   repos.push(repo);
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await service.projects.create({ workingDirectory: repo, id: "shop" });
 }
 

@@ -3,8 +3,8 @@ import { readFile as readFileAsync } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
-import { boot, isRunnerStartFailure } from "@boof/boof/boot";
+import { assessSandbox, ClaudeConcierge, isAgentOf, ToolRegistry } from "@boof/runner";
+import { boot, isRunnerStartFailure, sandboxServerHooks } from "@boof/boof/boot";
 import { RunnerGuard } from "./runner-guard.js";
 import { authCommand } from "@boof/facedisk/cli/auth-cli.js";
 import { remoteCommand } from "@boof/facedisk/cli/remote-cli.js";
@@ -22,17 +22,23 @@ import { taskCommand } from "@boof/facedisk/cli/task-cli.js";
 import { planCommand } from "@boof/facedisk/cli/plan-cli.js";
 import { mcpCommand } from "@boof/facedisk/cli/mcp-cli.js";
 import { openCommand } from "@boof/facedisk/cli/open-cli.js";
+import { sandboxCommand } from "./sandbox-cli.js";
+import { backupCommand, restoreCommand } from "@boof/facedisk/cli/backup-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
 import {
   AuthStore,
   BrowserSessionStore,
+  BackupError,
   MigrationError,
   scaffoldDataRoot,
   ProjectResolutionError,
   SettingsStore,
   securitySettings,
   UnsafeSecretPathError,
+  cliNoticeLine,
+  readUpdateCache,
+  cliRateNow,
 } from "@boof/heart";
 import { beginCliAudit, writeInterruptedSync } from "@boof/facedisk/cli/cli-audit.js";
 
@@ -86,7 +92,10 @@ Usage:
   boof-runner remote <setup|status|disable>  Expose this server to a remote AI harness in one command (see: remote --help)
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
+  boof-runner sandbox check            Print whether enforce would work (see: sandbox --help)
   boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
+  boof-runner backup --out <file.tar.gz> [-d <root>]  Copy a data root to an archive (see: backup --help)
+  boof-runner restore --from <file.tar.gz> -d <root>  Restore an archive into an empty directory (see: restore --help)
   boof-runner ops                      List the operation commands (every REST/MCP operation)
   boof-runner <area> <verb> [flags]    Run one operation, e.g. tasks create --project <id> --title <t> (see: <area> <verb> --help)
   boof-runner --help                   Show this help
@@ -183,6 +192,19 @@ function readVersion(): string {
   }
 }
 
+/**
+ * Print the version. A second line names a newer release already in the data-root cache.
+ * This never sends a request and never creates the data root or the cache file.
+ */
+async function printVersion(argv: string[]): Promise<void> {
+  const version = readVersion();
+  console.log(version);
+  const dataOpt = getOpt(argv, ["--data", "-d"]);
+  const root = dataOpt ? absPath(dataOpt) : defaultDataRoot();
+  const line = cliNoticeLine(version, await readUpdateCache(root));
+  if (line) console.log(line);
+}
+
 /** serve's own flags: the only tokens that may stand first without the `serve` word. */
 export const SERVE_FLAGS = [
   "--data",
@@ -207,8 +229,18 @@ const GLOBAL_VALUE_FLAGS = new Set([
   "--host",
   "--tls-cert",
   "--tls-key",
+  "--from",
 ]);
-const GLOBAL_BOOLEAN_FLAGS = new Set(["--json", "--no-runner", "--help", "-h", "--version", "-v"]);
+const GLOBAL_BOOLEAN_FLAGS = new Set([
+  "--json",
+  "--no-runner",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+  "--live",
+  "--no-secrets",
+]);
 
 /**
  * Global flags may come before the command words (`boof-runner -d ./data tasks list`,
@@ -310,6 +342,7 @@ export async function serve(argv: string[]): Promise<void> {
       host: args.host,
       uiDir,
       version: readVersion(),
+      updates: {},
       tlsCert: args.tlsCert ? absPath(args.tlsCert) : undefined,
       tlsKey: args.tlsKey ? absPath(args.tlsKey) : undefined,
       runner: !args.noRunner,
@@ -593,7 +626,7 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
   const [cmd, ...rest] = argv;
   // --version also works after serve's own flags (`boof-runner -d x --version`).
   if ((cmd === "serve" || isServeFlag(cmd ?? "")) && hasFlag(argv, ["--version", "-v"])) {
-    console.log(readVersion());
+    await printVersion(argv);
     return;
   }
   // Top-level --help (but let the subcommands handle their own --help). An unknown first word is
@@ -617,7 +650,8 @@ export async function main(rawArgv = process.argv.slice(2)): Promise<void> {
     if (
       err instanceof ProjectResolutionError ||
       err instanceof MigrationError ||
-      err instanceof UnsafeSecretPathError
+      err instanceof UnsafeSecretPathError ||
+      err instanceof BackupError
     ) {
       console.error(err.message.replace(/[\r\n]+/g, " "));
       code = 1;
@@ -707,10 +741,13 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
     return opsCommand([cmd, ...rest], defaultDataRoot, {
       services: (root) => {
         const service = new TaskService(root, new ToolRegistry(), {
-          conciergeAgent: new ClaudeConcierge({ root }),
+          conciergeAgent:
+            (globalThis as { __boofDevConcierge?: ConciergeAgent }).__boofDevConcierge ??
+            new ClaudeConcierge({ root }),
           authStore: new AuthStore(root),
+          ...sandboxServerHooks(),
         });
-        attachConcierge(service);
+        attachConcierge(service, undefined, { persistLimits: true, now: cliRateNow });
         return service;
       },
     });
@@ -749,12 +786,28 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
     case "open":
       code = await openCommand(rest, defaultDataRoot);
       break;
+    case "backup":
+      code = await backupCommand(rest, defaultDataRoot);
+      break;
+    case "restore":
+      code = await restoreCommand(rest, defaultDataRoot);
+      break;
     case "mcp":
-      code = await mcpCommand(rest, defaultDataRoot, new ToolRegistry());
+      code = await mcpCommand(
+        rest,
+        defaultDataRoot,
+        new ToolRegistry(),
+        console.error,
+        console.log,
+        sandboxServerHooks(),
+      );
+      break;
+    case "sandbox":
+      code = await sandboxCommand(rest, () => assessSandbox());
       break;
     case "--version":
     case "-v":
-      console.log(readVersion());
+      await printVersion(argv);
       break;
     case "serve":
       if (strayWords(rest).length > 0) return refuseServe(rest);

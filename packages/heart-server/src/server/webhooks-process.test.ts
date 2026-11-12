@@ -101,7 +101,7 @@ describe("one webhook dispatcher per data root", () => {
   it("two servers deliver each event once, and the other takes over when the holder dies", async () => {
     const repo = join(base, "a");
     await mkdir(repo);
-    await execCommand("git", ["init", "-q"], { cwd: repo });
+    await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
     const settings = new SettingsStore(root);
     const current = defaultSettings();
     await settings.save({

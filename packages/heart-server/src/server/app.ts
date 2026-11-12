@@ -10,9 +10,13 @@ import {
   authorizeProject,
   isKebabId,
   MAX_ATTACHMENT_BYTES,
+  BOOF_VERSION,
   ExternalRunStore,
+  dismissUpdate,
   instanceProof,
   randomInstanceId,
+  readUpdateCache,
+  uiNotice,
   type BrowserSessionVerifier,
   type Principal,
 } from "@boof/heart";
@@ -331,6 +335,38 @@ export function createApp(deps: AppDeps): Hono {
   });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "/v1", legacy: false });
   mountOps(api, registry as readonly AnyOperation[], restDeps, { prefix: "", legacy: true });
+
+  // Not a registry operation: a release notice is not an agent tool. GET only reads the cache.
+  // POST hides one version in the UI. Neither route asks GitHub.
+  const releaseVersion = () => deps.version ?? BOOF_VERSION;
+  api.get("/v1/updates", async (c) => {
+    const cache = await readUpdateCache(service.root);
+    return c.json({ update: uiNotice(releaseVersion(), cache) });
+  });
+  // The dismissal hides the notice for every client, so it needs the settings:write scope and a
+  // client that is not limited to some projects (the owner's session, or an operator key).
+  api.post("/v1/updates/dismiss", requireScope("settings:write"), async (c) => {
+    if (who(c).projects !== "*") {
+      throw new OpError(
+        403,
+        "Dismissing the update notice needs a client that may access every project",
+        "forbidden_project",
+      );
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new OpError(400, "Request body must be valid JSON", "invalid_input");
+    }
+    const version =
+      body && typeof body === "object" ? (body as { version?: unknown }).version : undefined;
+    if (typeof version !== "string" || !/^[0-9A-Za-z.+-]{1,64}$/.test(version))
+      throw new OpError(400, "version is required", "invalid_input");
+    await dismissUpdate(service.root, version);
+    const cache = await readUpdateCache(service.root);
+    return c.json({ update: uiNotice(releaseVersion(), cache) });
+  });
 
   const streamConcierge = async (c: Context) => {
     const principal = who(c);

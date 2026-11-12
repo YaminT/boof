@@ -25,7 +25,10 @@ let wtRoot: string;
 const V1 = "/api/v1";
 const call = (path: string, init: RequestInit = {}) => app.request("http://localhost" + path, init);
 const g = (cwd: string, args: string[]) =>
-  execCommand("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd });
+  execCommand("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    launch: { kind: "direct" },
+    cwd,
+  });
 const diffUrl = (id: string, qs = "") => `${V1}/projects/demo/tasks/${id}/diff${qs}`;
 
 async function mkTask(title: string): Promise<string> {
@@ -41,6 +44,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-diff-"));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-diff-repo-")));
   await g(repo, ["init", "-q", "-b", "main"]);
+  await g(repo, ["config", "core.autocrlf", "false"]);
   await writeFile(join(repo, "a.txt"), "one\ntwo\nthree\n");
   await writeFile(join(repo, "b.txt"), "bee\n");
   await writeFile(join(repo, "old.txt"), "a long enough file\nto be a rename\nsource\nfor git\n");
@@ -168,6 +172,20 @@ describe("GET /tasks/:id/diff", () => {
     await g(wt, ["branch", `boof-runner/${id}--leftovers`]);
     const d = await (await call(diffUrl(id))).json();
     expect(d.leftovers.ref).toBe(`boof-runner/${id}--leftovers`);
+  });
+
+  it("serves the diff for a worktree whose record was written by 0.4.1", async () => {
+    const { id } = await committedTask("Old record");
+    const meta = join(wtRoot, ".meta", `${id}.json`);
+    const rec = JSON.parse(await readFile(meta, "utf8"));
+    await writeFile(meta, JSON.stringify({ path: rec.path, branch: rec.branch, base: rec.base }));
+    const res = await call(diffUrl(id));
+    expect(res.status).toBe(200);
+    expect((await res.json()).files.length).toBeGreaterThan(0);
+    // A record that cannot be verified is a 409 with a message, never a server error.
+    await writeFile(meta, JSON.stringify({ ...rec, commonDir: join(root, "nowhere") }));
+    const bad = await call(diffUrl(id));
+    expect(bad.status).toBe(409);
   });
 
   it("leaves the patch out above maxBytes and cuts a single file at it", async () => {

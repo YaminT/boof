@@ -48,6 +48,10 @@ Environment:
 
 An existing checkout with uncommitted changes is never touched unless BOOF_RUNNER_FORCE_UPDATE=1.
 
+On Linux the script compiles the sandbox helper (packages/sandbox-linux/build.mjs). Without a C
+compiler it prints one line that the sandbox is unavailable and continues. The helper is not
+looked up on PATH.
+
 Examples:
   ./scripts/install-or-update-boof-runner.sh
   BOOF_RUNNER_BRANCH=main bash scripts/install-or-update-boof-runner.sh
@@ -234,6 +238,18 @@ install_dependencies() {
   fi
 }
 
+# Compiles boof-sandbox when a C compiler exists. The helper is optional: a missing compiler,
+# a non-Linux host or a failed compile (for example kernel headers older than 6.7, which lack
+# the Landlock network API) prints a note and the install continues. Nothing else depends on it.
+build_sandbox() {
+  local dir="$1"
+  log "Building the sandbox helper"
+  if ! (cd "$dir" && node packages/sandbox-linux/build.mjs); then
+    log "sandbox helper not built; enforce mode unavailable"
+  fi
+  return 0
+}
+
 build_app() {
   local dir="$1"
   if skip_desktop; then
@@ -289,6 +305,7 @@ main() {
   # The update may have raised engines.node.
   check_node "$dir"
   install_dependencies "$dir"
+  build_sandbox "$dir"
   build_app "$dir"
   install_command "$dir"
   verify_install

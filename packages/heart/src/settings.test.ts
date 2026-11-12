@@ -13,6 +13,7 @@ import {
   reviewSettings,
   SettingsStore,
   securitySettings,
+  updatesSettings,
   worktreeSettings,
 } from "./settings.js";
 import { defaultSettings } from "./settings.js";
@@ -21,7 +22,9 @@ import {
   ConciergeSettingsSchema,
   RoleAssignmentSchema,
   SETTINGS_SCHEMA_VERSION,
+  SandboxSettingsSchema,
   SettingsPatchSchema,
+  SettingsSchema,
   type Project,
   type Settings,
   type TaskFrontmatter,
@@ -242,7 +245,12 @@ describe("v2 settings store", () => {
     const s = await new SettingsStore(root).load();
     expect(s.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
     expect(s.defaultProject).toBeNull();
-    expect(s.runner).toEqual({ enabled: false, concurrency: 1, inheritMcpServers: false });
+    expect(s.runner).toEqual({
+      enabled: false,
+      concurrency: 1,
+      inheritMcpServers: false,
+      sandbox: { mode: "off", readPaths: [], writePaths: [], denyTcpPorts: [] },
+    });
     expect(Object.keys(s)).not.toContain("workingDirectory");
   });
 
@@ -272,7 +280,12 @@ describe("v2 settings store", () => {
     const store = new SettingsStore(root);
     await store.update({ runner: { concurrency: 3 } });
     const s = await store.update({ runner: { enabled: true } });
-    expect(s.runner).toEqual({ enabled: true, concurrency: 3, inheritMcpServers: false });
+    expect(s.runner).toEqual({
+      enabled: true,
+      concurrency: 3,
+      inheritMcpServers: false,
+      sandbox: { mode: "off", readPaths: [], writePaths: [], denyTcpPorts: [] },
+    });
   });
 
   it("update serializes concurrent patches so neither is lost", async () => {
@@ -286,6 +299,7 @@ describe("v2 settings store", () => {
       enabled: true,
       concurrency: 3,
       inheritMcpServers: false,
+      sandbox: { mode: "off", readPaths: [], writePaths: [], denyTcpPorts: [] },
     });
   });
 
@@ -378,12 +392,112 @@ describe("effectiveSettings", () => {
   });
 });
 
+describe("updates.check", () => {
+  it("is on when the block is absent, and a patch can turn it off", async () => {
+    expect(defaultSettings().updates).toBeUndefined();
+    expect(updatesSettings(defaultSettings()).check).toBe(true);
+    expect(SettingsPatchSchema.parse({ updates: { check: false } })).toEqual({
+      updates: { check: false },
+    });
+    expect(SettingsPatchSchema.safeParse({ updates: { check: "yes" } }).success).toBe(false);
+    expect(SettingsPatchSchema.safeParse({ updates: {} }).success).toBe(false);
+    const store = new SettingsStore(root);
+    await store.save(defaultSettings());
+    await store.update({ updates: { check: false } });
+    expect(updatesSettings(await store.load()).check).toBe(false);
+  });
+});
+
 describe("runner.inheritMcpServers", () => {
   it("is off by default and can be switched on through a settings patch", async () => {
     expect(defaultSettings().runner.inheritMcpServers).toBe(false);
     expect(SettingsPatchSchema.parse({ runner: { inheritMcpServers: true } })).toEqual({
       runner: { inheritMcpServers: true },
     });
+  });
+});
+
+const offSandbox = {
+  mode: "off" as const,
+  readPaths: [] as string[],
+  writePaths: [] as string[],
+  denyTcpPorts: [] as number[],
+};
+
+describe("runner.sandbox", () => {
+  it("defaults to off with empty lists, including an old file that has no sandbox key", () => {
+    expect(defaultSettings().runner.sandbox).toEqual(offSandbox);
+    expect(SandboxSettingsSchema.parse({}).mode).toBe("off");
+    expect(
+      SettingsSchema.parse({ ...defaultSettings(), runner: { enabled: true } }).runner.sandbox,
+    ).toEqual(offSandbox);
+    const old = SettingsSchema.parse({
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
+      runner: { enabled: false },
+      roles: defaultSettings().roles,
+      models: defaultSettings().models,
+    });
+    expect(old.runner.sandbox).toEqual(offSandbox);
+  });
+
+  it("accepts absolute paths and ports 1 to 65535, and refuses the rest", () => {
+    expect(
+      SandboxSettingsSchema.parse({
+        mode: "enforce",
+        readPaths: ["/opt/sdks"],
+        writePaths: ["/var/cache/boof"],
+        denyTcpPorts: [1, 65535],
+      }),
+    ).toEqual({
+      mode: "enforce",
+      readPaths: ["/opt/sdks"],
+      writePaths: ["/var/cache/boof"],
+      denyTcpPorts: [1, 65535],
+    });
+    for (const readPaths of ["rel", "./rel", "~/x", ""]) {
+      expect(SandboxSettingsSchema.safeParse({ readPaths: [readPaths] }).success).toBe(false);
+    }
+    for (const port of [0, -1, 65536, 1.5]) {
+      expect(SandboxSettingsSchema.safeParse({ denyTcpPorts: [port] }).success).toBe(false);
+    }
+  });
+
+  it("refuses unknown keys on the stored value and on a patch", () => {
+    expect(SandboxSettingsSchema.safeParse({ mode: "off", extra: true }).success).toBe(false);
+    expect(
+      SettingsPatchSchema.safeParse({ runner: { sandbox: { mode: "off", extra: 1 } } }).success,
+    ).toBe(false);
+    expect(SettingsPatchSchema.safeParse({ runner: { sandbox: { nope: true } } }).success).toBe(
+      false,
+    );
+    expect(
+      SettingsSchema.safeParse({
+        ...defaultSettings(),
+        runner: { ...defaultSettings().runner, sandbox: { mode: "off", extra: 1 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("a mode-only patch keeps the path lists", async () => {
+    const store = new SettingsStore(root);
+    await store.update({
+      runner: {
+        sandbox: {
+          mode: "off",
+          readPaths: ["/opt/sdks"],
+          writePaths: ["/opt/out"],
+          denyTcpPorts: [9],
+        },
+      },
+    });
+    const next = await store.update({ runner: { sandbox: { mode: "enforce" } } });
+    expect(next.runner.sandbox).toEqual({
+      mode: "enforce",
+      readPaths: ["/opt/sdks"],
+      writePaths: ["/opt/out"],
+      denyTcpPorts: [9],
+    });
+    expect(next.runner.concurrency).toBe(1);
   });
 });
 

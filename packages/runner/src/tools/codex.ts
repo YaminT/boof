@@ -30,6 +30,7 @@ export class CodexTool implements Tool {
       return { status: "unavailable", message: `\`${this.bin}\` not found on PATH` };
     }
     const res = await execCommand(this.bin, ["--version"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       timeoutMs: 8000,
       env: agentEnv(),
@@ -51,6 +52,7 @@ export class CodexTool implements Tool {
         "Reply with exactly: hi",
       ],
       {
+        launch: { kind: "direct" },
         cwd: process.cwd(),
         env: agentEnv(),
         input: "",
@@ -74,6 +76,7 @@ export class CodexTool implements Tool {
   async listModels(): Promise<string[]> {
     if (!(await commandExists(this.bin))) return [...this.defaultModels];
     const res = await execCommand(this.bin, ["debug", "models"], {
+      launch: { kind: "direct" },
       cwd: process.cwd(),
       timeoutMs: 20000,
       env: agentEnv(),
@@ -141,6 +144,7 @@ export class CodexTool implements Tool {
       // Live view: JSON events become readable lines; anything else passes through.
       const live = new JsonlRenderer(renderCodexEvent, opts.onChunk);
       const res = await execCommand(this.bin, args, {
+        launch: opts.launch ?? { kind: "direct" },
         cwd: opts.cwd,
         env: {
           ...agentEnv(process.env, opts.agentEnv, opts.agentMarker, {

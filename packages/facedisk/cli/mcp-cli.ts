@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { McpStartError, mcpNeedsClientMessage, runStdio } from "@boof/heart-server";
-import type { ToolCatalog } from "@boof/heart";
+import type { Settings, ToolCatalog } from "@boof/heart";
 import { InvalidIdError, isKebabId, scaffoldDataRoot } from "@boof/heart";
 
 export const MCP_HELP = `boof-runner mcp — serve boof over the Model Context Protocol on stdin/stdout
@@ -22,12 +22,18 @@ stdout carries the protocol only; logs go to stderr. Add it to Claude Code with:
 Remote harnesses use the HTTP endpoint /mcp of "boof-runner serve" instead.`;
 
 /** `mcp` subcommand. Returns a process exit code (only on a start error or help). */
+export interface McpHooks {
+  assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
+  refreshSandbox?: (settings: Settings) => Promise<void>;
+}
+
 export async function mcpCommand(
   argv: string[],
   defaultRoot: () => string,
   catalog: ToolCatalog,
   err: (line: string) => void = console.error,
   out: (line: string) => void = console.log,
+  hooks?: McpHooks,
 ): Promise<number> {
   let parsed;
   try {
@@ -83,7 +89,14 @@ export async function mcpCommand(
       );
     }
     await scaffoldDataRoot(root);
-    await runStdio({ root, catalog, client: v.client, project: v.project });
+    await runStdio({
+      root,
+      catalog,
+      client: v.client,
+      project: v.project,
+      assessSandbox: hooks?.assessSandbox,
+      refreshSandbox: hooks?.refreshSandbox,
+    });
     return 0;
   } catch (e) {
     if (e instanceof McpStartError) {

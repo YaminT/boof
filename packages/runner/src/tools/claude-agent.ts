@@ -1,7 +1,9 @@
 import type { TokenUsage } from "@boof/heart";
 import {
+  SandboxUnavailableError,
   killGroup,
   killWindowsProcessTree,
+  sandboxApplier,
   writePidFile,
   type WindowsTreeKillDeps,
 } from "@boof/heart";
@@ -297,13 +299,42 @@ export class ClaudeAgentTool implements Tool {
         stderr += data;
       },
       spawnClaudeCodeProcess: (o) => {
-        const child = this.spawn(o.command, o.args, {
-          cwd: o.cwd ?? opts.cwd,
-          env: o.env ?? childEnv,
-          stdio: ["pipe", "pipe", "pipe"],
-          detached: this.platform !== "win32",
-          windowsHide: true,
-        });
+        let child: ReturnType<Spawn>;
+        if (opts.launch?.kind === "sandbox") {
+          const apply = sandboxApplier();
+          if (!apply) throw new SandboxUnavailableError("no sandbox backend is registered");
+          const plan = apply(
+            opts.launch,
+            o.command,
+            o.args,
+            (o.env as NodeJS.ProcessEnv | undefined) ?? childEnv,
+          );
+          child = this.spawn(plan.command, plan.args, {
+            cwd: o.cwd ?? opts.cwd,
+            env: plan.env,
+            stdio: ["pipe", "pipe", "pipe", "pipe"],
+            detached: this.platform !== "win32",
+            windowsHide: true,
+          });
+          try {
+            plan.deliver(child);
+          } catch (err) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              /* already gone */
+            }
+            throw err;
+          }
+        } else {
+          child = this.spawn(o.command, o.args, {
+            cwd: o.cwd ?? opts.cwd,
+            env: o.env ?? childEnv,
+            stdio: ["pipe", "pipe", "pipe"],
+            detached: this.platform !== "win32",
+            windowsHide: true,
+          });
+        }
         if (opts.pidFilePath && child.pid)
           pidWritten = writePidFile(opts.pidFilePath, { pgid: child.pid, command: "claude" }).catch(
             () => {},

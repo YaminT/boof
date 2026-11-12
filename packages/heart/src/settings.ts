@@ -11,6 +11,7 @@ import {
   ReviewSettingsSchema,
   SecuritySettingsSchema,
   SettingsSchema,
+  UpdatesSettingsSchema,
   SETTINGS_SCHEMA_VERSION,
   WorktreeSettingsSchema,
   type ConciergeSettings,
@@ -21,6 +22,7 @@ import {
   type RoleAssignment,
   type SecuritySettings,
   type Settings,
+  type UpdatesSettings,
   type WorktreeSettings,
 } from "./schema.js";
 import type { Role } from "./schema.js";
@@ -30,7 +32,12 @@ import type { Task } from "./task-file.js";
 export function defaultSettings(): Settings {
   return {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
-    runner: { enabled: false, concurrency: 1, inheritMcpServers: false },
+    runner: {
+      enabled: false,
+      concurrency: 1,
+      inheritMcpServers: false,
+      sandbox: { mode: "off", readPaths: [], writePaths: [], denyTcpPorts: [] },
+    },
     defaultProject: null,
     roles: {
       planner: { tool: "claude-code", model: "opus" },
@@ -93,7 +100,8 @@ export class SettingsStore {
   }
 
   /**
-   * Partial update merged over the current settings; `runner` merges per key. `guard` runs on the
+   * Partial update merged over the current settings. `runner` merges per key, and `runner.sandbox`
+   * merges per key too, so changing `mode` does not clear the path lists. `guard` runs on the
    * current settings under the same lock, before the merge: it throws to refuse the write.
    */
   update(patch: SettingsUpdate, guard?: (current: Settings) => void): Promise<Settings> {
@@ -103,7 +111,7 @@ export class SettingsStore {
       const next = {
         ...current,
         ...rest,
-        ...(runner ? { runner: { ...current.runner, ...stripUndefined(runner) } } : {}),
+        ...(runner ? { runner: mergeRunner(current.runner, runner) } : {}),
       } as Settings;
       // `null` clears the projects root back to its default.
       if (owlish === null) delete next.owlish;
@@ -135,11 +143,23 @@ export function settingsVersion(settings: { webhooks?: unknown; n8n?: unknown })
 
 /** What {@link SettingsStore.update} accepts: any settings key, `runner` partial, `projectsRoot` nullable. */
 export type SettingsUpdate = Omit<Partial<Settings>, "runner" | "projectsRoot" | "owlish"> & {
-  runner?: Partial<Settings["runner"]>;
+  runner?: Partial<Omit<Settings["runner"], "sandbox">> & {
+    sandbox?: Partial<Settings["runner"]["sandbox"]>;
+  };
   projectsRoot?: string | null;
   /** `null` removes the account pool. */
   owlish?: Settings["owlish"] | null;
 };
+
+function mergeRunner(
+  current: Settings["runner"],
+  patch: NonNullable<SettingsUpdate["runner"]>,
+): Settings["runner"] {
+  const { sandbox, ...rest } = patch;
+  const next = { ...current, ...stripUndefined(rest) };
+  if (sandbox) next.sandbox = { ...current.sandbox, ...stripUndefined(sandbox) };
+  return next;
+}
 
 function stripUndefined<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
@@ -201,6 +221,11 @@ export function conciergeSettings(s: Settings): ConciergeSettings {
 /** Security settings with defaults applied. */
 export function securitySettings(settings: Settings): SecuritySettings {
   return SecuritySettingsSchema.parse(settings.security ?? {});
+}
+
+/** Release-check settings. Absent means on: the server may ask GitHub at most once a day. */
+export function updatesSettings(settings: Settings): UpdatesSettings {
+  return UpdatesSettingsSchema.parse(settings.updates ?? {});
 }
 
 /** Settings of one project: the global settings with the project's overrides and working directory. */

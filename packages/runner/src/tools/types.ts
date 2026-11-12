@@ -1,4 +1,4 @@
-import type { HealthResult, Role, TokenUsage } from "@boof/heart";
+import type { CommandLaunch, HealthResult, Role, TokenUsage } from "@boof/heart";
 import type { AgentAuth } from "@boof/owlish";
 import type { Gateway } from "../gateway-env.js";
 
@@ -69,6 +69,8 @@ export interface RunOptions {
   onSteer?: () => Promise<SteerRequest>;
   /** Cumulative SDK usage at the start of a resumed session. */
   resumeBaseline?: TokenUsage;
+  /** How this run is spawned. The pipeline sets it. Absent means direct (probes and unit tests). */
+  launch?: CommandLaunch;
 }
 
 export type SteerRequest = { texts: string[]; model?: string; last: boolean };

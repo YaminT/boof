@@ -88,5 +88,38 @@ describe("install script", () => {
     const text = await readFile(script, "utf8");
     expect(text).not.toMatch(/-ge 20/);
     expect(text).toContain('DEFAULT_REPO="https://github.com/YaminT/boof.git"');
+    expect(text).toContain("node packages/sandbox-linux/build.mjs");
+  });
+
+  it("continues when the sandbox compiler is missing", async () => {
+    const r = await run("bash", ["-c", 'source "$BOOF_SCRIPT"; build_sandbox "$1"', "fn", repo], {
+      env: { ...process.env, BOOF_SCRIPT: script, CC: "/no/such/boof-sandbox-cc" },
+    });
+    if (process.platform === "linux") expect(r.stdout).toContain("the sandbox is unavailable");
+    else expect(r.stdout).toContain("not Linux; not building the helper");
+  });
+
+  it("continues when the sandbox helper fails to compile (old kernel headers)", async () => {
+    if (process.platform !== "linux") return;
+    const stub = join(dir, "failing-cc");
+    await writeFile(
+      stub,
+      "#!/bin/sh\necho 'LANDLOCK_ACCESS_NET_BIND_TCP undeclared' >&2\nexit 2\n",
+      {
+        mode: 0o755,
+      },
+    );
+    const r = await run(
+      "bash",
+      [
+        "-c",
+        'set -Eeuo pipefail; source "$BOOF_SCRIPT"; build_sandbox "$1"; echo after-build',
+        "fn",
+        repo,
+      ],
+      { env: { ...process.env, BOOF_SCRIPT: script, CC: stub } },
+    );
+    expect(r.stderr).toContain("sandbox helper not built; enforce mode unavailable");
+    expect(r.stdout).toContain("after-build");
   });
 });

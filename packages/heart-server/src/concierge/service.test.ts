@@ -52,7 +52,7 @@ async function setup(steps: Parameters<typeof scriptedAgent>[0] = []) {
   root = join(base, "data");
   repo = join(base, "repo");
   await mkdir(repo, { recursive: true });
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   services = new TaskService(root, new ToolRegistry([new MockTool()]));
   settings = new SettingsStore(root);
   await settings.save(defaultSettings());
@@ -706,6 +706,18 @@ describe("ConciergeService", () => {
     concierge = buildConcierge();
     await ask("first");
     await expectCode(ask("second"), "rate_limited");
+  });
+
+  it("keeps the server limiter in memory, so a new service starts empty", async () => {
+    const value = defaultSettings();
+    value.concierge = { messagesPerMinute: 1 };
+    await settings.save(value);
+    agent = scriptedAgent([{ text: "one" }]);
+    concierge = buildConcierge();
+    await ask("first");
+    const again = buildConcierge();
+    await again.ask(LOCAL_PRINCIPAL, "demo", { text: "second" });
+    expect(await readdir(root)).not.toContain("ratelimit");
   });
 
   it("enforces the conversation cost cap", async () => {

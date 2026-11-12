@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const packageVersion = JSON.parse(
   readFileSync(resolve(fileURLToPath(new URL("../../", import.meta.url)), "package.json"), "utf8"),
@@ -14,6 +16,7 @@ const {
   engineShutdown,
   constructConcierge,
   createN8nTransport,
+  reapCrashedRunTemps,
 } = vi.hoisted(() => ({
   createN8nTransport: vi.fn(() => ({})),
   startServer: vi.fn(),
@@ -21,10 +24,12 @@ const {
   engineLoop: vi.fn(),
   engineShutdown: vi.fn(),
   constructConcierge: vi.fn(),
+  reapCrashedRunTemps: vi.fn(async () => {}),
 }));
 vi.mock("@boof/heart-server", () => ({ startServer, createN8nTransport }));
 vi.mock("@boof/runner", () => ({
   DESKTOP_CLAUDE_AGENT_REASON: "desktop unavailable",
+  reapCrashedRunTemps,
   ClaudeConcierge: class {
     constructor(options: unknown) {
       constructConcierge(options);
@@ -39,6 +44,8 @@ vi.mock("@boof/runner", () => ({
       return this.tools.find((t) => (t as { id: string }).id === id);
     }
   },
+  assessSandbox: vi.fn(async () => ({ ok: false, reason: "test" })),
+  refreshSandbox: vi.fn(async () => ({})),
   RunnerEngine: class {
     loop = engineLoop;
     shutdown = engineShutdown;
@@ -68,6 +75,9 @@ describe("bin boot", () => {
 
   it("composes server, registry, runner loop, drain, guard release, and server stop", async () => {
     const order: string[] = [];
+    reapCrashedRunTemps.mockImplementation(async () => {
+      order.push("reap");
+    });
     const server = { stop: vi.fn(async () => void order.push("server.stop")) };
     engineLoop.mockImplementation(() => order.push("engine.loop"));
     engineShutdown.mockImplementation(async (graceMs: number) => {
@@ -78,7 +88,8 @@ describe("bin boot", () => {
       order.push("server.start");
       expect(options.catalog).toBeTruthy();
       expect(options.runnerRunning?.()).toBe(false);
-      return server;
+      expect(reapCrashedRunTemps).toHaveBeenCalledWith("/tmp/boot-test");
+      return { ...server, port: 4319 };
     });
     constructEngine.mockImplementation(() => order.push("engine.create"));
     const guard = {
@@ -101,6 +112,7 @@ describe("bin boot", () => {
       });
       await result.stop(5000);
       expect(order).toEqual([
+        "reap",
         "server.start",
         "server.ready",
         "guard.acquire",
@@ -179,5 +191,62 @@ describe("bin boot", () => {
       unavailableReason: "desktop unavailable",
     });
     await result.stop(0);
+  });
+
+  it("asks GitHub only when updates is set, and an agent process sends nothing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "boof-boot-updates-"));
+    const agentRoot = await mkdtemp(join(tmpdir(), "boof-boot-updates-agent-"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no network"));
+    const calls: string[] = [];
+    const fetchImpl = async (url: string) => {
+      calls.push(url);
+      return {
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            tag_name: "v9.0.0",
+            html_url: "https://github.com/YaminT/boof/releases/tag/v9.0.0",
+            prerelease: false,
+            draft: false,
+          }),
+      };
+    };
+    const waitForCall = async () => {
+      for (let i = 0; i < 50 && calls.length === 0; i += 1)
+        await new Promise((r) => setTimeout(r, 20));
+    };
+    try {
+      startServer.mockResolvedValue({ stop: vi.fn(async () => {}) });
+      const quiet = await boot({ root, version: "0.4.0", runner: false });
+      await quiet.stop(0);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(calls).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const hooked = await boot({
+        root,
+        version: "0.4.0",
+        runner: false,
+        updates: { fetchImpl, env: {} },
+      });
+      await hooked.stop(0);
+      await waitForCall();
+      expect(calls).toEqual([expect.stringContaining("/releases/latest")]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const agent = await boot({
+        root: agentRoot,
+        version: "0.4.0",
+        runner: false,
+        updates: { fetchImpl, env: { BOOF_RUNNER_AGENT_OF: "marker" } },
+      });
+      await agent.stop(0);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(calls).toHaveLength(1);
+    } finally {
+      fetchSpy.mockRestore();
+      await rm(root, { recursive: true, force: true });
+      await rm(agentRoot, { recursive: true, force: true });
+    }
   });
 });

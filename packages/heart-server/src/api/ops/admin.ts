@@ -3,6 +3,8 @@ import {
   authorizeProject,
   hasScope,
   parseDuration,
+  sandboxOffer,
+  sandboxStatusFor,
   SettingsPatchSchema,
   settingsVersion,
   TokenUsageSchema,
@@ -321,6 +323,14 @@ export const runnerStatus = defineOp({
     /** The account pool (absent when settings.owlish is not set). */
     pool: PoolStatusSchema,
     agentAuth: AgentAuthStatusSchema,
+    sandbox: z.object({
+      mode: z.enum(["off", "enforce"]),
+      backend: z.enum(["none", "linux", "darwin"]),
+      state: z.enum(["off", "ok", "unavailable"]),
+      reason: z.string(),
+      /** True when the last capability check said enforce would work. A GET does not run one. */
+      offer: z.boolean(),
+    }),
   }),
   rest: { method: "GET", path: "/runner" },
   mcp: { expose: true, name: "boof_get_runner", annotations: READ },
@@ -328,8 +338,6 @@ export const runnerStatus = defineOp({
   handler: async (ctx) => {
     const { runner } = await ctx.services.loadSettings();
     const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
-    // Budget, pool and agent auth each read their own files. Waiting for one before the next
-    // made this request sit behind the soak's other filesystem work once per read.
     const [budget, pool, agentAuth] = await Promise.all([
       ctx.services.budgetStatus(allowed),
       ctx.services.poolStatus(),
@@ -341,6 +349,7 @@ export const runnerStatus = defineOp({
       budgetExceeded: budget.exceeded,
       pool,
       agentAuth,
+      sandbox: { ...sandboxStatusFor(runner.sandbox, process.platform), offer: sandboxOffer() },
     };
   },
 });
@@ -384,16 +393,17 @@ export const runnerOverview = defineOp({
   handler: async (ctx) => {
     const { runner } = await ctx.services.loadSettings();
     const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
+    // The project rows, budget, pool and agent auth each read their own files. Waiting for one
+    // before the next made this request sit behind the soak's other filesystem work.
     const [projects, budget, pool, agentAuth] = await Promise.all([
       (async () => {
         const listed = (await ctx.services.listProjects()).filter((p) => allowed(p.id));
-        const rows = await Promise.all(
+        return Promise.all(
           listed.map(async (p) => {
             const { counts, running } = await ctx.services.forProject(p.id).statusSummary();
             return { id: p.id, paused: p.paused, running, counts };
           }),
         );
-        return rows;
       })(),
       ctx.services.budgetStatus(allowed),
       ctx.services.poolStatus(),

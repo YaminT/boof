@@ -19,12 +19,24 @@ import {
   repoCommonDir,
 } from "./git.js";
 import { createIntegrationBranch } from "./plan-base.js";
-import { execCommand } from "./process.js";
+import {
+  execCommand as runExecCommand,
+  type ExecCommandDeps,
+  type ExecOptions,
+} from "./process.js";
 import { taskDiff } from "./task-diff.js";
 import { untrackedFiles, untrackedPatch } from "./untracked-diff.js";
 
 let repo: string;
 let nonRepo: string;
+
+type TestExecOptions = Omit<ExecOptions, "launch"> & { launch?: ExecOptions["launch"] };
+const execCommand = (
+  command: string,
+  args: string[],
+  opts: TestExecOptions,
+  deps?: ExecCommandDeps,
+) => runExecCommand(command, args, { ...opts, launch: opts.launch ?? { kind: "direct" } }, deps);
 
 const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
 
@@ -33,6 +45,22 @@ const addWorktree = async (name: string) => {
   const path = join(repo, ".wts", name);
   await g(["worktree", "add", "-q", "-b", `boof-runner/${name}`, path]);
   return { path, branch: `boof-runner/${name}` };
+};
+
+const pinnedWorktreeGit = (name: string, path: string) => {
+  const common = join(repo, ".git");
+  const admin = join(common, "worktrees", name);
+  const env = {
+    ...process.env,
+    GIT_DIR: admin,
+    GIT_COMMON_DIR: common,
+    GIT_WORK_TREE: path,
+    GIT_INDEX_FILE: join(admin, "index"),
+  };
+  return async (args: string[]) => {
+    const result = await git(path, args, env);
+    return { code: result.code, stdout: result.out, stderr: result.err };
+  };
 };
 
 const exists = async (p: string) => {
@@ -374,7 +402,12 @@ describe("agent-planted git config does not run server-side", () => {
     await writeFile(join(wt, "new.txt"), "x\n");
     const { fsmonitor } = await plant();
     await rm(fsmonitor, { force: true });
-    const diff = await taskDiff({ workingDir: repo, taskId: "t1", worktreePath: wt });
+    const diff = await taskDiff({
+      workingDir: repo,
+      taskId: "t1",
+      worktreePath: wt,
+      worktreeGit: pinnedWorktreeGit("t1", wt),
+    });
     expect(diff.includesUncommitted).toBe(true);
     expect(await untrackedFiles(wt)).toContain("new.txt");
     expect(await exists(fsmonitor)).toBe(false);
@@ -396,7 +429,12 @@ describe("agent-planted git config does not run server-side", () => {
     await g(["-C", wt, "diff", "HEAD"]);
     expect(await exists(ran)).toBe(true);
     await rm(ran, { force: true });
-    const diff = await taskDiff({ workingDir: repo, taskId: "t2", worktreePath: wt });
+    const diff = await taskDiff({
+      workingDir: repo,
+      taskId: "t2",
+      worktreePath: wt,
+      worktreeGit: pinnedWorktreeGit("t2", wt),
+    });
     expect(diff.includesUncommitted).toBe(true);
     await git(wt, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--stat"]);
     expect(await exists(ran)).toBe(false);
@@ -454,7 +492,12 @@ describe("agent-planted git config does not run server-side", () => {
     await writeFile(join(wt, ".gitattributes"), "* filter=evil\n");
     await writeFile(join(wt, "a.txt"), "three\n");
     await rm(ran, { force: true });
-    const task = await taskDiff({ workingDir: repo, taskId: "t3", worktreePath: wt });
+    const task = await taskDiff({
+      workingDir: repo,
+      taskId: "t3",
+      worktreePath: wt,
+      worktreeGit: pinnedWorktreeGit("t3", wt),
+    });
     expect(task.includesUncommitted).toBe(true);
     await writeFile(join(wt, "new.txt"), "x\n");
     expect(await untrackedFiles(wt)).toContain("new.txt");

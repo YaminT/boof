@@ -23,7 +23,7 @@ const put = (body: unknown): RequestInit => ({
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "boof-budget-api-"));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-budget-repo-")));
-  await execCommand("git", ["init", "-q"], { cwd: repo });
+  await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: repo });
   await new SettingsStore(root).save(defaultSettings());
   const service = new TaskService(root, new ToolRegistry([new MockTool()]));
   await service.projects.create({ workingDirectory: repo, id: "demo" });

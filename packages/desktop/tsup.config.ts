@@ -29,6 +29,21 @@ export default defineConfig({
           }
           return { contents: source.replace(fallback, "__filename"), loader: "ts" };
         });
+        build.onLoad({ filter: /[/\\]backend-linux\.ts$/ }, (args) => {
+          const source = readFileSync(args.path, "utf8");
+          if (!source.includes("// cjs-bundle-filename")) {
+            throw new Error("cjs-filename-for-agent-sdk: sandbox module marker not found");
+          }
+          const rewritten = "function sandboxModuleFile(): string {\n  return __filename;\n}";
+          const contents = source.replace(
+            /function sandboxModuleFile\(\): string \{\r?\n {2}\/\/ cjs-bundle-filename\r?\n[\s\S]*?\r?\n\}/,
+            rewritten,
+          );
+          if (!contents.includes(rewritten)) {
+            throw new Error("cjs-filename-for-agent-sdk: sandbox module was not rewritten");
+          }
+          return { contents, loader: "ts" };
+        });
       },
     },
   ],

@@ -1,12 +1,64 @@
 import { EventEmitter } from "node:events";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { execCommand, killWindowsProcessTree, MAX_ARG_STRLEN } from "./process.js";
+import {
+  execCommand as runExecCommand,
+  killDarwinProcessTree,
+  killWindowsProcessTree,
+  MAX_ARG_STRLEN,
+  type ExecCommandDeps,
+  type ExecOptions,
+} from "./process.js";
+
+type TestExecOptions = Omit<ExecOptions, "launch"> & { launch?: ExecOptions["launch"] };
+const execCommand = (
+  command: string,
+  args: string[],
+  opts: TestExecOptions,
+  deps?: ExecCommandDeps,
+) => runExecCommand(command, args, { ...opts, launch: opts.launch ?? { kind: "direct" } }, deps);
 
 describe("execCommand", () => {
+  it.skipIf(process.platform === "win32")(
+    "kills macOS sandbox descendants before their root",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "boof-exec-darwin-tree-"));
+      const child = spawn("sh", ["-c", "sleep 60 & echo $!; wait"], {
+        cwd: dir,
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      let output = "";
+      child.stdout?.on("data", (chunk) => (output += chunk.toString()));
+      await new Promise((resolve) => child.stdout?.once("data", resolve));
+      const root = child.pid!;
+      const grandchild = Number(output.trim());
+      expect(root).toBeGreaterThan(1);
+      try {
+        await killDarwinProcessTree(root, "SIGTERM");
+        for (let n = 0; n < 50 && alive(root); n++)
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(alive(root)).toBe(false);
+        expect(running(grandchild)).toBe(false);
+      } finally {
+        try {
+          process.kill(root, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        try {
+          process.kill(grandchild, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
   it("refuses an argument over MAX_ARG_STRLEN with a clear error instead of E2BIG", async () => {
     const res = await execCommand(
       process.execPath,
@@ -61,6 +113,12 @@ describe("execCommand", () => {
     } catch {
       return false;
     }
+  };
+
+  const running = (pid: number) => {
+    const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+    const state = result.stdout.trim();
+    return result.status === 0 && state.length > 0 && !state.startsWith("Z");
   };
 
   it.skipIf(process.platform === "win32")(

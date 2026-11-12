@@ -83,6 +83,10 @@ export const ERROR_CODES = {
   concierge_busy: [409, "A message to the assistant is still being answered."],
   concierge_limit: [409, "The conversation reached its cost limit; start a new one."],
   budget_exceeded: [409, "A daily budget that covers the assistant is used up."],
+  sandbox_unavailable: [
+    409,
+    "The sandbox self-test failed, so enforce was not saved. The message is the reason.",
+  ],
   change_not_found: [404, "The pending change does not exist or is no longer available."],
   change_stale: [409, "The target changed since the assistant proposed this change."],
   change_expired: [409, "The pending change expired."],

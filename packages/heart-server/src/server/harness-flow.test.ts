@@ -63,7 +63,8 @@ beforeEach(async () => {
   root = join(base, "data");
   repo = join(base, "repos", "shop");
   await mkdir(repo, { recursive: true });
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -119,117 +120,125 @@ afterEach(async () => {
 });
 
 describe("harness flow over /api/v1", () => {
-  it("project -> plan -> sync -> run -> goals done -> change a goal -> re-sync -> follow-up task", async () => {
-    // 1-2. Register the repository, submit a plan with dependent goals.
-    const project = await call("/projects", send("POST", { workingDirectory: repo, id: "shop" }));
-    expect(project.status).toBe(201);
-    const created = await call(
-      "/projects/shop/plans",
-      send("POST", {
-        id: "q4",
-        title: "Q4",
-        status: "active",
-        autoSync: true,
-        goals: [goal("a"), goal("b", ["a"]), goal("c")],
-      }),
-    );
-    expect(created.status).toBe(201);
-    expect(created.headers.get("etag")).toBe('"1"');
+  it(
+    "project -> plan -> sync -> run -> goals done -> change a goal -> re-sync -> follow-up task",
+    async () => {
+      // 1-2. Register the repository, submit a plan with dependent goals.
+      const project = await call("/projects", send("POST", { workingDirectory: repo, id: "shop" }));
+      expect(project.status).toBe(201);
+      const created = await call(
+        "/projects/shop/plans",
+        send("POST", {
+          id: "q4",
+          title: "Q4",
+          status: "active",
+          autoSync: true,
+          goals: [goal("a"), goal("b", ["a"]), goal("c")],
+        }),
+      );
+      expect(created.status).toBe(201);
+      expect(created.headers.get("etag")).toBe('"1"');
 
-    // 3. Sync materialises one task per unblocked goal.
-    const sync = await (await call("/projects/shop/plans/q4/sync", send("POST"))).json();
-    expect(sync.created.map((c: { goalId: string }) => c.goalId).sort()).toEqual(["a", "c"]);
-    expect(sync.skipped).toEqual([{ goalId: "b", reason: "blocked" }]);
+      // 3. Sync materialises one task per unblocked goal.
+      const sync = await (await call("/projects/shop/plans/q4/sync", send("POST"))).json();
+      expect(sync.created.map((c: { goalId: string }) => c.goalId).sort()).toEqual(["a", "c"]);
+      expect(sync.skipped).toEqual([{ goalId: "b", reason: "blocked" }]);
 
-    // 4. The runner executes with the mock tool; autoSync releases `b` once `a` is done.
-    const engine = new RunnerEngine({ root, pollIntervalMs: 10 });
-    await engine.runUntilIdle();
-    const plan = await (await call("/projects/shop/plans/q4")).json();
-    expect(plan.goals.map((g: { id: string; status: string }) => [g.id, g.status])).toEqual([
-      ["a", "done"],
-      ["b", "done"],
-      ["c", "done"],
-    ]);
-    const tasks = await (await call("/projects/shop/tasks?status=done")).json();
-    expect(tasks.items).toHaveLength(3);
-    expect("log" in tasks.items[0].body).toBe(false);
+      // 4. The runner executes with the mock tool; autoSync releases `b` once `a` is done.
+      const engine = new RunnerEngine({ root, pollIntervalMs: 10 });
+      await engine.runUntilIdle();
+      const plan = await (await call("/projects/shop/plans/q4")).json();
+      expect(plan.goals.map((g: { id: string; status: string }) => [g.id, g.status])).toEqual([
+        ["a", "done"],
+        ["b", "done"],
+        ["c", "done"],
+      ]);
+      const tasks = await (await call("/projects/shop/tasks?status=done")).json();
+      expect(tasks.items).toHaveLength(3);
+      expect("log" in tasks.items[0].body).toBe(false);
 
-    // 6. Requirements change: update goal `a` with the plan's ETag, then re-sync.
-    const etag = (await call("/projects/shop/plans/q4")).headers.get("etag")!;
-    const changed = await call(
-      "/projects/shop/plans/q4/goals/a",
-      send(
-        "PUT",
-        { title: "A", dependsOn: [], spec: spec("Build a, but with audit logging") },
-        { "If-Match": etag },
-      ),
-    );
-    expect(changed.status).toBe(200);
-    // A done goal whose spec changed is open again at once, before any sync.
-    const reopened = (await (await call("/projects/shop/plans/q4")).json()).goals.find(
-      (g: { id: string }) => g.id === "a",
-    );
-    expect(reopened.status).toBe("develop");
-    expect(reopened.history.at(-1)).toMatchObject({
-      status: "develop",
-      description: "spec changed to revision 2",
-    });
-    const stale = await call(
-      "/projects/shop/plans/q4/goals/a",
-      send("PUT", { title: "A", spec: spec("again") }, { "If-Match": etag }),
-    );
-    expect(stale.status).toBe(409);
-    expect((await stale.json()).error.code).toBe("plan_version_conflict");
+      // 6. Requirements change: update goal `a` with the plan's ETag, then re-sync.
+      const etag = (await call("/projects/shop/plans/q4")).headers.get("etag")!;
+      const changed = await call(
+        "/projects/shop/plans/q4/goals/a",
+        send(
+          "PUT",
+          { title: "A", dependsOn: [], spec: spec("Build a, but with audit logging") },
+          { "If-Match": etag },
+        ),
+      );
+      expect(changed.status).toBe(200);
+      // A done goal whose spec changed is open again at once, before any sync.
+      const reopened = (await (await call("/projects/shop/plans/q4")).json()).goals.find(
+        (g: { id: string }) => g.id === "a",
+      );
+      expect(reopened.status).toBe("develop");
+      expect(reopened.history.at(-1)).toMatchObject({
+        status: "develop",
+        description: "spec changed to revision 2",
+      });
+      const stale = await call(
+        "/projects/shop/plans/q4/goals/a",
+        send("PUT", { title: "A", spec: spec("again") }, { "If-Match": etag }),
+      );
+      expect(stale.status).toBe(409);
+      expect((await stale.json()).error.code).toBe("plan_version_conflict");
 
-    const resync = await (await call("/projects/shop/plans/q4/sync", send("POST"))).json();
-    expect(resync.created).toHaveLength(1);
-    expect(resync.created[0]).toMatchObject({ goalId: "a", followUp: true });
+      const resync = await (await call("/projects/shop/plans/q4/sync", send("POST"))).json();
+      expect(resync.created).toHaveLength(1);
+      expect(resync.created[0]).toMatchObject({ goalId: "a", followUp: true });
 
-    // The follow-up builds on the first task's branch and the goal lists both tasks.
-    const followUp = await (await call(`/projects/shop/tasks/${resync.created[0].taskId}`)).json();
-    expect(followUp.frontmatter.base).toBe("boof-runner/boof-a");
-    await engine.runUntilIdle();
-    const after = await (await call("/projects/shop/plans/q4")).json();
-    const a = after.goals.find((g: { id: string }) => g.id === "a");
-    expect(a.status).toBe("done");
-    expect(a.tasks).toEqual([
-      { taskId: "boof-a", revision: 1, status: "done", branch: "boof-runner/boof-a" },
-      {
+      // The follow-up builds on the first task's branch and the goal lists both tasks.
+      const followUp = await (
+        await call(`/projects/shop/tasks/${resync.created[0].taskId}`)
+      ).json();
+      expect(followUp.frontmatter.base).toBe("boof-runner/boof-a");
+      await engine.runUntilIdle();
+      const after = await (await call("/projects/shop/plans/q4")).json();
+      const a = after.goals.find((g: { id: string }) => g.id === "a");
+      expect(a.status).toBe("done");
+      expect(a.tasks).toEqual([
+        { taskId: "boof-a", revision: 1, status: "done", branch: "boof-runner/boof-a" },
+        {
+          taskId: resync.created[0].taskId,
+          revision: 2,
+          status: "done",
+          branch: `boof-runner/${resync.created[0].taskId}`,
+        },
+      ]);
+      expect(a.history.at(-1)).toMatchObject({ status: "done", taskId: resync.created[0].taskId });
+      expect(after.mergeOrder.map((m: { goalId: string }) => m.goalId)).toContain("a");
+      expect(after.mergeOrder.find((m: { goalId: string }) => m.goalId === "a")).toEqual({
+        goalId: "a",
         taskId: resync.created[0].taskId,
-        revision: 2,
-        status: "done",
         branch: `boof-runner/${resync.created[0].taskId}`,
-      },
-    ]);
-    expect(a.history.at(-1)).toMatchObject({ status: "done", taskId: resync.created[0].taskId });
-    expect(after.mergeOrder.map((m: { goalId: string }) => m.goalId)).toContain("a");
-    expect(after.mergeOrder.find((m: { goalId: string }) => m.goalId === "a")).toEqual({
-      goalId: "a",
-      taskId: resync.created[0].taskId,
-      branch: `boof-runner/${resync.created[0].taskId}`,
-    });
-    const fu = await (await call(`/projects/shop/tasks/${resync.created[0].taskId}`)).json();
-    expect(fu).toMatchObject({ baseRef: "boof-runner/boof-a", baseReason: "follow-up" });
-    expect(fu.baseSha).toMatch(/^[0-9a-f]{7,}$/);
-    const whole = await (await call("/projects/shop/plans/q4/wait?timeoutSeconds=1")).json();
-    expect(whole).toMatchObject({
-      complete: true,
-      stuck: false,
-      stuckReasons: [],
-      timedOut: false,
-    });
-    const doneWait = await (await call(`/projects/shop/tasks/boof-a/wait?timeoutSeconds=5`)).json();
-    expect(doneWait).toMatchObject({ changed: false, timedOut: false, terminal: true });
+      });
+      const fu = await (await call(`/projects/shop/tasks/${resync.created[0].taskId}`)).json();
+      expect(fu).toMatchObject({ baseRef: "boof-runner/boof-a", baseReason: "follow-up" });
+      expect(fu.baseSha).toMatch(/^[0-9a-f]{7,}$/);
+      const whole = await (await call("/projects/shop/plans/q4/wait?timeoutSeconds=1")).json();
+      expect(whole).toMatchObject({
+        complete: true,
+        stuck: false,
+        stuckReasons: [],
+        timedOut: false,
+      });
+      const doneWait = await (
+        await call(`/projects/shop/tasks/boof-a/wait?timeoutSeconds=5`)
+      ).json();
+      expect(doneWait).toMatchObject({ changed: false, timedOut: false, terminal: true });
 
-    // 5. The history is in the events stream and the contract is published.
-    const events = await app.request("http://localhost/api/v1/events?since=start", {
-      headers: { authorization: `Bearer ${key}` },
-    });
-    const types = [...(await events.text()).matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
-    expect(types).toContain("plan.synced");
-    expect(types.filter((t) => t === "task.status").length).toBeGreaterThanOrEqual(6);
-    expect((await call("/openapi.json")).status).toBe(200);
-  });
+      // 5. The history is in the events stream and the contract is published.
+      const events = await app.request("http://localhost/api/v1/events?since=start", {
+        headers: { authorization: `Bearer ${key}` },
+      });
+      const types = [...(await events.text()).matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
+      expect(types).toContain("plan.synced");
+      expect(types.filter((t) => t === "task.status").length).toBeGreaterThanOrEqual(6);
+      expect((await call("/openapi.json")).status).toBe(200);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it("wait: tasks and plans return at once when there is nothing to wait for", async () => {
     await call("/projects", send("POST", { workingDirectory: repo, id: "shop" }));

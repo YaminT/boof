@@ -11,7 +11,8 @@ const roots: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   process.exitCode = 0;
 });
 async function root() {
@@ -59,7 +60,13 @@ describe("agent containment", () => {
       child.removeAllListeners("exit");
       return await fn(port, dataRoot, home);
     } finally {
-      child.kill("SIGTERM");
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+        child.kill("SIGTERM");
+        const killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+        await exited;
+        clearTimeout(killTimer);
+      }
     }
   }
 
@@ -307,6 +314,15 @@ describe("agent containment", () => {
     const result = runCli(["project", "list", "-d", scratchRoot], spawningRoot, home);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("No projects");
+  });
+
+  it("refuses sandbox check for a task agent", async () => {
+    const dataRoot = await root();
+    const home = await root();
+    const result = runCli(["sandbox", "check", "-d", dataRoot], dataRoot, home);
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain(refusal);
+    expect(await readdir(dataRoot)).toEqual([]);
   });
 
   it("checks the BOOF_RUNNER_DATA_ROOT environment root", async () => {

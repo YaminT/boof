@@ -168,7 +168,8 @@ interface WorldOptions {
 async function world(opts: WorldOptions = {}): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "boof-n8n-e2e-data-"));
   const repo = await realpath(await mkdtemp(join(tmpdir(), "boof-n8n-e2e-repo-")));
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -192,7 +193,12 @@ async function world(opts: WorldOptions = {}): Promise<World> {
 
   const base: Settings = {
     ...defaultSettings(),
-    runner: { enabled: true, concurrency: 1, inheritMcpServers: false },
+    runner: {
+      ...defaultSettings().runner,
+      enabled: true,
+      concurrency: 1,
+      inheritMcpServers: false,
+    },
     defaultProject: "default",
     roles: {
       planner: { tool: "mock", model: "mock-default" },
@@ -301,8 +307,16 @@ beforeEach(() => {
     asked.push({ role: o.role, prompt: o.prompt });
     if (o.role === "developer") {
       await writeFile(join(o.cwd, "feature.txt"), "feature\n");
-      await execCommand("git", ["add", "feature.txt"], { cwd: o.cwd, timeoutMs: 15000 });
-      await execCommand("git", ["commit", "-m", "dev"], { cwd: o.cwd, timeoutMs: 15000 });
+      await execCommand("git", ["add", "feature.txt"], {
+        launch: { kind: "direct" },
+        cwd: o.cwd,
+        timeoutMs: 15000,
+      });
+      await execCommand("git", ["commit", "-m", "dev"], {
+        launch: { kind: "direct" },
+        cwd: o.cwd,
+        timeoutMs: 15000,
+      });
     }
   };
   // Record (and still pass through) everything the process prints.
@@ -375,74 +389,78 @@ describe("n8n external steps end to end", () => {
     });
   });
 
-  it("steps at all three points run in order, and C20: no run token appears in a log, task file, audit line, event, prompt, stdout or stderr", async () => {
-    const w = await world({
-      steps: [
-        step({ id: "plan", label: "Plan", at: "after-planner", webhookPath: "boof/plan" }),
-        step(),
-        step({ id: "notify", label: "Notify", at: "after-review", webhookPath: "boof/notify" }),
-      ],
-    });
-    const res = await runOne(w);
-    expect(res.outcome.kind).toBe("done");
+  it(
+    "steps at all three points run in order, and C20: no run token appears in a log, task file, audit line, event, prompt, stdout or stderr",
+    async () => {
+      const w = await world({
+        steps: [
+          step({ id: "plan", label: "Plan", at: "after-planner", webhookPath: "boof/plan" }),
+          step(),
+          step({ id: "notify", label: "Notify", at: "after-review", webhookPath: "boof/notify" }),
+        ],
+      });
+      const res = await runOne(w);
+      expect(res.outcome.kind).toBe("done");
 
-    const labels = await labelsOf(w);
-    expect(labels.filter((l) => l.startsWith("n8n:"))).toEqual([
-      "n8n: Plan",
-      "n8n: CI",
-      "n8n: Notify",
-    ]);
-    expect(labels.indexOf("n8n: Plan")).toBeLessThan(labels.indexOf("Developer"));
-    expect(labels.indexOf("n8n: CI")).toBeGreaterThan(labels.indexOf("Developer"));
-    expect(labels.indexOf("n8n: CI")).toBeLessThan(labels.indexOf("Reviewer (round 1)"));
-    expect(labels.indexOf("n8n: Notify")).toBeGreaterThan(labels.indexOf("Reviewer (round 1)"));
-    expect(labels.indexOf("n8n: Notify")).toBeLessThan(labels.indexOf("Finished"));
+      const labels = await labelsOf(w);
+      expect(labels.filter((l) => l.startsWith("n8n:"))).toEqual([
+        "n8n: Plan",
+        "n8n: CI",
+        "n8n: Notify",
+      ]);
+      expect(labels.indexOf("n8n: Plan")).toBeLessThan(labels.indexOf("Developer"));
+      expect(labels.indexOf("n8n: CI")).toBeGreaterThan(labels.indexOf("Developer"));
+      expect(labels.indexOf("n8n: CI")).toBeLessThan(labels.indexOf("Reviewer (round 1)"));
+      expect(labels.indexOf("n8n: Notify")).toBeGreaterThan(labels.indexOf("Reviewer (round 1)"));
+      expect(labels.indexOf("n8n: Notify")).toBeLessThan(labels.indexOf("Finished"));
 
-    // One distinct token per run.
-    expect(w.tokens).toHaveLength(3);
-    expect(new Set(w.tokens).size).toBe(3);
-    for (const t of w.tokens) expect(t).toMatch(/^bxs_/);
+      // One distinct token per run.
+      expect(w.tokens).toHaveLength(3);
+      expect(new Set(w.tokens).size).toBe(3);
+      for (const t of w.tokens) expect(t).toMatch(/^bxs_/);
 
-    const webhookSecret = (w.fake.calls[0]!.headers["x-boof-token"] ?? "") as string;
-    expect(webhookSecret).not.toBe("");
-    const secretsFile = dataRootPaths(w.root).n8nSecrets;
+      const webhookSecret = (w.fake.calls[0]!.headers["x-boof-token"] ?? "") as string;
+      expect(webhookSecret).not.toBe("");
+      const secretsFile = dataRootPaths(w.root).n8nSecrets;
 
-    // Everything on disk under the data root (task file, log.txt, audit, events, results, settings).
-    const files = await walk(w.root);
-    // log.txt is mirrored into the task file when the task ends; the working area is gone.
-    expect(files.some((f) => f.endsWith(join("tasks", "done", "t1.md")))).toBe(true);
-    expect(files.some((f) => f.includes("audit"))).toBe(true);
-    expect(files.some((f) => f.endsWith("events.jsonl"))).toBe(true);
-    const taskFile = await readFile(
-      files.find((f) => f.endsWith("t1.md"))!,
-      "utf8",
-    );
-    expect(taskFile).toContain("Waiting for n8n workflow wf1");
-    for (const f of files) {
-      const text = await readFile(f, "utf8").catch(() => "");
-      for (const t of w.tokens) expect(text, `${f} holds a run token`).not.toContain(t);
-      if (f !== secretsFile) {
-        expect(text, `${f} holds the webhook secret`).not.toContain(webhookSecret);
-        expect(text, `${f} holds the n8n API key`).not.toContain(API_KEY);
+      // Everything on disk under the data root (task file, log.txt, audit, events, results, settings).
+      const files = await walk(w.root);
+      // log.txt is mirrored into the task file when the task ends; the working area is gone.
+      expect(files.some((f) => f.endsWith(join("tasks", "done", "t1.md")))).toBe(true);
+      expect(files.some((f) => f.includes("audit"))).toBe(true);
+      expect(files.some((f) => f.endsWith("events.jsonl"))).toBe(true);
+      const taskFile = await readFile(
+        files.find((f) => f.endsWith("t1.md"))!,
+        "utf8",
+      );
+      expect(taskFile).toContain("Waiting for n8n workflow wf1");
+      for (const f of files) {
+        const text = await readFile(f, "utf8").catch(() => "");
+        for (const t of w.tokens) expect(text, `${f} holds a run token`).not.toContain(t);
+        if (f !== secretsFile) {
+          expect(text, `${f} holds the webhook secret`).not.toContain(webhookSecret);
+          expect(text, `${f} holds the n8n API key`).not.toContain(API_KEY);
+        }
       }
-    }
-    // Prompts and system prompts the mock agent received, and what the process printed.
-    const everythingTheAgentSaw = JSON.stringify([
-      asked,
-      mockState.prompts,
-      mockState.systemPrompts,
-      mockState.resumes,
-    ]);
-    const printed = captured.join("\n");
-    for (const t of w.tokens) {
-      expect(everythingTheAgentSaw).not.toContain(t);
-      expect(printed).not.toContain(t);
-    }
-    expect(everythingTheAgentSaw).not.toContain(webhookSecret);
-    expect(printed).not.toContain(webhookSecret);
-    expect(printed).not.toContain(API_KEY);
-    expect(asked.length).toBeGreaterThan(0);
-  });
+      // Prompts and system prompts the mock agent received, and what the process printed.
+      const everythingTheAgentSaw = JSON.stringify([
+        asked,
+        mockState.prompts,
+        mockState.systemPrompts,
+        mockState.resumes,
+      ]);
+      const printed = captured.join("\n");
+      for (const t of w.tokens) {
+        expect(everythingTheAgentSaw).not.toContain(t);
+        expect(printed).not.toContain(t);
+      }
+      expect(everythingTheAgentSaw).not.toContain(webhookSecret);
+      expect(printed).not.toContain(webhookSecret);
+      expect(printed).not.toContain(API_KEY);
+      expect(asked.length).toBeGreaterThan(0);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it("the same task without n8n finishes done and contacts nothing", async () => {
     const w = await world({ n8n: false });

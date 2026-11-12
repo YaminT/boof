@@ -46,7 +46,7 @@ const run = (...argv: string[]) =>
 async function repo(name: string, git = true): Promise<string> {
   const dir = join(base, name);
   await mkdir(dir, { recursive: true });
-  if (git) await execCommand("git", ["init", "-q"], { cwd: dir });
+  if (git) await execCommand("git", ["init", "-q"], { launch: { kind: "direct" }, cwd: dir });
   return realpath(dir);
 }
 
@@ -66,7 +66,7 @@ describe("boof-runner project", () => {
     const dir = join(base, "Made Here");
     expect(await run("add", dir, "--new", "--brief", "A thing", "-d", root)).toBe(0);
     expect(out.join("\n")).toContain(`Created project 'made-here' (${dir})`);
-    const g = (a: string[]) => execCommand("git", a, { cwd: dir });
+    const g = (a: string[]) => execCommand("git", a, { launch: { kind: "direct" }, cwd: dir });
     expect((await g(["rev-list", "--count", "HEAD"])).stdout.trim()).toBe("1");
     expect((await new ProjectStore(root).get("made-here"))?.brief).toBe("A thing");
   });
@@ -135,7 +135,8 @@ describe("boof-runner project", () => {
 
   it("add prunes a stale worktree registration of the repository", async () => {
     const dir = await repo("Pruned");
-    const g = (args: string[]) => execCommand("git", args, { cwd: dir, timeoutMs: 15000 });
+    const g = (args: string[]) =>
+      execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 15000 });
     await g(["config", "user.email", "t@e.com"]);
     await g(["config", "user.name", "T"]);
     await g(["commit", "--allow-empty", "-q", "-m", "init"]);

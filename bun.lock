@@ -25,7 +25,7 @@
     },
     "bin": {
       "name": "@boof/boof",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.322",
         "@boof/facedisk": "*",
@@ -44,7 +44,7 @@
     },
     "packages/desktop": {
       "name": "@boof/desktop",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@boof/boof": "*",
         "@boof/heart": "*",
@@ -63,7 +63,7 @@
     },
     "packages/facedisk": {
       "name": "@boof/facedisk",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@boof/heart": "*",
         "@boof/heart-server": "*",
@@ -96,7 +96,7 @@
     },
     "packages/heart": {
       "name": "@boof/heart",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "fast-xml-parser": "^5.12.0",
         "gray-matter": "^4.0.3",
@@ -105,9 +105,10 @@
     },
     "packages/heart-server": {
       "name": "@boof/heart-server",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@boof/heart": "*",
+        "@boof/runner": "*",
         "@boof/owlish": "*",
         "@hono/node-server": "^2.1.6",
         "@modelcontextprotocol/sdk": "~1.32.2",
@@ -118,7 +119,7 @@
     },
     "packages/owlish": {
       "name": "@boof/owlish",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@boof/heart": "*",
         "zod": "^4.6.7",
@@ -126,7 +127,7 @@
     },
     "packages/runner": {
       "name": "@boof/runner",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.322",
         "@boof/heart": "*",

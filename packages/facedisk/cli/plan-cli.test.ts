@@ -44,7 +44,8 @@ async function writeUnit(dir: string, g: BoofGoal): Promise<void> {
 beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-plancli-data-"));
   repo = await realpath(await mkdtemp(join(tmpdir(), "boof-plancli-repo-")));
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -107,26 +108,30 @@ describe("scan on top of plans (golden)", () => {
     expect(await store.list()).toHaveLength(3);
   });
 
-  it("drains in dependency order, records plan history and bumps the repo XML", async () => {
-    const summary = await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
-    const registry = new ToolRegistry();
-    const drained = await drainQueue({ root: dataRoot, registry, out: silent });
-    expect(drained).toEqual({ ran: 3, failed: 0 });
-    const plan = await new PlanStore(new ProjectStore(dataRoot).dir(summary.projectId!)).require(
-      "repo",
-    );
-    expect(plan.goals.map((g) => [g.id, g.status])).toEqual([
-      ["shipped", "done"],
-      ["core", "done"],
-      ["api", "done"],
-      ["web", "done"],
-    ]);
-    for (const dir of ["core", "api", "packages/web"]) {
-      expect(
-        currentStatus(parseGoal(await readFile(join(repo, dir, "goal.boof.xml"), "utf8"))),
-      ).toBe("done");
-    }
-  });
+  it(
+    "drains in dependency order, records plan history and bumps the repo XML",
+    async () => {
+      const summary = await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
+      const registry = new ToolRegistry();
+      const drained = await drainQueue({ root: dataRoot, registry, out: silent });
+      expect(drained).toEqual({ ran: 3, failed: 0 });
+      const plan = await new PlanStore(new ProjectStore(dataRoot).dir(summary.projectId!)).require(
+        "repo",
+      );
+      expect(plan.goals.map((g) => [g.id, g.status])).toEqual([
+        ["shipped", "done"],
+        ["core", "done"],
+        ["api", "done"],
+        ["web", "done"],
+      ]);
+      for (const dir of ["core", "api", "packages/web"]) {
+        expect(
+          currentStatus(parseGoal(await readFile(join(repo, dir, "goal.boof.xml"), "utf8"))),
+        ).toBe("done");
+      }
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 });
 
 describe("plan subcommands", () => {

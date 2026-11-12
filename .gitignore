@@ -30,3 +30,6 @@ AGENTS.md
 
 # Vitest cache
 .vitest/
+
+# Desktop start-smoke logs (uploaded by desktop-smoke.yml on failure)
+.desktop-smoke/

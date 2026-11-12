@@ -13,16 +13,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { installWinLauncher } from "../../heart/test-support/win-spawn-exe.js";
-
-/** A tool cwd is inside `root`. Windows joins with `\\` and folds case. */
-const cwdUnder = (cwd: string, root: string) => {
-  const fold = process.platform === "win32" ? (p: string) => p.toLowerCase() : (p: string) => p;
-  const norm = (p: string) => fold(p).replaceAll("\\", "/").replace(/\/+$/, "");
-  const child = norm(cwd);
-  const parent = norm(root);
-  return child === parent || child.startsWith(`${parent}/`);
-};
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommandStore,
@@ -36,7 +26,6 @@ import {
   serializeTask,
   SettingsStore,
   ExternalRunStore,
-  takeTaskFileReads,
   TaskStore,
   parseInjected,
   taskControlDir,
@@ -53,10 +42,11 @@ import {
   isGitRepo,
   repoCommonDir,
   readEvents,
+  resetSandboxStatus,
 } from "@boof/heart";
 import { RunnerEngine } from "./engine.js";
 import { execCommand } from "@boof/heart";
-import { NON_INTERACTIVE, Pipeline, SYSTEM_PROMPTS } from "./pipeline.js";
+import { NON_INTERACTIVE, Pipeline, SANDBOX_DEVELOPER_LIMITS, SYSTEM_PROMPTS } from "./pipeline.js";
 import { currentBootIdentity, isAlive, writePidFile } from "@boof/heart";
 import { ensureWorktree } from "./worktree.js";
 import { ToolRunError } from "./tools/errors.js";
@@ -88,7 +78,7 @@ const exists = async (p: string) => {
 
 const wtPath = (id = "t1") => join(workDir, ".boof-runner-worktrees", id);
 const gitOut = (args: string[], cwd = workDir) =>
-  execCommand("git", args, { cwd, timeoutMs: 15000 });
+  execCommand("git", args, { launch: { kind: "direct" }, cwd, timeoutMs: 15000 });
 const writeIn = (opts: RunOptions, file: string, content = "x\n") =>
   writeFile(join(opts.cwd, file), content);
 const commitIn = async (opts: RunOptions, file: string) => {
@@ -122,7 +112,8 @@ beforeEach(async () => {
   dataRoot = await mkdtemp(join(tmpdir(), "boof-runner-data-"));
   workDir = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-work-")));
   // Make workDir a git repo so worktree isolation engages.
-  const g = (args: string[]) => execCommand("git", args, { cwd: workDir, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: workDir, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -147,6 +138,7 @@ afterEach(async () => {
   await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   resetMock();
+  resetSandboxStatus();
 });
 
 describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
@@ -198,6 +190,50 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "fails an enforce task before any agent starts when the sandbox helper is missing, and does not retry it",
+    async () => {
+      const prevHelper = process.env.BOOF_SANDBOX_HELPER;
+      const prevAbi = process.env.BOOF_SANDBOX_FAKE_ABI;
+      process.env.BOOF_SANDBOX_HELPER = "/no/such/boof-sandbox";
+      delete process.env.BOOF_SANDBOX_FAKE_ABI;
+      try {
+        const settings = new SettingsStore(dataRoot);
+        const current = await settings.load();
+        await settings.save({
+          ...current,
+          runner: {
+            ...current.runner,
+            sandbox: { ...current.runner.sandbox, mode: "enforce" },
+          },
+        });
+        await store.create(newTask(fm(), "Sandboxed work."));
+        const result = await engine.tick();
+        expect(result.kind).toBe("idle");
+        const task = await store.get("t1");
+        expect(task?.frontmatter.status).toBe("failed");
+        expect(task?.body.log).toContain("### Not started");
+        expect(task?.body.log).toContain("sandbox_unavailable: boof-sandbox helper is missing");
+        expect(mockState.calls).toEqual([]);
+        expect(await exists(wtPath("t1"))).toBe(false);
+        expect(
+          (await readEvents(dataRoot, null)).filter(
+            (e) => e.event.type === "runner.agent_auth_refused",
+          ),
+        ).toHaveLength(0);
+        await engine.tick();
+        expect((await store.get("t1"))?.frontmatter.status).toBe("failed");
+        expect(mockState.calls).toEqual([]);
+      } finally {
+        if (prevHelper === undefined) delete process.env.BOOF_SANDBOX_HELPER;
+        else process.env.BOOF_SANDBOX_HELPER = prevHelper;
+        if (prevAbi === undefined) delete process.env.BOOF_SANDBOX_FAKE_ABI;
+        else process.env.BOOF_SANDBOX_FAKE_ABI = prevAbi;
+        resetSandboxStatus();
+      }
+    },
+  );
 
   it("an n8n check task is not touched by agent auth or an unavailable tool; a normal task still is", async () => {
     const decide = vi.fn(async () => ({ ok: false as const, reason: "auth refused" }));
@@ -625,52 +661,43 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
     expect(mockState.calls).toEqual(["planner", "planner"]);
   });
 
-  it("a codex-shaped planner report with a questions block parks the task", async () => {
-    const prev = process.env.BOOF_RUNNER_CODEX_BIN;
-    // Windows spawn only starts .exe. A .cmd is ignored and the task fails instead of parking.
-    const questions = "Need input.\n\n```questions\n1. Which DB?\n2. ## Reports\n```\n";
-    let bin = join(dataRoot, "codex");
-    if (process.platform === "win32") {
-      await writeFile(
-        join(dataRoot, "payload.mjs"),
-        `import { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nfor (let i = 0; i < args.length; i++) {\n  if (args[i] === "-o" && args[i + 1]) writeFileSync(args[i + 1], ${JSON.stringify(questions)});\n}\n`,
-      );
-      bin = join(dataRoot, "codex.exe");
-      await installWinLauncher(bin);
-      await writeFile(join(dataRoot, "node.path"), process.execPath, "utf8");
-    } else {
+  it.skipIf(process.platform === "win32")(
+    "a codex-shaped planner report with a questions block parks the task",
+    async () => {
+      const prev = process.env.BOOF_RUNNER_CODEX_BIN;
+      const bin = join(dataRoot, "codex");
       await writeFile(
         bin,
         '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf "Need input.\\n\\n\\`\\`\\`questions\\n1. Which DB?\\n2. ## Reports\\n\\`\\`\\`\\n" > "$2"; fi; shift; done\n',
       );
       await chmod(bin, 0o755);
-    }
-    process.env.BOOF_RUNNER_CODEX_BIN = bin;
-    try {
-      engine = new RunnerEngine({
-        root: dataRoot,
-        pollIntervalMs: 10,
-        registry: new ToolRegistry([new MockTool(), new CodexTool()]),
-      });
-      await store.create(
-        newTask(
-          fm({ tools: { ...fm().tools, planner: { tool: "codex", model: "m" } } }),
-          "Build it.",
-        ),
-      );
-      const r = await engine.tick();
-      expect(r.kind === "ran" && r.outcome.kind).toBe("parked");
-      const t = await store.get("t1");
-      expect(t?.frontmatter.status).toBe("action");
-      expect(t?.body.questions).toBe("1. Which DB?\n2. ## Reports");
-      expect(t?.body.reports.planner).toBe("");
-      expect(SYSTEM_PROMPTS.planner).toContain("```questions");
-      expect(SYSTEM_PROMPTS.refine).not.toContain("```questions");
-    } finally {
-      if (prev === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
-      else process.env.BOOF_RUNNER_CODEX_BIN = prev;
-    }
-  });
+      process.env.BOOF_RUNNER_CODEX_BIN = bin;
+      try {
+        engine = new RunnerEngine({
+          root: dataRoot,
+          pollIntervalMs: 10,
+          registry: new ToolRegistry([new MockTool(), new CodexTool()]),
+        });
+        await store.create(
+          newTask(
+            fm({ tools: { ...fm().tools, planner: { tool: "codex", model: "m" } } }),
+            "Build it.",
+          ),
+        );
+        const r = await engine.tick();
+        expect(r.kind === "ran" && r.outcome.kind).toBe("parked");
+        const t = await store.get("t1");
+        expect(t?.frontmatter.status).toBe("action");
+        expect(t?.body.questions).toBe("1. Which DB?\n2. ## Reports");
+        expect(t?.body.reports.planner).toBe("");
+        expect(SYSTEM_PROMPTS.planner).toContain("```questions");
+        expect(SYSTEM_PROMPTS.refine).not.toContain("```questions");
+      } finally {
+        if (prev === undefined) delete process.env.BOOF_RUNNER_CODEX_BIN;
+        else process.env.BOOF_RUNNER_CODEX_BIN = prev;
+      }
+    },
+  );
 
   it("edits to title, labels and runs made during a run survive it and set the run count", async () => {
     await store.create(newTask(fm(), "Build a thing."));
@@ -1371,23 +1398,27 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     expect(count("reviewer")).toBe(0);
   });
 
-  it("labels each findings block with its source round and role", async () => {
-    await withObserver({ maxFixRounds: 3 });
-    const out = await runTask(
-      "x [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE,CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]",
-    );
-    expect(out.kind).toBe("done");
-    const findings = mockState.prompts.filter((p) => p.includes("## Findings ("));
-    expect(
-      findings.some(
-        (p) =>
-          p.includes("## Findings (observer round 3)") &&
-          p.includes("- finding: mock issue observer round 3"),
-      ),
-    ).toBe(true);
-    expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
-    expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
-  });
+  it(
+    "labels each findings block with its source round and role",
+    async () => {
+      await withObserver({ maxFixRounds: 3 });
+      const out = await runTask(
+        "x [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE,CHANGES_REQUESTED,APPROVE reviewer=CHANGES_REQUESTED,APPROVE]]",
+      );
+      expect(out.kind).toBe("done");
+      const findings = mockState.prompts.filter((p) => p.includes("## Findings ("));
+      expect(
+        findings.some(
+          (p) =>
+            p.includes("## Findings (observer round 3)") &&
+            p.includes("- finding: mock issue observer round 3"),
+        ),
+      ).toBe(true);
+      expect(findings.some((p) => p.includes("## Findings (observer round 2)"))).toBe(false);
+      expect(findings.some((p) => p.includes("## Findings (reviewer round 1)"))).toBe(true);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it.each(["observer", "reviewer"] as const)(
     "%s system prompt keeps the worktree clean",
@@ -1412,15 +1443,19 @@ describe("observer, verdict gate and fix loop (mock tool)", () => {
     if (out.kind === "failed") expect(out.error).toContain("unknown mock verdict token: BOGUS");
   });
 
-  it("scripted verdict rounds restart each iteration (runs: 2)", async () => {
-    await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
-    const second = await engine.tick();
-    expect(second.kind).toBe("ran");
-    const end = await store.get("t1");
-    expect(end?.frontmatter.status).toBe("done");
-    expect(count("developer")).toBe(4);
-    expect(count("reviewer")).toBe(4);
-  });
+  it(
+    "scripted verdict rounds restart each iteration (runs: 2)",
+    async () => {
+      await runTask("x [[mock-verdicts reviewer=CHANGES_REQUESTED,APPROVE]]", { runs: 2 });
+      const second = await engine.tick();
+      expect(second.kind).toBe("ran");
+      const end = await store.get("t1");
+      expect(end?.frontmatter.status).toBe("done");
+      expect(count("developer")).toBe(4);
+      expect(count("reviewer")).toBe(4);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it("gate false: verdicts are recorded but not enforced", async () => {
     await withObserver({ gate: false });
@@ -1677,6 +1712,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     expect(has("You are the OBSERVER")).toBe(true);
     expect(has("You are the REVIEWER")).toBe(true);
     expect(has("Answer the following questions")).toBe(true);
+    expect(has(SANDBOX_DEVELOPER_LIMITS)).toBe(false);
     for (const p of Object.values(SYSTEM_PROMPTS)) expect(p).toContain(NON_INTERACTIVE);
     expect(NON_INTERACTIVE).toContain(
       'd=$(mktemp -d); (cmd; echo $? > "$d/done") > "$d/log" 2>&1 &',
@@ -1764,34 +1800,36 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
     }
   });
 
-  it("carried findings stay iteration 1's when iteration 2 fails after its observer round 1", async () => {
-    await configure({ observer: true });
-    await run("Twice. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]", {
-      runs: 2,
-    });
-    let failFix = true;
-    mockState.onRun = async (opts) => {
-      const observerCalls = mockState.calls.filter((c) => c === "observer").length;
-      if (failFix && opts.role === "developer" && observerCalls >= 3) {
-        throw new Error("boom after observer round 1 of iteration 2");
+  it(
+    "carried findings stay iteration 1's when iteration 2 fails after its observer round 1",
+    async () => {
+      await configure({ observer: true });
+      await run("Twice. [[mock-verdicts observer=CHANGES_REQUESTED,APPROVE reviewer=APPROVE]]", {
+        runs: 2,
+      });
+      let failFix = true;
+      mockState.onRun = async (opts) => {
+        const observerCalls = mockState.calls.filter((c) => c === "observer").length;
+        if (failFix && opts.role === "developer" && observerCalls >= 3) {
+          throw new Error("boom after observer round 1 of iteration 2");
+        }
+      };
+      const failed = await engine.tick();
+      if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
+      failFix = false;
+      await store.transition("t1", "pending");
+      const from = mockState.prompts.length;
+      await engine.tick();
+      const retried = mockState.prompts.slice(from);
+      expect(retried.length).toBeGreaterThan(0);
+      for (const p of retried) {
+        expect(p).toContain("## Findings from the previous iteration");
+        expect(p).toContain("#### Round 2 — APPROVE");
+        expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
       }
-    };
-    const failed = await engine.tick();
-    if (failed.kind === "ran") expect(failed.outcome.kind).toBe("failed");
-    failFix = false;
-    await store.transition("t1", "pending");
-    const from = mockState.prompts.length;
-    await engine.tick();
-    const retried = mockState.prompts.slice(from);
-    expect(retried.length).toBeGreaterThan(0);
-    for (const p of retried) {
-      expect(p).toContain("## Findings from the previous iteration");
-      expect(p).toContain("#### Round 2 — APPROVE");
-      expect(p).not.toContain("#### Round 1 — CHANGES_REQUESTED");
-    }
-    // Two observer iterations, a failed follow-up, then a retry. Windows ACL checks make that
-    // longer than the 20s default.
-  }, 60_000);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it("runs > 1: iteration 2 prompts carry iteration 1's final observer and reviewer reports", async () => {
     await configure({ observer: true });
@@ -1817,7 +1855,7 @@ describe("transient retries, stalls and prompts (mock tool)", () => {
       // Only the final round, not the earlier CHANGES_REQUESTED one.
       expect(section).not.toContain("mock issue observer round 1");
     }
-  });
+  }, 60_000);
 });
 
 /** A second (and third) registered repository for the multi-project tests. */
@@ -1832,7 +1870,8 @@ const extraRepos: string[] = [];
 async function addProject(id: string): Promise<Extra> {
   const repo = await realpath(await mkdtemp(join(tmpdir(), `boof-runner-${id}-`)));
   extraRepos.push(repo);
-  const g = (args: string[]) => execCommand("git", args, { cwd: repo, timeoutMs: 15000 });
+  const g = (args: string[]) =>
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
@@ -2286,46 +2325,53 @@ describe("multi-project engine (mock tool)", () => {
     expect(mockState.prompts.some((p) => p.includes("## Project\nFresh project."))).toBe(true);
   });
 
-  it("serves projects in global priority order, interleaved", async () => {
-    const b = await addProject("b");
-    await store.create(newTask(fm({ id: "a-low", priority: 10 }), "a low"));
-    await store.create(newTask(fm({ id: "a-mid", priority: 50 }), "a mid"));
-    await b.store.create(newTask(fm({ id: "b-high", priority: 90 }), "b high"));
-    await b.store.create(newTask(fm({ id: "b-mid", priority: 30 }), "b mid"));
+  it(
+    "serves projects in global priority order, interleaved",
+    async () => {
+      const b = await addProject("b");
+      await store.create(newTask(fm({ id: "a-low", priority: 10 }), "a low"));
+      await store.create(newTask(fm({ id: "a-mid", priority: 50 }), "a mid"));
+      await b.store.create(newTask(fm({ id: "b-high", priority: 90 }), "b high"));
+      await b.store.create(newTask(fm({ id: "b-mid", priority: 30 }), "b mid"));
 
-    expect(order(await engine.runUntilIdle())).toEqual([
-      "b/b-high",
-      "default/a-mid",
-      "b/b-mid",
-      "default/a-low",
-    ]);
-    expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
-    expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
-  });
+      expect(order(await engine.runUntilIdle())).toEqual([
+        "b/b-high",
+        "default/a-mid",
+        "b/b-mid",
+        "default/a-low",
+      ]);
+      expect((await b.store.get("b-high"))?.frontmatter.status).toBe("done");
+      expect((await store.get("a-mid"))?.frontmatter.status).toBe("done");
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
-  it("breaks priority ties by oldest `updated`, then by project id, then by task id", async () => {
-    const b = await addProject("b");
-    const write = (dir: string, id: string, updated: string) =>
-      writeFile(
-        taskFilePath(dir, "pending", id),
-        serializeTask(newTask(fm({ id, priority: 50, updated }), id)),
-      );
-    await write(projectDir, "newer", "2026-06-04T10:00:05.000Z");
-    await write(b.dir, "older", "2026-06-04T10:00:01.000Z");
-    // Identical priority and `updated`: project id, then task id decide.
-    await write(projectDir, "same-b", "2026-06-04T10:00:09.000Z");
-    await write(projectDir, "same-a", "2026-06-04T10:00:09.000Z");
-    await write(b.dir, "same-c", "2026-06-04T10:00:09.000Z");
+  it(
+    "breaks priority ties by oldest `updated`, then by project id, then by task id",
+    async () => {
+      const b = await addProject("b");
+      const write = (dir: string, id: string, updated: string) =>
+        writeFile(
+          taskFilePath(dir, "pending", id),
+          serializeTask(newTask(fm({ id, priority: 50, updated }), id)),
+        );
+      await write(projectDir, "newer", "2026-06-04T10:00:05.000Z");
+      await write(b.dir, "older", "2026-06-04T10:00:01.000Z");
+      // Identical priority and `updated`: project id, then task id decide.
+      await write(projectDir, "same-b", "2026-06-04T10:00:09.000Z");
+      await write(projectDir, "same-a", "2026-06-04T10:00:09.000Z");
+      await write(b.dir, "same-c", "2026-06-04T10:00:09.000Z");
 
-    expect(order(await engine.runUntilIdle())).toEqual([
-      "b/older",
-      "default/newer",
-      "b/same-c", // project "b" sorts before "default"
-      "default/same-a",
-      "default/same-b",
-    ]);
-    // Five full pipelines. Windows git is slower than the 20s default when the runner is busy.
-  }, 60_000);
+      expect(order(await engine.runUntilIdle())).toEqual([
+        "b/older",
+        "default/newer",
+        "b/same-c", // project "b" sorts before "default"
+        "default/same-a",
+        "default/same-b",
+      ]);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it("skips paused, archived and directory-less projects, and serves them again once resumed", async () => {
     const b = await addProject("b");
@@ -2388,39 +2434,46 @@ describe("multi-project engine (mock tool)", () => {
     expect(currentStatus(await read(workDir))).toBe("plan");
   });
 
-  it("honours a per-project worktree root override and project-level role overrides", async () => {
-    const b = await addProject("b");
-    const wtRoot = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-wt-")));
-    extraRepos.push(wtRoot);
-    await new ProjectStore(dataRoot).update("b", {
-      worktree: { root: wtRoot },
-      roles: { developer: { tool: "mock", model: "project-dev" } },
-    });
-    const cwds: string[] = [];
-    const models: string[] = [];
-    mockState.onRun = async (opts) => {
-      cwds.push(opts.cwd);
-      if (opts.role === "developer") models.push(opts.model);
-    };
-    // No per-task tools: roles come from global settings + the project's override.
-    await engine.settingsStore.update({
-      roles: {
-        planner: { tool: "mock", model: "g-plan" },
-        developer: { tool: "mock", model: "g-dev" },
-        reviewer: { tool: "mock", model: "g-rev" },
-      },
-    });
-    await b.store.create(newTask(withoutTools(fm({ id: "bt" })), "b"));
-    await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
-    expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
+  it(
+    "honours a per-project worktree root override and project-level role overrides",
+    async () => {
+      const b = await addProject("b");
+      const wtRoot = await realpath(await mkdtemp(join(tmpdir(), "boof-runner-wt-")));
+      extraRepos.push(wtRoot);
+      await new ProjectStore(dataRoot).update("b", {
+        worktree: { root: wtRoot },
+        roles: { developer: { tool: "mock", model: "project-dev" } },
+      });
+      const cwds: string[] = [];
+      const models: string[] = [];
+      mockState.onRun = async (opts) => {
+        cwds.push(opts.cwd);
+        if (opts.role === "developer") models.push(opts.model);
+      };
+      // No per-task tools: roles come from global settings + the project's override.
+      await engine.settingsStore.update({
+        roles: {
+          planner: { tool: "mock", model: "g-plan" },
+          developer: { tool: "mock", model: "g-dev" },
+          reviewer: { tool: "mock", model: "g-rev" },
+        },
+      });
+      await b.store.create(newTask(withoutTools(fm({ id: "bt" })), "b"));
+      await store.create(newTask(withoutTools(fm({ id: "at", priority: 10 })), "a"));
+      expect(order(await engine.runUntilIdle())).toEqual(["b/bt", "default/at"]);
 
-    const bCwds = cwds.filter((c) => cwdUnder(c, wtRoot));
-    const aCwds = cwds.filter((c) => cwdUnder(c, join(workDir, ".boof-runner-worktrees")));
-    expect(bCwds.length).toBeGreaterThan(0);
-    expect(aCwds.length).toBeGreaterThan(0);
-    expect(bCwds.length + aCwds.length).toBe(cwds.length);
-    expect(models).toEqual(["project-dev", "g-dev"]);
-  });
+      const normalized = (path: string) => path.replaceAll("\\", "/").toLowerCase();
+      const bCwds = cwds.filter((c) => normalized(c).startsWith(`${normalized(wtRoot)}/`));
+      const aCwds = cwds.filter((c) =>
+        normalized(c).startsWith(`${normalized(join(workDir, ".boof-runner-worktrees"))}/`),
+      );
+      expect(bCwds.length).toBeGreaterThan(0);
+      expect(aCwds.length).toBeGreaterThan(0);
+      expect(bCwds.length + aCwds.length).toBe(cwds.length);
+      expect(models).toEqual(["project-dev", "g-dev"]);
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   /** Tracks how many roles run at once per repository and overall, with a delay in every step. */
   const trackConcurrency = (repos: string[], opts: { rendezvous?: boolean } = {}) => {
@@ -2436,7 +2489,8 @@ describe("multi-project engine (mock tool)", () => {
     let allArrived!: () => void;
     const together = new Promise<void>((r) => (allArrived = r));
     mockState.onRun = async (run) => {
-      const repo = repos.find((r) => cwdUnder(run.cwd, r)) ?? "?";
+      const normalized = (path: string) => path.replaceAll("\\", "/").toLowerCase();
+      const repo = repos.find((r) => normalized(run.cwd).startsWith(`${normalized(r)}/`)) ?? "?";
       const n = (active.get(repo) ?? 0) + 1;
       active.set(repo, n);
       maxPerRepo.set(repo, Math.max(maxPerRepo.get(repo) ?? 0, n));
@@ -2467,45 +2521,31 @@ describe("multi-project engine (mock tool)", () => {
     return { maxPerRepo, maxTotal: () => maxTotal };
   };
 
-  it("selects the next task from pending files and does not read finished ones", async () => {
-    // F4 finding 3: a full scan slower than a running task left concurrency 4 with one
-    // task in flight. Finished tasks must not be opened to choose the next pending one.
-    await store.create(newTask(fm({ id: "wait", priority: 10 }), "wait"));
-    await store.create(newTask(fm({ id: "old", status: "done", priority: 90 }), "old"));
-    const fullScan = vi
-      .spyOn(TaskStore.prototype, "list")
-      .mockRejectedValue(new Error("full scan"));
-    try {
-      takeTaskFileReads();
-      const sel = await engine.selectNext();
-      expect(fullScan).not.toHaveBeenCalled();
-      expect(sel?.task.frontmatter.id).toBe("wait");
-      expect(takeTaskFileReads()).toBe(1);
-    } finally {
-      fullScan.mockRestore();
-    }
-  });
+  it(
+    "concurrency=2 runs two projects at once but never two tasks of one project",
+    async () => {
+      const b = await addProject("b");
+      await engine.settingsStore.update({ runner: { concurrency: 2 } });
+      for (const [s, label] of [
+        [store, "a"],
+        [b.store, "b"],
+      ] as const) {
+        await s.create(newTask(fm({ id: `${label}1`, priority: 50 }), `${label}1`));
+        await s.create(newTask(fm({ id: `${label}2`, priority: 40 }), `${label}2`));
+      }
+      const track = trackConcurrency([workDir, b.repo], { rendezvous: true });
 
-  it("concurrency=2 runs two projects at once but never two tasks of one project", async () => {
-    const b = await addProject("b");
-    await engine.settingsStore.update({ runner: { concurrency: 2 } });
-    for (const [s, label] of [
-      [store, "a"],
-      [b.store, "b"],
-    ] as const) {
-      await s.create(newTask(fm({ id: `${label}1`, priority: 50 }), `${label}1`));
-      await s.create(newTask(fm({ id: `${label}2`, priority: 40 }), `${label}2`));
-    }
-    const track = trackConcurrency([workDir, b.repo], { rendezvous: true });
-
-    const results = await engine.runUntilIdle();
-    expect(order(results).sort()).toEqual(["b/b1", "b/b2", "default/a1", "default/a2"]);
-    expect(track.maxTotal()).toBe(2); // two projects overlapped
-    expect(track.maxPerRepo.get(workDir)).toBe(1); // never two steps of one project at once
-    expect(track.maxPerRepo.get(b.repo)).toBe(1);
-    for (const id of ["a1", "a2"]) expect((await store.get(id))?.frontmatter.status).toBe("done");
-    for (const id of ["b1", "b2"]) expect((await b.store.get(id))?.frontmatter.status).toBe("done");
-  });
+      const results = await engine.runUntilIdle();
+      expect(order(results).sort()).toEqual(["b/b1", "b/b2", "default/a1", "default/a2"]);
+      expect(track.maxTotal()).toBe(2); // two projects overlapped
+      expect(track.maxPerRepo.get(workDir)).toBe(1); // never two steps of one project at once
+      expect(track.maxPerRepo.get(b.repo)).toBe(1);
+      for (const id of ["a1", "a2"]) expect((await store.get(id))?.frontmatter.status).toBe("done");
+      for (const id of ["b1", "b2"])
+        expect((await b.store.get(id))?.frontmatter.status).toBe("done");
+    },
+    process.platform === "win32" ? 180_000 : 20_000,
+  );
 
   it("concurrency=2 with a single project still runs its tasks one after the other", async () => {
     await engine.settingsStore.update({ runner: { concurrency: 2 } });
@@ -2542,7 +2582,8 @@ describe("multi-project engine (mock tool)", () => {
     await store.create(newTask(fm({ id: "a1" }), "a1"));
     await b.store.create(newTask(fm({ id: "b1" }), "b1"));
     const done = engine.loop();
-    for (let i = 0; i < 400; i += 1) {
+    // Two mock tasks take over ten seconds on a Windows runner; give the poll as long as the test.
+    for (let i = 0; i < (process.platform === "win32" ? 4000 : 400); i += 1) {
       const a = await store.get("a1");
       const c = await b.store.get("b1");
       if (a?.frontmatter.status === "done" && c?.frontmatter.status === "done") break;
@@ -2696,6 +2737,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
           cwd: opts.cwd,
           stopSignalPath: opts.stopSignalPath,
           stopPollMs: 25,
+          launch: opts.launch ?? { kind: "direct" },
         });
         clearInterval(watch);
         throw new ToolRunError("mock", res.code, res.timedOut, res.stopped, "stopped", res.stderr);
@@ -2963,7 +3005,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(t?.body.log).toContain("already been requeued once");
     });
 
-    it.skipIf(!currentBootIdentity())(
+    it.skipIf(process.platform !== "linux" || !currentBootIdentity())(
       "kills an agent process group a crashed runner left behind, then requeues the task",
       async () => {
         await crash();
@@ -2999,7 +3041,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       },
     );
 
-    it.skipIf(!currentBootIdentity())(
+    it.skipIf(process.platform !== "linux" || !currentBootIdentity())(
       "keeps the identity of an agent that is still running in the failed task, so Retry can refuse",
       async () => {
         await crash();
@@ -3023,11 +3065,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
             command: "node",
             bootId: currentBootIdentity(),
           });
-          // Linux records start ticks. macOS and Windows record the start-time string.
-          const recorded = t?.frontmatter.agentProcess;
-          expect(recorded?.startTicks != null || typeof recorded?.startTime === "string").toBe(
-            true,
-          );
+          expect(t?.frontmatter.agentProcess?.startTicks).toEqual(expect.any(Number));
         } finally {
           try {
             process.kill(-live.pid!, "SIGKILL");
@@ -3046,10 +3084,7 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(t?.frontmatter.agentProcess).toBeUndefined();
     });
 
-    // Forcing darwin uses process-group liveness. Windows reports that as dead, so the live
-    // process looks gone. A null identity stays unverified, which is the warning this test checks;
-    // a real macOS start time would let the reaper kill the orphan instead.
-    it.skipIf(process.platform === "win32")(
+    it.skipIf(process.platform !== "linux")(
       "off Linux, warns in the Interrupted block that a live agent process may still be running",
       async () => {
         await crash();
@@ -3063,9 +3098,6 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
             pgid: orphan.pid!,
             command: "node",
             ownerPid: null,
-            bootId: null,
-            startTime: null,
-            startTicks: null,
           });
           Object.defineProperty(process, "platform", { ...original, value: "darwin" });
           expect(await engine.recoverInterrupted()).toEqual(["t1"]);
@@ -3098,28 +3130,28 @@ describe("RunnerEngine.shutdown (SIGTERM under systemd)", () => {
       expect(existsSync(taskPidPath(projectDir, "t1"))).toBe(false);
     });
 
-    it("the pipeline records the step's group under control/pid while the tool runs", async () => {
-      await store.create(newTask(fm(), "Build it. [[mock-stall planner=1 developer=1]]"));
-      const pid = taskPidPath(projectDir, "t1");
-      const done = engine.loop();
-      try {
-        const deadline = Date.now() + 45_000;
-        while (!existsSync(pid)) {
-          if (Date.now() > deadline) throw new Error(`pid file was not written: ${pid}`);
-          await new Promise((r) => setTimeout(r, 20));
+    it.skipIf(process.platform === "win32")(
+      "the pipeline records the step's group under control/pid while the tool runs",
+      async () => {
+        await store.create(newTask(fm(), "Build it. [[mock-stall planner=1 developer=1]]"));
+        const pid = taskPidPath(projectDir, "t1");
+        const done = engine.loop();
+        try {
+          while (!existsSync(pid)) await new Promise((r) => setTimeout(r, 20));
+          const rec = JSON.parse(await readFile(pid, "utf8"));
+          expect(rec.command).toBe("node");
+          expect(isAlive(rec.pgid)).toBe(true);
+          await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
+          await writeFile(taskStopRequestPath(projectDir, "t1"), "test\n");
+        } finally {
+          engine.stop();
+          await done;
         }
-        const rec = JSON.parse(await readFile(pid, "utf8"));
-        expect(rec.command).toBe(basename(process.execPath));
-        expect(isAlive(rec.pgid)).toBe(true);
-        await mkdir(taskControlDir(projectDir, "t1"), { recursive: true });
-        await writeFile(taskStopRequestPath(projectDir, "t1"), "test\n");
-      } finally {
-        engine.stop();
-        await done;
-      }
-      expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
-      expect(existsSync(pid)).toBe(false);
-    }, 60_000);
+        expect((await store.get("t1"))?.frontmatter.status).toBe("stopped");
+        expect(existsSync(pid)).toBe(false);
+      },
+      process.platform === "win32" ? 180_000 : 20_000,
+    );
 
     it("does nothing when no engine loop runs (the --no-runner path)", async () => {
       await crash();

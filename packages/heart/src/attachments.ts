@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { isPortableName } from "./portable-name.js";
 import { taskAssetPath, taskAssetsDir } from "./paths.js";
 
 /** Attachment kinds the prompt box accepts: raster images and PDFs. */
@@ -24,10 +25,16 @@ export function isAllowedAttachmentType(type: string): boolean {
  * traversal when the name is later joined onto the asset directory.
  */
 export function safeAttachmentName(raw: string): string {
-  const base = basename(raw)
+  let base = basename(raw)
     .replace(/[^a-zA-Z0-9._-]+/g, "_")
-    .replace(/^\.+/, "");
-  return base.length > 0 ? base.slice(0, 120) : "file";
+    .replace(/^\.+/, "")
+    .slice(0, 120)
+    // A trailing dot or space is dropped by Windows, so the file could not be backed up there.
+    .replace(/[. ]+$/g, "");
+  if (base.length === 0) return "file";
+  // Windows device names (aux.png, con.txt) cannot be created or restored on Windows.
+  if (!isPortableName(base)) base = `_${base}`;
+  return base;
 }
 
 /**

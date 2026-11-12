@@ -39,6 +39,14 @@ export const GIT_HARDENING_ARGS: readonly string[] = [
   "core.hooksPath=/dev/null",
   "-c",
   "core.attributesFile=/dev/null",
+  "-c",
+  "core.logAllRefUpdates=false",
+  "-c",
+  "submodule.recurse=false",
+  "-c",
+  "status.submoduleSummary=false",
+  "-c",
+  "diff.ignoreSubmodules=all",
 ];
 
 /** `--attr-source` arrived in git 2.40. Earlier git exits 129 on the unknown option. */
@@ -237,6 +245,7 @@ async function attrSourceSupported(
   if (cachedAttrSourceSupport !== undefined) return cachedAttrSourceSupport;
   const versionTimeout = Math.min(DRIVER_LIST_TIMEOUT_MS, timeoutMs);
   const res = await execCommand("git", ["--version"], {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs: versionTimeout,
     env,
@@ -264,6 +273,7 @@ async function resolveCommonDir(
   timeoutMs: number,
 ): Promise<CommonDir> {
   const res = await execCommand("git", [...GIT_HARDENING_ARGS, "rev-parse", "--git-common-dir"], {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs,
     env: probeEnvironment(env),
@@ -291,7 +301,7 @@ async function readObjectFormat(
   const res = await execCommand(
     "git",
     [...GIT_HARDENING_ARGS, "rev-parse", "--show-object-format"],
-    { cwd, timeoutMs, env },
+    { launch: { kind: "direct" }, cwd, timeoutMs, env },
   );
   if (res.timedOut) {
     throw new GitCommandRefusedError(
@@ -312,7 +322,7 @@ async function hashEmptyTree(
   const res = await execCommand(
     "git",
     [...GIT_HARDENING_ARGS, "hash-object", "-t", "tree", "--no-filters", "--stdin"],
-    { cwd, timeoutMs, env, input: "" },
+    { launch: { kind: "direct" }, cwd, timeoutMs, env, input: "" },
   );
   if (res.timedOut) {
     throw new GitCommandRefusedError(
@@ -382,7 +392,7 @@ async function readDriverOverrides(
     listed = await execCommand(
       "git",
       [...hardening, "config", "--null", "--get-regexp", DRIVER_LIST_PATTERN],
-      { cwd, timeoutMs: listTimeout, env },
+      { launch: { kind: "direct" }, cwd, timeoutMs: listTimeout, env },
     );
   } catch (error) {
     throw new GitDriversUnreadError(error instanceof Error ? error.message : String(error));
@@ -421,8 +431,14 @@ export async function hardenedGitCommand(
   const overrides = await readDriverOverrides(cwd, callerEnv, timeoutMs, hardening);
   // Last step before the caller runs git: a filter planted during the driver list is visible.
   if (common.kind === "dir") await assertInfoAttributesClear(common.path);
+  const commandIndex = args.findIndex((arg) => ["status", "diff", "add"].includes(arg));
+  const guardedArgs = [...args];
+  if (commandIndex >= 0 && args[commandIndex] !== "add") {
+    // Command-line precedence is required: agent-controlled .gitmodules can override -c.
+    guardedArgs.splice(commandIndex + 1, 0, "--ignore-submodules=all");
+  }
   return {
-    args: [...hardening, ...args],
+    args: [...hardening, ...guardedArgs],
     env:
       overrides.length === 0
         ? callerEnv
@@ -441,6 +457,7 @@ export async function git(
 ): Promise<{ code: number | null; out: string; err: string; timedOut: boolean }> {
   const prepared = await hardenedGitCommand(cwd, args, env, timeoutMs, probe);
   const res = await execCommand("git", prepared.args, {
+    launch: { kind: "direct" },
     cwd,
     timeoutMs,
     env: prepared.env,

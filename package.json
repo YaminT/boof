@@ -1,6 +1,6 @@
 {
   "name": "boof-runner",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "description": "Agent Task Runner \u2014 queue prompts and run them through a planner \u2192 developer \u2192 reviewer pipeline",
   "type": "module",
@@ -38,6 +38,7 @@
     "desktop:dist": "npm run desktop:build && npm run dist -w @boof/desktop",
     "desktop:dist:mac": "npm run desktop:build && npm run dist:mac -w @boof/desktop",
     "desktop:dist:win": "npm run desktop:build && npm run dist:win -w @boof/desktop",
+    "desktop:dist:linux": "npm run desktop:build && npm run dist:linux -w @boof/desktop",
     "docs:gen": "tsx scripts/gen-harness-reference.ts",
     "lint": "prettier --check .",
     "format": "prettier --write ."
