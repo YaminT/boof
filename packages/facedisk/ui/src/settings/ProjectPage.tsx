@@ -35,6 +35,8 @@ export function ProjectPage({
   advancedOpen,
   updatesCheck,
   onUpdatesCheck,
+  profiles = [],
+  onProfile,
 }: {
   /** Show the advanced sections (expanded view, or the page has unsaved edits). */
   advancedOpen: boolean;
@@ -52,6 +54,10 @@ export function ProjectPage({
   updatesCheck: boolean;
   /** Saves immediately. Off means the server never asks GitHub. */
   onUpdatesCheck: (check: boolean) => void;
+  /** The orchestration profiles to choose from (Settings › Profiles). */
+  profiles?: { id: string; name: string }[];
+  /** Saves immediately; null means "use the global one". */
+  onProfile?: (profile: string | null) => void;
 }) {
   const [archiving, setArchiving] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -108,6 +114,29 @@ export function ProjectPage({
             onChange={(e) => setP({ name: e.target.value })}
           />
         </label>
+        {onProfile && (profiles.length > 0 || project.profile) && (
+          <label className={label}>
+            Profile for this project
+            <NativeSelect
+              className="mt-0 font-normal"
+              value={project.profile ?? ""}
+              onChange={(e) => onProfile(e.target.value || null)}
+            >
+              <option value="">Use the global one</option>
+              {project.profile && !profiles.some((x) => x.id === project.profile) && (
+                <option value={project.profile}>{project.profile} (missing)</option>
+              )}
+              {profiles.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                </option>
+              ))}
+            </NativeSelect>
+            <span className={help}>
+              Applies to tasks that start after you change it. Saved right away.
+            </span>
+          </label>
+        )}
         <label className={label}>
           Working directory
           <span className="flex gap-2">

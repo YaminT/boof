@@ -1,4 +1,5 @@
-export type SettingsPageId = "project" | "agents" | "budgets" | "keys" | "automation" | "accounts";
+export type SettingsPageId =
+  "project" | "agents" | "profiles" | "budgets" | "keys" | "automation" | "accounts";
 export type TaskView = "edit" | "changes" | "questions";
 export type Route =
   | { name: "overview"; pid: string }
@@ -11,6 +12,7 @@ export type Route =
 const SETTINGS_PAGES: readonly SettingsPageId[] = [
   "project",
   "agents",
+  "profiles",
   "budgets",
   "keys",
   "automation",
