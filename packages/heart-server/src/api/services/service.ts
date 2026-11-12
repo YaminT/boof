@@ -1905,8 +1905,8 @@ export class TaskService {
     let oldest = Date.now();
     for (const info of this.catalog.list()) {
       const found = installs[info.id];
-      if (!found) continue;
-      const { checkedAt, ...install } = found;
+      if (!found || found.hidden) continue;
+      const { checkedAt, hidden: _hidden, ...install } = found;
       oldest = Math.min(oldest, Date.parse(checkedAt));
       tools[info.id] = { displayName: info.displayName, ...install };
     }

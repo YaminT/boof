@@ -10,8 +10,9 @@ import {
   TaskStore,
   type Settings,
 } from "@boof/heart";
+import { execCommand, initGitRepo } from "@boof/heart";
 import { afterEach, describe, expect, it } from "vitest";
-import { Pipeline, type PipelineOutcome } from "./pipeline.js";
+import { Pipeline, sharedFromAbout, type PipelineOutcome } from "./pipeline.js";
 import { MockTool, mockState } from "./tools/mock.js";
 import { formatQuestions, withQuestions } from "./tools/questions.js";
 import type { RunOptions, RunResult } from "./tools/types.js";
@@ -47,11 +48,12 @@ const fenced = (value: unknown) => `Done.\n\n\`\`\`json\n${JSON.stringify(value)
 
 async function run(
   script: (opts: RunOptions) => Partial<RunResult>,
-  opts: { planVersion?: number } = {},
-): Promise<{ outcome: PipelineOutcome; planStore: PlanStore }> {
+  opts: { planVersion?: number; git?: boolean } = {},
+): Promise<{ outcome: PipelineOutcome; planStore: PlanStore; workDir: string }> {
   const dataRoot = await mkdtemp(join(tmpdir(), "boof-draft-data-"));
   const workDir = await mkdtemp(join(tmpdir(), "boof-draft-work-"));
   roots.push(dataRoot, workDir);
+  if (opts.git) await initGitRepo(workDir);
   const settings: Settings = {
     ...defaultSettings(),
     runner: { ...defaultSettings().runner, enabled: true, concurrency: 1 },
@@ -99,7 +101,7 @@ async function run(
     registry: new ToolRegistry([new ScriptedPlanner(script)]),
     settings: effectiveSettings(settings, project),
   }).run(running);
-  return { outcome, planStore };
+  return { outcome, planStore, workDir };
 }
 
 describe("plan-draft task", () => {
@@ -137,6 +139,18 @@ describe("plan-draft task", () => {
     expect((await planStore.require("the-plan")).goals).toEqual([]);
   });
 
+  it("deletes the worktree and branch of a draft that failed", async () => {
+    const { outcome, workDir } = await run(() => ({ report: "I wrote no json." }), { git: true });
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind === "failed") expect(outcome.task.body.log).not.toContain("Kept worktree");
+    const branches = await execCommand("git", ["branch", "--list", "boof-runner/*"], {
+      launch: { kind: "direct" },
+      cwd: workDir,
+      timeoutMs: 15000,
+    });
+    expect(branches.stdout.trim()).toBe("");
+  });
+
   it("parks the task when the agent asks a question", async () => {
     const asked = withQuestions({
       output: "asked",
@@ -146,5 +160,24 @@ describe("plan-draft task", () => {
     expect(outcome.kind).toBe("parked");
     if (outcome.kind === "parked") expect(outcome.questions).toEqual(["Which database?"]);
     expect((await planStore.require("the-plan")).goals).toEqual([]);
+  });
+});
+
+describe("sharedFromAbout", () => {
+  it("prefers the project answers over the folder scan", () => {
+    const about = {
+      stack: "Rust",
+      testCommand: "cargo test",
+      doRules: "small steps\n\nwrite tests",
+      dontRules: "",
+    };
+    expect(sharedFromAbout(about, { stack: "Node.js", testCommand: "npm test" })).toEqual({
+      stack: "Rust",
+      testRun: "cargo test",
+      doRules: ["small steps", "write tests"],
+    });
+    expect(sharedFromAbout(undefined, { stack: "Node.js", testCommand: "" })).toEqual({
+      stack: "Node.js",
+    });
   });
 });

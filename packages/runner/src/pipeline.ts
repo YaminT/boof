@@ -140,6 +140,31 @@ const WORKTREE_HYGIENE =
   "nested git repositories. ";
 
 /** Appended to every role's system prompt: the tool runs in --print mode and exits with its turn. */
+/**
+ * The shared goal fields of an agent-drafted plan: the project answers the user gave the wizard
+ * win, then what the folder scan guessed.
+ */
+export function sharedFromAbout(
+  about: Project["planDefaults"],
+  scan: { stack: string; testCommand: string },
+): { stack?: string; testRun?: string; doRules?: string[]; dontRules?: string[] } {
+  const lines = (t: string | undefined) =>
+    (t ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+  const stack = about?.stack.trim() || scan.stack;
+  const testRun = about?.testCommand.trim() || scan.testCommand;
+  const doRules = lines(about?.doRules);
+  const dontRules = lines(about?.dontRules);
+  return {
+    ...(stack ? { stack } : {}),
+    ...(testRun ? { testRun } : {}),
+    ...(doRules.length ? { doRules } : {}),
+    ...(dontRules.length ? { dontRules } : {}),
+  };
+}
+
 export const NON_INTERACTIVE =
   "You are running non-interactively. Your process exits as soon as you end your turn, and " +
   "anything still running in the background is killed. Never end your turn while waiting on " +
@@ -1583,7 +1608,9 @@ export class Pipeline {
           (overBudget || poolExhausted) &&
           projectTaskBudget(this.deps.settings, this.deps.project).onExceed === "pause";
         if (
-          worktreeSettings(this.deps.settings).onFailure === "delete" &&
+          // A plan-draft worktree holds nothing worth keeping: the report is kept in the task.
+          (worktreeSettings(this.deps.settings).onFailure === "delete" ||
+            task.frontmatter.draftFor !== undefined) &&
           !stopped &&
           !keepForBudget &&
           !authRefused &&
@@ -1681,10 +1708,7 @@ export class Pipeline {
         planId: draftFor.planId,
         planVersion: draftFor.planVersion,
         report: result.report,
-        shared: {
-          ...(stack.stack ? { stack: stack.stack } : {}),
-          ...(stack.testCommand ? { testRun: stack.testCommand } : {}),
-        },
+        shared: sharedFromAbout(this.deps.project?.planDefaults, stack),
       });
     } catch (err) {
       if (err instanceof PlanDraftParseError) throw new Error(`plan draft: ${err.message}`);

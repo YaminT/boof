@@ -64,14 +64,24 @@ describe("detectStack", () => {
     });
   });
 
-  it("ignores a symlink that points outside the project and oversized files", async () => {
+  it("ignores a symlink that points outside the project and an oversized package.json", async () => {
     const outside = await tmp();
     await writeFile(join(outside, "Cargo.toml"), "[package]\n");
     const d = await tmp();
     await symlink(join(outside, "Cargo.toml"), join(d, "Cargo.toml"));
-    await writeFile(join(d, "go.mod"), "x".repeat(DETECT_MAX_FILE_BYTES + 1));
+    await writeFile(join(d, "package.json"), "x".repeat(DETECT_MAX_FILE_BYTES + 1));
     await mkdir(join(d, "sub"));
     expect(await detectStack(d)).toEqual({ detected: [], stack: "", testCommand: "" });
+  });
+
+  it("sees a lockfile over the size cap (it is only checked for, never read)", async () => {
+    const d = await tmp();
+    await writeFile(join(d, "package.json"), JSON.stringify({ scripts: { test: "x" } }));
+    await writeFile(join(d, "pnpm-lock.yaml"), "x".repeat(DETECT_MAX_FILE_BYTES + 1));
+    expect(await detectStack(d)).toMatchObject({
+      stack: "Node.js (pnpm)",
+      testCommand: "pnpm test",
+    });
   });
 
   it("copes with a broken package.json", async () => {

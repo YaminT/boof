@@ -31,7 +31,9 @@ export async function doctorCommand(
     return 1;
   }
   const installs = await catalog.installedAll(0);
-  const tools = catalog.list().filter((t) => installs[t.id] !== undefined);
+  const tools = catalog
+    .list()
+    .filter((t) => installs[t.id] !== undefined && !installs[t.id]!.hidden);
   const anyInstalled = tools.some((t) => installs[t.id]!.installed);
   const pathUsed = env.PATH ?? env.Path ?? "";
   if (flags.includes("--json")) {

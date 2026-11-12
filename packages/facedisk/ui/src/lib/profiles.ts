@@ -1,3 +1,5 @@
+import { toolChoices, type HarnessEnv } from "./harnesses.js";
+import type { HarnessStatus } from "../api-types.js";
 import type {
   OrchestrationProfile,
   Project,
@@ -206,3 +208,22 @@ export const profilesPage: PageModel<ProfilesValues> = {
     return Object.keys(settings).length > 0 ? { settings } : {};
   },
 };
+
+/**
+ * The tools a profile role may pick: the ones installed on this computer (and able to run
+ * here), plus the one the role already has, which is kept and marked "not installed" in the select.
+ */
+export function profileToolOptions(
+  all: readonly string[],
+  unavailable: Readonly<Record<string, string>>,
+  status: HarnessStatus | null,
+  env: HarnessEnv,
+  current?: string | null,
+): string[] {
+  return toolChoices(
+    all.filter((t) => !unavailable[t]),
+    status,
+    env,
+    current ?? undefined,
+  );
+}

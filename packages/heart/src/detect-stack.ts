@@ -35,8 +35,15 @@ async function readSmall(root: string, name: string): Promise<string | null> {
   }
 }
 
+/** A regular file of any size inside `root` (it is not read, so the size cap does not apply). */
 async function exists(root: string, name: string): Promise<boolean> {
-  return (await readSmall(root, name)) !== null;
+  try {
+    const real = await realpath(join(root, name));
+    if (real !== root && !real.startsWith(root + sep)) return false;
+    return (await stat(real)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export async function detectStack(projectDir: string): Promise<DetectedStack> {

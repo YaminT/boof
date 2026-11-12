@@ -24,10 +24,19 @@ export class CodexTool implements Tool {
   readonly id = "codex";
   readonly displayName = "Codex";
   readonly defaultModels: string[] = [];
-  private readonly bin = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
+  /** The program to spawn: the name, or the absolute path the install check found off PATH. */
+  private readonly name = process.env.BOOF_RUNNER_CODEX_BIN ?? "codex";
+  private offPathBin: string | undefined;
 
-  installed(): Promise<InstallResult> {
-    return checkInstalled(this.bin);
+  private get bin(): string {
+    return this.offPathBin ?? this.name;
+  }
+
+  async installed(): Promise<InstallResult> {
+    const result = await checkInstalled(this.name);
+    // Found off PATH (a desktop app started without the shell's PATH): spawn that exact file.
+    this.offPathBin = result.installed ? result.foundOffPath : undefined;
+    return result;
   }
 
   async detect(detect: DetectOptions = {}): Promise<HealthResult> {

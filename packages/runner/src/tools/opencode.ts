@@ -17,10 +17,19 @@ export class OpencodeTool implements Tool {
   readonly id = "opencode";
   readonly displayName = "OpenCode";
   readonly defaultModels = ["opencode-go/kimi-k3"];
-  private readonly bin = process.env.BOOF_RUNNER_OPENCODE_BIN ?? "opencode";
+  /** The program to spawn: the name, or the absolute path the install check found off PATH. */
+  private readonly name = process.env.BOOF_RUNNER_OPENCODE_BIN ?? "opencode";
+  private offPathBin: string | undefined;
 
-  installed(): Promise<InstallResult> {
-    return checkInstalled(this.bin);
+  private get bin(): string {
+    return this.offPathBin ?? this.name;
+  }
+
+  async installed(): Promise<InstallResult> {
+    const result = await checkInstalled(this.name);
+    // Found off PATH (a desktop app started without the shell's PATH): spawn that exact file.
+    this.offPathBin = result.installed ? result.foundOffPath : undefined;
+    return result;
   }
 
   async detect(_detect: DetectOptions = {}): Promise<HealthResult> {

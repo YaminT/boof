@@ -4,6 +4,7 @@ import { api, type TaskView } from "../api.js";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
 import { act } from "../lib/act.js";
+import { activateWithTasks, reportCreated } from "../lib/activate.js";
 import { createCommandActions, type CommandAction } from "../lib/command-actions.js";
 import { useTheme } from "../lib/theme.js";
 import { toggleRunner } from "./RunnerSwitch.js";
@@ -87,9 +88,9 @@ export function useCommandActions({
           : new Promise<void>((resolve, reject) => setStopping({ task, resolve, reject })),
       activatePlan: (id, plan) =>
         mutate(
-          () => api.updatePlan(id, plan, { status: "active" }),
-          "Plan activated",
-          "Could not activate",
+          async () => reportCreated((await activateWithTasks(id, plan)).created),
+          "",
+          "Could not create the tasks",
         ),
       queueTask: (id, taskId) =>
         mutate(

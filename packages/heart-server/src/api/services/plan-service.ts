@@ -34,6 +34,7 @@ import {
   type SyncResult,
 } from "@boof/heart";
 import type { z } from "zod";
+import type { PlanDefaults } from "@boof/heart";
 import { formatIssues, OpError } from "../errors.js";
 import { sleepUnlessAborted } from "../abort.js";
 import { statusDowngraded, type Warning } from "../warnings.js";
@@ -131,6 +132,29 @@ export function mapPlanError(err: unknown): unknown {
     return new OpError(400, "Invalid plan", "invalid_plan", formatIssues(err));
   }
   return err;
+}
+
+/** The wizard's project facts as a prompt section; empty when the user gave none. */
+export function aboutSection(about: PlanDefaults | undefined): string {
+  if (!about) return "";
+  const rules = (title: string, text: string) =>
+    text.trim()
+      ? `${title}:\n${text
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((l) => `- ${l}`)
+          .join("\n")}`
+      : "";
+  const body = [
+    about.stack.trim() ? `Stack: ${about.stack.trim()}` : "",
+    about.testCommand.trim() ? `Test command: ${about.testCommand.trim()}` : "",
+    rules("Always", about.doRules),
+    rules("Never", about.dontRules),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return body ? `## About this project (give each goal these)\n${body}` : "";
 }
 
 /**
@@ -276,6 +300,7 @@ export class PlanService {
     }
     const existing = plan.goals.map((g) => `- ${g.id}: ${g.title}`).join("\n");
     const prompt = [
+      aboutSection((await this.parent.getProject(this.projectId)).planDefaults),
       `## Request\n${plan.description.trim() || plan.title}`,
       input.note?.trim() ? `## Note from the user\n${input.note.trim()}` : "",
       existing ? `## Current task list (adjust it as the note says)\n${existing}` : "",

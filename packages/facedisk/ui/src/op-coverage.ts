@@ -38,7 +38,8 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where: "draftPlanGoals \u2014 PlanWizard (Draft tasks, Ask the agent to adjust)",
   },
   "plans.update": {
-    where: "updatePlan \u2014 PlanPage, InboxPage, useCommandActions (approve, draft, archive)",
+    where:
+      "updatePlan \u2014 PlanPage, InboxPage, activate (approve, draft, archive, create tasks)",
   },
   "plans.replaceGoals": { where: "replacePlanGoals \u2014 PlanWizard (save the task list)" },
   "plans.upsertGoal": { where: "putGoal \u2014 GoalEditor (add or edit a goal)" },
@@ -96,7 +97,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "settings.get": { where: "getSettings \u2014 useAppData (global settings)" },
   "settings.update": {
     where:
-      "updateSettings \u2014 useSettingsPage, Projects, TopBar, RunnerSwitch, useCommandActions, SandboxSection, SandboxNotice (change settings)",
+      "updateSettings \u2014 useSettingsPage, Projects, RunnerSwitch, useCommandActions, SandboxSection, SandboxNotice (change settings)",
   },
   "settings.health": {
     none: "the UI runs the check itself (settings.checkHealth) and shows its result",
@@ -121,7 +122,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where: "runnerOverview \u2014 useRunnerOverview (the topbar)",
   },
   "runner.setEnabled": {
-    where: "updateSettings {runner.enabled} \u2014 TopBar (Pause and Start)",
+    where: "setRunnerEnabled \u2014 TopBar (Pause and Start)",
   },
   "actions.list": { where: "actions \u2014 useAppData (tasks that need an answer)" },
   "commands.list": { where: "listCommands \u2014 CommandTemplates, TaskForm (command templates)" },

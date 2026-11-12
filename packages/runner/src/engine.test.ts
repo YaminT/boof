@@ -334,6 +334,83 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
     expect(mockState.calls).toEqual([]);
   });
 
+  describe("start checks use only the roles the task runs", () => {
+    const ghost = {
+      id: "ghost",
+      displayName: "Ghost",
+      defaultModels: ["g"],
+      installed: async () => ({ installed: false, message: "`ghost` not found on PATH" }),
+      detect: () => new MockTool().detect(),
+      listModels: () => new MockTool().listModels(),
+      run: (opts: RunOptions) => new MockTool().run(opts),
+    };
+    const mockPick = { tool: "mock", model: "mock-default" };
+    const ghostPick = { tool: "ghost", model: "g" };
+
+    const noTools = (): TaskFrontmatter => {
+      const { tools: _t, ...rest } = fm();
+      return rest;
+    };
+
+    async function useSettings(profileRoles: Record<string, unknown> | null) {
+      await new SettingsStore(dataRoot).save({
+        ...defaultSettings(),
+        runner: { enabled: true, concurrency: 1 },
+        defaultProject: "default",
+        roles: { planner: ghostPick, developer: mockPick, reviewer: ghostPick },
+        ...(profileRoles
+          ? {
+              profiles: [{ id: "dev-only", name: "Developer only", roles: profileRoles }],
+              activeProfile: "dev-only",
+            }
+          : {}),
+      } as never);
+      engine = new RunnerEngine({
+        root: dataRoot,
+        registry: new ToolRegistry([new MockTool(), ghost]),
+      });
+    }
+
+    it("does not check a role the active profile switched off", async () => {
+      await useSettings({ planner: null, developer: mockPick, observer: null, reviewer: null });
+      await store.create(newTask(noTools(), "Develop."));
+      await engine.tick();
+      const task = await store.get("t1");
+      expect(task?.body.log).not.toContain("tool_not_installed");
+      expect(task?.frontmatter.status).toBe("done");
+    });
+
+    it("still refuses a role the profile keeps when its tool is missing", async () => {
+      await useSettings({
+        planner: ghostPick,
+        developer: mockPick,
+        observer: null,
+        reviewer: null,
+      });
+      await store.create(newTask(noTools(), "Develop."));
+      await engine.tick();
+      const task = await store.get("t1");
+      expect(task?.frontmatter.status).toBe("failed");
+      expect(task?.body.log).toContain("tool_not_installed: ghost (role planner)");
+    });
+
+    it("checks only the planner for a plan-draft task", async () => {
+      await useSettings(null);
+      await store.create(
+        newTask(
+          fm({
+            tools: { planner: mockPick },
+            draftFor: { planId: "the-plan", planVersion: 1 },
+          }),
+          "Draft.",
+        ),
+      );
+      await engine.tick();
+      const task = await store.get("t1");
+      expect(task?.body.log).not.toContain("tool_not_installed");
+    });
+  });
+
   it("fails desktop-unavailable claude-agent selection without asking for auth", async () => {
     const decide = vi.fn(async () => ({ ok: false as const, reason: "should not decide" }));
     engine = new RunnerEngine({

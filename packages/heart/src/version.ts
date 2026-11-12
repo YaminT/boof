@@ -1,5 +1,5 @@
 /** The boof-runner version (kept equal to the root package.json; a test checks it). */
-export const BOOF_VERSION = "0.5.1";
+export const BOOF_VERSION = "0.6.0";
 
 /**
  * GitHub `owner/name` that publishes releases. This is the owner and name of
