@@ -333,6 +333,17 @@ describe.skipIf(!linux && !required)("run temp and git policy facts", () => {
     expect(main.denyTcpPorts).toEqual([4319, 1]);
   });
 
+  it("creates a missing logs directory instead of refusing the run", async () => {
+    const linked = await fixture(true);
+    const common = (await repoCommonDir(linked.wtPath))!;
+    await rm(join(common, "logs"), { recursive: true, force: true });
+    await buildRunPolicy(
+      { runner: { sandbox: sandboxSettings } },
+      { ...linked.ctx, serverPort: 4319 },
+    );
+    expect((await stat(join(common, "logs", "refs", "heads"))).isDirectory()).toBe(true);
+  });
+
   it("refuses an agent planted tool-state symlink before chmod or policy construction", async () => {
     const fx = await fixture(false);
     const initial = await buildRunPolicy(

@@ -1,6 +1,6 @@
 {
   "name": "@boof/desktop",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Boof Runner desktop app (Electron) \u2014 runs the server and UI in one window",
   "main": "dist/main.js",

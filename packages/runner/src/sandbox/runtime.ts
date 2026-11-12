@@ -332,16 +332,14 @@ export async function linkedWorktreeGit(
 }
 
 async function ensureGitWriteDirs(commonDir: string, worktreeName: string): Promise<void> {
-  const required = [
-    join(commonDir, "worktrees", worktreeName),
-    join(commonDir, "objects"),
-    join(commonDir, "logs"),
-  ];
+  const required = [join(commonDir, "worktrees", worktreeName), join(commonDir, "objects")];
   for (const path of required) {
     if (!existsSync(path)) {
       throw new SandboxUnavailableError(`git path is missing: ${path}`);
     }
   }
+  // git creates logs/ lazily (e.g. core.logAllRefUpdates=false); the task branch reflog needs it.
+  await mkdir(join(commonDir, "logs", "refs", "heads"), { recursive: true });
   const refs = join(commonDir, "refs", "heads", "boof-runner");
   if (!existsSync(refs)) await mkdir(refs, { recursive: true });
 }
