@@ -72,7 +72,11 @@ describe("operations registry contract", () => {
     for (const op of registry) {
       const json = !op.rest.kind || op.rest.kind === "json";
       expect(op.mcp.expose, op.name).toBe(json && !op.mcp.why);
-      if (op.mcp.why) expect(/^(concierge|harnesses)\./.test(op.name), op.name).toBe(true);
+      if (op.mcp.why)
+        expect(
+          /^(concierge|harnesses|plans\.draftGoals|projects\.detectStack)/.test(op.name),
+          op.name,
+        ).toBe(true);
     }
   });
 

@@ -126,6 +126,9 @@
                   "task_modified",
                   "plan_exists",
                   "plan_not_active",
+                  "plan_not_draft",
+                  "tool_not_installed",
+                  "draft_in_progress",
                   "goal_has_dependents",
                   "profile_in_use",
                   "project_exists",
@@ -8231,6 +8234,72 @@
         "x-boof-scope": "tasks:read"
       }
     },
+    "/projects/{projectId}/detect-stack": {
+      "get": {
+        "description": "Reads a few well-known files of the project directory (package.json, lockfiles, pyproject.toml, Cargo.toml, go.mod; each at most 256 KB, never outside the directory) and reports a guessed stack and test command for the plan wizard. No model, no network, no side effects.",
+        "operationId": "projects.detectStack",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detected": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "stack": {
+                      "type": "string"
+                    },
+                    "testCommand": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detected",
+                    "stack",
+                    "testCommand"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Guess a project's stack and test command",
+        "tags": [
+          "projects"
+        ],
+        "x-boof-scope": "projects:read"
+      }
+    },
     "/projects/{projectId}/epics": {
       "get": {
         "description": "Lists a project's epics (priority descending, then oldest update) with their progress: non-archived top-level tasks and how many are done. Inputs: projectId, optional includeArchived. No side effects.",
@@ -9596,6 +9665,23 @@
                       "default": "",
                       "type": "string"
                     },
+                    "draftTask": {
+                      "additionalProperties": false,
+                      "description": "The newest plan-draft task of the plan (an agent writing its goals).",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
                     "goals": {
                       "items": {
                         "$ref": "#/components/schemas/Goal"
@@ -9840,6 +9926,119 @@
         ],
         "x-boof-scope": "plans:write",
         "x-mcp-tool": "boof_update_plan"
+      }
+    },
+    "/projects/{projectId}/plans/{planId}/draft": {
+      "post": {
+        "description": "Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Review-trust clients are refused.",
+        "operationId": "plans.draftGoals",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "description": "Project id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "planId",
+            "required": true,
+            "schema": {
+              "description": "Plan id (kebab-case).",
+              "maxLength": 200,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "note": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "tool": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "tool",
+                  "model"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "plan": {
+                      "$ref": "#/components/schemas/Plan"
+                    },
+                    "task": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "status"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "task"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Have an agent draft the goals of a plan",
+        "tags": [
+          "plans"
+        ],
+        "x-boof-scope": "tasks:write"
       }
     },
     "/projects/{projectId}/plans/{planId}/export": {
@@ -16207,6 +16406,10 @@
       "description": "The directory exists and is not empty; send path.confirm: true to initialise it anyway.",
       "status": 409
     },
+    "draft_in_progress": {
+      "description": "A task list is already being drafted for this plan.",
+      "status": 409
+    },
     "epic_modified": {
       "description": "The epic changed since the ETag in If-Match.",
       "status": 409
@@ -16323,6 +16526,10 @@
       "description": "The plan is not active; activate it before syncing.",
       "status": 409
     },
+    "plan_not_draft": {
+      "description": "The plan is not a draft; only a draft plan can have its tasks drafted.",
+      "status": 409
+    },
     "plan_not_found": {
       "description": "The plan does not exist.",
       "status": 404
@@ -16370,6 +16577,10 @@
     "task_modified": {
       "description": "The task changed since the ETag in If-Match.",
       "status": 409
+    },
+    "tool_not_installed": {
+      "description": "That coding agent is not installed on this computer.",
+      "status": 400
     },
     "unauthenticated": {
       "description": "No credentials, or an invalid, expired or revoked API key.",
