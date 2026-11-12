@@ -16,6 +16,8 @@ import { makeAgentsPage } from "../lib/settings-agents.js";
 import { budgetsPage } from "../lib/settings-budgets.js";
 import type { AppData } from "../useAppData.js";
 import { AgentsPage } from "./AgentsPage.js";
+import { ProfilesPage } from "./ProfilesPage.js";
+import { profilesPage } from "../lib/profiles.js";
 import { SandboxSection } from "./SandboxSection.js";
 import { AutomationPage } from "./AutomationPage.js";
 import { BudgetsPage } from "./BudgetsPage.js";
@@ -63,6 +65,7 @@ function SettingsForms({
   const agentsModel = useMemo(() => makeAgentsPage({ isDesktop, unavailable }), [unavailable]);
   const proj = useSettingsPage(projectPage, settings, project, pid, onSaved);
   const agents = useSettingsPage(agentsModel, settings, project, pid, onSaved);
+  const profiles = useSettingsPage(profilesPage, settings, project, pid, onSaved);
   const budgets = useSettingsPage(budgetsPage, settings, project, pid, onSaved);
   const accounts = useSettingsPage(accountsPage, settings, project, pid, onSaved);
 
@@ -70,10 +73,11 @@ function SettingsForms({
     const s = new Set<SettingsPageId>();
     if (proj.dirty) s.add("project");
     if (agents.dirty) s.add("agents");
+    if (profiles.dirty) s.add("profiles");
     if (budgets.dirty) s.add("budgets");
     if (accounts.dirty) s.add("accounts");
     return s;
-  }, [proj.dirty, agents.dirty, budgets.dirty, accounts.dirty]);
+  }, [proj.dirty, agents.dirty, profiles.dirty, budgets.dirty, accounts.dirty]);
 
   // In-app navigation away from the settings (another screen, another project) asks first.
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
@@ -118,7 +122,7 @@ function SettingsForms({
         <h1 className="m-0 flex-1 text-[length:var(--text-page)] leading-tight font-semibold">
           Settings
         </h1>
-        {!(["budgets", "keys", "automation"] as SettingsPageId[]).includes(page) && (
+        {!(["profiles", "budgets", "keys", "automation"] as SettingsPageId[]).includes(page) && (
           <FocusToggle mode={focus.mode} onToggle={focus.toggle} />
         )}
       </div>
@@ -136,6 +140,16 @@ function SettingsForms({
             reloadProjects={reloadProjects}
             advancedOpen={focus.expanded || proj.dirty}
             updatesCheck={settings.updates?.check !== false}
+            profiles={settings.profiles ?? []}
+            onProfile={(profile) => {
+              void act(
+                async () => {
+                  await api.updateProject(pid, { profile });
+                  await data.refresh();
+                },
+                { failure: "Could not save the project's profile" },
+              );
+            }}
             onUpdatesCheck={(check) => {
               void act(
                 async () => {
@@ -175,6 +189,25 @@ function SettingsForms({
             savedAt={agents.savedAt}
             onSave={() => void agents.save()}
             onReload={agents.reload}
+          />
+        </>
+      )}
+      {page === "profiles" && (
+        <>
+          <ProfilesPage
+            form={profiles.form}
+            set={profiles.set}
+            settings={settings}
+            projects={projects}
+          />
+          <SettingsFooter
+            dirty={profiles.dirty}
+            elsewhere={profiles.elsewhere}
+            busy={profiles.busy}
+            problems={profiles.problems}
+            savedAt={profiles.savedAt}
+            onSave={() => void profiles.save()}
+            onReload={profiles.reload}
           />
         </>
       )}

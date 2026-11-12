@@ -5,6 +5,7 @@ import { formatRoute, type Route, type SettingsPageId } from "../lib/route.js";
 const PAGES: { page: SettingsPageId; label: string }[] = [
   { page: "project", label: "Project" },
   { page: "agents", label: "Agents" },
+  { page: "profiles", label: "Profiles" },
   { page: "budgets", label: "Budgets" },
   { page: "keys", label: "API keys" },
   { page: "automation", label: "Automation" },
