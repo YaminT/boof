@@ -38,6 +38,30 @@ sandboxSuite("sandbox acceptance: TCP ports and unix sockets", () => {
     }
   }, 60_000);
 
+  it("A3s makes 200 connects to the boof port on 127.0.0.1 and ::1 and none gets through", async () => {
+    const fx = await makeFixture();
+    const v4 = await listen("127.0.0.1");
+    const v6 = await listen("::1", v4.port);
+    fx.ctx.serverPort = v4.port;
+    let hits = 0;
+    const onConnection = () => {
+      hits += 1;
+    };
+    v4.server.on("connection", onConnection);
+    v6.server.on("connection", onConnection);
+    try {
+      const four = await runProbe(fx, ["stress4", String(v4.port)]);
+      const six = await runProbe(fx, ["stress6", String(v4.port)]);
+      expect(four.code, four.stderr).toBe(0);
+      expect(four.stdout).toBe("stress 200 0\n");
+      expect(six.stdout).toBe("stress 200 0\n");
+      expect(hits).toBe(0);
+    } finally {
+      await closeListen(v4);
+      await closeListen(v6);
+    }
+  }, 120_000);
+
   it("A4 denies binding the boof port after the listener closed", async () => {
     const fx = await makeFixture();
     const held = await listen("127.0.0.1");

@@ -340,6 +340,26 @@ static void op_connect(int family, int port, const char *label) {
   close(fd);
 }
 
+/* Many connects to one port, half of them non-blocking. Prints how many got through. */
+static void op_connect_many(int family, int port, int count) {
+  int leaked = 0;
+  for (int i = 0; i < count; i++) {
+    int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) continue;
+    if (i % 2) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+    struct sockaddr_storage ss;
+    socklen_t len = 0;
+    if (fill_loopback(family, port, &ss, &len) != 0) {
+      close(fd);
+      continue;
+    }
+    int rc = connect(fd, (struct sockaddr *)&ss, len);
+    if (rc == 0 || errno == EINPROGRESS) leaked++;
+    close(fd);
+  }
+  printf("stress %d %d\n", count, leaked);
+}
+
 static void op_bind(int family, int port, const char *label) {
   int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
@@ -714,6 +734,14 @@ int main(int argc, char **argv) {
     int port = port_arg(argv[2]);
     if (port < 0) usage();
     op_connect(AF_INET6, port, "connect");
+  } else if (strcmp(cmd, "stress4") == 0 && argc == 3) {
+    int port = port_arg(argv[2]);
+    if (port < 0) usage();
+    op_connect_many(AF_INET, port, 200);
+  } else if (strcmp(cmd, "stress6") == 0 && argc == 3) {
+    int port = port_arg(argv[2]);
+    if (port < 0) usage();
+    op_connect_many(AF_INET6, port, 200);
   } else if (strcmp(cmd, "bind4") == 0 && argc == 3) {
     int port = port_arg(argv[2]);
     if (port < 0) usage();
