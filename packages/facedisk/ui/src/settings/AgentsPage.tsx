@@ -4,6 +4,8 @@ import { api } from "../api.js";
 import type { AgentAuthEntry, HealthResult, ToolModelDetails } from "../api-types.js";
 import { isDesktop } from "../desktop.js";
 import { claudeAgentRoles } from "../lib/claude-agent.js";
+import { isNotInstalled, notInstalledWarnings, toolChoices } from "../lib/harnesses.js";
+import { useHarnesses } from "../useHarnesses.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
@@ -24,6 +26,7 @@ import { AddModelDialog } from "./AddModelDialog.js";
 import { OverrideHeader, OverrideRow } from "./OverrideRow.js";
 import { ClaudeAgentNote } from "./ClaudeAgentNote.js";
 import { RoleSelects } from "./RoleSelects.js";
+import { HarnessPanel } from "./HarnessPanel.js";
 
 export function inheritedRoleLabel(tool: string, model: string): string {
   return `${tool}, ${roleModelLabel(tool, model)}`;
@@ -86,6 +89,16 @@ export function AgentsPage({
   const [failed, setFailed] = useState(false);
   const [addFor, setAddFor] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const harnesses = useHarnesses();
+  const [checking, setChecking] = useState(false);
+  const checkHealth = () => {
+    setChecking(true);
+    void api
+      .health()
+      .then(setHealth)
+      .catch(() => setFailed(true))
+      .finally(() => setChecking(false));
+  };
   const [agentAuth, setAgentAuth] = useState<AgentAuthEntry[] | null>(null);
 
   useEffect(() => {
@@ -98,10 +111,10 @@ export function AgentsPage({
         .then((d) => !cancelled && setDetails(d))
         .catch(() => {});
     void loadDetails();
-    void Promise.all([api.health(), api.models()])
-      .then(([h, m]) => {
+    void api
+      .models()
+      .then((m) => {
         if (cancelled) return;
-        setHealth(h);
         setFetched(m);
         void loadDetails();
       })
@@ -142,7 +155,13 @@ export function AgentsPage({
         out[tool] = [...new Set([...(out[tool] ?? []), ...list])];
     return out;
   }, [g.models, fetched, details]);
-  const tools = Object.keys(models);
+  const allTools = Object.keys(models);
+  const tools = toolChoices(allTools, harnesses.status, { isDesktop });
+  const choicesFor = (current?: string) =>
+    toolChoices(allTools, harnesses.status, { isDesktop }, current);
+  const toolText = (t: string) =>
+    isNotInstalled(t, harnesses.status) ? `${t} (not installed)` : toolOptionLabel(t, env);
+  const installWarnings = notInstalledWarnings(g.roles, o.roles, harnesses.status);
 
   const setRole = (role: RoleName, next: RoleAssignment | undefined) =>
     setG({
@@ -162,6 +181,13 @@ export function AgentsPage({
 
   return (
     <div className="flex max-w-[1000px] flex-col gap-8">
+      <HarnessPanel
+        status={harnesses.status}
+        loading={harnesses.loading}
+        failed={harnesses.failed}
+        env={{ isDesktop }}
+        onRefresh={harnesses.refresh}
+      />
       <section className="flex flex-col gap-2">
         <h2 className={h2}>Runner</h2>
         <label className="flex flex-col gap-1.5 text-[length:var(--text-body)] font-medium">
@@ -194,29 +220,39 @@ export function AgentsPage({
               <RoleSelects
                 role={role}
                 value={g.roles[role]}
-                tools={tools}
+                tools={choicesFor(g.roles[role]?.tool)}
                 models={models}
                 allowNone={role === "observer"}
                 onChange={(n) => setRole(role, n)}
                 onAddModel={setAddFor}
-                toolLabel={(t) => toolOptionLabel(t, env)}
+                toolLabel={toolText}
               />
             }
             override={
               <RoleSelects
                 role={`${role} (this project)`}
                 value={o.roles[role]}
-                tools={tools}
+                tools={choicesFor(o.roles[role]?.tool)}
                 models={models}
                 allowNone={false}
                 onChange={(n) => setOwnRole(role, n)}
                 onAddModel={setAddFor}
-                toolLabel={(t) => toolOptionLabel(t, env)}
+                toolLabel={toolText}
               />
             }
           />
         ))}
-        {agentNote && (
+        {installWarnings.map((w) => (
+          <p
+            key={w}
+            role="alert"
+            data-testid="not-installed-warning"
+            className="mt-3 mb-0 max-w-[720px] text-[length:var(--text-row)] text-attention"
+          >
+            {w}
+          </p>
+        ))}
+        {agentNote && agentNote.kind === "auth" && (
           <ClaudeAgentNote
             kind={agentNote.kind}
             text={agentNote.text}
@@ -361,6 +397,12 @@ export function AgentsPage({
       </AdvancedSection>
 
       <AdvancedSection title="Tools and models" className="flex flex-col gap-3" open={advancedOpen}>
+        <div className="flex flex-wrap items-center gap-3 text-[length:var(--text-row)] text-ink-muted">
+          <Button variant="outline" size="xs" disabled={checking} onClick={checkHealth}>
+            {checking ? "Checking…" : "Check health"}
+          </Button>
+          Sends a short prompt to each installed tool, so it can use a little of your quota.
+        </div>
         {loading && (
           <p className="m-0 text-[length:var(--text-row)] text-ink-muted">Checking the tools…</p>
         )}
