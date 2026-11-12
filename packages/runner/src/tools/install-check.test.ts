@@ -29,7 +29,8 @@ async function fakeBin(where: string, name: string, body?: string): Promise<stri
   return path;
 }
 
-describe("checkInstalled", () => {
+// The fake programs are POSIX shell scripts and mode bits; Windows is covered by the injected-platform test.
+describe.skipIf(process.platform === "win32")("checkInstalled", () => {
   it("finds a program on PATH, asks only for --version and never sends a prompt", async () => {
     const bin = join(dir, "bin");
     await fakeBin(bin, "fakeagent");
@@ -91,14 +92,17 @@ describe("checkInstalled", () => {
 });
 
 describe("findExecutable", () => {
-  it("skips a non-executable file and a directory with the name", async () => {
-    const bin = join(dir, "bin");
-    await mkdir(join(bin, "dirname"), { recursive: true });
-    await writeFile(join(bin, "plain"), "x");
-    await chmod(join(bin, "plain"), 0o644);
-    expect(await findExecutable("plain", { env: { PATH: bin }, home: dir })).toBeUndefined();
-    expect(await findExecutable("dirname", { env: { PATH: bin }, home: dir })).toBeUndefined();
-  });
+  it.skipIf(process.platform === "win32")(
+    "skips a non-executable file and a directory with the name",
+    async () => {
+      const bin = join(dir, "bin");
+      await mkdir(join(bin, "dirname"), { recursive: true });
+      await writeFile(join(bin, "plain"), "x");
+      await chmod(join(bin, "plain"), 0o644);
+      expect(await findExecutable("plain", { env: { PATH: bin }, home: dir })).toBeUndefined();
+      expect(await findExecutable("dirname", { env: { PATH: bin }, home: dir })).toBeUndefined();
+    },
+  );
 
   it("tries PATHEXT on Windows (injected platform) and uses its known locations", async () => {
     const appdata = join(dir, "AppData");
