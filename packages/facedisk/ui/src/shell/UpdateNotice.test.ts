@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkForUpdate, type ToolCatalog, type UpdateFetch } from "@boof/heart";
+import { AuthStore, checkForUpdate, type ToolCatalog, type UpdateFetch } from "@boof/heart";
 import { TaskService, createApp } from "@boof/heart-server";
 import { TEST_LOOPBACK_IS_UI } from "../../../../heart-server/src/server/test-ui-session.js";
 import { UpdateNoticeView } from "./UpdateNotice.js";
@@ -83,6 +83,42 @@ describe("UpdateNoticeView", () => {
         body: JSON.stringify({ version: "../nope" }),
       });
       expect(bad.status).toBe(400);
+      for (const raw of ["null", "42", '"x"']) {
+        const res = await req("/api/v1/updates/dismiss", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: raw,
+        });
+        expect(res.status).toBe(400);
+      }
+      // Clients without settings:write, or limited to some projects, cannot hide it for everyone.
+      const authStore = new AuthStore(root);
+      const guarded = createApp({
+        browserSessions: TEST_LOOPBACK_IS_UI,
+        service: new TaskService(root, catalog),
+        authStore,
+        peerAddress: () => "198.51.100.7",
+        version: "0.4.0",
+      });
+      const dismissAs = async (key: string) =>
+        guarded.request("http://localhost/api/v1/updates/dismiss", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+          body: JSON.stringify({ version: "0.5.0" }),
+        });
+      const reader = await authStore.create({
+        name: "reader",
+        scopes: ["tasks:read"],
+        projects: "*",
+      });
+      expect((await dismissAs(reader.key)).status).toBe(403);
+      const scoped = await authStore.create({
+        name: "scoped",
+        scopes: ["settings:write"],
+        projects: ["one"],
+      });
+      expect((await dismissAs(scoped.key)).status).toBe(403);
+      expect(await (await req("/api/v1/updates")).json()).toEqual(body);
       expect(await (await req("/api/v1/updates")).json()).toEqual(body);
 
       const hidden = await req("/api/v1/updates/dismiss", {

@@ -343,14 +343,24 @@ export function createApp(deps: AppDeps): Hono {
     const cache = await readUpdateCache(service.root);
     return c.json({ update: uiNotice(releaseVersion(), cache) });
   });
-  api.post("/v1/updates/dismiss", async (c) => {
+  // The dismissal hides the notice for every client, so it needs the settings:write scope and a
+  // client that is not limited to some projects (the owner's session, or an operator key).
+  api.post("/v1/updates/dismiss", requireScope("settings:write"), async (c) => {
+    if (who(c).projects !== "*") {
+      throw new OpError(
+        403,
+        "Dismissing the update notice needs a client that may access every project",
+        "forbidden_project",
+      );
+    }
     let body: unknown;
     try {
       body = await c.req.json();
     } catch {
       throw new OpError(400, "Request body must be valid JSON", "invalid_input");
     }
-    const version = (body as { version?: unknown }).version;
+    const version =
+      body && typeof body === "object" ? (body as { version?: unknown }).version : undefined;
     if (typeof version !== "string" || !/^[0-9A-Za-z.+-]{1,64}$/.test(version))
       throw new OpError(400, "version is required", "invalid_input");
     await dismissUpdate(service.root, version);
