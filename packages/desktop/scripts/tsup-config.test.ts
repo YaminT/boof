@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import config from "../tsup.config.js";
+import config from "../tsup.config.ts";
 
 type OnLoad = (args: { path: string }) => { contents: string };
 
