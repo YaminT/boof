@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/ui/dropdown-menu";
 import { formatRoute } from "../lib/route.js";
+import { planCountsLabel, tasksByPlanHref, type PlanTaskCounts } from "../lib/plan-grouping.js";
 import { planProgress, planStatusTone } from "../lib/plan-view.js";
 import { TonePill } from "../shell/StatusPill.js";
 import { ProgressBar } from "./ProgressBar.js";
@@ -24,6 +25,7 @@ export function PlanHeader({
   pid,
   plan,
   busy,
+  taskCounts,
   onActivate,
   onSync,
   onAddGoal,
@@ -36,6 +38,8 @@ export function PlanHeader({
   pid: string;
   plan: Plan;
   busy: boolean;
+  /** The plan's tasks by state. */
+  taskCounts: PlanTaskCounts;
   onActivate: () => void;
   onSync: () => void;
   onAddGoal: () => void;
@@ -59,13 +63,18 @@ export function PlanHeader({
         <span className="ml-auto flex items-center gap-2">
           {focusToggle}
           {plan.status === "draft" && (
-            <Button onClick={onActivate} disabled={busy}>
-              Activate plan
-            </Button>
+            <span className="flex flex-col items-end gap-0.5">
+              <Button onClick={onActivate} disabled={busy}>
+                Create tasks ({plan.goals.length})
+              </Button>
+              <span className="text-[length:var(--text-meta)] text-ink-muted">
+                Activates the plan: one task per goal
+              </span>
+            </span>
           )}
           {plan.status === "active" && (
             <Button onClick={onSync} disabled={busy}>
-              Sync
+              Update tasks
             </Button>
           )}
           <DropdownMenu>
@@ -113,6 +122,13 @@ export function PlanHeader({
           {p.total} {p.total === 1 ? "goal" : "goals"}, {p.done} done
         </span>
         {p.percent !== null && <ProgressBar percent={p.percent} label="Goals done" />}
+        <span aria-hidden>·</span>
+        <span>{planCountsLabel(taskCounts)}</span>
+        {taskCounts.total > 0 && (
+          <a href={tasksByPlanHref(pid)} className="text-ink underline-offset-2 hover:underline">
+            View in Tasks
+          </a>
+        )}
       </div>
       {plan.description && (
         <p className="m-0 max-w-[80ch] text-[length:var(--text-body)] text-ink-muted">

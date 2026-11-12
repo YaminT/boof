@@ -27,13 +27,15 @@ import {
   groupTasksByEpic,
   isCollapsed,
   readCollapsed,
-  readGrouping,
+  readGroupBy,
   reorderWithinGroup,
   writeCollapsed,
-  writeGrouping,
+  writeGroupBy,
   type EpicSection,
   type PrefStore,
 } from "../lib/epic-grouping.js";
+import { groupFromSearch, groupTasksByPlan, type GroupBy } from "../lib/plan-grouping.js";
+import { usePlanDetails } from "../lib/usePlanDetails.js";
 import { useFocusMode } from "../lib/useFocusMode.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
 import { withEpicQuery, withQuery } from "../lib/task-links.js";
@@ -92,7 +94,9 @@ export function TasksPage({
   useEffect(() => setFilter((f) => (f.epic === epic ? f : { ...f, epic })), [epic]);
   const focus = useFocusMode("tasks");
   const store = useMemo(safeStorage, []);
-  const [grouping, setGrouping] = useState(() => readGrouping(store, pid));
+  const [groupBy, setGroupBy] = useState<GroupBy>(
+    () => groupFromSearch(window.location.search) ?? readGroupBy(store, pid),
+  );
   const [collapsed, setCollapsed] = useState(() => readCollapsed(store, pid));
   const [managing, setManaging] = useState(manageEpics);
   useEffect(() => {
@@ -111,7 +115,7 @@ export function TasksPage({
   };
   const held = useHeldScopes();
   useEffect(() => {
-    setGrouping(readGrouping(store, pid));
+    setGroupBy(groupFromSearch(window.location.search) ?? readGroupBy(store, pid));
     setCollapsed(readCollapsed(store, pid));
   }, [store, pid]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -146,6 +150,11 @@ export function TasksPage({
   }, [shownPending, localOrder]);
 
   const epicState = useEpics(pid, tasks);
+  const planIds = useMemo(
+    () => tasks.flatMap((t) => (t.frontmatter.planRef ? [t.frontmatter.planRef.planId] : [])),
+    [tasks],
+  );
+  const planDetails = usePlanDetails(pid, planIds, data.planTick);
   const epics = epicState.byId;
 
   const rows = useMemo(() => {
@@ -194,13 +203,14 @@ export function TasksPage({
       return [...grouped, ...entries.filter((e) => e.kind === "plan")];
     };
     const asGroups = <E extends Task>(entries: E[], nest: boolean): EpicGroup<E>[] => {
-      const split = grouping
-        ? groupTasksByEpic(
-            entries.map((e) => e.task),
-            epicState.list,
-          )
-        : [];
-      if (!split.some((g) => g.epic !== null))
+      const own = entries.map((e) => e.task);
+      const split =
+        groupBy === "epic"
+          ? groupTasksByEpic(own, epicState.list)
+          : groupBy === "plan"
+            ? groupTasksByPlan(own, plans, tasks, planDetails)
+            : [];
+      if (!split.some((g) => g.key !== "none"))
         return [
           {
             key: "all",
@@ -252,9 +262,10 @@ export function TasksPage({
     shownPending,
     queuedOrder,
     tasks,
-    grouping,
+    groupBy,
     collapsed,
     epicState.list,
+    planDetails,
   ]);
 
   const filtering =
@@ -269,9 +280,9 @@ export function TasksPage({
     history.replaceState(null, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
-  const toggleGrouping = (on: boolean) => {
-    setGrouping(on);
-    writeGrouping(store, pid, on);
+  const changeGroupBy = (by: GroupBy) => {
+    setGroupBy(by);
+    writeGroupBy(store, pid, by);
   };
   const toggleFold = (section: EpicSection) => {
     const next = { ...collapsed, [section.key]: !isCollapsed(collapsed, section) };
@@ -378,6 +389,8 @@ export function TasksPage({
     onSelect: setSelectedKey,
     onStop: setStopId,
     epics,
+    plans: useMemo(() => new Map(plans.map((p) => [p.id, p])), [plans]),
+    planDetails,
   };
   const list = (entries: RowEntry[]) => (
     <ul className="m-0 list-none p-0">
@@ -398,8 +411,9 @@ export function TasksPage({
         onNew={newTask}
         epics={epicState.list}
         onEpic={setEpic}
-        grouping={grouping}
-        onGrouping={toggleGrouping}
+        groupBy={groupBy}
+        onGroupBy={changeGroupBy}
+        hasPlans={plans.length > 0}
         onManageEpics={() => setManaging(true)}
         focusMode={focus.mode}
         onFocusToggle={focus.toggle}

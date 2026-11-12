@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode, Ref } from "react";
-import type { EpicView, PlanSummary, TaskView } from "../api.js";
+import type { EpicView, Plan, PlanSummary, TaskView } from "../api.js";
+import { planChip } from "../lib/plan-grouping.js";
 import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,9 @@ export interface RowContext {
   onStop: (id: string) => void;
   /** The project's epics by id, to name the epic chips. */
   epics: ReadonlyMap<string, EpicView>;
+  /** The project's plans by id and the loaded ones with their goals, to name the plan chips. */
+  plans: ReadonlyMap<string, PlanSummary>;
+  planDetails: ReadonlyMap<string, Plan>;
 }
 
 function RunningMarker({ pid, task }: { pid: string; task: TaskView }) {
@@ -102,6 +106,7 @@ function HierarchyChips({
   hier: HierarchyRow | undefined;
   ctx: RowContext;
 }) {
+  const plan = planChip(ctx.pid, task, ctx.plans, ctx.planDetails);
   const epic = task.epicId ? (ctx.epics.get(task.epicId)?.title ?? task.epicId) : null;
   return (
     <>
@@ -126,6 +131,20 @@ function HierarchyChips({
         >
           ↳ {hier.parentRef.title}
         </button>
+      )}
+      {plan && (
+        <a
+          href={plan.href}
+          title={plan.label}
+          onClick={(e) => e.stopPropagation()}
+          className={cn(
+            "focus-ring",
+            chip,
+            "hidden max-w-56 truncate text-ink-muted no-underline hover:underline min-[720px]:block",
+          )}
+        >
+          {plan.label}
+        </a>
       )}
       {epic && !task.epicMissing && (
         <span

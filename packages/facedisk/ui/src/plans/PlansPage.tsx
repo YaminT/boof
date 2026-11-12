@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { api, ApiError, type PlanSummary } from "../api.js";
+import { api, ApiError, type PlanSummary, type TaskView } from "../api.js";
 import { Button } from "@/ui/button";
 import { FocusToggle } from "@/ui/focus-toggle";
 import { useFocusMode } from "../lib/useFocusMode.js";
 import { act } from "../lib/act.js";
+import { planCountsLabel, planTaskCounts } from "../lib/plan-grouping.js";
 import { planStatusTone } from "../lib/plan-view.js";
 import { formatRoute, type Route } from "../lib/route.js";
 import { relativeTime } from "../lib/time.js";
@@ -12,7 +13,7 @@ import type { AppData } from "../useAppData.js";
 import { ImportResultDialog, NewPlanDialog } from "./PlanDialogs.js";
 import { ProgressBar } from "./ProgressBar.js";
 
-function PlanRow({ pid, plan }: { pid: string; plan: PlanSummary }) {
+function PlanRow({ pid, plan, tasks }: { pid: string; plan: PlanSummary; tasks: TaskView[] }) {
   const percent = plan.goalCount ? Math.round((100 * plan.doneCount) / plan.goalCount) : 0;
   return (
     <li className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-1 py-1.5 text-[length:var(--text-row)] last:border-b-0">
@@ -29,6 +30,7 @@ function PlanRow({ pid, plan }: { pid: string; plan: PlanSummary }) {
         </span>
         <ProgressBar percent={percent} label={`${plan.title}: goals done`} />
       </span>
+      <span className="text-ink-muted">{planCountsLabel(planTaskCounts(tasks, plan.id))}</span>
       {plan.autoSync && <span className="text-ink-muted">Auto-sync</span>}
       <span className="ml-auto text-[length:var(--text-meta)] text-ink-muted">
         {relativeTime(plan.updated)}
@@ -98,7 +100,7 @@ export function PlansPage({
       ) : (
         <ul className="m-0 list-none p-0">
           {active.map((p) => (
-            <PlanRow key={p.id} pid={pid} plan={p} />
+            <PlanRow key={p.id} pid={pid} plan={p} tasks={data.tasks} />
           ))}
         </ul>
       )}
@@ -120,7 +122,7 @@ export function PlansPage({
           {(showArchived || focus.expanded) && (
             <ul className="m-0 list-none p-0">
               {archived.map((p) => (
-                <PlanRow key={p.id} pid={pid} plan={p} />
+                <PlanRow key={p.id} pid={pid} plan={p} tasks={data.tasks} />
               ))}
             </ul>
           )}

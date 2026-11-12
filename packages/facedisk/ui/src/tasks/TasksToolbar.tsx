@@ -5,6 +5,7 @@ import { FocusToggle } from "@/ui/focus-toggle";
 import { Kbd } from "@/ui/kbd";
 import type { FocusMode } from "../lib/focus-mode.js";
 import type { EpicView } from "../api.js";
+import { GROUP_BY_LABELS, type GroupBy } from "../lib/plan-grouping.js";
 import type { TaskFilter } from "../lib/task-list.js";
 import { paletteShortcutLabel } from "../shell/CommandPalette.js";
 
@@ -24,8 +25,9 @@ export function TasksToolbar({
   onNew,
   epics,
   onEpic,
-  grouping,
-  onGrouping,
+  groupBy,
+  onGroupBy,
+  hasPlans,
   onManageEpics,
   focusMode,
   onFocusToggle,
@@ -38,8 +40,10 @@ export function TasksToolbar({
   epics: EpicView[];
   /** The epic filter changed (null: every epic); the page keeps the URL in step. */
   onEpic: (epic: string | null) => void;
-  grouping: boolean;
-  onGrouping: (on: boolean) => void;
+  groupBy: GroupBy;
+  onGroupBy: (by: GroupBy) => void;
+  /** The project has plans, so grouping by plan makes sense. */
+  hasPlans: boolean;
   onManageEpics: () => void;
   focusMode: FocusMode;
   onFocusToggle: () => void;
@@ -105,14 +109,21 @@ export function TasksToolbar({
           ))}
         </NativeSelect>
       )}
-      {epics.length > 0 && (
+      {(epics.length > 0 || hasPlans || groupBy !== "none") && (
         <label className="flex h-8 items-center gap-1.5 text-[length:var(--text-row)] whitespace-nowrap text-ink">
-          <input
-            type="checkbox"
-            checked={grouping}
-            onChange={(e) => onGrouping(e.target.checked)}
-          />
-          Group by epic
+          Group by
+          <NativeSelect
+            aria-label="Group by"
+            className="w-auto"
+            value={groupBy}
+            onChange={(e) => onGroupBy(e.target.value as GroupBy)}
+          >
+            {(Object.keys(GROUP_BY_LABELS) as GroupBy[]).map((g) => (
+              <option key={g} value={g}>
+                {GROUP_BY_LABELS[g]}
+              </option>
+            ))}
+          </NativeSelect>
         </label>
       )}
       <Button variant="ghost" size="sm" onClick={onManageEpics}>

@@ -1,4 +1,5 @@
 import type { EpicView, TaskView } from "../api.js";
+import type { GroupBy } from "./plan-grouping.js";
 
 /** One epic's tasks within a state section; `epic` is null for the tasks without one. */
 export interface EpicSection {
@@ -9,6 +10,8 @@ export interface EpicSection {
   /** The epic's own progress over the whole project, not just the tasks shown here. */
   progress: { done: number; total: number } | null;
   archived: boolean;
+  /** The header text when it is not an epic's title (plan groups). */
+  label?: string;
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -62,6 +65,25 @@ export interface PrefStore {
 }
 
 const groupingKey = (pid: string) => `boof.groupByEpic.${pid}`;
+
+/** What the Tasks list is grouped by in this project; none until the user picks one. */
+export function readGroupBy(store: PrefStore | null, pid: string): GroupBy {
+  try {
+    const v = store?.getItem(groupingKey(pid));
+    return v === "1" ? "epic" : v === "plan" ? "plan" : "none";
+  } catch {
+    return "none";
+  }
+}
+
+/** Stored under the key the epic checkbox used: "1" still means epic, "0" none. */
+export function writeGroupBy(store: PrefStore | null, pid: string, by: GroupBy): void {
+  try {
+    store?.setItem(groupingKey(pid), by === "epic" ? "1" : by === "plan" ? "plan" : "0");
+  } catch {
+    // See writeGrouping.
+  }
+}
 const collapsedKey = (pid: string) => `boof.epicCollapsed.${pid}`;
 
 /** Whether the Tasks list is grouped by epic in this project; off until the user turns it on. */
