@@ -31,6 +31,7 @@ import { useRoute } from "./lib/useRoute.js";
 import { epicFromSearch, manageEpicsFromSearch } from "./lib/task-links.js";
 import { groupTasks } from "./lib/task-groups.js";
 import { markRunning } from "./lib/first-seen.js";
+import { isDismissed, shouldAutoOpen } from "./lib/wizard.js";
 
 const TaskDetailPage = lazy(() =>
   import("./task/TaskDetailPage.js").then((m) => ({ default: m.TaskDetailPage })),
@@ -44,6 +45,9 @@ const OverviewPage = lazy(() =>
 // Screens loaded on first use, so the first paint does not carry them.
 const PlansPage = lazy(() =>
   import("./plans/PlansPage.js").then((m) => ({ default: m.PlansPage })),
+);
+const PlanWizard = lazy(() =>
+  import("./plans/PlanWizard.js").then((m) => ({ default: m.PlanWizard })),
 );
 const PlanPage = lazy(() => import("./plans/PlanPage.js").then((m) => ({ default: m.PlanPage })));
 const SettingsScreen = lazy(() =>
@@ -98,6 +102,25 @@ export function App() {
     if (fix) navigate(fix, { replace: true });
   }, [route, projectIds, currentId, navigate]);
 
+  // A project with no tasks and no plans opens the plan wizard, unless it was skipped for it.
+  const planCount = data.plans.length;
+  const taskCount = data.tasks.length;
+  const plansLoaded = !data.plansError && data.plansLoaded;
+  const emptyProject =
+    !!route &&
+    (route.name === "overview" || route.name === "tasks" || route.name === "plans") &&
+    !(route.name === "plans" && route.planId) &&
+    route.pid === currentId &&
+    shouldAutoOpen({
+      loaded: data.tasksLoaded && plansLoaded,
+      taskCount,
+      planCount,
+      dismissed: isDismissed(window.localStorage, route.pid),
+    });
+  useEffect(() => {
+    if (emptyProject && route) navigate({ name: "wizard", pid: route.pid }, { replace: true });
+  }, [emptyProject, route, navigate]);
+
   /** Switch project: the equivalent screen there, pushed so Back returns to the old project. */
   const openProject = (id: string) => {
     select(id);
@@ -108,7 +131,7 @@ export function App() {
   const addProject = async (p: Project) => {
     await reload().catch(() => {});
     select(p.id);
-    navigate({ name: "overview", pid: p.id });
+    navigate({ name: "wizard", pid: p.id });
     void refresh().catch(() => {});
   };
 
@@ -177,6 +200,9 @@ export function App() {
             previous={previous.current}
             project={selected}
           />
+        )}
+        {routeReady && route.name === "wizard" && (
+          <PlanWizard key={pid} pid={pid} data={data} navigate={navigate} />
         )}
         {routeReady && route.name === "plans" && (
           <>

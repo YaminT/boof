@@ -511,6 +511,8 @@ export const api = {
       bumpTo: "review" | "done";
     }>,
   ) => http<Plan>(PL(pid, plan.id), json("PUT", patch, plan.version)),
+  replacePlanGoals: (pid: string, plan: { id: string; version: number }, goals: GoalInput[]) =>
+    http<Plan>(`${PL(pid, plan.id)}/goals`, json("PUT", { goals }, plan.version)),
   putGoal: (pid: string, plan: { id: string; version: number }, goal: GoalInput) =>
     http<Plan>(
       `${PL(pid, plan.id)}/goals/${encodeURIComponent(goal.id)}`,

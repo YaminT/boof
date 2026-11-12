@@ -353,11 +353,11 @@ describe("hint, /plan and intent suggestions", () => {
     expect(r.kind === "run" && r.action.id).toBe("new-plan");
   });
 
-  it("/plan opens Plans when nothing provides the wizard", () => {
+  it("/plan opens the plan wizard when nothing else provides it", () => {
     const { actions, effects } = setup();
     const r = resolveConsoleCommand("/plan", actions);
     if (r.kind === "run") void r.action.run(r.args);
-    expect(effects.navigate).toHaveBeenCalledWith({ name: "plans", pid: "alpha" });
+    expect(effects.navigate).toHaveBeenCalledWith({ name: "wizard", pid: "alpha" });
   });
 
   it("labels the activation action 'Create tasks from plan' and keeps /activate", () => {

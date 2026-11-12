@@ -80,7 +80,10 @@ export function PlansPage({
   return (
     <div className="flex max-w-[1320px] flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setCreating(true)}>New plan</Button>
+        <Button onClick={() => navigate({ name: "wizard", pid })}>New plan</Button>
+        <Button variant="outline" onClick={() => setCreating(true)}>
+          Blank plan
+        </Button>
         <Button variant="outline" onClick={() => void runImport(false)}>
           Import from repo
         </Button>

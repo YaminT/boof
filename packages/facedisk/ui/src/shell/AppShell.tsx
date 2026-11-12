@@ -41,6 +41,8 @@ export function conciergeContextOf(route: Route | null): ConciergeContext | null
   switch (route.name) {
     case "task":
       return { screen: "task", taskId: route.taskId };
+    case "wizard":
+      return { screen: "plans" };
     case "plans":
       return {
         screen: "plans",

@@ -6,6 +6,7 @@ export type Route =
   | { name: "tasks"; pid: string }
   | { name: "task"; pid: string; taskId: string; view: TaskView }
   | { name: "plans"; pid: string; planId?: string; goalId?: string }
+  | { name: "wizard"; pid: string }
   | { name: "settings"; pid: string; page: SettingsPageId }
   | { name: "inbox" };
 
@@ -49,6 +50,7 @@ export function parseRoute(path: string): Route | null {
         view: b === "changes" || b === "questions" ? b : "edit",
       };
     case "plans": {
+      if (a === "new" && !b) return { name: "wizard", pid };
       const route: Route = { name: "plans", pid };
       if (a) route.planId = a;
       if (a && b) route.goalId = b;
@@ -85,6 +87,8 @@ export function formatRoute(route: Route): string {
       }
       return p;
     }
+    case "wizard":
+      return `${base}/plans/new`;
     case "settings":
       return route.page === "project" ? `${base}/settings` : `${base}/settings/${route.page}`;
   }
@@ -101,6 +105,7 @@ export function routeForProject(route: Route | null, pid: string): Route {
     case "task":
       return { name: "tasks", pid };
     case "plans":
+    case "wizard":
       return { name: "plans", pid };
     case "settings":
       return { name: "settings", pid, page: route.page };
@@ -146,6 +151,8 @@ export function routeKey(route: Route | null): string {
       return `task:${route.pid}:${route.taskId}:${route.view}`;
     case "plans":
       return `plans:${route.pid}:${route.planId ?? ""}:${route.goalId ?? ""}`;
+    case "wizard":
+      return `wizard:${route.pid}`;
     case "settings":
       return `settings:${route.pid}:${route.page}`;
   }
