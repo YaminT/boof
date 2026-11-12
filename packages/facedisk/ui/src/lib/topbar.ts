@@ -4,6 +4,13 @@ import type { Scope } from "@boof/heart/schema";
 export interface RunnerOverview {
   enabled: boolean;
   budgetExceeded: unknown[];
+  /** The account pool; absent without one. */
+  pool?: {
+    status?: string;
+    routable?: number | null;
+    usageExhausted?: number | null;
+    nextAvailableAt?: string | null;
+  } | null;
   projects: { id: string; paused: boolean; running: string[]; counts: Record<string, number> }[];
 }
 
@@ -16,7 +23,8 @@ export interface RunningItem {
   plan?: string;
 }
 
-export type TopbarKind = "running" | "draining" | "idle" | "paused" | "blocked" | "unknown";
+export type TopbarKind =
+  "running" | "draining" | "idle" | "waiting" | "paused" | "blocked" | "unknown";
 
 export interface TopbarState {
   kind: TopbarKind;
@@ -40,6 +48,36 @@ export interface TopbarInput {
   step?: string | null;
   /** True when no harness is installed (wired in by a later task). */
   noHarness?: boolean;
+  /** When the spent budget or the exhausted pool frees up again (ISO), if known. */
+  resetAt?: string | null;
+  /** Time zone for "resumes at HH:MM"; the browser's when absent. */
+  timeZone?: string;
+}
+
+/** "14:05" in the given (or the local) time zone; null for a missing or bad date. */
+export function formatResumeTime(iso: string | null | undefined, timeZone?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
+/** True when the daily budget is spent or every pool account hit its usage limit. */
+export function waitingForReset(o: RunnerOverview): boolean {
+  const pool = o.pool;
+  return (
+    o.budgetExceeded.length > 0 || (!!pool && (pool.usageExhausted ?? 0) > 0 && pool.routable === 0)
+  );
+}
+
+/** The time the overview itself knows about (the pool's); the budget's comes from the budget API. */
+export function poolResetAt(o: RunnerOverview): string | null {
+  return o.pool?.nextAvailableAt ?? null;
 }
 
 const has = (held: ReadonlySet<Scope> | "all", scope: Scope) =>
@@ -98,6 +136,16 @@ export function topbarState(input: TopbarInput): TopbarState {
       running,
     };
   }
+  if (running.length === 0 && !input.noHarness && waitingForReset(overview)) {
+    const at = formatResumeTime(input.resetAt ?? poolResetAt(overview), input.timeZone);
+    return {
+      kind: "waiting",
+      text: `Waiting for usage-limit reset${at ? `, resumes at ${at}` : ""}`,
+      toggle: toggle("Pause"),
+      stop: false,
+      running,
+    };
+  }
   const reason = blockedReason(overview, input.noHarness === true);
   if (reason && running.length === 0) {
     return {
@@ -128,7 +176,6 @@ export function topbarState(input: TopbarInput): TopbarState {
 
 function blockedReason(o: RunnerOverview, noHarness: boolean): string | null {
   if (noHarness) return "no harness installed";
-  if (o.budgetExceeded.length > 0) return "budget spent";
   if (o.projects.length > 0 && o.projects.every((p) => p.paused)) return "all projects paused";
   return null;
 }
@@ -184,4 +231,41 @@ export function contrast(a: string, b: string): number {
   };
   const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
+}
+
+export interface NextStepInput {
+  kind: TopbarKind;
+  queued: number;
+  tasks: { status: string }[];
+  plans: { title: string; status?: string; goalCount: number; doneCount: number }[];
+}
+
+export type NextStep = { to: "tasks" | "wizard" | "plans"; text: string; link: string } | null;
+
+/**
+ * What to do when the runner has nothing to run: queue the drafts, plan the next piece after a
+ * finished plan, or plan from scratch. Null while work runs, waits for a reset or is queued.
+ */
+export function nextStep(input: NextStepInput): NextStep {
+  if (input.kind !== "idle" && input.kind !== "paused") return null;
+  if (input.queued > 0) return null;
+  const drafts = input.tasks.filter((t) => t.status === "draft").length;
+  if (drafts > 0)
+    return {
+      to: "tasks",
+      text: `${drafts} draft ${drafts === 1 ? "task" : "tasks"} not queued yet`,
+      link: "Review and queue",
+    };
+  const finished = input.plans.find(
+    (p) => p.status !== "archived" && p.goalCount > 0 && p.doneCount >= p.goalCount,
+  );
+  if (finished)
+    return {
+      to: "wizard",
+      text: `Plan "${finished.title}" is finished`,
+      link: "Plan the next step",
+    };
+  if (!input.tasks.some((t) => ["pending", "running", "action"].includes(t.status)))
+    return { to: "wizard", text: "Nothing queued", link: "Plan what's next" };
+  return null;
 }

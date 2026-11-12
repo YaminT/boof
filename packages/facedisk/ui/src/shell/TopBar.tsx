@@ -8,10 +8,13 @@ import { act, errorMessage } from "../lib/act.js";
 import { formatRoute } from "../lib/route.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
 import { useRunnerOverview } from "../lib/useRunnerOverview.js";
+import { useHarnesses } from "../useHarnesses.js";
 import { useRunningStep } from "../lib/useRunningStep.js";
 import {
   itemLabel,
+  nextStep,
   stopAllRunning,
+  waitingForReset,
   stopSummary,
   topbarState,
   type RunningItem,
@@ -26,6 +29,7 @@ const KIND_STYLE = {
   running: "border-transparent bg-done text-white dark:text-page",
   draining: "border-attention/40 bg-attention/15 text-ink",
   idle: "border-line bg-surface text-ink",
+  waiting: "border-attention/40 bg-attention/15 text-ink",
   paused: "border-line bg-surface text-ink-muted",
   blocked: "border-attention/40 bg-attention/15 text-ink",
   unknown: "border-line bg-surface text-ink-muted",
@@ -58,6 +62,8 @@ export function TopBar({
 }) {
   const held = useHeldScopes();
   const { overview, denied, stale, reload } = useRunnerOverview();
+  const harnesses = useHarnesses();
+  const [budgetReset, setBudgetReset] = useState<string | null>(null);
   const [, bump] = useState(0);
   const [confirming, setConfirming] = useState(false);
   const [open, setOpen] = useState(false);
@@ -127,7 +133,23 @@ export function TopBar({
     single && first ? first.pid : null,
     single && first ? first.taskId : null,
   );
+  const waiting = !!overview && waitingForReset(overview);
+  const budgetSpent = (overview?.budgetExceeded.length ?? 0) > 0;
+  // The budget's reset time is not in the overview: ask for it while a budget is spent.
+  useEffect(() => {
+    if (!budgetSpent) return setBudgetReset(null);
+    let live = true;
+    api.budget().then(
+      (b) => live && setBudgetReset(b.resetsAt),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [budgetSpent, waiting]);
   const state = topbarState({
+    noHarness: harnesses.status !== null && !harnesses.status.anyInstalled,
+    resetAt: budgetSpent ? budgetReset : null,
     overview: denied ? null : overview,
     fallbackRunning,
     items,
@@ -161,6 +183,28 @@ export function TopBar({
       toast.error(`Could not pause the runner: ${errorMessage(err)}`);
     }
     await afterChange();
+  };
+
+  const queued = overview ? overview.projects.reduce((n, p) => n + (p.counts.pending ?? 0), 0) : 0;
+  const next = nextStep({
+    kind: state.kind,
+    queued,
+    tasks: data.tasks.map((t) => ({ status: t.frontmatter.status })),
+    plans: data.plans,
+  });
+  const nextRoute = next && pid ? { name: next.to, pid } : null;
+
+  // The profile chip: the project's own profile when set (changed in Project settings), else the
+  // global active one, which the chip switches.
+  const profiles = data.settings?.profiles ?? [];
+  const activeId = data.settings?.activeProfile ?? null;
+  const ownId = selected?.profile ?? null;
+  const canSwitch = held === "all" || held.has("admin") || held.has("settings:write");
+  const switchProfile = async (id: string) => {
+    await act(() => api.updateSettings({ activeProfile: id || null }), {
+      failure: "Could not change the profile",
+    });
+    await data.refresh();
   };
 
   // Keep the disclosure closed when there is nothing to list.
@@ -197,6 +241,43 @@ export function TopBar({
             {open ? "Hide" : "Details"}
           </Button>
         )}
+        {nextRoute && next && (
+          <span className="hidden shrink-0 items-center gap-1 min-[720px]:flex">
+            <span>{next.text}.</span>
+            <a
+              href={formatRoute(nextRoute as Parameters<typeof formatRoute>[0])}
+              className="font-medium text-inherit underline"
+            >
+              {next.link}
+            </a>
+          </span>
+        )}
+        {profiles.length > 0 &&
+          (ownId || !canSwitch ? (
+            <span
+              className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[length:var(--text-meta)]"
+              title={ownId ? "Set for this project (Settings › Project)" : "Active profile"}
+            >
+              Profile:{" "}
+              {profiles.find((p) => p.id === (ownId ?? activeId))?.name ?? ownId ?? "Custom roles"}
+              {ownId ? " (project)" : ""}
+            </span>
+          ) : (
+            <select
+              aria-label="Active profile"
+              title="Profile for tasks that start next"
+              className="h-8 max-w-40 shrink-0 rounded-full border border-line bg-surface px-2 text-[length:var(--text-meta)] text-ink"
+              value={activeId ?? ""}
+              onChange={(e) => void switchProfile(e.target.value)}
+            >
+              <option value="">Custom roles</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          ))}
         {needsYou > 0 && (
           <a
             href={formatRoute({ name: "inbox" })}

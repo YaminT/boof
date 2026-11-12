@@ -1,3 +1,4 @@
+import type { OrchestrationProfile } from "@boof/heart/schema";
 import { describe, expect, it, vi } from "vitest";
 import type { Project, Scope } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
@@ -54,6 +55,11 @@ function setup(over: { runnerEnabled?: boolean } = {}) {
     ] as unknown as EpicView[],
     currentTask: task("t1", "draft", "Fix login"),
     runnerEnabled: over.runnerEnabled ?? false,
+    profiles: [
+      { id: "dev-only", name: "Developer only" },
+      { id: "full", name: "Full crew" },
+    ] as unknown as OrchestrationProfile[],
+    activeProfile: "full",
     settingsLoaded: true,
     effects,
   });
@@ -121,6 +127,17 @@ describe("resolveConsoleCommand", () => {
     expect(idOf(resolveConsoleCommand("dark theme", actions))).toBe("theme-dark");
     expect(resolveConsoleCommand("queue", actions).kind).toBe("unknown");
     expect(resolveConsoleCommand("stop", actions).kind).toBe("unknown");
+  });
+
+  it("/profile picks a profile by id or name, and alone opens the Profiles page", () => {
+    expect(idOf(resolveConsoleCommand("/profile dev-only", actions))).toBe("use-profile-dev-only");
+    expect(idOf(resolveConsoleCommand("/profile Full crew", actions))).toBe("use-profile-full");
+    expect(idOf(resolveConsoleCommand("/profile developer", actions))).toBe("use-profile-dev-only");
+    expect(idOf(resolveConsoleCommand("/profile", actions))).toBe("go-settings-profiles");
+    expect(resolveConsoleCommand("/profile nope", actions).kind).toBe("unknown");
+    expect(idOf(resolveConsoleCommand("/go settings profiles", actions))).toBe(
+      "go-settings-profiles",
+    );
   });
 
   it("resolves slash verbs to actions", () => {
@@ -307,7 +324,7 @@ describe("formatConsoleResult", () => {
     expect(
       formatConsoleResult({ kind: "unknown", input: "/nope", reason: "no such command" }),
     ).toBe(
-      'unknown: "/nope" (no such command). Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach, /activate, /plan, /project, /runner, /theme, /new.',
+      'unknown: "/nope" (no such command). Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach, /activate, /plan, /project, /runner, /profile, /theme, /new.',
     );
   });
 });
