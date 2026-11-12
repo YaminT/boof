@@ -813,6 +813,19 @@ export function isAnthropicApiKey(v: unknown): v is string {
   return typeof v === "string" && ANTHROPIC_API_KEY_PATTERN.test(v);
 }
 
+/**
+ * What the plan wizard's "About this project" step collected: the shared facts of every goal it
+ * writes, and context for agent-drafted plans. Stored once per project; every field is free text
+ * (the rule fields hold one rule per line).
+ */
+export const PlanDefaultsSchema = z.strictObject({
+  stack: z.string().trim().max(500).default(""),
+  testCommand: z.string().trim().max(500).default(""),
+  doRules: z.string().trim().max(4000).default(""),
+  dontRules: z.string().trim().max(4000).default(""),
+});
+export type PlanDefaults = z.infer<typeof PlanDefaultsSchema>;
+
 /** projects/<id>/project.json. */
 export const ProjectSchema = z.object({
   /** Directory name under projects/. */
@@ -826,6 +839,8 @@ export const ProjectSchema = z.object({
   /** What the project is for; given to every agent prompt as `## Project`. Absent on projects created before 0.3. */
   brief: z.string().optional(),
   claudeAgent: ClaudeAgentProjectSchema.optional(),
+  /** The wizard's project facts (stack, test command, rules); absent until the user answered. */
+  planDefaults: PlanDefaultsSchema.optional(),
   /** The runner skips a paused project. */
   paused: z.boolean().default(false),
   archived: z.boolean().default(false),
@@ -856,6 +871,7 @@ export const ProjectPatchSchema = z
     workingDirectory: z.string().min(1),
     brief: z.string().trim().max(20_000).nullable(),
     claudeAgent: ClaudeAgentProjectSchema.nullable(),
+    planDefaults: PlanDefaultsSchema.nullable(),
     paused: z.boolean(),
     archived: z.boolean(),
     defaultBase: z.string().min(1).nullable(),

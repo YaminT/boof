@@ -375,6 +375,9 @@ export const api = {
   agentSdkEligibility: (refresh = false) =>
     http<AgentSdkEligibility>(`${V1}/accounts/agent-sdk${refresh ? "?refresh=true" : ""}`),
   /** Runner state, with the claude-agent authentication result per project. */
+  /** Start or pause the runner (`runner:control` or `settings:write`). */
+  setRunnerEnabled: (enabled: boolean) =>
+    http<{ enabled: boolean; concurrency: number }>(`${V1}/runner`, json("PUT", { enabled })),
   runnerStatus: () => http<RunnerStatus>(`${V1}/runner`),
   /** Runner on/off and, per project, what runs now (the topbar). */
   runnerOverview: () => http<RunnerOverview>(`${V1}/runner/status`),

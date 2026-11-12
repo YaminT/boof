@@ -23,6 +23,8 @@ export interface InstallResult {
   path?: string;
   /** Set when the program exists but is not on PATH (the path it was found at). */
   foundOffPath?: string;
+  /** A tool that exists for tests and development only: it never shows as an installed agent. */
+  hidden?: boolean;
   message: string;
 }
 

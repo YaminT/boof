@@ -3,6 +3,8 @@ import type { OrchestrationProfile, Project, RoleAssignment, Settings } from "@b
 import { api } from "../api.js";
 import type { ToolModelDetails } from "../api-types.js";
 import { isDesktop } from "../desktop.js";
+import { useHarnesses } from "../useHarnesses.js";
+import { isNotInstalled } from "../lib/harnesses.js";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { NativeSelect } from "@/ui/native-select";
@@ -13,6 +15,7 @@ import {
   newProfile,
   profileSummary,
   PROFILE_ROLES,
+  profileToolOptions,
   renameProfile,
   setProfileRole,
   type ProfileRoleName,
@@ -47,7 +50,8 @@ function ProfileRoleSelects({
   toolLabel: (tool: string) => string;
   onChange: (next: RoleAssignment | null) => void;
 }) {
-  // A tool this install does not list stays in the select, so a saved choice is never changed silently.
+  // `tools` already holds the installed ones; a saved tool that is not installed stays in the
+  // select (marked), so a saved choice is never changed silently.
   const options = value && !tools.includes(value.tool) ? [...tools, value.tool] : tools;
   return (
     <div className="flex flex-col gap-1.5">
@@ -136,11 +140,10 @@ export function ProfilesPage({
       );
     return out;
   }, [settings.models, details]);
-  // Tools to choose from: the ones this install lists and can run.
-  const tools = useMemo(
-    () => Object.keys(models).filter((t) => !unavailable[t]),
-    [models, unavailable],
-  );
+  const harnesses = useHarnesses();
+  // Tools to choose from: the installed ones (each role also keeps the tool it already has).
+  const toolsFor = (current?: string | null) =>
+    profileToolOptions(Object.keys(models), unavailable, harnesses.status, { isDesktop }, current);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [refused, setRefused] = useState<{ id: string; message: string } | null>(null);
@@ -257,9 +260,13 @@ export function ProfilesPage({
                           label={`${p.name} ${label}`}
                           value={p.roles[role as ProfileRoleName]}
                           canBeOff={canBeOff}
-                          tools={tools}
+                          tools={toolsFor(p.roles[role as ProfileRoleName]?.tool)}
                           models={models}
-                          toolLabel={(t) => toolOptionLabel(t, env)}
+                          toolLabel={(t) =>
+                            isNotInstalled(t, harnesses.status)
+                              ? `${t} (not installed)`
+                              : toolOptionLabel(t, env)
+                          }
                           onChange={(next) =>
                             setProfiles(setProfileRole(profiles, p.id, role, next))
                           }

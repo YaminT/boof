@@ -1399,6 +1399,38 @@
             "default": false,
             "type": "boolean"
           },
+          "planDefaults": {
+            "additionalProperties": false,
+            "properties": {
+              "dontRules": {
+                "default": "",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "doRules": {
+                "default": "",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "stack": {
+                "default": "",
+                "maxLength": 500,
+                "type": "string"
+              },
+              "testCommand": {
+                "default": "",
+                "maxLength": 500,
+                "type": "string"
+              }
+            },
+            "required": [
+              "stack",
+              "testCommand",
+              "doRules",
+              "dontRules"
+            ],
+            "type": "object"
+          },
           "planWriteBack": {
             "default": true,
             "type": "boolean"
@@ -5638,6 +5670,38 @@
                             "default": false,
                             "type": "boolean"
                           },
+                          "planDefaults": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "dontRules": {
+                                "default": "",
+                                "maxLength": 4000,
+                                "type": "string"
+                              },
+                              "doRules": {
+                                "default": "",
+                                "maxLength": 4000,
+                                "type": "string"
+                              },
+                              "stack": {
+                                "default": "",
+                                "maxLength": 500,
+                                "type": "string"
+                              },
+                              "testCommand": {
+                                "default": "",
+                                "maxLength": 500,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "stack",
+                              "testCommand",
+                              "doRules",
+                              "dontRules"
+                            ],
+                            "type": "object"
+                          },
                           "planWriteBack": {
                             "default": true,
                             "type": "boolean"
@@ -6436,6 +6500,38 @@
                       "default": false,
                       "type": "boolean"
                     },
+                    "planDefaults": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "dontRules": {
+                          "default": "",
+                          "maxLength": 4000,
+                          "type": "string"
+                        },
+                        "doRules": {
+                          "default": "",
+                          "maxLength": 4000,
+                          "type": "string"
+                        },
+                        "stack": {
+                          "default": "",
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        "testCommand": {
+                          "default": "",
+                          "maxLength": 500,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "stack",
+                        "testCommand",
+                        "doRules",
+                        "dontRules"
+                      ],
+                      "type": "object"
+                    },
                     "planWriteBack": {
                       "default": true,
                       "type": "boolean"
@@ -6860,6 +6956,39 @@
                   "paused": {
                     "type": "boolean"
                   },
+                  "planDefaults": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "dontRules": {
+                            "default": "",
+                            "maxLength": 4000,
+                            "type": "string"
+                          },
+                          "doRules": {
+                            "default": "",
+                            "maxLength": 4000,
+                            "type": "string"
+                          },
+                          "stack": {
+                            "default": "",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "testCommand": {
+                            "default": "",
+                            "maxLength": 500,
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "planWriteBack": {
                     "type": "boolean"
                   },
@@ -7230,6 +7359,38 @@
                     "paused": {
                       "default": false,
                       "type": "boolean"
+                    },
+                    "planDefaults": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "dontRules": {
+                          "default": "",
+                          "maxLength": 4000,
+                          "type": "string"
+                        },
+                        "doRules": {
+                          "default": "",
+                          "maxLength": 4000,
+                          "type": "string"
+                        },
+                        "stack": {
+                          "default": "",
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        "testCommand": {
+                          "default": "",
+                          "maxLength": 500,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "stack",
+                        "testCommand",
+                        "doRules",
+                        "dontRules"
+                      ],
+                      "type": "object"
                     },
                     "planWriteBack": {
                       "default": true,

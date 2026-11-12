@@ -92,7 +92,7 @@ export function itemLabel(i: RunningItem): string {
 export function topbarState(input: TopbarInput): TopbarState {
   const { overview, held } = input;
   const canControl = has(held, "runner:control") || has(held, "settings:write");
-  const canStop = has(held, "tasks:write");
+  const canStop = has(held, "tasks:write") || has(held, "tasks:control");
   if (!overview) {
     // No global state: only the selected project's tasks are known, and nothing can be toggled.
     const running = input.fallbackRunning;
@@ -190,18 +190,27 @@ function runningText(running: RunningItem[], step?: string | null): string {
 export interface StopAllResult {
   /** Tasks that did not stop, with the server's message. */
   failed: { item: RunningItem; message: string }[];
+  /** Set when the pause was refused (a key without the right to pause); the tasks were still stopped. */
+  pauseFailed?: string;
 }
 
 /**
  * Stop = pause the runner first (so the queue does not pick the next task), then stop each
- * running task. A failed pause aborts: nothing is stopped. A failed stop is listed, not thrown.
+ * running task. A refused pause (a key with `tasks:control` but no right to pause) does not
+ * block the stops: the tasks are stopped and the result says the runner was not paused. A failed
+ * stop is listed, not thrown.
  */
 export async function stopAllRunning(
   items: RunningItem[],
   pause: () => Promise<unknown>,
   stopTask: (pid: string, taskId: string) => Promise<unknown>,
 ): Promise<StopAllResult> {
-  await pause();
+  let pauseFailed: string | undefined;
+  try {
+    await pause();
+  } catch (err) {
+    pauseFailed = err instanceof Error ? err.message : String(err);
+  }
   const failed: StopAllResult["failed"] = [];
   for (const item of items) {
     try {
@@ -210,7 +219,7 @@ export async function stopAllRunning(
       failed.push({ item, message: err instanceof Error ? err.message : String(err) });
     }
   }
-  return { failed };
+  return { failed, ...(pauseFailed !== undefined ? { pauseFailed } : {}) };
 }
 
 /** "Stop N running tasks and pause the runner?" in the dialog's words. */

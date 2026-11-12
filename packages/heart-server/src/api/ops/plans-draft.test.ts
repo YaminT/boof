@@ -68,6 +68,31 @@ describe("plans.draftGoals", () => {
     });
   });
 
+  it("stores the wizard's project answers per project and puts them in later drafts", async () => {
+    const { call } = await setup();
+    const saved = await call("projects.update", {
+      projectId: "proj",
+      planDefaults: {
+        stack: "TypeScript, Node.js",
+        testCommand: "npm test",
+        doRules: "Keep functions small\nWrite a test first",
+        dontRules: "Never edit generated files",
+      },
+    });
+    expect(saved.planDefaults).toMatchObject({ testCommand: "npm test" });
+    // Persisted with the project, so a later session (or another browser) finds them.
+    expect((await call("projects.get", { projectId: "proj" })).planDefaults).toMatchObject({
+      stack: "TypeScript, Node.js",
+    });
+    const out = await call("plans.draftGoals", draft);
+    const task = await call("tasks.get", { projectId: "proj", taskId: out.task.id });
+    const prompt = task.body.prompt as string;
+    expect(prompt).toContain("Stack: TypeScript, Node.js");
+    expect(prompt).toContain("Test command: npm test");
+    expect(prompt).toContain("- Write a test first");
+    expect(prompt).toContain("- Never edit generated files");
+  });
+
   it("queues a plan-draft task with the planner override and shows it on plans.get", async () => {
     const { call } = await setup();
     const out = await call("plans.draftGoals", { ...draft, note: "keep it small" });

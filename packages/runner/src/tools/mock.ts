@@ -173,8 +173,17 @@ export class MockTool implements Tool {
     return mockState.resumeSupported;
   }
 
+  /**
+   * The mock runs in-process for tests and development. It is not a coding agent, so it is hidden
+   * from the harness list, the doctor and every tool select unless `BOOF_SHOW_MOCK_TOOL` is set.
+   */
   async installed(): Promise<InstallResult> {
-    return { installed: true, version: "1.0.0", message: "Mock tool is always installed" };
+    return {
+      installed: true,
+      version: "1.0.0",
+      hidden: !process.env.BOOF_SHOW_MOCK_TOOL,
+      message: "Mock tool is always installed",
+    };
   }
 
   async detect(): Promise<HealthResult> {

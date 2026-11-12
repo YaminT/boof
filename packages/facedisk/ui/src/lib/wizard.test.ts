@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Goal } from "../api.js";
 import {
   afterOutcome,
+  aboutDone,
   agentUnavailableReason,
   assignIds,
   buildGoalInputs,
@@ -19,6 +20,7 @@ import {
   outcomeProblem,
   planTitle,
   saveDraft,
+  savedAbout,
   shouldAutoOpen,
   type WizardProject,
 } from "./wizard.js";
@@ -183,5 +185,23 @@ describe("storage", () => {
     expect(shouldAutoOpen({ ...base, taskCount: 1 })).toBe(false);
     expect(shouldAutoOpen({ ...base, planCount: 1 })).toBe(false);
     expect(shouldAutoOpen({ ...base, dismissed: true })).toBe(false);
+  });
+});
+
+describe("project answers kept with the project", () => {
+  const answers: WizardProject = {
+    stack: "TypeScript",
+    testCommand: "npm test",
+    doRules: "a",
+    dontRules: "b",
+  };
+  it("is done only when the project holds the answers, not because of a browser flag", () => {
+    expect(aboutDone(null)).toBe(false);
+    expect(aboutDone({})).toBe(false);
+    expect(aboutDone({ planDefaults: answers })).toBe(true);
+  });
+  it("hands the saved answers back to prefill the next plan", () => {
+    expect(savedAbout({ planDefaults: answers })).toEqual(answers);
+    expect(savedAbout({})).toBeNull();
   });
 });

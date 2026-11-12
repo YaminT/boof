@@ -92,13 +92,37 @@ describe("harnesses.status operation", () => {
     expect(checks).toBe(1);
   });
 
-  it("lists the mock tool as installed beside a missing one", async () => {
-    await setup(fake(false), [new MockTool(), fake(false)]);
-    const out = (await getOp("harnesses.status")!.execute(ctx, {})) as {
-      tools: Record<string, { installed: boolean }>;
-      anyInstalled: boolean;
-    };
-    expect(out.tools.mock.installed).toBe(true);
-    expect(out.tools.fake.installed).toBe(false);
+  it("hides the mock tool: it is not an installed agent unless a dev flag is set", async () => {
+    const saved = process.env.BOOF_SHOW_MOCK_TOOL;
+    delete process.env.BOOF_SHOW_MOCK_TOOL;
+    try {
+      await setup(fake(false), [new MockTool(), fake(false)]);
+      const out = (await getOp("harnesses.status")!.execute(ctx, {})) as {
+        tools: Record<string, { installed: boolean }>;
+        anyInstalled: boolean;
+      };
+      expect(out.tools.mock).toBeUndefined();
+      expect(out.tools.fake.installed).toBe(false);
+      expect(out.anyInstalled).toBe(false);
+    } finally {
+      if (saved !== undefined) process.env.BOOF_SHOW_MOCK_TOOL = saved;
+    }
+  });
+
+  it("lists the mock tool when BOOF_SHOW_MOCK_TOOL is set", async () => {
+    const saved = process.env.BOOF_SHOW_MOCK_TOOL;
+    process.env.BOOF_SHOW_MOCK_TOOL = "1";
+    try {
+      await setup(fake(false), [new MockTool(), fake(false)]);
+      const out = (await getOp("harnesses.status")!.execute(ctx, {})) as {
+        tools: Record<string, { installed: boolean }>;
+        anyInstalled: boolean;
+      };
+      expect(out.tools.mock.installed).toBe(true);
+      expect(out.anyInstalled).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.BOOF_SHOW_MOCK_TOOL;
+      else process.env.BOOF_SHOW_MOCK_TOOL = saved;
+    }
   });
 });

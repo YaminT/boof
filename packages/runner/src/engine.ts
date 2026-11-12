@@ -5,7 +5,7 @@ import {
   blockingScopes,
   effectiveSettings,
   evaluateBudget,
-  resolveRole,
+  resolveRoleOrOff,
   type BudgetScope,
   type ExternalStepTransport,
   parseGoal,
@@ -66,6 +66,25 @@ export interface EngineOptions {
 
 const INTERRUPTED_HEAD =
   "The runner stopped unexpectedly (server restart or crash) while this task was running. Its worktree and branch are kept.";
+
+/**
+ * The role/tool pairs a task needs to start. A role the profile turned off is left out, and a
+ * plan-draft task needs the planner alone (the draft path never runs the other roles).
+ */
+export function startRolesFor(
+  eff: Parameters<typeof resolveRoleOrOff>[0],
+  task: Task,
+): { role: "planner" | "developer" | "reviewer" | "observer"; tool: string }[] {
+  const roles = task.frontmatter.draftFor
+    ? (["planner"] as const)
+    : (["planner", "developer", "reviewer", "observer"] as const);
+  const out: { role: (typeof roles)[number]; tool: string }[] = [];
+  for (const role of roles) {
+    const pick = resolveRoleOrOff(eff, task, role);
+    if (pick) out.push({ role, tool: pick.tool });
+  }
+  return out;
+}
 
 /** The agent is gone: put the task back on the queue. Otherwise the user has to retry it. */
 function interruptedNote(requeue: boolean): string {
@@ -253,9 +272,10 @@ export class RunnerEngine {
           continue;
         }
         const eff = effectiveSettings(settings, project);
-        const tools = (["planner", "developer", "reviewer", "observer"] as const)
-          .map((role) => resolveRole(eff, task, role as "observer")?.tool)
-          .filter((t): t is string => t !== undefined);
+        // Only the roles this task will run: a role a profile switched off is not checked, and a
+        // plan-draft task runs the planner alone.
+        const startRoles = startRolesFor(eff, task);
+        const tools = startRoles.map((r) => r.tool);
         const resolved = tools.map((id) => this.registry.get(id)).filter((t) => t !== undefined);
         const unavailable = resolved.find((tool) => tool.unavailableReason);
         if (unavailable) {
@@ -268,19 +288,18 @@ export class RunnerEngine {
           continue;
         }
         const installs = await this.registry.installedAll();
-        const missing = (["planner", "developer", "reviewer", "observer"] as const).find((role) => {
-          const id = resolveRole(eff, task, role as "observer")?.tool;
-          const tool = id === undefined ? undefined : this.registry.get(id);
+        const missing = startRoles.find((r) => {
+          const tool = this.registry.get(r.tool);
           // An Agent SDK tool has its own selection check, with its own reason, just below.
           return tool && !tool.needsAgentAuth && installs[tool.id]?.installed === false;
         });
         if (missing) {
-          const id = resolveRole(eff, task, missing as "observer")!.tool;
+          const id = missing.tool;
           try {
             await this.refuseBeforeStart(
               project,
               task,
-              `tool_not_installed: ${id} (role ${missing}): ${installs[id].message}`,
+              `tool_not_installed: ${id} (role ${missing.role}): ${installs[id].message}`,
             );
             await this.noteGoalTaskStatus(project, task, "failed");
           } catch (error) {

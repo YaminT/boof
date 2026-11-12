@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MockTool, ToolRegistry } from "@boof/runner";
 import { doctorCommand, type DoctorCatalog } from "./doctor-cli.js";
 
 const catalog = (installed: boolean): DoctorCatalog => ({
@@ -45,5 +46,21 @@ describe("boof-runner doctor", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await doctorCommand(["nope"], catalog(true), {})).toBe(1);
     expect(await doctorCommand(["--bad"], catalog(true), {})).toBe(1);
+  });
+
+  it("does not count the mock tool as an installed agent (exit 1, no mock row)", async () => {
+    const saved = process.env.BOOF_SHOW_MOCK_TOOL;
+    delete process.env.BOOF_SHOW_MOCK_TOOL;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await doctorCommand([], new ToolRegistry([new MockTool()]), { PATH: "" })).toBe(1);
+      expect(log.mock.calls.map((c) => c[0]).join("\n")).not.toContain("mock");
+      process.env.BOOF_SHOW_MOCK_TOOL = "1";
+      expect(await doctorCommand([], new ToolRegistry([new MockTool()]), { PATH: "" })).toBe(0);
+    } finally {
+      if (saved === undefined) delete process.env.BOOF_SHOW_MOCK_TOOL;
+      else process.env.BOOF_SHOW_MOCK_TOOL = saved;
+    }
   });
 });

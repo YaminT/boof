@@ -5,12 +5,15 @@ import { Textarea } from "@/ui/textarea";
 import { NativeSelect } from "../ui/native-select.js";
 import { api, type Plan, type TaskView } from "../api.js";
 import { act } from "../lib/act.js";
+import { activateWithTasks, reportCreated } from "../lib/activate.js";
 import { formatRoute, type Route } from "../lib/route.js";
 import {
   OUTCOME_MAX,
   afterOutcome,
   agentUnavailableReason,
   aboutDone,
+  savedAbout,
+  hasAbout,
   buildGoalInputs,
   clearDraft,
   defaultAgent,
@@ -20,7 +23,6 @@ import {
   itemsFromGoals,
   itemsProblems,
   loadDraft,
-  markAboutDone,
   newItem,
   outcomeProblem,
   planTitle,
@@ -166,8 +168,19 @@ export function PlanWizard({
     if (p) return setProblem(p);
     setProblem(null);
     if (draft.useAgent && !draft.tool) return setProblem("Pick an agent.");
-    const next: WizardStep = afterOutcome(aboutDone(window.localStorage, pid));
+    // The project facts live with the project on the server, so they are known in any browser.
+    let known = null as Awaited<ReturnType<typeof api.getProject>> | null;
+    try {
+      known = await api.getProject(pid);
+    } catch {
+      /* without them the step is simply asked again */
+    }
+    const next: WizardStep = afterOutcome(aboutDone(known));
+    const saved = savedAbout(known);
+    // The saved answers prefill the draft; a draft the user already edited keeps its own.
+    if (saved) setDraft((d) => ({ ...d, project: hasAbout(d.project) ? d.project : saved }));
     setDraft({ step: next });
+    if (next === "tasks") startTaskList();
     if (next === "about" && !draft.project.stack && !draft.project.testCommand) {
       try {
         const d = await api.detectStack(pid);
@@ -204,11 +217,19 @@ export function PlanWizard({
     return created;
   };
 
-  const goTasks = () => {
-    markAboutDone(window.localStorage, pid);
-    setDraft({ step: "tasks" });
+  /** The task step opens with one empty row when the tasks are written by hand. */
+  const startTaskList = () => {
     if (!draftRef.current.useAgent && draftRef.current.items.length === 0)
       setDraft((d) => ({ ...d, items: [newItem()] }));
+  };
+
+  const goTasks = async () => {
+    // Keep the answers with the project: next plan, and any other browser, starts from them.
+    await act(() => api.updateProject(pid, { planDefaults: draftRef.current.project }), {
+      failure: "Could not save the project answers",
+    });
+    setDraft({ step: "tasks" });
+    startTaskList();
   };
 
   const draftTasks = async (note?: string) => {
@@ -273,11 +294,12 @@ export function PlanWizard({
         { failure: "Could not save the tasks" },
       );
       if (!saved) return;
-      const active = await act(() => api.updatePlan(pid, saved, { status: "active" }), {
+      const result = await act(() => activateWithTasks(pid, saved), {
         failure: "Could not create the tasks",
-        success: "Tasks created",
       });
-      if (!active) return;
+      if (!result) return;
+      const active = result.plan;
+      reportCreated(result.created);
       clearDraft(window.sessionStorage, pid);
       dismissWizard(window.localStorage, pid);
       void data.refresh();

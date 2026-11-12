@@ -66,6 +66,10 @@ export function outcomeProblem(outcome: string): string | null {
   return null;
 }
 
+/** True when any of the project answers is filled in. */
+export const hasAbout = (p: WizardProject): boolean =>
+  Object.values(p).some((v) => v.trim() !== "");
+
 /** The step after the outcome: the project facts are asked once per project. */
 export const afterOutcome = (aboutAlreadyDone: boolean): WizardStep =>
   aboutAlreadyDone ? "tasks" : "about";
@@ -224,7 +228,6 @@ export interface KeyValueStore {
 
 const draftKey = (pid: string) => `boof.wizard.draft.${pid}`;
 const dismissKey = (pid: string) => `boof.wizard.dismissed.${pid}`;
-const aboutKey = (pid: string) => `boof.wizard.about.${pid}`;
 
 export function saveDraft(store: KeyValueStore, pid: string, draft: WizardDraft): void {
   try {
@@ -254,11 +257,14 @@ export function loadDraft(store: KeyValueStore, pid: string): WizardDraft | null
 
 export const clearDraft = (store: KeyValueStore, pid: string) => store.removeItem(draftKey(pid));
 
-/** "About this project" is shown once per project. */
-export const aboutDone = (store: KeyValueStore, pid: string): boolean =>
-  store.getItem(aboutKey(pid)) === "1";
-export const markAboutDone = (store: KeyValueStore, pid: string) =>
-  store.setItem(aboutKey(pid), "1");
+/** The project's saved answers (kept in the data root with the project), or null before any. */
+export const savedAbout = (
+  project: { planDefaults?: WizardProject } | null,
+): WizardProject | null => (project?.planDefaults ? { ...project.planDefaults } : null);
+
+/** "About this project" is asked once per project: done when the server holds the answers. */
+export const aboutDone = (project: { planDefaults?: WizardProject } | null): boolean =>
+  savedAbout(project) !== null;
 
 export function isDismissed(store: KeyValueStore, pid: string): boolean {
   try {

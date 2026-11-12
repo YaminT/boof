@@ -38,7 +38,7 @@ const KIND_STYLE = {
 /** Pause and Start: the global switch, or the selected project for a project-restricted key. */
 async function setRunner(enable: boolean, pid: string | null): Promise<void> {
   try {
-    await api.updateSettings({ runner: { enabled: enable } });
+    await api.setRunnerEnabled(enable);
   } catch (err) {
     if (err instanceof ApiError && err.code === "forbidden_project" && pid) {
       await (enable ? api.resumeProject(pid) : api.pauseProject(pid));
@@ -169,7 +169,7 @@ export function TopBar({
   const stop = async () => {
     setConfirming(false);
     try {
-      const { failed } = await stopAllRunning(
+      const { failed, pauseFailed } = await stopAllRunning(
         state.running,
         () => setRunner(false, pid),
         (p, t) => api.stopTask(p, t),
@@ -178,9 +178,13 @@ export function TopBar({
         toast.error(
           `Could not stop: ${failed.map((f) => `${itemLabel(f.item)} (${f.message})`).join("; ")}`,
         );
+      else if (pauseFailed !== undefined)
+        toast.warning(
+          `Stop requested, but the runner was not paused (${pauseFailed}); it may start the next task.`,
+        );
       else toast.success("Stop requested");
     } catch (err) {
-      toast.error(`Could not pause the runner: ${errorMessage(err)}`);
+      toast.error(`Could not stop: ${errorMessage(err)}`);
     }
     await afterChange();
   };

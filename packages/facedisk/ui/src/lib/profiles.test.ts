@@ -8,6 +8,7 @@ import {
   newProfile,
   profileProblems,
   profileSummary,
+  profileToolOptions,
   profilesPage,
   projectsUsing,
   setProfileRole,
@@ -162,5 +163,31 @@ describe("profilesPage", () => {
     expect(profilesPage.patches(form, b0, latest)).toEqual({
       settings: { profiles: [], activeProfile: null },
     });
+  });
+});
+
+describe("profileToolOptions", () => {
+  const status = {
+    anyInstalled: true,
+    checkedAt: "",
+    tools: {
+      "claude-code": { displayName: "Claude Code", installed: true, message: "" },
+      codex: { displayName: "Codex", installed: true, message: "" },
+      opencode: { displayName: "opencode", installed: false, message: "" },
+    },
+  };
+  const all = ["claude-code", "codex", "opencode"];
+  it("lists only installed tools", () => {
+    expect(profileToolOptions(all, {}, status, {})).toEqual(["claude-code", "codex"]);
+  });
+  it("keeps a tool the role already has, after the installed ones", () => {
+    expect(profileToolOptions(all, {}, status, {}, "opencode")).toEqual([
+      "claude-code",
+      "codex",
+      "opencode",
+    ]);
+  });
+  it("leaves out a tool that cannot run here", () => {
+    expect(profileToolOptions(all, { codex: "no" }, status, {})).toEqual(["claude-code"]);
   });
 });

@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/ui/dropdown-menu";
 import { act } from "../lib/act.js";
+import { activateWithTasks, reportCreated } from "../lib/activate.js";
 import { listKeyAction, moveQueued } from "../lib/task-list.js";
 import { SortableList } from "../shell/SortableList.js";
 import { planErrorLines, sortGoals } from "../lib/plan-view.js";
@@ -208,7 +209,13 @@ export function PlanPage({
         busy={false}
         taskCounts={planTaskCounts(data.tasks, plan.id)}
         onActivate={() =>
-          void mutate((p) => api.updatePlan(pid, p, { status: "active" }), "Could not activate")
+          void mutate(async (p) => {
+            const r = await activateWithTasks(pid, p);
+            reportCreated(r.created);
+            return r.plan;
+          }, "Could not create the tasks").then((p) => {
+            if (p) changed();
+          })
         }
         onSync={() => void startSync()}
         onAddGoal={() => {

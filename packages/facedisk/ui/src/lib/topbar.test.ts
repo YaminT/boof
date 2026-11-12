@@ -182,6 +182,15 @@ describe("topbarState", () => {
   });
 });
 
+describe("Stop for a key that cannot write settings", () => {
+  it("is shown for runner:control + tasks:control without settings:write", () => {
+    const held = new Set(["settings:read", "runner:control", "tasks:control"] as const);
+    const s = topbarState(input({ overview: runningOv(), held }));
+    expect(s.stop).toBe(true);
+    expect(s.toggle).not.toBeNull();
+  });
+});
+
 describe("stopAllRunning", () => {
   it("pauses first, then stops each task", async () => {
     const calls: string[] = [];
@@ -205,18 +214,17 @@ describe("stopAllRunning", () => {
     expect(r.failed.map((f) => [f.item.taskId, f.message])).toEqual([["a", "busy"]]);
   });
 
-  it("stops nothing when the pause fails", async () => {
+  it("still stops the tasks when the pause is refused, and says so", async () => {
     const stopped: string[] = [];
-    await expect(
-      stopAllRunning(
-        [item()],
-        async () => {
-          throw new Error("forbidden");
-        },
-        async (_p, id) => void stopped.push(id),
-      ),
-    ).rejects.toThrow("forbidden");
-    expect(stopped).toEqual([]);
+    const r = await stopAllRunning(
+      [item({ taskId: "a" }), item({ taskId: "b" })],
+      async () => {
+        throw new Error("forbidden");
+      },
+      async (_p, id) => void stopped.push(id),
+    );
+    expect(stopped).toEqual(["a", "b"]);
+    expect(r).toEqual({ failed: [], pauseFailed: "forbidden" });
   });
 });
 
