@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Project, Scope } from "@boof/heart/schema";
 import type { EpicView, PlanSummary, TaskView } from "../api.js";
 import {
+  CONSOLE_VERBS,
   availableActions,
   formatConsoleResult,
   resolveConsoleCommand,
@@ -306,7 +307,135 @@ describe("formatConsoleResult", () => {
     expect(
       formatConsoleResult({ kind: "unknown", input: "/nope", reason: "no such command" }),
     ).toBe(
-      'unknown: "/nope" (no such command). Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach.',
+      'unknown: "/nope" (no such command). Try a palette label or /task, /queue, /stop, /open, /go, /epic, /move, /subtask, /detach, /activate, /plan, /project, /runner, /theme, /new.',
     );
+  });
+});
+
+describe("hint, /plan and intent suggestions", () => {
+  const plan = (id: string, title: string) =>
+    ({ id, title, status: "draft", created: "2026-01-01" }) as unknown as PlanSummary;
+  function withPlans(plans: PlanSummary[]) {
+    const { effects } = setup();
+    const actions = createCommandActions({
+      pid: "alpha",
+      projects: [project("alpha")],
+      tasks: [],
+      plans,
+      epics: [],
+      currentTask: null,
+      runnerEnabled: true,
+      settingsLoaded: true,
+      effects: { ...effects, openNewPlan: vi.fn() },
+    });
+    return { actions, effects };
+  }
+
+  it("lists every verb in the unknown hint", () => {
+    const text = formatConsoleResult({ kind: "unknown", input: "x" });
+    for (const v of CONSOLE_VERBS) expect(text).toContain(`/${v}`);
+    for (const v of ["activate", "project", "runner", "theme", "new", "plan"])
+      expect(text).toContain(`/${v}`);
+  });
+
+  it("understands every verb in the table", () => {
+    const { actions } = setup();
+    for (const v of CONSOLE_VERBS) {
+      const r = resolveConsoleCommand(`/${v}`, actions);
+      expect(r.kind === "unknown" ? r.reason : "").not.toBe("no such command");
+    }
+  });
+
+  it("/plan runs the new-plan action with its title", () => {
+    const { actions } = withPlans([]);
+    const r = resolveConsoleCommand("/plan Launch site", actions);
+    expect(r).toMatchObject({ kind: "run", args: "Launch site" });
+    expect(r.kind === "run" && r.action.id).toBe("new-plan");
+  });
+
+  it("/plan opens Plans when nothing provides the wizard", () => {
+    const { actions, effects } = setup();
+    const r = resolveConsoleCommand("/plan", actions);
+    if (r.kind === "run") void r.action.run(r.args);
+    expect(effects.navigate).toHaveBeenCalledWith({ name: "plans", pid: "alpha" });
+  });
+
+  it("labels the activation action 'Create tasks from plan' and keeps /activate", () => {
+    const { actions } = withPlans([plan("p1", "Launch")]);
+    const a = actions.find((x) => x.id === "activate-plan-p1")!;
+    expect(a.label).toBe("Create tasks from plan: Launch");
+    expect(a.keywords).toEqual(expect.arrayContaining(["activate", "plan", "tasks"]));
+    expect(idOf(resolveConsoleCommand("/activate launch", actions))).toBe("activate-plan-p1");
+  });
+
+  it("the owner's sentence suggests /activate and runs nothing", () => {
+    const { actions, effects } = withPlans([plan("p1", "Launch")]);
+    const r = resolveConsoleCommand("Make tasks out of the plans", actions);
+    expect(r).toEqual({
+      kind: "suggest",
+      input: "Make tasks out of the plans",
+      lines: ["Did you mean: /activate Launch? Press Enter to run it."],
+      prefill: "/activate Launch",
+    });
+    expect(effects.activatePlan).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "make the plan into tasks",
+    "create tasks from the plan",
+    "turn the plans into tasks",
+    "generate plan into tasks",
+    "tasks out of plans",
+    "tasks from the plan.",
+  ])("suggests for %s", (text) => {
+    const { actions } = withPlans([plan("p1", "Launch")]);
+    expect(resolveConsoleCommand(text, actions)).toMatchObject({ kind: "suggest" });
+  });
+
+  it("lists up to five draft plans and prefills /activate", () => {
+    const { actions } = withPlans(Array.from({ length: 7 }, (_, i) => plan(`p${i}`, `Plan ${i}`)));
+    const r = resolveConsoleCommand("make tasks out of the plans", actions);
+    expect(r.kind === "suggest" && r.prefill).toBe("/activate ");
+    const lines = r.kind === "suggest" ? r.lines : [];
+    expect(lines.filter((l) => l.startsWith("  Plan "))).toHaveLength(5);
+    expect(lines.join("\n")).toContain("and 2 more");
+  });
+
+  it("with no draft plan points to /plan", () => {
+    const { actions } = withPlans([]);
+    expect(resolveConsoleCommand("make tasks out of the plans", actions)).toEqual({
+      kind: "suggest",
+      input: "make tasks out of the plans",
+      lines: ["No draft plan. Type /plan to write one."],
+      prefill: null,
+    });
+  });
+
+  it("suggests runner and plan commands without running them", () => {
+    const { actions, effects } = withPlans([]);
+    expect(resolveConsoleCommand("pause everything", actions)).toMatchObject({
+      kind: "suggest",
+      prefill: "/runner pause",
+    });
+    expect(resolveConsoleCommand("create a plan", actions)).toMatchObject({ prefill: "/plan" });
+    expect(resolveConsoleCommand("what is running", actions)).toMatchObject({
+      prefill: "/go overview",
+    });
+    expect(effects.setRunner).not.toHaveBeenCalled();
+  });
+
+  it("does not suggest starting a runner that already runs", () => {
+    const { actions } = withPlans([]);
+    expect(resolveConsoleCommand("start the runner", actions)).toMatchObject({
+      kind: "suggest",
+      prefill: null,
+    });
+  });
+
+  it("never runs a write from plain words", () => {
+    const { actions } = withPlans([plan("p1", "Launch")]);
+    for (const text of ["make tasks out of the plans", "pause everything", "create a plan"]) {
+      expect(resolveConsoleCommand(text, actions).kind).toBe("suggest");
+    }
   });
 });

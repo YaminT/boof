@@ -42,7 +42,7 @@ describe("unavailable mode", () => {
       lines: [
         {
           kind: "system",
-          text: `Assistant unavailable: ${reason} Commands still work: try /task, /queue, /stop, /open.`,
+          text: "The assistant is disabled in settings. Commands work: /plan, /activate, /queue, /stop, /open.",
         },
         consoleA,
       ],
@@ -50,8 +50,27 @@ describe("unavailable mode", () => {
   });
 
   it("ends the reason with a full stop when the server gave none", () => {
-    expect(unavailableLine("Not in the desktop app")).toBe(
-      "Assistant unavailable: Not in the desktop app. Commands still work: try /task, /queue, /stop, /open.",
+    expect(unavailableLine("Not on this server")).toBe(
+      "Assistant unavailable: Not on this server. Commands work: /plan, /activate, /queue, /stop, /open.",
+    );
+  });
+
+  it("says plainly that desktop needs Claude Code installed", () => {
+    expect(
+      unavailableLine("claude-agent is not available in the desktop app. Use claude-code."),
+    ).toBe(
+      "Plain-words questions need Claude Code installed. Commands work: /plan, /activate, /queue, /stop, /open.",
+    );
+    expect(unavailableLine("no assistant harness installed")).toContain(
+      "need Claude Code installed",
+    );
+  });
+
+  it("says so when the assistant is disabled in settings", () => {
+    expect(
+      unavailableLine("The assistant is turned off (settings.concierge.enabled is false)."),
+    ).toBe(
+      "The assistant is disabled in settings. Commands work: /plan, /activate, /queue, /stop, /open.",
     );
   });
 

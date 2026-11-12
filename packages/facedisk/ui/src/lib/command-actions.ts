@@ -40,6 +40,8 @@ export interface ActionEffects {
   activatePlan(pid: string, plan: PlanSummary): Promise<void> | void;
   queueTask(pid: string, taskId: string): Promise<void> | void;
   setRunner(enabled: boolean): Promise<void> | void;
+  /** Open the new-plan flow (the wizard once it exists). Without it the console opens Plans. */
+  openNewPlan?(pid: string, title?: string): void;
   /** Create an epic with this name and refresh. */
   createEpic(pid: string, title: string): Promise<void> | void;
   /** Take the user to where an epic is named (the Manage epics sheet). */
@@ -138,14 +140,25 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
       requiredScope: "tasks:write",
       run: () => fx.navigate({ name: "task", pid, taskId: "__new__", view: "edit" }),
     });
+    add({
+      id: "new-plan",
+      label: "New plan",
+      group: "Actions",
+      keywords: ["create", "plan", "wizard", "/plan"],
+      requiredScope: "plans:write",
+      run: (args) =>
+        fx.openNewPlan
+          ? fx.openNewPlan(pid, args?.trim() || undefined)
+          : fx.navigate({ name: "plans", pid }),
+    });
     for (const plan of groups.needsYou.flatMap((n) => (n.kind === "draft-plan" ? [n.plan] : []))) {
       add({
         id: `activate-plan-${plan.id}`,
         targetTitle: plan.title,
-        label: `Activate plan: ${plan.title}`,
+        label: `Create tasks from plan: ${plan.title}`,
         group: "Actions",
-        searchValue: `Activate plan: ${plan.title} ${plan.id}`,
-        keywords: ["activate", "plan", plan.id],
+        searchValue: `Create tasks from plan: ${plan.title} ${plan.id}`,
+        keywords: ["activate", "plan", "tasks", plan.id],
         requiredScope: "plans:write",
         run: () => fx.activatePlan(pid, plan),
       });

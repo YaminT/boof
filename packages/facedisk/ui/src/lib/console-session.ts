@@ -73,10 +73,10 @@ export async function submitConsole(
   input: string,
   actions: CommandAction[],
   held: ReadonlySet<Scope> | "all",
-): Promise<{ outcome: ConsoleOutcome; line: ConsoleLine }> {
+): Promise<{ outcome: ConsoleOutcome; line: ConsoleLine; prefill: string | null }> {
   const resolved = resolveConsoleCommand(input, availableActions(actions, held));
   let outcome: ConsoleOutcome;
-  if (resolved.kind === "unknown") {
+  if (resolved.kind === "unknown" || resolved.kind === "suggest") {
     outcome = resolved;
   } else {
     try {
@@ -86,5 +86,9 @@ export async function submitConsole(
       outcome = { kind: "error", action: resolved.action, message: errorMessage(err) };
     }
   }
-  return { outcome, line: { kind: "result", text: formatConsoleResult(outcome) } };
+  return {
+    outcome,
+    line: { kind: "result", text: formatConsoleResult(outcome) },
+    prefill: outcome.kind === "suggest" ? outcome.prefill : null,
+  };
 }
