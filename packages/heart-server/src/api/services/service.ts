@@ -669,7 +669,16 @@ export class ProjectService {
       | ((args: string[]) => Promise<{ code: number | null; stdout: string; stderr: string }>)
       | undefined;
     if (liveWorktree) {
-      const record = await loadWorktreeRecord(worktreeRoot, id);
+      let record: Awaited<ReturnType<typeof loadWorktreeRecord>>;
+      try {
+        record = await loadWorktreeRecord(worktreeRoot, id, project.workingDirectory);
+      } catch (err) {
+        throw new OpError(
+          409,
+          `task worktree cannot be checked (${err instanceof Error ? err.message : String(err)}); ` +
+            "run the task again to recreate its record",
+        );
+      }
       if (!record) {
         throw new OpError(
           409,

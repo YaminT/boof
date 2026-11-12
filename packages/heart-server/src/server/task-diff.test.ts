@@ -174,6 +174,20 @@ describe("GET /tasks/:id/diff", () => {
     expect(d.leftovers.ref).toBe(`boof-runner/${id}--leftovers`);
   });
 
+  it("serves the diff for a worktree whose record was written by 0.4.1", async () => {
+    const { id } = await committedTask("Old record");
+    const meta = join(wtRoot, ".meta", `${id}.json`);
+    const rec = JSON.parse(await readFile(meta, "utf8"));
+    await writeFile(meta, JSON.stringify({ path: rec.path, branch: rec.branch, base: rec.base }));
+    const res = await call(diffUrl(id));
+    expect(res.status).toBe(200);
+    expect((await res.json()).files.length).toBeGreaterThan(0);
+    // A record that cannot be verified is a 409 with a message, never a server error.
+    await writeFile(meta, JSON.stringify({ ...rec, commonDir: join(root, "nowhere") }));
+    const bad = await call(diffUrl(id));
+    expect(bad.status).toBe(409);
+  });
+
   it("leaves the patch out above maxBytes and cuts a single file at it", async () => {
     const id = await mkTask("Big one");
     const { worktree } = await createWorktree(repo, id, { root: wtRoot });

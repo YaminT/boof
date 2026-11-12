@@ -23,6 +23,7 @@ import {
 } from "@boof/heart";
 import {
   commitLeftovers,
+  loadWorktreeRecord,
   createWorktree as create,
   diffAgainstBase,
   discardWorktree,
@@ -289,6 +290,47 @@ describe("worktree isolation", () => {
     await expect(
       verifyWorktreeRecord({ path: wt.path, branch: wt.branch, base: wt.base }),
     ).rejects.toThrow("task worktree is missing its trusted git record");
+  });
+
+  it("sandbox-off worktrees work in a repository with extensions.worktreeConfig=true", async () => {
+    const wt = await createWorktree(repo, "wtconfig-off", { strict: false });
+    const config = join((await repoCommonDir(repo))!, "config");
+    const original = await readFile(config, "utf8");
+    try {
+      await writeFile(config, `${original}\n[extensions]\n\tworktreeConfig = true\n`);
+      await writeFile(join(wt.path, "x.txt"), "x\n");
+      await expect(verifyWorktreeRecord(wt)).resolves.toBeUndefined();
+      expect((await diffAgainstBase(wt)).text).toContain("x.txt");
+      await expect(commitLeftovers(repo, wt, "t")).resolves.toBeTruthy();
+      // Enforce mode still refuses, with a message that says how to proceed.
+      await expect(verifyWorktreeRecord({ ...wt, strict: true })).rejects.toThrow(
+        "extensions.worktreeConfig is not allowed while the sandbox is enforced",
+      );
+    } finally {
+      await writeFile(config, original);
+    }
+  });
+
+  it("upgrades a 0.4.1 record that lacks the trusted git fields", async () => {
+    const wtRoot = rootOf();
+    const made = { worktree: await createWorktree(repo, "legacy-upgrade") };
+    const old = {
+      path: made.worktree.path,
+      branch: made.worktree.branch,
+      base: made.worktree.base,
+    };
+    await mkdir(join(wtRoot, ".meta"), { recursive: true });
+    await writeFile(join(wtRoot, ".meta", "legacy-upgrade.json"), JSON.stringify(old));
+    const loaded = await loadWorktreeRecord(wtRoot, "legacy-upgrade", repo);
+    expect(loaded?.commonDir).toBe(made.worktree.commonDir);
+    expect(loaded?.worktreeName).toBe("legacy-upgrade");
+    const stored = JSON.parse(await readFile(join(wtRoot, ".meta", "legacy-upgrade.json"), "utf8"));
+    expect(stored.commonDir).toBe(made.worktree.commonDir);
+    // Without the working directory the record is still refused, with a plain error.
+    await writeFile(join(wtRoot, ".meta", "legacy-upgrade.json"), JSON.stringify(old));
+    await expect(loadWorktreeRecord(wtRoot, "legacy-upgrade")).rejects.toThrow(
+      "missing its trusted git record",
+    );
   });
 
   it("untracked content counts toward the inline cap", async () => {

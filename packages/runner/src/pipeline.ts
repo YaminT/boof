@@ -1119,6 +1119,7 @@ export class Pipeline {
         const made = await ensureWorktree(workingDirectory, id, {
           root: resolveWorktreeRoot(worktreeSettings(this.deps.settings), workingDirectory),
           base,
+          strict: this.sandboxMode() === "enforce",
         });
         worktree = made.worktree;
         await appendLog(

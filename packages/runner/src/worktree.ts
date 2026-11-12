@@ -42,6 +42,11 @@ export interface Worktree {
   /** Trusted runner record used to check mutable .git metadata before every server git call. */
   commonDir?: string;
   worktreeName?: string;
+  /**
+   * Sandbox-enforce hardening (refuse extensions.worktreeConfig, config.worktree, gitlinks and
+   * .gitmodules). Absent means on; sandbox-off runs record `false`, as 0.4.1 behaved.
+   */
+  strict?: boolean;
 }
 
 /** Timeout for checkout-sized git calls (worktree add/remove, add -A): slow on a big repository. */
@@ -74,6 +79,8 @@ export interface WorktreeOptions {
   base?: string;
   /** Timeout for `git worktree add`; default CHECKOUT_TIMEOUT_MS. */
   checkoutTimeoutMs?: number;
+  /** Apply the enforce-mode git hardening to this worktree; default true. Sandbox-off runs pass false. */
+  strict?: boolean;
 }
 
 export interface WorktreeResult {
@@ -108,7 +115,11 @@ export async function createWorktree(
   const baseIgnored = !!opts.base && (hasPath || hasBranch);
   const commonDir = await repoCommonDir(workingDir);
   if (!commonDir) throw new Error(`git common dir is unavailable for ${workingDir}`);
-  const trustedGit = { commonDir: await realpath(commonDir), worktreeName: basename(path) };
+  const trustedGit = {
+    commonDir: await realpath(commonDir),
+    worktreeName: basename(path),
+    strict: opts.strict !== false,
+  };
 
   if (hasPath) {
     if ((await registeredWorktreeBranch(workingDir, path)) !== branch) {
@@ -168,7 +179,7 @@ export async function createWorktree(
         : `git worktree add failed: ${add.err || add.out}`,
     );
   }
-  const wt = { path, branch, base, ...trustedGit };
+  const wt: Worktree = { path, branch, base, ...trustedGit };
   await removeTaskBranchReflog(trustedGit.commonDir, branch);
   await writeMeta(root, taskId, wt);
   return { worktree: wt, reused: hasBranch, baseIgnored };
@@ -210,9 +221,31 @@ async function readMeta(root: string, taskId: string): Promise<Worktree | null> 
 }
 
 /** Read and verify the runner-owned sidecar record for a live task worktree. */
-export async function loadWorktreeRecord(root: string, taskId: string): Promise<Worktree | null> {
-  const wt = await readMeta(root, taskId);
+export async function loadWorktreeRecord(
+  root: string,
+  taskId: string,
+  workingDir?: string,
+): Promise<Worktree | null> {
+  let wt = await readMeta(root, taskId);
   if (!wt) return null;
+  if ((!wt.commonDir || !wt.worktreeName) && workingDir) {
+    // A record written by 0.4.1 has no trusted git fields. Derive them when git itself lists
+    // this directory as the registered worktree of the task branch, then store them.
+    const path = join(resolve(root), taskId);
+    const branch = `${BRANCH_PREFIX}${taskId}`;
+    const common = await repoCommonDir(workingDir);
+    if (common && (await registeredWorktreeBranch(workingDir, path)) === branch) {
+      wt = {
+        ...wt,
+        path,
+        branch,
+        commonDir: await realpath(common),
+        worktreeName: basename(path),
+        strict: false,
+      };
+      await writeMeta(root, taskId, wt);
+    }
+  }
   await verifyWorktreeRecord(wt);
   return wt;
 }
@@ -358,7 +391,7 @@ export async function commitLeftovers(
   const stagedGitlinks = gitlinksFromIndex(staged.out.split("\0")).filter(
     ([path, oid]) => baseLinks.get(path) !== oid,
   );
-  if (stagedGitlinks.length > 0) {
+  if (strict(wt) && stagedGitlinks.length > 0) {
     throw new Error(
       `refusing to snapshot gitlink entries: ${stagedGitlinks.map(([path]) => path).join(", ")}`,
     );
@@ -368,7 +401,7 @@ export async function commitLeftovers(
   const headGitlinks = gitlinksFromTree(
     headTree.out.split("\0").filter((entry) => /^160000 commit /.test(entry)),
   ).filter(([path, oid]) => baseLinks.get(path) !== oid);
-  if (headGitlinks.length > 0) {
+  if (strict(wt) && headGitlinks.length > 0) {
     throw new Error("refusing to snapshot gitlink entries present in HEAD");
   }
   // `git add` can read a .gitmodules override while walking nested gitlinks. Refuse any
@@ -399,7 +432,11 @@ export async function commitLeftovers(
   ]);
   if (modulesInBase.code !== 0)
     throw new Error(`git ls-tree failed: ${modulesInBase.err || modulesInBase.out}`);
-  if ((modulesOnDisk || modulesInIndex.out || modulesInHead.out) && !modulesInBase.out) {
+  if (
+    strict(wt) &&
+    (modulesOnDisk || modulesInIndex.out || modulesInHead.out) &&
+    !modulesInBase.out
+  ) {
     throw new Error("refusing to snapshot an agent-controlled .gitmodules file");
   }
   const status = await checkedWorktreeGit(wt, ["status", "--porcelain"]);
@@ -581,6 +618,10 @@ export async function finalizeWorktree(
   return lines;
 }
 
+function strict(wt: Worktree): boolean {
+  return wt.strict !== false;
+}
+
 export async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
   if (!wt.commonDir || !wt.worktreeName) {
     throw new Error("task worktree is missing its trusted git record");
@@ -612,19 +653,24 @@ export async function verifyWorktreeRecord(wt: Worktree): Promise<void> {
     ],
     worktreeGitEnv(wt),
   );
-  if (worktreeConfigEnabled.code === 0 && worktreeConfigEnabled.out.trim() === "true") {
-    throw new Error("task worktree extensions.worktreeConfig is not allowed");
-  }
-  if (worktreeConfigEnabled.code !== 0 && worktreeConfigEnabled.code !== 1) {
-    throw new Error("could not parse common git extensions.worktreeConfig setting");
-  }
-  const worktreeConfig = join(admin, "config.worktree");
-  const worktreeConfigInfo = await lstat(worktreeConfig).catch((err: NodeJS.ErrnoException) => {
-    if (err.code === "ENOENT") return null;
-    throw err;
-  });
-  if (worktreeConfigInfo) {
-    throw new Error("task worktree config.worktree is not allowed");
+  if (strict(wt)) {
+    if (worktreeConfigEnabled.code === 0 && worktreeConfigEnabled.out.trim() === "true") {
+      throw new Error(
+        "task worktree extensions.worktreeConfig is not allowed while the sandbox is enforced; " +
+          "turn it off in the repository (git config --unset extensions.worktreeConfig) or switch the sandbox off",
+      );
+    }
+    if (worktreeConfigEnabled.code !== 0 && worktreeConfigEnabled.code !== 1) {
+      throw new Error("could not parse common git extensions.worktreeConfig setting");
+    }
+    const worktreeConfig = join(admin, "config.worktree");
+    const worktreeConfigInfo = await lstat(worktreeConfig).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") return null;
+      throw err;
+    });
+    if (worktreeConfigInfo) {
+      throw new Error("task worktree config.worktree is not allowed while the sandbox is enforced");
+    }
   }
   const commonFile = join(admin, "commondir");
   const commonInfo = await lstat(commonFile).catch(() => null);
@@ -681,7 +727,7 @@ export async function checkedWorktreeGit(
 ): Promise<Awaited<ReturnType<typeof git>>> {
   await verifyWorktreeRecord(wt);
   const commandIndex = args.findIndex((arg) => ["status", "diff", "add"].includes(arg));
-  if (commandIndex >= 0) await refuseTaskSubmodules(wt, env);
+  if (commandIndex >= 0 && strict(wt)) await refuseTaskSubmodules(wt, env);
   const trustedEnv = {
     ...process.env,
     ...env,
