@@ -189,11 +189,30 @@ export function installedTools(status: HarnessStatus | null): string[] {
     .map(([id]) => id);
 }
 
+/** Installed tools that cannot start for this project, with the server's reason. */
+export function blockedTools(status: HarnessStatus | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (status)
+    for (const [id, i] of Object.entries(status.tools))
+      if (i.installed && i.startBlock) out[id] = i.startBlock;
+  return out;
+}
+
+/** Installed tools that can start: the ones an agent draft may use. */
+export function readyTools(status: HarnessStatus | null): string[] {
+  const blocked = blockedTools(status);
+  return installedTools(status).filter((id) => !blocked[id]);
+}
+
 /** Why "Let an agent write the tasks" is not available, or null when it is. */
 export function agentUnavailableReason(status: HarnessStatus | null): string | null {
   if (!status) return "Checking which coding agents are installed…";
   if (!status.anyInstalled)
     return "No coding agent is installed on this computer. Install one (Settings › Agents), or write the tasks yourself.";
+  if (readyTools(status).length === 0) {
+    const first = Object.values(blockedTools(status))[0];
+    return `No installed coding agent can start for this project. ${first ?? ""}`.trim();
+  }
   return null;
 }
 
@@ -207,7 +226,10 @@ interface SettingsLike {
   activeProfile?: string | null;
 }
 
-/** The agent preselected: the active profile's advisor (planner), else the planner role, if installed. */
+/**
+ * The agent preselected: the active profile's advisor (planner), else the planner role, if it
+ * is ready; else the first ready one. `installed` lists the tools that can start.
+ */
 export function defaultAgent(
   settings: SettingsLike | null,
   installed: readonly string[],
@@ -216,6 +238,46 @@ export function defaultAgent(
   for (const pick of [prof?.roles.planner, settings?.roles.planner])
     if (pick && installed.includes(pick.tool)) return { tool: pick.tool, model: pick.model };
   return { tool: installed[0] ?? "", model: "" };
+}
+
+const FAILURE_MAX = 300;
+
+/** Drops what a user must not see or does not need: file paths, keys and tokens. */
+function cleanReason(text: string): string {
+  return text
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "[key]")
+    .replace(/\b(Bearer|Basic)\s+\S+/gi, "$1 [token]")
+    .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))=\S+/g, "$1=[hidden]")
+    .replace(/(?:[A-Za-z]:\\|~\/|\/)(?:[\w.@+-]+[\\/])+[\w.@+-]*/g, "[path]")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Why a plan-draft task failed: the first non-empty line of its "Not started" note, else of
+ * its log (headings skipped), cleaned of paths and secrets and cut short. Null when the task
+ * did not fail or says nothing.
+ */
+export function draftFailureReason(task: {
+  frontmatter: { status: string };
+  body: { log?: string };
+}): string | null {
+  if (task.frontmatter.status !== "failed" && task.frontmatter.status !== "stopped") return null;
+  const lines = (task.body.log ?? "").split(/\r?\n/);
+  const at = lines.findIndex((l) => /^#+\s*Not started\s*$/i.test(l.trim()));
+  const pool = at >= 0 ? lines.slice(at + 1) : lines;
+  const first = pool.find((l) => l.trim() && !/^#+\s/.test(l.trim()));
+  if (!first) return null;
+  const clean = cleanReason(first);
+  if (!clean) return null;
+  return clean.length > FAILURE_MAX ? `${clean.slice(0, FAILURE_MAX - 1)}…` : clean;
+}
+
+/** The next actions for a failed draft: always another agent; project settings when it points there. */
+export function draftFailureActions(reason: string | null): ("change-agent" | "settings")[] {
+  return reason && /settings|api key|authenticat|gateway/i.test(reason)
+    ? ["change-agent", "settings"]
+    : ["change-agent"];
 }
 
 // ---- draft kept in sessionStorage, dismissal in localStorage ----

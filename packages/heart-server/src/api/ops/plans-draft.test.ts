@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AuthStore, LOCAL_PRINCIPAL, ProjectStore, type Principal } from "@boof/heart";
+import { AuthStore, LOCAL_PRINCIPAL, ProjectStore, TaskStore, type Principal } from "@boof/heart";
 import { MockTool, ToolRegistry, type Tool } from "@boof/runner";
 import type { OpContext } from "../define-op.js";
 import { getOp } from "../registry.js";
@@ -28,6 +28,22 @@ const missing = (): Tool =>
     },
   }) as Tool;
 
+const agentSdk = (): Tool =>
+  ({
+    id: "claude-agent",
+    displayName: "Claude Agent",
+    defaultModels: ["m"],
+    needsAgentAuth: true,
+    installed: async () => ({ installed: true, message: "ok" }),
+    detect: async () => {
+      throw new Error("no probe");
+    },
+    listModels: async () => [],
+    run: async () => {
+      throw new Error("not used");
+    },
+  }) as Tool;
+
 async function setup(principal: Principal = LOCAL_PRINCIPAL) {
   const root = await mkdtemp(join(tmpdir(), "boof-draftops-"));
   const work = await mkdtemp(join(tmpdir(), "boof-draftops-work-"));
@@ -36,7 +52,7 @@ async function setup(principal: Principal = LOCAL_PRINCIPAL) {
   const ctx: OpContext = {
     root,
     principal: LOCAL_PRINCIPAL,
-    services: new TaskService(root, new ToolRegistry([new MockTool(), missing()])),
+    services: new TaskService(root, new ToolRegistry([new MockTool(), missing(), agentSdk()])),
     authStore: new AuthStore(root),
     now: () => "2026-01-01T00:00:00.000Z",
   };
@@ -52,6 +68,7 @@ async function setup(principal: Principal = LOCAL_PRINCIPAL) {
     call: (op: string, input: object) =>
       getOp(op)!.execute({ ...ctx, principal }, input) as Promise<any>,
     work,
+    root,
   };
 }
 
@@ -131,6 +148,39 @@ describe("plans.draftGoals", () => {
     ).rejects.toMatchObject({
       code: "tool_not_installed",
     });
+  });
+
+  it("refuses claude-agent with the gateway reason before creating a task (400 agent_not_ready)", async () => {
+    const { call } = await setup();
+    await expect(
+      call("plans.draftGoals", { ...draft, tool: "claude-agent", model: "default" }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "agent_not_ready",
+      message: expect.stringMatching(/no better-ccflare gateway is configured/),
+    });
+    const tasks = await call("tasks.list", { projectId: "proj" });
+    expect(JSON.stringify(tasks)).not.toContain("plan-draft");
+  });
+
+  it("reports a tool that cannot start per project on harnesses.status", async () => {
+    const { call } = await setup();
+    const plain = await call("harnesses.status", {});
+    expect(plain.tools["claude-agent"].startBlock).toBeUndefined();
+    const out = await call("harnesses.status", { forProject: "proj" });
+    expect(out.tools["claude-agent"].startBlock).toMatch(/no better-ccflare gateway/);
+  });
+
+  it("drops a failed draft task when the user drafts again", async () => {
+    const { call, root } = await setup();
+    const first = await call("plans.draftGoals", draft);
+    const store = new TaskStore(new ProjectStore(root).dir("proj"));
+    await store.transition(first.task.id, "failed");
+    const second = await call("plans.draftGoals", draft);
+    // The failed one is gone: one draft task of the plan remains, and it is the new, pending one.
+    const drafts = (await store.list()).filter((t) => t.frontmatter.draftFor?.planId === "pl");
+    expect(drafts.map((t) => t.frontmatter.status)).toEqual(["pending"]);
+    expect(second.task.status).toBe("pending");
   });
 
   it("refuses a plan that is not a draft and a missing model", async () => {

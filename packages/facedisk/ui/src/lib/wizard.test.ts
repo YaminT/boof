@@ -7,7 +7,11 @@ import {
   assignIds,
   buildGoalInputs,
   clearDraft,
+  blockedTools,
   defaultAgent,
+  draftFailureActions,
+  draftFailureReason,
+  readyTools,
   dismissWizard,
   emptyDraft,
   installedTools,
@@ -154,6 +158,60 @@ describe("agents", () => {
       model: "m1",
     });
     expect(defaultAgent(null, [])).toEqual({ tool: "", model: "" });
+  });
+});
+
+describe("agents that cannot start", () => {
+  const status = {
+    tools: {
+      "claude-agent": {
+        displayName: "Claude Agent",
+        installed: true,
+        message: "",
+        startBlock: "claude-agent cannot start: no gateway",
+      },
+      "claude-code": { displayName: "Claude Code", installed: true, message: "" },
+      codex: { displayName: "Codex", installed: false, message: "" },
+    },
+    anyInstalled: true,
+    checkedAt: "",
+  };
+  it("separates installed tools that cannot start and never preselects them", () => {
+    expect(blockedTools(status)).toEqual({
+      "claude-agent": "claude-agent cannot start: no gateway",
+    });
+    expect(readyTools(status)).toEqual(["claude-code"]);
+    const settings = { roles: { planner: { tool: "claude-agent", model: "m" } } };
+    expect(defaultAgent(settings, readyTools(status))).toEqual({ tool: "claude-code", model: "" });
+  });
+  it("explains when every installed agent is blocked", () => {
+    const only = { ...status, tools: { "claude-agent": status.tools["claude-agent"] } };
+    expect(agentUnavailableReason(only)).toMatch(/can start.*no gateway/);
+    expect(agentUnavailableReason(status)).toBeNull();
+  });
+});
+
+describe("draft failure reason", () => {
+  const task = (status: string, log: string) => ({ frontmatter: { status }, body: { log } });
+  it("takes the first line after the Not started heading", () => {
+    const log =
+      "### Not started\nclaude-agent cannot start: no better-ccflare gateway is configured. Set an Anthropic API key (Settings › Project).\nmore";
+    const reason = draftFailureReason(task("failed", log));
+    expect(reason).toMatch(/^claude-agent cannot start: no better-ccflare gateway/);
+    expect(reason).not.toContain("more");
+    expect(draftFailureActions(reason)).toEqual(["change-agent", "settings"]);
+  });
+  it("skips headings and blank lines, hides paths and secrets, and cuts it short", () => {
+    const reason = draftFailureReason(
+      task("failed", "\n## Log\nfailed in /home/me/proj/x.ts with sk-ant-api03-abcdefghijklmnop\n"),
+    );
+    expect(reason).toBe("failed in [path] with [key]");
+    expect(draftFailureReason(task("failed", `${"a".repeat(500)}`))!.length).toBe(300);
+    expect(draftFailureActions(reason)).toEqual(["change-agent"]);
+  });
+  it("is null for a task that did not fail or has no log", () => {
+    expect(draftFailureReason(task("done", "x"))).toBeNull();
+    expect(draftFailureReason(task("failed", ""))).toBeNull();
   });
 });
 

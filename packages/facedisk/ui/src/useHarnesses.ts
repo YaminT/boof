@@ -12,7 +12,7 @@ export interface HarnessesState {
 }
 
 /** Which coding agents are installed on the computer that runs boof (needs settings:read). */
-export function useHarnesses(): HarnessesState {
+export function useHarnesses(projectId?: string): HarnessesState {
   const [status, setStatus] = useState<HarnessStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -22,14 +22,14 @@ export function useHarnesses(): HarnessesState {
     setLoading(true);
     setFailed(false);
     api
-      .harnesses(attempt > 0)
+      .harnesses(attempt > 0, projectId)
       .then((s) => !cancelled && setStatus(s))
       .catch(() => !cancelled && setFailed(true))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [attempt]);
+  }, [attempt, projectId]);
   const refresh = useCallback(() => setAttempt((n) => n + 1), []);
   return { status, loading, failed, refresh };
 }

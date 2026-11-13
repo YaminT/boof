@@ -1020,7 +1020,11 @@ export class TaskService {
     return withAgentKey(value, hasAgentKey);
   }
 
-  async agentAuthStatus(authorized: (projectId: string) => boolean) {
+  async agentAuthStatus(
+    authorized: (projectId: string) => boolean,
+    /** A role to count as claude-agent for one project, e.g. the planner of a plan-draft task. */
+    forced?: { projectId: string; role: "planner" | "developer" | "observer" | "reviewer" },
+  ) {
     const settings = await this.loadSettings();
     const result = [];
     let gatewayEligibility: AgentSdkEligibility | null | undefined;
@@ -1040,7 +1044,8 @@ export class TaskService {
     );
     for (const project of projects) {
       const effective = effectiveSettings(settings, project);
-      const pendingRoles = pendingRolesByProject.get(project.id) ?? new Set<string>();
+      const pendingRoles = new Set(pendingRolesByProject.get(project.id) ?? []);
+      if (forced?.projectId === project.id) pendingRoles.add(forced.role);
       const roles = (["planner", "developer", "observer", "reviewer"] as const).filter(
         (role) => effective.roles[role]?.tool === "claude-agent" || pendingRoles.has(role),
       );
@@ -1895,13 +1900,16 @@ export class TaskService {
    * Which tools are installed. Free: no prompt. Cached for five minutes; `refresh` re-checks, but
    * a check younger than ten seconds is reused.
    */
-  async harnesses(refresh = false): Promise<{
-    tools: Record<string, InstallResult & { displayName: string }>;
+  async harnesses(
+    refresh = false,
+    projectId?: string,
+  ): Promise<{
+    tools: Record<string, InstallResult & { displayName: string; startBlock?: string }>;
     anyInstalled: boolean;
     checkedAt: string;
   }> {
     const installs = await this.catalog.installedAll(refresh ? 10_000 : 5 * 60_000);
-    const tools: Record<string, InstallResult & { displayName: string }> = {};
+    const tools: Record<string, InstallResult & { displayName: string; startBlock?: string }> = {};
     let oldest = Date.now();
     for (const info of this.catalog.list()) {
       const found = installs[info.id];
@@ -1909,12 +1917,38 @@ export class TaskService {
       const { checkedAt, hidden: _hidden, ...install } = found;
       oldest = Math.min(oldest, Date.parse(checkedAt));
       tools[info.id] = { displayName: info.displayName, ...install };
+      // With a project: why a task of this project could not start with this tool.
+      if (projectId && install.installed) {
+        const block = await this.draftStartBlock(projectId, info.id);
+        if (block) tools[info.id].startBlock = block;
+      }
     }
     return {
       tools,
       anyInstalled: Object.values(tools).some((t) => t.installed),
       checkedAt: new Date(oldest).toISOString(),
     };
+  }
+
+  /**
+   * Why a plan-draft task for `tool` would not start in this project, or null. The same checks
+   * the engine runs before it starts a task: the tool is known, usable and installed, and for
+   * claude-agent the project's authentication allows it.
+   */
+  async draftStartBlock(projectId: string, tool: string): Promise<string | null> {
+    const info = this.catalog.get(tool);
+    if (!info) return `Unknown tool: ${tool}`;
+    if (info.unavailableReason) return info.unavailableReason;
+    const install = (await this.catalog.installedAll())[tool];
+    if (install && install.installed === false)
+      return `${info.displayName} is not installed: ${install.message}`;
+    if (tool === "claude-agent") {
+      const entry = (
+        await this.agentAuthStatus((id) => id === projectId, { projectId, role: "planner" })
+      ).find((e) => e.projectId === projectId);
+      if (entry && !entry.allowed) return entry.reason ?? "claude-agent cannot start here";
+    }
+    return null;
   }
 
   /** The last health results of this process, without running a tool (empty until a check ran). */

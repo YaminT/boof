@@ -306,6 +306,10 @@ export const HarnessInstallSchema = z.object({
     .optional()
     .meta({ description: "Set when the program exists but is not on PATH: where it was found." }),
   message: z.string(),
+  startBlock: z.string().optional().meta({
+    description:
+      "Only with forProject: why a task of that project cannot start with this installed tool (for example claude-agent without an API key).",
+  }),
 });
 
 export const HarnessStatusSchema = z.object({
