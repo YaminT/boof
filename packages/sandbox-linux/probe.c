@@ -13,6 +13,12 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(__linux__)
+#include <sched.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#endif
+#include <sys/resource.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -574,6 +580,178 @@ static void op_orphan_sleep(const char *pid_path) {
   close(ready[0]);
 }
 
+#if defined(__linux__)
+static long host_tasks(void) {
+  FILE *file = fopen("/proc/loadavg", "r");
+  if (file == NULL) return -1;
+  double a, b, c;
+  long running = 0, total = -1;
+  if (fscanf(file, "%lf %lf %lf %ld/%ld", &a, &b, &c, &running, &total) != 5) total = -1;
+  fclose(file);
+  return total;
+}
+
+/* Print the limits the helper left on this process. The knobs must already be unset. */
+static void op_limits(void) {
+  struct rlimit nproc;
+  if (getrlimit(RLIMIT_NPROC, &nproc) != 0) {
+    printf("limits %s\n", errname(errno));
+    return;
+  }
+  struct rlimit nice_lim;
+  if (getrlimit(RLIMIT_NICE, &nice_lim) != 0) {
+    printf("limits %s\n", errname(errno));
+    return;
+  }
+  errno = 0;
+  int nice_value = getpriority(PRIO_PROCESS, 0);
+  const char *floor = getenv("BOOF_SANDBOX_NPROC_FLOOR");
+  const char *headroom = getenv("BOOF_SANDBOX_NPROC_HEADROOM");
+  printf("limits nproc=%lu/%lu nice=%d nice_rlim=%lu/%lu host=%ld floor=%s headroom=%s\n",
+         (unsigned long)nproc.rlim_cur, (unsigned long)nproc.rlim_max, nice_value,
+         (unsigned long)nice_lim.rlim_cur, (unsigned long)nice_lim.rlim_max, host_tasks(),
+         floor != NULL ? floor : "unset", headroom != NULL ? headroom : "unset");
+}
+
+#ifndef SCHED_IDLE
+#define SCHED_IDLE 5
+#endif
+
+struct boof_sched_attr {
+  unsigned int size;
+  unsigned int sched_policy;
+  unsigned long long sched_flags;
+  int sched_nice;
+  unsigned int sched_priority;
+  unsigned long long sched_runtime;
+  unsigned long long sched_deadline;
+  unsigned long long sched_period;
+};
+
+/* IOPRIO_WHO_PROCESS is 1. who 0 is the caller. BE class, level 4. */
+#define BOOF_IOPRIO_WHO_PROCESS 1
+#define BOOF_IOPRIO_BE4 ((2 << 13) | 4)
+
+static void report_call(const char *name, int rc) {
+  printf("%s %s\n", name, rc == 0 ? "ok" : errname(errno));
+}
+
+/*
+ * Self (pid/who 0) must still work. The helper and an outside pid must be EPERM.
+ * A call that unexpectedly succeeds is undone when that is possible.
+ */
+static void op_task_control(const char *outside_text) {
+  char *end = NULL;
+  long outside_value = strtol(outside_text, &end, 10);
+  if (end == outside_text || *end != '\0' || outside_value <= 1) {
+    printf("task-control EINVAL\n");
+    return;
+  }
+  pid_t outside = (pid_t)outside_value;
+  pid_t parent = getppid();
+  struct rlimit nofile;
+
+  errno = 0;
+  report_call("prlimit-self", prlimit(0, RLIMIT_NOFILE, NULL, &nofile));
+  errno = 0;
+  report_call("prlimit-parent", prlimit(parent, RLIMIT_NOFILE, NULL, &nofile));
+  errno = 0;
+  report_call("prlimit-outside", prlimit(outside, RLIMIT_NOFILE, NULL, &nofile));
+
+  errno = 0;
+  int rc = setpriority(PRIO_PROCESS, 0, 19);
+  report_call("setpriority-self", rc);
+
+  errno = 0;
+  rc = setpriority(PRIO_PROCESS, parent, 19);
+  if (rc == 0) setpriority(PRIO_PROCESS, parent, 0);
+  report_call("setpriority-parent", rc);
+
+  errno = 0;
+  rc = setpriority(PRIO_PROCESS, outside, 19);
+  if (rc == 0) setpriority(PRIO_PROCESS, outside, 0);
+  report_call("setpriority-outside", rc);
+
+  struct sched_param param;
+  memset(&param, 0, sizeof param);
+  errno = 0;
+  report_call("sched-scheduler-self", sched_setscheduler(0, SCHED_OTHER, &param));
+  errno = 0;
+  rc = sched_setscheduler(parent, SCHED_IDLE, &param);
+  if (rc == 0) sched_setscheduler(parent, SCHED_OTHER, &param);
+  report_call("sched-scheduler-parent", rc);
+  errno = 0;
+  report_call("sched-param-parent", sched_setparam(parent, &param));
+
+  struct boof_sched_attr attr;
+  memset(&attr, 0, sizeof attr);
+  attr.size = sizeof attr;
+  attr.sched_policy = SCHED_OTHER;
+  errno = 0;
+  rc = (int)syscall(SYS_sched_setattr, parent, &attr, 0);
+  if (rc == 0) {
+    attr.sched_policy = SCHED_OTHER;
+    syscall(SYS_sched_setattr, parent, &attr, 0);
+  }
+  report_call("sched-attr-parent", rc);
+
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET(0, &set);
+  errno = 0;
+  report_call("sched-affinity-self", sched_setaffinity(0, sizeof set, &set));
+  errno = 0;
+  rc = sched_setaffinity(parent, sizeof set, &set);
+  if (rc == 0) {
+    cpu_set_t all;
+    CPU_ZERO(&all);
+    long ncpu = sysconf(_SC_NPROCESSORS_CONF);
+    if (ncpu < 1) ncpu = 1;
+    for (long cpu = 0; cpu < ncpu && cpu < CPU_SETSIZE; cpu++) CPU_SET(cpu, &all);
+    sched_setaffinity(parent, sizeof all, &all);
+  }
+  report_call("sched-affinity-parent", rc);
+
+  errno = 0;
+  report_call("ioprio-self", (int)syscall(SYS_ioprio_set, BOOF_IOPRIO_WHO_PROCESS, 0, BOOF_IOPRIO_BE4));
+  errno = 0;
+  rc = (int)syscall(SYS_ioprio_set, BOOF_IOPRIO_WHO_PROCESS, parent, BOOF_IOPRIO_BE4);
+  report_call("ioprio-parent", rc);
+  errno = 0;
+  rc = (int)syscall(SYS_ioprio_set, BOOF_IOPRIO_WHO_PROCESS, outside, BOOF_IOPRIO_BE4);
+  report_call("ioprio-outside", rc);
+}
+
+/*
+ * A storm that keeps forking until killed. Every process forks whenever the host task count is
+ * below the start count plus `ceiling`, so a slot that a kill frees is refilled at once. Half the
+ * children setsid(). All of them are named "boofstorm". The ceiling bounds the host, not the
+ * helper: a helper that sets no process cap lets the storm reach it.
+ */
+static void op_storm_live(const char *ceiling_text) {
+  long ceiling = strtol(ceiling_text, NULL, 10);
+  long base = host_tasks();
+  if (ceiling < 1 || base < 0) return;
+  prctl(PR_SET_NAME, "boofstorm", 0, 0, 0);
+  printf("storm-live start\n");
+  fflush(stdout);
+  for (;;) {
+    long total = host_tasks();
+    if (total >= 0 && total < base + ceiling) {
+      pid_t pid = fork();
+      if (pid == 0) {
+        if ((getpid() & 1) == 0) setsid();
+        continue;
+      }
+      if (pid > 0) continue;
+    }
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+    nanosleep(&delay, NULL);
+  }
+}
+
+#endif
+
 static void op_fork_storm(const char *pid_path) {
   int fd = open(pid_path, O_WRONLY | O_APPEND);
   if (fd < 0) {
@@ -769,6 +947,9 @@ int main(int argc, char **argv) {
   else if (strcmp(cmd, "double-read") == 0 && argc == 3) op_double("read", argv[2]);
   else if (strcmp(cmd, "double-connect4") == 0 && argc == 3) op_double("connect4", argv[2]);
 #if defined(__linux__)
+  else if (strcmp(cmd, "storm-live") == 0 && argc == 3) op_storm_live(argv[2]);
+  else if (strcmp(cmd, "limits") == 0 && argc == 2) op_limits();
+  else if (strcmp(cmd, "task-control") == 0 && argc == 3) op_task_control(argv[2]);
   else if (strcmp(cmd, "pair-connect4") == 0 && argc == 4) {
     int denied = port_arg(argv[2]);
     int allowed = port_arg(argv[3]);

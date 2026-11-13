@@ -71,6 +71,13 @@ static const __u32 k_sendmsg = 211;
 static const __u32 k_sendmmsg = 269;
 static const __u32 k_deny[] = {425, 426, 427, 117, 270, 271, 40, 39, 41, 51, 268,
                                219, 217, 218, 280, 241, 282};
+static const __u32 k_setpriority = 140;
+static const __u32 k_sched_setscheduler = 119;
+static const __u32 k_sched_setparam = 118;
+static const __u32 k_sched_setattr = 274;
+static const __u32 k_sched_setaffinity = 122;
+static const __u32 k_prlimit64 = 261;
+static const __u32 k_ioprio_set = 30;
 #elif defined(__x86_64__)
 static const __u32 k_socket = 41;
 static const __u32 k_socketpair = 53;
@@ -79,6 +86,13 @@ static const __u32 k_sendmsg = 46;
 static const __u32 k_sendmmsg = 307;
 static const __u32 k_deny[] = {425, 426, 427, 101, 310, 311, 165, 166, 155, 161, 308,
                                250, 248, 249, 321, 298, 323};
+static const __u32 k_setpriority = 141;
+static const __u32 k_sched_setscheduler = 144;
+static const __u32 k_sched_setparam = 142;
+static const __u32 k_sched_setattr = 314;
+static const __u32 k_sched_setaffinity = 203;
+static const __u32 k_prlimit64 = 302;
+static const __u32 k_ioprio_set = 251;
 #endif
 
 static int has_k(const struct sock_filter *filter, unsigned len, __u16 code, __u32 k) {
@@ -125,6 +139,11 @@ static int filter_ok(const struct sock_filter *filter, unsigned len) {
   for (unsigned i = 0; i < sizeof k_deny / sizeof k_deny[0]; i++) {
     if (!has_jeq(filter, len, k_deny[i])) return 0;
   }
+  if (!has_jeq(filter, len, k_setpriority) || !has_jeq(filter, len, k_sched_setscheduler) ||
+      !has_jeq(filter, len, k_sched_setparam) || !has_jeq(filter, len, k_sched_setattr) ||
+      !has_jeq(filter, len, k_sched_setaffinity) || !has_jeq(filter, len, k_prlimit64) ||
+      !has_jeq(filter, len, k_ioprio_set))
+    return 0;
 #if defined(__x86_64__)
   int saw_x32 = 0;
   for (unsigned i = 0; i < len; i++) {

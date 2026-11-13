@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { setSandboxApplier } from "./sandbox-launch.js";
 import {
   execCommand as runExecCommand,
   killDarwinProcessTree,
@@ -246,6 +247,55 @@ describe("execCommand", () => {
     }
     return child;
   };
+
+  it.skipIf(process.platform !== "linux")(
+    "kills the process group and closes the streams when the sandbox helper dies mid-walk",
+    async () => {
+      const child = fakeChild(4343, 0, true);
+      const destroyed: string[] = [];
+      (child.stdout as EventEmitter & { destroy?: () => void }).destroy = () => {
+        destroyed.push("stdout");
+      };
+      (child.stderr as EventEmitter & { destroy?: () => void }).destroy = () => {
+        destroyed.push("stderr");
+        // A real stream emits close once destroyed; the child then closes.
+        setTimeout(() => child.emit("close", null, "SIGKILL"), 0);
+      };
+      setSandboxApplier(() => ({
+        command: "helper",
+        args: [],
+        env: {},
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        deliver: () => {},
+      }));
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+      try {
+        const run = execCommand(
+          "agent",
+          [],
+          {
+            cwd: process.cwd(),
+            launch: {
+              kind: "sandbox",
+              helper: "helper",
+              policy: { version: 1, readExec: [], readWrite: [], denyTcpPorts: [], env: {} },
+            },
+          },
+          { spawn: vi.fn(() => child) as never, platform: "linux" },
+        );
+        // The helper dies from SIGKILL while a survivor still holds stdout and stderr open.
+        child.signalCode = "SIGKILL";
+        child.emit("exit", null, "SIGKILL");
+        const res = await run;
+        expect(res.code).toBeNull();
+        expect(killSpy).toHaveBeenCalledWith(-4343, "SIGKILL");
+        expect(destroyed.sort()).toEqual(["stderr", "stdout"]);
+      } finally {
+        killSpy.mockRestore();
+        setSandboxApplier(undefined);
+      }
+    },
+  );
 
   const ROOT = "2026-11-02T17:30:07.1234560Z";
   const CHILD = "2026-11-02T17:30:09.0000000Z";

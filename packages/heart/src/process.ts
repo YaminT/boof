@@ -474,6 +474,29 @@ export function execCommand(
       });
     });
 
+    // The helper is the group leader. When it exits, everything it left behind is a survivor that
+    // still holds stdout and stderr: `close` would never fire. This is the case where the helper
+    // was killed mid-walk (the 10s SIGKILL backstop) and its teardown did not finish. After a
+    // normal exit the group is already empty and the kill finds nothing. Linux only: macOS has its
+    // own tree kill, and Windows has no groups.
+    if (launch.kind === "sandbox" && platform === "linux" && child.pid) {
+      const helperPid = child.pid;
+      child.on("exit", () => {
+        try {
+          process.kill(-helperPid, "SIGKILL");
+        } catch {
+          /* the group is already empty */
+        }
+        // Streams carry the helper's last output, so give it a moment before cutting them.
+        const cut = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+        }, 1000);
+        cut.unref?.();
+        child.once("close", () => clearTimeout(cut));
+      });
+    }
+
     child.on("close", async (code) => {
       clearTimers();
       await cleanPid();
