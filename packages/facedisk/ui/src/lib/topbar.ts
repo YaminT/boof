@@ -50,6 +50,11 @@ export interface TopbarInput {
   noHarness?: boolean;
   /** When the spent budget or the exhausted pool frees up again (ISO), if known. */
   resetAt?: string | null;
+  /**
+   * Pending tasks the UI already knows per project (plan-draft tasks included). The overview is
+   * polled, so right after a task is queued it can still say 0: the larger number wins.
+   */
+  localPending?: Record<string, number>;
   /** Time zone for "resumes at HH:MM"; the browser's when absent. */
   timeZone?: string;
 }
@@ -83,6 +88,16 @@ export function poolResetAt(o: RunnerOverview): string | null {
 const has = (held: ReadonlySet<Scope> | "all", scope: Scope) =>
   held === "all" || held.has("admin") || held.has(scope);
 
+/** True when the key may start and pause the runner (`runner:control` or `settings:write`). */
+export function canControlRunner(held: ReadonlySet<Scope> | "all"): boolean {
+  return has(held, "runner:control") || has(held, "settings:write");
+}
+
+/** Tasks waiting for the runner, plan-draft tasks included. */
+export function pendingCount(tasks: readonly { frontmatter: { status: string } }[]): number {
+  return tasks.filter((t) => t.frontmatter.status === "pending").length;
+}
+
 /** "Plan › Task" (the plan part only when the task has one). */
 export function itemLabel(i: RunningItem): string {
   return i.plan ? `${i.plan} › ${i.title}` : i.title;
@@ -91,7 +106,7 @@ export function itemLabel(i: RunningItem): string {
 /** What the topbar shows, from the runner overview and the key's scopes. */
 export function topbarState(input: TopbarInput): TopbarState {
   const { overview, held } = input;
-  const canControl = has(held, "runner:control") || has(held, "settings:write");
+  const canControl = canControlRunner(held);
   const canStop = has(held, "tasks:write") || has(held, "tasks:control");
   if (!overview) {
     // No global state: only the selected project's tasks are known, and nothing can be toggled.
@@ -107,7 +122,7 @@ export function topbarState(input: TopbarInput): TopbarState {
   const running: RunningItem[] = [];
   let queued = 0;
   for (const p of overview.projects) {
-    queued += p.counts.pending ?? 0;
+    queued += Math.max(p.counts.pending ?? 0, input.localPending?.[p.id] ?? 0);
     for (const id of p.running) {
       running.push(
         input.items.get(`${p.id}/${id}`) ?? { pid: p.id, project: p.id, taskId: id, title: id },

@@ -290,3 +290,21 @@ describe("no agent ready", () => {
     expect(ok.toggle).toMatchObject({ label: "Start", disabled: false });
   });
 });
+
+describe("queued count with local pending tasks", () => {
+  it("counts a pending plan-draft the overview has not seen yet", () => {
+    const overview = {
+      enabled: false,
+      budgetExceeded: [],
+      projects: [{ id: "a", paused: false, running: [], counts: {} }],
+    };
+    const state = topbarState({
+      overview,
+      fallbackRunning: [],
+      items: new Map(),
+      held: "all",
+      localPending: { a: 1 },
+    });
+    expect(state.text).toBe("Paused · 1 queued");
+  });
+});

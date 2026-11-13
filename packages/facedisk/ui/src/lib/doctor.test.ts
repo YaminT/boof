@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { DoctorCheck, HarnessStatus } from "../api-types.js";
-import { continueRoute, fixRoute, gateOf, reachableWhileBlocked, summarize } from "./doctor.js";
+import {
+  continueRoute,
+  fixRoute,
+  forgetEntry,
+  gateOf,
+  reachableWhileBlocked,
+  recallEntry,
+  rememberEntry,
+  summarize,
+} from "./doctor.js";
 
 const status = (anyReady: boolean): HarnessStatus => ({
   tools: {},
@@ -89,5 +98,28 @@ describe("continueRoute", () => {
   });
   it("has nowhere to go before a project exists", () => {
     expect(continueRoute(null, null, [])).toBeNull();
+  });
+});
+
+describe("remembered entry", () => {
+  const mem = () => {
+    const m = new Map<string, string>();
+    return {
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, v),
+      removeItem: (k: string) => void m.delete(k),
+    };
+  };
+  it("keeps the wizard page across a reload of the doctor", () => {
+    const st = mem();
+    rememberEntry(st, { name: "wizard", pid: "a" });
+    expect(recallEntry(st)).toEqual({ name: "wizard", pid: "a" });
+    forgetEntry(st);
+    expect(recallEntry(st)).toBeNull();
+  });
+  it("never remembers the doctor itself", () => {
+    const st = mem();
+    rememberEntry(st, { name: "doctor" });
+    expect(recallEntry(st)).toBeNull();
   });
 });
