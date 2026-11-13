@@ -80,6 +80,12 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1
           npm exec --workspace @boof/desktop -- electron-builder --linux --publish never
 
+      - name: Build and verify macOS ad-hoc signed app
+        if: runner.os == 'macOS'
+        run: |
+          npm exec --workspace @boof/desktop -- electron-builder --mac --dir --publish never
+          bash scripts/verify-mac-codesign.sh packages/desktop/build/release
+
       - name: Install virtual display
         if: runner.os == 'Linux'
         run: |

@@ -23,7 +23,12 @@ files:
 
 mac:
   category: public.app-category.developer-tools
-  identity: null # unsigned beta build — no signing/notarization
+  # Ad-hoc signature ("-"): no Apple account, no notarization. Without any signature an
+  # arm64 Mac reports the download as "damaged". With it, right-click Open (or
+  # `xattr -cr`) is enough.
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
   target:
     - target: dmg
       arch: [arm64, x64]
