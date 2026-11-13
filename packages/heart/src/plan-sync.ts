@@ -424,14 +424,29 @@ async function syncOnce(
   const priorityOf = (g: Goal) => (open.length - open.indexOf(g)) * 10;
 
   /** Finished branch of each goal `g` depends on, in dependsOn order, when it exists in the repo. */
-  const dependencyBranches = async (g: Goal): Promise<{ goalId: string; branch: string }[]> => {
+  const dependencyBranches = async (
+    g: Goal,
+    warnings: string[] = [],
+  ): Promise<{ goalId: string; branch: string }[]> => {
     const out: { goalId: string; branch: string }[] = [];
     for (const d of g.dependsOn) {
-      const branch = await previousTaskBase(
-        repoRoot,
-        mine.filter((t) => t.frontmatter.planRef!.goalId === d),
-      );
-      if (branch && !out.some((o) => o.branch === branch)) out.push({ goalId: d, branch });
+      const goalTasks = mine.filter((t) => t.frontmatter.planRef!.goalId === d);
+      const branch = await previousTaskBase(repoRoot, goalTasks);
+      if (!branch) {
+        if (goalTasks.some((t) => t.frontmatter.status === "done")) {
+          warnings.push(
+            `WARNING: dependency ${d} produced no commits (its task branch is missing).`,
+          );
+        }
+        continue;
+      }
+      const emptyBase = opts.project.defaultBase ?? "HEAD";
+      if (await isAncestor(repoRoot, branch, emptyBase)) {
+        warnings.push(
+          `WARNING: dependency ${d} produced no commits (${branch} adds nothing beyond ${emptyBase}).`,
+        );
+      }
+      if (!out.some((o) => o.branch === branch)) out.push({ goalId: d, branch });
     }
     return out;
   };
@@ -447,7 +462,19 @@ async function syncOnce(
     taskId: string,
     ownBase: string | undefined,
   ): Promise<{ base: string | undefined; mergeFirst: string[]; log: string }> => {
-    const deps = await dependencyBranches(g);
+    const warnings: string[] = [];
+    const deps = await dependencyBranches(g, warnings);
+    const chosen = await chooseBaseFrom(taskId, ownBase, deps);
+    return warnings.length > 0
+      ? { ...chosen, log: `${chosen.log}\n${warnings.join("\n")}` }
+      : chosen;
+  };
+
+  const chooseBaseFrom = async (
+    taskId: string,
+    ownBase: string | undefined,
+    deps: { goalId: string; branch: string }[],
+  ): Promise<{ base: string | undefined; mergeFirst: string[]; log: string }> => {
     if (ownBase) {
       const missing: string[] = [];
       for (const d of deps)

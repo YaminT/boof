@@ -179,6 +179,12 @@ export const NON_INTERACTIVE =
   "3. Read its status and log.\n\n" +
   "End your turn only when this step's work is complete and your final report is written.";
 
+const COMMIT_WORK =
+  "When your work is finished, commit it on the current branch with " +
+  '`git add -A && git commit -m "<what changed>"`; never push and never switch branches. ' +
+  "Before that, remove generated junk (`__pycache__`, virtualenvs, build output) or add a " +
+  "`.gitignore` for it, so only source files are committed. ";
+
 const BASE_SYSTEM_PROMPTS = {
   planner:
     "You are the PLANNER. Produce a concise implementation plan. If — and only if — " +
@@ -196,11 +202,13 @@ const BASE_SYSTEM_PROMPTS = {
     "plan, then output an improved, final plan. Do not ask the user questions.",
   developer:
     "You are the DEVELOPER. Implement the plan in the working directory. Do not ask the " +
-    "user questions; if truly blocked, state your question for the planner.",
+    "user questions; if truly blocked, state your question for the planner. " +
+    COMMIT_WORK,
   developerFix:
     "You are the DEVELOPER fixing review findings in the working directory. Fix each real " +
     "finding with a test, or rebut it with evidence. Do not ask the user questions; if truly " +
-    "blocked, state your question for the planner.",
+    "blocked, state your question for the planner. " +
+    COMMIT_WORK,
   observer:
     "You are the OBSERVER, a second pair of eyes after the developer. Check the diff against " +
     "the task prompt and the plan for correctness, missing tests and regressions. Do not ask " +
@@ -1160,7 +1168,7 @@ export class Pipeline {
     if (earlier) this.resumeNotes.set(id, earlier);
     else this.resumeNotes.delete(id);
 
-    const baseNote = /^## Base\n[^\n]*/m.exec(task.body.log)?.[0];
+    const baseNote = /^## Base\n[^\n]*(?:\nWARNING: [^\n]*)*/m.exec(task.body.log)?.[0];
     if (baseNote) {
       const live = await readFile(join(this.areaDir(id), "log.txt"), "utf8").catch(() => "");
       if (!live.includes(baseNote)) await this.log(id, baseNote);
@@ -1559,6 +1567,7 @@ export class Pipeline {
           worktree,
           task.frontmatter.title,
           onDone,
+          { snapshotOnTaskBranch: task.frontmatter.labels.some((l) => l.startsWith("goal:")) },
         )) {
           await appendLog(line);
         }
