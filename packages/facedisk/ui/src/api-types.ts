@@ -60,6 +60,8 @@ export interface HarnessInstall {
   /** Set when the program exists but is not on PATH: where it was found. */
   foundOffPath?: string;
   message: string;
+  /** Asked with a project: why a task of that project cannot start with this installed tool. */
+  startBlock?: string;
 }
 
 export interface HarnessStatus {

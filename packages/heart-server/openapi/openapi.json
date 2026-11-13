@@ -128,6 +128,7 @@
                   "plan_not_active",
                   "plan_not_draft",
                   "tool_not_installed",
+                  "agent_not_ready",
                   "draft_in_progress",
                   "goal_has_dependents",
                   "profile_in_use",
@@ -4394,7 +4395,7 @@
     },
     "/harnesses": {
       "get": {
-        "description": "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` re-checks (at most once every ten seconds). Needs settings:read.",
+        "description": "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` re-checks (at most once every ten seconds). With `forProject` (a project id), a tool that is installed but cannot start for that project carries startBlock, the reason. Needs settings:read.",
         "operationId": "harnesses.status",
         "parameters": [
           {
@@ -4403,6 +4404,14 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "forProject",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -4438,6 +4447,10 @@
                             "type": "string"
                           },
                           "path": {
+                            "type": "string"
+                          },
+                          "startBlock": {
+                            "description": "Only with forProject: why a task of that project cannot start with this installed tool (for example claude-agent without an API key).",
                             "type": "string"
                           },
                           "version": {
@@ -16519,6 +16532,10 @@
     }
   ],
   "x-error-codes": {
+    "agent_not_ready": {
+      "description": "That coding agent is installed but cannot start for this project.",
+      "status": 400
+    },
     "auth_store_unavailable": {
       "description": "The server's data folder has unsafe permissions, so no key can be checked; see the server log.",
       "status": 503

@@ -67,6 +67,7 @@ export const ERROR_CODES = {
   plan_not_active: [409, "The plan is not active; activate it before syncing."],
   plan_not_draft: [409, "The plan is not a draft; only a draft plan can have its tasks drafted."],
   tool_not_installed: [400, "That coding agent is not installed on this computer."],
+  agent_not_ready: [400, "That coding agent is installed but cannot start for this project."],
   draft_in_progress: [409, "A task list is already being drafted for this plan."],
   goal_has_dependents: [409, "Other goals depend on this one; pass cascade to remove them too."],
   profile_in_use: [409, "A project still uses the profile; the message lists the projects."],

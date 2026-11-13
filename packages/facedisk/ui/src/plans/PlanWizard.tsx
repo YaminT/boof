@@ -4,13 +4,17 @@ import { Input } from "@/ui/input";
 import { Textarea } from "@/ui/textarea";
 import { NativeSelect } from "../ui/native-select.js";
 import { api, type Plan, type TaskView } from "../api.js";
-import { act } from "../lib/act.js";
+import { act, errorMessage } from "../lib/act.js";
 import { activateWithTasks, reportCreated } from "../lib/activate.js";
 import { formatRoute, type Route } from "../lib/route.js";
 import {
   OUTCOME_MAX,
   afterOutcome,
   agentUnavailableReason,
+  blockedTools,
+  draftFailureActions,
+  draftFailureReason,
+  readyTools,
   aboutDone,
   savedAbout,
   hasAbout,
@@ -73,8 +77,10 @@ export function PlanWizard({
   navigate: (to: Route) => void;
   initialTitle?: string;
 }) {
-  const harnesses = useHarnesses();
+  const harnesses = useHarnesses(pid);
   const installed = useMemo(() => installedTools(harnesses.status), [harnesses.status]);
+  const blocked = useMemo(() => blockedTools(harnesses.status), [harnesses.status]);
+  const ready = useMemo(() => readyTools(harnesses.status), [harnesses.status]);
   const reason = agentUnavailableReason(harnesses.status);
   const [draft, setDraftState] = useState<WizardDraft>(
     () => loadDraft(window.sessionStorage, pid) ?? { ...emptyDraft(), title: initialTitle ?? "" },
@@ -101,9 +107,9 @@ export function PlanWizard({
   // Preselect the agent once the install check and settings have answered.
   useEffect(() => {
     if (!harnesses.status || draftRef.current.tool) return;
-    const pick = defaultAgent(data.settings, installed);
+    const pick = defaultAgent(data.settings, ready);
     setDraft((d) => ({ ...d, tool: pick.tool, model: pick.model, useAgent: d.useAgent }));
-  }, [harnesses.status, installed, data.settings, setDraft]);
+  }, [harnesses.status, ready, data.settings, setDraft]);
 
   // The models of the chosen tool, for the model select.
   useEffect(() => {
@@ -196,6 +202,8 @@ export function PlanWizard({
     if (p) return setProblem(p);
     setProblem(null);
     if (draft.useAgent && !draft.tool) return setProblem("Pick an agent.");
+    if (draft.useAgent && blocked[draft.tool])
+      return setProblem(`${draft.tool} cannot start: ${blocked[draft.tool]}`);
     // The project facts live with the project on the server, so they are known in any browser.
     let known = null as Awaited<ReturnType<typeof api.getProject>> | null;
     try {
@@ -291,7 +299,12 @@ export function PlanWizard({
           }),
         {
           failure: "Could not start the agent",
-          onError: () => false,
+          // The server refuses an agent that cannot start, with the reason: show it here.
+          onError: (err) => {
+            setProblem(errorMessage(err));
+            harnesses.refresh();
+            return true;
+          },
         },
       );
       if (!r) return;
@@ -337,8 +350,18 @@ export function PlanWizard({
     }
   };
 
+  const failureReason = task ? draftFailureReason(task) : null;
+  const failureActions = draftFailureActions(failureReason);
+  /** Back to the first step to pick another agent; the failed attempt is dropped from view. */
+  const useDifferentAgent = () => {
+    setTask(null);
+    harnesses.refresh();
+    const next = ready.find((t) => t !== draftRef.current.tool) ?? "";
+    setDraft({ step: "outcome", ...(next ? { tool: next, model: "" } : {}) });
+  };
+
   const step = draft.step;
-  const agentReady = !reason && installed.length > 0;
+  const agentReady = !reason && ready.length > 0;
   const proj = draft.project;
   const setProj = (patch: Partial<typeof proj>) => setDraft({ project: { ...proj, ...patch } });
 
@@ -384,6 +407,15 @@ export function PlanWizard({
             <span className={FIELD}>Let an agent write the tasks</span>
           </label>
           {reason && <p className="m-0 text-ink-muted">{reason}</p>}
+          {draft.useAgent && agentReady && Object.keys(blocked).length > 0 && (
+            <ul className="m-0 list-none p-0 text-ink-muted">
+              {Object.entries(blocked).map(([t, why]) => (
+                <li key={t}>
+                  {harnesses.status?.tools[t]?.displayName ?? t} cannot start here: {why}
+                </li>
+              ))}
+            </ul>
+          )}
           {draft.useAgent && agentReady && (
             <div className="flex flex-wrap gap-2">
               <NativeSelect
@@ -392,8 +424,9 @@ export function PlanWizard({
                 onChange={(e) => setDraft({ tool: e.target.value, model: "" })}
               >
                 {installed.map((t) => (
-                  <option key={t} value={t}>
+                  <option key={t} value={t} disabled={!!blocked[t]}>
                     {harnesses.status?.tools[t]?.displayName ?? t}
+                    {blocked[t] ? " (cannot start here)" : ""}
                   </option>
                 ))}
               </NativeSelect>
@@ -502,6 +535,28 @@ export function PlanWizard({
                     ? "The agent finished drafting."
                     : `The agent ${task.frontmatter.status}.`}
               </div>
+              {failureReason && (
+                <div className="flex flex-col gap-2">
+                  <p role="alert" className="m-0 text-danger">
+                    {failureReason}
+                  </p>
+                  <div className="flex gap-2">
+                    {failureActions.includes("change-agent") && (
+                      <Button variant="outline" onClick={useDifferentAgent}>
+                        Use a different agent
+                      </Button>
+                    )}
+                    {failureActions.includes("settings") && (
+                      <Button
+                        variant="outline"
+                        onClick={() => navigate({ name: "settings", pid, page: "project" })}
+                      >
+                        Open project settings
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
               {task.frontmatter.status === "action" && (
                 <>
                   {task.body.questions?.trim() && (

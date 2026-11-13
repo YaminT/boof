@@ -250,7 +250,7 @@ export class PlanService {
    * Queue a plan-draft task: an agent reads the repository and writes the plan's goals (the
    * wizard's "Let an agent write the tasks"). Refused while another one is pending, running or
    * waiting for answers (409 `draft_in_progress`), for a tool that is not installed (400
-   * `tool_not_installed`) and for a plan that is not a draft (409 `plan_not_draft`).
+   * `tool_not_installed`), for one that cannot start for this project (400 `agent_not_ready`) and for a plan that is not a draft (409 `plan_not_draft`).
    */
   async draftGoals(
     planId: string,
@@ -289,6 +289,10 @@ export class PlanService {
         { tool: input.tool },
       );
     }
+    const block = await this.parent.draftStartBlock(this.projectId, input.tool);
+    if (block) {
+      throw new OpError(400, block, "agent_not_ready", { tool: input.tool });
+    }
     const current = await this.draftTask(planId);
     if (current && ["pending", "running", "action"].includes(current.status)) {
       throw new OpError(
@@ -297,6 +301,14 @@ export class PlanService {
         "draft_in_progress",
         { taskId: current.id },
       );
+    }
+    // A draft that failed or was stopped is of no use once the user tries again: drop it, so it
+    // does not pile up in the project's task history.
+    const store = new TaskStore(this.projectDir);
+    for (const old of await store.list()) {
+      const fm = old.frontmatter;
+      if (fm.draftFor?.planId === planId && ["failed", "stopped"].includes(fm.status))
+        await store.delete(fm.id);
     }
     const existing = plan.goals.map((g) => `- ${g.id}: ${g.title}`).join("\n");
     const prompt = [
