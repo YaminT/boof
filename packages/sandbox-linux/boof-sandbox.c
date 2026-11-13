@@ -668,31 +668,47 @@ static void apply_seccomp(void) {
     failf("seccomp: %s", strerror(errno));
 }
 
-static int process_children(pid_t parent, pid_t **out) {
-  char path[128];
-  snprintf(path, sizeof path, "/proc/%ld/task/%ld/children", (long)parent, (long)parent);
+/* Append the pids listed in one `children` file to *pids. Returns 0, or -1 on failure. */
+static int read_children_file(const char *path, pid_t **pids, size_t *len, size_t *cap) {
   FILE *file = fopen(path, "r");
-  if (file == NULL) return -1;
-  pid_t *pids = NULL;
-  size_t len = 0, cap = 0;
+  if (file == NULL) return errno == ENOENT || errno == ESRCH ? 0 : -1;
   long value;
   while (fscanf(file, "%ld", &value) == 1) {
     if (value <= 1 || value == getpid()) continue;
-    if (len == cap) {
-      size_t next_cap = cap == 0 ? 8 : cap * 2;
-      pid_t *next = realloc(pids, next_cap * sizeof *pids);
+    if (*len == *cap) {
+      size_t next_cap = *cap == 0 ? 8 : *cap * 2;
+      pid_t *next = realloc(*pids, next_cap * sizeof **pids);
       if (next == NULL) {
-        free(pids);
         fclose(file);
         return -1;
       }
-      pids = next;
-      cap = next_cap;
+      *pids = next;
+      *cap = next_cap;
     }
-    pids[len++] = (pid_t)value;
+    (*pids)[(*len)++] = (pid_t)value;
   }
   int failed = ferror(file);
   if (fclose(file) != 0) failed = 1;
+  return failed ? -1 : 0;
+}
+
+/* Children of every thread of `parent`: fork() from a non-main thread lists the child there. */
+static int process_children(pid_t parent, pid_t **out) {
+  char path[128];
+  snprintf(path, sizeof path, "/proc/%ld/task", (long)parent);
+  DIR *dir = opendir(path);
+  if (dir == NULL) return -1;
+  pid_t *pids = NULL;
+  size_t len = 0, cap = 0;
+  int failed = 0;
+  struct dirent *entry;
+  while (!failed && (entry = readdir(dir)) != NULL) {
+    if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+    char file[320];
+    snprintf(file, sizeof file, "/proc/%ld/task/%s/children", (long)parent, entry->d_name);
+    if (read_children_file(file, &pids, &len, &cap) != 0) failed = 1;
+  }
+  closedir(dir);
   if (failed) {
     free(pids);
     return -1;
@@ -701,14 +717,20 @@ static int process_children(pid_t parent, pid_t **out) {
   return (int)len;
 }
 
+/*
+ * Stop `pid` first, then walk its children, then deliver `sig`. A process cannot fork while it
+ * is stopped, so a parent stops refilling its subtree before the walk reads the children list.
+ * (Reading the children first lets a storm keep forking behind the walk.)
+ */
 static void signal_process_tree(pid_t pid, int sig) {
+  (void)kill(pid, SIGSTOP);
   pid_t *children = NULL;
   int count = process_children(pid, &children);
   if (count > 0) {
     for (int i = 0; i < count; i++) signal_process_tree(children[i], sig);
   }
   free(children);
-  (void)kill(pid, sig);
+  if (sig != SIGSTOP) (void)kill(pid, sig);
 }
 
 /* PR_SET_CHILD_SUBREAPER makes orphaned setsid/double-fork descendants our children. */
@@ -728,15 +750,45 @@ static void kill_and_reap_descendants(void) {
       while (waitpid(-1, NULL, WNOHANG) > 0) {}
       return;
     }
-    // Stop every current descendant before killing. Repeat the walk until there are no
-    // descendants; a process cannot fork while stopped, so a fork storm cannot outrun the walk.
-    for (int i = 0; i < count; i++) signal_process_tree(children[i], SIGSTOP);
+    // signal_process_tree stops each process before it reads that process's children, then
+    // kills it. Repeat until there are no descendants.
     for (int i = 0; i < count; i++) signal_process_tree(children[i], SIGKILL);
     free(children);
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
     struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
     nanosleep(&delay, NULL);
   }
+}
+
+/* Threads and processes that exist on the host right now (4th field of /proc/loadavg). */
+static unsigned long host_task_count(void) {
+  FILE *file = fopen("/proc/loadavg", "r");
+  if (file == NULL) return 0;
+  double a, b, c;
+  unsigned long running = 0, total = 0;
+  int got = fscanf(file, "%lf %lf %lf %lu/%lu", &a, &b, &c, &running, &total);
+  fclose(file);
+  return got == 5 ? total : 0;
+}
+
+/* Extra processes and threads a sandboxed command may add on top of what the host already runs. */
+#define SANDBOX_NPROC_HEADROOM 2048UL
+
+/*
+ * Applied in the sandboxed child before exec. RLIMIT_NPROC bounds a fork storm (it is per uid,
+ * so the cap is the host's current count plus headroom), and nice 19 lets the supervisor win the
+ * CPU against thousands of runnable storm processes when it has to stop and kill them.
+ */
+static void apply_resource_limits(void) {
+  unsigned long total = host_task_count();
+  struct rlimit nproc;
+  if (total > 0 && getrlimit(RLIMIT_NPROC, &nproc) == 0) {
+    rlim_t cap = (rlim_t)(total + SANDBOX_NPROC_HEADROOM);
+    if (cap < nproc.rlim_max) nproc.rlim_max = cap;
+    if (cap < nproc.rlim_cur) nproc.rlim_cur = cap;
+    if (setrlimit(RLIMIT_NPROC, &nproc) != 0) failf("setrlimit nproc: %s", strerror(errno));
+  }
+  if (setpriority(PRIO_PROCESS, 0, 19) != 0) failf("setpriority: %s", strerror(errno));
 }
 
 static volatile sig_atomic_t supervisor_signal = 0;
@@ -825,6 +877,7 @@ int main(int argc, char **argv) {
     sigaction(SIGTERM, &def, NULL);
     sigaction(SIGINT, &def, NULL);
     sigaction(SIGHUP, &def, NULL);
+    apply_resource_limits();
     apply_landlock(abi);
     apply_seccomp();
     free(policy_buf);

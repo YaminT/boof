@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -574,6 +576,57 @@ static void op_orphan_sleep(const char *pid_path) {
   close(ready[0]);
 }
 
+static long host_tasks(void) {
+  FILE *file = fopen("/proc/loadavg", "r");
+  if (file == NULL) return -1;
+  double a, b, c;
+  long running = 0, total = -1;
+  if (fscanf(file, "%lf %lf %lf %ld/%ld", &a, &b, &c, &running, &total) != 5) total = -1;
+  fclose(file);
+  return total;
+}
+
+/* Print the limits the helper left on this process. */
+static void op_limits(void) {
+  struct rlimit nproc;
+  if (getrlimit(RLIMIT_NPROC, &nproc) != 0) {
+    printf("limits %s\n", errname(errno));
+    return;
+  }
+  errno = 0;
+  int nice_value = getpriority(PRIO_PROCESS, 0);
+  printf("limits nproc=%lu/%lu nice=%d host=%ld\n", (unsigned long)nproc.rlim_cur,
+         (unsigned long)nproc.rlim_max, nice_value, host_tasks());
+}
+
+/*
+ * A storm that keeps forking until killed. Every process forks whenever the host task count is
+ * below the start count plus `ceiling`, so a slot that a kill frees is refilled at once. Half the
+ * children setsid(). All of them are named "boofstorm". The ceiling bounds the host, not the
+ * helper: a helper that sets no process cap lets the storm reach it.
+ */
+static void op_storm_live(const char *ceiling_text) {
+  long ceiling = strtol(ceiling_text, NULL, 10);
+  long base = host_tasks();
+  if (ceiling < 1 || base < 0) return;
+  prctl(PR_SET_NAME, "boofstorm", 0, 0, 0);
+  printf("storm-live start\n");
+  fflush(stdout);
+  for (;;) {
+    long total = host_tasks();
+    if (total >= 0 && total < base + ceiling) {
+      pid_t pid = fork();
+      if (pid == 0) {
+        if ((getpid() & 1) == 0) setsid();
+        continue;
+      }
+      if (pid > 0) continue;
+    }
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+    nanosleep(&delay, NULL);
+  }
+}
+
 static void op_fork_storm(const char *pid_path) {
   int fd = open(pid_path, O_WRONLY | O_APPEND);
   if (fd < 0) {
@@ -766,6 +819,8 @@ int main(int argc, char **argv) {
   else if (strcmp(cmd, "setsid-connect4") == 0 && argc == 3) op_setsid("connect4", argv[2]);
   else if (strcmp(cmd, "orphan-sleep") == 0 && argc == 3) op_orphan_sleep(argv[2]);
   else if (strcmp(cmd, "fork-storm") == 0 && argc == 3) op_fork_storm(argv[2]);
+  else if (strcmp(cmd, "storm-live") == 0 && argc == 3) op_storm_live(argv[2]);
+  else if (strcmp(cmd, "limits") == 0 && argc == 2) op_limits();
   else if (strcmp(cmd, "double-read") == 0 && argc == 3) op_double("read", argv[2]);
   else if (strcmp(cmd, "double-connect4") == 0 && argc == 3) op_double("connect4", argv[2]);
 #if defined(__linux__)

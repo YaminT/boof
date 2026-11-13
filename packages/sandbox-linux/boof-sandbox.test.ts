@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   closeSync,
   readFileSync,
   realpathSync,
@@ -675,6 +676,89 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     const survivors = recorded.filter((pid) => existsSync(`/proc/${pid}`));
     expect(survivors).toEqual([]);
   });
+
+  it("caps processes and lowers the priority of the sandboxed command", async () => {
+    await tree();
+    const result = await run(basePolicy([]), [probe, "limits"]);
+    expect(result.code).toBe(0);
+    const match = /limits nproc=(\d+)\/(\d+) nice=(\d+) host=(\d+)/.exec(result.stdout);
+    expect(match).not.toBeNull();
+    const [cur, max, nice, host] = match!.slice(1).map(Number);
+    // The cap is the host's task count when the helper started plus 2,048, not the user's ulimit.
+    expect(cur).toBe(max);
+    expect(cur).toBeGreaterThan(host);
+    expect(cur).toBeLessThanOrEqual(host + 2048 + 512);
+    expect(nice).toBe(19);
+  });
+
+  it("tears down a storm that keeps forking within a deadline and leaves no survivor", async () => {
+    await tree();
+    const stormPids = (): number[] =>
+      readdirSync("/proc")
+        .filter((name) => /^\d+$/.test(name))
+        .filter((name) => {
+          try {
+            return readFileSync(`/proc/${name}/comm`, "utf8").trim() === "boofstorm";
+          } catch {
+            return false;
+          }
+        })
+        .map(Number);
+    const killStorm = (): void => {
+      for (let round = 0; round < 50 && stormPids().length > 0; round += 1) {
+        for (const pid of stormPids()) {
+          try {
+            process.kill(pid, "SIGCONT");
+            process.kill(pid, "SIGKILL");
+          } catch {
+            /* gone */
+          }
+        }
+      }
+    };
+    // The ceiling is far above the helper's process cap and above what an uncapped supervisor
+    // can stop in the deadline on a small host. Every storm process refills freed slots.
+    const dir = join(tmpdir(), `boof-sandbox-pol-${process.pid}-${Date.now()}-${Math.random()}`);
+    mkdirSync(dir, { recursive: true });
+    const policyPath = join(dir, "policy.json");
+    writeFileSync(policyPath, basePolicy([]));
+    const fd = openSync(policyPath, "r");
+    const child = spawn(helper, ["--policy-fd", "3", "--", probe, "storm-live", "7000"], {
+      stdio: ["ignore", "pipe", "pipe", fd],
+      detached: true,
+    });
+    closeSync(fd);
+    let closed = false;
+    const closedAt = new Promise<number>((resolve) => {
+      child.on("close", () => {
+        closed = true;
+        resolve(performance.now());
+      });
+    });
+    child.stdout?.resume();
+    child.stderr?.resume();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      expect(stormPids().length).toBeGreaterThan(100);
+      const stoppedAt = performance.now();
+      child.kill("SIGTERM");
+      const deadline = new Promise<number>((resolve) => setTimeout(() => resolve(-1), 12000));
+      const done = await Promise.race([closedAt, deadline]);
+      expect(done).toBeGreaterThan(0);
+      expect(done - stoppedAt).toBeLessThan(10000);
+      expect(stormPids()).toEqual([]);
+    } finally {
+      if (!closed) {
+        try {
+          process.kill(-child.pid!, "SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+      killStorm();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 40000);
 
   it("exits 126 when a readWrite path is missing and does not exec", async () => {
     const missing = join(tmpdir(), `boof-sandbox-missing-${process.pid}`);
