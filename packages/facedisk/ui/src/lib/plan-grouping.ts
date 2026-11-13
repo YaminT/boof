@@ -154,3 +154,22 @@ export function groupTasksByPlan(
     });
   return out;
 }
+
+/**
+ * Titles of the goals a blocked task still waits for (its goal's unfinished dependencies), or
+ * null when the task is not a blocked plan task or the plan is not loaded.
+ */
+export function waitingFor(
+  task: Pick<TaskView, "frontmatter">,
+  plan: Pick<Plan, "goals"> | undefined,
+): string[] | null {
+  const ref = task.frontmatter.planRef;
+  if (!ref || !plan || !task.frontmatter.labels.includes("blocked")) return null;
+  const goal = plan.goals.find((g) => g.id === ref.goalId);
+  if (!goal) return null;
+  const titles = goal.dependsOn.flatMap((d) => {
+    const dep = plan.goals.find((g) => g.id === d);
+    return dep && dep.status === "done" ? [] : [dep?.title ?? d];
+  });
+  return titles.length > 0 ? titles : null;
+}

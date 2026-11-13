@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode, Ref } from "react";
 import type { EpicView, Plan, PlanSummary, TaskView } from "../api.js";
-import { planChip } from "../lib/plan-grouping.js";
+import { planChip, waitingFor } from "../lib/plan-grouping.js";
 import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
@@ -107,6 +107,7 @@ function HierarchyChips({
   ctx: RowContext;
 }) {
   const plan = planChip(ctx.pid, task, ctx.plans, ctx.planDetails);
+  const waiting = waitingFor(task, plan ? ctx.planDetails.get(plan.planId) : undefined);
   const epic = task.epicId ? (ctx.epics.get(task.epicId)?.title ?? task.epicId) : null;
   return (
     <>
@@ -145,6 +146,14 @@ function HierarchyChips({
         >
           {plan.label}
         </a>
+      )}
+      {waiting && (
+        <span
+          className={cn(chip, "hidden max-w-64 truncate text-ink-muted min-[720px]:block")}
+          title={`Waiting for: ${waiting.join(", ")}`}
+        >
+          Waiting for: {waiting.join(", ")}
+        </span>
       )}
       {epic && !task.epicMissing && (
         <span

@@ -1305,7 +1305,7 @@ Path parameters (all required):
 - Scope: `plans:write`
 - MCP tool: `boof_sync_plan`
 - CLI: `boof-runner plans sync`
-- What it does: Creates one task per unblocked goal of an active plan and updates tasks of changed goals. Inputs: projectId, planId, dryRun, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.
+- What it does: Creates one task per unblocked goal of an active plan and updates tasks of changed goals. With includeBlocked it also creates skipped `blocked` tasks for goals whose dependencies are not done; they unskip when the dependencies finish. Inputs: projectId, planId, dryRun, includeBlocked, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.
 - Success: HTTP 200 with `{ archived: { action: "archived" | "stop-requested", goalId: string, reason: "goal-removed", taskId: string }[], created: { followUp: boolean, goalId: string, revision: integer, skip: boolean, status: string, taskId: string }[], dryRun: boolean, plan: Plan, planId: string, skipped: { goalId: string, reason: "blocked", taskId?: string }[], updated: { action: "rewritten" | "appended" | "injected" | "unskipped" | "blocked", goalId: string, revision: integer, taskId: string }[] }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_input`, `409 plan_not_active`
 
@@ -1317,6 +1317,7 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `dryRun`: `boolean`, optional
+- `includeBlocked`: `boolean`, optional
 - `stopRunning`: `boolean`, optional
 
 #### `GET /api/v1/projects/{projectId}/plans/{planId}/wait` (Wait for a plan to change, finish or get stuck)

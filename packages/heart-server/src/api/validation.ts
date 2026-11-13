@@ -209,7 +209,11 @@ export const ImportPlanBody = z
   .strict();
 
 export const SyncPlanBody = z
-  .object({ dryRun: z.boolean().optional(), stopRunning: z.boolean().optional() })
+  .object({
+    dryRun: z.boolean().optional(),
+    stopRunning: z.boolean().optional(),
+    includeBlocked: z.boolean().optional(),
+  })
   .strict();
 
 /** Query flags of DELETE goals/:goalId (a DELETE has no body). */

@@ -5,6 +5,7 @@ import {
   groupFromSearch,
   groupTasksByPlan,
   planChip,
+  waitingFor,
   planCountsLabel,
   planRefOf,
   planTaskCounts,
@@ -136,5 +137,25 @@ describe("group-by preference", () => {
     expect(readGroupBy(s, "p")).toBe("none");
     s.setItem("boof.groupByEpic.old", "1");
     expect(readGroupBy(s, "old")).toBe("epic");
+  });
+});
+
+describe("waitingFor", () => {
+  const plan = {
+    goals: [
+      { id: "a", title: "Scaffold", dependsOn: [], status: "done" },
+      { id: "b", title: "Models", dependsOn: [], status: "develop" },
+      { id: "c", title: "List", dependsOn: ["a", "b"], status: "develop" },
+    ],
+  } as unknown as Plan;
+  const task = (labels: string[]) =>
+    ({ frontmatter: { labels, planRef: { planId: "p", goalId: "c", revision: 1 } } }) as never;
+
+  it("names the unfinished dependencies of a blocked task", () => {
+    expect(waitingFor(task(["blocked"]), plan)).toEqual(["Models"]);
+  });
+  it("is null for an unblocked task or an unloaded plan", () => {
+    expect(waitingFor(task([]), plan)).toBeNull();
+    expect(waitingFor(task(["blocked"]), undefined)).toBeNull();
   });
 });

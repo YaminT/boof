@@ -299,7 +299,7 @@ export function PlanWizard({
       });
       if (!result) return;
       const active = result.plan;
-      reportCreated(result.created);
+      reportCreated(result.created, result.waiting);
       clearDraft(window.sessionStorage, pid);
       dismissWizard(window.localStorage, pid);
       void data.refresh();

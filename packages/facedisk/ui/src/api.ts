@@ -547,8 +547,8 @@ export const api = {
     http<ImportReport>(`${P(pid)}/plans/import`, json("POST", input)),
   exportPlan: (pid: string, planId: string) =>
     http<Record<string, string>>(`${PL(pid, planId)}/export`),
-  syncPlan: (pid: string, planId: string, dryRun: boolean) =>
-    http<SyncReport>(`${PL(pid, planId)}/sync`, json("POST", { dryRun })),
+  syncPlan: (pid: string, planId: string, dryRun: boolean, includeBlocked = false) =>
+    http<SyncReport>(`${PL(pid, planId)}/sync`, json("POST", { dryRun, includeBlocked })),
 
   conciergeStatus: (pid: string) => http<ConciergeStatus>(`${P(pid)}/concierge`),
   conciergeAsk: (pid: string, body: ConciergeAskBody) =>
